@@ -466,6 +466,9 @@ module Repository =
                                     | SetName repositoryName -> return NameSet repositoryName
                                     | SetDescription description -> return DescriptionSet description
                                     | SetConflictResolutionPolicy policy -> return ConflictResolutionPolicySet policy
+                                    | SetAutoRebaseEnabled enabled -> return AutoRebaseEnabledSet enabled
+                                    | SetAutoRestackEnabled enabled -> return AutoRestackEnabledSet enabled
+                                    | SetConflictResolutionMode mode -> return ConflictResolutionModeSet mode
                                     | DeleteLogical(force, deleteReason) ->
                                         // Get the list of branches that aren't already deleted.
                                         let! branches =

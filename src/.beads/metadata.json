@@ -1,4 +1,5 @@
 {
   "database": "beads.db",
-  "jsonl_export": "issues.jsonl"
+  "jsonl_export": "issues.jsonl",
+  "last_bd_version": "0.29.0"
 }

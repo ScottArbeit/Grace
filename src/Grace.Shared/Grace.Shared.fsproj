@@ -40,6 +40,11 @@
         <Compile Include="Parameters\Diff.Parameters.fs" />
         <Compile Include="Parameters\Storage.Parameters.fs" />
         <Compile Include="Parameters\PromotionGroup.Parameters.fs" />
+        <Compile Include="Parameters\Change.Parameters.fs" />
+        <Compile Include="Parameters\PatchSet.Parameters.fs" />
+        <Compile Include="Parameters\Stack.Parameters.fs" />
+        <Compile Include="Parameters\Train.Parameters.fs" />
+        <Compile Include="Parameters\Operation.Parameters.fs" />
         <Compile Include="Parameters\Reminder.Parameters.fs" />
         <Compile Include="Validation\Errors.Validation.fs" />
         <Compile Include="Validation\Common.Validation.fs" />

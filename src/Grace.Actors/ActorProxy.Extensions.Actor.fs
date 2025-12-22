@@ -45,6 +45,17 @@ module ActorProxy =
             memoryCache.CreateOrleansContextEntry(grain.GetGrainId(), orleansContext)
             grain
 
+    module Change =
+        /// Creates an ActorProxy for a Change actor, and adds the correlationId to the server's MemoryCache so
+        ///   it's available in the OnActivateAsync() method.
+        let CreateActorProxy (changeId: ChangeId) (repositoryId: RepositoryId) (correlationId: string) =
+            let grain = orleansClient.CreateActorProxyWithCorrelationId<IChangeActor>(changeId, correlationId)
+            let orleansContext = Dictionary<string, obj>()
+            orleansContext.Add(Constants.ActorNameProperty, ActorName.Change)
+            orleansContext.Add(nameof RepositoryId, repositoryId)
+            memoryCache.CreateOrleansContextEntry(grain.GetGrainId(), orleansContext)
+            grain
+
     module BranchName =
         /// Creates an ActorProxy for a BranchName actor, and adds the correlationId to the server's MemoryCache so
         ///   it's available in the OnActivateAsync() method.
@@ -79,6 +90,28 @@ module ActorProxy =
             orleansContext.Add(Constants.ActorNameProperty, ActorName.Diff)
             orleansContext.Add(nameof OwnerId, ownerId)
             orleansContext.Add(nameof OrganizationId, organizationId)
+            orleansContext.Add(nameof RepositoryId, repositoryId)
+            memoryCache.CreateOrleansContextEntry(grain.GetGrainId(), orleansContext)
+            grain
+
+    module Operation =
+        /// Creates an ActorProxy for an Operation actor, and adds the correlationId to the server's MemoryCache so
+        ///   it's available in the OnActivateAsync() method.
+        let CreateActorProxy (operationId: OperationId) (repositoryId: RepositoryId) (correlationId: string) =
+            let grain = orleansClient.CreateActorProxyWithCorrelationId<IOperationActor>(operationId, correlationId)
+            let orleansContext = Dictionary<string, obj>()
+            orleansContext.Add(Constants.ActorNameProperty, ActorName.Operation)
+            orleansContext.Add(nameof RepositoryId, repositoryId)
+            memoryCache.CreateOrleansContextEntry(grain.GetGrainId(), orleansContext)
+            grain
+
+    module PatchSet =
+        /// Creates an ActorProxy for a PatchSet actor, and adds the correlationId to the server's MemoryCache so
+        ///   it's available in the OnActivateAsync() method.
+        let CreateActorProxy (patchSetId: PatchSetId) (repositoryId: RepositoryId) (correlationId: string) =
+            let grain = orleansClient.CreateActorProxyWithCorrelationId<IPatchSetActor>(patchSetId, correlationId)
+            let orleansContext = Dictionary<string, obj>()
+            orleansContext.Add(Constants.ActorNameProperty, ActorName.PatchSet)
             orleansContext.Add(nameof RepositoryId, repositoryId)
             memoryCache.CreateOrleansContextEntry(grain.GetGrainId(), orleansContext)
             grain
@@ -223,5 +256,27 @@ module ActorProxy =
             let orleansContext = Dictionary<string, obj>()
             orleansContext.Add(nameof RepositoryId, repositoryId)
             orleansContext.Add(Constants.ActorNameProperty, ActorName.PromotionGroup)
+            memoryCache.CreateOrleansContextEntry(grain.GetGrainId(), orleansContext)
+            grain
+
+    module Stack =
+        /// Creates an ActorProxy for a Stack actor, and adds the correlationId to the server's MemoryCache so
+        ///   it's available in the OnActivateAsync() method.
+        let CreateActorProxy (stackId: StackId) (repositoryId: RepositoryId) (correlationId: string) =
+            let grain = orleansClient.CreateActorProxyWithCorrelationId<IStackActor>(stackId, correlationId)
+            let orleansContext = Dictionary<string, obj>()
+            orleansContext.Add(Constants.ActorNameProperty, ActorName.Stack)
+            orleansContext.Add(nameof RepositoryId, repositoryId)
+            memoryCache.CreateOrleansContextEntry(grain.GetGrainId(), orleansContext)
+            grain
+
+    module Train =
+        /// Creates an ActorProxy for a Train actor, and adds the correlationId to the server's MemoryCache so
+        ///   it's available in the OnActivateAsync() method.
+        let CreateActorProxy (trainId: PromotionTrainId) (repositoryId: RepositoryId) (correlationId: string) =
+            let grain = orleansClient.CreateActorProxyWithCorrelationId<ITrainActor>(trainId, correlationId)
+            let orleansContext = Dictionary<string, obj>()
+            orleansContext.Add(Constants.ActorNameProperty, ActorName.Train)
+            orleansContext.Add(nameof RepositoryId, repositoryId)
             memoryCache.CreateOrleansContextEntry(grain.GetGrainId(), orleansContext)
             grain

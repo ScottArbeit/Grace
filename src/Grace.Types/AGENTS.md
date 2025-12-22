@@ -18,6 +18,10 @@ Refer to `../AGENTS.md` for shared expectations before working here.
 2. Keep serializer attributes accurate and up to date when adding fields or cases.
 3. Document new versioning or migration strategies inside this file so subsequent agents load the context immediately.
 
+## Recent Additions
+- New Change/PatchSet/Stack/Train/Operation DTOs and reference-link types for stacked-diff workflows.
+- Repository settings now include AutoRebaseEnabled, AutoRestackEnabled, and ConflictResolutionMode.
+
 ## Validation
 - Add round-trip tests for every serializer impacted by a change (MessagePack, STJ, etc.).
 - Run `dotnet build --configuration Release` and any focused serialization/unit tests that cover the updated types.

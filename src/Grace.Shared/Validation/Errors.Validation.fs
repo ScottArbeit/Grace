@@ -485,6 +485,7 @@ module Errors =
         | FailedWhileApplyingEvent
         | InvalidCheckpointDaysValue
         | InvalidConflictResolutionPolicy
+        | InvalidConflictResolutionMode
         | InvalidDiffCacheDaysValue
         | InvalidDirectory
         | InvalidDirectoryVersionCacheDaysValue
@@ -538,6 +539,7 @@ module Errors =
             | FailedWhileApplyingEvent -> getLocalizedString StringResourceName.FailedWhileApplyingEvent
             | InvalidCheckpointDaysValue -> getLocalizedString StringResourceName.InvalidCheckpointDaysValue
             | InvalidConflictResolutionPolicy -> getLocalizedString StringResourceName.InvalidConflictResolutionPolicy
+            | InvalidConflictResolutionMode -> getLocalizedString StringResourceName.InvalidConflictResolutionMode
             | InvalidDiffCacheDaysValue -> getLocalizedString StringResourceName.InvalidDiffCacheDaysValue
             | InvalidDirectory -> getLocalizedString StringResourceName.InvalidDirectoryPath
             | InvalidDirectoryVersionCacheDaysValue -> getLocalizedString StringResourceName.InvalidDirectoryVersionCacheDaysValue

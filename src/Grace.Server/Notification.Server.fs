@@ -234,6 +234,51 @@ module Notification =
                 let hubContext = hubContext.Value
 
                 match graceEvent with
+                | ChangeEvent changeEvent ->
+                    let correlationId = changeEvent.Metadata.CorrelationId
+
+                    log.LogInformation(
+                        "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Received ChangeEvent notification.",
+                        getCurrentInstantExtended (),
+                        getMachineName,
+                        correlationId
+                    )
+                | PatchSetEvent patchSetEvent ->
+                    let correlationId = patchSetEvent.Metadata.CorrelationId
+
+                    log.LogInformation(
+                        "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Received PatchSetEvent notification.",
+                        getCurrentInstantExtended (),
+                        getMachineName,
+                        correlationId
+                    )
+                | StackEvent stackEvent ->
+                    let correlationId = stackEvent.Metadata.CorrelationId
+
+                    log.LogInformation(
+                        "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Received StackEvent notification.",
+                        getCurrentInstantExtended (),
+                        getMachineName,
+                        correlationId
+                    )
+                | OperationEvent operationEvent ->
+                    let correlationId = operationEvent.Metadata.CorrelationId
+
+                    log.LogInformation(
+                        "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Received OperationEvent notification.",
+                        getCurrentInstantExtended (),
+                        getMachineName,
+                        correlationId
+                    )
+                | TrainEvent trainEvent ->
+                    let correlationId = trainEvent.Metadata.CorrelationId
+
+                    log.LogInformation(
+                        "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Received TrainEvent notification.",
+                        getCurrentInstantExtended (),
+                        getMachineName,
+                        correlationId
+                    )
                 | BranchEvent branchEvent ->
                     let correlationId = branchEvent.Metadata.CorrelationId
 
@@ -455,16 +500,21 @@ module Notification =
 
                         do! hubContext.Clients.Group($"{repositoryId}").NotifyRepository(repositoryId, referenceId)
                     | _ -> ()
-                | RepositoryEvent repositoryEvent ->
-                    let correlationId = repositoryEvent.Metadata.CorrelationId
 
-                    logToConsole
-                        $"Received RepositoryEvent: {getDiscriminatedUnionFullName repositoryEvent.Event} {Environment.NewLine}{repositoryEvent.Metadata}"
                 | PromotionGroupEvent promotionGroupEvent ->
                     let correlationId = promotionGroupEvent.Metadata.CorrelationId
 
                     log.LogInformation(
                         "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Received PromotionGroupEvent notification.",
+                        getCurrentInstantExtended (),
+                        getMachineName,
+                        correlationId
+                    )
+                | RepositoryEvent repositoryEvent ->
+                    let correlationId = repositoryEvent.Metadata.CorrelationId
+
+                    log.LogInformation(
+                        "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Received RepositoryEvent notification.",
                         getCurrentInstantExtended (),
                         getMachineName,
                         correlationId
@@ -529,8 +579,7 @@ module Notification =
                                             else
                                                 AzureEnvironment.tryGetServiceBusFullyQualifiedNamespace ()
                                                 |> Option.defaultWith (fun () ->
-                                                    invalidOp
-                                                        "Azure Service Bus namespace must be configured when using a managed identity.")
+                                                    invalidOp "Azure Service Bus namespace must be configured when using a managed identity.")
 
                                         ServiceBusClient(fullyQualifiedNamespace, defaultAzureCredential.Value)
                                     else

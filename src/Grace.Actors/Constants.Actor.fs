@@ -23,6 +23,9 @@ module Constants =
         let Checkpoint = "CheckpointActor"
 
         [<Literal>]
+        let Change = "ChangeActor"
+
+        [<Literal>]
         let Diff = "DiffActor"
 
         [<Literal>]
@@ -56,6 +59,12 @@ module Constants =
         let OwnerName = "OwnerNameActor"
 
         [<Literal>]
+        let Operation = "OperationActor"
+
+        [<Literal>]
+        let PatchSet = "PatchSetActor"
+
+        [<Literal>]
         let NamedSection = "NamedSectionActor"
 
         [<Literal>]
@@ -77,11 +86,20 @@ module Constants =
         let RepositoryPermission = "RepositoryPermissionActor"
 
         [<Literal>]
+        let Stack = "StackActor"
+
+        [<Literal>]
+        let Train = "TrainActor"
+
+        [<Literal>]
         let User = "UserActor"
 
     module StateName =
         [<Literal>]
         let Branch = "Branch"
+
+        [<Literal>]
+        let Change = "Change"
 
         [<Literal>]
         let Diff = "Diff"
@@ -105,6 +123,12 @@ module Constants =
         let Owner = "Owner"
 
         [<Literal>]
+        let Operation = "Operation"
+
+        [<Literal>]
+        let PatchSet = "PatchSet"
+
+        [<Literal>]
         let PromotionGroup = "PromotionGroup"
 
         [<Literal>]
@@ -118,6 +142,12 @@ module Constants =
 
         [<Literal>]
         let RepositoryPermission = "RepoPermission"
+
+        [<Literal>]
+        let Stack = "Stack"
+
+        [<Literal>]
+        let Train = "Train"
 
         [<Literal>]
         let User = "User"

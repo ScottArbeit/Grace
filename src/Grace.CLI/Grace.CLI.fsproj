@@ -33,8 +33,10 @@
 		<Compile Include="Command\Repository.CLI.fs" />
 		<Compile Include="Command\Diff.CLI.fs" />
 		<Compile Include="Command\Branch.CLI.fs" />
+		<Compile Include="Command\Change.CLI.fs" />
 		<Compile Include="Command\Reference.CLI.fs" />
 		<Compile Include="Command\DirectoryVersion.CLI.fs" />
+		<Compile Include="Command\Stack.CLI.fs" />
 		<Compile Include="Command\Watch.CLI.fs" />
 		<Compile Include="Command\Maintenance.CLI.fs" />
 		<Compile Include="Command\PromotionGroup.CLI.fs" />

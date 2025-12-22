@@ -427,6 +427,47 @@ module Repository =
                 return! processCommand context validations command
             }
 
+    /// Sets whether auto-rebase is enabled by default for the repository.
+    let SetAutoRebaseEnabled: HttpHandler =
+        fun (next: HttpFunc) (context: HttpContext) ->
+            task {
+                let validations (parameters: SetAutoRebaseEnabledParameters) =
+                    [| Repository.repositoryIsNotDeleted context parameters.CorrelationId RepositoryIsDeleted |]
+
+                let command (parameters: SetAutoRebaseEnabledParameters) = SetAutoRebaseEnabled(parameters.Enabled) |> returnValueTask
+
+                context.Items.Add("Command", nameof SetAutoRebaseEnabled)
+                return! processCommand context validations command
+            }
+
+    /// Sets whether auto-restack is enabled for the repository.
+    let SetAutoRestackEnabled: HttpHandler =
+        fun (next: HttpFunc) (context: HttpContext) ->
+            task {
+                let validations (parameters: SetAutoRestackEnabledParameters) =
+                    [| Repository.repositoryIsNotDeleted context parameters.CorrelationId RepositoryIsDeleted |]
+
+                let command (parameters: SetAutoRestackEnabledParameters) = SetAutoRestackEnabled(parameters.Enabled) |> returnValueTask
+
+                context.Items.Add("Command", nameof SetAutoRestackEnabled)
+                return! processCommand context validations command
+            }
+
+    /// Sets the conflict resolution mode for server-side morphisms.
+    let SetConflictResolutionMode: HttpHandler =
+        fun (next: HttpFunc) (context: HttpContext) ->
+            task {
+                let validations (parameters: SetConflictResolutionModeParameters) =
+                    [| Repository.repositoryIsNotDeleted context parameters.CorrelationId RepositoryIsDeleted
+                       DiscriminatedUnion.isMemberOf<ConflictResolutionMode, RepositoryError> parameters.ConflictResolutionMode InvalidConflictResolutionMode |]
+
+                let command (parameters: SetConflictResolutionModeParameters) =
+                    SetConflictResolutionMode(discriminatedUnionFromString<ConflictResolutionMode>(parameters.ConflictResolutionMode).Value) |> returnValueTask
+
+                context.Items.Add("Command", nameof SetConflictResolutionMode)
+                return! processCommand context validations command
+            }
+
     /// Sets whether or not to keep saves in the repository.
     let SetRecordSaves: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->

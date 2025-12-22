@@ -25,6 +25,9 @@ module Types =
     /// The Id of the branch.
     type BranchId = Guid
 
+    /// The Id of a logical change (stacked diff).
+    type ChangeId = Guid
+
     /// The name of the branch.
     type BranchName = string
 
@@ -61,6 +64,12 @@ module Types =
     /// The Id of the parent branch.
     type ParentBranchId = BranchId
 
+    /// The Id of a patch set.
+    type PatchSetId = Guid
+
+    /// The Id of an async operation.
+    type OperationId = Guid
+
     /// The Id of the reference.
     type ReferenceId = Guid
 
@@ -73,6 +82,9 @@ module Types =
     /// The Id of the repository.
     type RepositoryId = Guid
 
+    /// The Id of a promotion train.
+    type PromotionTrainId = Guid
+
     /// The name of the repository.
     type RepositoryName = string
 
@@ -82,6 +94,9 @@ module Types =
     /// the full file path is "C:\Source\Grace\src\Grace.Shared\Types.Shared.fs",
     /// and the relative path is "src\Grace.Shared\Types.Shared.fs".
     type RelativePath = string
+
+    /// The Id of a stack.
+    type StackId = Guid
 
     /// A SHA-256 hash value.
     type Sha256Hash = string
@@ -520,6 +535,11 @@ module Types =
     [<KnownType("GetKnownTypes"); GenerateSerializer>]
     type ReferenceLinkType =
         | BasedOn of ReferenceId
+        | BelongsToChange of ChangeId
+        | Supersedes of ReferenceId
+        | DerivedFromPatchSet of PatchSetId
+        | InStack of StackId
+        | StackParentChange of ChangeId
         | IncludedInPromotionGroup of Guid
         | PromotionGroupTerminal of Guid // Marks the final promotion in a promotion group.
 
@@ -802,6 +822,17 @@ module Types =
         | ConflictsAllowed of float32 // Conflicts allowed if model confidence >= threshold (0.0 to 1.0).
 
         static member GetKnownTypes() = GetKnownTypes<ConflictResolutionPolicy>()
+
+        override this.ToString() = getDiscriminatedUnionFullName this
+
+    /// Defines how conflicts should be handled for server-side morphisms (rebase/restack/train).
+    [<KnownType("GetKnownTypes"); GenerateSerializer>]
+    type ConflictResolutionMode =
+        | ManualOnly of unit
+        | SuggestWithConfidence of unit
+        | AutoAcceptAboveConfidence of int // 0..100
+
+        static member GetKnownTypes() = GetKnownTypes<ConflictResolutionMode>()
 
         override this.ToString() = getDiscriminatedUnionFullName this
 

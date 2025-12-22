@@ -17,6 +17,10 @@ Read `../AGENTS.md` for global expectations before updating CLI code.
 2. Preserve existing option names/switches; introduce new aliases when expanding behavior instead of breaking existing scripts.
 3. Capture new command patterns or usage tips in this document to guide future agents.
 
+## Recent Additions
+- New `grace change` and `grace stack` command surfaces for stacked-diff workflows.
+- `grace rebase` now uses server-side operations and polls for completion instead of applying patches locally.
+
 ## Validation
 - Add option parsing tests and handler unit tests for new functionality.
 - Manually exercise impacted commands when practical and ensure `dotnet build --configuration Release` stays green.

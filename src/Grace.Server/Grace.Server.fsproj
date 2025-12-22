@@ -56,6 +56,13 @@
 	<ItemGroup>
 		<Compile Include="ApplicationContext.Server.fs" />
 		<Compile Include="Services.Server.fs" />
+		<Compile Include="Services\UpdatedPaths.Service.fs" />
+		<Compile Include="Services\Snapshot.Service.fs" />
+		<Compile Include="Services\PatchSet.Service.fs" />
+		<Compile Include="Services\ApplyPatchSet.Service.fs" />
+		<Compile Include="Services\ConflictResolution.Service.fs" />
+		<Compile Include="Services\Restack.Service.fs" />
+		<Compile Include="Services\TrainBuild.Service.fs" />
 		<Compile Include="Validations.Server.fs" />
         <Compile Include="OrleansFilters.Server.fs" />
 		<Compile Include="Middleware\Fake.Middleware.fs" />
@@ -67,6 +74,11 @@
 		<Compile Include="Owner.Server.fs" />
 		<Compile Include="Organization.Server.fs" />
 		<Compile Include="Repository.Server.fs" />
+		<Compile Include="Change.Server.fs" />
+		<Compile Include="PatchSet.Server.fs" />
+		<Compile Include="Stack.Server.fs" />
+		<Compile Include="Operation.Server.fs" />
+		<Compile Include="Train.Server.fs" />
 		<Compile Include="Branch.Server.fs" />
 		<Compile Include="PromotionGroup.Server.fs" />
 		<Compile Include="DirectoryVersion.Server.fs" />

@@ -41,6 +41,9 @@ module Repository =
         | SetName of repositoryName: RepositoryName
         | SetDescription of description: string
         | SetConflictResolutionPolicy of conflictResolutionPolicy: ConflictResolutionPolicy
+        | SetAutoRebaseEnabled of enabled: bool
+        | SetAutoRestackEnabled of enabled: bool
+        | SetConflictResolutionMode of conflictResolutionMode: ConflictResolutionMode
         | DeleteLogical of force: bool * DeleteReason: DeleteReason
         | DeletePhysical
         | Undelete
@@ -75,6 +78,9 @@ module Repository =
         | NameSet of repositoryName: RepositoryName
         | DescriptionSet of description: string
         | ConflictResolutionPolicySet of conflictResolutionPolicy: ConflictResolutionPolicy
+        | AutoRebaseEnabledSet of enabled: bool
+        | AutoRestackEnabledSet of enabled: bool
+        | ConflictResolutionModeSet of conflictResolutionMode: ConflictResolutionMode
         | LogicalDeleted of force: bool * DeleteReason: DeleteReason
         | PhysicalDeleted
         | Undeleted
@@ -114,6 +120,9 @@ module Repository =
           Description: string
           RecordSaves: bool
           ConflictResolutionPolicy: ConflictResolutionPolicy
+          AutoRebaseEnabled: bool
+          AutoRestackEnabled: bool
+          ConflictResolutionMode: ConflictResolutionMode
           CreatedAt: Instant
           InitializedAt: Instant option
           UpdatedAt: Instant option
@@ -143,6 +152,9 @@ module Repository =
               Description = String.Empty
               RecordSaves = true
               ConflictResolutionPolicy = ConflictResolutionPolicy.ConflictsAllowed 0.8f
+              AutoRebaseEnabled = true
+              AutoRestackEnabled = false
+              ConflictResolutionMode = ConflictResolutionMode.ManualOnly ()
               CreatedAt = Constants.DefaultTimestamp
               InitializedAt = None
               UpdatedAt = None
@@ -180,6 +192,9 @@ module Repository =
                 | NameSet repositoryName -> { currentRepositoryDto with RepositoryName = repositoryName }
                 | DescriptionSet description -> { currentRepositoryDto with Description = description }
                 | ConflictResolutionPolicySet policy -> { currentRepositoryDto with ConflictResolutionPolicy = policy }
+                | AutoRebaseEnabledSet enabled -> { currentRepositoryDto with AutoRebaseEnabled = enabled }
+                | AutoRestackEnabledSet enabled -> { currentRepositoryDto with AutoRestackEnabled = enabled }
+                | ConflictResolutionModeSet mode -> { currentRepositoryDto with ConflictResolutionMode = mode }
                 | LogicalDeleted _ -> { currentRepositoryDto with DeletedAt = Some(getCurrentInstant ()) }
                 | PhysicalDeleted -> currentRepositoryDto // Do nothing because it's about to be deleted anyway.
                 | Undeleted -> { currentRepositoryDto with DeletedAt = None; DeleteReason = String.Empty }

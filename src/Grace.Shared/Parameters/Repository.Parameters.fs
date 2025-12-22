@@ -138,3 +138,18 @@ module Repository =
         inherit RepositoryParameters()
         member val public ConflictResolutionPolicy = String.Empty with get, set
         member val public ConfidenceThreshold: float32 = 0.8f with get, set
+
+    /// Parameters for the /repository/setAutoRebaseEnabled endpoint.
+    type SetAutoRebaseEnabledParameters() =
+        inherit RepositoryParameters()
+        member val public Enabled = false with get, set
+
+    /// Parameters for the /repository/setAutoRestackEnabled endpoint.
+    type SetAutoRestackEnabledParameters() =
+        inherit RepositoryParameters()
+        member val public Enabled = false with get, set
+
+    /// Parameters for the /repository/setConflictResolutionMode endpoint.
+    type SetConflictResolutionModeParameters() =
+        inherit RepositoryParameters()
+        member val public ConflictResolutionMode = String.Empty with get, set

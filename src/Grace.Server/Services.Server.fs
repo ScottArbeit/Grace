@@ -1,11 +1,10 @@
-namespace Grace.Server
+namespace Grace.Server.Services
 
 open Giraffe
 open Grace.Actors
 open Grace.Actors.Constants
 open Grace.Actors.Interfaces
 open Grace.Actors.Services
-open Grace.Server.ApplicationContext
 open Grace.Shared
 open Grace.Shared.Constants
 open Grace.Shared.Parameters.Common
@@ -27,9 +26,10 @@ open System.Threading.Tasks
 open System.Text
 open System.Text.Json
 
-module Services =
 
-    let log = ApplicationContext.loggerFactory.CreateLogger("Server.Services")
+[<AutoOpen>]
+module Common =
+    let log = Grace.Server.ApplicationContext.loggerFactory.CreateLogger("Server.Services")
 
     /// Defines the type of all server queries in Grace.
     ///

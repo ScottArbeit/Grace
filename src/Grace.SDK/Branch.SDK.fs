@@ -21,7 +21,7 @@ type Branch() =
 
     /// Rebases a branch on a promotion from the parent branch.
     static member public Rebase(parameters: RebaseParameters) =
-        postServer<RebaseParameters, string> (parameters |> ensureCorrelationIdIsSet, $"branch/{nameof (Branch.Rebase)}")
+        postServer<RebaseParameters, OperationId> (parameters |> ensureCorrelationIdIsSet, $"branch/{nameof (Branch.Rebase)}")
 
     /// Assigns a specific version of the repository to be the next promotion in a branch.
     static member public Assign(parameters: AssignParameters) =

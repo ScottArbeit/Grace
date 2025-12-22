@@ -156,3 +156,21 @@ type Repository() =
             parameters |> ensureCorrelationIdIsSet,
             $"repository/{nameof (Repository.SetConflictResolutionPolicy)}"
         )
+
+    static member public SetAutoRebaseEnabled(parameters: SetAutoRebaseEnabledParameters) =
+        postServer<SetAutoRebaseEnabledParameters, String> (
+            parameters |> ensureCorrelationIdIsSet,
+            $"repository/{nameof (Repository.SetAutoRebaseEnabled)}"
+        )
+
+    static member public SetAutoRestackEnabled(parameters: SetAutoRestackEnabledParameters) =
+        postServer<SetAutoRestackEnabledParameters, String> (
+            parameters |> ensureCorrelationIdIsSet,
+            $"repository/{nameof (Repository.SetAutoRestackEnabled)}"
+        )
+
+    static member public SetConflictResolutionMode(parameters: SetConflictResolutionModeParameters) =
+        postServer<SetConflictResolutionModeParameters, String> (
+            parameters |> ensureCorrelationIdIsSet,
+            $"repository/{nameof (Repository.SetConflictResolutionMode)}"
+        )

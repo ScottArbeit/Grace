@@ -4,7 +4,7 @@ open Grace.Actors.Services
 open Grace.Actors.Timing
 open Grace.Actors.Types
 open Grace.Server
-open Grace.Server.ApplicationContext
+open Grace.Server.Services
 open Grace.Shared
 open Grace.Shared.Resources.Text
 open Grace.Shared.Utilities
@@ -35,7 +35,7 @@ type TimingMiddleware(next: RequestDelegate) =
 #endif
 
             // We expect the CorrelationId to be set at this point.
-            let correlationId = Services.getCorrelationId context
+            let correlationId = getCorrelationId context
 
             if isInteresting context.Request.Path.Value then
                 // Mark this as the start of timing this request.

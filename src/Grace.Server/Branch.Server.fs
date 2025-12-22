@@ -303,6 +303,7 @@ module Branch =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let graceIds = getGraceIds context
+                let correlationId = getCorrelationId context
 
                 let validations (parameters: RebaseParameters) =
                     [| Branch.referenceIdExists parameters.BasedOn graceIds.RepositoryId parameters.CorrelationId BranchError.ReferenceIdDoesNotExist
@@ -316,10 +317,155 @@ module Branch =
                            parameters.CorrelationId
                            BranchError.CommitIsDisabled |]
 
-                let command (parameters: RebaseParameters) = BranchCommand.Rebase parameters.BasedOn |> returnValueTask
+                let! parameters = context |> parse<RebaseParameters>
+                let validationResults = validations parameters
+                let! validationsPassed = validationResults |> allPass
 
-                context.Items.Add("Command", nameof Rebase)
-                return! processCommand context validations command
+                if not validationsPassed then
+                    let! error = validationResults |> getFirstError
+                    let graceError = GraceError.Create (BranchError.getErrorMessage error) correlationId
+                    return! context |> result400BadRequest graceError
+                else
+                    let operationId = OperationId.NewGuid()
+                    let operationActor = Grace.Actors.Extensions.ActorProxy.Operation.CreateActorProxy operationId graceIds.RepositoryId correlationId
+                    let! _ = operationActor.Handle (Grace.Types.Operation.OperationCommand.Create(operationId, graceIds.RepositoryId)) (createMetadata context)
+
+                    let! _ = operationActor.Handle (Grace.Types.Operation.OperationCommand.Start) (createMetadata context)
+
+                    let branchActor = Branch.CreateActorProxy graceIds.BranchId graceIds.RepositoryId correlationId
+                    let! branchDto = branchActor.Get correlationId
+
+                    let headReference =
+                        if branchDto.LatestCommit.ReferenceId <> ReferenceId.Empty then
+                            branchDto.LatestCommit
+                        elif branchDto.LatestSave.ReferenceId <> ReferenceId.Empty then
+                            branchDto.LatestSave
+                        else
+                            branchDto.LatestReference
+
+                    if headReference.ReferenceId = ReferenceId.Empty then
+                        let! _ =
+                            operationActor.Handle
+                                (Grace.Types.Operation.OperationCommand.Fail "No commit or save reference found to rebase.")
+                                (createMetadata context)
+
+                        return!
+                            context
+                            |> result400BadRequest (GraceError.Create "No commit or save reference found to rebase." correlationId)
+                    else
+                        let baseReference = branchDto.BasedOn
+                        let newBaseReferenceActor = Reference.CreateActorProxy parameters.BasedOn graceIds.RepositoryId correlationId
+                        let! newBaseReference = newBaseReferenceActor.Get correlationId
+
+                        let! patchSetDto =
+                            PatchSetService.createPatchSet
+                                graceIds.RepositoryId
+                                baseReference.DirectoryId
+                                headReference.DirectoryId
+                                graceIds.OwnerId
+                                correlationId
+
+                        let patchSetActor =
+                            Grace.Actors.Extensions.ActorProxy.PatchSet.CreateActorProxy patchSetDto.PatchSetId graceIds.RepositoryId correlationId
+
+                        let patchSetCommand =
+                            Grace.Types.PatchSet.PatchSetCommand.Create(
+                                patchSetDto.PatchSetId,
+                                patchSetDto.RepositoryId,
+                                patchSetDto.BaseDirectoryId,
+                                patchSetDto.HeadDirectoryId,
+                                patchSetDto.UpdatedPaths,
+                                patchSetDto.Files,
+                                patchSetDto.CreatedBy
+                            )
+
+                        let! _ = patchSetActor.Handle patchSetCommand (createMetadata context)
+
+                        let! applyResult = ApplyPatchSet.applyPatchSet graceIds.RepositoryId patchSetDto newBaseReference.DirectoryId correlationId
+
+                        if applyResult.Conflicts.Length > 0 then
+                            let! _ =
+                                operationActor.Handle
+                                    (Grace.Types.Operation.OperationCommand.NeedsInput(Some "Conflicts detected during rebase."))
+                                    (createMetadata context)
+
+                            let returnValue = GraceReturnValue.Create operationId correlationId
+                            return! context |> result200Ok returnValue
+                        else
+                            let repositoryActorProxy =
+                                Grace.Actors.Extensions.ActorProxy.Repository.CreateActorProxy graceIds.OrganizationId graceIds.RepositoryId correlationId
+
+                            let! repositoryDto = repositoryActorProxy.Get correlationId
+
+                            for directoryVersionDto in applyResult.DirectoryVersions do
+                                let directoryActor =
+                                    DirectoryVersion.CreateActorProxy
+                                        directoryVersionDto.DirectoryVersion.DirectoryVersionId
+                                        graceIds.RepositoryId
+                                        correlationId
+
+                                let! exists = directoryActor.Exists correlationId
+
+                                if not exists then
+                                    let! _ =
+                                        directoryActor.Handle
+                                            (Grace.Types.DirectoryVersion.DirectoryVersionCommand.Create(directoryVersionDto.DirectoryVersion, repositoryDto))
+                                            (createMetadata context)
+
+                                    ()
+
+                            let rootDirectory =
+                                applyResult.DirectoryVersions
+                                |> Seq.tryFind (fun dto -> dto.DirectoryVersion.DirectoryVersionId = applyResult.RootDirectoryId)
+
+                            match rootDirectory with
+                            | None ->
+                                let! _ =
+                                    operationActor.Handle
+                                        (Grace.Types.Operation.OperationCommand.Fail "Root directory version not found after rebase.")
+                                        (createMetadata context)
+
+                                return!
+                                    context
+                                    |> result400BadRequest (GraceError.Create "Root directory version not found after rebase." correlationId)
+                            | Some rootDto ->
+                                let commitMessage =
+                                    ReferenceText $"Rebase onto {newBaseReference.ReferenceText}; {getShortSha256Hash newBaseReference.Sha256Hash}."
+
+                                let! commitResult =
+                                    branchActor.Handle
+                                        (BranchCommand.Commit(rootDto.DirectoryVersion.DirectoryVersionId, rootDto.DirectoryVersion.Sha256Hash, commitMessage))
+                                        (createMetadata context)
+
+                                let! rebaseResult = branchActor.Handle (BranchCommand.Rebase parameters.BasedOn) (createMetadata context)
+
+                                let tryGetReferenceId (returnValue: GraceReturnValue<string>) =
+                                    match returnValue.Properties.TryGetValue(nameof ReferenceId) with
+                                    | true, value ->
+                                        match value with
+                                        | :? ReferenceId as referenceId -> Some referenceId
+                                        | :? string as referenceId when Guid.TryParse(referenceId) |> fst -> Some(Guid.Parse(referenceId))
+                                        | _ -> None
+                                    | _ -> None
+
+                                let referenceIds =
+                                    [| match commitResult with
+                                       | Ok returnValue -> tryGetReferenceId returnValue |> Option.toArray
+                                       | Error _ -> Array.empty
+                                       match rebaseResult with
+                                       | Ok returnValue -> tryGetReferenceId returnValue |> Option.toArray
+                                       | Error _ -> Array.empty |]
+                                    |> Array.concat
+
+                                let operationResult: Grace.Types.Operation.OperationResult =
+                                    { NewReferenceIds = referenceIds
+                                      NewDirectoryIds = [| rootDto.DirectoryVersion.DirectoryVersionId |]
+                                      Message = "Rebase completed." }
+
+                                let! _ = operationActor.Handle (Grace.Types.Operation.OperationCommand.Complete operationResult) (createMetadata context)
+
+                                let returnValue = GraceReturnValue.Create operationId correlationId
+                                return! context |> result200Ok returnValue
             }
 
     /// Assigns a specific directory version as the next promotion reference for a branch.

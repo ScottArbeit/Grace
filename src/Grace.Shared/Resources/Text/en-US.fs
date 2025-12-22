@@ -74,6 +74,7 @@ module en_US =
             "The BranchName is not a valid Grace name. A valid object name in Grace has between 2 and 64 characters, has a letter for the first character ([A-Za-z]), and letters, numbers, or - for the rest ([A-Za-z0-9\-]{1,63})."
         | InvalidCheckpointDaysValue -> "The provided value for CheckpointDays is invalid."
         | InvalidConflictResolutionPolicy -> $"The Conflict Resolution Policy provided is not a valid value. Valid values: {listCasesAsString<Types.ConflictResolutionPolicy>()}."
+        | InvalidConflictResolutionMode -> $"The Conflict Resolution Mode provided is not a valid value. Valid values: {listCasesAsString<Types.ConflictResolutionMode>()}."
         | InvalidDiffCacheDaysValue -> "The provided value for DiffCacheDays is invalid."
         | InvalidDirectoryVersionCacheDaysValue -> "The provided value for DirectoryVersionCacheDays is invalid."
         | InvalidDirectoryPath -> "The provided directory is not a valid directory path."

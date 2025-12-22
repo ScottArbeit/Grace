@@ -42,6 +42,11 @@
 		<Compile Include="Repository.Actor.fs" />
 		<Compile Include="RepositoryName.Actor.fs" />
 		<Compile Include="RepositoryPermission.Actor.fs" />
+		<Compile Include="Change.Actor.fs" />
+		<Compile Include="PatchSet.Actor.fs" />
+		<Compile Include="Stack.Actor.fs" />
+		<Compile Include="Operation.Actor.fs" />
+		<Compile Include="Train.Actor.fs" />
 		<Compile Include="Diff.Actor.fs" />
 		<Compile Include="FileAppearance.Actor.fs" />
 		<Compile Include="DirectoryAppearance.Actor.fs" />

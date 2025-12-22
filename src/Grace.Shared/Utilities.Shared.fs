@@ -25,21 +25,6 @@ open Microsoft.Extensions.ObjectPool
 
 #nowarn "9"
 
-module Combinators =
-    let either okFunc errorFunc graceResult =
-        match graceResult with
-        | Result.Ok s -> okFunc s
-        | Result.Error f -> errorFunc f
-
-    let ok x = Result.Ok x
-    let error x = Result.Error x
-
-    let bind f = either f error
-
-    let (>>=) x f = bind f x
-
-    let (>=>) s1 s2 = s1 >> bind s2
-
 module Utilities =
     let memoryCacheOptions = MemoryCacheOptions(TrackStatistics = false, TrackLinkedCacheEntries = false, ExpirationScanFrequency = TimeSpan.FromSeconds(30.0))
     let memoryCache: IMemoryCache = new MemoryCache(memoryCacheOptions)

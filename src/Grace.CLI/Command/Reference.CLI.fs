@@ -957,7 +957,7 @@ module Reference =
 
                                                                 match rebaseResult with
                                                                 | Ok returnValue ->
-                                                                    logToAnsiConsole Colors.Verbose $"Succeeded doing rebase."
+                                                                    logToAnsiConsole Colors.Verbose $"Started server-side rebase operation {returnValue.ReturnValue}."
 
                                                                     return promotionResult
                                                                 | Error error -> return Error error

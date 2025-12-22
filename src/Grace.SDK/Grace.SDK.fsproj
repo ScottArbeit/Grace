@@ -26,6 +26,11 @@
 		<Compile Include="DirectoryVersion.SDK.fs" />
 		<Compile Include="Diff.SDK.fs" />
 		<Compile Include="PromotionGroup.SDK.fs" />
+		<Compile Include="Change.SDK.fs" />
+		<Compile Include="PatchSet.SDK.fs" />
+		<Compile Include="Stack.SDK.fs" />
+		<Compile Include="Train.SDK.fs" />
+		<Compile Include="Operation.SDK.fs" />
 		<Compile Include="Admin.SDK.fs" />
 	</ItemGroup>
 

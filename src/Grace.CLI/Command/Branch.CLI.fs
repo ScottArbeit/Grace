@@ -17,6 +17,7 @@ open Grace.Shared.Validation
 open Grace.Shared.Validation.Errors
 open Grace.Types.Branch
 open Grace.Types.DirectoryVersion
+open Grace.Types.Operation
 open Grace.Types.Reference
 open Grace.Types.Types
 open NodaTime
@@ -2834,7 +2835,7 @@ module Branch =
                         File.Delete(updateInProgressFileName)
             }
 
-    let rebaseHandler (graceIds: GraceIds) (graceStatus: GraceStatus) =
+    let rebaseHandlerLegacy (graceIds: GraceIds) (graceStatus: GraceStatus) =
         task {
             // --------------------------------------------------------------------------------------------------------------------------------------
             // Algorithm:
@@ -3219,6 +3220,113 @@ module Branch =
                 return -1
         }
 
+    let rebaseHandlerServer (graceIds: GraceIds) =
+        task {
+            logToAnsiConsole Colors.Verbose $"In Branch.CLI.rebaseHandlerServer: GraceIds:{Environment.NewLine}{serialize graceIds}"
+
+            let branchGetParameters =
+                GetBranchParameters(
+                    OwnerId = graceIds.OwnerIdString,
+                    OwnerName = graceIds.OwnerName,
+                    OrganizationId = graceIds.OrganizationIdString,
+                    OrganizationName = graceIds.OrganizationName,
+                    RepositoryId = graceIds.RepositoryIdString,
+                    RepositoryName = graceIds.RepositoryName,
+                    BranchId = graceIds.BranchIdString,
+                    BranchName = graceIds.BranchName,
+                    CorrelationId = graceIds.CorrelationId
+                )
+
+            match! Branch.Get(branchGetParameters) with
+            | Ok returnValue ->
+                let branchDto = returnValue.ReturnValue
+
+                match! Branch.GetParentBranch(branchGetParameters) with
+                | Ok parentReturnValue ->
+                    let parentBranchDto = parentReturnValue.ReturnValue
+
+                    if branchDto.BasedOn.ReferenceId = parentBranchDto.LatestPromotion.ReferenceId then
+                        AnsiConsole.MarkupLine("The current branch is already based on the latest promotion in the parent branch.")
+                        AnsiConsole.MarkupLine("Run `grace status` to see more.")
+                        return 0
+                    else
+                        let rebaseParameters =
+                            Parameters.Branch.RebaseParameters(
+                                OwnerId = graceIds.OwnerIdString,
+                                OrganizationId = graceIds.OrganizationIdString,
+                                RepositoryId = graceIds.RepositoryIdString,
+                                BranchId = graceIds.BranchIdString,
+                                BasedOn = parentBranchDto.LatestPromotion.ReferenceId,
+                                CorrelationId = graceIds.CorrelationId
+                            )
+
+                        match! Branch.Rebase(rebaseParameters) with
+                        | Ok returnValue ->
+                            let operationId = returnValue.ReturnValue
+
+                            let getOperationParameters =
+                                Parameters.Operation.GetOperationParameters(
+                                    OwnerId = graceIds.OwnerIdString,
+                                    OrganizationId = graceIds.OrganizationIdString,
+                                    RepositoryId = graceIds.RepositoryIdString,
+                                    OperationId = $"{operationId}",
+                                    CorrelationId = graceIds.CorrelationId
+                                )
+
+                            let rec pollOperation attempt =
+                                task {
+                                    if attempt > 60 then
+                                        return Error(GraceError.Create "Timed out waiting for rebase operation." graceIds.CorrelationId)
+                                    else
+                                        match! Operation.Get(getOperationParameters) with
+                                        | Ok operationReturn ->
+                                            let operationDto = operationReturn.ReturnValue
+                                            match operationDto.Status with
+                                            | OperationStatus.Succeeded -> return Ok operationDto
+                                            | OperationStatus.Failed ->
+                                                let errorMessage = operationDto.Error |> Option.defaultValue "Unknown error"
+                                                return Error(GraceError.Create $"Rebase failed: {errorMessage}" graceIds.CorrelationId)
+                                            | OperationStatus.NeedsUserInput ->
+                                                return
+                                                    Error(
+                                                        GraceError.Create
+                                                            "Rebase needs user input. Use grace operation approve-conflict."
+                                                            graceIds.CorrelationId
+                                                    )
+                                            | _ ->
+                                                do! Task.Delay(TimeSpan.FromSeconds(1.0))
+                                                return! pollOperation (attempt + 1)
+                                        | Error error -> return Error error
+                                }
+
+                            match! pollOperation 0 with
+                            | Ok operationDto ->
+                                AnsiConsole.MarkupLine($"[{Colors.Important}]Rebase completed on the server.[/]")
+                                if operationDto.Result.IsSome then
+                                    AnsiConsole.WriteLine(serialize operationDto.Result.Value)
+                                return 0
+                            | Error error ->
+                                logToAnsiConsole Colors.Error (Markup.Escape($"{error}"))
+                                return -1
+                        | Error error ->
+                            logToAnsiConsole Colors.Error (Markup.Escape($"{error}"))
+                            return -1
+                | Error error ->
+                    logToAnsiConsole Colors.Error (Markup.Escape($"{error}"))
+                    return -1
+            | Error error ->
+                logToAnsiConsole Colors.Error (Markup.Escape($"{error}"))
+                return -1
+        }
+
+    let useLegacyClientRebase = false
+
+    let rebaseHandler (graceIds: GraceIds) (graceStatus: GraceStatus) =
+        if useLegacyClientRebase then
+            rebaseHandlerLegacy graceIds graceStatus
+        else
+            rebaseHandlerServer graceIds
+
     type Rebase() =
         inherit AsynchronousCommandLineAction()
 
@@ -3234,7 +3342,6 @@ module Branch =
 
                     let graceIds = parseResult |> getNormalizedIdsAndNames
                     let! graceStatus = readGraceStatusFile ()
-
                     let! result = rebaseHandler graceIds graceStatus
                     return result
                 finally

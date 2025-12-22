@@ -3,12 +3,17 @@ namespace Grace.Actors
 open Grace.Actors.Types
 open Grace.Shared
 open Grace.Types.Branch
+open Grace.Types.Change
 open Grace.Types.Diff
 open Grace.Types.DirectoryVersion
+open Grace.Types.Operation
+open Grace.Types.PatchSet
 open Grace.Types.PromotionGroup
 open Grace.Types.Reference
 open Grace.Types.Reminder
 open Grace.Types.Repository
+open Grace.Types.Stack
+open Grace.Types.Train
 open Grace.Types.Organization
 open Grace.Types.Owner
 open Grace.Types.Types
@@ -130,6 +135,16 @@ module Interfaces =
         /// Sets the BranchId that matches the BranchName.
         abstract member SetBranchId: branchId: BranchId -> correlationId: CorrelationId -> Task
 
+    /// Defines the operations for the Change actor.
+    [<Interface>]
+    type IChangeActor =
+        inherit IGrainWithGuidKey
+
+        abstract member Exists: correlationId: CorrelationId -> Task<bool>
+        abstract member Get: correlationId: CorrelationId -> Task<ChangeDto>
+        abstract member GetEvents: correlationId: CorrelationId -> Task<IReadOnlyList<ChangeEvent>>
+        abstract member Handle: command: ChangeCommand -> eventMetadata: EventMetadata -> Task<GraceResult<ChangeDto>>
+
     /// Defines the operations for the Diff actor.
     [<Interface>]
     type IDiffActor =
@@ -140,6 +155,16 @@ module Interfaces =
 
         /// Gets the results of the diff. If the diff has not already been computed, it will be computed.
         abstract member GetDiff: correlationId: CorrelationId -> Task<DiffDto>
+
+    /// Defines the operations for the Operation actor.
+    [<Interface>]
+    type IOperationActor =
+        inherit IGrainWithGuidKey
+
+        abstract member Exists: correlationId: CorrelationId -> Task<bool>
+        abstract member Get: correlationId: CorrelationId -> Task<OperationDto>
+        abstract member GetEvents: correlationId: CorrelationId -> Task<IReadOnlyList<OperationEvent>>
+        abstract member Handle: command: OperationCommand -> eventMetadata: EventMetadata -> Task<GraceResult<OperationDto>>
 
     /// Defines the operations for the DirectoryAppearance actor.
     [<Interface>]
@@ -359,6 +384,16 @@ module Interfaces =
         /// Validates incoming commands and converts them to events that are stored in the database.
         abstract member Handle: command: PromotionGroupCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
 
+    /// Defines the operations for the PatchSet actor.
+    [<Interface>]
+    type IPatchSetActor =
+        inherit IGrainWithGuidKey
+
+        abstract member Exists: correlationId: CorrelationId -> Task<bool>
+        abstract member Get: correlationId: CorrelationId -> Task<PatchSetDto>
+        abstract member GetEvents: correlationId: CorrelationId -> Task<IReadOnlyList<PatchSetEvent>>
+        abstract member Handle: command: PatchSetCommand -> eventMetadata: EventMetadata -> Task<GraceResult<PatchSetDto>>
+
     /// Defines the operations for the Repository actor.
     [<Interface>]
     type IRepositoryActor =
@@ -381,6 +416,26 @@ module Interfaces =
 
         /// Processes commands by checking that they're valid, and then converting them into events.
         abstract member Handle: command: RepositoryCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
+
+    /// Defines the operations for the Stack actor.
+    [<Interface>]
+    type IStackActor =
+        inherit IGrainWithGuidKey
+
+        abstract member Exists: correlationId: CorrelationId -> Task<bool>
+        abstract member Get: correlationId: CorrelationId -> Task<StackDto>
+        abstract member GetEvents: correlationId: CorrelationId -> Task<IReadOnlyList<StackEvent>>
+        abstract member Handle: command: StackCommand -> eventMetadata: EventMetadata -> Task<GraceResult<StackDto>>
+
+    /// Defines the operations for the Train actor.
+    [<Interface>]
+    type ITrainActor =
+        inherit IGrainWithGuidKey
+
+        abstract member Exists: correlationId: CorrelationId -> Task<bool>
+        abstract member Get: correlationId: CorrelationId -> Task<TrainDto>
+        abstract member GetEvents: correlationId: CorrelationId -> Task<IReadOnlyList<TrainEvent>>
+        abstract member Handle: command: TrainCommand -> eventMetadata: EventMetadata -> Task<GraceResult<TrainDto>>
 
     /// Defines the operations for the RepositoryName actor.
     [<Interface>]

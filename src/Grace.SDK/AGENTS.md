@@ -17,6 +17,9 @@ Consult `../AGENTS.md` for global policies before modifying the SDK.
 2. Align SDK method contracts, routes, and DTOs with the server; update integration tests or samples when they diverge.
 3. Record any new surface area, release notes, or migration steps inside this file to keep future agents informed.
 
+## Recent Additions
+- Added SDK surfaces for change, patchset, stack, train, and operation workflows; `Branch.Rebase` now returns an `OperationId` for server-side rebase.
+
 ## Validation
 - Cover new behaviors with unit tests that mock transport layers, actor proxies, or HTTP abstractions.
 - Execute `dotnet build --configuration Release` and targeted tests before shipping.

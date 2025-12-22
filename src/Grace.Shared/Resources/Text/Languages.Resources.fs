@@ -65,6 +65,7 @@ module Text =
         | InvalidBranchName
         | InvalidCheckpointDaysValue
         | InvalidConflictResolutionPolicy
+        | InvalidConflictResolutionMode
         | InvalidDiffCacheDaysValue
         | InvalidDirectoryVersionCacheDaysValue
         | InvalidDirectoryPath

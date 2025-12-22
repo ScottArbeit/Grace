@@ -14,8 +14,11 @@ Start with `../AGENTS.md` for global rules before working on Orleans code.
 
 ## Project Rules
 1. When adding new grain types or serializer changes, ensure `Grace.Orleans.CodeGen` stays in sync and regenerates as needed.
-2. Keep grain state mutations safe for retries—idempotent transitions make distributed recovery predictable.
+2. Keep grain state mutations safe for retries-idempotent transitions make distributed recovery predictable.
 3. Document non-obvious activation, reminder, or timer behavior here so future agents can reason without scanning the entire implementation.
+
+## Recent Additions
+- Added grains for Change, PatchSet, Stack, Train, and Operation to support stacked-diff and server-side operation workflows.
 
 ## Validation
 - Add activation and idempotency tests for new grains or state transitions.

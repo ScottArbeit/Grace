@@ -213,6 +213,43 @@ module Application =
                           route "/updateParentBranch" Branch.UpdateParentBranch
                           |> addMetadata typeof<Branch.UpdateParentBranchParameters> ] ]
               subRoute
+                  "/change"
+                  [ POST
+                        [ route "/create" Change.Create |> addMetadata typeof<Change.CreateChangeParameters>
+                          route "/update-metadata" Change.UpdateMetadata |> addMetadata typeof<Change.UpdateChangeMetadataParameters>
+                          route "/get" Change.Get |> addMetadata typeof<Change.GetChangeParameters>
+                          route "/list" Change.List |> addMetadata typeof<Change.ListChangesParameters> ] ]
+              subRoute
+                  "/patchset"
+                  [ POST
+                        [ route "/create" PatchSet.Create |> addMetadata typeof<PatchSet.CreatePatchSetParameters>
+                          route "/get" PatchSet.Get |> addMetadata typeof<PatchSet.GetPatchSetParameters> ] ]
+              subRoute
+                  "/stack"
+                  [ POST
+                        [ route "/create" Stack.Create |> addMetadata typeof<Stack.CreateStackParameters>
+                          route "/add-layer" Stack.AddLayer |> addMetadata typeof<Stack.AddStackLayerParameters>
+                          route "/get" Stack.Get |> addMetadata typeof<Stack.GetStackParameters>
+                          route "/restack" Stack.Restack |> addMetadata typeof<Stack.RestackParameters>
+                          route "/reparent-after-promotion" Stack.ReparentAfterPromotion
+                          |> addMetadata typeof<Stack.ReparentAfterPromotionParameters> ] ]
+              subRoute
+                  "/train"
+                  [ POST
+                        [ route "/create" Train.Create |> addMetadata typeof<Train.CreateTrainParameters>
+                          route "/enqueue" Train.Enqueue |> addMetadata typeof<Train.EnqueueTrainParameters>
+                          route "/dequeue" Train.Dequeue |> addMetadata typeof<Train.DequeueTrainParameters>
+                          route "/build" Train.Build |> addMetadata typeof<Train.BuildTrainParameters>
+                          route "/apply" Train.Apply |> addMetadata typeof<Train.ApplyTrainParameters>
+                          route "/get" Train.Get |> addMetadata typeof<Train.GetTrainParameters> ] ]
+              subRoute
+                  "/operation"
+                  [ POST
+                        [ route "/get" Operation.Get |> addMetadata typeof<Operation.GetOperationParameters>
+                          route "/cancel" Operation.Cancel |> addMetadata typeof<Operation.CancelOperationParameters>
+                          route "/approve-conflict" Operation.ApproveConflict
+                          |> addMetadata typeof<Operation.ApproveConflictParameters> ] ]
+              subRoute
                   "/diff"
                   [ POST
                         [ route "/getDiff" Diff.GetDiff |> addMetadata typeof<Diff.GetDiffParameters>
@@ -385,6 +422,15 @@ module Application =
 
                           route "/setConflictResolutionPolicy" Repository.SetConflictResolutionPolicy
                           |> addMetadata typeof<Repository.SetConflictResolutionPolicyParameters>
+
+                          route "/setAutoRebaseEnabled" Repository.SetAutoRebaseEnabled
+                          |> addMetadata typeof<Repository.SetAutoRebaseEnabledParameters>
+
+                          route "/setAutoRestackEnabled" Repository.SetAutoRestackEnabled
+                          |> addMetadata typeof<Repository.SetAutoRestackEnabledParameters>
+
+                          route "/setConflictResolutionMode" Repository.SetConflictResolutionMode
+                          |> addMetadata typeof<Repository.SetConflictResolutionModeParameters>
 
                           route "/setDescription" Repository.SetDescription
                           |> addMetadata typeof<Repository.SetRepositoryDescriptionParameters>

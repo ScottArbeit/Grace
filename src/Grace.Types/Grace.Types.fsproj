@@ -24,6 +24,11 @@
         <Compile Include="Organization.Types.fs" />
         <Compile Include="Repository.Types.fs" />
         <Compile Include="Reference.Types.fs" />
+        <Compile Include="PatchSet.Types.fs" />
+        <Compile Include="Change.Types.fs" />
+        <Compile Include="Stack.Types.fs" />
+        <Compile Include="Operation.Types.fs" />
+        <Compile Include="Train.Types.fs" />
         <Compile Include="Branch.Types.fs" />
         <Compile Include="PromotionGroup.Types.fs" />
         <Compile Include="Diff.Types.fs" />
