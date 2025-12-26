@@ -393,10 +393,7 @@ module Reference =
 
                             let directoryCount = directoryVersions.Count()
 
-                            let fileCount =
-                                directoryVersions
-                                    .Select(fun directoryVersion -> directoryVersion.Files.Count)
-                                    .Sum()
+                            let fileCount = directoryVersions.Select(fun directoryVersion -> directoryVersion.Files.Count).Sum()
 
                             let totalFileSize = directoryVersions.Sum(fun directoryVersion -> directoryVersion.Files.Sum(fun f -> f.Size))
 

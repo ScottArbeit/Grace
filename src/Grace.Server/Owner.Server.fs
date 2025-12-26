@@ -63,8 +63,23 @@ module Owner =
                         let actorProxy = Owner.CreateActorProxy ownerGuid (getCorrelationId context)
                         let metadata = createMetadata context
 
+                        log.LogInformation(
+                            "{CurrentInstant}: Owner.Server sending command {Command} to actor. CorrelationId: {CorrelationId}; OwnerId: {OwnerId}.",
+                            getCurrentInstantExtended (),
+                            getDiscriminatedUnionCaseName cmd,
+                            metadata.CorrelationId,
+                            ownerId
+                        )
+
                         match! actorProxy.Handle cmd metadata with
                         | Ok graceReturnValue ->
+                            log.LogInformation(
+                                "{CurrentInstant}: Owner.Server received command result. CorrelationId: {CorrelationId}; OwnerId: {OwnerId}.",
+                                getCurrentInstantExtended (),
+                                metadata.CorrelationId,
+                                ownerId
+                            )
+
                             graceReturnValue
                                 .enhance(parameterDictionary :> IReadOnlyDictionary<string, obj>)
                                 .enhance(nameof OwnerId, graceIds.OwnerId)
@@ -259,11 +274,7 @@ module Owner =
                        Owner.ownerIsNotDeleted context parameters.CorrelationId OwnerIsDeleted |]
 
                 let command (parameters: SetOwnerSearchVisibilityParameters) =
-                    OwnerCommand.SetSearchVisibility(
-                        Utilities
-                            .discriminatedUnionFromString<SearchVisibility>(parameters.SearchVisibility)
-                            .Value
-                    )
+                    OwnerCommand.SetSearchVisibility(Utilities.discriminatedUnionFromString<SearchVisibility>(parameters.SearchVisibility).Value)
                     |> returnValueTask
 
                 context.Items.Add("Command", nameof SetSearchVisibility)

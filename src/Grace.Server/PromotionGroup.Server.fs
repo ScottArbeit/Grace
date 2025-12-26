@@ -37,7 +37,11 @@ module PromotionGroup =
 
     let log = ApplicationContext.loggerFactory.CreateLogger("PromotionGroup.Server")
 
-    let processCommand<'T when 'T :> PromotionGroupParameters> (context: HttpContext) (validations: Validations<'T>) (command: 'T -> ValueTask<PromotionGroupCommand>) =
+    let processCommand<'T when 'T :> PromotionGroupParameters>
+        (context: HttpContext)
+        (validations: Validations<'T>)
+        (command: 'T -> ValueTask<PromotionGroupCommand>)
+        =
         task {
             let startTime = getCurrentInstant ()
             let graceIds = getGraceIds context
@@ -223,6 +227,7 @@ module PromotionGroup =
                 let command (parameters: CreatePromotionGroupParameters) =
                     let promotionGroupId = Guid.Parse(parameters.PromotionGroupId)
                     let targetBranchId = Guid.Parse(parameters.TargetBranchId)
+
                     let scheduledAt =
                         if String.IsNullOrWhiteSpace(parameters.ScheduledAt) then
                             None
@@ -238,10 +243,11 @@ module PromotionGroup =
                         graceIds.RepositoryId,
                         targetBranchId,
                         parameters.Description,
-                        scheduledAt)
+                        scheduledAt
+                    )
                     |> returnValueTask
 
-                context.Items["Command"] <- nameof(Create)
+                context.Items["Command"] <- nameof (Create)
                 return! processCommand context validations command
             }
 
@@ -254,10 +260,7 @@ module PromotionGroup =
                 let validations (parameters: GetPromotionGroupParameters) =
                     [| Guid.isValidAndNotEmptyGuid parameters.PromotionGroupId PromotionGroupError.InvalidPromotionGroupId |]
 
-                let query (context: HttpContext) maxCount (actorProxy: IPromotionGroupActor) =
-                    task {
-                        return! actorProxy.Get(getCorrelationId context)
-                    }
+                let query (context: HttpContext) maxCount (actorProxy: IPromotionGroupActor) = task { return! actorProxy.Get(getCorrelationId context) }
 
                 let! parameters = context |> parse<GetPromotionGroupParameters>
                 parameters.OwnerId <- graceIds.OwnerIdString
@@ -276,10 +279,7 @@ module PromotionGroup =
                 let validations (parameters: GetPromotionGroupParameters) =
                     [| Guid.isValidAndNotEmptyGuid parameters.PromotionGroupId PromotionGroupError.InvalidPromotionGroupId |]
 
-                let query (context: HttpContext) maxCount (actorProxy: IPromotionGroupActor) =
-                    task {
-                        return! actorProxy.GetEvents(getCorrelationId context)
-                    }
+                let query (context: HttpContext) maxCount (actorProxy: IPromotionGroupActor) = task { return! actorProxy.GetEvents(getCorrelationId context) }
 
                 let! parameters = context |> parse<GetPromotionGroupParameters>
                 parameters.OwnerId <- graceIds.OwnerIdString
@@ -301,10 +301,9 @@ module PromotionGroup =
 
                 let command (parameters: AddPromotionParameters) =
                     let promotionId = Guid.Parse(parameters.PromotionId)
-                    PromotionGroupCommand.AddPromotion promotionId
-                    |> returnValueTask
+                    PromotionGroupCommand.AddPromotion promotionId |> returnValueTask
 
-                context.Items["Command"] <- nameof(AddPromotion)
+                context.Items["Command"] <- nameof (AddPromotion)
                 return! processCommand context validations command
             }
 
@@ -320,10 +319,9 @@ module PromotionGroup =
 
                 let command (parameters: RemovePromotionParameters) =
                     let promotionId = Guid.Parse(parameters.PromotionId)
-                    PromotionGroupCommand.RemovePromotion promotionId
-                    |> returnValueTask
+                    PromotionGroupCommand.RemovePromotion promotionId |> returnValueTask
 
-                context.Items["Command"] <- nameof(RemovePromotion)
+                context.Items["Command"] <- nameof (RemovePromotion)
                 return! processCommand context validations command
             }
 
@@ -334,16 +332,14 @@ module PromotionGroup =
                 let graceIds = getGraceIds context
 
                 let validatePromotionIds (promotionIds: System.Collections.Generic.IEnumerable<string>) (error: PromotionGroupError) =
-                    let allValid = 
-                        promotionIds 
-                        |> Seq.forall (fun id -> 
+                    let allValid =
+                        promotionIds
+                        |> Seq.forall (fun id ->
                             match Guid.TryParse(id) with
                             | (true, guid) -> guid <> Guid.Empty
                             | _ -> false)
-                    if allValid then
-                        Ok() |> returnValueTask
-                    else
-                        Error error |> returnValueTask
+
+                    if allValid then Ok() |> returnValueTask else Error error |> returnValueTask
 
                 let validations (parameters: ReorderPromotionsParameters) =
                     [| Guid.isValidAndNotEmptyGuid parameters.PromotionGroupId PromotionGroupError.InvalidPromotionGroupId
@@ -351,10 +347,9 @@ module PromotionGroup =
 
                 let command (parameters: ReorderPromotionsParameters) =
                     let promotionIds = parameters.PromotionIds |> Seq.map (fun id -> Guid.Parse(id)) |> Seq.toList
-                    PromotionGroupCommand.ReorderPromotions promotionIds
-                    |> returnValueTask
+                    PromotionGroupCommand.ReorderPromotions promotionIds |> returnValueTask
 
-                context.Items["Command"] <- nameof(ReorderPromotions)
+                context.Items["Command"] <- nameof (ReorderPromotions)
                 return! processCommand context validations command
             }
 
@@ -375,10 +370,10 @@ module PromotionGroup =
                             match InstantPattern.ExtendedIso.Parse(parameters.ScheduledAt) with
                             | result when result.Success -> Some result.Value
                             | _ -> None
-                    PromotionGroupCommand.Schedule scheduledAt
-                    |> returnValueTask
 
-                context.Items["Command"] <- nameof(Schedule)
+                    PromotionGroupCommand.Schedule scheduledAt |> returnValueTask
+
+                context.Items["Command"] <- nameof (Schedule)
                 return! processCommand context validations command
             }
 
@@ -391,11 +386,9 @@ module PromotionGroup =
                 let validations (parameters: MarkReadyParameters) =
                     [| Guid.isValidAndNotEmptyGuid parameters.PromotionGroupId PromotionGroupError.InvalidPromotionGroupId |]
 
-                let command (parameters: MarkReadyParameters) =
-                    PromotionGroupCommand.MarkReady
-                    |> returnValueTask
+                let command (parameters: MarkReadyParameters) = PromotionGroupCommand.MarkReady |> returnValueTask
 
-                context.Items["Command"] <- nameof(MarkReady)
+                context.Items["Command"] <- nameof (MarkReady)
                 return! processCommand context validations command
             }
 
@@ -408,11 +401,9 @@ module PromotionGroup =
                 let validations (parameters: StartParameters) =
                     [| Guid.isValidAndNotEmptyGuid parameters.PromotionGroupId PromotionGroupError.InvalidPromotionGroupId |]
 
-                let command (parameters: StartParameters) =
-                    PromotionGroupCommand.Start
-                    |> returnValueTask
+                let command (parameters: StartParameters) = PromotionGroupCommand.Start |> returnValueTask
 
-                context.Items["Command"] <- nameof(Start)
+                context.Items["Command"] <- nameof (Start)
                 return! processCommand context validations command
             }
 
@@ -425,11 +416,9 @@ module PromotionGroup =
                 let validations (parameters: CompleteParameters) =
                     [| Guid.isValidAndNotEmptyGuid parameters.PromotionGroupId PromotionGroupError.InvalidPromotionGroupId |]
 
-                let command (parameters: CompleteParameters) =
-                    PromotionGroupCommand.Complete parameters.Success
-                    |> returnValueTask
+                let command (parameters: CompleteParameters) = PromotionGroupCommand.Complete parameters.Success |> returnValueTask
 
-                context.Items["Command"] <- nameof(Complete)
+                context.Items["Command"] <- nameof (Complete)
                 return! processCommand context validations command
             }
 
@@ -442,11 +431,9 @@ module PromotionGroup =
                 let validations (parameters: BlockParameters) =
                     [| Guid.isValidAndNotEmptyGuid parameters.PromotionGroupId PromotionGroupError.InvalidPromotionGroupId |]
 
-                let command (parameters: BlockParameters) =
-                    PromotionGroupCommand.Block parameters.Reason
-                    |> returnValueTask
+                let command (parameters: BlockParameters) = PromotionGroupCommand.Block parameters.Reason |> returnValueTask
 
-                context.Items["Command"] <- nameof(Block)
+                context.Items["Command"] <- nameof (Block)
                 return! processCommand context validations command
             }
 
@@ -463,6 +450,6 @@ module PromotionGroup =
                     PromotionGroupCommand.DeleteLogical(parameters.Force, parameters.DeleteReason)
                     |> returnValueTask
 
-                context.Items["Command"] <- nameof(Delete)
+                context.Items["Command"] <- nameof (Delete)
                 return! processCommand context validations command
             }

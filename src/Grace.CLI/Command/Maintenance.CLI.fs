@@ -332,9 +332,7 @@ module Maintenance =
                                     //   so we process the deepest paths first, and the new children exist before the parent is created.
                                     //   Within each segment group, we'll parallelize the processing for performance.
                                     let segmentGroups =
-                                        graceStatus.Index.Values
-                                            .GroupBy(fun dv -> countSegments dv.RelativePath)
-                                            .OrderByDescending(fun group -> group.Key)
+                                        graceStatus.Index.Values.GroupBy(fun dv -> countSegments dv.RelativePath).OrderByDescending(fun group -> group.Key)
 
                                     for group in segmentGroups do
                                         let directoryVersionGroups = group.Chunk(chunkSize)
@@ -384,10 +382,7 @@ module Maintenance =
                                     return graceStatus
                                 })
 
-                    let fileCount =
-                        graceStatus.Index.Values
-                            .Select(fun directoryVersion -> directoryVersion.Files.Count)
-                            .Sum()
+                    let fileCount = graceStatus.Index.Values.Select(fun directoryVersion -> directoryVersion.Files.Count).Sum()
 
                     let totalFileSize = graceStatus.Index.Values.Sum(fun directoryVersion -> directoryVersion.Files.Sum(fun f -> int64 f.Size))
 
@@ -596,10 +591,7 @@ module Maintenance =
                 let! graceStatus = readGraceStatusFile ()
                 let directoryCount = graceStatus.Index.Count
 
-                let fileCount =
-                    graceStatus.Index.Values
-                        .Select(fun directoryVersion -> directoryVersion.Files.Count)
-                        .Sum()
+                let fileCount = graceStatus.Index.Values.Select(fun directoryVersion -> directoryVersion.Files.Count).Sum()
 
                 let totalFileSize = graceStatus.Index.Values.Sum(fun directoryVersion -> directoryVersion.Files.Sum(fun f -> int64 f.Size))
 
@@ -628,10 +620,7 @@ module Maintenance =
                 let! graceStatus = readGraceStatusFile ()
                 let directoryCount = graceStatus.Index.Count
 
-                let fileCount =
-                    graceStatus.Index.Values
-                        .Select(fun directoryVersion -> directoryVersion.Files.Count)
-                        .Sum()
+                let fileCount = graceStatus.Index.Values.Select(fun directoryVersion -> directoryVersion.Files.Count).Sum()
 
                 let totalFileSize = graceStatus.Index.Values.Sum(fun directoryVersion -> directoryVersion.Files.Sum(fun f -> int64 f.Size))
 

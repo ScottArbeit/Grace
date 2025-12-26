@@ -54,11 +54,7 @@ module Branch =
         | SetPromotionMode of promotionMode: BranchPromotionMode
         | RemoveReference of referenceId: ReferenceId
         | UpdateParentBranch of newParentBranchId: BranchId
-        | DeleteLogical of
-            force: bool *
-            DeleteReason: DeleteReason *
-            reassignChildBranches: bool *
-            newParentBranchId: BranchId option
+        | DeleteLogical of force: bool * DeleteReason: DeleteReason * reassignChildBranches: bool * newParentBranchId: BranchId option
         | DeletePhysical
         | Undelete
 
@@ -96,11 +92,7 @@ module Branch =
         | PromotionModeSet of promotionMode: BranchPromotionMode
         | ReferenceRemoved of referenceId: ReferenceId
         | ParentBranchUpdated of newParentBranchId: BranchId
-        | LogicalDeleted of
-            force: bool *
-            DeleteReason: DeleteReason *
-            reassignedChildBranches: bool *
-            childrenReassignedTo: BranchId option
+        | LogicalDeleted of force: bool * DeleteReason: DeleteReason * reassignedChildBranches: bool * childrenReassignedTo: BranchId option
         | PhysicalDeleted
         | Undeleted
 

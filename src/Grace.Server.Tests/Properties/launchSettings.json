@@ -4,7 +4,8 @@
       "commandName": "Project",
       "launchBrowser": true,
       "environmentVariables": {
-        "ASPNETCORE_ENVIRONMENT": "Development"
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "GRACE_TEST_CLEANUP": "1"
       },
       "applicationUrl": "https://localhost:56173;http://localhost:56174"
     }

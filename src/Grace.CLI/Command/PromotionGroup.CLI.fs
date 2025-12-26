@@ -60,21 +60,10 @@ module PromotionGroupCommand =
             )
 
         let targetBranchId =
-            new Option<String>(
-                "--target-branch-id",
-                Required = false,
-                Description = "The target branch ID <Guid>.",
-                Arity = ArgumentArity.ExactlyOne
-            )
+            new Option<String>("--target-branch-id", Required = false, Description = "The target branch ID <Guid>.", Arity = ArgumentArity.ExactlyOne)
 
         let targetBranchName =
-            new Option<String>(
-                "--target-branch-name",
-                [| "-t" |],
-                Required = false,
-                Description = "The target branch name.",
-                Arity = ArgumentArity.ExactlyOne
-            )
+            new Option<String>("--target-branch-name", [| "-t" |], Required = false, Description = "The target branch name.", Arity = ArgumentArity.ExactlyOne)
 
         let description =
             new Option<String>(
@@ -94,13 +83,7 @@ module PromotionGroupCommand =
             )
 
         let promotionId =
-            new Option<String>(
-                "--promotion-id",
-                [| "-p" |],
-                Required = true,
-                Description = "The promotion ID <Guid>.",
-                Arity = ArgumentArity.ExactlyOne
-            )
+            new Option<String>("--promotion-id", [| "-p" |], Required = true, Description = "The promotion ID <Guid>.", Arity = ArgumentArity.ExactlyOne)
 
         let promotionIds =
             new Option<String[]>(
@@ -111,21 +94,10 @@ module PromotionGroupCommand =
             )
 
         let reason =
-            new Option<String>(
-                "--reason",
-                [| "-r" |],
-                Required = true,
-                Description = "Reason for blocking the group.",
-                Arity = ArgumentArity.ExactlyOne
-            )
+            new Option<String>("--reason", [| "-r" |], Required = true, Description = "Reason for blocking the group.", Arity = ArgumentArity.ExactlyOne)
 
         let success =
-            new Option<Boolean>(
-                "--success",
-                Required = true,
-                Description = "Whether the group completed successfully.",
-                Arity = ArgumentArity.ExactlyOne
-            )
+            new Option<Boolean>("--success", Required = true, Description = "Whether the group completed successfully.", Arity = ArgumentArity.ExactlyOne)
 
         let force =
             new Option<Boolean>(
@@ -138,12 +110,7 @@ module PromotionGroupCommand =
             )
 
         let deleteReason =
-            new Option<String>(
-                "--delete-reason",
-                Required = false,
-                Description = "Reason for deleting the group.",
-                Arity = ArgumentArity.ExactlyOne
-            )
+            new Option<String>("--delete-reason", Required = false, Description = "Reason for deleting the group.", Arity = ArgumentArity.ExactlyOne)
 
         let status =
             (new Option<String>(
@@ -152,7 +119,8 @@ module PromotionGroupCommand =
                 Required = false,
                 Description = "Filter by status: Draft, Ready, Running, Succeeded, Failed, or Blocked.",
                 Arity = ArgumentArity.ExactlyOne
-            )).AcceptOnlyFromAmong(listCases<PromotionGroupStatus>())
+            ))
+                .AcceptOnlyFromAmong(listCases<PromotionGroupStatus> ())
 
         let maxCount =
             new Option<int>(
@@ -163,13 +131,7 @@ module PromotionGroupCommand =
                 DefaultValueFactory = (fun _ -> 30)
             )
 
-        let ownerId =
-            new Option<String>(
-                "--owner-id",
-                Required = false,
-                Description = "The repository's owner ID <Guid>.",
-                Arity = ArgumentArity.ZeroOrOne
-            )
+        let ownerId = new Option<String>("--owner-id", Required = false, Description = "The repository's owner ID <Guid>.", Arity = ArgumentArity.ZeroOrOne)
 
         let ownerName =
             new Option<String>(
@@ -180,12 +142,7 @@ module PromotionGroupCommand =
             )
 
         let organizationId =
-            new Option<String>(
-                "--organization-id",
-                Required = false,
-                Description = "The organization's ID <Guid>.",
-                Arity = ArgumentArity.ZeroOrOne
-            )
+            new Option<String>("--organization-id", Required = false, Description = "The organization's ID <Guid>.", Arity = ArgumentArity.ZeroOrOne)
 
         let organizationName =
             new Option<String>(
@@ -195,13 +152,7 @@ module PromotionGroupCommand =
                 Arity = ArgumentArity.ExactlyOne
             )
 
-        let repositoryId =
-            new Option<String>(
-                "--repository-id",
-                Required = false,
-                Description = "The repository's ID <Guid>.",
-                Arity = ArgumentArity.ZeroOrOne
-            )
+        let repositoryId = new Option<String>("--repository-id", Required = false, Description = "The repository's ID <Guid>.", Arity = ArgumentArity.ZeroOrOne)
 
         let repositoryName =
             new Option<String>(
@@ -216,12 +167,31 @@ module PromotionGroupCommand =
             try
                 if parseResult |> verbose then printParseResult parseResult
                 let graceIds = parseResult |> getNormalizedIdsAndNames
-                
-                let targetBranchId = parseResult.GetValue(Options.targetBranchId) |> Option.ofObj |> Option.defaultValue String.Empty
-                let targetBranchName = parseResult.GetValue(Options.targetBranchName) |> Option.ofObj |> Option.defaultValue String.Empty
-                let description = parseResult.GetValue(Options.description) |> Option.ofObj |> Option.defaultValue String.Empty
-                let scheduledAt = parseResult.GetValue(Options.scheduledAt) |> Option.ofObj |> Option.defaultValue String.Empty
-                let promotionGroupId = parseResult.GetValue(Options.promotionGroupId) |> Option.ofObj |> Option.defaultValue (Guid.NewGuid().ToString())
+
+                let targetBranchId =
+                    parseResult.GetValue(Options.targetBranchId)
+                    |> Option.ofObj
+                    |> Option.defaultValue String.Empty
+
+                let targetBranchName =
+                    parseResult.GetValue(Options.targetBranchName)
+                    |> Option.ofObj
+                    |> Option.defaultValue String.Empty
+
+                let description =
+                    parseResult.GetValue(Options.description)
+                    |> Option.ofObj
+                    |> Option.defaultValue String.Empty
+
+                let scheduledAt =
+                    parseResult.GetValue(Options.scheduledAt)
+                    |> Option.ofObj
+                    |> Option.defaultValue String.Empty
+
+                let promotionGroupId =
+                    parseResult.GetValue(Options.promotionGroupId)
+                    |> Option.ofObj
+                    |> Option.defaultValue (Guid.NewGuid().ToString())
 
                 let parameters =
                     CreatePromotionGroupParameters(
@@ -457,7 +427,11 @@ module PromotionGroupCommand =
                 if parseResult |> verbose then printParseResult parseResult
                 let graceIds = parseResult |> getNormalizedIdsAndNames
                 let promotionGroupId = parseResult.GetValue(Options.promotionGroupIdRequired)
-                let scheduledAt = parseResult.GetValue(Options.scheduledAt) |> Option.ofObj |> Option.defaultValue String.Empty
+
+                let scheduledAt =
+                    parseResult.GetValue(Options.scheduledAt)
+                    |> Option.ofObj
+                    |> Option.defaultValue String.Empty
 
                 let parameters =
                     ScheduleParameters(
@@ -642,7 +616,11 @@ module PromotionGroupCommand =
                 let graceIds = parseResult |> getNormalizedIdsAndNames
                 let promotionGroupId = parseResult.GetValue(Options.promotionGroupIdRequired)
                 let force = parseResult.GetValue(Options.force)
-                let deleteReason = parseResult.GetValue(Options.deleteReason) |> Option.ofObj |> Option.defaultValue String.Empty
+
+                let deleteReason =
+                    parseResult.GetValue(Options.deleteReason)
+                    |> Option.ofObj
+                    |> Option.defaultValue String.Empty
 
                 let parameters =
                     DeletePromotionGroupParameters(
@@ -689,9 +667,22 @@ module PromotionGroupCommand =
             try
                 if parseResult |> verbose then printParseResult parseResult
                 let graceIds = parseResult |> getNormalizedIdsAndNames
-                let targetBranchId = parseResult.GetValue(Options.targetBranchId) |> Option.ofObj |> Option.defaultValue String.Empty
-                let targetBranchName = parseResult.GetValue(Options.targetBranchName) |> Option.ofObj |> Option.defaultValue String.Empty
-                let status = parseResult.GetValue(Options.status) |> Option.ofObj |> Option.defaultValue String.Empty
+
+                let targetBranchId =
+                    parseResult.GetValue(Options.targetBranchId)
+                    |> Option.ofObj
+                    |> Option.defaultValue String.Empty
+
+                let targetBranchName =
+                    parseResult.GetValue(Options.targetBranchName)
+                    |> Option.ofObj
+                    |> Option.defaultValue String.Empty
+
+                let status =
+                    parseResult.GetValue(Options.status)
+                    |> Option.ofObj
+                    |> Option.defaultValue String.Empty
+
                 let maxCount = parseResult.GetValue(Options.maxCount)
 
                 let parameters =

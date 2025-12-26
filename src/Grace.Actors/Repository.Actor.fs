@@ -29,6 +29,7 @@ open Orleans.Runtime
 open System
 open System.Collections.Concurrent
 open System.Collections.Generic
+open System.Globalization
 open System.Linq
 open System.Text
 open System.Text.Json
@@ -231,6 +232,11 @@ module Repository =
                                     if branch.DeletedAt |> Option.isNone then
                                         let branchActor = Branch.CreateActorProxy branch.BranchId branch.RepositoryId this.correlationId
 
+                                        let childMetadata = EventMetadata.New metadata.CorrelationId GraceSystemUser
+                                        childMetadata.Properties[nameof RepositoryId] <- $"{repositoryDto.RepositoryId}"
+                                        childMetadata.Properties["RepositoryLogicalDeleteDays"] <-
+                                            repositoryDto.LogicalDeleteDays.ToString("F", CultureInfo.InvariantCulture)
+
                                         let! result =
                                             branchActor.Handle
                                                 (BranchCommand.DeleteLogical(
@@ -239,7 +245,7 @@ module Repository =
                                                     false,
                                                     None
                                                 ))
-                                                metadata
+                                                childMetadata
 
                                         results.Enqueue(result)
                                 }

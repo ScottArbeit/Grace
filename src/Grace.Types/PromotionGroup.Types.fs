@@ -16,12 +16,12 @@ module PromotionGroup =
     /// Defines the status of a promotion group.
     [<KnownType("GetKnownTypes"); GenerateSerializer>]
     type PromotionGroupStatus =
-        | Draft       // Being edited: promotions can be added/removed/reordered.
-        | Ready       // Marked ready for execution (subject to schedule).
-        | Running     // Currently being applied atomically to the parent branch.
-        | Succeeded   // Fully applied, final promotion recorded.
-        | Failed      // Failed due to conflicts/tests/other conditions; branch rolled back.
-        | Blocked     // Waiting on human review (e.g. policy requires review).
+        | Draft // Being edited: promotions can be added/removed/reordered.
+        | Ready // Marked ready for execution (subject to schedule).
+        | Running // Currently being applied atomically to the parent branch.
+        | Succeeded // Fully applied, final promotion recorded.
+        | Failed // Failed due to conflicts/tests/other conditions; branch rolled back.
+        | Blocked // Waiting on human review (e.g. policy requires review).
 
         static member GetKnownTypes() = GetKnownTypes<PromotionGroupStatus>()
 
@@ -29,21 +29,14 @@ module PromotionGroup =
     [<GenerateSerializer>]
     type ConflictResolutionOutcome =
         { ModelResolution: string
-          Confidence: float  // 0.0 to 1.0
+          Confidence: float // 0.0 to 1.0
           Accepted: bool option } // None = not reviewed yet
 
-        static member Default =
-            { ModelResolution = String.Empty
-              Confidence = 0.0
-              Accepted = None }
+        static member Default = { ModelResolution = String.Empty; Confidence = 0.0; Accepted = None }
 
     /// Represents a hunk of conflicting content.
     [<GenerateSerializer>]
-    type ConflictHunk =
-        { StartLine: int
-          EndLine: int
-          OursContent: string
-          TheirsContent: string }
+    type ConflictHunk = { StartLine: int; EndLine: int; OursContent: string; TheirsContent: string }
 
     /// Analysis of a conflict in a file.
     [<GenerateSerializer>]
@@ -52,10 +45,7 @@ module PromotionGroup =
           OriginalHunks: ConflictHunk list
           Resolution: ConflictResolutionOutcome option }
 
-        static member Default =
-            { FilePath = String.Empty
-              OriginalHunks = []
-              Resolution = None }
+        static member Default = { FilePath = String.Empty; OriginalHunks = []; Resolution = None }
 
     /// Represents a promotion within a promotion group.
     [<GenerateSerializer>]
@@ -64,18 +54,11 @@ module PromotionGroup =
           Order: int
           Conflicts: ConflictAnalysis list option }
 
-        static member Default =
-            { PromotionId = ReferenceId.Empty
-              Order = 0
-              Conflicts = None }
+        static member Default = { PromotionId = ReferenceId.Empty; Order = 0; Conflicts = None }
 
     /// Event types recorded during promotion group execution.
     [<GenerateSerializer>]
-    type PromotionGroupExecutionEvent =
-        { Timestamp: Instant
-          Description: string
-          PromotionId: ReferenceId option
-          ConflictCount: int option }
+    type PromotionGroupExecutionEvent = { Timestamp: Instant; Description: string; PromotionId: ReferenceId option; ConflictCount: int option }
 
     /// Defines the commands for the PromotionGroup actor.
     [<KnownType("GetKnownTypes")>]
@@ -187,7 +170,7 @@ module PromotionGroup =
                         CreatedAt = promotionGroupEvent.Metadata.Timestamp }
                 | PromotionAdded(promotionId, order) ->
                     let newPromotion = { PromotionId = promotionId; Order = order; Conflicts = None }
-                    { currentDto with Promotions = currentDto.Promotions @ [newPromotion] }
+                    { currentDto with Promotions = currentDto.Promotions @ [ newPromotion ] }
                 | PromotionRemoved promotionId ->
                     let filtered = currentDto.Promotions |> List.filter (fun p -> p.PromotionId <> promotionId)
                     // Re-normalize ordering
@@ -199,28 +182,26 @@ module PromotionGroup =
                         |> List.mapi (fun i pid ->
                             let existing = currentDto.Promotions |> List.find (fun p -> p.PromotionId = pid)
                             { existing with Order = i })
+
                     { currentDto with Promotions = reordered }
-                | Scheduled scheduledAt ->
-                    { currentDto with ScheduledAt = scheduledAt }
-                | MarkedReady ->
-                    { currentDto with Status = PromotionGroupStatus.Ready }
-                | Started ->
-                    { currentDto with Status = PromotionGroupStatus.Running }
+                | Scheduled scheduledAt -> { currentDto with ScheduledAt = scheduledAt }
+                | MarkedReady -> { currentDto with Status = PromotionGroupStatus.Ready }
+                | Started -> { currentDto with Status = PromotionGroupStatus.Running }
                 | Completed success ->
                     let newStatus = if success then PromotionGroupStatus.Succeeded else PromotionGroupStatus.Failed
                     { currentDto with Status = newStatus }
-                | Blocked reason ->
-                    { currentDto with Status = PromotionGroupStatus.Blocked }
+                | Blocked reason -> { currentDto with Status = PromotionGroupStatus.Blocked }
                 | ConflictAnalyzed(promotionId, analysis) ->
                     let updatedPromotions =
                         currentDto.Promotions
                         |> List.map (fun p ->
                             if p.PromotionId = promotionId then
                                 let existingConflicts = p.Conflicts |> Option.defaultValue []
-                                { p with Conflicts = Some (existingConflicts @ [analysis]) }
-                            else p)
+                                { p with Conflicts = Some(existingConflicts @ [ analysis ]) }
+                            else
+                                p)
+
                     { currentDto with Promotions = updatedPromotions }
-                | LogicalDeleted(force, deleteReason) ->
-                    { currentDto with DeletedAt = Some(getCurrentInstant ()); DeleteReason = deleteReason }
+                | LogicalDeleted(force, deleteReason) -> { currentDto with DeletedAt = Some(getCurrentInstant ()); DeleteReason = deleteReason }
 
             { newDto with UpdatedAt = Some promotionGroupEvent.Metadata.Timestamp }

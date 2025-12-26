@@ -18,15 +18,15 @@ module Utilities =
     let tryFind (predicate: 'T -> bool) (validations: ValueTask<'T> array) =
         task {
             let mutable i = 0
-            let mutable first = 0
+            let mutable first = -1
 
-            while i < validations.Length && first = 0 do
+            while i < validations.Length && first = -1 do
                 let! result = validations[i]
                 if predicate result then first <- i
                 i <- i + 1
 
             // Using .Result here is OK because it would already have been awaited in the while loop above.
-            if first > 0 then return Some(validations[first].Result) else return None
+            if first >= 0 then return Some(validations[first].Result) else return None
         }
 
     /// Retrieves the first error from a list of validations.

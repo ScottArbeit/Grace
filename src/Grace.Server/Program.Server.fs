@@ -40,6 +40,7 @@ open System.Net.Http
 open System.Net.Security
 open System.Security.Authentication
 open System.Text.Json
+open System.Threading
 open System.Threading.Tasks
 open Grace.Actors
 open System.Runtime.CompilerServices
@@ -157,6 +158,28 @@ module Program =
             | Some value -> value
             | None -> Environment.GetEnvironmentVariable EnvironmentVariables.AzureCosmosDBConnectionString
 
+        let waitForAzureTableReady (client: TableServiceClient) =
+            match AzureEnvironment.debugEnvironment with
+            | Some value when value.Equals("Local", StringComparison.OrdinalIgnoreCase) ->
+                let sw = Stopwatch.StartNew()
+                let timeout = TimeSpan.FromSeconds(60.0)
+                let delay = TimeSpan.FromSeconds(1.0)
+
+                let rec poll attempt =
+                    try
+                        client.GetProperties() |> ignore
+                        logToConsole $"Azure Table endpoint ready after {attempt} attempt(s)."
+                    with ex ->
+                        if sw.Elapsed >= timeout then
+                            logToConsole $"Azure Table endpoint was not ready after {timeout.TotalSeconds} seconds: {ex.Message}"
+                            reraise ()
+                        else
+                            Thread.Sleep(delay)
+                            poll (attempt + 1)
+
+                poll 0
+            | _ -> ()
+
         let logDirectory =
             let directoryValue = Environment.GetEnvironmentVariable EnvironmentVariables.GraceLogDirectory
 
@@ -203,6 +226,8 @@ module Program =
                                 invalidOp "Azure Storage connection string must be configured for clustering when managed identity is disabled."
                             else
                                 TableServiceClient(azureStorageConnectionString)
+
+                        waitForAzureTableReady tableServiceClient
 
                         options.TableServiceClient <- tableServiceClient)
                     .AddCosmosGrainStorage(

@@ -501,9 +501,7 @@ module Load =
             // Delete repositories.
             do!
                 Parallel.ForEachAsync(
-                    ids.Values
-                        .Select(fun (ownerId, organizationId, repositoryId, branchId) -> (ownerId, organizationId, repositoryId))
-                        .Distinct(),
+                    ids.Values.Select(fun (ownerId, organizationId, repositoryId, branchId) -> (ownerId, organizationId, repositoryId)).Distinct(),
                     deleteParallelOptions,
                     (fun id (cancellationToken: CancellationToken) ->
                         ValueTask(

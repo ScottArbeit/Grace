@@ -277,9 +277,7 @@ module Common =
 
     /// Prints output to the console, depending on the output format.
     let renderOutput (parseResult: ParseResult) (result: GraceResult<'T>) =
-        let outputFormat =
-            discriminatedUnionFromString<OutputFormat>(parseResult.GetValue(Options.output))
-                .Value
+        let outputFormat = discriminatedUnionFromString<OutputFormat>(parseResult.GetValue(Options.output)).Value
 
         match result with
         | Ok graceReturnValue ->

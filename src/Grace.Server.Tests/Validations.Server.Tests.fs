@@ -15,9 +15,7 @@ type Validations() =
 
     [<Test>]
     member this.``valid Guid returns Ok``() =
-        let result =
-            (Guid.isValidAndNotEmptyGuid "6fddb3c1-24c2-4e2e-8f57-98d0838c0c3f" TestError.TestFailed)
-                .Result
+        let result = (Guid.isValidAndNotEmptyGuid "6fddb3c1-24c2-4e2e-8f57-98d0838c0c3f" TestError.TestFailed).Result
 
         Assert.That(result, Is.EqualTo(Common.okResult))
 
@@ -33,9 +31,7 @@ type Validations() =
 
     [<Test>]
     member this.``Guid Empty returns Error``() =
-        let result =
-            (Guid.isValidAndNotEmptyGuid (Guid.Empty.ToString()) TestError.TestFailed)
-                .Result
+        let result = (Guid.isValidAndNotEmptyGuid (Guid.Empty.ToString()) TestError.TestFailed).Result
 
         Assert.That(result, Is.EqualTo(Common.errorResult))
 
@@ -86,9 +82,7 @@ type Validations() =
 
     [<Test>]
     member this.``valid SHA-256 hash returns Ok``() =
-        let result =
-            (String.isEmptyOrValidSha256Hash "67A1790DCA55B8803AD024EE28F616A284DF5DD7B8BA5F68B4B252A5E925AF79" TestError.TestFailed)
-                .Result
+        let result = (String.isEmptyOrValidSha256Hash "67A1790DCA55B8803AD024EE28F616A284DF5DD7B8BA5F68B4B252A5E925AF79" TestError.TestFailed).Result
 
         Assert.That(result, Is.EqualTo(Common.okResult))
 
@@ -119,17 +113,13 @@ type Validations() =
 
     [<Test>]
     member this.``string is member of discriminated union returns Ok``() =
-        let result =
-            (DiscriminatedUnion.isMemberOf<Types.ReferenceType, TestError> "Checkpoint" TestError.TestFailed)
-                .Result
+        let result = (DiscriminatedUnion.isMemberOf<Types.ReferenceType, TestError> "Checkpoint" TestError.TestFailed).Result
 
         Assert.That(result, Is.EqualTo(Common.okResult))
 
     [<Test>]
     member this.``string is not member of discriminated union returns Error``() =
-        let result =
-            (DiscriminatedUnion.isMemberOf<Types.ReferenceType, TestError> "Not a member" TestError.TestFailed)
-                .Result
+        let result = (DiscriminatedUnion.isMemberOf<Types.ReferenceType, TestError> "Not a member" TestError.TestFailed).Result
 
         Assert.That(result, Is.EqualTo(Common.errorResult))
 
