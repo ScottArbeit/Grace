@@ -71,6 +71,11 @@ public partial class Program
 
                 // Common settings for local debugging
                 var otlpEndpoint = configuration["Grace:OtlpEndpoint"] ?? "http://localhost:18889";
+                var stateRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".grace", "aspire");
+                var logDirectory = Path.Combine(stateRoot, "logs");
+
+                Directory.CreateDirectory(stateRoot);
+                Directory.CreateDirectory(logDirectory);
 
                 // These get set in both Local and Azure-debug runs.
                 var orleansClusterId = configuration["Grace:Orleans:ClusterId"] ?? "local";
@@ -123,18 +128,13 @@ public partial class Program
                     // DebugLocal (default): containers/emulators
                     // -------------------------
                     Console.WriteLine("Configuring Grace.Server for DebugLocal with local emulators.");
-                    var stateRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".grace", "aspire");
-                    Directory.CreateDirectory(stateRoot);
-
                     var azuriteDataPath = Path.Combine(stateRoot, "azurite");
                     var cosmosCertPath = Path.Combine(stateRoot, "cosmos-cert");
                     var serviceBusConfigPath = Path.Combine(stateRoot, "servicebus");
-                    var logDirectory = Path.Combine(stateRoot, "logs");
 
                     Directory.CreateDirectory(azuriteDataPath);
                     Directory.CreateDirectory(cosmosCertPath);
                     Directory.CreateDirectory(serviceBusConfigPath);
-                    Directory.CreateDirectory(logDirectory);
 
                     // Create Service Bus emulator config
                     var serviceBusConfigFile = Path.Combine(
@@ -267,6 +267,7 @@ public partial class Program
                         .WithEnvironment(EnvironmentVariables.AzureServiceBusNamespace, configuration["Grace:ServiceBus:Namespace"])
                         .WithEnvironment(EnvironmentVariables.AzureServiceBusTopic, configuration["Grace:ServiceBus:TopicName"])
                         .WithEnvironment(EnvironmentVariables.AzureServiceBusSubscription, configuration["Grace:ServiceBus:SubscriptionName"])
+                        .WithEnvironment(EnvironmentVariables.GraceLogDirectory, logDirectory)
                         .WithEnvironment(EnvironmentVariables.DebugEnvironment, "Azure");
 
                     Console.WriteLine("Grace.Server DebugAzure environment configured (no emulators started):");
@@ -297,6 +298,7 @@ public partial class Program
                     .AddServiceBusSubscription(configuration["Grace:ServiceBus:SubscriptionName"] ?? "grace-server");
 
                 var otlpEndpoint = configuration["Grace:OtlpEndpoint"] ?? "http://localhost:18889";
+                var publishLogDirectory = configuration["Grace:LogDirectory"] ?? "/tmp/grace-logs";
 
                 _ = builder.AddProject("grace-server", "..\\Grace.Server\\Grace.Server.fsproj")
                     .WithReference(cosmosDatabase)
@@ -322,6 +324,7 @@ public partial class Program
                     .WithEnvironment(EnvironmentVariables.GracePubSubSystem, "AzureServiceBus")
                     .WithEnvironment(EnvironmentVariables.AzureServiceBusTopic, configuration["Grace:ServiceBus:TopicName"] ?? "graceeventstream")
                     .WithEnvironment(EnvironmentVariables.AzureServiceBusSubscription, configuration["Grace:ServiceBus:SubscriptionName"] ?? "grace-server")
+                    .WithEnvironment(EnvironmentVariables.GraceLogDirectory, publishLogDirectory)
                     .WithHttpEndpoint(port: 5000, name: "http")
                     .WithHttpsEndpoint(port: 5001, name: "https")
                     .AsHttp2Service()
