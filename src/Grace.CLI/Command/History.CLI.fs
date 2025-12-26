@@ -512,6 +512,25 @@ module History =
                 let value = AnsiConsole.Prompt(prompt)
                 replacements[key] <- value
 
+    let private resolveWorkingDirectory (entryCwd: string) (useCurrentCwd: bool) (canPrompt: bool) (yes: bool) =
+        if useCurrentCwd then
+            Ok(Environment.CurrentDirectory, false)
+        elif String.IsNullOrWhiteSpace(entryCwd) then
+            Error "History entry did not record a working directory. Use --use-current-cwd to run from the current directory."
+        elif Directory.Exists(entryCwd) then
+            Ok(entryCwd, false)
+        else if canPrompt && not yes then
+            let message =
+                $"Recorded working directory not found: {Markup.Escape(entryCwd)}. Use current directory instead?"
+
+            let useCurrent = AnsiConsole.Confirm(message, defaultValue = true)
+            if useCurrent then
+                Ok(Environment.CurrentDirectory, true)
+            else
+                Error $"Recorded working directory not found: {entryCwd}."
+        else
+            Error $"Recorded working directory not found: {entryCwd}. Use --use-current-cwd to run from the current directory."
+
     type HistoryRun() =
         inherit AsynchronousCommandLineAction()
 
@@ -523,6 +542,7 @@ module History =
                 let useCurrentCwd = parseResult.GetValue(Options.useCurrentCwd)
                 let dryRun = parseResult.GetValue(Options.dryRun)
                 let replacementsInput = parseResult.GetValue(Options.replace)
+                let canPrompt = not Console.IsInputRedirected && not Console.IsOutputRedirected
 
                 let loadResult = UserConfiguration.loadUserConfiguration ()
                 warnOnCorruptConfig parseResult loadResult
@@ -557,8 +577,6 @@ module History =
                             argvToRun <- updated
                             missingRedactions <- missing
 
-                            let canPrompt = not Console.IsInputRedirected && not Console.IsOutputRedirected
-
                             if missingRedactions.Length > 0 && canPrompt && not yes then
                                 promptForReplacements missingRedactions replacements
                                 let updatedAfterPrompt, missingAfterPrompt = applyReplacements argvToRun entry.redactions replacements
@@ -578,47 +596,65 @@ module History =
                             AnsiConsole.MarkupLine($"[red]Missing replacements for redacted values: {Markup.Escape(missingKeys)}[/]")
                             return -1
                         else
-                            let cwd = if useCurrentCwd then Environment.CurrentDirectory else entry.cwd
+                            match resolveWorkingDirectory entry.cwd useCurrentCwd canPrompt yes with
+                            | Error message ->
+                                AnsiConsole.MarkupLine($"[red]{Markup.Escape(message)}[/]")
+                                return -1
+                            | Ok(cwd, usedFallback) ->
+                                if usedFallback && not (parseResult |> silent) then
+                                    AnsiConsole.MarkupLine(
+                                        $"[yellow]Recorded working directory not found; using current directory: {Markup.Escape(cwd)}[/]"
+                                    )
 
-                            let commandLine = HistoryStorage.buildCommandLine argvToRun
+                                let commandLine = HistoryStorage.buildCommandLine argvToRun
 
-                            AnsiConsole.MarkupLine($"[bold]About to run:[/] grace {Markup.Escape(commandLine)}")
+                                AnsiConsole.MarkupLine($"[bold]About to run:[/] grace {Markup.Escape(commandLine)}")
 
-                            AnsiConsole.MarkupLine($"[bold]Working directory:[/] {Markup.Escape(cwd)}")
+                                AnsiConsole.MarkupLine($"[bold]Working directory:[/] {Markup.Escape(cwd)}")
 
-                            let shouldProceed =
-                                if HistoryStorage.isDestructive commandLine historyConfig && not yes then
-                                    AnsiConsole.Confirm("This command looks destructive. Re-run?", defaultValue = false)
+                                let shouldProceed =
+                                    if HistoryStorage.isDestructive commandLine historyConfig && not yes then
+                                        AnsiConsole.Confirm("This command looks destructive. Re-run?", defaultValue = false)
+                                    else
+                                        true
+
+                                if not shouldProceed then
+                                    return 1
+                                else if dryRun then
+                                    return 0
                                 else
-                                    true
+                                    let executablePath = Environment.ProcessPath
 
-                            if not shouldProceed then
-                                return 1
-                            else if dryRun then
-                                return 0
-                            else
-                                let executablePath = Environment.ProcessPath
+                                    if String.IsNullOrWhiteSpace(executablePath) then
+                                        AnsiConsole.MarkupLine("[red]Failed to locate Grace executable.[/]")
+                                        return -1
+                                    else
+                                        try
+                                            let startInfo = ProcessStartInfo()
+                                            startInfo.FileName <- executablePath
+                                            startInfo.WorkingDirectory <- cwd
+                                            startInfo.UseShellExecute <- false
+                                            startInfo.RedirectStandardInput <- false
+                                            startInfo.RedirectStandardOutput <- false
+                                            startInfo.RedirectStandardError <- false
 
-                                if String.IsNullOrWhiteSpace(executablePath) then
-                                    AnsiConsole.MarkupLine("[red]Failed to locate Grace executable.[/]")
-                                    return -1
-                                else
-                                    let startInfo = ProcessStartInfo()
-                                    startInfo.FileName <- executablePath
-                                    startInfo.WorkingDirectory <- cwd
-                                    startInfo.UseShellExecute <- false
-                                    startInfo.RedirectStandardInput <- false
-                                    startInfo.RedirectStandardOutput <- false
-                                    startInfo.RedirectStandardError <- false
+                                            for arg in argvToRun do
+                                                startInfo.ArgumentList.Add(arg)
 
-                                    for arg in argvToRun do
-                                        startInfo.ArgumentList.Add(arg)
+                                            use proc = new Process()
+                                            proc.StartInfo <- startInfo
 
-                                    use proc = new Process()
-                                    proc.StartInfo <- startInfo
-                                    proc.Start() |> ignore
-                                    proc.WaitForExit()
-                                    return proc.ExitCode
+                                            if proc.Start() then
+                                                proc.WaitForExit()
+                                                return proc.ExitCode
+                                            else
+                                                AnsiConsole.MarkupLine("[red]Failed to start Grace process.[/]")
+                                                return -1
+                                        with ex ->
+                                            AnsiConsole.MarkupLine(
+                                                $"[red]Failed to start Grace process: {Markup.Escape(ex.Message)}[/]"
+                                            )
+                                            return -1
             }
 
     type HistoryDelete() =
