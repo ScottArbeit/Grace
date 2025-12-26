@@ -346,10 +346,16 @@ module Program =
                 // Build the configuration
                 let environment = Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT")
 
-                let configuration =
+                let configurationBuilder =
                     ConfigurationBuilder()
                         .AddJsonFile("appsettings.json", true, true) // Load appsettings.json
-                        .AddJsonFile($"appsettings.{environment}.json", false, true) // Load environment-specific settings
+
+                if not <| String.IsNullOrWhiteSpace(environment) then
+                    configurationBuilder.AddJsonFile($"appsettings.{environment}.json", true, true) // Load environment-specific settings
+                    |> ignore
+
+                let configuration =
+                    configurationBuilder
                         .AddEnvironmentVariables()
                         .AddUserSecrets() // Use `dotnet user-secrets` to store sensitive settings during development
                         .Build()

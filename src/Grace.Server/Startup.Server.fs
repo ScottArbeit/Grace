@@ -717,6 +717,6 @@ module Application =
 
             // Set the global ApplicationContext.
             ApplicationContext.serviceProvider <- app.ApplicationServices
-            ApplicationContext.Set.Wait()
+            ApplicationContext.Set().Wait()
 
             logToConsole $"Grace Server started successfully."

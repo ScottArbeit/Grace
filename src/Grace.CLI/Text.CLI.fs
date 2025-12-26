@@ -94,10 +94,16 @@ module Text =
         let LogicalDeleteDays = "--logical-delete-days"
 
         [<Literal>]
+        let Limit = "--limit"
+
+        [<Literal>]
         let MaxCount = "--max-count"
 
         [<Literal>]
         let Message = "--message"
+
+        [<Literal>]
+        let Contains = "--contains"
 
         [<Literal>]
         let NewName = "--new-name"
@@ -133,6 +139,9 @@ module Text =
         let ParentBranchName = "--parent-branch-name"
 
         [<Literal>]
+        let Repo = "--repo"
+
+        [<Literal>]
         let RecordSaves = "--record-saves"
 
         [<Literal>]
@@ -163,6 +172,12 @@ module Text =
         let SaveDays = "--save-days"
 
         [<Literal>]
+        let Failed = "--failed"
+
+        [<Literal>]
+        let Success = "--success"
+
+        [<Literal>]
         let SearchVisibility = "--search-visibility"
 
         [<Literal>]
@@ -187,6 +202,9 @@ module Text =
         let ShowEvents = "--show-events"
 
         [<Literal>]
+        let Since = "--since"
+
+        [<Literal>]
         let Status = "--status"
 
         [<Literal>]
@@ -200,6 +218,21 @@ module Text =
 
         [<Literal>]
         let Visibility = "--visibility"
+
+        [<Literal>]
+        let Id = "--id"
+
+        [<Literal>]
+        let Yes = "--yes"
+
+        [<Literal>]
+        let DryRun = "--dry-run"
+
+        [<Literal>]
+        let UseCurrentCwd = "--use-current-cwd"
+
+        [<Literal>]
+        let Replace = "--replace"
 
     /// The full list of strings that can be displayed to the user.
     type UIString =

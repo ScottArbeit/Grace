@@ -66,6 +66,9 @@ module ApplicationContext =
     /// CosmosDB client instance
     //let mutable cosmosClient: CosmosClient = null
 
+    /// CosmosDB container instance (set during startup).
+    let mutable cosmosContainer: Container = null
+
     /// Pub-sub settings for the application.
     let mutable pubSubSettings: GracePubSubSettings = GracePubSubSettings.Empty
 
@@ -118,15 +121,15 @@ module ApplicationContext =
 
     let defaultObjectStorageProvider = ObjectStorageProvider.AzureBlobStorage
 
-    let cosmosDbConnectionString = Environment.GetEnvironmentVariable EnvironmentVariables.AzureCosmosDBConnectionString
-
-    let cosmosDatabaseName = Environment.GetEnvironmentVariable EnvironmentVariables.AzureCosmosDBDatabaseName
-
-    let cosmosContainerName = Environment.GetEnvironmentVariable EnvironmentVariables.AzureCosmosDBContainerName
-
-    // Get a reference to the CosmosDB database.
     let cosmosClientOptions =
         CosmosClientOptions(ApplicationName = "Grace.Server", LimitToEndpoint = false, UseSystemTextJsonSerializerWithOptions = Constants.JsonSerializerOptions)
+
+    let cosmosConnectionStringValue =
+        match AzureEnvironment.cosmosConnectionString with
+        | Some value when not <| String.IsNullOrWhiteSpace(value) -> value
+        | _ ->
+            let value = Environment.GetEnvironmentVariable EnvironmentVariables.AzureCosmosDBConnectionString
+            if String.IsNullOrWhiteSpace(value) then String.Empty else value
 
     let isGraceTesting =
         match Environment.GetEnvironmentVariable("GRACE_TESTING") with
@@ -141,9 +144,9 @@ module ApplicationContext =
         | value -> value.Equals("Local", StringComparison.OrdinalIgnoreCase)
 
     let isLocalEndpoint =
-        not (String.IsNullOrWhiteSpace cosmosDbConnectionString)
-        && (cosmosDbConnectionString.Contains("localhost", StringComparison.OrdinalIgnoreCase)
-            || cosmosDbConnectionString.Contains("127.0.0.1", StringComparison.OrdinalIgnoreCase))
+        not (String.IsNullOrWhiteSpace cosmosConnectionStringValue)
+        && (cosmosConnectionStringValue.Contains("localhost", StringComparison.OrdinalIgnoreCase)
+            || cosmosConnectionStringValue.Contains("127.0.0.1", StringComparison.OrdinalIgnoreCase))
 
     let useLocalEmulatorSettings =
         not useManagedIdentity
@@ -171,27 +174,48 @@ module ApplicationContext =
         cosmosClientOptions.LimitToEndpoint <- true
         cosmosClientOptions.ConnectionMode <- ConnectionMode.Gateway
 
-    let cosmosClient =
-        if useManagedIdentity then
-            let endpoint =
-                AzureEnvironment.tryGetCosmosEndpointUri ()
-                |> Option.defaultWith (fun () -> invalidOp "Azure Cosmos DB endpoint must be configured when using a managed identity.")
-
-            new CosmosClient(endpoint.AbsoluteUri, defaultAzureCredential.Value, cosmosClientOptions)
+    let private tryGetConfigValue (config: IConfiguration) (name: string) =
+        if isNull config then
+            None
         else
-            if String.IsNullOrWhiteSpace cosmosDbConnectionString then
-                invalidOp "Cosmos DB connection string must be configured when managed identity is disabled."
+            let value = config[getConfigKey name]
+            if String.IsNullOrWhiteSpace value then None else Some(value.Trim())
 
-            new CosmosClient(cosmosDbConnectionString, cosmosClientOptions)
-
-    // Get a reference to the CosmosDB database and container.
-    let database = cosmosClient.GetDatabase(cosmosDatabaseName)
-    let cosmosContainer = database.GetContainer(cosmosContainerName)
+    let private resolveSetting (config: IConfiguration) (name: string) =
+        match tryGetConfigValue config name with
+        | Some value -> value
+        | None ->
+            let value = Environment.GetEnvironmentVariable name
+            if String.IsNullOrWhiteSpace value then
+                invalidOp $"Configuration value '{getConfigKey name}' (env '{name}') must be set."
+            else
+                value.Trim()
 
     /// Sets multiple values for the application. In functional programming, a global construct like this is used instead of dependency injection.
-    let Set =
+    let Set () =
         task {
             try
+                if isNull configuration then
+                    invalidOp "Configuration must be set before initializing ApplicationContext."
+
+                let cosmosDatabaseName = resolveSetting configuration EnvironmentVariables.AzureCosmosDBDatabaseName
+                let cosmosContainerName = resolveSetting configuration EnvironmentVariables.AzureCosmosDBContainerName
+
+                let cosmosClient =
+                    if useManagedIdentity then
+                        let endpoint =
+                            AzureEnvironment.tryGetCosmosEndpointUri ()
+                            |> Option.defaultWith (fun () ->
+                                invalidOp "Azure Cosmos DB endpoint must be configured when using a managed identity.")
+
+                        new CosmosClient(endpoint.AbsoluteUri, defaultAzureCredential.Value, cosmosClientOptions)
+                    else
+                        let cosmosDbConnectionString = resolveSetting configuration EnvironmentVariables.AzureCosmosDBConnectionString
+                        new CosmosClient(cosmosDbConnectionString, cosmosClientOptions)
+
+                let database = cosmosClient.GetDatabase(cosmosDatabaseName)
+                cosmosContainer <- database.GetContainer(cosmosContainerName)
+
                 logToConsole $"Using CosmosDB database '{cosmosDatabaseName}' and container '{cosmosContainer.Id}'."
 
                 // Inject things into Actor Services.

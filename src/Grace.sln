@@ -19,6 +19,8 @@ Project("{6EC3EE1D-3C4E-46DD-8F32-0CC8E7565705}") = "Grace.Load", "Grace.Load\Gr
 EndProject
 Project("{6EC3EE1D-3C4E-46DD-8F32-0CC8E7565705}") = "Grace.Server.Tests", "Grace.Server.Tests\Grace.Server.Tests.fsproj", "{B31CE180-594F-46CF-95FE-4A482EFEC24D}"
 EndProject
+Project("{6EC3EE1D-3C4E-46DD-8F32-0CC8E7565705}") = "Grace.CLI.Tests", "Grace.CLI.Tests\Grace.CLI.Tests.fsproj", "{A7A5E7F3-7BFC-4E29-BD46-F873468A8071}"
+EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution items", "Solution items", "{40F2D935-0455-48D5-B8E1-BEC3020C4FF1}"
 	ProjectSection(SolutionItems) = preProject
 		agents.md = agents.md
@@ -65,6 +67,10 @@ Global
 		{B31CE180-594F-46CF-95FE-4A482EFEC24D}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{B31CE180-594F-46CF-95FE-4A482EFEC24D}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{B31CE180-594F-46CF-95FE-4A482EFEC24D}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A7A5E7F3-7BFC-4E29-BD46-F873468A8071}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A7A5E7F3-7BFC-4E29-BD46-F873468A8071}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A7A5E7F3-7BFC-4E29-BD46-F873468A8071}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A7A5E7F3-7BFC-4E29-BD46-F873468A8071}.Release|Any CPU.Build.0 = Release|Any CPU
 		{70C75B35-D0BA-4355-914D-A41A99DCB9A2}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{70C75B35-D0BA-4355-914D-A41A99DCB9A2}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{70C75B35-D0BA-4355-914D-A41A99DCB9A2}.Release|Any CPU.ActiveCfg = Release|Any CPU
