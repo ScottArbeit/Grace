@@ -529,8 +529,7 @@ module Notification =
                                             else
                                                 AzureEnvironment.tryGetServiceBusFullyQualifiedNamespace ()
                                                 |> Option.defaultWith (fun () ->
-                                                    invalidOp
-                                                        "Azure Service Bus namespace must be configured when using a managed identity.")
+                                                    invalidOp "Azure Service Bus namespace must be configured when using a managed identity.")
 
                                         ServiceBusClient(fullyQualifiedNamespace, defaultAzureCredential.Value)
                                     else

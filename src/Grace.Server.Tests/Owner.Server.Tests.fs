@@ -21,10 +21,7 @@ open System.Net.Http
 [<Parallelizable(ParallelScope.All)>]
 type Owner() =
 
-    let log =
-        LoggerFactory
-            .Create(fun builder -> builder.AddConsole().AddDebug() |> ignore)
-            .CreateLogger("Owner.Server.Tests")
+    let log = LoggerFactory.Create(fun builder -> builder.AddConsole().AddDebug() |> ignore).CreateLogger("Owner.Server.Tests")
 
     member val public TestContext = TestContext.CurrentContext with get, set
 
@@ -53,7 +50,8 @@ type Owner() =
             let! response = Client.PostAsync("/owner/setType", createJsonContent parameters)
             response.EnsureSuccessStatusCode() |> ignore
             let! returnValue = deserializeContent<GraceReturnValue<string>> response
-            Assert.That(returnValue.Properties[nameof OwnerId], Is.EqualTo(ownerId))
+            let ownerGuid = Common.requireGuidProperty (nameof OwnerId) returnValue.Properties[nameof OwnerId]
+            Assert.That(ownerGuid, Is.EqualTo(Guid.Parse(ownerId)))
         }
 
     [<Test>]
@@ -66,7 +64,8 @@ type Owner() =
             let! response = Client.PostAsync("/owner/setType", createJsonContent parameters)
             response.EnsureSuccessStatusCode() |> ignore
             let! returnValue = deserializeContent<GraceReturnValue<string>> response
-            Assert.That(returnValue.Properties[nameof OwnerId], Is.EqualTo(ownerId))
+            let ownerGuid = Common.requireGuidProperty (nameof OwnerId) returnValue.Properties[nameof OwnerId]
+            Assert.That(ownerGuid, Is.EqualTo(Guid.Parse(ownerId)))
         }
 
     [<Test>]
@@ -163,7 +162,8 @@ type Owner() =
             let! response = Client.PostAsync("/owner/setSearchVisibility", createJsonContent parameters)
             response.EnsureSuccessStatusCode() |> ignore
             let! returnValue = deserializeContent<GraceReturnValue<string>> response
-            Assert.That(returnValue.Properties[nameof OwnerId], Is.EqualTo(ownerId))
+            let ownerGuid = Common.requireGuidProperty (nameof OwnerId) returnValue.Properties[nameof OwnerId]
+            Assert.That(ownerGuid, Is.EqualTo(Guid.Parse(ownerId)))
         }
 
     [<Test>]
@@ -176,7 +176,8 @@ type Owner() =
             let! response = Client.PostAsync("/owner/setSearchVisibility", createJsonContent parameters)
             response.EnsureSuccessStatusCode() |> ignore
             let! returnValue = deserializeContent<GraceReturnValue<string>> response
-            Assert.That(returnValue.Properties[nameof OwnerId], Is.EqualTo(ownerId))
+            let ownerGuid = Common.requireGuidProperty (nameof OwnerId) returnValue.Properties[nameof OwnerId]
+            Assert.That(ownerGuid, Is.EqualTo(Guid.Parse(ownerId)))
         }
 
     [<Test>]
@@ -242,7 +243,8 @@ type Owner() =
             let! response = Client.PostAsync("/owner/setName", createJsonContent parameters)
             response.EnsureSuccessStatusCode() |> ignore
             let! returnValue = deserializeContent<GraceReturnValue<string>> response
-            Assert.That(returnValue.Properties[nameof OwnerId], Is.EqualTo(ownerId))
+            let ownerGuid = Common.requireGuidProperty (nameof OwnerId) returnValue.Properties[nameof OwnerId]
+            Assert.That(ownerGuid, Is.EqualTo(Guid.Parse(ownerId)))
         }
 
     [<Test>]

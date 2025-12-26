@@ -38,11 +38,7 @@ module StorageAccount =
         let containerClients = new ConcurrentDictionary<string, BlobContainerClient>()
 
         let retrieveSecret secretName =
-            let secrets =
-                daprClient
-                    .GetSecretAsync(Constants.GraceSecretStoreName, secretName)
-                    .GetAwaiter()
-                    .GetResult()
+            let secrets = daprClient.GetSecretAsync(Constants.GraceSecretStoreName, secretName).GetAwaiter().GetResult()
 
             secrets.Item secretName
 

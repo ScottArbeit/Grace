@@ -79,6 +79,9 @@
 		<Compile Include="Program.Server.fs" />
 		<None Include="Dockerfile" />
 		<None Include="properties\publishprofiles\DisableContainerBuild.pubxml" />
+		<None Update="appsettings.Development.json">
+		  <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+		</None>
 		<None Include="web.config">
 		  <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
 		</None>

@@ -58,7 +58,21 @@ module Owner =
                 try
                     state.State.Add(ownerEvent)
 
+                    log.LogInformation(
+                        "{CurrentInstant}: Owner.Actor writing state. CorrelationId: {CorrelationId}; OwnerId: {OwnerId}.",
+                        getCurrentInstantExtended (),
+                        ownerEvent.Metadata.CorrelationId,
+                        ownerDto.OwnerId
+                    )
+
                     do! state.WriteStateAsync()
+
+                    log.LogInformation(
+                        "{CurrentInstant}: Owner.Actor state write completed. CorrelationId: {CorrelationId}; OwnerId: {OwnerId}.",
+                        getCurrentInstantExtended (),
+                        ownerEvent.Metadata.CorrelationId,
+                        ownerDto.OwnerId
+                    )
 
                     // Update the Dto based on the current event.
                     ownerDto <- ownerDto |> OwnerDto.UpdateDto ownerEvent
@@ -66,7 +80,21 @@ module Owner =
                     // Publish the event to the rest of the world.
                     let graceEvent = Events.GraceEvent.OwnerEvent ownerEvent
 
+                    log.LogInformation(
+                        "{CurrentInstant}: Owner.Actor publishing GraceEvent. CorrelationId: {CorrelationId}; OwnerId: {OwnerId}.",
+                        getCurrentInstantExtended (),
+                        ownerEvent.Metadata.CorrelationId,
+                        ownerDto.OwnerId
+                    )
+
                     do! publishGraceEvent graceEvent ownerEvent.Metadata
+
+                    log.LogInformation(
+                        "{CurrentInstant}: Owner.Actor published GraceEvent. CorrelationId: {CorrelationId}; OwnerId: {OwnerId}.",
+                        getCurrentInstantExtended (),
+                        ownerEvent.Metadata.CorrelationId,
+                        ownerDto.OwnerId
+                    )
 
                     let returnValue = GraceReturnValue.Create "Owner command succeeded." ownerEvent.Metadata.CorrelationId
 

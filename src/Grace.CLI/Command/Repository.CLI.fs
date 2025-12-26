@@ -252,19 +252,22 @@ module Repository =
                 Required = true,
                 Description = "The repository's resolution conflict policy when conflicts are detected in a PromotionGroup.",
                 Arity = ArgumentArity.ExactlyOne
-            )).AcceptOnlyFromAmong(listCases<ConflictResolutionPolicy> ())
+            ))
+                .AcceptOnlyFromAmong(listCases<ConflictResolutionPolicy> ())
 
         let confidenceThreshold =
             new Option<float32>(
                 "--confidence-threshold",
                 Required = false,
-                Description = "The confidence threshold for auto-accepting conflict resolutions (0.0 to 1.0). Required when policy is ConflictsAllowedWithConfidence.",
+                Description =
+                    "The confidence threshold for auto-accepting conflict resolutions (0.0 to 1.0). Required when policy is ConflictsAllowedWithConfidence.",
                 Arity = ArgumentArity.ExactlyOne,
                 DefaultValueFactory = (fun _ -> 0.8f)
             )
 
         confidenceThreshold.Validators.Add(fun optionResult ->
             let parseResult = optionResult.GetValueOrDefault<float32>()
+
             if parseResult < 0.0f || parseResult > 1.0f then
                 optionResult.AddError("The confidence threshold must be between 0.0 and 1.0."))
 
@@ -700,10 +703,7 @@ module Repository =
 
                                                 })
 
-                                    let fileCount =
-                                        graceStatus.Index.Values
-                                            .Select(fun directoryVersion -> directoryVersion.Files.Count)
-                                            .Sum()
+                                    let fileCount = graceStatus.Index.Values.Select(fun directoryVersion -> directoryVersion.Files.Count).Sum()
 
                                     let totalFileSize = graceStatus.Index.Values.Sum(fun directoryVersion -> directoryVersion.Files.Sum(fun f -> int64 f.Size))
 
@@ -899,18 +899,12 @@ module Repository =
                                             if branch.ParentBranchId = Constants.DefaultParentBranchId then
                                                 "root"
                                             else
-                                                allBranches
-                                                    .Where(fun br -> br.BranchId = branch.ParentBranchId)
-                                                    .Select(fun br -> br.BranchName)
-                                                    .First()
+                                                allBranches.Where(fun br -> br.BranchId = branch.ParentBranchId).Select(fun br -> br.BranchName).First()
                                            LatestPromotion =
                                             if branch.ParentBranchId = Constants.DefaultParentBranchId then
                                                 branch.LatestPromotion
                                             else
-                                                allBranches
-                                                    .Where(fun br -> br.BranchId = branch.ParentBranchId)
-                                                    .Select(fun br -> br.LatestPromotion)
-                                                    .First() |})
+                                                allBranches.Where(fun br -> br.BranchId = branch.ParentBranchId).Select(fun br -> br.LatestPromotion).First() |})
 
                                 let branchesWithParentNames =
                                     allBranches

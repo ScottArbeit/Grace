@@ -95,12 +95,7 @@ module Admin =
                 )
 
             let reminderId =
-                new Option<String>(
-                    "--reminder-id",
-                    Required = true,
-                    Description = "The ID of the reminder <Guid>.",
-                    Arity = ArgumentArity.ExactlyOne
-                )
+                new Option<String>("--reminder-id", Required = true, Description = "The ID of the reminder <Guid>.", Arity = ArgumentArity.ExactlyOne)
 
             let maxCount =
                 new Option<int>(
@@ -128,13 +123,7 @@ module Admin =
                     Arity = ArgumentArity.ZeroOrOne
                 )
 
-            let actorId =
-                new Option<String>(
-                    "--actor-id",
-                    Required = true,
-                    Description = "The target actor ID.",
-                    Arity = ArgumentArity.ExactlyOne
-                )
+            let actorId = new Option<String>("--actor-id", Required = true, Description = "The target actor ID.", Arity = ArgumentArity.ExactlyOne)
 
             let dueAfter =
                 new Option<String>(
@@ -200,10 +189,19 @@ module Admin =
                                     RepositoryId = graceIds.RepositoryIdString,
                                     RepositoryName = graceIds.RepositoryName,
                                     MaxCount = parseResult.GetValue(Options.maxCount),
-                                    ReminderType = (parseResult.GetValue(Options.reminderType) |> Option.ofObj |> Option.defaultValue ""),
-                                    ActorName = (parseResult.GetValue(Options.actorName) |> Option.ofObj |> Option.defaultValue ""),
+                                    ReminderType =
+                                        (parseResult.GetValue(Options.reminderType)
+                                         |> Option.ofObj
+                                         |> Option.defaultValue ""),
+                                    ActorName =
+                                        (parseResult.GetValue(Options.actorName)
+                                         |> Option.ofObj
+                                         |> Option.defaultValue ""),
                                     DueAfter = (parseResult.GetValue(Options.dueAfter) |> Option.ofObj |> Option.defaultValue ""),
-                                    DueBefore = (parseResult.GetValue(Options.dueBefore) |> Option.ofObj |> Option.defaultValue ""),
+                                    DueBefore =
+                                        (parseResult.GetValue(Options.dueBefore)
+                                         |> Option.ofObj
+                                         |> Option.defaultValue ""),
                                     CorrelationId = getCorrelationId parseResult
                                 )
 
@@ -241,13 +239,11 @@ module Admin =
                                         |> ignore
 
                                         for reminder in reminders do
-                                            let actorIdDisplay = 
-                                                if String.IsNullOrEmpty(reminder.ActorId) then 
-                                                    "(empty)"
-                                                elif reminder.ActorId.Length > 8 then 
-                                                    reminder.ActorId.Substring(0, 8) + "..."
-                                                else 
-                                                    reminder.ActorId
+                                            let actorIdDisplay =
+                                                if String.IsNullOrEmpty(reminder.ActorId) then "(empty)"
+                                                elif reminder.ActorId.Length > 8 then reminder.ActorId.Substring(0, 8) + "..."
+                                                else reminder.ActorId
+
                                             table.AddRow(
                                                 $"[{Colors.Deemphasized}]{reminder.ReminderId}[/]",
                                                 $"{reminder.ReminderType}",
@@ -513,7 +509,10 @@ module Admin =
                                     ActorId = parseResult.GetValue(Options.actorId),
                                     ReminderType = parseResult.GetValue(Options.reminderType),
                                     FireAt = parseResult.GetValue(Options.fireAt),
-                                    StateJson = (parseResult.GetValue(Options.stateJson) |> Option.ofObj |> Option.defaultValue ""),
+                                    StateJson =
+                                        (parseResult.GetValue(Options.stateJson)
+                                         |> Option.ofObj
+                                         |> Option.defaultValue ""),
                                     CorrelationId = getCorrelationId parseResult
                                 )
 

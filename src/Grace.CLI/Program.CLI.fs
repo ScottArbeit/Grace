@@ -392,10 +392,7 @@ module GraceCommand =
 
                             if parseResult |> hasOutput then
                                 if parseResult |> verbose then
-                                    AnsiConsole.Write(
-                                        (new Rule($"[{Colors.Important}]Started: {formatInstantExtended startTime}.[/]"))
-                                            .RightJustified()
-                                    )
+                                    AnsiConsole.Write((new Rule($"[{Colors.Important}]Started: {formatInstantExtended startTime}.[/]")).RightJustified())
 
                                 //printParseResult parseResult
                                 else
@@ -433,8 +430,7 @@ module GraceCommand =
                                     )
                                 else
                                     AnsiConsole.Write(
-                                        (new Rule($"[{Colors.Important}]Elapsed: {elapsed.TotalSeconds:F3}s. Exit code: {returnValue}.[/]"))
-                                            .RightJustified()
+                                        (new Rule($"[{Colors.Important}]Elapsed: {elapsed.TotalSeconds:F3}s. Exit code: {returnValue}.[/]")).RightJustified()
                                     )
 
                                 AnsiConsole.WriteLine()
@@ -452,10 +448,7 @@ module GraceCommand =
                         let finishTime = getCurrentInstant ()
                         let elapsed = (finishTime - startTime).Plus(Duration.FromMilliseconds(110.0)) // Adding 110ms for .NET Runtime startup time.
 
-                        AnsiConsole.Write(
-                            (new Rule($"[{Colors.Important}]Elapsed: {elapsed.TotalSeconds:F3}s. Exit code: {returnValue}.[/]"))
-                                .RightJustified()
-                        )
+                        AnsiConsole.Write((new Rule($"[{Colors.Important}]Elapsed: {elapsed.TotalSeconds:F3}s. Exit code: {returnValue}.[/]")).RightJustified())
 
                     return returnValue
                 with ex ->

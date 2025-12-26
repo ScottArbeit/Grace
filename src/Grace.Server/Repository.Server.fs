@@ -418,10 +418,13 @@ module Repository =
             task {
                 let validations (parameters: SetConflictResolutionPolicyParameters) =
                     [| Repository.repositoryIsNotDeleted context parameters.CorrelationId RepositoryIsDeleted
-                       DiscriminatedUnion.isMemberOf<ConflictResolutionPolicy, RepositoryError> parameters.ConflictResolutionPolicy InvalidConflictResolutionPolicy |]
+                       DiscriminatedUnion.isMemberOf<ConflictResolutionPolicy, RepositoryError>
+                           parameters.ConflictResolutionPolicy
+                           InvalidConflictResolutionPolicy |]
 
                 let command (parameters: SetConflictResolutionPolicyParameters) =
-                    SetConflictResolutionPolicy(discriminatedUnionFromString<ConflictResolutionPolicy>(parameters.ConflictResolutionPolicy).Value) |> returnValueTask
+                    SetConflictResolutionPolicy(discriminatedUnionFromString<ConflictResolutionPolicy>(parameters.ConflictResolutionPolicy).Value)
+                    |> returnValueTask
 
                 context.Items.Add("Command", nameof SetConflictResolutionPolicy)
                 return! processCommand context validations command
@@ -775,10 +778,7 @@ module Repository =
                             let repositoryId = Guid.Parse(graceIds.RepositoryIdString)
                             let branchIdsFromContext = (context.Items["BranchIds"] :?> string)
 
-                            let branchIds =
-                                branchIdsFromContext
-                                    .Split(',', StringSplitOptions.TrimEntries)
-                                    .Select(fun branchId -> Guid.Parse(branchId))
+                            let branchIds = branchIdsFromContext.Split(',', StringSplitOptions.TrimEntries).Select(fun branchId -> Guid.Parse(branchId))
 
                             let includeDeleted = context.Items["IncludeDeleted"] :?> bool
                             return! getBranchesByBranchId repositoryId branchIds maxCount includeDeleted

@@ -218,15 +218,7 @@ module Reminder =
 
                                     if parseResult.Success then Some parseResult.Value else None
 
-                            return!
-                                getReminders
-                                    graceIds
-                                    parameters.MaxCount
-                                    reminderTypeFilter
-                                    actorNameFilter
-                                    dueAfter
-                                    dueBefore
-                                    correlationId
+                            return! getReminders graceIds parameters.MaxCount reminderTypeFilter actorNameFilter dueAfter dueBefore correlationId
                         }
 
                     let! parameters = context |> parse<ListRemindersParameters>
@@ -273,8 +265,7 @@ module Reminder =
                 let graceIds = getGraceIds context
 
                 try
-                    let validations (parameters: GetReminderParameters) =
-                        [| String.isNotEmpty parameters.ReminderId ReminderIdIsRequired |]
+                    let validations (parameters: GetReminderParameters) = [| String.isNotEmpty parameters.ReminderId ReminderIdIsRequired |]
 
                     let query (context: HttpContext) (parameters: GetReminderParameters) =
                         task {
@@ -330,8 +321,7 @@ module Reminder =
                 let graceIds = getGraceIds context
 
                 try
-                    let validations (parameters: DeleteReminderParameters) =
-                        [| String.isNotEmpty parameters.ReminderId ReminderIdIsRequired |]
+                    let validations (parameters: DeleteReminderParameters) = [| String.isNotEmpty parameters.ReminderId ReminderIdIsRequired |]
 
                     let command (context: HttpContext) (parameters: DeleteReminderParameters) =
                         task {
@@ -408,10 +398,7 @@ module Reminder =
                                     // Delete the old reminder and create a new one with updated time
                                     let! _ = deleteReminder reminderId correlationId
 
-                                    let newReminder =
-                                        { existingReminder with
-                                            ReminderTime = newFireTime
-                                            CorrelationId = correlationId }
+                                    let newReminder = { existingReminder with ReminderTime = newFireTime; CorrelationId = correlationId }
 
                                     do! createReminder newReminder
                                     return Ok "Reminder time updated successfully."
@@ -460,7 +447,11 @@ module Reminder =
             None
         else
             try
-                let normalized = if durationString.StartsWith("+") then durationString.Substring(1) else durationString
+                let normalized =
+                    if durationString.StartsWith("+") then
+                        durationString.Substring(1)
+                    else
+                        durationString
 
                 let lastChar = normalized[normalized.Length - 1]
                 let numericPart = normalized.Substring(0, normalized.Length - 1)
@@ -505,10 +496,7 @@ module Reminder =
                                     // Delete the old reminder and create a new one with updated time
                                     let! _ = deleteReminder reminderId correlationId
 
-                                    let newReminder =
-                                        { existingReminder with
-                                            ReminderTime = newFireTime
-                                            CorrelationId = correlationId }
+                                    let newReminder = { existingReminder with ReminderTime = newFireTime; CorrelationId = correlationId }
 
                                     do! createReminder newReminder
 

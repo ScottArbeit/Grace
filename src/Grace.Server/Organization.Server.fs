@@ -257,10 +257,7 @@ module Organization =
                        Organization.organizationIsNotDeleted context parameters.CorrelationId OrganizationError.OrganizationIsDeleted |]
 
                 let command (parameters: SetOrganizationTypeParameters) =
-                    SetType(
-                        discriminatedUnionFromString<OrganizationType>(parameters.OrganizationType)
-                            .Value
-                    )
+                    SetType(discriminatedUnionFromString<OrganizationType>(parameters.OrganizationType).Value)
                     |> returnValueTask
 
                 context.Items.Add("Command", nameof SetType)
@@ -277,10 +274,7 @@ module Organization =
                        Organization.organizationIsNotDeleted context parameters.CorrelationId OrganizationError.OrganizationIsDeleted |]
 
                 let command (parameters: SetOrganizationSearchVisibilityParameters) =
-                    SetSearchVisibility(
-                        discriminatedUnionFromString<SearchVisibility>(parameters.SearchVisibility)
-                            .Value
-                    )
+                    SetSearchVisibility(discriminatedUnionFromString<SearchVisibility>(parameters.SearchVisibility).Value)
                     |> returnValueTask
 
                 context.Items.Add("Command", nameof SetSearchVisibility)

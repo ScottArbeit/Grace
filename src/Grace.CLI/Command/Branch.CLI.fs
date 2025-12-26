@@ -2271,7 +2271,8 @@ module Branch =
                             currentBranch: BranchDto,
                             differences: List<FileSystemDifference>,
                             newDirectoryVersions: List<LocalDirectoryVersion>
-                        ) =
+                        )
+                        =
                         task {
                             t |> startProgressTask showOutput
 
@@ -2338,7 +2339,8 @@ module Branch =
                             parameters: SwitchParameters,
                             currentBranch: BranchDto,
                             newDirectoryVersions: List<LocalDirectoryVersion>
-                        ) =
+                        )
+                        =
                         task {
                             t |> startProgressTask showOutput
 
@@ -2579,7 +2581,8 @@ module Branch =
                             currentBranch: BranchDto,
                             newBranch: BranchDto,
                             directoryIds: IEnumerable<DirectoryVersionId>
-                        ) =
+                        )
+                        =
                         task {
                             t |> startProgressTask showOutput
 

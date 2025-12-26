@@ -24,6 +24,7 @@ open Orleans.Runtime
 open System
 open System.Collections.Generic
 open System.Diagnostics
+open System.Globalization
 open System.Linq
 open System.Runtime.Serialization
 open System.Text
@@ -544,10 +545,27 @@ module Branch =
                                                     )
 
                                             // Now proceed with the deletion regardless of reassignment
-                                            let repositoryActorProxy =
-                                                Repository.CreateActorProxy branchDto.OrganizationId branchDto.RepositoryId metadata.CorrelationId
+                                            let tryGetLogicalDeleteDaysFromMetadata () =
+                                                match metadata.Properties.TryGetValue("RepositoryLogicalDeleteDays") with
+                                                | true, value ->
+                                                    let mutable parsed = 0.0f
+                                                    if Single.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, &parsed) then
+                                                        Some parsed
+                                                    else
+                                                        None
+                                                | _ -> None
 
-                                            let! repositoryDto = repositoryActorProxy.Get(metadata.CorrelationId)
+                                            let! logicalDeleteDays =
+                                                match tryGetLogicalDeleteDaysFromMetadata () with
+                                                | Some days -> Task.FromResult days
+                                                | None ->
+                                                    task {
+                                                        let repositoryActorProxy =
+                                                            Repository.CreateActorProxy branchDto.OrganizationId branchDto.RepositoryId metadata.CorrelationId
+
+                                                        let! repositoryDto = repositoryActorProxy.Get(metadata.CorrelationId)
+                                                        return repositoryDto.LogicalDeleteDays
+                                                    }
 
                                             // Delete the references for this branch.
                                             let! references = getReferences branchDto.RepositoryId branchDto.BranchId Int32.MaxValue metadata.CorrelationId
@@ -567,6 +585,8 @@ module Branch =
 
                                                                 let metadata = EventMetadata.New metadata.CorrelationId GraceSystemUser
                                                                 metadata.Properties[nameof (RepositoryId)] <- $"{branchDto.RepositoryId}"
+                                                                metadata.Properties["RepositoryLogicalDeleteDays"] <-
+                                                                    logicalDeleteDays.ToString("F", CultureInfo.InvariantCulture)
 
                                                                 match!
                                                                     referenceActorProxy.Handle
@@ -601,7 +621,7 @@ module Branch =
                                             do!
                                                 (this :> IGraceReminderWithGuidKey).ScheduleReminderAsync
                                                     ReminderTypes.PhysicalDeletion
-                                                    (Duration.FromDays(float repositoryDto.LogicalDeleteDays))
+                                                    (Duration.FromDays(float logicalDeleteDays))
                                                     (ReminderState.BranchPhysicalDeletion physicalDeletionReminderState)
                                                     metadata.CorrelationId
 

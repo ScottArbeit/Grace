@@ -128,13 +128,31 @@ module ApplicationContext =
     let cosmosClientOptions =
         CosmosClientOptions(ApplicationName = "Grace.Server", LimitToEndpoint = false, UseSystemTextJsonSerializerWithOptions = Constants.JsonSerializerOptions)
 
-#if DEBUG
-    // The CosmosDB emulator uses a self-signed certificate, and, by default, HttpClient will refuse
-    //   to connect over https: if the certificate can't be traced back to a root.
-    // These settings allow Grace Server to access the CosmosDB Emulator by bypassing TLS.
+    let isGraceTesting =
+        match Environment.GetEnvironmentVariable("GRACE_TESTING") with
+        | null -> false
+        | value ->
+            value.Equals("1", StringComparison.OrdinalIgnoreCase)
+            || value.Equals("true", StringComparison.OrdinalIgnoreCase)
 
-    if not useManagedIdentity then
-        // Force SNI = "localhost" while we connect to 127.0.0.1.
+    let isLocalDebugEnvironment =
+        match Environment.GetEnvironmentVariable EnvironmentVariables.DebugEnvironment with
+        | null -> false
+        | value -> value.Equals("Local", StringComparison.OrdinalIgnoreCase)
+
+    let isLocalEndpoint =
+        not (String.IsNullOrWhiteSpace cosmosDbConnectionString)
+        && (cosmosDbConnectionString.Contains("localhost", StringComparison.OrdinalIgnoreCase)
+            || cosmosDbConnectionString.Contains("127.0.0.1", StringComparison.OrdinalIgnoreCase))
+
+    let useLocalEmulatorSettings =
+        not useManagedIdentity
+        && (isGraceTesting || isLocalDebugEnvironment || isLocalEndpoint)
+
+    if useLocalEmulatorSettings then
+        // The CosmosDB emulator uses a self-signed certificate, and, by default, HttpClient will refuse
+        //   to connect over https: if the certificate can't be traced back to a root.
+        // These settings allow Grace Server to access the CosmosDB Emulator by bypassing TLS.
         let handler =
             new SocketsHttpHandler(
                 SslOptions =
@@ -150,9 +168,8 @@ module ApplicationContext =
         cosmosClientOptions.EnableContentResponseOnWrite <- true
 
         // When using the CosmosDB Emulator, these settings help with connectivity.
-        cosmosClientOptions.LimitToEndpoint <- false
+        cosmosClientOptions.LimitToEndpoint <- true
         cosmosClientOptions.ConnectionMode <- ConnectionMode.Gateway
-#endif
 
     let cosmosClient =
         if useManagedIdentity then

@@ -22,6 +22,7 @@ open Orleans
 open Orleans.Runtime
 open System
 open System.Collections.Generic
+open System.Globalization
 open System.Threading.Tasks
 
 module Reference =
@@ -284,10 +285,27 @@ module Reference =
                                 | AddLink link -> return LinkAdded link
                                 | RemoveLink link -> return LinkRemoved link
                                 | DeleteLogical(force, deleteReason) ->
-                                    let repositoryActorProxy =
-                                        Repository.CreateActorProxy referenceDto.OrganizationId referenceDto.RepositoryId this.correlationId
+                                    let tryGetLogicalDeleteDaysFromMetadata () =
+                                        match metadata.Properties.TryGetValue("RepositoryLogicalDeleteDays") with
+                                        | true, value ->
+                                            let mutable parsed = 0.0f
+                                            if Single.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, &parsed) then
+                                                Some parsed
+                                            else
+                                                None
+                                        | _ -> None
 
-                                    let! repositoryDto = repositoryActorProxy.Get this.correlationId
+                                    let! logicalDeleteDays =
+                                        match tryGetLogicalDeleteDaysFromMetadata () with
+                                        | Some days -> Task.FromResult days
+                                        | None ->
+                                            task {
+                                                let repositoryActorProxy =
+                                                    Repository.CreateActorProxy referenceDto.OrganizationId referenceDto.RepositoryId this.correlationId
+
+                                                let! repositoryDto = repositoryActorProxy.Get this.correlationId
+                                                return repositoryDto.LogicalDeleteDays
+                                            }
 
                                     let reminderState: PhysicalDeletionReminderState =
                                         { RepositoryId = referenceDto.RepositoryId
@@ -300,7 +318,7 @@ module Reference =
                                     do!
                                         (this :> IGraceReminderWithGuidKey).ScheduleReminderAsync
                                             ReminderTypes.PhysicalDeletion
-                                            (Duration.FromDays(float repositoryDto.LogicalDeleteDays))
+                                            (Duration.FromDays(float logicalDeleteDays))
                                             (ReminderState.ReferencePhysicalDeletion reminderState)
                                             metadata.CorrelationId
 

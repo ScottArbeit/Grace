@@ -598,7 +598,7 @@ module Application =
             |> ignore
 
             services.AddSingleton<CosmosClient>(fun serviceProvider ->
-                let cosmosConnectionString = configuration.GetValue<string>(Constants.EnvironmentVariables.AzureCosmosDBConnectionString) //?? throw new InvalidOperationException("Missing ConnectionStrings:cosmosdb");
+                let cosmosConnectionString = configuration.GetValue<string>(getConfigKey Constants.EnvironmentVariables.AzureCosmosDBConnectionString)
 
                 // Force SNI = "localhost" while we connect to 127.0.0.1.
                 let httpHandler =
