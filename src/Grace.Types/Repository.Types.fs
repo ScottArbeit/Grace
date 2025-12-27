@@ -4,6 +4,7 @@ open Grace.Shared
 open Grace.Shared.Constants
 open Grace.Shared.Utilities
 open Grace.Types.Types
+open Grace.Types.Access
 open NodaTime
 open Orleans
 open System
@@ -41,6 +42,10 @@ module Repository =
         | SetName of repositoryName: RepositoryName
         | SetDescription of description: string
         | SetConflictResolutionPolicy of conflictResolutionPolicy: ConflictResolutionPolicy
+        | GrantRoleAssignment of roleAssignment: RoleAssignment
+        | RevokeRoleAssignment of principal: Principal * roleId: string
+        | AddPathAce of pathAce: PathAce
+        | RemovePathAce of principal: Principal * path: string * permissions: PathPermission list
         | DeleteLogical of force: bool * DeleteReason: DeleteReason
         | DeletePhysical
         | Undelete
@@ -75,6 +80,10 @@ module Repository =
         | NameSet of repositoryName: RepositoryName
         | DescriptionSet of description: string
         | ConflictResolutionPolicySet of conflictResolutionPolicy: ConflictResolutionPolicy
+        | RoleAssignmentGranted of roleAssignment: RoleAssignment
+        | RoleAssignmentRevoked of principal: Principal * roleId: string
+        | PathAceAdded of pathAce: PathAce
+        | PathAceRemoved of principal: Principal * path: string * permissions: PathPermission list
         | LogicalDeleted of force: bool * DeleteReason: DeleteReason
         | PhysicalDeleted
         | Undeleted
@@ -180,6 +189,10 @@ module Repository =
                 | NameSet repositoryName -> { currentRepositoryDto with RepositoryName = repositoryName }
                 | DescriptionSet description -> { currentRepositoryDto with Description = description }
                 | ConflictResolutionPolicySet policy -> { currentRepositoryDto with ConflictResolutionPolicy = policy }
+                | RoleAssignmentGranted _ -> currentRepositoryDto
+                | RoleAssignmentRevoked _ -> currentRepositoryDto
+                | PathAceAdded _ -> currentRepositoryDto
+                | PathAceRemoved _ -> currentRepositoryDto
                 | LogicalDeleted _ -> { currentRepositoryDto with DeletedAt = Some(getCurrentInstant ()) }
                 | PhysicalDeleted -> currentRepositoryDto // Do nothing because it's about to be deleted anyway.
                 | Undeleted -> { currentRepositoryDto with DeletedAt = None; DeleteReason = String.Empty }

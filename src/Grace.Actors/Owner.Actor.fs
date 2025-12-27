@@ -17,6 +17,7 @@ open Grace.Types.Organization
 open Grace.Types.Owner
 open Grace.Types.Reminder
 open Grace.Types.Types
+open Grace.Types.Access
 open Microsoft.Extensions.Logging
 open NodaTime
 open Orleans
@@ -39,15 +40,37 @@ module Owner =
         let log = loggerFactory.CreateLogger("Owner.Actor")
 
         let mutable ownerDto = OwnerDto.Default
+        let mutable roleAssignments: List<RoleAssignment> = List<RoleAssignment>()
 
         member val private correlationId: CorrelationId = String.Empty with get, set
 
         override this.OnActivateAsync(ct) =
             let activateStartTime = getCurrentInstant ()
 
-            ownerDto <-
-                state.State
-                |> Seq.fold (fun ownerDto ownerEvent -> OwnerDto.UpdateDto ownerEvent ownerDto) OwnerDto.Default
+            ownerDto <- OwnerDto.Default
+            roleAssignments <- List<RoleAssignment>()
+
+            for ownerEvent in state.State do
+                ownerDto <- OwnerDto.UpdateDto ownerEvent ownerDto
+
+                match ownerEvent.Event with
+                | OwnerEventType.RoleAssignmentGranted roleAssignment ->
+                    if
+                        roleAssignments.Exists(fun assignment ->
+                            assignment.Principal = roleAssignment.Principal
+                            && assignment.RoleId.Equals(roleAssignment.RoleId, StringComparison.OrdinalIgnoreCase))
+                    then
+                        ()
+                    else
+                        roleAssignments.Add roleAssignment
+                | OwnerEventType.RoleAssignmentRevoked(principal, roleId) ->
+                    roleAssignments <-
+                        roleAssignments
+                        |> Seq.filter (fun assignment ->
+                            assignment.Principal <> principal
+                            || not <| assignment.RoleId.Equals(roleId, StringComparison.OrdinalIgnoreCase))
+                        |> List
+                | _ -> ()
 
             logActorActivation log this.IdentityString activateStartTime (getActorActivationMessage state.RecordExists)
 
@@ -76,6 +99,24 @@ module Owner =
 
                     // Update the Dto based on the current event.
                     ownerDto <- ownerDto |> OwnerDto.UpdateDto ownerEvent
+
+                    match ownerEvent.Event with
+                    | OwnerEventType.RoleAssignmentGranted roleAssignment ->
+                        if
+                            not
+                            <| roleAssignments.Exists(fun assignment ->
+                                assignment.Principal = roleAssignment.Principal
+                                && assignment.RoleId.Equals(roleAssignment.RoleId, StringComparison.OrdinalIgnoreCase))
+                        then
+                            roleAssignments.Add roleAssignment
+                    | OwnerEventType.RoleAssignmentRevoked(principal, roleId) ->
+                        roleAssignments <-
+                            roleAssignments
+                            |> Seq.filter (fun assignment ->
+                                assignment.Principal <> principal
+                                || not <| assignment.RoleId.Equals(roleId, StringComparison.OrdinalIgnoreCase))
+                            |> List
+                    | _ -> ()
 
                     // Publish the event to the rest of the world.
                     let graceEvent = Events.GraceEvent.OwnerEvent ownerEvent
@@ -250,6 +291,12 @@ module Owner =
                     return dict :> IReadOnlyDictionary<OrganizationId, OrganizationName>
                 }
 
+            member this.GetRoleAssignments correlationId =
+                task {
+                    this.correlationId <- correlationId
+                    return roleAssignments :> IReadOnlyList<RoleAssignment>
+                }
+
             member this.Handle command metadata =
                 let isValid command (metadata: EventMetadata) =
                     task {
@@ -289,6 +336,8 @@ module Owner =
                                     | OwnerCommand.SetType ownerType -> return Ok(OwnerEventType.TypeSet ownerType)
                                     | OwnerCommand.SetSearchVisibility searchVisibility -> return Ok(OwnerEventType.SearchVisibilitySet searchVisibility)
                                     | OwnerCommand.SetDescription description -> return Ok(OwnerEventType.DescriptionSet description)
+                                    | OwnerCommand.GrantRoleAssignment roleAssignment -> return Ok(OwnerEventType.RoleAssignmentGranted roleAssignment)
+                                    | OwnerCommand.RevokeRoleAssignment(principal, roleId) -> return Ok(OwnerEventType.RoleAssignmentRevoked(principal, roleId))
                                     | OwnerCommand.DeleteLogical(force, deleteReason) ->
                                         // Get the list of organizations that aren't already deleted.
                                         let! organizations = getOrganizations ownerDto.OwnerId Int32.MaxValue false

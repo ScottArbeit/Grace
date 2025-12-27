@@ -127,6 +127,7 @@ module GraceCommand =
         rootCommand.Subcommands.Add(Maintenance.Build)
         rootCommand.Subcommands.Add(PromotionGroupCommand.Build)
         rootCommand.Subcommands.Add(Admin.Build)
+        rootCommand.Subcommands.Add(Access.Build)
 
         let Alias = Command("alias", "Display aliases for Grace commands.")
         let ListAliases = Command("list", "Display aliases for Grace commands.")

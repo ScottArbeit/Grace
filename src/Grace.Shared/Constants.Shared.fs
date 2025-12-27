@@ -186,6 +186,14 @@ module Constants =
     [<Literal>]
     let ServerApiVersionHeaderKey = "X-Api-Version"
 
+    /// Authentication/authorization constants.
+    module Authentication =
+        [<Literal>]
+        let GraceUserIdClaim = "grace_user_id"
+
+        [<Literal>]
+        let DevUserIdHeader = "x-grace-user-id"
+
     /// Environment variables used by Grace.
     module EnvironmentVariables =
         /// The environment variable that contains the Application Insights connection string.

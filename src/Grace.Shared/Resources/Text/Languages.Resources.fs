@@ -90,6 +90,13 @@ module Text =
         | InvalidSha256Hash
         | InvalidSize
         | InvalidVisibilityValue
+        | InvalidAccessType
+        | InvalidOperation
+        | InvalidPath
+        | InvalidPermissions
+        | InvalidPrincipalType
+        | InvalidRoleId
+        | InvalidScopeType
         | PromotionIsDisabled
         | PromotionNotAvailableBecauseThereAreNoPromotableReferences
         | MessageIsRequired
@@ -146,6 +153,7 @@ module Text =
         | Sha256HashDoesNotExist
         | Sha256HashDoesNotMatch
         | Sha256HashIsRequired
+        | ScopeIsRequired
         | StringIsTooLong
         | TagIsDisabled
         | TestFailed
@@ -154,6 +162,8 @@ module Text =
         | UploadingFiles
         | ValueMustBePositive
         | WritingGraceStatusFile
+        | PrincipalIsRequired
+        | RoleIdIsRequired
 
     /// Computes text for how long ago an instant was.
     ///

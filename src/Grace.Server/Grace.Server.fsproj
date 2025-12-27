@@ -57,8 +57,11 @@
 		<Compile Include="ApplicationContext.Server.fs" />
 		<Compile Include="Services.Server.fs" />
 		<Compile Include="Validations.Server.fs" />
+		<Compile Include="Authorization.Server.fs" />
+		<Compile Include="Access.Server.fs" />
         <Compile Include="OrleansFilters.Server.fs" />
 		<Compile Include="Middleware\Fake.Middleware.fs" />
+		<Compile Include="Middleware\DevAuthHeader.Middleware.fs" />
 		<Compile Include="Middleware\HttpSecurityHeaders.Middleware.fs" />
 		<Compile Include="Middleware\CorrelationId.Middleware.fs" />
 		<Compile Include="Middleware\ValidateIds.Middleware.fs" />

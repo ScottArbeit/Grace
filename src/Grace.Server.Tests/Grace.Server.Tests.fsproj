@@ -13,14 +13,15 @@
     <OtherFlags>--test:GraphBasedChecking --test:ParallelOptimization --test:ParallelIlxGen</OtherFlags>
   </PropertyGroup>
 
-  <ItemGroup>
-    <Compile Include="AspireTestHost.fs" />
-    <Compile Include="General.Server.Tests.fs" />
-    <Compile Include="Validations.Server.Tests.fs" />
-    <Compile Include="Owner.Server.Tests.fs" />
-    <Compile Include="Repository.Server.Tests.fs" />
-    <Compile Include="Program.fs" />
-  </ItemGroup>
+	<ItemGroup>
+		<Compile Include="AspireTestHost.fs" />
+		<Compile Include="Authorization.Shared.Tests.fs" />
+		<Compile Include="General.Server.Tests.fs" />
+		<Compile Include="Validations.Server.Tests.fs" />
+		<Compile Include="Owner.Server.Tests.fs" />
+		<Compile Include="Repository.Server.Tests.fs" />
+		<Compile Include="Program.fs" />
+	</ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Ben.Demystifier" Version="0.4.1" />

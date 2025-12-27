@@ -12,6 +12,7 @@ Refer to `../AGENTS.md` for shared expectations before working here.
 - When altering schemas, add versioned records/DU cases (for example `FooV2`) and supply migration adapters or compatibility shims.
 - Synchronize breaking or behavioral changes with consumers in `Grace.Shared`, `Grace.Server`, and `Grace.SDK` before merging PRs.
 - Capture schema background and migration rationale inline (XML docs or comments) so future agents understand expectations without scanning history.
+- Authorization/identity domain types live in `Access.Types.fs` (`Principal`, `Operation`, `RoleAssignment`, `PathAce`, `UserState`, etc.) and are used by actors, server endpoints, SDK, and CLI.
 
 ## Project Rules
 1. Avoid direct breaking changes; introduce new versions and migrate callers gradually.

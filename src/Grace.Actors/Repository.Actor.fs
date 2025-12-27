@@ -20,6 +20,7 @@ open Grace.Types.Reminder
 open Grace.Types.Repository
 open Grace.Types.Events
 open Grace.Types.Types
+open Grace.Types.Access
 open Grace.Shared.Utilities
 open Grace.Shared.Validation.Errors
 open Microsoft.Extensions.Logging
@@ -47,6 +48,8 @@ module Repository =
         let log = loggerFactory.CreateLogger("Repository.Actor")
 
         let mutable repositoryDto = RepositoryDto.Default
+        let mutable roleAssignments: List<RoleAssignment> = List<RoleAssignment>()
+        let mutable pathAcls: List<PathAce> = List<PathAce>()
         member val private correlationId: CorrelationId = String.Empty with get, set
 
         override this.OnActivateAsync(ct) =
@@ -54,9 +57,53 @@ module Repository =
 
             logActorActivation log this.IdentityString activateStartTime (getActorActivationMessage state.RecordExists)
 
-            repositoryDto <-
-                state.State
-                |> Seq.fold (fun repositoryDto repositoryEvent -> repositoryDto |> RepositoryDto.UpdateDto repositoryEvent) RepositoryDto.Default
+            repositoryDto <- RepositoryDto.Default
+            roleAssignments <- List<RoleAssignment>()
+            pathAcls <- List<PathAce>()
+
+            for repositoryEvent in state.State do
+                repositoryDto <- repositoryDto |> RepositoryDto.UpdateDto repositoryEvent
+
+                match repositoryEvent.Event with
+                | RepositoryEventType.RoleAssignmentGranted roleAssignment ->
+                    if
+                        roleAssignments.Exists(fun assignment ->
+                            assignment.Principal = roleAssignment.Principal
+                            && assignment.RoleId.Equals(roleAssignment.RoleId, StringComparison.OrdinalIgnoreCase))
+                    then
+                        ()
+                    else
+                        roleAssignments.Add roleAssignment
+                | RepositoryEventType.RoleAssignmentRevoked(principal, roleId) ->
+                    roleAssignments <-
+                        roleAssignments
+                        |> Seq.filter (fun assignment ->
+                            assignment.Principal <> principal
+                            || not <| assignment.RoleId.Equals(roleId, StringComparison.OrdinalIgnoreCase))
+                        |> List
+                | RepositoryEventType.PathAceAdded pathAce ->
+                    if
+                        pathAcls.Exists(fun ace ->
+                            ace.Principal = pathAce.Principal
+                            && ace.Path.Equals(pathAce.Path, StringComparison.OrdinalIgnoreCase)
+                            && ace.Permissions = pathAce.Permissions
+                            && ace.Access = pathAce.Access)
+                    then
+                        ()
+                    else
+                        pathAcls.Add pathAce
+                | RepositoryEventType.PathAceRemoved(principal, path, permissions) ->
+                    let permissionsSet = permissions |> Set.ofList
+
+                    pathAcls <-
+                        pathAcls
+                        |> Seq.filter (fun ace ->
+                            ace.Principal <> principal
+                            || not <| ace.Path.Equals(path, StringComparison.OrdinalIgnoreCase)
+                            || (not <| Set.isEmpty permissionsSet
+                                && not <| (ace.Permissions |> Set.ofList |> Set.isSubset permissionsSet)))
+                        |> List
+                | _ -> ()
 
             Task.CompletedTask
 
@@ -69,6 +116,45 @@ module Repository =
 
                     // Update the repositoryDto with the new event.
                     repositoryDto <- repositoryDto |> RepositoryDto.UpdateDto repositoryEvent
+
+                    match repositoryEvent.Event with
+                    | RepositoryEventType.RoleAssignmentGranted roleAssignment ->
+                        if
+                            not
+                            <| roleAssignments.Exists(fun assignment ->
+                                assignment.Principal = roleAssignment.Principal
+                                && assignment.RoleId.Equals(roleAssignment.RoleId, StringComparison.OrdinalIgnoreCase))
+                        then
+                            roleAssignments.Add roleAssignment
+                    | RepositoryEventType.RoleAssignmentRevoked(principal, roleId) ->
+                        roleAssignments <-
+                            roleAssignments
+                            |> Seq.filter (fun assignment ->
+                                assignment.Principal <> principal
+                                || not <| assignment.RoleId.Equals(roleId, StringComparison.OrdinalIgnoreCase))
+                            |> List
+                    | RepositoryEventType.PathAceAdded pathAce ->
+                        if
+                            not
+                            <| pathAcls.Exists(fun ace ->
+                                ace.Principal = pathAce.Principal
+                                && ace.Path.Equals(pathAce.Path, StringComparison.OrdinalIgnoreCase)
+                                && ace.Permissions = pathAce.Permissions
+                                && ace.Access = pathAce.Access)
+                        then
+                            pathAcls.Add pathAce
+                    | RepositoryEventType.PathAceRemoved(principal, path, permissions) ->
+                        let permissionsSet = permissions |> Set.ofList
+
+                        pathAcls <-
+                            pathAcls
+                            |> Seq.filter (fun ace ->
+                                ace.Principal <> principal
+                                || not <| ace.Path.Equals(path, StringComparison.OrdinalIgnoreCase)
+                                || (not <| Set.isEmpty permissionsSet
+                                    && not <| (ace.Permissions |> Set.ofList |> Set.isSubset permissionsSet)))
+                            |> List
+                    | _ -> ()
 
                     /// Concatenates repository errors into a single GraceError instance.
                     let processGraceError (repositoryError: RepositoryError) repositoryEvent previousGraceError =
@@ -416,6 +502,14 @@ module Repository =
                 this.correlationId <- correlationId
                 repositoryDto.ObjectStorageProvider |> returnTask
 
+            member this.GetRoleAssignments correlationId =
+                this.correlationId <- correlationId
+                roleAssignments :> IReadOnlyList<RoleAssignment> |> returnTask
+
+            member this.GetPathAcls correlationId =
+                this.correlationId <- correlationId
+                pathAcls :> IReadOnlyList<PathAce> |> returnTask
+
             member this.Exists correlationId =
                 this.correlationId <- correlationId
                 repositoryDto.UpdatedAt.IsSome |> returnTask
@@ -472,6 +566,10 @@ module Repository =
                                     | SetName repositoryName -> return NameSet repositoryName
                                     | SetDescription description -> return DescriptionSet description
                                     | SetConflictResolutionPolicy policy -> return ConflictResolutionPolicySet policy
+                                    | GrantRoleAssignment roleAssignment -> return RoleAssignmentGranted roleAssignment
+                                    | RevokeRoleAssignment(principal, roleId) -> return RoleAssignmentRevoked(principal, roleId)
+                                    | AddPathAce pathAce -> return PathAceAdded pathAce
+                                    | RemovePathAce(principal, path, permissions) -> return PathAceRemoved(principal, path, permissions)
                                     | DeleteLogical(force, deleteReason) ->
                                         // Get the list of branches that aren't already deleted.
                                         let! branches =

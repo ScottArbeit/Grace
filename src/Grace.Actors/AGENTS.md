@@ -11,6 +11,7 @@ Start with `../AGENTS.md` for global rules before working on Orleans code.
 - Drive state changes through explicit events or commands; keep transitions deterministic and idempotent.
 - Use domain types from `Grace.Types` directly to avoid duplication and guarantee serialization compatibility.
 - Separate orchestration (grains) from external service or SDK calls by delegating to helper modules/services.
+- Role assignments and path ACLs are stored on Owner/Organization/Repository grains; user identities are handled by `UserActor` and `ExternalIdentityIndexActor`.
 
 ## Project Rules
 1. When adding new grain types or serializer changes, ensure `Grace.Orleans.CodeGen` stays in sync and regenerates as needed.

@@ -27,6 +27,7 @@
 		<Compile Include="Diff.SDK.fs" />
 		<Compile Include="PromotionGroup.SDK.fs" />
 		<Compile Include="Admin.SDK.fs" />
+		<Compile Include="Access.SDK.fs" />
 	</ItemGroup>
 
 	<ItemGroup>

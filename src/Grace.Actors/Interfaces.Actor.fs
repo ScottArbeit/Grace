@@ -12,6 +12,8 @@ open Grace.Types.Repository
 open Grace.Types.Organization
 open Grace.Types.Owner
 open Grace.Types.Types
+open Grace.Types.Access
+open Grace.Types.Identity
 open Grace.Shared.Utilities
 open NodaTime
 open Orleans
@@ -250,6 +252,9 @@ module Interfaces =
         /// Returns a list of the repositories under this organization.
         abstract member ListRepositories: correlationId: CorrelationId -> Task<IReadOnlyDictionary<RepositoryId, RepositoryName>>
 
+        /// Returns direct role assignments stored at this organization scope.
+        abstract member GetRoleAssignments: correlationId: CorrelationId -> Task<IReadOnlyList<RoleAssignment>>
+
         /// Validates incoming commands and converts them to events that are stored in the database.
         abstract member Handle: command: OrganizationCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
 
@@ -283,6 +288,9 @@ module Interfaces =
 
         /// Returns a list of the organizations under this owner.
         abstract member ListOrganizations: correlationId: CorrelationId -> Task<IReadOnlyDictionary<OrganizationId, OrganizationName>>
+
+        /// Returns direct role assignments stored at this owner scope.
+        abstract member GetRoleAssignments: correlationId: CorrelationId -> Task<IReadOnlyList<RoleAssignment>>
 
         /// Validates incoming commands and converts them to events that are stored in the database.
         abstract member Handle: command: OwnerCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
@@ -379,6 +387,12 @@ module Interfaces =
         /// Returns the object storage provider for this repository.
         abstract member GetObjectStorageProvider: correlationId: CorrelationId -> Task<ObjectStorageProvider>
 
+        /// Returns direct role assignments stored at this repository scope.
+        abstract member GetRoleAssignments: correlationId: CorrelationId -> Task<IReadOnlyList<RoleAssignment>>
+
+        /// Returns path ACL entries stored at this repository scope.
+        abstract member GetPathAcls: correlationId: CorrelationId -> Task<IReadOnlyList<PathAce>>
+
         /// Processes commands by checking that they're valid, and then converting them into events.
         abstract member Handle: command: RepositoryCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
 
@@ -403,3 +417,29 @@ module Interfaces =
 
         /// Returns the RepositoryId for the given RepositoryName.
         abstract member GetRepositoryId: correlationId: CorrelationId -> Task<RepositoryId option>
+
+    [<Interface>]
+    type IUserActor =
+        inherit IGrainWithStringKey
+
+        /// Returns the current user state.
+        abstract member Get: correlationId: CorrelationId -> Task<UserState>
+
+        /// Creates or updates a user from an external identity.
+        abstract member UpsertExternalIdentity: externalIdentity: ExternalIdentity -> correlationId: CorrelationId -> Task<UserState>
+
+        /// Disables the user.
+        abstract member Disable: correlationId: CorrelationId -> Task
+
+        /// Enables the user.
+        abstract member Enable: correlationId: CorrelationId -> Task
+
+    [<Interface>]
+    type IExternalIdentityIndexActor =
+        inherit IGrainWithStringKey
+
+        /// Gets the user id for a provider/subject/tenantId triple.
+        abstract member TryGetUserId: correlationId: CorrelationId -> Task<UserId option>
+
+        /// Sets the user id for a provider/subject/tenantId triple if not already mapped.
+        abstract member TrySetUserId: userId: UserId -> correlationId: CorrelationId -> Task<bool>

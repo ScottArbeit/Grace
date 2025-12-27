@@ -15,6 +15,7 @@ open Grace.Types.Reminder
 open Grace.Types.Repository
 open Grace.Types.Organization
 open Grace.Types.Types
+open Grace.Types.Access
 open Grace.Shared.Validation.Errors
 open Microsoft.Extensions.Logging
 open NodaTime
@@ -38,6 +39,7 @@ module Organization =
         let log = loggerFactory.CreateLogger("Organization.Actor")
 
         let mutable organizationDto = OrganizationDto.Default
+        let mutable roleAssignments: List<RoleAssignment> = List<RoleAssignment>()
 
         member val private correlationId: CorrelationId = String.Empty with get, set
 
@@ -46,9 +48,30 @@ module Organization =
 
             logActorActivation log this.IdentityString activateStartTime (getActorActivationMessage state.RecordExists)
 
-            organizationDto <-
-                state.State
-                |> Seq.fold (fun organizationDto event -> OrganizationDto.UpdateDto event organizationDto) organizationDto
+            organizationDto <- OrganizationDto.Default
+            roleAssignments <- List<RoleAssignment>()
+
+            for organizationEvent in state.State do
+                organizationDto <- OrganizationDto.UpdateDto organizationEvent organizationDto
+
+                match organizationEvent.Event with
+                | OrganizationEventType.RoleAssignmentGranted roleAssignment ->
+                    if
+                        roleAssignments.Exists(fun assignment ->
+                            assignment.Principal = roleAssignment.Principal
+                            && assignment.RoleId.Equals(roleAssignment.RoleId, StringComparison.OrdinalIgnoreCase))
+                    then
+                        ()
+                    else
+                        roleAssignments.Add roleAssignment
+                | OrganizationEventType.RoleAssignmentRevoked(principal, roleId) ->
+                    roleAssignments <-
+                        roleAssignments
+                        |> Seq.filter (fun assignment ->
+                            assignment.Principal <> principal
+                            || not <| assignment.RoleId.Equals(roleId, StringComparison.OrdinalIgnoreCase))
+                        |> List
+                | _ -> ()
 
             Task.CompletedTask
 
@@ -61,6 +84,24 @@ module Organization =
 
                     // Update the Dto based on the current event.
                     organizationDto <- organizationDto |> OrganizationDto.UpdateDto organizationEvent
+
+                    match organizationEvent.Event with
+                    | OrganizationEventType.RoleAssignmentGranted roleAssignment ->
+                        if
+                            not
+                            <| roleAssignments.Exists(fun assignment ->
+                                assignment.Principal = roleAssignment.Principal
+                                && assignment.RoleId.Equals(roleAssignment.RoleId, StringComparison.OrdinalIgnoreCase))
+                        then
+                            roleAssignments.Add roleAssignment
+                    | OrganizationEventType.RoleAssignmentRevoked(principal, roleId) ->
+                        roleAssignments <-
+                            roleAssignments
+                            |> Seq.filter (fun assignment ->
+                                assignment.Principal <> principal
+                                || not <| assignment.RoleId.Equals(roleId, StringComparison.OrdinalIgnoreCase))
+                            |> List
+                    | _ -> ()
 
                     // Publish the event to the rest of the world.
                     let graceEvent = OrganizationEvent organizationEvent
@@ -220,6 +261,12 @@ module Organization =
 
                     return dict :> IReadOnlyDictionary<RepositoryId, RepositoryName>
                 }
+
+            member this.GetRoleAssignments correlationId =
+                task {
+                    this.correlationId <- correlationId
+                    return roleAssignments :> IReadOnlyList<RoleAssignment>
+                }
             //Task.FromResult(organizationDto.Repositories :> IReadOnlyDictionary<RepositoryId, RepositoryName>)
 
             member this.Handle (command: OrganizationCommand) metadata =
@@ -253,6 +300,10 @@ module Organization =
                                     | OrganizationCommand.SetSearchVisibility(searchVisibility) ->
                                         return Ok(OrganizationEventType.SearchVisibilitySet(searchVisibility))
                                     | OrganizationCommand.SetDescription(description) -> return Ok(OrganizationEventType.DescriptionSet(description))
+                                    | OrganizationCommand.GrantRoleAssignment roleAssignment ->
+                                        return Ok(OrganizationEventType.RoleAssignmentGranted roleAssignment)
+                                    | OrganizationCommand.RevokeRoleAssignment(principal, roleId) ->
+                                        return Ok(OrganizationEventType.RoleAssignmentRevoked(principal, roleId))
                                     | OrganizationCommand.DeleteLogical(force, deleteReason) ->
                                         // Get the list of branches that aren't already deleted.
                                         let! repositories = getRepositories organizationDto.OwnerId organizationDto.OrganizationId Int32.MaxValue false

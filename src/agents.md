@@ -142,6 +142,7 @@ For more details, see README.md and QUICKSTART.md.
 - Validate changes with `dotnet build --configuration Release` and `dotnet test --no-build`; run `fantomas .` after touching F# source.
 - Treat secrets with care, avoid logging PII, and preserve structured logging (including correlation IDs).
 - Favor existing helpers in `Grace.Shared` before adding new utilities; when new helpers are required, keep them composable and well documented.
+- Access control is centralized in `Grace.Shared.Authorization` and enforced via `Grace.Server.Authorization.requiresPermission`; admin APIs live under `/access/*`.
 
 ## F# Coding Guidelines
 
@@ -164,5 +165,4 @@ For more details, see README.md and QUICKSTART.md.
 - Summarise modifications clearly, cite file paths with 1-based line numbers, and call out follow-up actions or tests that remain.
 - Coordinate cross-project changes across `Grace.Types`, `Grace.Shared`, `Grace.Server`, `Grace.Actors`, and `Grace.SDK` to keep contracts aligned.
 - When adding new capabilities, ensure matching tests exist and note any coverage gaps or risks in the final hand-off.
-
 

@@ -3,6 +3,7 @@ namespace Grace.Types
 open Grace.Shared
 open Grace.Shared.Utilities
 open Grace.Types.Types
+open Grace.Types.Access
 open NodaTime
 open Orleans
 open System
@@ -22,6 +23,8 @@ module Organization =
         | SetType of organizationType: OrganizationType
         | SetSearchVisibility of searchVisibility: SearchVisibility
         | SetDescription of description: string
+        | GrantRoleAssignment of roleAssignment: RoleAssignment
+        | RevokeRoleAssignment of principal: Principal * roleId: string
         | DeleteLogical of force: bool * DeleteReason: DeleteReason
         | DeletePhysical
         | Undelete
@@ -36,6 +39,8 @@ module Organization =
         | TypeSet of organizationType: OrganizationType
         | SearchVisibilitySet of searchVisibility: SearchVisibility
         | DescriptionSet of organizationDescription: string
+        | RoleAssignmentGranted of roleAssignment: RoleAssignment
+        | RoleAssignmentRevoked of principal: Principal * roleId: string
         | LogicalDeleted of force: bool * DeleteReason: DeleteReason
         | PhysicalDeleted
         | Undeleted
@@ -91,6 +96,8 @@ module Organization =
                 | TypeSet(organizationType) -> { currentOrganizationDto with OrganizationType = organizationType }
                 | SearchVisibilitySet(searchVisibility) -> { currentOrganizationDto with SearchVisibility = searchVisibility }
                 | DescriptionSet(description) -> { currentOrganizationDto with Description = description }
+                | RoleAssignmentGranted _ -> currentOrganizationDto
+                | RoleAssignmentRevoked _ -> currentOrganizationDto
                 | LogicalDeleted(_, deleteReason) -> { currentOrganizationDto with DeleteReason = deleteReason; DeletedAt = Some(getCurrentInstant ()) }
                 | PhysicalDeleted -> currentOrganizationDto // Do nothing because it's about to be deleted anyway.
                 | Undeleted -> { currentOrganizationDto with DeletedAt = None; DeleteReason = String.Empty }

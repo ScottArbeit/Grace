@@ -237,6 +237,38 @@ module Errors =
             | Some error -> DirectoryVersionError.getErrorMessage error
             | None -> String.Empty
 
+    type AccessError =
+        | PrincipalIsRequired
+        | ScopeIsRequired
+        | InvalidPrincipalType
+        | InvalidScopeType
+        | InvalidOperation
+        | InvalidRoleId
+        | RoleIdIsRequired
+        | InvalidPath
+        | InvalidAccessType
+        | InvalidPermissions
+
+        interface IErrorDiscriminatedUnion
+
+        static member getErrorMessage(accessError: AccessError) : string =
+            match accessError with
+            | PrincipalIsRequired -> getLocalizedString StringResourceName.PrincipalIsRequired
+            | ScopeIsRequired -> getLocalizedString StringResourceName.ScopeIsRequired
+            | InvalidPrincipalType -> getLocalizedString StringResourceName.InvalidPrincipalType
+            | InvalidScopeType -> getLocalizedString StringResourceName.InvalidScopeType
+            | InvalidOperation -> getLocalizedString StringResourceName.InvalidOperation
+            | InvalidRoleId -> getLocalizedString StringResourceName.InvalidRoleId
+            | RoleIdIsRequired -> getLocalizedString StringResourceName.RoleIdIsRequired
+            | InvalidPath -> getLocalizedString StringResourceName.InvalidPath
+            | InvalidAccessType -> getLocalizedString StringResourceName.InvalidAccessType
+            | InvalidPermissions -> getLocalizedString StringResourceName.InvalidPermissions
+
+        static member getErrorMessage(accessError: AccessError option) : string =
+            match accessError with
+            | Some error -> AccessError.getErrorMessage error
+            | None -> String.Empty
+
     type OwnerError =
         | DeleteReasonIsRequired
         | DescriptionIsRequired

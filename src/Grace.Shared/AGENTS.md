@@ -11,6 +11,7 @@ Review `../AGENTS.md` for global policies before working in this project.
 - Use extension members sparingly and document side-effecting helpers with concise comments so intent stays clear.
 - Maintain `InternalsVisibleTo` patterns that allow targeted testing without leaking unnecessary APIs.
 - Coordinate semantic changes with dependents (`Grace.Server`, `Grace.SDK`, `Grace.CLI`, etc.) to avoid breaking downstream logic.
+- Authorization logic lives in `Grace.Shared.Authorization` (role catalog, scope resolution, path normalization, permission checks).
 
 ## Project Rules
 1. Prefer adding new helpers instead of altering the semantics of widely used ones—create adapters when behavior must diverge.

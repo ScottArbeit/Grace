@@ -79,6 +79,9 @@ module Constants =
         [<Literal>]
         let User = "UserActor"
 
+        [<Literal>]
+        let ExternalIdentityIndex = "ExternalIdentityIndexActor"
+
     module StateName =
         [<Literal>]
         let Branch = "Branch"
@@ -121,6 +124,9 @@ module Constants =
 
         [<Literal>]
         let User = "User"
+
+        [<Literal>]
+        let ExternalIdentityIndex = "ExternalIdentityIndex"
 
     /// Constants for the different types of reminders.
     module ReminderType =

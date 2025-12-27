@@ -7,10 +7,11 @@ Consult `../AGENTS.md` for global policies before modifying the SDK.
 - Provide thin wrappers around server endpoints and actor proxies while keeping DTOs aligned with shared domain types.
 
 ## Key Patterns
-- DTOs are records with descriptive field names that map directly to `Grace.Types` definitions—sync changes across both projects.
+- DTOs are records with descriptive field names that map directly to `Grace.Types` definitions-sync changes across both projects.
 - Wrap HTTP calls and actor interactions in lightweight modules; avoid embedding heavy business logic inside transport layers.
 - Favor additive API expansions or versioned members when evolution is required; deprecate before removing public surface area.
 - Document notable auth, retry, or transport assumptions here to spare agents from scanning implementation details.
+- Access-control SDK calls are in `Access.SDK.fs` and mirror `/access/*` endpoints (grant/revoke/list roles, path ACLs, permission checks).
 
 ## Project Rules
 1. Maintain public API stability; breaking changes require coordination with CLI and external clients plus versioned alternatives.

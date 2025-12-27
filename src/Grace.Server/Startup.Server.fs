@@ -110,6 +110,28 @@ module Application =
                             htmlString $"<h1>Grace server seems healthy!</h1><br/><p>The current server time is: {getCurrentInstantExtended ()}.</p>")) ]
               PUT []
               subRoute
+                  "/access"
+                  [ GET
+                        [ route "/roles" Grace.Server.Access.Role.ListRoles
+                          routef "/roles/%s" (fun roleId -> Grace.Server.Access.Role.GetRoleById roleId) ]
+                    POST
+                        [ route "/role/grant" Grace.Server.Access.Role.Grant
+                          |> addMetadata typeof<Grace.Shared.Parameters.Access.GrantRoleRequest>
+                          route "/role/revoke" Grace.Server.Access.Role.Revoke
+                          |> addMetadata typeof<Grace.Shared.Parameters.Access.RevokeRoleRequest>
+                          route "/role/list" Grace.Server.Access.Role.ListAssignments
+                          |> addMetadata typeof<Grace.Shared.Parameters.Access.ListRoleAssignmentsRequest>
+                          route "/role/list-effective" Grace.Server.Access.Role.ListAssignments
+                          |> addMetadata typeof<Grace.Shared.Parameters.Access.ListRoleAssignmentsRequest>
+                          route "/path/add" Grace.Server.Access.Path.Add
+                          |> addMetadata typeof<Grace.Shared.Parameters.Access.AddPathAceRequest>
+                          route "/path/remove" Grace.Server.Access.Path.Remove
+                          |> addMetadata typeof<Grace.Shared.Parameters.Access.RemovePathAceRequest>
+                          route "/path/list" Grace.Server.Access.Path.List
+                          |> addMetadata typeof<Grace.Shared.Parameters.Access.ListPathAclsRequest>
+                          route "/check" Grace.Server.Access.Permission.Check
+                          |> addMetadata typeof<Grace.Shared.Parameters.Access.CheckPermissionRequest> ] ]
+              subRoute
                   "/branch"
                   [ POST
                         [ route "/assign" Branch.Assign |> addMetadata typeof<Branch.AssignParameters>
@@ -224,7 +246,25 @@ module Application =
               subRoute
                   "/directory"
                   [ POST
-                        [ route "/create" DirectoryVersion.Create
+                        [ route
+                              "/create"
+                              (Grace.Server.Authorization.requiresPermission Grace.Types.Access.Operation.PathWrite (fun context ->
+                                  task {
+                                      context.Request.EnableBuffering()
+                                      let! body = Services.deserializeToType (typeof<Grace.Shared.Parameters.DirectoryVersion.CreateParameters>) context
+                                      context.Request.Body.Position <- 0L
+
+                                      let graceIds = Services.getGraceIds context
+
+                                      let path =
+                                          match body with
+                                          | Some(:? Grace.Shared.Parameters.DirectoryVersion.CreateParameters as parameters) ->
+                                              parameters.DirectoryVersion.RelativePath
+                                          | _ -> "/"
+
+                                      return Grace.Types.Access.Resource.Path(graceIds.OwnerId, graceIds.OrganizationId, graceIds.RepositoryId, path)
+                                  })
+                               |> fun handler next context -> handler (DirectoryVersion.Create next) context)
                           |> addMetadata typeof<DirectoryVersion.CreateParameters>
 
                           route "/get" DirectoryVersion.Get
@@ -386,7 +426,14 @@ module Application =
                           route "/setConflictResolutionPolicy" Repository.SetConflictResolutionPolicy
                           |> addMetadata typeof<Repository.SetConflictResolutionPolicyParameters>
 
-                          route "/setDescription" Repository.SetDescription
+                          route
+                              "/setDescription"
+                              (Grace.Server.Authorization.requiresPermission Grace.Types.Access.Operation.RepoWrite (fun context ->
+                                  task {
+                                      let graceIds = Services.getGraceIds context
+                                      return Grace.Types.Access.Resource.Repo(graceIds.OwnerId, graceIds.OrganizationId, graceIds.RepositoryId)
+                                  })
+                               |> fun handler next context -> handler (Repository.SetDescription next) context)
                           |> addMetadata typeof<Repository.SetRepositoryDescriptionParameters>
 
                           route "/setLogicalDeleteDays" Repository.SetLogicalDeleteDays
@@ -469,20 +516,18 @@ module Application =
             let user = context.User
 
             if user.Identity.IsAuthenticated then
-                let claimsList = stringBuilderPool.Get()
+                let graceUserIdClaim = user.FindFirst(Constants.Authentication.GraceUserIdClaim)
 
-                try
-                    if not <| isNull user.Claims then
-                        for claim in user.Claims do
-                            claimsList.Append($"{claim.Type}:{claim.Value};") |> ignore
+                let endUserId =
+                    if
+                        not <| isNull graceUserIdClaim
+                        && not <| String.IsNullOrWhiteSpace graceUserIdClaim.Value
+                    then
+                        graceUserIdClaim.Value
+                    else
+                        user.Identity.Name
 
-                    if claimsList.Length > 1 then
-                        claimsList.Remove(claimsList.Length - 1, 1) |> ignore
-
-                    activity.AddTag("enduser.id", user.Identity.Name).AddTag("enduser.claims", claimsList.ToString())
-                    |> ignore
-                finally
-                    stringBuilderPool.Return(claimsList)
+                activity.AddTag("enduser.id", endUserId) |> ignore
 
             activity
                 .AddTag("working_set", currentWorkingSet)
@@ -574,6 +619,9 @@ module Application =
             |> ignore
 
             services.AddAuthentication() |> ignore
+
+            services.AddSingleton<Authorization.IGracePermissionEvaluator, Authorization.GracePermissionEvaluator>()
+            |> ignore
 
             services.AddW3CLogging(fun options ->
                 options.FileName <- "Grace.Server.log-"
@@ -695,6 +743,12 @@ module Application =
                 .UseW3CLogging()
                 .UseMiddleware<CorrelationIdMiddleware>()
                 .UseMiddleware<LogRequestHeadersMiddleware>()
+            |> ignore
+
+            if env.IsDevelopment() || env.IsEnvironment("Test") then
+                app.UseMiddleware<DevAuthHeaderMiddleware>() |> ignore
+
+            app
                 .UseStaticFiles()
                 .UseRouting()
                 .UseAuthentication()

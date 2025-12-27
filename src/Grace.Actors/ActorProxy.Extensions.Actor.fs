@@ -213,6 +213,30 @@ module ActorProxy =
             memoryCache.CreateOrleansContextEntry(grain.GetGrainId(), orleansContext)
             grain
 
+    module User =
+        /// Creates an ActorProxy for a User actor, and adds the correlationId to the server's MemoryCache so
+        ///   it's available in the OnActivateAsync() method.
+        let CreateActorProxy (userId: UserId) (correlationId: string) =
+            let grain = orleansClient.CreateActorProxyWithCorrelationId<IUserActor>(userId, correlationId)
+            let orleansContext = Dictionary<string, obj>()
+            orleansContext.Add(Constants.ActorNameProperty, ActorName.User)
+            memoryCache.CreateOrleansContextEntry(grain.GetGrainId(), orleansContext)
+            grain
+
+    module ExternalIdentityIndex =
+        /// Gets a primary key for the external identity index actor.
+        let GetPrimaryKey (provider: string) (subject: string) (tenantId: string option) =
+            let tenant = tenantId |> Option.defaultValue String.Empty
+            $"{provider}|{subject}|{tenant}"
+
+        /// Creates an ActorProxy for an ExternalIdentityIndex actor.
+        let CreateActorProxy (provider: string) (subject: string) (tenantId: string option) (correlationId: string) =
+            let grain = orleansClient.CreateActorProxyWithCorrelationId<IExternalIdentityIndexActor>(GetPrimaryKey provider subject tenantId, correlationId)
+            let orleansContext = Dictionary<string, obj>()
+            orleansContext.Add(Constants.ActorNameProperty, ActorName.ExternalIdentityIndex)
+            memoryCache.CreateOrleansContextEntry(grain.GetGrainId(), orleansContext)
+            grain
+
     module PromotionGroup =
         open Grace.Types.PromotionGroup
 

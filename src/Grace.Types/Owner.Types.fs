@@ -3,6 +3,7 @@ namespace Grace.Types
 open Grace.Shared
 open Grace.Shared.Utilities
 open Grace.Types.Types
+open Grace.Types.Access
 open NodaTime
 open Orleans
 open System
@@ -22,6 +23,8 @@ module Owner =
         | SetType of ownerType: OwnerType
         | SetSearchVisibility of searchVisibility: SearchVisibility
         | SetDescription of description: string
+        | GrantRoleAssignment of roleAssignment: RoleAssignment
+        | RevokeRoleAssignment of principal: Principal * roleId: string
         | DeleteLogical of force: bool * DeleteReason: DeleteReason
         | DeletePhysical
         | Undelete
@@ -36,6 +39,8 @@ module Owner =
         | TypeSet of ownerType: OwnerType
         | SearchVisibilitySet of searchVisibility: SearchVisibility
         | DescriptionSet of description: string
+        | RoleAssignmentGranted of roleAssignment: RoleAssignment
+        | RoleAssignmentRevoked of principal: Principal * roleId: string
         | LogicalDeleted of force: bool * DeleteReason: DeleteReason
         | PhysicalDeleted
         | Undeleted
@@ -86,6 +91,8 @@ module Owner =
                 | TypeSet(ownerType) -> { currentOwnerDto with OwnerType = ownerType }
                 | SearchVisibilitySet(searchVisibility) -> { currentOwnerDto with SearchVisibility = searchVisibility }
                 | DescriptionSet(description) -> { currentOwnerDto with Description = description }
+                | RoleAssignmentGranted _ -> currentOwnerDto
+                | RoleAssignmentRevoked _ -> currentOwnerDto
                 | LogicalDeleted(_, deleteReason) -> { currentOwnerDto with DeletedAt = Some(getCurrentInstant ()); DeleteReason = deleteReason }
                 | PhysicalDeleted -> currentOwnerDto // Do nothing because it's about to be deleted anyway.
                 | Undeleted -> { currentOwnerDto with DeletedAt = None; DeleteReason = String.Empty }

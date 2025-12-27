@@ -41,6 +41,7 @@
 		<Compile Include="Command\Admin.CLI.fs" />
 		<Compile Include="HistoryStorage.CLI.fs" />
 		<Compile Include="Command\History.CLI.fs" />
+		<Compile Include="Command\Access.CLI.fs" />
 		<Compile Include="Program.CLI.fs" />
 	</ItemGroup>
 	<ItemGroup>

@@ -11,6 +11,7 @@ Read `../AGENTS.md` for global expectations before updating CLI code.
 - Create handlers with `CommandHandler.Create(...)` that delegate to reusable services (often via `Grace.SDK`).
 - Use Spectre.Console for user interaction, but keep core logic testable and separate from console presentation.
 - Maintain alignment with DTOs and contracts defined in `Grace.Types`.
+- Access control commands live under `grace access` (role grants/revokes, ACL management, permission checks) and call `Grace.SDK.Access`.
 
 ## Project Rules
 1. Keep handlers thin; move heavier logic into services or helpers that are straightforward to unit test.
