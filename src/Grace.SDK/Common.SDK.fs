@@ -26,14 +26,6 @@ open Microsoft.Extensions.Caching.Memory
 
 module Common =
 
-    /// Checks to make sure the .NET MemoryCache is initialized. If not, it will create one.
-    //let checkMemoryCache () =
-    //    if isNull memoryCache then
-    //        let memoryCacheOptions =
-    //            MemoryCacheOptions(TrackStatistics = false, TrackLinkedCacheEntries = false, ExpirationScanFrequency = TimeSpan.FromSeconds(30.0))
-
-    //        memoryCache <- new MemoryCache(memoryCacheOptions)
-
     /// <summary>
     /// Sends GET commands to Grace Server.
     /// </summary>

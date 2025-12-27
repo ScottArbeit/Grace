@@ -63,9 +63,6 @@ module ApplicationContext =
     /// Grace Server's universal .NET memory cache
     let mutable memoryCache: IMemoryCache = null
 
-    /// CosmosDB client instance
-    //let mutable cosmosClient: CosmosClient = null
-
     /// CosmosDB container instance (set during startup).
     let mutable cosmosContainer: Container = null
 
@@ -131,8 +128,7 @@ module ApplicationContext =
             let value = config[getConfigKey name]
             if String.IsNullOrWhiteSpace value then None else Some(value.Trim())
 
-    let private tryGetCosmosConnectionString (config: IConfiguration) =
-        tryGetConfigValue config EnvironmentVariables.AzureCosmosDBConnectionString
+    let private tryGetCosmosConnectionString (config: IConfiguration) = tryGetConfigValue config EnvironmentVariables.AzureCosmosDBConnectionString
 
     let isGraceTesting =
         match Environment.GetEnvironmentVariable("GRACE_TESTING") with
@@ -201,8 +197,7 @@ module ApplicationContext =
                     if useManagedIdentity then
                         let endpoint =
                             AzureEnvironment.tryGetCosmosEndpointUri ()
-                            |> Option.defaultWith (fun () ->
-                                invalidOp "Azure Cosmos DB endpoint must be configured when using a managed identity.")
+                            |> Option.defaultWith (fun () -> invalidOp "Azure Cosmos DB endpoint must be configured when using a managed identity.")
 
                         new CosmosClient(endpoint.AbsoluteUri, defaultAzureCredential.Value, cosmosClientOptions)
                     else
