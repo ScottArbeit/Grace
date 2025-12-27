@@ -122,7 +122,7 @@ module Utilities =
     /// Logs the message to the console, with the current instant and thread ID.
     let logToConsole message = lock lockObject (fun () -> printfn $"{getCurrentInstantExtended ()} {Environment.CurrentManagedThreadId:X2} {message}")
 
-    /// Converts an environment variable name to a configuration key.
+    /// Converts an environment variable name to a key used to look up the value in IConfiguration.
     let getConfigKey (environmentVariableName: string) = environmentVariableName.Replace("__", ":")
 
     /// Gets the elapsed time since the start time, in milliseconds, right-aligned in a string of not less than 7 characters.

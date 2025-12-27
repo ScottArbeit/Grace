@@ -232,11 +232,6 @@ module Connect =
 
                                     // Download the .zip file to temp directory.
                                     let blobClient = BlobClient(uriWithSharedAccessSignature)
-                                    //let zipFilePath = Path.Combine(Current().GraceDirectory, $"{branchDto.LatestPromotion.DirectoryId}.zip")
-                                    //let! downloadResponse = blobClient.DownloadToAsync(zipFilePath)
-
-                                    //if downloadResponse.Status = 200 then
-                                    //    AnsiConsole.MarkupLine $"[{Colors.Important}]Successfully downloaded zip file to {zipFilePath}.[/]"
 
                                     // Loop through the ZipArchiveEntry list, identify if each file version is binary, and extract
                                     //   each one accordingly.

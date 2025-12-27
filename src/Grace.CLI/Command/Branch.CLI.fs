@@ -700,7 +700,7 @@ module Branch =
     type ListContents() =
         inherit AsynchronousCommandLineAction()
 
-        override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Task<int> =
+        override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) =
             task {
                 try
                     if parseResult |> verbose then printParseResult parseResult
@@ -712,18 +712,18 @@ module Branch =
                     match validateIncomingParameters with
                     | Ok _ ->
                         let referenceId =
-                            if isNull (parseResult.GetResult(Options.referenceId)) then
+                            if isNull (parseResult.GetResult Options.referenceId) then
                                 String.Empty
                             else
-                                parseResult.GetValue(Options.referenceId).ToString()
+                                (parseResult.GetValue Options.referenceId).ToString()
 
                         let sha256Hash =
-                            if isNull (parseResult.GetResult(Options.sha256Hash)) then
+                            if isNull (parseResult.GetResult Options.sha256Hash) then
                                 String.Empty
                             else
-                                parseResult.GetValue(Options.sha256Hash)
+                                parseResult.GetValue Options.sha256Hash
 
-                        let forceRecompute = parseResult.GetValue(Options.forceRecompute)
+                        let forceRecompute = parseResult.GetValue Options.forceRecompute
 
                         let sdkParameters =
                             ListContentsParameters(
@@ -751,9 +751,8 @@ module Branch =
                                     .StartAsync(fun progressContext ->
                                         task {
                                             let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
-
                                             let! response = Branch.ListContents(sdkParameters)
-                                            t0.Increment(100.0)
+                                            t0.Value <- 100.0
                                             return response
                                         })
                             else
@@ -761,8 +760,6 @@ module Branch =
 
                         match result with
                         | Ok returnValue ->
-                            let! _ = readGraceStatusFile ()
-
                             let directoryVersions =
                                 returnValue.ReturnValue
                                     .Select(fun directoryVersionDto -> directoryVersionDto.DirectoryVersion)

@@ -17,6 +17,9 @@ Read `../AGENTS.md` for global expectations before updating CLI code.
 2. Preserve existing option names/switches; introduce new aliases when expanding behavior instead of breaking existing scripts.
 3. Capture new command patterns or usage tips in this document to guide future agents.
 
+## Recent Patterns
+- `grace history` commands operate without requiring a repo `graceconfig.json`; avoid `Configuration.Current()` in history-related flows.
+
 ## Validation
 - Add option parsing tests and handler unit tests for new functionality.
 - Manually exercise impacted commands when practical and ensure `dotnet build --configuration Release` stays green.

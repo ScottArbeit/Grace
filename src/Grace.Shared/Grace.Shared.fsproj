@@ -30,6 +30,7 @@
         <Compile Include="Diff.Shared.fs" />
         <Compile Include="Client\Theme.Shared.fs" />
         <Compile Include="Client\Configuration.Shared.fs" />
+        <Compile Include="Client\UserConfiguration.Shared.fs" />
         <Compile Include="Parameters\Common.Parameters.fs" />
         <Compile Include="Parameters\Owner.Parameters.fs" />
         <Compile Include="Parameters\Organization.Parameters.fs" />

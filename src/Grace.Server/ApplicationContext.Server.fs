@@ -63,8 +63,8 @@ module ApplicationContext =
     /// Grace Server's universal .NET memory cache
     let mutable memoryCache: IMemoryCache = null
 
-    /// CosmosDB client instance
-    //let mutable cosmosClient: CosmosClient = null
+    /// CosmosDB container instance (set during startup).
+    let mutable cosmosContainer: Container = null
 
     /// Pub-sub settings for the application.
     let mutable pubSubSettings: GracePubSubSettings = GracePubSubSettings.Empty
@@ -118,15 +118,17 @@ module ApplicationContext =
 
     let defaultObjectStorageProvider = ObjectStorageProvider.AzureBlobStorage
 
-    let cosmosDbConnectionString = Environment.GetEnvironmentVariable EnvironmentVariables.AzureCosmosDBConnectionString
-
-    let cosmosDatabaseName = Environment.GetEnvironmentVariable EnvironmentVariables.AzureCosmosDBDatabaseName
-
-    let cosmosContainerName = Environment.GetEnvironmentVariable EnvironmentVariables.AzureCosmosDBContainerName
-
-    // Get a reference to the CosmosDB database.
     let cosmosClientOptions =
         CosmosClientOptions(ApplicationName = "Grace.Server", LimitToEndpoint = false, UseSystemTextJsonSerializerWithOptions = Constants.JsonSerializerOptions)
+
+    let private tryGetConfigValue (config: IConfiguration) (name: string) =
+        if isNull config then
+            None
+        else
+            let value = config[getConfigKey name]
+            if String.IsNullOrWhiteSpace value then None else Some(value.Trim())
+
+    let private tryGetCosmosConnectionString (config: IConfiguration) = tryGetConfigValue config EnvironmentVariables.AzureCosmosDBConnectionString
 
     let isGraceTesting =
         match Environment.GetEnvironmentVariable("GRACE_TESTING") with
@@ -140,58 +142,71 @@ module ApplicationContext =
         | null -> false
         | value -> value.Equals("Local", StringComparison.OrdinalIgnoreCase)
 
-    let isLocalEndpoint =
-        not (String.IsNullOrWhiteSpace cosmosDbConnectionString)
-        && (cosmosDbConnectionString.Contains("localhost", StringComparison.OrdinalIgnoreCase)
-            || cosmosDbConnectionString.Contains("127.0.0.1", StringComparison.OrdinalIgnoreCase))
+    let private isLocalEndpoint (config: IConfiguration) =
+        match tryGetCosmosConnectionString config with
+        | Some value ->
+            value.Contains("localhost", StringComparison.OrdinalIgnoreCase)
+            || value.Contains("127.0.0.1", StringComparison.OrdinalIgnoreCase)
+        | None -> false
 
-    let useLocalEmulatorSettings =
-        not useManagedIdentity
-        && (isGraceTesting || isLocalDebugEnvironment || isLocalEndpoint)
+    let private applyLocalEmulatorSettings (config: IConfiguration) =
+        let useLocalEmulatorSettings =
+            not useManagedIdentity
+            && (isGraceTesting || isLocalDebugEnvironment || isLocalEndpoint config)
 
-    if useLocalEmulatorSettings then
-        // The CosmosDB emulator uses a self-signed certificate, and, by default, HttpClient will refuse
-        //   to connect over https: if the certificate can't be traced back to a root.
-        // These settings allow Grace Server to access the CosmosDB Emulator by bypassing TLS.
-        let handler =
-            new SocketsHttpHandler(
-                SslOptions =
-                    new SslClientAuthenticationOptions(
-                        TargetHost = "localhost", // SNI host_name must be DNS per RFC 6066
-                        RemoteCertificateValidationCallback = (fun _ __ ___ ____ -> true) // emulator only
-                    )
-            )
+        if useLocalEmulatorSettings then
+            // The CosmosDB emulator uses a self-signed certificate, and, by default, HttpClient will refuse
+            //   to connect over https: if the certificate can't be traced back to a root.
+            // These settings allow Grace Server to access the CosmosDB Emulator by bypassing TLS.
+            let handler =
+                new SocketsHttpHandler(
+                    SslOptions =
+                        new SslClientAuthenticationOptions(
+                            TargetHost = "localhost", // SNI host_name must be DNS per RFC 6066
+                            RemoteCertificateValidationCallback = (fun _ __ ___ ____ -> true) // emulator only
+                        )
+                )
 
-        cosmosClientOptions.HttpClientFactory <- (fun () -> new HttpClient(handler, disposeHandler = true))
+            cosmosClientOptions.HttpClientFactory <- (fun () -> new HttpClient(handler, disposeHandler = true))
 
-        // During debugging, we might want to see the responses.
-        cosmosClientOptions.EnableContentResponseOnWrite <- true
+            // During debugging, we might want to see the responses.
+            cosmosClientOptions.EnableContentResponseOnWrite <- true
 
-        // When using the CosmosDB Emulator, these settings help with connectivity.
-        cosmosClientOptions.LimitToEndpoint <- true
-        cosmosClientOptions.ConnectionMode <- ConnectionMode.Gateway
+            // When using the CosmosDB Emulator, these settings help with connectivity.
+            cosmosClientOptions.LimitToEndpoint <- true
+            cosmosClientOptions.ConnectionMode <- ConnectionMode.Gateway
 
-    let cosmosClient =
-        if useManagedIdentity then
-            let endpoint =
-                AzureEnvironment.tryGetCosmosEndpointUri ()
-                |> Option.defaultWith (fun () -> invalidOp "Azure Cosmos DB endpoint must be configured when using a managed identity.")
-
-            new CosmosClient(endpoint.AbsoluteUri, defaultAzureCredential.Value, cosmosClientOptions)
-        else
-            if String.IsNullOrWhiteSpace cosmosDbConnectionString then
-                invalidOp "Cosmos DB connection string must be configured when managed identity is disabled."
-
-            new CosmosClient(cosmosDbConnectionString, cosmosClientOptions)
-
-    // Get a reference to the CosmosDB database and container.
-    let database = cosmosClient.GetDatabase(cosmosDatabaseName)
-    let cosmosContainer = database.GetContainer(cosmosContainerName)
+    let private resolveSetting (config: IConfiguration) (name: string) =
+        match tryGetConfigValue config name with
+        | Some value -> value
+        | None -> invalidOp $"Configuration value '{getConfigKey name}' must be set."
 
     /// Sets multiple values for the application. In functional programming, a global construct like this is used instead of dependency injection.
-    let Set =
+    let Set () =
         task {
             try
+                if isNull configuration then
+                    invalidOp "Configuration must be set before initializing ApplicationContext."
+
+                applyLocalEmulatorSettings configuration
+
+                let cosmosDatabaseName = resolveSetting configuration EnvironmentVariables.AzureCosmosDBDatabaseName
+                let cosmosContainerName = resolveSetting configuration EnvironmentVariables.AzureCosmosDBContainerName
+
+                let cosmosClient =
+                    if useManagedIdentity then
+                        let endpoint =
+                            AzureEnvironment.tryGetCosmosEndpointUri ()
+                            |> Option.defaultWith (fun () -> invalidOp "Azure Cosmos DB endpoint must be configured when using a managed identity.")
+
+                        new CosmosClient(endpoint.AbsoluteUri, defaultAzureCredential.Value, cosmosClientOptions)
+                    else
+                        let cosmosDbConnectionString = resolveSetting configuration EnvironmentVariables.AzureCosmosDBConnectionString
+                        new CosmosClient(cosmosDbConnectionString, cosmosClientOptions)
+
+                let database = cosmosClient.GetDatabase(cosmosDatabaseName)
+                cosmosContainer <- database.GetContainer(cosmosContainerName)
+
                 logToConsole $"Using CosmosDB database '{cosmosDatabaseName}' and container '{cosmosContainer.Id}'."
 
                 // Inject things into Actor Services.

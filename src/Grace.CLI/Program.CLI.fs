@@ -123,6 +123,7 @@ module GraceCommand =
         rootCommand.Subcommands.Add(Organization.Build)
         rootCommand.Subcommands.Add(Owner.Build)
         rootCommand.Subcommands.Add(Config.Build)
+        rootCommand.Subcommands.Add(History.Build)
         rootCommand.Subcommands.Add(Maintenance.Build)
         rootCommand.Subcommands.Add(PromotionGroupCommand.Build)
         rootCommand.Subcommands.Add(Admin.Build)
@@ -264,10 +265,41 @@ module GraceCommand =
 
         /// True if the OS is case-insensitive (i.e. Windows), false otherwise.
         let isCaseInsensitive = Environment.OSVersion.Platform = PlatformID.Win32NT
+        let argvOriginal = args |> Array.copy
+
+        let normalizeArgsForHistory (args: string array) =
+            if args.Length = 0 then
+                Array.empty<string>
+            else
+                let firstToken = if isCaseInsensitive then args[0].ToLowerInvariant() else args[0]
+
+                let properCasedArgs =
+                    args
+                    |> Array.map (fun arg ->
+                        if isCaseInsensitive && arg.StartsWith("--") then
+                            arg.ToLowerInvariant()
+                        else
+                            arg)
+
+                if aliases.ContainsKey(firstToken) then
+                    let newArgs = List<string>()
+
+                    for token in aliases[firstToken].Reverse() do
+                        newArgs.Insert(0, token)
+
+                    for token in properCasedArgs[1..] do
+                        newArgs.Add(token)
+
+                    newArgs.ToArray()
+                else
+                    properCasedArgs
+
+        let mutable argvNormalized = normalizeArgsForHistory args
 
         (task {
             let mutable parseResult: ParseResult = null
             let mutable returnValue: int = 0
+            let mutable parseSucceeded: bool = false
 
             try
                 try
@@ -309,16 +341,19 @@ module GraceCommand =
 
                                 //let newArgsString = String.Join(" ", newArgs)
                                 //logToAnsiConsole Colors.Verbose $"Using alias for command: {firstToken} -> {newArgsString}."
+                                argvNormalized <- newArgs.ToArray()
                                 parseResult <- rootCommand.Parse(newArgs)
                             else
                                 //let argsString = String.Join(" ", properCasedArgs)
                                 //logToAnsiConsole Colors.Verbose $"No alias; parsing command line arguments: {argsString}."
+                                argvNormalized <- properCasedArgs
                                 parseResult <- rootCommand.Parse(properCasedArgs)
                         else
                             // If we have no tokens, we want to show the help text for the command,
                             //   so we parse the command again with one of the help options to get the help text.
                             parseResult <- rootCommand.Parse(helpOptions[0])
 
+                        parseSucceeded <- parseResult.Errors.Count = 0
                         // Write the ParseResult to Services as global context for the CLI.
                         Services.parseResult <- parseResult
 
@@ -438,8 +473,20 @@ module GraceCommand =
                         // We don't have a config file, so write an error message and exit.
                         AnsiConsole.Write(new Rule())
 
-                        if args.Any(fun arg -> arg = "config") then
-                            let! returnValue = rootCommand.Parse(args).InvokeAsync()
+                        let comparison =
+                            if isCaseInsensitive then
+                                StringComparison.InvariantCultureIgnoreCase
+                            else
+                                StringComparison.InvariantCulture
+
+                        let isAllowed = args.Any(fun arg -> arg.Equals("config", comparison) || arg.Equals("history", comparison))
+
+                        if isAllowed then
+                            let parsed = rootCommand.Parse(args)
+                            parseResult <- parsed
+                            parseSucceeded <- parsed.Errors.Count = 0
+                            let! invokedReturnValue = parsed.InvokeAsync()
+                            returnValue <- invokedReturnValue
                             ()
                         else
                             AnsiConsole.MarkupLine($"[{Colors.Important}]{getLocalizedString StringResourceName.GraceConfigFileNotFound}[/]")
@@ -455,8 +502,22 @@ module GraceCommand =
                     AnsiConsole.WriteException ex
                     //logToAnsiConsole Colors.Error $"ex.Message: {ex.Message}"
                     //logToAnsiConsole Colors.Error $"{ex.StackTrace}"
+                    returnValue <- -1
                     return -1
             finally
+                let finishTime = getCurrentInstant ()
+                let durationMs = (finishTime - startTime).TotalMilliseconds |> int64
+
+                HistoryStorage.tryRecordInvocation
+                    { argvOriginal = argvOriginal
+                      argvNormalized = argvNormalized
+                      cwd = Environment.CurrentDirectory
+                      exitCode = returnValue
+                      durationMs = durationMs
+                      parseSucceeded = parseSucceeded
+                      timestampUtc = startTime
+                      source = None }
+
                 // If this was grace watch, delete the inter-process communication file.
                 if not <| isNull (parseResult) && parseResult |> isGraceWatch then
                     File.Delete(IpcFileName())

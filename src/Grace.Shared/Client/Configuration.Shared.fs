@@ -68,8 +68,6 @@ module Configuration =
         member val public ProgramVersion = Constants.CurrentConfigurationVersion with get, set
         /// The current format of configuration.
         member val public ConfigurationVersion = String.Empty with get, set
-        /// An OpenTelemetry ActivitySource for logging.
-        //member val public ActivitySource: ActivitySource = new ActivitySource("Grace", "0.1") with get, set
 
         /// The current list of graceignore.json entries.
         [<JsonIgnore(Condition = JsonIgnoreCondition.Always)>]
