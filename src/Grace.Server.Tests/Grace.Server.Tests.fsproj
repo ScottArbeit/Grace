@@ -19,6 +19,8 @@
     <Compile Include="Validations.Server.Tests.fs" />
     <Compile Include="Owner.Server.Tests.fs" />
     <Compile Include="Repository.Server.Tests.fs" />
+    <Compile Include="Authorization.Unit.Tests.fs" />
+    <Compile Include="AccessControl.Server.Tests.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
 
