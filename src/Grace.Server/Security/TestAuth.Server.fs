@@ -23,10 +23,9 @@ module TestAuth =
         (
             options: IOptionsMonitor<AuthenticationSchemeOptions>,
             loggerFactory: ILoggerFactory,
-            encoder: UrlEncoder,
-            clock: ISystemClock
+            encoder: UrlEncoder
         ) =
-        inherit AuthenticationHandler<AuthenticationSchemeOptions>(options, loggerFactory, encoder, clock)
+        inherit AuthenticationHandler<AuthenticationSchemeOptions>(options, loggerFactory, encoder)
 
         override this.HandleAuthenticateAsync() =
             let request = this.Request
