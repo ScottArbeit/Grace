@@ -424,6 +424,30 @@ module Application =
                           route "/getUploadUri" Storage.GetUploadUris
                           |> addMetadata typeof<Storage.GetUploadUriParameters> ] ]
               subRoute
+                  "/access"
+                  [ POST
+                        [ route "/grantRole" Access.GrantRole
+                          |> addMetadata typeof<Access.GrantRoleParameters>
+
+                          route "/revokeRole" Access.RevokeRole
+                          |> addMetadata typeof<Access.RevokeRoleParameters>
+
+                          route "/listRoleAssignments" Access.ListRoleAssignments
+                          |> addMetadata typeof<Access.ListRoleAssignmentsParameters>
+
+                          route "/upsertPathPermission" Access.UpsertPathPermission
+                          |> addMetadata typeof<Access.UpsertPathPermissionParameters>
+
+                          route "/removePathPermission" Access.RemovePathPermission
+                          |> addMetadata typeof<Access.RemovePathPermissionParameters>
+
+                          route "/listPathPermissions" Access.ListPathPermissions
+                          |> addMetadata typeof<Access.ListPathPermissionsParameters>
+
+                          route "/checkPermission" Access.CheckPermission
+                          |> addMetadata typeof<Access.CheckPermissionParameters> ]
+                    GET [ route "/listRoles" Access.ListRoles ] ]
+              subRoute
                   "/reminder"
                   [ POST
                         [ route "/list" Reminder.List

@@ -75,6 +75,7 @@
 		<Compile Include="DirectoryVersion.Server.fs" />
 		<Compile Include="Diff.Server.fs" />
 		<Compile Include="Storage.Server.fs" />
+		<Compile Include="Access.Server.fs" />
 		<Compile Include="Reminder.Server.fs" />
 		<Compile Include="ReminderService.Server.fs" />
 		<Compile Include="Notification.Server.fs" />
