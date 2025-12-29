@@ -21,6 +21,7 @@ open Grace.Server.Security.TestAuth
 open Grace.Shared.Converters
 open Grace.Shared.Parameters
 open Grace.Types.Types
+open Grace.Types.Authorization
 open Microsoft.AspNetCore.Authentication
 open Microsoft.AspNetCore.Builder
 open Microsoft.AspNetCore.Hosting
@@ -99,6 +100,29 @@ module Application =
         let mustBeLoggedIn = requiresAuthentication notLoggedIn
 
         let graceServerVersion = FileVersionInfo.GetVersionInfo(Assembly.GetExecutingAssembly().Location).FileVersion
+
+        let repositoryResourceFromContext (context: HttpContext) =
+            task {
+                let graceIds = Services.getGraceIds context
+                return Resource.Repository(graceIds.OwnerId, graceIds.OrganizationId, graceIds.RepositoryId)
+            }
+
+        let uploadPathResourcesFromContext (context: HttpContext) =
+            task {
+                context.Request.EnableBuffering()
+                let! parameters = context.BindJsonAsync<Storage.GetUploadMetadataForFilesParameters>()
+                context.Request.Body.Seek(0L, IO.SeekOrigin.Begin) |> ignore
+
+                let graceIds = Services.getGraceIds context
+
+                let resources =
+                    parameters.FileVersions
+                    |> Seq.map (fun fileVersion ->
+                        Resource.Path(graceIds.OwnerId, graceIds.OrganizationId, graceIds.RepositoryId, fileVersion.RelativePath))
+                    |> Seq.toList
+
+                return resources
+            }
 
         let endpoints =
             [ GET
@@ -389,7 +413,10 @@ module Application =
                           route "/setConflictResolutionPolicy" Repository.SetConflictResolutionPolicy
                           |> addMetadata typeof<Repository.SetConflictResolutionPolicyParameters>
 
-                          route "/setDescription" Repository.SetDescription
+                          route
+                              "/setDescription"
+                              (AuthorizationMiddleware.requiresPermission Operation.RepoAdmin repositoryResourceFromContext
+                               >=> Repository.SetDescription)
                           |> addMetadata typeof<Repository.SetRepositoryDescriptionParameters>
 
                           route "/setLogicalDeleteDays" Repository.SetLogicalDeleteDays
@@ -415,7 +442,10 @@ module Application =
               subRoute
                   "/storage"
                   [ POST
-                        [ route "/getUploadMetadataForFiles" Storage.GetUploadMetadataForFiles
+                        [ route
+                              "/getUploadMetadataForFiles"
+                              (AuthorizationMiddleware.requiresPermissions Operation.PathWrite uploadPathResourcesFromContext
+                               >=> Storage.GetUploadMetadataForFiles)
                           |> addMetadata typeof<Storage.GetUploadMetadataForFilesParameters>
 
                           route "/getDownloadUri" Storage.GetDownloadUri

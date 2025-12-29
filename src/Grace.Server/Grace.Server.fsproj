@@ -60,6 +60,7 @@
 		<Compile Include="Security\PrincipalMapper.Server.fs" />
 		<Compile Include="Security\TestAuth.Server.fs" />
 		<Compile Include="Security\PermissionEvaluator.Server.fs" />
+		<Compile Include="Security\AuthorizationMiddleware.Server.fs" />
         <Compile Include="OrleansFilters.Server.fs" />
 		<Compile Include="Middleware\Fake.Middleware.fs" />
 		<Compile Include="Middleware\HttpSecurityHeaders.Middleware.fs" />
