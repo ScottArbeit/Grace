@@ -14,6 +14,9 @@ module Constants =
     /// These names should exactly match the actors' typenames.
     module ActorName =
         [<Literal>]
+        let AccessControl = "AccessControlActor"
+
+        [<Literal>]
         let Branch = "BranchActor"
 
         [<Literal>]
@@ -80,6 +83,9 @@ module Constants =
         let User = "UserActor"
 
     module StateName =
+        [<Literal>]
+        let AccessControl = "AccessControl"
+
         [<Literal>]
         let Branch = "Branch"
 

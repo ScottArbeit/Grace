@@ -225,3 +225,24 @@ module ActorProxy =
             orleansContext.Add(Constants.ActorNameProperty, ActorName.PromotionGroup)
             memoryCache.CreateOrleansContextEntry(grain.GetGrainId(), orleansContext)
             grain
+
+    module AccessControl =
+        /// Creates an ActorProxy for an AccessControl actor, and adds the correlationId to the server's MemoryCache so
+        ///   it's available in the OnActivateAsync() method.
+        let CreateActorProxy (scopeKey: string) (correlationId: string) =
+            let grain = orleansClient.CreateActorProxyWithCorrelationId<IAccessControlActor>(scopeKey, correlationId)
+            let orleansContext = Dictionary<string, obj>()
+            orleansContext.Add(Constants.ActorNameProperty, ActorName.AccessControl)
+            memoryCache.CreateOrleansContextEntry(grain.GetGrainId(), orleansContext)
+            grain
+
+    module RepositoryPermission =
+        /// Creates an ActorProxy for a RepositoryPermission actor, and adds the correlationId to the server's MemoryCache so
+        ///   it's available in the OnActivateAsync() method.
+        let CreateActorProxy (repositoryId: RepositoryId) (correlationId: string) =
+            let grain = orleansClient.CreateActorProxyWithCorrelationId<IRepositoryPermissionActor>($"{repositoryId}", correlationId)
+            let orleansContext = Dictionary<string, obj>()
+            orleansContext.Add(nameof RepositoryId, repositoryId)
+            orleansContext.Add(Constants.ActorNameProperty, ActorName.RepositoryPermission)
+            memoryCache.CreateOrleansContextEntry(grain.GetGrainId(), orleansContext)
+            grain

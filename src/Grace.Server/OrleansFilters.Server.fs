@@ -59,6 +59,7 @@ module Orleans =
                             | StateName.Reminder -> StateName.Reminder
                             | StateName.Repository -> organizationId ()
                             | StateName.RepositoryPermission -> repositoryId ()
+                            | StateName.AccessControl -> grainId.Key.ToString()
                             | StateName.User -> StateName.User
                             | _ -> raise (ArgumentException($"Unknown grain type in {nameof GracePartitionKeyProvider}: {grainType}"))
 

@@ -93,3 +93,21 @@ module Authorization =
         | Denied of reason: string
 
         static member GetKnownTypes() = GetKnownTypes<PermissionCheckResult>()
+
+    /// Commands for managing role assignments.
+    [<KnownType("GetKnownTypes"); GenerateSerializer>]
+    type AccessControlCommand =
+        | GrantRole of RoleAssignment
+        | RevokeRole of Principal * RoleId
+        | ListAssignments of Principal option
+
+        static member GetKnownTypes() = GetKnownTypes<AccessControlCommand>()
+
+    /// Commands for managing repository path permissions.
+    [<KnownType("GetKnownTypes"); GenerateSerializer>]
+    type RepositoryPermissionCommand =
+        | UpsertPathPermission of PathPermission
+        | RemovePathPermission of RelativePath
+        | ListPathPermissions of RelativePath option
+
+        static member GetKnownTypes() = GetKnownTypes<RepositoryPermissionCommand>()

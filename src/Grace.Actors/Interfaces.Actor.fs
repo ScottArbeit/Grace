@@ -2,6 +2,7 @@ namespace Grace.Actors
 
 open Grace.Actors.Types
 open Grace.Shared
+open Grace.Types.Authorization
 open Grace.Types.Branch
 open Grace.Types.Diff
 open Grace.Types.DirectoryVersion
@@ -381,6 +382,28 @@ module Interfaces =
 
         /// Processes commands by checking that they're valid, and then converting them into events.
         abstract member Handle: command: RepositoryCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
+
+    /// Defines the operations for the AccessControl actor.
+    [<Interface>]
+    type IAccessControlActor =
+        inherit IGrainWithStringKey
+
+        /// Handles role assignment commands.
+        abstract member Handle: command: AccessControlCommand -> eventMetadata: EventMetadata -> Task<GraceResult<RoleAssignment list>>
+
+        /// Returns role assignments for this scope.
+        abstract member GetAssignments: principal: Principal option -> correlationId: CorrelationId -> Task<RoleAssignment list>
+
+    /// Defines the operations for the RepositoryPermission actor.
+    [<Interface>]
+    type IRepositoryPermissionActor =
+        inherit IGrainWithStringKey
+
+        /// Handles repository path permission commands.
+        abstract member Handle: command: RepositoryPermissionCommand -> eventMetadata: EventMetadata -> Task<GraceResult<PathPermission list>>
+
+        /// Returns path permissions for this repository.
+        abstract member GetPathPermissions: pathFilter: RelativePath option -> correlationId: CorrelationId -> Task<PathPermission list>
 
     /// Defines the operations for the RepositoryName actor.
     [<Interface>]

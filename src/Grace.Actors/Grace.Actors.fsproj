@@ -27,6 +27,7 @@
 		<Compile Include="Services.Actor.fs" />
 		<Compile Include="GrainRepository.Actor.fs" />
 		<Compile Include="GlobalLock.Actor.fs" />
+		<Compile Include="AccessControl.Actor.fs" />
 		<Compile Include="Reminder.Actor.fs" />
 		<Compile Include="User.Actor.fs" />
 		<Compile Include="Owner.Actor.fs" />
