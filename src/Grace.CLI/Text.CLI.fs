@@ -169,6 +169,30 @@ module Text =
         let RetrieveDefaultBranch = "--retrieve-default-branch"
 
         [<Literal>]
+        let Claim = "--claim"
+
+        [<Literal>]
+        let DirectoryPermission = "--dir-perm"
+
+        [<Literal>]
+        let Operation = "--operation"
+
+        [<Literal>]
+        let Path = "--path"
+
+        [<Literal>]
+        let PrincipalId = "--principal-id"
+
+        [<Literal>]
+        let PrincipalType = "--principal-type"
+
+        [<Literal>]
+        let ResourceKind = "--resource"
+
+        [<Literal>]
+        let RoleId = "--role"
+
+        [<Literal>]
         let SaveDays = "--save-days"
 
         [<Literal>]
@@ -182,6 +206,9 @@ module Text =
 
         [<Literal>]
         let ServerAddress = "--server-address"
+
+        [<Literal>]
+        let ScopeKind = "--scope"
 
         [<Literal>]
         let S1 = "--s1"
@@ -200,6 +227,12 @@ module Text =
 
         [<Literal>]
         let ShowEvents = "--show-events"
+
+        [<Literal>]
+        let Source = "--source"
+
+        [<Literal>]
+        let SourceDetail = "--source-detail"
 
         [<Literal>]
         let Since = "--since"

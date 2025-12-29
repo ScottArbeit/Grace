@@ -38,6 +38,7 @@
 		<Compile Include="Command\Watch.CLI.fs" />
 		<Compile Include="Command\Maintenance.CLI.fs" />
 		<Compile Include="Command\PromotionGroup.CLI.fs" />
+		<Compile Include="Command\Access.CLI.fs" />
 		<Compile Include="Command\Admin.CLI.fs" />
 		<Compile Include="HistoryStorage.CLI.fs" />
 		<Compile Include="Command\History.CLI.fs" />
