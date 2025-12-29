@@ -16,9 +16,12 @@ open Grace.Shared.Utilities
 open Grace.Server
 open Grace.Server.Middleware
 open Grace.Server.ReminderService
+open Grace.Server.Security
+open Grace.Server.Security.TestAuth
 open Grace.Shared.Converters
 open Grace.Shared.Parameters
 open Grace.Types.Types
+open Microsoft.AspNetCore.Authentication
 open Microsoft.AspNetCore.Builder
 open Microsoft.AspNetCore.Hosting
 open Microsoft.AspNetCore.Http
@@ -573,7 +576,25 @@ module Application =
                         |> ignore)
             |> ignore
 
-            services.AddAuthentication() |> ignore
+            let isTesting =
+                match Environment.GetEnvironmentVariable("GRACE_TESTING") with
+                | null -> false
+                | value ->
+                    value.Equals("1", StringComparison.OrdinalIgnoreCase)
+                    || value.Equals("true", StringComparison.OrdinalIgnoreCase)
+                    || value.Equals("yes", StringComparison.OrdinalIgnoreCase)
+
+            if isTesting then
+                services
+                    .AddAuthentication(fun options ->
+                        options.DefaultAuthenticateScheme <- SchemeName
+                        options.DefaultChallengeScheme <- SchemeName)
+                    .AddScheme<AuthenticationSchemeOptions, GraceTestAuthHandler>(SchemeName, fun _ -> ())
+                |> ignore
+            else
+                services.AddAuthentication() |> ignore
+
+            services.AddSingleton<IGracePermissionEvaluator, GracePermissionEvaluator>() |> ignore
 
             services.AddW3CLogging(fun options ->
                 options.FileName <- "Grace.Server.log-"

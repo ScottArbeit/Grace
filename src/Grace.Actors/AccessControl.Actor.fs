@@ -21,7 +21,7 @@ module AccessControl =
     module AccessControlState =
         let Empty = { Assignments = [] }
 
-    let private scopeKey (scope: Scope) =
+    let getScopeKey (scope: Scope) =
         match scope with
         | Scope.System -> "system"
         | Scope.Owner ownerId -> $"owner:{ownerId}"
@@ -47,7 +47,7 @@ module AccessControl =
             Task.CompletedTask
 
         member private this.ValidateScope (scope: Scope) (correlationId: CorrelationId) =
-            let expectedKey = scopeKey scope
+            let expectedKey = getScopeKey scope
             let actualKey = this.GetPrimaryKeyString()
 
             if expectedKey = actualKey then
