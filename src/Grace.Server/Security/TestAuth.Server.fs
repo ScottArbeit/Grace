@@ -29,8 +29,10 @@ module TestAuth =
         inherit AuthenticationHandler<AuthenticationSchemeOptions>(options, loggerFactory, encoder, clock)
 
         override this.HandleAuthenticateAsync() =
+            let request = this.Request
+
             let tryGetHeader (name: string) =
-                let values = this.Request.Headers[name]
+                let values = request.Headers[name]
                 if values.Count = 0 then None else Some(values.ToString())
 
             match tryGetHeader UserIdHeader with

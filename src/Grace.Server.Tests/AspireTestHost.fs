@@ -114,8 +114,9 @@ module AspireTestHost =
         task {
             let loggerService = app.Services.GetRequiredService<ResourceLoggerService>()
             let lines = ResizeArray<string>()
+            use cts = new CancellationTokenSource(TimeSpan.FromSeconds(10.0))
             let logs = loggerService.GetAllAsync(resourceName)
-            let enumerator = logs.GetAsyncEnumerator()
+            let enumerator = logs.GetAsyncEnumerator(cts.Token)
 
             try
                 let mutable keepGoing = true
@@ -340,6 +341,7 @@ module AspireTestHost =
         task {
             Environment.SetEnvironmentVariable("GRACE_TESTING", "1")
             Environment.SetEnvironmentVariable("GRACE_TEST_CLEANUP", "1")
+            Environment.SetEnvironmentVariable("ASPIRE_RESOURCE_MODE", "Local")
             let! builder = DistributedApplicationTestingBuilder.CreateAsync<Projects.Grace_Aspire_AppHost>()
             let! app = builder.BuildAsync()
             do! app.StartAsync()

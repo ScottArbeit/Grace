@@ -6,6 +6,7 @@ open Grace.Types.Authorization
 open Grace.Types.Types
 open NUnit.Framework
 open System
+open System.Collections.Generic
 
 [<Parallelizable(ParallelScope.All)>]
 type AuthorizationUnit() =
@@ -64,11 +65,10 @@ type AuthorizationUnit() =
         let assignments =
             [ createAssignment principal (Scope.Organization(ownerId, organizationId)) "OrgAdmin" ]
 
-        let pathPermissions =
-            [ { Path = "/images"
-                Permissions =
-                    [ { Claim = "engineering"
-                        DirectoryPermission = DirectoryPermission.NoAccess } ] } ]
+        let denyPermissions = List<ClaimPermission>()
+        denyPermissions.Add({ Claim = "engineering"; DirectoryPermission = DirectoryPermission.NoAccess })
+
+        let pathPermissions = [ { Path = "/images"; Permissions = denyPermissions } ]
 
         let result =
             checkPermission
@@ -93,11 +93,10 @@ type AuthorizationUnit() =
         let assignments =
             [ createAssignment principal (Scope.Organization(ownerId, organizationId)) "OrgReader" ]
 
-        let pathPermissions =
-            [ { Path = "/images"
-                Permissions =
-                    [ { Claim = "engineering"
-                        DirectoryPermission = DirectoryPermission.Modify } ] } ]
+        let allowPermissions = List<ClaimPermission>()
+        allowPermissions.Add({ Claim = "engineering"; DirectoryPermission = DirectoryPermission.Modify })
+
+        let pathPermissions = [ { Path = "/images"; Permissions = allowPermissions } ]
 
         let result =
             checkPermission

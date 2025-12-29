@@ -20,8 +20,6 @@ open System.Threading.Tasks
 
 module Access =
 
-    let log = ApplicationContext.loggerFactory.CreateLogger("Access.Server")
-
     let private requireGraceUser (handler: HttpHandler) : HttpHandler =
         fun next context ->
             match PrincipalMapper.tryGetUserId context.User with
@@ -60,36 +58,36 @@ module Access =
         | "" -> Error(GraceError.Create "ScopeKind is required." correlationId)
         | "system" -> Ok Scope.System
         | "owner" ->
-            parseGuid parameters.OwnerId nameof parameters.OwnerId correlationId
+            parseGuid parameters.OwnerId (nameof parameters.OwnerId) correlationId
             |> Result.map (fun ownerId -> Scope.Owner ownerId)
         | "org"
         | "organization" ->
-            match parseGuid parameters.OwnerId nameof parameters.OwnerId correlationId with
+            match parseGuid parameters.OwnerId (nameof parameters.OwnerId) correlationId with
             | Error error -> Error error
             | Ok ownerId ->
-                parseGuid parameters.OrganizationId nameof parameters.OrganizationId correlationId
+                parseGuid parameters.OrganizationId (nameof parameters.OrganizationId) correlationId
                 |> Result.map (fun organizationId -> Scope.Organization(ownerId, organizationId))
         | "repo"
         | "repository" ->
-            match parseGuid parameters.OwnerId nameof parameters.OwnerId correlationId with
+            match parseGuid parameters.OwnerId (nameof parameters.OwnerId) correlationId with
             | Error error -> Error error
             | Ok ownerId ->
-                match parseGuid parameters.OrganizationId nameof parameters.OrganizationId correlationId with
+                match parseGuid parameters.OrganizationId (nameof parameters.OrganizationId) correlationId with
                 | Error error -> Error error
                 | Ok organizationId ->
-                    parseGuid parameters.RepositoryId nameof parameters.RepositoryId correlationId
+                    parseGuid parameters.RepositoryId (nameof parameters.RepositoryId) correlationId
                     |> Result.map (fun repositoryId -> Scope.Repository(ownerId, organizationId, repositoryId))
         | "branch" ->
-            match parseGuid parameters.OwnerId nameof parameters.OwnerId correlationId with
+            match parseGuid parameters.OwnerId (nameof parameters.OwnerId) correlationId with
             | Error error -> Error error
             | Ok ownerId ->
-                match parseGuid parameters.OrganizationId nameof parameters.OrganizationId correlationId with
+                match parseGuid parameters.OrganizationId (nameof parameters.OrganizationId) correlationId with
                 | Error error -> Error error
                 | Ok organizationId ->
-                    match parseGuid parameters.RepositoryId nameof parameters.RepositoryId correlationId with
+                    match parseGuid parameters.RepositoryId (nameof parameters.RepositoryId) correlationId with
                     | Error error -> Error error
                     | Ok repositoryId ->
-                        parseGuid parameters.BranchId nameof parameters.BranchId correlationId
+                        parseGuid parameters.BranchId (nameof parameters.BranchId) correlationId
                         |> Result.map (fun branchId -> Scope.Branch(ownerId, organizationId, repositoryId, branchId))
         | other -> Error(GraceError.Create $"Invalid ScopeKind '{other}'." correlationId)
 
@@ -104,48 +102,48 @@ module Access =
         | "" -> Error(GraceError.Create "ResourceKind is required." correlationId)
         | "system" -> Ok Resource.System
         | "owner" ->
-            parseGuid parameters.OwnerId nameof parameters.OwnerId correlationId
+            parseGuid parameters.OwnerId (nameof parameters.OwnerId) correlationId
             |> Result.map (fun ownerId -> Resource.Owner ownerId)
         | "org"
         | "organization" ->
-            match parseGuid parameters.OwnerId nameof parameters.OwnerId correlationId with
+            match parseGuid parameters.OwnerId (nameof parameters.OwnerId) correlationId with
             | Error error -> Error error
             | Ok ownerId ->
-                parseGuid parameters.OrganizationId nameof parameters.OrganizationId correlationId
+                parseGuid parameters.OrganizationId (nameof parameters.OrganizationId) correlationId
                 |> Result.map (fun organizationId -> Resource.Organization(ownerId, organizationId))
         | "repo"
         | "repository" ->
-            match parseGuid parameters.OwnerId nameof parameters.OwnerId correlationId with
+            match parseGuid parameters.OwnerId (nameof parameters.OwnerId) correlationId with
             | Error error -> Error error
             | Ok ownerId ->
-                match parseGuid parameters.OrganizationId nameof parameters.OrganizationId correlationId with
+                match parseGuid parameters.OrganizationId (nameof parameters.OrganizationId) correlationId with
                 | Error error -> Error error
                 | Ok organizationId ->
-                    parseGuid parameters.RepositoryId nameof parameters.RepositoryId correlationId
+                    parseGuid parameters.RepositoryId (nameof parameters.RepositoryId) correlationId
                     |> Result.map (fun repositoryId -> Resource.Repository(ownerId, organizationId, repositoryId))
         | "branch" ->
-            match parseGuid parameters.OwnerId nameof parameters.OwnerId correlationId with
+            match parseGuid parameters.OwnerId (nameof parameters.OwnerId) correlationId with
             | Error error -> Error error
             | Ok ownerId ->
-                match parseGuid parameters.OrganizationId nameof parameters.OrganizationId correlationId with
+                match parseGuid parameters.OrganizationId (nameof parameters.OrganizationId) correlationId with
                 | Error error -> Error error
                 | Ok organizationId ->
-                    match parseGuid parameters.RepositoryId nameof parameters.RepositoryId correlationId with
+                    match parseGuid parameters.RepositoryId (nameof parameters.RepositoryId) correlationId with
                     | Error error -> Error error
                     | Ok repositoryId ->
-                        parseGuid parameters.BranchId nameof parameters.BranchId correlationId
+                        parseGuid parameters.BranchId (nameof parameters.BranchId) correlationId
                         |> Result.map (fun branchId -> Resource.Branch(ownerId, organizationId, repositoryId, branchId))
         | "path" ->
             if String.IsNullOrWhiteSpace parameters.Path then
                 Error(GraceError.Create "Path is required for Path resources." correlationId)
             else
-                match parseGuid parameters.OwnerId nameof parameters.OwnerId correlationId with
+                match parseGuid parameters.OwnerId (nameof parameters.OwnerId) correlationId with
                 | Error error -> Error error
                 | Ok ownerId ->
-                    match parseGuid parameters.OrganizationId nameof parameters.OrganizationId correlationId with
+                    match parseGuid parameters.OrganizationId (nameof parameters.OrganizationId) correlationId with
                     | Error error -> Error error
                     | Ok organizationId ->
-                        parseGuid parameters.RepositoryId nameof parameters.RepositoryId correlationId
+                        parseGuid parameters.RepositoryId (nameof parameters.RepositoryId) correlationId
                         |> Result.map (fun repositoryId -> Resource.Path(ownerId, organizationId, repositoryId, parameters.Path))
         | other -> Error(GraceError.Create $"Invalid ResourceKind '{other}'." correlationId)
 
@@ -249,13 +247,13 @@ module Access =
                 let! parameters = context |> parse<UpsertPathPermissionParameters>
                 let correlationId = parameters.CorrelationId
 
-                match parseGuid parameters.OwnerId nameof parameters.OwnerId correlationId with
+                match parseGuid parameters.OwnerId (nameof parameters.OwnerId) correlationId with
                 | Error error -> return! context |> result400BadRequest error
                 | Ok _ ->
-                    match parseGuid parameters.OrganizationId nameof parameters.OrganizationId correlationId with
+                    match parseGuid parameters.OrganizationId (nameof parameters.OrganizationId) correlationId with
                     | Error error -> return! context |> result400BadRequest error
                     | Ok _ ->
-                        match parseGuid parameters.RepositoryId nameof parameters.RepositoryId correlationId with
+                        match parseGuid parameters.RepositoryId (nameof parameters.RepositoryId) correlationId with
                         | Error error -> return! context |> result400BadRequest error
                         | Ok repositoryId ->
                             if String.IsNullOrWhiteSpace parameters.Path then
@@ -302,13 +300,13 @@ module Access =
                 let! parameters = context |> parse<RemovePathPermissionParameters>
                 let correlationId = parameters.CorrelationId
 
-                match parseGuid parameters.OwnerId nameof parameters.OwnerId correlationId with
+                match parseGuid parameters.OwnerId (nameof parameters.OwnerId) correlationId with
                 | Error error -> return! context |> result400BadRequest error
                 | Ok _ ->
-                    match parseGuid parameters.OrganizationId nameof parameters.OrganizationId correlationId with
+                    match parseGuid parameters.OrganizationId (nameof parameters.OrganizationId) correlationId with
                     | Error error -> return! context |> result400BadRequest error
                     | Ok _ ->
-                        match parseGuid parameters.RepositoryId nameof parameters.RepositoryId correlationId with
+                        match parseGuid parameters.RepositoryId (nameof parameters.RepositoryId) correlationId with
                         | Error error -> return! context |> result400BadRequest error
                         | Ok repositoryId ->
                             if String.IsNullOrWhiteSpace parameters.Path then
@@ -327,13 +325,13 @@ module Access =
                 let! parameters = context |> parse<ListPathPermissionsParameters>
                 let correlationId = parameters.CorrelationId
 
-                match parseGuid parameters.OwnerId nameof parameters.OwnerId correlationId with
+                match parseGuid parameters.OwnerId (nameof parameters.OwnerId) correlationId with
                 | Error error -> return! context |> result400BadRequest error
                 | Ok _ ->
-                    match parseGuid parameters.OrganizationId nameof parameters.OrganizationId correlationId with
+                    match parseGuid parameters.OrganizationId (nameof parameters.OrganizationId) correlationId with
                     | Error error -> return! context |> result400BadRequest error
                     | Ok _ ->
-                        match parseGuid parameters.RepositoryId nameof parameters.RepositoryId correlationId with
+                        match parseGuid parameters.RepositoryId (nameof parameters.RepositoryId) correlationId with
                         | Error error -> return! context |> result400BadRequest error
                         | Ok repositoryId ->
                             let pathFilter =

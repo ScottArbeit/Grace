@@ -47,7 +47,18 @@ module Authorization =
 
         let private ownerReaderOperations = set [ OwnerRead; OrgRead; RepoRead; BranchRead; PathRead ]
 
-        let private orgAdminOperations = set [ OrgAdmin; OrgRead; RepoWrite; RepoRead; PathWrite; PathRead; BranchWrite; BranchRead ]
+        let private orgAdminOperations =
+            set
+                [ OrgAdmin
+                  OrgRead
+                  RepoAdmin
+                  RepoWrite
+                  RepoRead
+                  PathWrite
+                  PathRead
+                  BranchAdmin
+                  BranchWrite
+                  BranchRead ]
 
         let private orgReaderOperations = set [ OrgRead; RepoRead; PathRead; BranchRead ]
 

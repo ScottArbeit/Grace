@@ -298,7 +298,7 @@ module Access =
             | Some value -> Error(GraceError.Create $"Invalid DirectoryPermission '{value}'." correlationId)
             | None -> Ok parseResult
 
-    let private validatePrincipalFilter (parseResult: ParseResult) (principalType: Option<string>) (principalId: Option<string>) =
+    let private validatePrincipalFilter (parseResult: ParseResult) (principalType: string option) (principalId: string option) =
         let correlationId = getCorrelationId parseResult
         let principalTypeValue = principalType |> Option.defaultValue String.Empty
         let principalIdValue = principalId |> Option.defaultValue String.Empty
@@ -437,13 +437,13 @@ module Access =
                     if parseResult |> verbose then printParseResult parseResult
 
                     let graceIds = parseResult |> getNormalizedIdsAndNames
+                    let principalType = parseResult.GetValue(Options.principalTypeOptional) |> Option.ofObj
+                    let principalId = parseResult.GetValue(Options.principalIdOptional) |> Option.ofObj
+
                     let validateIncomingParameters =
                         parseResult
                         |> CommonValidations
-                        >>= validatePrincipalFilter
-                            parseResult
-                            (parseResult.GetValue(Options.principalTypeOptional) |> Option.ofObj)
-                            (parseResult.GetValue(Options.principalIdOptional) |> Option.ofObj)
+                        >>= (fun _ -> validatePrincipalFilter parseResult principalType principalId)
 
                     match validateIncomingParameters with
                     | Ok _ ->
@@ -453,8 +453,8 @@ module Access =
                                 OrganizationId = graceIds.OrganizationIdString,
                                 RepositoryId = graceIds.RepositoryIdString,
                                 BranchId = graceIds.BranchIdString,
-                                PrincipalType = (parseResult.GetValue(Options.principalTypeOptional) |> Option.ofObj |> Option.defaultValue ""),
-                                PrincipalId = (parseResult.GetValue(Options.principalIdOptional) |> Option.ofObj |> Option.defaultValue ""),
+                                PrincipalType = (principalType |> Option.defaultValue ""),
+                                PrincipalId = (principalId |> Option.defaultValue ""),
                                 ScopeKind = parseResult.GetValue(Options.scopeKindRequired),
                                 CorrelationId = getCorrelationId parseResult
                             )
@@ -663,15 +663,14 @@ module Access =
                     let graceIds = parseResult |> getNormalizedIdsAndNames
                     let resourceKind = parseResult.GetValue(Options.resourceKindRequired)
                     let pathValue = parseResult.GetValue(Options.pathOptional) |> Option.ofObj |> Option.defaultValue ""
+                    let principalType = parseResult.GetValue(Options.principalTypeOptional) |> Option.ofObj
+                    let principalId = parseResult.GetValue(Options.principalIdOptional) |> Option.ofObj
 
                     let validateIncomingParameters =
                         parseResult
                         |> CommonValidations
-                        >>= validatePrincipalFilter
-                            parseResult
-                            (parseResult.GetValue(Options.principalTypeOptional) |> Option.ofObj)
-                            (parseResult.GetValue(Options.principalIdOptional) |> Option.ofObj)
-                        >>= validatePathResource parseResult resourceKind pathValue
+                        >>= (fun _ -> validatePrincipalFilter parseResult principalType principalId)
+                        >>= (fun _ -> validatePathResource parseResult resourceKind pathValue)
 
                     match validateIncomingParameters with
                     | Ok _ ->
@@ -684,8 +683,8 @@ module Access =
                                 Operation = parseResult.GetValue(Options.operationRequired),
                                 ResourceKind = resourceKind,
                                 Path = pathValue,
-                                PrincipalType = (parseResult.GetValue(Options.principalTypeOptional) |> Option.ofObj |> Option.defaultValue ""),
-                                PrincipalId = (parseResult.GetValue(Options.principalIdOptional) |> Option.ofObj |> Option.defaultValue ""),
+                                PrincipalType = (principalType |> Option.defaultValue ""),
+                                PrincipalId = (principalId |> Option.defaultValue ""),
                                 CorrelationId = getCorrelationId parseResult
                             )
 

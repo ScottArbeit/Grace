@@ -12,7 +12,7 @@ module Authorization =
     type PrincipalId = string
 
     /// The type of principal represented in authorization decisions.
-    [<KnownType("GetKnownTypes"); GenerateSerializer>]
+    [<KnownType("GetKnownTypes")>]
     type PrincipalType =
         | User
         | Group
@@ -22,33 +22,37 @@ module Authorization =
 
     /// Identifies a principal (user, group, or service).
     [<GenerateSerializer>]
-    type Principal = { PrincipalType: PrincipalType; PrincipalId: PrincipalId }
+    type Principal =
+        { [<Id 0u>]
+          PrincipalType: PrincipalType
+          [<Id 1u>]
+          PrincipalId: PrincipalId }
 
     /// Scope for role assignments in the resource hierarchy.
-    [<KnownType("GetKnownTypes"); GenerateSerializer>]
+    [<KnownType("GetKnownTypes")>]
     type Scope =
-        | System
-        | Owner of ownerId: OwnerId
-        | Organization of ownerId: OwnerId * organizationId: OrganizationId
-        | Repository of ownerId: OwnerId * organizationId: OrganizationId * repositoryId: RepositoryId
-        | Branch of ownerId: OwnerId * organizationId: OrganizationId * repositoryId: RepositoryId * branchId: BranchId
+        | [<Id 0u>] System
+        | [<Id 1u>] Owner of OwnerId
+        | [<Id 2u>] Organization of OwnerId * OrganizationId
+        | [<Id 3u>] Repository of OwnerId * OrganizationId * RepositoryId
+        | [<Id 4u>] Branch of OwnerId * OrganizationId * RepositoryId * BranchId
 
         static member GetKnownTypes() = GetKnownTypes<Scope>()
 
     /// Resource targeted by an authorization check.
-    [<KnownType("GetKnownTypes"); GenerateSerializer>]
+    [<KnownType("GetKnownTypes")>]
     type Resource =
-        | System
-        | Owner of ownerId: OwnerId
-        | Organization of ownerId: OwnerId * organizationId: OrganizationId
-        | Repository of ownerId: OwnerId * organizationId: OrganizationId * repositoryId: RepositoryId
-        | Branch of ownerId: OwnerId * organizationId: OrganizationId * repositoryId: RepositoryId * branchId: BranchId
-        | Path of ownerId: OwnerId * organizationId: OrganizationId * repositoryId: RepositoryId * relativePath: RelativePath
+        | [<Id 0u>] System
+        | [<Id 1u>] Owner of OwnerId
+        | [<Id 2u>] Organization of OwnerId * OrganizationId
+        | [<Id 3u>] Repository of OwnerId * OrganizationId * RepositoryId
+        | [<Id 4u>] Branch of OwnerId * OrganizationId * RepositoryId * BranchId
+        | [<Id 5u>] Path of OwnerId * OrganizationId * RepositoryId * RelativePath
 
         static member GetKnownTypes() = GetKnownTypes<Resource>()
 
     /// Operation requested on a resource.
-    [<KnownType("GetKnownTypes"); GenerateSerializer>]
+    [<KnownType("GetKnownTypes")>]
     type Operation =
         | SystemAdmin
         | OwnerAdmin
@@ -72,42 +76,51 @@ module Authorization =
     /// Defines a role's allowed operations and applicable scope kinds.
     [<GenerateSerializer>]
     type RoleDefinition =
-        { RoleId: RoleId
+        { [<Id 0u>]
+          RoleId: RoleId
+          [<Id 1u>]
           AllowedOperations: Set<Operation>
+          [<Id 2u>]
           AppliesTo: Set<string> }
 
     /// Binds a principal to a role at a specific scope.
     [<GenerateSerializer>]
     type RoleAssignment =
-        { Principal: Principal
+        { [<Id 0u>]
+          Principal: Principal
+          [<Id 1u>]
           Scope: Scope
+          [<Id 2u>]
           RoleId: RoleId
+          [<Id 3u>]
           Source: string
+          [<Id 4u>]
           SourceDetail: string option
+          [<Id 5u>]
           CreatedAt: Instant }
 
     /// Result of an authorization check with a human-readable reason.
-    [<KnownType("GetKnownTypes"); GenerateSerializer>]
+    [<KnownType("GetKnownTypes")>]
     type PermissionCheckResult =
-        | Allowed of reason: string
-        | Denied of reason: string
+        | [<Id 0u>] Allowed of string
+        | [<Id 1u>] Denied of string
 
         static member GetKnownTypes() = GetKnownTypes<PermissionCheckResult>()
 
     /// Commands for managing role assignments.
-    [<KnownType("GetKnownTypes"); GenerateSerializer>]
+    [<KnownType("GetKnownTypes")>]
     type AccessControlCommand =
-        | GrantRole of RoleAssignment
-        | RevokeRole of Principal * RoleId
-        | ListAssignments of Principal option
+        | [<Id 0u>] GrantRole of RoleAssignment
+        | [<Id 1u>] RevokeRole of Principal * RoleId
+        | [<Id 2u>] ListAssignments of Principal option
 
         static member GetKnownTypes() = GetKnownTypes<AccessControlCommand>()
 
     /// Commands for managing repository path permissions.
-    [<KnownType("GetKnownTypes"); GenerateSerializer>]
+    [<KnownType("GetKnownTypes")>]
     type RepositoryPermissionCommand =
-        | UpsertPathPermission of PathPermission
-        | RemovePathPermission of RelativePath
-        | ListPathPermissions of RelativePath option
+        | [<Id 0u>] UpsertPathPermission of PathPermission
+        | [<Id 1u>] RemovePathPermission of RelativePath
+        | [<Id 2u>] ListPathPermissions of RelativePath option
 
         static member GetKnownTypes() = GetKnownTypes<RepositoryPermissionCommand>()

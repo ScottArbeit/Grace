@@ -1,7 +1,9 @@
 namespace Grace.Actors
 
 open Grace.Actors.Constants
+open Grace.Actors.Context
 open Grace.Actors.Interfaces
+open Grace.Shared.Constants
 open Grace.Shared.Utilities
 open Grace.Types.Authorization
 open Grace.Types.Types
@@ -22,7 +24,7 @@ module RepositoryPermission =
         let Empty = { PathPermissions = [] }
 
     type RepositoryPermissionActor
-        ([<PersistentState(StateName.RepositoryPermission, Constants.GraceActorStorage)>] state: IPersistentState<RepositoryPermissionState>) =
+        ([<PersistentState(StateName.RepositoryPermission, Grace.Shared.Constants.GraceActorStorage)>] state: IPersistentState<RepositoryPermissionState>) =
         inherit Grain()
 
         let log = loggerFactory.CreateLogger("RepositoryPermission.Actor")
@@ -30,11 +32,7 @@ module RepositoryPermission =
         let mutable permissionState = RepositoryPermissionState.Empty
 
         override this.OnActivateAsync(ct) =
-            permissionState <-
-                if state.RecordExists && not (isNull state.State) then
-                    state.State
-                else
-                    RepositoryPermissionState.Empty
+            permissionState <- if state.RecordExists then state.State else RepositoryPermissionState.Empty
 
             Task.CompletedTask
 

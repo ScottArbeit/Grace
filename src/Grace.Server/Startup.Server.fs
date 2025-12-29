@@ -124,6 +124,15 @@ module Application =
                 return resources
             }
 
+        let composeHandlers (first: HttpHandler) (second: HttpHandler) : HttpHandler =
+            fun next context -> first (second next) context
+
+        let requireRepoAdmin: HttpHandler =
+            AuthorizationMiddleware.requiresPermission Operation.RepoAdmin repositoryResourceFromContext
+
+        let requirePathWrite: HttpHandler =
+            AuthorizationMiddleware.requiresPermissions Operation.PathWrite uploadPathResourcesFromContext
+
         let endpoints =
             [ GET
                   [ route
@@ -413,10 +422,7 @@ module Application =
                           route "/setConflictResolutionPolicy" Repository.SetConflictResolutionPolicy
                           |> addMetadata typeof<Repository.SetConflictResolutionPolicyParameters>
 
-                          route
-                              "/setDescription"
-                              (AuthorizationMiddleware.requiresPermission Operation.RepoAdmin repositoryResourceFromContext
-                               >=> Repository.SetDescription)
+                          route "/setDescription" (composeHandlers requireRepoAdmin Repository.SetDescription)
                           |> addMetadata typeof<Repository.SetRepositoryDescriptionParameters>
 
                           route "/setLogicalDeleteDays" Repository.SetLogicalDeleteDays
@@ -442,10 +448,7 @@ module Application =
               subRoute
                   "/storage"
                   [ POST
-                        [ route
-                              "/getUploadMetadataForFiles"
-                              (AuthorizationMiddleware.requiresPermissions Operation.PathWrite uploadPathResourcesFromContext
-                               >=> Storage.GetUploadMetadataForFiles)
+                        [ route "/getUploadMetadataForFiles" (composeHandlers requirePathWrite Storage.GetUploadMetadataForFiles)
                           |> addMetadata typeof<Storage.GetUploadMetadataForFilesParameters>
 
                           route "/getDownloadUri" Storage.GetDownloadUri

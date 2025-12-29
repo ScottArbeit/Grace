@@ -1,7 +1,9 @@
 namespace Grace.Actors
 
 open Grace.Actors.Constants
+open Grace.Actors.Context
 open Grace.Actors.Interfaces
+open Grace.Shared.Constants
 open Grace.Shared.Utilities
 open Grace.Types.Authorization
 open Grace.Types.Types
@@ -29,7 +31,7 @@ module AccessControl =
         | Scope.Repository(ownerId, organizationId, repositoryId) -> $"repo:{ownerId}:{organizationId}:{repositoryId}"
         | Scope.Branch(ownerId, organizationId, repositoryId, branchId) -> $"branch:{ownerId}:{organizationId}:{repositoryId}:{branchId}"
 
-    type AccessControlActor([<PersistentState(StateName.AccessControl, Constants.GraceActorStorage)>] state: IPersistentState<AccessControlState>) =
+    type AccessControlActor([<PersistentState(StateName.AccessControl, Grace.Shared.Constants.GraceActorStorage)>] state: IPersistentState<AccessControlState>) =
         inherit Grain()
 
         let log = loggerFactory.CreateLogger("AccessControl.Actor")
@@ -38,11 +40,7 @@ module AccessControl =
         let mutable correlationId: CorrelationId = String.Empty
 
         override this.OnActivateAsync(ct) =
-            accessControlState <-
-                if state.RecordExists && not (isNull state.State) then
-                    state.State
-                else
-                    AccessControlState.Empty
+            accessControlState <- if state.RecordExists then state.State else AccessControlState.Empty
 
             Task.CompletedTask
 
