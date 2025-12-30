@@ -75,7 +75,7 @@ module Auth =
                     do! context.ChallengeAsync(ExternalAuthConfig.MicrosoftScheme, properties)
                     return Some context
                 else
-                    return! RequestErrors.NOT_FOUND "Grace" "Auth" "Login provider not available." next context
+                    return! RequestErrors.NOT_FOUND "Login provider not available." next context
             }
 
     let Logout: HttpHandler =
