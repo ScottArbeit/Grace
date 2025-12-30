@@ -482,7 +482,11 @@ module Application =
                     GET [ route "/listRoles" Access.ListRoles ] ]
               subRoute
                   "/auth"
-                  [ GET [ route "/me" Auth.Me ] ]
+                  [ GET
+                        [ route "/me" Auth.Me
+                          route "/login" Auth.Login
+                          routef "/login/%s" (fun providerId -> Auth.LoginProvider providerId)
+                          route "/logout" Auth.Logout ] ]
               subRoute
                   "/reminder"
                   [ POST
