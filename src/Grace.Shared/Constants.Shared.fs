@@ -229,6 +229,30 @@ module Constants =
         [<Literal>]
         let GraceServerUri = "GRACE_SERVER_URI"
 
+        /// External authentication settings for Microsoft (MSA + Entra).
+        [<Literal>]
+        let GraceAuthMicrosoftClientId = "grace__auth__microsoft__client_id"
+
+        /// External authentication settings for Microsoft (MSA + Entra).
+        [<Literal>]
+        let GraceAuthMicrosoftClientSecret = "grace__auth__microsoft__client_secret"
+
+        /// External authentication settings for Microsoft (MSA + Entra).
+        [<Literal>]
+        let GraceAuthMicrosoftTenantId = "grace__auth__microsoft__tenant_id"
+
+        /// External authentication settings for Microsoft (MSA + Entra).
+        [<Literal>]
+        let GraceAuthMicrosoftAuthority = "grace__auth__microsoft__authority"
+
+        /// External authentication settings for Microsoft (MSA + Entra).
+        [<Literal>]
+        let GraceAuthMicrosoftApiScope = "grace__auth__microsoft__api_scope"
+
+        /// External authentication settings for Microsoft (MSA + Entra).
+        [<Literal>]
+        let GraceAuthMicrosoftCliClientId = "grace__auth__microsoft__cli_client_id"
+
         /// The name of the container in object storage that holds memoized RecursiveDirectoryVersions.
         [<Literal>]
         let DirectoryVersionContainerName = "grace__azure_storage__directoryversion_container_name"

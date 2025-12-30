@@ -58,6 +58,9 @@
 		<Compile Include="Services.Server.fs" />
 		<Compile Include="Validations.Server.fs" />
 		<Compile Include="Security\PrincipalMapper.Server.fs" />
+		<Compile Include="Security\ExternalAuthConfig.Server.fs" />
+		<Compile Include="Security\ClaimMapping.Server.fs" />
+		<Compile Include="Security\ClaimsTransformation.Server.fs" />
 		<Compile Include="Security\TestAuth.Server.fs" />
 		<Compile Include="Security\PermissionEvaluator.Server.fs" />
 		<Compile Include="Security\AuthorizationMiddleware.Server.fs" />
@@ -77,6 +80,7 @@
 		<Compile Include="Diff.Server.fs" />
 		<Compile Include="Storage.Server.fs" />
 		<Compile Include="Access.Server.fs" />
+		<Compile Include="Auth.Server.fs" />
 		<Compile Include="Reminder.Server.fs" />
 		<Compile Include="ReminderService.Server.fs" />
 		<Compile Include="Notification.Server.fs" />

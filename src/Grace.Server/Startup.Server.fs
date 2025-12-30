@@ -481,6 +481,9 @@ module Application =
                           |> addMetadata typeof<Access.CheckPermissionParameters> ]
                     GET [ route "/listRoles" Access.ListRoles ] ]
               subRoute
+                  "/auth"
+                  [ GET [ route "/me" Auth.Me ] ]
+              subRoute
                   "/reminder"
                   [ POST
                         [ route "/list" Reminder.List
@@ -650,6 +653,8 @@ module Application =
                 |> ignore
             else
                 services.AddAuthentication() |> ignore
+
+            services.AddTransient<IClaimsTransformation, GraceClaimsTransformation>() |> ignore
 
             services.AddSingleton<IGracePermissionEvaluator, GracePermissionEvaluator>() |> ignore
 
