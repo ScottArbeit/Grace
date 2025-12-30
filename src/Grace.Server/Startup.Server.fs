@@ -23,6 +23,9 @@ open Grace.Shared.Parameters
 open Grace.Types.Types
 open Grace.Types.Authorization
 open Microsoft.AspNetCore.Authentication
+open Microsoft.AspNetCore.Authentication.Cookies
+open Microsoft.AspNetCore.Authentication.JwtBearer
+open Microsoft.AspNetCore.Authentication.OpenIdConnect
 open Microsoft.AspNetCore.Builder
 open Microsoft.AspNetCore.Hosting
 open Microsoft.AspNetCore.Http
@@ -61,6 +64,8 @@ open System.Threading.Tasks
 open FSharpPlus
 open System.Net.Http
 open System.Net.Security
+open Microsoft.IdentityModel.Tokens
+open System.Security.Claims
 
 module Application =
 
@@ -656,7 +661,90 @@ module Application =
                     .AddScheme<AuthenticationSchemeOptions, GraceTestAuthHandler>(SchemeName, fun _ -> ())
                 |> ignore
             else
-                services.AddAuthentication() |> ignore
+                let authBuilder =
+                    services.AddAuthentication(fun options ->
+                        options.DefaultScheme <- "GraceAuth"
+                        options.DefaultChallengeScheme <- ExternalAuthConfig.MicrosoftScheme)
+
+                authBuilder
+                    .AddPolicyScheme(
+                        "GraceAuth",
+                        "GraceAuth",
+                        fun options ->
+                            options.ForwardDefaultSelector <-
+                                fun context ->
+                                    let authorization = context.Request.Headers.Authorization.ToString()
+
+                                    if
+                                        not (String.IsNullOrWhiteSpace authorization)
+                                        && authorization.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)
+                                    then
+                                        JwtBearerDefaults.AuthenticationScheme
+                                    else
+                                        CookieAuthenticationDefaults.AuthenticationScheme
+                    )
+                    .AddCookie(
+                        CookieAuthenticationDefaults.AuthenticationScheme,
+                        fun options ->
+                            options.SlidingExpiration <- true
+                            options.Cookie.HttpOnly <- true
+                    )
+                |> ignore
+
+                match ExternalAuthConfig.tryGetMicrosoftConfig configuration with
+                | Some microsoftConfig when microsoftConfig.ClientSecret.IsSome ->
+                    let authority =
+                        let trimmed = microsoftConfig.Authority.TrimEnd('/')
+                        if trimmed.EndsWith("/v2.0", StringComparison.OrdinalIgnoreCase) then
+                            trimmed
+                        else
+                            $"{trimmed}/v2.0"
+
+                    let apiAudience =
+                        let trimmed = microsoftConfig.ApiScope.TrimEnd('/')
+                        if String.IsNullOrWhiteSpace trimmed then
+                            microsoftConfig.ClientId
+                        elif trimmed.Contains("/") then
+                            trimmed.Substring(0, trimmed.LastIndexOf('/'))
+                        else
+                            trimmed
+
+                    authBuilder
+                        .AddOpenIdConnect(
+                            ExternalAuthConfig.MicrosoftScheme,
+                            fun options ->
+                                options.Authority <- authority
+                                options.ClientId <- microsoftConfig.ClientId
+                                options.ClientSecret <- microsoftConfig.ClientSecret.Value
+                                options.CallbackPath <- PathString("/signin-microsoft")
+                                options.SignInScheme <- CookieAuthenticationDefaults.AuthenticationScheme
+                                options.SaveTokens <- true
+                                options.GetClaimsFromUserInfoEndpoint <- true
+                                options.Scope.Clear()
+                                options.Scope.Add("openid") |> ignore
+                                options.Scope.Add("profile") |> ignore
+                                options.Scope.Add("email") |> ignore
+
+                                if not (String.IsNullOrWhiteSpace microsoftConfig.ApiScope) then
+                                    options.Scope.Add(microsoftConfig.ApiScope) |> ignore
+
+                                options.TokenValidationParameters <-
+                                    TokenValidationParameters(NameClaimType = "name", RoleClaimType = "roles")
+                        )
+                        .AddJwtBearer(
+                            JwtBearerDefaults.AuthenticationScheme,
+                            fun options ->
+                                options.Authority <- authority
+                                options.TokenValidationParameters <-
+                                    TokenValidationParameters(
+                                        ValidateIssuer = true,
+                                        NameClaimType = "name",
+                                        RoleClaimType = "roles",
+                                        ValidAudiences = [| apiAudience; microsoftConfig.ClientId; microsoftConfig.ApiScope |]
+                                    )
+                        )
+                    |> ignore
+                | _ -> ()
 
             services.AddTransient<IClaimsTransformation, GraceClaimsTransformation>() |> ignore
 
