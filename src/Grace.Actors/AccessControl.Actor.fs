@@ -62,9 +62,9 @@ module AccessControl =
                 state.State <- accessControlState
 
                 if accessControlState.Assignments |> List.isEmpty then
-                    do! state.ClearStateAsync()
+                    do! DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> state.ClearStateAsync())
                 else
-                    do! state.WriteStateAsync()
+                    do! DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> state.WriteStateAsync())
             }
 
         member private this.GrantRole (assignment: RoleAssignment) (metadata: EventMetadata) =

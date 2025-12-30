@@ -41,9 +41,9 @@ module RepositoryPermission =
                 state.State <- permissionState
 
                 if permissionState.PathPermissions |> List.isEmpty then
-                    do! state.ClearStateAsync()
+                    do! DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> state.ClearStateAsync())
                 else
-                    do! state.WriteStateAsync()
+                    do! DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> state.WriteStateAsync())
             }
 
         member private this.Upsert (pathPermission: PathPermission) (metadata: EventMetadata) =
