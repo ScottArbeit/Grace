@@ -17,6 +17,7 @@
 	</PropertyGroup>
 	<ItemGroup>
 		<None Include="instructions.md" />
+		<Compile Include="Auth.SDK.fs" />
 		<Compile Include="Common.SDK.fs" />
 		<Compile Include="Storage.SDK.fs" />
 		<Compile Include="Branch.SDK.fs" />

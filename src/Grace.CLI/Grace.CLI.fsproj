@@ -26,6 +26,7 @@
 		<Compile Include="Text.CLI.fs" />
 		<Compile Include="Command\Services.CLI.fs" />
 		<Compile Include="Command\Common.CLI.fs" />
+		<Compile Include="Command\Auth.CLI.fs" />
 		<Compile Include="Command\Config.CLI.fs" />
 		<Compile Include="Command\Owner.CLI.fs" />
 		<Compile Include="Command\Connect.CLI.fs" />
@@ -54,6 +55,8 @@
 		<PackageReference Include="Microsoft.AspNetCore.SignalR.Protocols.Json" Version="10.0.0" />
 		<PackageReference Include="Microsoft.Extensions.Logging.Configuration" Version="10.0.0" />
 		<PackageReference Include="Microsoft.Extensions.Logging.Console" Version="10.0.0" />
+		<PackageReference Include="Microsoft.Identity.Client" Version="4.79.2" />
+		<PackageReference Include="Microsoft.Identity.Client.Extensions.Msal" Version="4.79.2" />
 		<PackageReference Include="NodaTime" Version="3.2.2" />
 		<PackageReference Include="NodaTime.Serialization.SystemTextJson" Version="1.3.0" />
 		<PackageReference Include="OpenTelemetry" Version="1.14.0" />
