@@ -719,7 +719,7 @@ module Application =
                                 options.CallbackPath <- PathString("/signin-microsoft")
                                 options.SignInScheme <- CookieAuthenticationDefaults.AuthenticationScheme
                                 // Force auth code flow to avoid id_token implicit requirements.
-                                options.ResponseType <- OpenIdConnectResponseType.Code
+                                options.ResponseType <- "code"
                                 options.UsePkce <- true
                                 options.SaveTokens <- true
                                 options.GetClaimsFromUserInfoEndpoint <- true
