@@ -814,6 +814,14 @@ module Application =
 
                                         Task.CompletedTask)
 
+                                options.Events <- OpenIdConnectEvents()
+                                options.Events.OnAuthorizationCodeReceived <-
+                                    Func<AuthorizationCodeReceivedContext, Task>(fun context ->
+                                        let scopeValue = String.Join(" ", options.Scope)
+                                        if not (String.IsNullOrWhiteSpace scopeValue) then
+                                            context.TokenEndpointRequest.Scope <- scopeValue
+                                        Task.CompletedTask)
+
                                 options.TokenValidationParameters <-
                                     TokenValidationParameters(NameClaimType = "name", RoleClaimType = "roles", IssuerValidator = issuerValidator)
                         )
