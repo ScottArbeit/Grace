@@ -14,7 +14,8 @@ module Auth =
 
     type AuthInfo =
         { GraceUserId: string
-          Claims: string list }
+          Claims: string list
+          RawClaims: (string * string) list }
 
     let private tryGetQueryValue (context: HttpContext) (name: string) =
         let values = context.Request.Query[name]
@@ -94,9 +95,16 @@ module Auth =
                     return! RequestErrors.UNAUTHORIZED "Grace" "Auth" "Authentication required." next context
                 | Some userId ->
                     let claims = PrincipalMapper.getEffectiveClaims context.User |> Set.toList
+                    let rawClaims =
+                        context.User.Claims
+                        |> Seq.map (fun claim -> (claim.Type, claim.Value))
+                        |> Seq.sortBy (fun (claimType, claimValue) -> (claimType, claimValue))
+                        |> Seq.toList
+
                     let info =
                         { GraceUserId = userId
-                          Claims = claims }
+                          Claims = claims
+                          RawClaims = rawClaims }
 
                     let correlationId = getCorrelationId context
                     let returnValue = GraceReturnValue.Create info correlationId

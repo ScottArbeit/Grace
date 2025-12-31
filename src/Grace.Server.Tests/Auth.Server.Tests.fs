@@ -1,6 +1,7 @@
 namespace Grace.Server.Tests
 
 open Grace.Server.Tests.Services
+open Grace.Server.Security
 open Grace.Shared
 open Grace.Shared.Utilities
 open Grace.Types.Types
@@ -10,7 +11,10 @@ open System.Net.Http
 open System.Threading.Tasks
 
 [<Parallelizable(ParallelScope.All)>]
-type AuthInfo = { GraceUserId: string; Claims: string list }
+type AuthInfo =
+    { GraceUserId: string
+      Claims: string list
+      RawClaims: (string * string) list }
 
 [<Parallelizable(ParallelScope.All)>]
 type AuthEndpoints() =
@@ -39,6 +43,10 @@ type AuthEndpoints() =
             let! returnValue = deserializeContent<GraceReturnValue<AuthInfo>> response
             Assert.That(returnValue.ReturnValue.GraceUserId, Is.EqualTo(testUserId))
             Assert.That(returnValue.ReturnValue.Claims, Is.Empty)
+            Assert.That(
+                returnValue.ReturnValue.RawClaims,
+                Has.Some.EqualTo((PrincipalMapper.GraceUserIdClaim, testUserId))
+            )
         }
 
     [<Test>]
