@@ -709,6 +709,46 @@ module Application =
                         else
                             trimmed
 
+                    let issuerValidator =
+                        let allowAnyTenant =
+                            let tenantId = microsoftConfig.TenantId.Trim()
+                            tenantId.Equals("common", StringComparison.OrdinalIgnoreCase)
+                            || tenantId.Equals("organizations", StringComparison.OrdinalIgnoreCase)
+                            || tenantId.Equals("consumers", StringComparison.OrdinalIgnoreCase)
+
+                        let prefix = "https://login.microsoftonline.com/"
+                        let suffix = "/v2.0"
+
+                        Func<string, SecurityToken, TokenValidationParameters, string>(fun issuer _ _ ->
+                            if String.IsNullOrWhiteSpace issuer then
+                                raise (SecurityTokenInvalidIssuerException("Issuer is missing."))
+
+                            let normalized = issuer.TrimEnd('/')
+                            let matchesPattern =
+                                normalized.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
+                                && normalized.EndsWith(suffix, StringComparison.OrdinalIgnoreCase)
+
+                            if not matchesPattern then
+                                raise (SecurityTokenInvalidIssuerException($"Issuer '{issuer}' is not a valid Microsoft v2 issuer."))
+
+                            if allowAnyTenant then
+                                issuer
+                            else
+                                let tenantSegment =
+                                    normalized.Substring(
+                                        prefix.Length,
+                                        normalized.Length - prefix.Length - suffix.Length
+                                    )
+
+                                if tenantSegment.Equals(microsoftConfig.TenantId, StringComparison.OrdinalIgnoreCase) then
+                                    issuer
+                                else
+                                    raise (
+                                        SecurityTokenInvalidIssuerException(
+                                            $"Issuer '{issuer}' does not match tenant '{microsoftConfig.TenantId}'."
+                                        )
+                                    ))
+
                     authBuilder
                         .AddOpenIdConnect(
                             ExternalAuthConfig.MicrosoftScheme,
@@ -732,7 +772,11 @@ module Application =
                                     options.Scope.Add(microsoftConfig.ApiScope) |> ignore
 
                                 options.TokenValidationParameters <-
-                                    TokenValidationParameters(NameClaimType = "name", RoleClaimType = "roles")
+                                    TokenValidationParameters(
+                                        NameClaimType = "name",
+                                        RoleClaimType = "roles",
+                                        IssuerValidator = issuerValidator
+                                    )
                         )
                         .AddJwtBearer(
                             JwtBearerDefaults.AuthenticationScheme,
@@ -743,7 +787,8 @@ module Application =
                                         ValidateIssuer = true,
                                         NameClaimType = "name",
                                         RoleClaimType = "roles",
-                                        ValidAudiences = [| apiAudience; microsoftConfig.ClientId; microsoftConfig.ApiScope |]
+                                        ValidAudiences = [| apiAudience; microsoftConfig.ClientId; microsoftConfig.ApiScope |],
+                                        IssuerValidator = issuerValidator
                                     )
                         )
                     |> ignore
