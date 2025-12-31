@@ -709,7 +709,7 @@ module Application =
                         else
                             trimmed
 
-                    let issuerValidator =
+                    let issuerValidator : IssuerValidator =
                         let allowAnyTenant =
                             let tenantId = microsoftConfig.TenantId.Trim()
                             tenantId.Equals("common", StringComparison.OrdinalIgnoreCase)
@@ -719,7 +719,7 @@ module Application =
                         let prefix = "https://login.microsoftonline.com/"
                         let suffix = "/v2.0"
 
-                        Func<string, SecurityToken, TokenValidationParameters, string>(fun issuer _ _ ->
+                        IssuerValidator(fun issuer _ _ ->
                             if String.IsNullOrWhiteSpace issuer then
                                 raise (SecurityTokenInvalidIssuerException("Issuer is missing."))
 
