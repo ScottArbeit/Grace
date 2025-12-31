@@ -718,6 +718,9 @@ module Application =
                                 options.ClientSecret <- microsoftConfig.ClientSecret.Value
                                 options.CallbackPath <- PathString("/signin-microsoft")
                                 options.SignInScheme <- CookieAuthenticationDefaults.AuthenticationScheme
+                                // Force auth code flow to avoid id_token implicit requirements.
+                                options.ResponseType <- OpenIdConnectResponseType.Code
+                                options.UsePkce <- true
                                 options.SaveTokens <- true
                                 options.GetClaimsFromUserInfoEndpoint <- true
                                 options.Scope.Clear()
