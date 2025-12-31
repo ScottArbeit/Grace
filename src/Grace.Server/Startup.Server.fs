@@ -770,8 +770,7 @@ module Application =
                                 options.Scope.Add("email") |> ignore
                                 options.Scope.Add("User.Read") |> ignore
 
-                                if not (String.IsNullOrWhiteSpace microsoftConfig.ApiScope) then
-                                    options.Scope.Add(microsoftConfig.ApiScope) |> ignore
+                                // Do not mix API scopes with Graph scopes in a single auth code request.
 
                                 options.Events <- OpenIdConnectEvents()
                                 options.Events.OnAuthorizationCodeReceived <-
