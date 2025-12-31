@@ -762,13 +762,13 @@ module Application =
                                 options.ResponseType <- "code"
                                 options.UsePkce <- true
                                 options.SaveTokens <- true
-                                // Microsoft v2 userinfo requires a Graph-scoped access token; we request API scope,
-                                // so skip userinfo and rely on id_token claims.
-                                options.GetClaimsFromUserInfoEndpoint <- false
+                                // Request Graph scope so userinfo succeeds.
+                                options.GetClaimsFromUserInfoEndpoint <- true
                                 options.Scope.Clear()
                                 options.Scope.Add("openid") |> ignore
                                 options.Scope.Add("profile") |> ignore
                                 options.Scope.Add("email") |> ignore
+                                options.Scope.Add("User.Read") |> ignore
 
                                 if not (String.IsNullOrWhiteSpace microsoftConfig.ApiScope) then
                                     options.Scope.Add(microsoftConfig.ApiScope) |> ignore
