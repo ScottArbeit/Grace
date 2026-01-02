@@ -12,6 +12,7 @@ open Grace.Types.Reminder
 open Grace.Types.Repository
 open Grace.Types.Organization
 open Grace.Types.Owner
+open Grace.Types.PersonalAccessToken
 open Grace.Types.Types
 open Grace.Shared.Utilities
 open NodaTime
@@ -426,3 +427,26 @@ module Interfaces =
 
         /// Returns the RepositoryId for the given RepositoryName.
         abstract member GetRepositoryId: correlationId: CorrelationId -> Task<RepositoryId option>
+
+    /// Defines the operations for the PersonalAccessToken actor.
+    [<Interface>]
+    type IPersonalAccessTokenActor =
+        inherit IGrainWithStringKey
+
+        abstract member CreateToken:
+            name: string ->
+            claims: string list ->
+            groupIds: string list ->
+            expiresAt: Instant option ->
+            now: Instant ->
+            correlationId: CorrelationId ->
+                Task<Result<PersonalAccessTokenCreated, GraceError>>
+
+        abstract member ListTokens:
+            includeRevoked: bool -> includeExpired: bool -> now: Instant -> correlationId: CorrelationId -> Task<PersonalAccessTokenSummary list>
+
+        abstract member RevokeToken:
+            tokenId: PersonalAccessTokenId -> now: Instant -> correlationId: CorrelationId -> Task<Result<PersonalAccessTokenSummary, GraceError>>
+
+        abstract member ValidateToken:
+            tokenId: PersonalAccessTokenId -> secret: byte[] -> now: Instant -> correlationId: CorrelationId -> Task<PersonalAccessTokenValidationResult option>

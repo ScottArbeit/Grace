@@ -20,8 +20,9 @@
 		<Compile Include="Extensions\MemoryCache.Extensions.Actor.fs" />
 		<Compile Include="Constants.Actor.fs" />
 		<Compile Include="Types.Actor.fs" />
-		<Compile Include="Interfaces.Actor.fs" />
-		<Compile Include="Context.Actor.fs" />
+                <Compile Include="Interfaces.Actor.fs" />
+                <Compile Include="Context.Actor.fs" />
+                <Compile Include="PersonalAccessToken.Actor.fs" />
 		<Compile Include="Timing.Actor.fs" />
 		<Compile Include="ActorProxy.Extensions.Actor.fs" />
 		<Compile Include="Services.Actor.fs" />

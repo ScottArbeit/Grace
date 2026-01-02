@@ -84,12 +84,7 @@ module Access =
                 .AcceptOnlyFromAmong(listCases<PrincipalType> ())
 
         let principalIdRequired =
-            new Option<string>(
-                OptionName.PrincipalId,
-                Required = true,
-                Description = "The principal identifier.",
-                Arity = ArgumentArity.ExactlyOne
-            )
+            new Option<string>(OptionName.PrincipalId, Required = true, Description = "The principal identifier.", Arity = ArgumentArity.ExactlyOne)
 
         let principalTypeOptional =
             (new Option<string>(
@@ -101,12 +96,7 @@ module Access =
                 .AcceptOnlyFromAmong(listCases<PrincipalType> ())
 
         let principalIdOptional =
-            new Option<string>(
-                OptionName.PrincipalId,
-                Required = false,
-                Description = "Optional principal identifier filter.",
-                Arity = ArgumentArity.ZeroOrOne
-            )
+            new Option<string>(OptionName.PrincipalId, Required = false, Description = "Optional principal identifier filter.", Arity = ArgumentArity.ZeroOrOne)
 
         let scopeKindRequired =
             (new Option<string>(
@@ -117,16 +107,9 @@ module Access =
             ))
                 .AcceptOnlyFromAmong([| "system"; "owner"; "org"; "organization"; "repo"; "repository"; "branch" |])
 
-        let roleId =
-            new Option<string>(OptionName.RoleId, Required = true, Description = "Role identifier.", Arity = ArgumentArity.ExactlyOne)
+        let roleId = new Option<string>(OptionName.RoleId, Required = true, Description = "Role identifier.", Arity = ArgumentArity.ExactlyOne)
 
-        let source =
-            new Option<string>(
-                OptionName.Source,
-                Required = false,
-                Description = "Optional role assignment source.",
-                Arity = ArgumentArity.ZeroOrOne
-            )
+        let source = new Option<string>(OptionName.Source, Required = false, Description = "Optional role assignment source.", Arity = ArgumentArity.ZeroOrOne)
 
         let sourceDetail =
             new Option<string>(
@@ -139,12 +122,7 @@ module Access =
         let pathRequired = new Option<string>(OptionName.Path, Required = true, Description = "Repository relative path.", Arity = ArgumentArity.ExactlyOne)
 
         let pathOptional =
-            new Option<string>(
-                OptionName.Path,
-                Required = false,
-                Description = "Optional repository relative path filter.",
-                Arity = ArgumentArity.ZeroOrOne
-            )
+            new Option<string>(OptionName.Path, Required = false, Description = "Optional repository relative path filter.", Arity = ArgumentArity.ZeroOrOne)
 
         let claim =
             new Option<string[]>(
@@ -163,12 +141,7 @@ module Access =
             )
 
         let operationRequired =
-            (new Option<string>(
-                OptionName.Operation,
-                Required = true,
-                Description = "Operation to check.",
-                Arity = ArgumentArity.ExactlyOne
-            ))
+            (new Option<string>(OptionName.Operation, Required = true, Description = "Operation to check.", Arity = ArgumentArity.ExactlyOne))
                 .AcceptOnlyFromAmong(listCases<Operation> ())
 
         let resourceKindRequired =
@@ -178,7 +151,16 @@ module Access =
                 Description = "Resource kind (system, owner, org, repo, branch, path).",
                 Arity = ArgumentArity.ExactlyOne
             ))
-                .AcceptOnlyFromAmong([| "system"; "owner"; "org"; "organization"; "repo"; "repository"; "branch"; "path" |])
+                .AcceptOnlyFromAmong(
+                    [| "system"
+                       "owner"
+                       "org"
+                       "organization"
+                       "repo"
+                       "repository"
+                       "branch"
+                       "path" |]
+                )
 
     let private formatScope (scope: Scope) =
         match scope with
@@ -212,6 +194,7 @@ module Access =
                 for assignment in assignments do
                     let principalText = $"{assignment.Principal.PrincipalType}:{assignment.Principal.PrincipalId}"
                     let sourceDetail = assignment.SourceDetail |> Option.defaultValue ""
+
                     let sourceText =
                         if String.IsNullOrWhiteSpace sourceDetail then
                             assignment.Source
@@ -247,7 +230,8 @@ module Access =
                     let appliesTo = role.AppliesTo |> Seq.sort |> String.concat ", "
                     let operations = role.AllowedOperations |> Seq.map string |> Seq.sort |> String.concat ", "
 
-                    table.AddRow($"[{Colors.Deemphasized}]{role.RoleId}[/]", appliesTo, operations) |> ignore
+                    table.AddRow($"[{Colors.Deemphasized}]{role.RoleId}[/]", appliesTo, operations)
+                    |> ignore
 
                 AnsiConsole.Write(table)
 
@@ -266,17 +250,17 @@ module Access =
 
                 for pathPermission in pathPermissions do
                     let claims = formatClaimPermissions pathPermission.Permissions
-                    table.AddRow($"[{Colors.Deemphasized}]{pathPermission.Path}[/]", claims) |> ignore
+
+                    table.AddRow($"[{Colors.Deemphasized}]{pathPermission.Path}[/]", claims)
+                    |> ignore
 
                 AnsiConsole.Write(table)
 
     let private renderPermissionCheck (parseResult: ParseResult) (result: PermissionCheckResult) =
         if parseResult |> hasOutput then
             match result with
-            | Allowed reason ->
-                AnsiConsole.MarkupLine($"[{Colors.Highlighted}]Allowed[/]: {Markup.Escape(reason)}")
-            | Denied reason ->
-                AnsiConsole.MarkupLine($"[{Colors.Error}]Denied[/]: {Markup.Escape(reason)}")
+            | Allowed reason -> AnsiConsole.MarkupLine($"[{Colors.Highlighted}]Allowed[/]: {Markup.Escape(reason)}")
+            | Denied reason -> AnsiConsole.MarkupLine($"[{Colors.Error}]Denied[/]: {Markup.Escape(reason)}")
 
     let private validateClaimPermissions (parseResult: ParseResult) =
         let correlationId = getCorrelationId parseResult
@@ -303,15 +287,24 @@ module Access =
         let principalTypeValue = principalType |> Option.defaultValue String.Empty
         let principalIdValue = principalId |> Option.defaultValue String.Empty
 
-        if String.IsNullOrWhiteSpace principalTypeValue && String.IsNullOrWhiteSpace principalIdValue then
+        if
+            String.IsNullOrWhiteSpace principalTypeValue
+            && String.IsNullOrWhiteSpace principalIdValue
+        then
             Ok parseResult
-        elif String.IsNullOrWhiteSpace principalTypeValue || String.IsNullOrWhiteSpace principalIdValue then
+        elif
+            String.IsNullOrWhiteSpace principalTypeValue
+            || String.IsNullOrWhiteSpace principalIdValue
+        then
             Error(GraceError.Create "PrincipalType and PrincipalId must be provided together." correlationId)
         else
             Ok parseResult
 
     let private validatePathResource (parseResult: ParseResult) (resourceKind: string) (pathValue: string) =
-        if resourceKind.Equals("path", StringComparison.InvariantCultureIgnoreCase) && String.IsNullOrWhiteSpace pathValue then
+        if
+            resourceKind.Equals("path", StringComparison.InvariantCultureIgnoreCase)
+            && String.IsNullOrWhiteSpace pathValue
+        then
             Error(GraceError.Create "Path is required for Path resources." (getCorrelationId parseResult))
         else
             Ok parseResult
@@ -497,10 +490,7 @@ module Access =
                     if parseResult |> verbose then printParseResult parseResult
 
                     let graceIds = parseResult |> getNormalizedIdsAndNames
-                    let validateIncomingParameters =
-                        parseResult
-                        |> CommonValidations
-                        >>= validateClaimPermissions
+                    let validateIncomingParameters = parseResult |> CommonValidations >>= validateClaimPermissions
 
                     match validateIncomingParameters with
                     | Ok _ ->
@@ -619,7 +609,10 @@ module Access =
                                 OwnerId = graceIds.OwnerIdString,
                                 OrganizationId = graceIds.OrganizationIdString,
                                 RepositoryId = graceIds.RepositoryIdString,
-                                Path = (parseResult.GetValue(Options.pathOptional) |> Option.ofObj |> Option.defaultValue ""),
+                                Path =
+                                    (parseResult.GetValue(Options.pathOptional)
+                                     |> Option.ofObj
+                                     |> Option.defaultValue ""),
                                 CorrelationId = getCorrelationId parseResult
                             )
 
@@ -662,7 +655,12 @@ module Access =
 
                     let graceIds = parseResult |> getNormalizedIdsAndNames
                     let resourceKind = parseResult.GetValue(Options.resourceKindRequired)
-                    let pathValue = parseResult.GetValue(Options.pathOptional) |> Option.ofObj |> Option.defaultValue ""
+
+                    let pathValue =
+                        parseResult.GetValue(Options.pathOptional)
+                        |> Option.ofObj
+                        |> Option.defaultValue ""
+
                     let principalType = parseResult.GetValue(Options.principalTypeOptional) |> Option.ofObj
                     let principalId = parseResult.GetValue(Options.principalIdOptional) |> Option.ofObj
 

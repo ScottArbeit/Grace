@@ -9,6 +9,7 @@ using Grace.Shared;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Net;
@@ -32,6 +33,7 @@ public partial class Program
             var configuration = new ConfigurationBuilder()
                 .AddJsonFile("appsettings.json", optional: true, reloadOnChange: true)
                 .AddJsonFile($"appsettings.{environmentName}.json", optional: true, reloadOnChange: true)
+                .AddUserSecrets(typeof(Program).Assembly, optional: true)
                 .AddEnvironmentVariables()
                 .Build();
 
@@ -105,6 +107,14 @@ public partial class Program
                     .AsHttp2Service()
                     .WithOtlpExporter();
 
+                var forwardedAuthKeys = new List<string>();
+                AddOptionalEnvironment(graceServer, configuration, EnvironmentVariables.GraceAuthMicrosoftClientId, forwardedAuthKeys);
+                AddOptionalEnvironment(graceServer, configuration, EnvironmentVariables.GraceAuthMicrosoftClientSecret, forwardedAuthKeys);
+                AddOptionalEnvironment(graceServer, configuration, EnvironmentVariables.GraceAuthMicrosoftTenantId, forwardedAuthKeys);
+                AddOptionalEnvironment(graceServer, configuration, EnvironmentVariables.GraceAuthMicrosoftAuthority, forwardedAuthKeys);
+                AddOptionalEnvironment(graceServer, configuration, EnvironmentVariables.GraceAuthMicrosoftApiScope, forwardedAuthKeys);
+                LogForwardedSettings("Grace.Server auth settings", forwardedAuthKeys);
+
                 if (isTestRun)
                 {
                     var graceTargetPort = GetAvailableTcpPort();
@@ -118,8 +128,8 @@ public partial class Program
                     graceServer
                         .WithEnvironment("ASPNETCORE_URLS", "https://+:5001;http://+:5000")
                         .WithEnvironment(EnvironmentVariables.GraceServerUri, "http://localhost:5000")
-                        .WithHttpEndpoint(port: 5000, name: "http")
-                        .WithHttpsEndpoint(port: 5001, name: "https");
+                        .WithHttpEndpoint(targetPort: 5000, name: "http")
+                        .WithHttpsEndpoint(targetPort: 5001, name: "https");
                 }
 
                 if (!isAzureDebugRun)
@@ -300,7 +310,7 @@ public partial class Program
                 var otlpEndpoint = configuration["Grace:OtlpEndpoint"] ?? "http://localhost:18889";
                 var publishLogDirectory = configuration["Grace:LogDirectory"] ?? "/tmp/grace-logs";
 
-                _ = builder.AddProject("grace-server", "..\\Grace.Server\\Grace.Server.fsproj")
+                var graceServer = builder.AddProject("grace-server", "..\\Grace.Server\\Grace.Server.fsproj")
                     .WithReference(cosmosDatabase)
                     .WithReference(blobStorage)
                     .WithReference(diffStorage)
@@ -325,10 +335,18 @@ public partial class Program
                     .WithEnvironment(EnvironmentVariables.AzureServiceBusTopic, configuration["Grace:ServiceBus:TopicName"] ?? "graceeventstream")
                     .WithEnvironment(EnvironmentVariables.AzureServiceBusSubscription, configuration["Grace:ServiceBus:SubscriptionName"] ?? "grace-server")
                     .WithEnvironment(EnvironmentVariables.GraceLogDirectory, publishLogDirectory)
-                    .WithHttpEndpoint(port: 5000, name: "http")
-                    .WithHttpsEndpoint(port: 5001, name: "https")
+                    .WithHttpEndpoint(targetPort: 5000, name: "http")
+                    .WithHttpsEndpoint(targetPort: 5001, name: "https")
                     .AsHttp2Service()
                     .WithOtlpExporter();
+
+                var forwardedAuthKeys = new List<string>();
+                AddOptionalEnvironment(graceServer, configuration, EnvironmentVariables.GraceAuthMicrosoftClientId, forwardedAuthKeys);
+                AddOptionalEnvironment(graceServer, configuration, EnvironmentVariables.GraceAuthMicrosoftClientSecret, forwardedAuthKeys);
+                AddOptionalEnvironment(graceServer, configuration, EnvironmentVariables.GraceAuthMicrosoftTenantId, forwardedAuthKeys);
+                AddOptionalEnvironment(graceServer, configuration, EnvironmentVariables.GraceAuthMicrosoftAuthority, forwardedAuthKeys);
+                AddOptionalEnvironment(graceServer, configuration, EnvironmentVariables.GraceAuthMicrosoftApiScope, forwardedAuthKeys);
+                LogForwardedSettings("Grace.Server auth settings", forwardedAuthKeys);
 
                 Console.WriteLine("Grace.Server publish/production environment configured (Azure resources with MI by default).");
                 Console.WriteLine("  - Redis remains local container");
@@ -367,6 +385,52 @@ public partial class Program
     {
         var v = configuration[key];
         return string.IsNullOrWhiteSpace(v) ? null : v;
+    }
+
+    private static void AddOptionalEnvironment(
+        IResourceBuilder<ProjectResource> resource,
+        IConfiguration configuration,
+        string name,
+        IList<string> forwardedKeys)
+    {
+        var value = Environment.GetEnvironmentVariable(name);
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            value = Environment.GetEnvironmentVariable(name, EnvironmentVariableTarget.User);
+        }
+
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            value = Environment.GetEnvironmentVariable(name, EnvironmentVariableTarget.Machine);
+        }
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            value = configuration[name];
+        }
+
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            var key = Shared::Grace.Shared.Utilities.getConfigKey(name);
+            value = configuration[key];
+        }
+
+        if (!string.IsNullOrWhiteSpace(value))
+        {
+            resource.WithEnvironment(name, value);
+            forwardedKeys?.Add(name);
+        }
+    }
+
+    private static void LogForwardedSettings(string label, IList<string> forwardedKeys)
+    {
+        if (forwardedKeys is { Count: > 0 })
+        {
+            Console.WriteLine($"{label}: {string.Join(", ", forwardedKeys)}.");
+        }
+        else
+        {
+            Console.WriteLine($"{label}: none detected.");
+        }
     }
 
     private static int GetAvailableTcpPort()

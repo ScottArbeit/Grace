@@ -44,15 +44,7 @@ type GracePermissionEvaluator() =
                             }
                         | _ -> Task.FromResult List.empty
 
-                    return
-                        checkPermission
-                            roleCatalog
-                            allAssignments
-                            pathPermissions
-                            principalSet
-                            effectiveClaims
-                            operation
-                            resource
+                    return checkPermission roleCatalog allAssignments pathPermissions principalSet effectiveClaims operation resource
                 with ex ->
                     return Denied $"Authorization evaluation failed: {ex.Message}"
             }

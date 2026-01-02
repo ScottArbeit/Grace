@@ -229,6 +229,15 @@ module Constants =
         [<Literal>]
         let GraceServerUri = "GRACE_SERVER_URI"
 
+        /// The environment variable that contains a Grace personal access token
+        /// for non-interactive authentication.
+        [<Literal>]
+        let GraceToken = "GRACE_TOKEN"
+
+        /// The environment variable that overrides the local token file path.
+        [<Literal>]
+        let GraceTokenFile = "GRACE_TOKEN_FILE"
+
         /// External authentication settings for Microsoft (MSA + Entra).
         [<Literal>]
         let GraceAuthMicrosoftClientId = "grace__auth__microsoft__client_id"
@@ -252,6 +261,18 @@ module Constants =
         /// External authentication settings for Microsoft (MSA + Entra).
         [<Literal>]
         let GraceAuthMicrosoftCliClientId = "grace__auth__microsoft__cli_client_id"
+
+        /// Default PAT lifetime in days.
+        [<Literal>]
+        let GraceAuthPatDefaultLifetimeDays = "grace__auth__pat__default_lifetime_days"
+
+        /// Maximum PAT lifetime in days.
+        [<Literal>]
+        let GraceAuthPatMaxLifetimeDays = "grace__auth__pat__max_lifetime_days"
+
+        /// Allows PATs with no expiry when set to true.
+        [<Literal>]
+        let GraceAuthPatAllowNoExpiry = "grace__auth__pat__allow_no_expiry"
 
         /// The name of the container in object storage that holds memoized RecursiveDirectoryVersions.
         [<Literal>]

@@ -62,6 +62,9 @@ module Constants =
         let NamedSection = "NamedSectionActor"
 
         [<Literal>]
+        let PersonalAccessToken = "PersonalAccessTokenActor"
+
+        [<Literal>]
         let PromotionGroup = "PromotionGroupActor"
 
         [<Literal>]
@@ -109,6 +112,9 @@ module Constants =
 
         [<Literal>]
         let Owner = "Owner"
+
+        [<Literal>]
+        let PersonalAccessToken = "PersonalAccessToken"
 
         [<Literal>]
         let PromotionGroup = "PromotionGroup"

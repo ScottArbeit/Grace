@@ -346,9 +346,7 @@ module Program =
                 // Build the configuration
                 let environment = Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT")
 
-                let configurationBuilder =
-                    ConfigurationBuilder()
-                        .AddJsonFile("appsettings.json", true, true) // Load appsettings.json
+                let configurationBuilder = ConfigurationBuilder().AddJsonFile("appsettings.json", true, true) // Load appsettings.json
 
                 if not <| String.IsNullOrWhiteSpace(environment) then
                     configurationBuilder.AddJsonFile($"appsettings.{environment}.json", true, true) // Load environment-specific settings

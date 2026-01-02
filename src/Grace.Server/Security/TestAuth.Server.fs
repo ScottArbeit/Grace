@@ -19,12 +19,7 @@ module TestAuth =
     [<Literal>]
     let ClaimsHeader = "x-grace-claims"
 
-    type GraceTestAuthHandler
-        (
-            options: IOptionsMonitor<AuthenticationSchemeOptions>,
-            loggerFactory: ILoggerFactory,
-            encoder: UrlEncoder
-        ) =
+    type GraceTestAuthHandler(options: IOptionsMonitor<AuthenticationSchemeOptions>, loggerFactory: ILoggerFactory, encoder: UrlEncoder) =
         inherit AuthenticationHandler<AuthenticationSchemeOptions>(options, loggerFactory, encoder)
 
         override this.HandleAuthenticateAsync() =

@@ -33,6 +33,7 @@
         <Compile Include="Client\Configuration.Shared.fs" />
         <Compile Include="Client\UserConfiguration.Shared.fs" />
         <Compile Include="Parameters\Common.Parameters.fs" />
+        <Compile Include="Parameters\Auth.Parameters.fs" />
         <Compile Include="Parameters\Access.Parameters.fs" />
         <Compile Include="Parameters\Owner.Parameters.fs" />
         <Compile Include="Parameters\Organization.Parameters.fs" />

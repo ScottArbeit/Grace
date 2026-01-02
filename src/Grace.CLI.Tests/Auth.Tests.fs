@@ -5,6 +5,7 @@ open Grace.CLI.Command
 open Grace.Shared
 open NUnit.Framework
 open System
+open System.IO
 
 [<NonParallelizable>]
 module AuthTests =
@@ -27,3 +28,27 @@ module AuthTests =
             withEnv Constants.EnvironmentVariables.GraceAuthMicrosoftApiScope None (fun () ->
                 let result = Auth.tryGetAccessToken().GetAwaiter().GetResult()
                 result |> should equal None))
+
+    [<Test>]
+    let ``tryGetAccessToken prefers GRACE_TOKEN env var`` () =
+        withEnv Constants.EnvironmentVariables.GraceToken (Some "Bearer env-token") (fun () ->
+            withEnv Constants.EnvironmentVariables.GraceAuthMicrosoftCliClientId None (fun () ->
+                withEnv Constants.EnvironmentVariables.GraceAuthMicrosoftApiScope None (fun () ->
+                    let result = Auth.tryGetAccessToken().GetAwaiter().GetResult()
+                    result |> should equal (Some "env-token"))))
+
+    [<Test>]
+    let ``tryGetAccessToken uses token file when env var missing`` () =
+        let tempPath = Path.Combine(Path.GetTempPath(), $"grace-token-{Guid.NewGuid():N}")
+
+        try
+            File.WriteAllText(tempPath, "file-token")
+
+            withEnv Constants.EnvironmentVariables.GraceToken None (fun () ->
+                withEnv Constants.EnvironmentVariables.GraceTokenFile (Some tempPath) (fun () ->
+                    withEnv Constants.EnvironmentVariables.GraceAuthMicrosoftCliClientId None (fun () ->
+                        withEnv Constants.EnvironmentVariables.GraceAuthMicrosoftApiScope None (fun () ->
+                            let result = Auth.tryGetAccessToken().GetAwaiter().GetResult()
+                            result |> should equal (Some "file-token")))))
+        finally
+            if File.Exists(tempPath) then File.Delete(tempPath)

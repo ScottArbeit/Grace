@@ -17,12 +17,7 @@ module ExternalAuthConfig =
     let MicrosoftDisplayName = "Microsoft"
 
     type MicrosoftAuthConfig =
-        { ClientId: string
-          ClientSecret: string option
-          TenantId: string
-          Authority: string
-          ApiScope: string
-          CliClientId: string option }
+        { ClientId: string; ClientSecret: string option; TenantId: string; Authority: string; ApiScope: string; CliClientId: string option }
 
     type AuthProvider = { Id: string; DisplayName: string; Scheme: string }
 
@@ -56,12 +51,7 @@ module ExternalAuthConfig =
             let cliClientId = tryGetConfigValue configuration EnvironmentVariables.GraceAuthMicrosoftCliClientId
 
             Some
-                { ClientId = clientId
-                  ClientSecret = clientSecret
-                  TenantId = tenantId
-                  Authority = authority
-                  ApiScope = apiScope
-                  CliClientId = cliClientId }
+                { ClientId = clientId; ClientSecret = clientSecret; TenantId = tenantId; Authority = authority; ApiScope = apiScope; CliClientId = cliClientId }
 
     let isMicrosoftWebConfigured (configuration: IConfiguration) =
         match tryGetMicrosoftConfig configuration with
@@ -73,6 +63,4 @@ module ExternalAuthConfig =
 
     let getEnabledProviders (configuration: IConfiguration) =
         [ if isMicrosoftWebConfigured configuration then
-              { Id = MicrosoftProviderId
-                DisplayName = MicrosoftDisplayName
-                Scheme = MicrosoftScheme } ]
+              { Id = MicrosoftProviderId; DisplayName = MicrosoftDisplayName; Scheme = MicrosoftScheme } ]

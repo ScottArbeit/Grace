@@ -34,8 +34,15 @@ type LogRequestHeadersMiddleware(next: RequestDelegate) =
             let sb = stringBuilderPool.Get()
 
             try
+                let isSensitiveHeader (name: string) =
+                    name.Equals("Authorization", StringComparison.OrdinalIgnoreCase)
+                    || name.Equals("Cookie", StringComparison.OrdinalIgnoreCase)
+                    || name.Contains("token", StringComparison.OrdinalIgnoreCase)
+
                 context.Request.Headers
-                |> Seq.iter (fun kv -> sb.AppendLine($"{kv.Key} = {kv.Value}") |> ignore)
+                |> Seq.iter (fun kv ->
+                    let value = if isSensitiveHeader kv.Key then "[REDACTED]" else kv.Value.ToString()
+                    sb.AppendLine($"{kv.Key} = {value}") |> ignore)
 
                 log.LogDebug("Request headers: {headers}", sb.ToString())
             finally

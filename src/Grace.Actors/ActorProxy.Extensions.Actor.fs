@@ -166,6 +166,17 @@ module ActorProxy =
             memoryCache.CreateOrleansContextEntry(grain.GetGrainId(), orleansContext)
             grain
 
+    module PersonalAccessToken =
+        /// Creates an ActorProxy for a PersonalAccessToken actor, and adds the correlationId to the server's MemoryCache so
+        ///   it's available in the OnActivateAsync() method.
+        let CreateActorProxy (userId: string) (correlationId: string) =
+            let grain = orleansClient.CreateActorProxyWithCorrelationId<IPersonalAccessTokenActor>(userId, correlationId)
+
+            let orleansContext = Dictionary<string, obj>()
+            orleansContext.Add(Constants.ActorNameProperty, ActorName.PersonalAccessToken)
+            memoryCache.CreateOrleansContextEntry(grain.GetGrainId(), orleansContext)
+            grain
+
     module Reminder =
         /// Creates an ActorProxy for a Reminder actor, and adds the correlationId to the server's MemoryCache so
         ///   it's available in the OnActivateAsync() method.

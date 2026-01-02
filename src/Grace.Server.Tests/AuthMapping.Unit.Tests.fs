@@ -19,9 +19,7 @@ type ClaimMappingTests() =
 
     [<Test>]
     member _.MapsGraceUserIdFromTenantAndObjectId() =
-        let principal =
-            createPrincipal [ Claim("tid", "tenant-1")
-                              Claim("oid", "object-1") ]
+        let principal = createPrincipal [ Claim("tid", "tenant-1"); Claim("oid", "object-1") ]
 
         let mapped = ClaimMapping.mapClaims principal
         let userIds = findValues PrincipalMapper.GraceUserIdClaim mapped
@@ -30,8 +28,9 @@ type ClaimMappingTests() =
     [<Test>]
     member _.MapsGraceUserIdFromIssuerAndSubject() =
         let principal =
-            createPrincipal [ Claim("iss", "https://login.microsoftonline.com/common/v2.0")
-                              Claim("sub", "subject-1") ]
+            createPrincipal
+                [ Claim("iss", "https://login.microsoftonline.com/common/v2.0")
+                  Claim("sub", "subject-1") ]
 
         let mapped = ClaimMapping.mapClaims principal
         let userIds = findValues PrincipalMapper.GraceUserIdClaim mapped
@@ -40,9 +39,10 @@ type ClaimMappingTests() =
     [<Test>]
     member _.DoesNotOverrideExistingGraceUserId() =
         let principal =
-            createPrincipal [ Claim(PrincipalMapper.GraceUserIdClaim, "existing-user")
-                              Claim("tid", "tenant-2")
-                              Claim("oid", "object-2") ]
+            createPrincipal
+                [ Claim(PrincipalMapper.GraceUserIdClaim, "existing-user")
+                  Claim("tid", "tenant-2")
+                  Claim("oid", "object-2") ]
 
         let mapped = ClaimMapping.mapClaims principal
         let userIds = findValues PrincipalMapper.GraceUserIdClaim mapped
@@ -51,9 +51,10 @@ type ClaimMappingTests() =
     [<Test>]
     member _.MapsRolesScopesAndGroups() =
         let principal =
-            createPrincipal [ Claim("roles", "Admin")
-                              Claim("scp", "repo.write repo.read")
-                              Claim("groups", "group-1") ]
+            createPrincipal
+                [ Claim("roles", "Admin")
+                  Claim("scp", "repo.write repo.read")
+                  Claim("groups", "group-1") ]
 
         let mapped = ClaimMapping.mapClaims principal
         let graceClaims = findValues PrincipalMapper.GraceClaim mapped

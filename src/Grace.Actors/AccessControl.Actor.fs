@@ -31,7 +31,8 @@ module AccessControl =
         | Scope.Repository(ownerId, organizationId, repositoryId) -> $"repo:{ownerId}:{organizationId}:{repositoryId}"
         | Scope.Branch(ownerId, organizationId, repositoryId, branchId) -> $"branch:{ownerId}:{organizationId}:{repositoryId}:{branchId}"
 
-    type AccessControlActor([<PersistentState(StateName.AccessControl, Grace.Shared.Constants.GraceActorStorage)>] state: IPersistentState<AccessControlState>) =
+    type AccessControlActor([<PersistentState(StateName.AccessControl, Grace.Shared.Constants.GraceActorStorage)>] state: IPersistentState<AccessControlState>)
+        =
         inherit Grain()
 
         let log = loggerFactory.CreateLogger("AccessControl.Actor")
@@ -51,11 +52,7 @@ module AccessControl =
             if expectedKey = actualKey then
                 Ok()
             else
-                Error(
-                    GraceError.Create
-                        $"AccessControl scope mismatch. Expected '{expectedKey}', got '{actualKey}'."
-                        correlationId
-                )
+                Error(GraceError.Create $"AccessControl scope mismatch. Expected '{expectedKey}', got '{actualKey}'." correlationId)
 
         member private this.SaveState() =
             task {
@@ -96,7 +93,10 @@ module AccessControl =
                 let assignments =
                     accessControlState.Assignments
                     |> List.filter (fun existing ->
-                        not (existing.Principal = principal && existing.RoleId.Equals(roleId, StringComparison.OrdinalIgnoreCase)))
+                        not (
+                            existing.Principal = principal
+                            && existing.RoleId.Equals(roleId, StringComparison.OrdinalIgnoreCase)
+                        ))
 
                 accessControlState <- { accessControlState with Assignments = assignments }
                 do! this.SaveState()
@@ -112,7 +112,9 @@ module AccessControl =
                 let filtered =
                     match principal with
                     | None -> accessControlState.Assignments
-                    | Some value -> accessControlState.Assignments |> List.filter (fun assignment -> assignment.Principal = value)
+                    | Some value ->
+                        accessControlState.Assignments
+                        |> List.filter (fun assignment -> assignment.Principal = value)
 
                 let returnValue = GraceReturnValue.Create filtered metadata.CorrelationId
                 return Ok returnValue
@@ -129,6 +131,8 @@ module AccessControl =
                 let filtered =
                     match principal with
                     | None -> accessControlState.Assignments
-                    | Some value -> accessControlState.Assignments |> List.filter (fun assignment -> assignment.Principal = value)
+                    | Some value ->
+                        accessControlState.Assignments
+                        |> List.filter (fun assignment -> assignment.Principal = value)
 
                 filtered |> returnTask

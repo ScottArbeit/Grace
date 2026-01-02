@@ -41,10 +41,7 @@ module Access =
             Error(GraceError.Create "PrincipalType and PrincipalId are required." correlationId)
         else
             match discriminatedUnionFromString<PrincipalType> principalType with
-            | Some parsed ->
-                Ok
-                    { PrincipalType = parsed
-                      PrincipalId = principalId }
+            | Some parsed -> Ok { PrincipalType = parsed; PrincipalId = principalId }
             | None -> Error(GraceError.Create $"Invalid PrincipalType '{principalType}'." correlationId)
 
     let private parseScope (scopeKind: string) (parameters: AccessParameters) (correlationId: CorrelationId) =
@@ -176,13 +173,19 @@ module Access =
                     | Error error -> return! context |> result400BadRequest error
                     | Ok principal ->
                         if String.IsNullOrWhiteSpace parameters.RoleId then
-                            return! context |> result400BadRequest (GraceError.Create "RoleId is required." correlationId)
+                            return!
+                                context
+                                |> result400BadRequest (GraceError.Create "RoleId is required." correlationId)
                         else
                             let assignment =
                                 { Principal = principal
                                   Scope = scope
                                   RoleId = parameters.RoleId
-                                  Source = if String.IsNullOrWhiteSpace parameters.Source then "manual" else parameters.Source
+                                  Source =
+                                    if String.IsNullOrWhiteSpace parameters.Source then
+                                        "manual"
+                                    else
+                                        parameters.Source
                                   SourceDetail =
                                     if String.IsNullOrWhiteSpace parameters.SourceDetail then
                                         None
@@ -211,7 +214,9 @@ module Access =
                     | Error error -> return! context |> result400BadRequest error
                     | Ok principal ->
                         if String.IsNullOrWhiteSpace parameters.RoleId then
-                            return! context |> result400BadRequest (GraceError.Create "RoleId is required." correlationId)
+                            return!
+                                context
+                                |> result400BadRequest (GraceError.Create "RoleId is required." correlationId)
                         else
                             let scopeKey = AccessControl.getScopeKey scope
                             let actorProxy = ActorProxy.AccessControl.CreateActorProxy scopeKey correlationId
@@ -257,9 +262,13 @@ module Access =
                         | Error error -> return! context |> result400BadRequest error
                         | Ok repositoryId ->
                             if String.IsNullOrWhiteSpace parameters.Path then
-                                return! context |> result400BadRequest (GraceError.Create "Path is required." correlationId)
+                                return!
+                                    context
+                                    |> result400BadRequest (GraceError.Create "Path is required." correlationId)
                             else if isNull parameters.ClaimPermissions || parameters.ClaimPermissions.Count = 0 then
-                                return! context |> result400BadRequest (GraceError.Create "ClaimPermissions are required." correlationId)
+                                return!
+                                    context
+                                    |> result400BadRequest (GraceError.Create "ClaimPermissions are required." correlationId)
                             else
                                 let permissions = List<ClaimPermission>()
                                 let mutable permissionError: GraceError option = None
@@ -272,20 +281,13 @@ module Access =
                                             match discriminatedUnionFromString<DirectoryPermission> permission.DirectoryPermission with
                                             | None ->
                                                 permissionError <-
-                                                    Some(
-                                                        GraceError.Create
-                                                            $"Invalid DirectoryPermission '{permission.DirectoryPermission}'."
-                                                            correlationId
-                                                    )
-                                            | Some parsed ->
-                                                permissions.Add({ Claim = permission.Claim; DirectoryPermission = parsed })
+                                                    Some(GraceError.Create $"Invalid DirectoryPermission '{permission.DirectoryPermission}'." correlationId)
+                                            | Some parsed -> permissions.Add({ Claim = permission.Claim; DirectoryPermission = parsed })
 
                                 match permissionError with
                                 | Some error -> return! context |> result400BadRequest error
                                 | None ->
-                                    let pathPermission =
-                                        { Path = parameters.Path
-                                          Permissions = permissions }
+                                    let pathPermission = { Path = parameters.Path; Permissions = permissions }
 
                                     let actorProxy = ActorProxy.RepositoryPermission.CreateActorProxy repositoryId correlationId
 
@@ -310,7 +312,9 @@ module Access =
                         | Error error -> return! context |> result400BadRequest error
                         | Ok repositoryId ->
                             if String.IsNullOrWhiteSpace parameters.Path then
-                                return! context |> result400BadRequest (GraceError.Create "Path is required." correlationId)
+                                return!
+                                    context
+                                    |> result400BadRequest (GraceError.Create "Path is required." correlationId)
                             else
                                 let actorProxy = ActorProxy.RepositoryPermission.CreateActorProxy repositoryId correlationId
 
@@ -334,11 +338,7 @@ module Access =
                         match parseGuid parameters.RepositoryId (nameof parameters.RepositoryId) correlationId with
                         | Error error -> return! context |> result400BadRequest error
                         | Ok repositoryId ->
-                            let pathFilter =
-                                if String.IsNullOrWhiteSpace parameters.Path then
-                                    None
-                                else
-                                    Some parameters.Path
+                            let pathFilter = if String.IsNullOrWhiteSpace parameters.Path then None else Some parameters.Path
 
                             let actorProxy = ActorProxy.RepositoryPermission.CreateActorProxy repositoryId correlationId
 

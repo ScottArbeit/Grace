@@ -14,12 +14,7 @@ type AuthorizationUnit() =
     let roleCatalog = RoleCatalog.getAll ()
 
     let createAssignment principal scope roleId =
-        { Principal = principal
-          Scope = scope
-          RoleId = roleId
-          Source = "test"
-          SourceDetail = None
-          CreatedAt = getCurrentInstant () }
+        { Principal = principal; Scope = scope; RoleId = roleId; Source = "test"; SourceDetail = None; CreatedAt = getCurrentInstant () }
 
     let assertAllowed result =
         match result with
@@ -39,18 +34,10 @@ type AuthorizationUnit() =
 
         let principal = { PrincipalType = PrincipalType.User; PrincipalId = "user-1" }
 
-        let assignments =
-            [ createAssignment principal (Scope.Organization(ownerId, organizationId)) "OrgAdmin" ]
+        let assignments = [ createAssignment principal (Scope.Organization(ownerId, organizationId)) "OrgAdmin" ]
 
         let result =
-            checkPermission
-                roleCatalog
-                assignments
-                []
-                [ principal ]
-                Set.empty
-                Operation.RepoWrite
-                (Resource.Repository(ownerId, organizationId, repositoryId))
+            checkPermission roleCatalog assignments [] [ principal ] Set.empty Operation.RepoWrite (Resource.Repository(ownerId, organizationId, repositoryId))
 
         assertAllowed result
 
@@ -62,8 +49,7 @@ type AuthorizationUnit() =
 
         let principal = { PrincipalType = PrincipalType.User; PrincipalId = "user-2" }
 
-        let assignments =
-            [ createAssignment principal (Scope.Organization(ownerId, organizationId)) "OrgAdmin" ]
+        let assignments = [ createAssignment principal (Scope.Organization(ownerId, organizationId)) "OrgAdmin" ]
 
         let denyPermissions = List<ClaimPermission>()
         denyPermissions.Add({ Claim = "engineering"; DirectoryPermission = DirectoryPermission.NoAccess })
@@ -90,8 +76,7 @@ type AuthorizationUnit() =
 
         let principal = { PrincipalType = PrincipalType.User; PrincipalId = "user-3" }
 
-        let assignments =
-            [ createAssignment principal (Scope.Organization(ownerId, organizationId)) "OrgReader" ]
+        let assignments = [ createAssignment principal (Scope.Organization(ownerId, organizationId)) "OrgReader" ]
 
         let allowPermissions = List<ClaimPermission>()
         allowPermissions.Add({ Claim = "engineering"; DirectoryPermission = DirectoryPermission.Modify })
@@ -118,15 +103,7 @@ type AuthorizationUnit() =
 
         let principal = { PrincipalType = PrincipalType.User; PrincipalId = "user-4" }
 
-        let result =
-            checkPermission
-                roleCatalog
-                []
-                []
-                [ principal ]
-                Set.empty
-                Operation.RepoRead
-                (Resource.Repository(ownerId, organizationId, repositoryId))
+        let result = checkPermission roleCatalog [] [] [ principal ] Set.empty Operation.RepoRead (Resource.Repository(ownerId, organizationId, repositoryId))
 
         assertDenied result
 
@@ -139,8 +116,7 @@ type AuthorizationUnit() =
         let userPrincipal = { PrincipalType = PrincipalType.User; PrincipalId = "user-5" }
         let groupPrincipal = { PrincipalType = PrincipalType.Group; PrincipalId = "group-1" }
 
-        let assignments =
-            [ createAssignment groupPrincipal (Scope.Repository(ownerId, organizationId, repositoryId)) "RepoReader" ]
+        let assignments = [ createAssignment groupPrincipal (Scope.Repository(ownerId, organizationId, repositoryId)) "RepoReader" ]
 
         let result =
             checkPermission

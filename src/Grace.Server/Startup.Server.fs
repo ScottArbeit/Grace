@@ -22,6 +22,7 @@ open Grace.Shared.Converters
 open Grace.Shared.Parameters
 open Grace.Types.Types
 open Grace.Types.Authorization
+open Grace.Types.PersonalAccessToken
 open Microsoft.AspNetCore.Authentication
 open Microsoft.AspNetCore.Authentication.Cookies
 open Microsoft.AspNetCore.Authentication.JwtBearer
@@ -122,21 +123,17 @@ module Application =
 
                 let resources =
                     parameters.FileVersions
-                    |> Seq.map (fun fileVersion ->
-                        Resource.Path(graceIds.OwnerId, graceIds.OrganizationId, graceIds.RepositoryId, fileVersion.RelativePath))
+                    |> Seq.map (fun fileVersion -> Resource.Path(graceIds.OwnerId, graceIds.OrganizationId, graceIds.RepositoryId, fileVersion.RelativePath))
                     |> Seq.toList
 
                 return resources
             }
 
-        let composeHandlers (first: HttpHandler) (second: HttpHandler) : HttpHandler =
-            fun next context -> first (second next) context
+        let composeHandlers (first: HttpHandler) (second: HttpHandler) : HttpHandler = fun next context -> first (second next) context
 
-        let requireRepoAdmin: HttpHandler =
-            AuthorizationMiddleware.requiresPermission Operation.RepoAdmin repositoryResourceFromContext
+        let requireRepoAdmin: HttpHandler = AuthorizationMiddleware.requiresPermission Operation.RepoAdmin repositoryResourceFromContext
 
-        let requirePathWrite: HttpHandler =
-            AuthorizationMiddleware.requiresPermissions Operation.PathWrite uploadPathResourcesFromContext
+        let requirePathWrite: HttpHandler = AuthorizationMiddleware.requiresPermissions Operation.PathWrite uploadPathResourcesFromContext
 
         let endpoints =
             [ GET
@@ -491,7 +488,14 @@ module Application =
                         [ route "/me" Auth.Me
                           route "/login" Auth.Login
                           routef "/login/%s" (fun providerId -> Auth.LoginProvider providerId)
-                          route "/logout" Auth.Logout ] ]
+                          route "/logout" Auth.Logout ]
+                    POST
+                        [ route "/token/create" (Auth.TokenCreate configuration)
+                          |> addMetadata typeof<Auth.CreatePersonalAccessTokenParameters>
+                          route "/token/list" (Auth.TokenList configuration)
+                          |> addMetadata typeof<Auth.ListPersonalAccessTokensParameters>
+                          route "/token/revoke" (Auth.TokenRevoke configuration)
+                          |> addMetadata typeof<Auth.RevokePersonalAccessTokenParameters> ] ]
               subRoute
                   "/reminder"
                   [ POST
@@ -656,9 +660,34 @@ module Application =
             if isTesting then
                 services
                     .AddAuthentication(fun options ->
-                        options.DefaultAuthenticateScheme <- SchemeName
-                        options.DefaultChallengeScheme <- SchemeName)
-                    .AddScheme<AuthenticationSchemeOptions, GraceTestAuthHandler>(SchemeName, fun _ -> ())
+                        options.DefaultScheme <- "GraceAuth"
+                        options.DefaultChallengeScheme <- "GraceAuth")
+                    .AddPolicyScheme(
+                        "GraceAuth",
+                        "GraceAuth",
+                        fun options ->
+                            options.ForwardDefaultSelector <-
+                                fun context ->
+                                    let authorization = context.Request.Headers.Authorization.ToString()
+
+                                    if
+                                        not (String.IsNullOrWhiteSpace authorization)
+                                        && authorization.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)
+                                    then
+                                        let token = authorization.Substring("Bearer ".Length).Trim()
+
+                                        if token.StartsWith(TokenPrefix, StringComparison.Ordinal) then
+                                            PersonalAccessTokenAuth.SchemeName
+                                        else
+                                            TestAuth.SchemeName
+                                    else
+                                        TestAuth.SchemeName
+                    )
+                    .AddScheme<AuthenticationSchemeOptions, GraceTestAuthHandler>(TestAuth.SchemeName, fun _ -> ())
+                    .AddScheme<AuthenticationSchemeOptions, PersonalAccessTokenAuth.PersonalAccessTokenAuthHandler>(
+                        PersonalAccessTokenAuth.SchemeName,
+                        fun _ -> ()
+                    )
                 |> ignore
             else
                 let authBuilder =
@@ -679,7 +708,12 @@ module Application =
                                         not (String.IsNullOrWhiteSpace authorization)
                                         && authorization.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)
                                     then
-                                        JwtBearerDefaults.AuthenticationScheme
+                                        let token = authorization.Substring("Bearer ".Length).Trim()
+
+                                        if token.StartsWith(TokenPrefix, StringComparison.Ordinal) then
+                                            PersonalAccessTokenAuth.SchemeName
+                                        else
+                                            JwtBearerDefaults.AuthenticationScheme
                                     else
                                         CookieAuthenticationDefaults.AuthenticationScheme
                     )
@@ -689,12 +723,17 @@ module Application =
                             options.SlidingExpiration <- true
                             options.Cookie.HttpOnly <- true
                     )
+                    .AddScheme<AuthenticationSchemeOptions, PersonalAccessTokenAuth.PersonalAccessTokenAuthHandler>(
+                        PersonalAccessTokenAuth.SchemeName,
+                        fun _ -> ()
+                    )
                 |> ignore
 
                 match ExternalAuthConfig.tryGetMicrosoftConfig configuration with
-                | Some microsoftConfig when microsoftConfig.ClientSecret.IsSome ->
+                | Some microsoftConfig ->
                     let authority =
                         let trimmed = microsoftConfig.Authority.TrimEnd('/')
+
                         if trimmed.EndsWith("/v2.0", StringComparison.OrdinalIgnoreCase) then
                             trimmed
                         else
@@ -702,16 +741,15 @@ module Application =
 
                     let apiAudience =
                         let trimmed = microsoftConfig.ApiScope.TrimEnd('/')
-                        if String.IsNullOrWhiteSpace trimmed then
-                            microsoftConfig.ClientId
-                        elif trimmed.Contains("/") then
-                            trimmed.Substring(0, trimmed.LastIndexOf('/'))
-                        else
-                            trimmed
 
-                    let issuerValidator : IssuerValidator =
+                        if String.IsNullOrWhiteSpace trimmed then microsoftConfig.ClientId
+                        elif trimmed.Contains("/") then trimmed.Substring(0, trimmed.LastIndexOf('/'))
+                        else trimmed
+
+                    let issuerValidator: IssuerValidator =
                         let allowAnyTenant =
                             let tenantId = microsoftConfig.TenantId.Trim()
+
                             tenantId.Equals("common", StringComparison.OrdinalIgnoreCase)
                             || tenantId.Equals("organizations", StringComparison.OrdinalIgnoreCase)
                             || tenantId.Equals("consumers", StringComparison.OrdinalIgnoreCase)
@@ -724,6 +762,7 @@ module Application =
                                 raise (SecurityTokenInvalidIssuerException("Issuer is missing."))
 
                             let normalized = issuer.TrimEnd('/')
+
                             let matchesPattern =
                                 normalized.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
                                 && normalized.EndsWith(suffix, StringComparison.OrdinalIgnoreCase)
@@ -734,23 +773,15 @@ module Application =
                             if allowAnyTenant then
                                 issuer
                             else
-                                let tenantSegment =
-                                    normalized.Substring(
-                                        prefix.Length,
-                                        normalized.Length - prefix.Length - suffix.Length
-                                    )
+                                let tenantSegment = normalized.Substring(prefix.Length, normalized.Length - prefix.Length - suffix.Length)
 
                                 if tenantSegment.Equals(microsoftConfig.TenantId, StringComparison.OrdinalIgnoreCase) then
                                     issuer
                                 else
-                                    raise (
-                                        SecurityTokenInvalidIssuerException(
-                                            $"Issuer '{issuer}' does not match tenant '{microsoftConfig.TenantId}'."
-                                        )
-                                    ))
+                                    raise (SecurityTokenInvalidIssuerException($"Issuer '{issuer}' does not match tenant '{microsoftConfig.TenantId}'.")))
 
-                    authBuilder
-                        .AddOpenIdConnect(
+                    if microsoftConfig.ClientSecret.IsSome then
+                        authBuilder.AddOpenIdConnect(
                             ExternalAuthConfig.MicrosoftScheme,
                             fun options ->
                                 options.Authority <- authority
@@ -773,39 +804,43 @@ module Application =
                                 // Do not mix API scopes with Graph scopes in a single auth code request.
 
                                 options.Events <- OpenIdConnectEvents()
+
                                 options.Events.OnAuthorizationCodeReceived <-
                                     Func<AuthorizationCodeReceivedContext, Task>(fun context ->
                                         let scopeValue = String.Join(" ", options.Scope)
+
                                         if not (String.IsNullOrWhiteSpace scopeValue) then
                                             context.TokenEndpointRequest.Scope <- scopeValue
+
                                         Task.CompletedTask)
 
                                 options.TokenValidationParameters <-
-                                    TokenValidationParameters(
-                                        NameClaimType = "name",
-                                        RoleClaimType = "roles",
-                                        IssuerValidator = issuerValidator
-                                    )
+                                    TokenValidationParameters(NameClaimType = "name", RoleClaimType = "roles", IssuerValidator = issuerValidator)
                         )
-                        .AddJwtBearer(
-                            JwtBearerDefaults.AuthenticationScheme,
-                            fun options ->
-                                options.Authority <- authority
-                                options.TokenValidationParameters <-
-                                    TokenValidationParameters(
-                                        ValidateIssuer = true,
-                                        NameClaimType = "name",
-                                        RoleClaimType = "roles",
-                                        ValidAudiences = [| apiAudience; microsoftConfig.ClientId; microsoftConfig.ApiScope |],
-                                        IssuerValidator = issuerValidator
-                                    )
-                        )
+                        |> ignore
+
+                    authBuilder.AddJwtBearer(
+                        JwtBearerDefaults.AuthenticationScheme,
+                        fun options ->
+                            options.Authority <- authority
+
+                            options.TokenValidationParameters <-
+                                TokenValidationParameters(
+                                    ValidateIssuer = true,
+                                    NameClaimType = "name",
+                                    RoleClaimType = "roles",
+                                    ValidAudiences = [| apiAudience; microsoftConfig.ClientId; microsoftConfig.ApiScope |],
+                                    IssuerValidator = issuerValidator
+                                )
+                    )
                     |> ignore
-                | _ -> ()
+                | None -> ()
 
-            services.AddTransient<IClaimsTransformation, GraceClaimsTransformation>() |> ignore
+            services.AddTransient<IClaimsTransformation, GraceClaimsTransformation>()
+            |> ignore
 
-            services.AddSingleton<IGracePermissionEvaluator, GracePermissionEvaluator>() |> ignore
+            services.AddSingleton<IGracePermissionEvaluator, GracePermissionEvaluator>()
+            |> ignore
 
             services.AddW3CLogging(fun options ->
                 options.FileName <- "Grace.Server.log-"

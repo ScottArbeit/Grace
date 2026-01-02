@@ -18,10 +18,7 @@ type Access() =
 
     /// Lists role assignments at a scope, optionally filtered by principal.
     static member public ListRoleAssignments(parameters: ListRoleAssignmentsParameters) =
-        postServer<ListRoleAssignmentsParameters, RoleAssignment list> (
-            parameters |> ensureCorrelationIdIsSet,
-            $"access/{nameof (Access.ListRoleAssignments)}"
-        )
+        postServer<ListRoleAssignmentsParameters, RoleAssignment list> (parameters |> ensureCorrelationIdIsSet, $"access/{nameof (Access.ListRoleAssignments)}")
 
     /// Upserts a repository path permission.
     static member public UpsertPathPermission(parameters: UpsertPathPermissionParameters) =
@@ -39,17 +36,11 @@ type Access() =
 
     /// Lists repository path permissions.
     static member public ListPathPermissions(parameters: ListPathPermissionsParameters) =
-        postServer<ListPathPermissionsParameters, PathPermission list> (
-            parameters |> ensureCorrelationIdIsSet,
-            $"access/{nameof (Access.ListPathPermissions)}"
-        )
+        postServer<ListPathPermissionsParameters, PathPermission list> (parameters |> ensureCorrelationIdIsSet, $"access/{nameof (Access.ListPathPermissions)}")
 
     /// Checks a permission against the current or specified principal.
     static member public CheckPermission(parameters: CheckPermissionParameters) =
-        postServer<CheckPermissionParameters, PermissionCheckResult> (
-            parameters |> ensureCorrelationIdIsSet,
-            $"access/{nameof (Access.CheckPermission)}"
-        )
+        postServer<CheckPermissionParameters, PermissionCheckResult> (parameters |> ensureCorrelationIdIsSet, $"access/{nameof (Access.CheckPermission)}")
 
     /// Lists the configured roles.
     static member public ListRoles(parameters: CommonParameters) =

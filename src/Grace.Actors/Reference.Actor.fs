@@ -289,6 +289,7 @@ module Reference =
                                         match metadata.Properties.TryGetValue("RepositoryLogicalDeleteDays") with
                                         | true, value ->
                                             let mutable parsed = 0.0f
+
                                             if Single.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, &parsed) then
                                                 Some parsed
                                             else

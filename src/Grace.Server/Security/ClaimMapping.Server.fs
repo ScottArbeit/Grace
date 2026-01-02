@@ -39,15 +39,16 @@ module ClaimMapping =
         | None ->
             let tenantId = tryGetClaimValue principal [ "tid" ]
             let objectId = tryGetClaimValue principal [ "oid" ]
+
             match tenantId, objectId with
             | Some tid, Some oid -> Some($"{tid}:{oid}")
             | _ ->
                 let issuer = tryGetClaimValue principal [ "iss" ]
                 let subject = tryGetClaimValue principal [ "sub"; ClaimTypes.NameIdentifier ]
+
                 match issuer, subject with
                 | Some iss, Some sub -> Some($"{iss}|{sub}")
-                | _ ->
-                    tryGetClaimValue principal [ "sub"; ClaimTypes.NameIdentifier; "preferred_username"; ClaimTypes.Email ]
+                | _ -> tryGetClaimValue principal [ "sub"; ClaimTypes.NameIdentifier; "preferred_username"; ClaimTypes.Email ]
 
     let mapClaims (principal: ClaimsPrincipal) =
         let claimsToAdd = ResizeArray<Claim>()
@@ -65,9 +66,7 @@ module ClaimMapping =
         for value in getClaimValues principal PrincipalMapper.GraceGroupIdClaim do
             existingGroupClaims.Add(value) |> ignore
 
-        let roleClaims =
-            (getClaimValues principal "roles")
-            @ (getClaimValues principal ClaimTypes.Role)
+        let roleClaims = (getClaimValues principal "roles") @ (getClaimValues principal ClaimTypes.Role)
 
         for value in roleClaims do
             if existingGraceClaims.Add(value) then

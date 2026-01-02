@@ -164,14 +164,7 @@ type AccessControl() =
 
             do! grantRoleAsync Client ownerId organizationId "" "org" "OrgAdmin"
 
-            do!
-                upsertPathPermissionAsync
-                    Client
-                    ownerId
-                    organizationId
-                    repositoryId
-                    "/images"
-                    [ ("engineering", "NoAccess"); ("writers", "Modify") ]
+            do! upsertPathPermissionAsync Client ownerId organizationId repositoryId "/images" [ ("engineering", "NoAccess"); ("writers", "Modify") ]
 
             use claimsClient = createClientWithClaims [ "engineering"; "writers" ]
 
@@ -181,14 +174,7 @@ type AccessControl() =
             | Denied _ -> ()
             | Allowed reason -> Assert.Fail($"Expected path write to be denied. {reason}")
 
-            do!
-                upsertPathPermissionAsync
-                    Client
-                    ownerId
-                    organizationId
-                    repositoryId
-                    "/images"
-                    [ ("engineering", "Modify") ]
+            do! upsertPathPermissionAsync Client ownerId organizationId repositoryId "/images" [ ("engineering", "Modify") ]
 
             let! allowedPermission = checkPermissionAsync claimsClient ownerId organizationId repositoryId "path" "PathWrite" "/images"
 
@@ -227,14 +213,7 @@ type AccessControl() =
 
             do! grantRoleAsync Client ownerId orgId "" "org" "OrgAdmin"
 
-            do!
-                upsertPathPermissionAsync
-                    Client
-                    ownerId
-                    orgId
-                    repoId
-                    "/images/foo.png"
-                    [ ("engineering", "NoAccess"); ("writers", "Modify") ]
+            do! upsertPathPermissionAsync Client ownerId orgId repoId "/images/foo.png" [ ("engineering", "NoAccess"); ("writers", "Modify") ]
 
             use claimsClient = createClientWithClaims [ "engineering"; "writers" ]
 
@@ -250,14 +229,7 @@ type AccessControl() =
             let! deniedResponse = claimsClient.PostAsync("/storage/getUploadMetadataForFiles", createJsonContent uploadParameters)
             Assert.That(deniedResponse.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden))
 
-            do!
-                upsertPathPermissionAsync
-                    Client
-                    ownerId
-                    orgId
-                    repoId
-                    "/images/foo.png"
-                    [ ("engineering", "Modify") ]
+            do! upsertPathPermissionAsync Client ownerId orgId repoId "/images/foo.png" [ ("engineering", "Modify") ]
 
             let! allowedResponse = claimsClient.PostAsync("/storage/getUploadMetadataForFiles", createJsonContent uploadParameters)
             Assert.That(allowedResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK))

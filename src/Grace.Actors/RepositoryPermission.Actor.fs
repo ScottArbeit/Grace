@@ -84,7 +84,9 @@ module RepositoryPermission =
                     | None -> permissionState.PathPermissions
                     | Some value ->
                         let normalizedPath = normalizeFilePath value
-                        permissionState.PathPermissions |> List.filter (fun existing -> normalizeFilePath existing.Path = normalizedPath)
+
+                        permissionState.PathPermissions
+                        |> List.filter (fun existing -> normalizeFilePath existing.Path = normalizedPath)
 
                 let returnValue = GraceReturnValue.Create filtered metadata.CorrelationId
                 return Ok returnValue
@@ -103,6 +105,8 @@ module RepositoryPermission =
                     | None -> permissionState.PathPermissions
                     | Some value ->
                         let normalizedPath = normalizeFilePath value
-                        permissionState.PathPermissions |> List.filter (fun existing -> normalizeFilePath existing.Path = normalizedPath)
+
+                        permissionState.PathPermissions
+                        |> List.filter (fun existing -> normalizeFilePath existing.Path = normalizedPath)
 
                 filtered |> returnTask

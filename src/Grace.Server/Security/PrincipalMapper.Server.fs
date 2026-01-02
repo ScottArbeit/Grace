@@ -34,11 +34,9 @@ module PrincipalMapper =
 
         let principals =
             [ if userId.IsSome then
-                  { PrincipalType = PrincipalType.User
-                    PrincipalId = userId.Value }
+                  { PrincipalType = PrincipalType.User; PrincipalId = userId.Value }
               for groupId in groupIds do
-                  { PrincipalType = PrincipalType.Group
-                    PrincipalId = groupId } ]
+                  { PrincipalType = PrincipalType.Group; PrincipalId = groupId } ]
 
         principals
 

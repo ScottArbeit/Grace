@@ -68,7 +68,13 @@ module UserConfiguration =
                 configuration
 
         normalized.History <- normalizeHistory normalized.History
-        normalized.Auth <- if obj.ReferenceEquals(normalized.Auth, null) then AuthConfiguration() else normalized.Auth
+
+        normalized.Auth <-
+            if obj.ReferenceEquals(normalized.Auth, null) then
+                AuthConfiguration()
+            else
+                normalized.Auth
+
         normalized
 
     let private getUserProfileDirectory () =
