@@ -78,6 +78,26 @@ module HelpDoesNotReadConfigTests =
         )
 
     [<Test>]
+    let ``create help rewrites empty guid defaults`` () =
+        withTempDir (fun _ ->
+            use writer = new StringWriter()
+            let originalOut = Console.Out
+
+            try
+                Console.SetOut(writer)
+                let exitCode = GraceCommand.main [| "repository"; "create"; "-h" |]
+                exitCode |> should equal 0
+            finally
+                Console.SetOut(originalOut)
+
+            let output = writer.ToString()
+            output |> should contain "[default: current OwnerId]"
+            output |> should contain "[default: current OrganizationId]"
+            output |> should contain "[default: new Guid]"
+            output |> should not' (contain "00000000-0000-0000-0000-000000000000")
+        )
+
+    [<Test>]
     let ``getNormalizedIdsAndNames falls back to config ids`` () =
         withTempDir (fun root ->
             let ownerId = Guid.NewGuid()

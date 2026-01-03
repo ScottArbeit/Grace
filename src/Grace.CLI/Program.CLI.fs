@@ -122,9 +122,11 @@ module GraceCommand =
 
     let private rewriteHelpDefaults (helpText: string) (defaultsByAlias: IDictionary<string, string>) =
         let lines = helpText.Split(Environment.NewLine)
+        let output = ResizeArray<string>(lines.Length)
         let mutable pendingAlias: string option = None
+        let mutable i = 0
 
-        for i in 0 .. lines.Length - 1 do
+        while i < lines.Length do
             let line = lines[i]
             let matchedAlias = defaultsByAlias.Keys |> Seq.tryFind (fun alias -> line.Contains(alias))
 
@@ -134,15 +136,53 @@ module GraceCommand =
 
             match pendingAlias with
             | Some alias when line.Contains("[default:", StringComparison.OrdinalIgnoreCase) ->
-                lines[i] <- replaceDefaultValue line defaultsByAlias[alias]
-                pendingAlias <- None
+                let startIndex = line.IndexOf("[default:", StringComparison.OrdinalIgnoreCase)
+                let endIndex = line.IndexOf("]", startIndex)
+
+                if endIndex > startIndex then
+                    output.Add(replaceDefaultValue line defaultsByAlias[alias])
+                    pendingAlias <- None
+                    i <- i + 1
+                else
+                    let prefix = line.Substring(0, startIndex)
+                    output.Add($"{prefix}[default: {defaultsByAlias[alias]}]")
+                    pendingAlias <- None
+
+                    let mutable j = i + 1
+                    let mutable foundEnd = false
+
+                    while j < lines.Length && not foundEnd do
+                        let continuation = lines[j]
+                        let continuationEndIndex = continuation.IndexOf("]")
+
+                        if continuationEndIndex >= 0 then
+                            let suffix =
+                                if continuationEndIndex < continuation.Length - 1 then
+                                    continuation.Substring(continuationEndIndex + 1)
+                                else
+                                    String.Empty
+
+                            if not <| String.IsNullOrWhiteSpace(suffix) then
+                                output.Add(suffix)
+
+                            foundEnd <- true
+
+                        j <- j + 1
+
+                    i <- j
             | Some alias when alias = OptionName.CorrelationId && line.Contains("CorrelationId") ->
                 if not <| line.Contains("[default:", StringComparison.OrdinalIgnoreCase) then
-                    lines[i] <- $"{line} [default: {defaultsByAlias[alias]}]"
-                pendingAlias <- None
-            | _ -> ()
+                    output.Add($"{line} [default: {defaultsByAlias[alias]}]")
+                else
+                    output.Add(line)
 
-        String.Join(Environment.NewLine, lines)
+                pendingAlias <- None
+                i <- i + 1
+            | _ ->
+                output.Add(line)
+                i <- i + 1
+
+        String.Join(Environment.NewLine, output)
 
     let rootCommand =
         // Create the root of the command tree.
