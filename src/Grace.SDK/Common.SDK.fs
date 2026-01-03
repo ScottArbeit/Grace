@@ -39,6 +39,7 @@ module Common =
             try
                 //checkMemoryCache ()
                 use httpClient = getHttpClient parameters.CorrelationId
+                do! Auth.addAuthorizationHeader httpClient
                 let startTime = getCurrentInstant ()
 
                 let graceServerUri = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.GraceServerUri)
@@ -79,6 +80,7 @@ module Common =
             try
                 //checkMemoryCache ()
                 use httpClient = getHttpClient parameters.CorrelationId
+                do! Auth.addAuthorizationHeader httpClient
                 let serverUriWithRoute = Uri($"{Current().ServerUri}/{route}")
                 let startTime = getCurrentInstant ()
                 let! response = httpClient.PostAsync(serverUriWithRoute, createJsonContent parameters)

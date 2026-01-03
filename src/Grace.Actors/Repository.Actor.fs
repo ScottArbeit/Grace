@@ -234,6 +234,7 @@ module Repository =
 
                                         let childMetadata = EventMetadata.New metadata.CorrelationId GraceSystemUser
                                         childMetadata.Properties[nameof RepositoryId] <- $"{repositoryDto.RepositoryId}"
+
                                         childMetadata.Properties["RepositoryLogicalDeleteDays"] <-
                                             repositoryDto.LogicalDeleteDays.ToString("F", CultureInfo.InvariantCulture)
 

@@ -2,6 +2,7 @@ namespace Grace.Actors
 
 open Grace.Actors.Types
 open Grace.Shared
+open Grace.Types.Authorization
 open Grace.Types.Branch
 open Grace.Types.Diff
 open Grace.Types.DirectoryVersion
@@ -11,6 +12,7 @@ open Grace.Types.Reminder
 open Grace.Types.Repository
 open Grace.Types.Organization
 open Grace.Types.Owner
+open Grace.Types.PersonalAccessToken
 open Grace.Types.Types
 open Grace.Shared.Utilities
 open NodaTime
@@ -382,6 +384,28 @@ module Interfaces =
         /// Processes commands by checking that they're valid, and then converting them into events.
         abstract member Handle: command: RepositoryCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
 
+    /// Defines the operations for the AccessControl actor.
+    [<Interface>]
+    type IAccessControlActor =
+        inherit IGrainWithStringKey
+
+        /// Handles role assignment commands.
+        abstract member Handle: command: AccessControlCommand -> eventMetadata: EventMetadata -> Task<GraceResult<RoleAssignment list>>
+
+        /// Returns role assignments for this scope.
+        abstract member GetAssignments: principal: Principal option -> correlationId: CorrelationId -> Task<RoleAssignment list>
+
+    /// Defines the operations for the RepositoryPermission actor.
+    [<Interface>]
+    type IRepositoryPermissionActor =
+        inherit IGrainWithStringKey
+
+        /// Handles repository path permission commands.
+        abstract member Handle: command: RepositoryPermissionCommand -> eventMetadata: EventMetadata -> Task<GraceResult<PathPermission list>>
+
+        /// Returns path permissions for this repository.
+        abstract member GetPathPermissions: pathFilter: RelativePath option -> correlationId: CorrelationId -> Task<PathPermission list>
+
     /// Defines the operations for the RepositoryName actor.
     [<Interface>]
     type IGrainRepositoryActor =
@@ -403,3 +427,26 @@ module Interfaces =
 
         /// Returns the RepositoryId for the given RepositoryName.
         abstract member GetRepositoryId: correlationId: CorrelationId -> Task<RepositoryId option>
+
+    /// Defines the operations for the PersonalAccessToken actor.
+    [<Interface>]
+    type IPersonalAccessTokenActor =
+        inherit IGrainWithStringKey
+
+        abstract member CreateToken:
+            name: string ->
+            claims: string list ->
+            groupIds: string list ->
+            expiresAt: Instant option ->
+            now: Instant ->
+            correlationId: CorrelationId ->
+                Task<Result<PersonalAccessTokenCreated, GraceError>>
+
+        abstract member ListTokens:
+            includeRevoked: bool -> includeExpired: bool -> now: Instant -> correlationId: CorrelationId -> Task<PersonalAccessTokenSummary list>
+
+        abstract member RevokeToken:
+            tokenId: PersonalAccessTokenId -> now: Instant -> correlationId: CorrelationId -> Task<Result<PersonalAccessTokenSummary, GraceError>>
+
+        abstract member ValidateToken:
+            tokenId: PersonalAccessTokenId -> secret: byte[] -> now: Instant -> correlationId: CorrelationId -> Task<PersonalAccessTokenValidationResult option>

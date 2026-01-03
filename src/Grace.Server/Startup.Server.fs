@@ -16,9 +16,17 @@ open Grace.Shared.Utilities
 open Grace.Server
 open Grace.Server.Middleware
 open Grace.Server.ReminderService
+open Grace.Server.Security
+open Grace.Server.Security.TestAuth
 open Grace.Shared.Converters
 open Grace.Shared.Parameters
 open Grace.Types.Types
+open Grace.Types.Authorization
+open Grace.Types.PersonalAccessToken
+open Microsoft.AspNetCore.Authentication
+open Microsoft.AspNetCore.Authentication.Cookies
+open Microsoft.AspNetCore.Authentication.JwtBearer
+open Microsoft.AspNetCore.Authentication.OpenIdConnect
 open Microsoft.AspNetCore.Builder
 open Microsoft.AspNetCore.Hosting
 open Microsoft.AspNetCore.Http
@@ -57,6 +65,8 @@ open System.Threading.Tasks
 open FSharpPlus
 open System.Net.Http
 open System.Net.Security
+open Microsoft.IdentityModel.Tokens
+open System.Security.Claims
 
 module Application =
 
@@ -96,6 +106,34 @@ module Application =
         let mustBeLoggedIn = requiresAuthentication notLoggedIn
 
         let graceServerVersion = FileVersionInfo.GetVersionInfo(Assembly.GetExecutingAssembly().Location).FileVersion
+
+        let repositoryResourceFromContext (context: HttpContext) =
+            task {
+                let graceIds = Services.getGraceIds context
+                return Resource.Repository(graceIds.OwnerId, graceIds.OrganizationId, graceIds.RepositoryId)
+            }
+
+        let uploadPathResourcesFromContext (context: HttpContext) =
+            task {
+                context.Request.EnableBuffering()
+                let! parameters = context.BindJsonAsync<Storage.GetUploadMetadataForFilesParameters>()
+                context.Request.Body.Seek(0L, IO.SeekOrigin.Begin) |> ignore
+
+                let graceIds = Services.getGraceIds context
+
+                let resources =
+                    parameters.FileVersions
+                    |> Seq.map (fun fileVersion -> Resource.Path(graceIds.OwnerId, graceIds.OrganizationId, graceIds.RepositoryId, fileVersion.RelativePath))
+                    |> Seq.toList
+
+                return resources
+            }
+
+        let composeHandlers (first: HttpHandler) (second: HttpHandler) : HttpHandler = fun next context -> first (second next) context
+
+        let requireRepoAdmin: HttpHandler = AuthorizationMiddleware.requiresPermission Operation.RepoAdmin repositoryResourceFromContext
+
+        let requirePathWrite: HttpHandler = AuthorizationMiddleware.requiresPermissions Operation.PathWrite uploadPathResourcesFromContext
 
         let endpoints =
             [ GET
@@ -386,7 +424,7 @@ module Application =
                           route "/setConflictResolutionPolicy" Repository.SetConflictResolutionPolicy
                           |> addMetadata typeof<Repository.SetConflictResolutionPolicyParameters>
 
-                          route "/setDescription" Repository.SetDescription
+                          route "/setDescription" (composeHandlers requireRepoAdmin Repository.SetDescription)
                           |> addMetadata typeof<Repository.SetRepositoryDescriptionParameters>
 
                           route "/setLogicalDeleteDays" Repository.SetLogicalDeleteDays
@@ -412,7 +450,7 @@ module Application =
               subRoute
                   "/storage"
                   [ POST
-                        [ route "/getUploadMetadataForFiles" Storage.GetUploadMetadataForFiles
+                        [ route "/getUploadMetadataForFiles" (composeHandlers requirePathWrite Storage.GetUploadMetadataForFiles)
                           |> addMetadata typeof<Storage.GetUploadMetadataForFilesParameters>
 
                           route "/getDownloadUri" Storage.GetDownloadUri
@@ -420,6 +458,44 @@ module Application =
 
                           route "/getUploadUri" Storage.GetUploadUris
                           |> addMetadata typeof<Storage.GetUploadUriParameters> ] ]
+              subRoute
+                  "/access"
+                  [ POST
+                        [ route "/grantRole" Access.GrantRole
+                          |> addMetadata typeof<Access.GrantRoleParameters>
+
+                          route "/revokeRole" Access.RevokeRole
+                          |> addMetadata typeof<Access.RevokeRoleParameters>
+
+                          route "/listRoleAssignments" Access.ListRoleAssignments
+                          |> addMetadata typeof<Access.ListRoleAssignmentsParameters>
+
+                          route "/upsertPathPermission" Access.UpsertPathPermission
+                          |> addMetadata typeof<Access.UpsertPathPermissionParameters>
+
+                          route "/removePathPermission" Access.RemovePathPermission
+                          |> addMetadata typeof<Access.RemovePathPermissionParameters>
+
+                          route "/listPathPermissions" Access.ListPathPermissions
+                          |> addMetadata typeof<Access.ListPathPermissionsParameters>
+
+                          route "/checkPermission" Access.CheckPermission
+                          |> addMetadata typeof<Access.CheckPermissionParameters> ]
+                    GET [ route "/listRoles" Access.ListRoles ] ]
+              subRoute
+                  "/auth"
+                  [ GET
+                        [ route "/me" Auth.Me
+                          route "/login" Auth.Login
+                          routef "/login/%s" (fun providerId -> Auth.LoginProvider providerId)
+                          route "/logout" Auth.Logout ]
+                    POST
+                        [ route "/token/create" (Auth.TokenCreate configuration)
+                          |> addMetadata typeof<Auth.CreatePersonalAccessTokenParameters>
+                          route "/token/list" (Auth.TokenList configuration)
+                          |> addMetadata typeof<Auth.ListPersonalAccessTokensParameters>
+                          route "/token/revoke" (Auth.TokenRevoke configuration)
+                          |> addMetadata typeof<Auth.RevokePersonalAccessTokenParameters> ] ]
               subRoute
                   "/reminder"
                   [ POST
@@ -573,7 +649,198 @@ module Application =
                         |> ignore)
             |> ignore
 
-            services.AddAuthentication() |> ignore
+            let isTesting =
+                match Environment.GetEnvironmentVariable("GRACE_TESTING") with
+                | null -> false
+                | value ->
+                    value.Equals("1", StringComparison.OrdinalIgnoreCase)
+                    || value.Equals("true", StringComparison.OrdinalIgnoreCase)
+                    || value.Equals("yes", StringComparison.OrdinalIgnoreCase)
+
+            if isTesting then
+                services
+                    .AddAuthentication(fun options ->
+                        options.DefaultScheme <- "GraceAuth"
+                        options.DefaultChallengeScheme <- "GraceAuth")
+                    .AddPolicyScheme(
+                        "GraceAuth",
+                        "GraceAuth",
+                        fun options ->
+                            options.ForwardDefaultSelector <-
+                                fun context ->
+                                    let authorization = context.Request.Headers.Authorization.ToString()
+
+                                    if
+                                        not (String.IsNullOrWhiteSpace authorization)
+                                        && authorization.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)
+                                    then
+                                        let token = authorization.Substring("Bearer ".Length).Trim()
+
+                                        if token.StartsWith(TokenPrefix, StringComparison.Ordinal) then
+                                            PersonalAccessTokenAuth.SchemeName
+                                        else
+                                            TestAuth.SchemeName
+                                    else
+                                        TestAuth.SchemeName
+                    )
+                    .AddScheme<AuthenticationSchemeOptions, GraceTestAuthHandler>(TestAuth.SchemeName, fun _ -> ())
+                    .AddScheme<AuthenticationSchemeOptions, PersonalAccessTokenAuth.PersonalAccessTokenAuthHandler>(
+                        PersonalAccessTokenAuth.SchemeName,
+                        fun _ -> ()
+                    )
+                |> ignore
+            else
+                let authBuilder =
+                    services.AddAuthentication(fun options ->
+                        options.DefaultScheme <- "GraceAuth"
+                        options.DefaultChallengeScheme <- ExternalAuthConfig.MicrosoftScheme)
+
+                authBuilder
+                    .AddPolicyScheme(
+                        "GraceAuth",
+                        "GraceAuth",
+                        fun options ->
+                            options.ForwardDefaultSelector <-
+                                fun context ->
+                                    let authorization = context.Request.Headers.Authorization.ToString()
+
+                                    if
+                                        not (String.IsNullOrWhiteSpace authorization)
+                                        && authorization.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)
+                                    then
+                                        let token = authorization.Substring("Bearer ".Length).Trim()
+
+                                        if token.StartsWith(TokenPrefix, StringComparison.Ordinal) then
+                                            PersonalAccessTokenAuth.SchemeName
+                                        else
+                                            JwtBearerDefaults.AuthenticationScheme
+                                    else
+                                        CookieAuthenticationDefaults.AuthenticationScheme
+                    )
+                    .AddCookie(
+                        CookieAuthenticationDefaults.AuthenticationScheme,
+                        fun options ->
+                            options.SlidingExpiration <- true
+                            options.Cookie.HttpOnly <- true
+                    )
+                    .AddScheme<AuthenticationSchemeOptions, PersonalAccessTokenAuth.PersonalAccessTokenAuthHandler>(
+                        PersonalAccessTokenAuth.SchemeName,
+                        fun _ -> ()
+                    )
+                |> ignore
+
+                match ExternalAuthConfig.tryGetMicrosoftConfig configuration with
+                | Some microsoftConfig ->
+                    let authority =
+                        let trimmed = microsoftConfig.Authority.TrimEnd('/')
+
+                        if trimmed.EndsWith("/v2.0", StringComparison.OrdinalIgnoreCase) then
+                            trimmed
+                        else
+                            $"{trimmed}/v2.0"
+
+                    let apiAudience =
+                        let trimmed = microsoftConfig.ApiScope.TrimEnd('/')
+
+                        if String.IsNullOrWhiteSpace trimmed then microsoftConfig.ClientId
+                        elif trimmed.Contains("/") then trimmed.Substring(0, trimmed.LastIndexOf('/'))
+                        else trimmed
+
+                    let issuerValidator: IssuerValidator =
+                        let allowAnyTenant =
+                            let tenantId = microsoftConfig.TenantId.Trim()
+
+                            tenantId.Equals("common", StringComparison.OrdinalIgnoreCase)
+                            || tenantId.Equals("organizations", StringComparison.OrdinalIgnoreCase)
+                            || tenantId.Equals("consumers", StringComparison.OrdinalIgnoreCase)
+
+                        let prefix = "https://login.microsoftonline.com/"
+                        let suffix = "/v2.0"
+
+                        IssuerValidator(fun issuer _ _ ->
+                            if String.IsNullOrWhiteSpace issuer then
+                                raise (SecurityTokenInvalidIssuerException("Issuer is missing."))
+
+                            let normalized = issuer.TrimEnd('/')
+
+                            let matchesPattern =
+                                normalized.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
+                                && normalized.EndsWith(suffix, StringComparison.OrdinalIgnoreCase)
+
+                            if not matchesPattern then
+                                raise (SecurityTokenInvalidIssuerException($"Issuer '{issuer}' is not a valid Microsoft v2 issuer."))
+
+                            if allowAnyTenant then
+                                issuer
+                            else
+                                let tenantSegment = normalized.Substring(prefix.Length, normalized.Length - prefix.Length - suffix.Length)
+
+                                if tenantSegment.Equals(microsoftConfig.TenantId, StringComparison.OrdinalIgnoreCase) then
+                                    issuer
+                                else
+                                    raise (SecurityTokenInvalidIssuerException($"Issuer '{issuer}' does not match tenant '{microsoftConfig.TenantId}'.")))
+
+                    if microsoftConfig.ClientSecret.IsSome then
+                        authBuilder.AddOpenIdConnect(
+                            ExternalAuthConfig.MicrosoftScheme,
+                            fun options ->
+                                options.Authority <- authority
+                                options.ClientId <- microsoftConfig.ClientId
+                                options.ClientSecret <- microsoftConfig.ClientSecret.Value
+                                options.CallbackPath <- PathString("/signin-microsoft")
+                                options.SignInScheme <- CookieAuthenticationDefaults.AuthenticationScheme
+                                // Force auth code flow to avoid id_token implicit requirements.
+                                options.ResponseType <- "code"
+                                options.UsePkce <- true
+                                options.SaveTokens <- true
+                                // Request Graph scope so userinfo succeeds.
+                                options.GetClaimsFromUserInfoEndpoint <- true
+                                options.Scope.Clear()
+                                options.Scope.Add("openid") |> ignore
+                                options.Scope.Add("profile") |> ignore
+                                options.Scope.Add("email") |> ignore
+                                options.Scope.Add("User.Read") |> ignore
+
+                                // Do not mix API scopes with Graph scopes in a single auth code request.
+
+                                options.Events <- OpenIdConnectEvents()
+
+                                options.Events.OnAuthorizationCodeReceived <-
+                                    Func<AuthorizationCodeReceivedContext, Task>(fun context ->
+                                        let scopeValue = String.Join(" ", options.Scope)
+
+                                        if not (String.IsNullOrWhiteSpace scopeValue) then
+                                            context.TokenEndpointRequest.Scope <- scopeValue
+
+                                        Task.CompletedTask)
+
+                                options.TokenValidationParameters <-
+                                    TokenValidationParameters(NameClaimType = "name", RoleClaimType = "roles", IssuerValidator = issuerValidator)
+                        )
+                        |> ignore
+
+                    authBuilder.AddJwtBearer(
+                        JwtBearerDefaults.AuthenticationScheme,
+                        fun options ->
+                            options.Authority <- authority
+
+                            options.TokenValidationParameters <-
+                                TokenValidationParameters(
+                                    ValidateIssuer = true,
+                                    NameClaimType = "name",
+                                    RoleClaimType = "roles",
+                                    ValidAudiences = [| apiAudience; microsoftConfig.ClientId; microsoftConfig.ApiScope |],
+                                    IssuerValidator = issuerValidator
+                                )
+                    )
+                    |> ignore
+                | None -> ()
+
+            services.AddTransient<IClaimsTransformation, GraceClaimsTransformation>()
+            |> ignore
+
+            services.AddSingleton<IGracePermissionEvaluator, GracePermissionEvaluator>()
+            |> ignore
 
             services.AddW3CLogging(fun options ->
                 options.FileName <- "Grace.Server.log-"

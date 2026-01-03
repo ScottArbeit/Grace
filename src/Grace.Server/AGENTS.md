@@ -12,6 +12,7 @@ Global policies live in `../AGENTS.md`; review them before touching server code.
 - Preserve structured logging (including correlation IDs) and ensure middleware ordering remains stable.
 - Keep configuration loading and Orleans startup sequencing intact; changes should be intentional and well documented here.
 - Coordinate contracts and message flows with `Grace.Actors`, `Grace.SDK`, and `Grace.Types` so that clients and grain logic remain in sync.
+- Personal access tokens (PATs) use the `GracePat` auth scheme, `/auth/token/*` endpoints, and are governed by `grace__auth__pat__*` lifetime policies; Authorization headers are redacted in request logging.
 
 ## Project Rules
 1. When modifying `Program.Server.fs`, `OrleansConfig.fs`, or startup modules, verify that ordering, options binding, and health checks remain correct.

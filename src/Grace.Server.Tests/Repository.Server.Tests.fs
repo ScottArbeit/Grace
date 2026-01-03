@@ -24,6 +24,23 @@ type Repository() =
 
     let log = LoggerFactory.Create(fun builder -> builder.AddConsole().AddDebug() |> ignore).CreateLogger("RepositoryTests")
 
+    let grantRepoAdminAsync repositoryId =
+        task {
+            let parameters = Parameters.Access.GrantRoleParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.PrincipalType <- "User"
+            parameters.PrincipalId <- testUserId
+            parameters.ScopeKind <- "repo"
+            parameters.RoleId <- "RepoAdmin"
+            parameters.Source <- "test"
+            parameters.CorrelationId <- generateCorrelationId ()
+
+            let! response = Client.PostAsync("/access/grantRole", createJsonContent parameters)
+            response.EnsureSuccessStatusCode() |> ignore
+        }
+
     member val public TestContext = TestContext.CurrentContext with get, set
 
     [<Test>]
@@ -36,6 +53,8 @@ type Repository() =
             parameters.OwnerId <- ownerId
             parameters.OrganizationId <- organizationId
             parameters.RepositoryId <- repositoryIds[(rnd.Next(0, numberOfRepositories))]
+
+            do! grantRepoAdminAsync parameters.RepositoryId
 
             let! response = Client.PostAsync("/repository/setDescription", createJsonContent parameters)
             let! content = response.Content.ReadAsStringAsync()
@@ -68,6 +87,8 @@ type Repository() =
             parameters.OrganizationId <- organizationId
             parameters.RepositoryId <- repositoryIds[(rnd.Next(0, numberOfRepositories))]
             parameters.Description <- String.Empty
+
+            do! grantRepoAdminAsync parameters.RepositoryId
 
             let! response = Client.PostAsync("/repository/setDescription", createJsonContent parameters)
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))

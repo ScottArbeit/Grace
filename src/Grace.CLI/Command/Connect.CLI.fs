@@ -116,6 +116,8 @@ module Connect =
 
                     match validateIncomingParameters with
                     | Ok _ ->
+                        do! Auth.ensureAccessToken parseResult
+
                         let graceIds = getNormalizedIdsAndNames parseResult
 
                         let ownerParameters =

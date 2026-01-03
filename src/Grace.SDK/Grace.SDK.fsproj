@@ -16,9 +16,11 @@
 		<OtherFlags>--test:ParallelIlxGen</OtherFlags>
 	</PropertyGroup>
 	<ItemGroup>
-		<None Include="instructions.md" />
-		<Compile Include="Common.SDK.fs" />
-		<Compile Include="Storage.SDK.fs" />
+        <None Include="instructions.md" />
+        <Compile Include="Auth.SDK.fs" />
+        <Compile Include="Common.SDK.fs" />
+        <Compile Include="PersonalAccessToken.SDK.fs" />
+        <Compile Include="Storage.SDK.fs" />
 		<Compile Include="Branch.SDK.fs" />
 		<Compile Include="Owner.SDK.fs" />
 		<Compile Include="Organization.SDK.fs" />
@@ -27,6 +29,7 @@
 		<Compile Include="Diff.SDK.fs" />
 		<Compile Include="PromotionGroup.SDK.fs" />
 		<Compile Include="Admin.SDK.fs" />
+		<Compile Include="Access.SDK.fs" />
 	</ItemGroup>
 
 	<ItemGroup>

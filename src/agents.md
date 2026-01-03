@@ -140,6 +140,11 @@ For more details, see README.md and QUICKSTART.md.
 
 - Make a multi-step plan for non-trivial work, keep edits focused, and leave code cleaner than you found it.
 - Validate changes with `dotnet build --configuration Release` and `dotnet test --no-build`; run `fantomas .` after touching F# source.
+- Each task cannot be considered complete until it builds without errors; all compilation errors much be resolved.
+- When each task is done, run all tests and ensure they pass; fix any broken tests before marking complete.
+- Create a new `git commit` after each task is done to ensure ease of review.
+- Write unit/integration tests for new features and bug fixes; aim for high coverage on critical paths.
+- Document new public APIs with XML comments; update relevant READMEs and `AGENTS.md` files to reflect behavior changes.
 - Treat secrets with care, avoid logging PII, and preserve structured logging (including correlation IDs).
 - Favor existing helpers in `Grace.Shared` before adding new utilities; when new helpers are required, keep them composable and well documented.
 

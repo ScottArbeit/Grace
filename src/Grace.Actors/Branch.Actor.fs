@@ -549,6 +549,7 @@ module Branch =
                                                 match metadata.Properties.TryGetValue("RepositoryLogicalDeleteDays") with
                                                 | true, value ->
                                                     let mutable parsed = 0.0f
+
                                                     if Single.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, &parsed) then
                                                         Some parsed
                                                     else
@@ -585,6 +586,7 @@ module Branch =
 
                                                                 let metadata = EventMetadata.New metadata.CorrelationId GraceSystemUser
                                                                 metadata.Properties[nameof (RepositoryId)] <- $"{branchDto.RepositoryId}"
+
                                                                 metadata.Properties["RepositoryLogicalDeleteDays"] <-
                                                                     logicalDeleteDays.ToString("F", CultureInfo.InvariantCulture)
 

@@ -55,6 +55,8 @@ module Services =
     let mutable serviceBusServerSubscription = String.Empty
     let mutable serviceBusTestSubscription = String.Empty
     let mutable graceServerBaseAddress = String.Empty
+    let mutable testUserId = String.Empty
+    let mutable testUserClaims: string list = []
 
     let logToTestConsole (message: string) = Console.WriteLine(message)
 
@@ -78,6 +80,10 @@ type Setup() =
             serviceBusTopic <- hostState.ServiceBusTopic
             serviceBusServerSubscription <- hostState.ServiceBusServerSubscription
             serviceBusTestSubscription <- hostState.ServiceBusTestSubscription
+            testUserId <- $"{Guid.NewGuid()}"
+            testUserClaims <- [ "engineering"; "contributors" ]
+
+            Client.DefaultRequestHeaders.Add("x-grace-user-id", testUserId)
 
             logToTestConsole $"Grace.Server base address: {graceServerBaseAddress}"
 

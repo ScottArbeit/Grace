@@ -41,6 +41,7 @@ module Storage =
                 | AzureBlobStorage ->
                     // Get the URI to use when downloading the file. This includes a SAS token.
                     let httpClient = getHttpClient correlationId
+                    do! Auth.addAuthorizationHeader httpClient
                     let serviceUrl = $"{Current().ServerUri}/storage/getDownloadUri"
                     let jsonContent = createJsonContent getDownloadUriParameters
                     let! response = httpClient.PostAsync(serviceUrl, jsonContent)
@@ -112,6 +113,7 @@ module Storage =
                     match Current().ObjectStorageProvider with
                     | AzureBlobStorage ->
                         let httpClient = getHttpClient correlationId
+                        do! Auth.addAuthorizationHeader httpClient
                         let serviceUrl = $"{Current().ServerUri}/storage/getUploadMetadataForFiles"
                         let jsonContent = createJsonContent parameters
                         let! response = httpClient.PostAsync(serviceUrl, jsonContent)
@@ -295,6 +297,7 @@ module Storage =
                 | ObjectStorageProvider.Unknown -> return Error(GraceError.Create (getErrorMessage StorageError.NotImplemented) parameters.CorrelationId)
                 | ObjectStorageProvider.AzureBlobStorage ->
                     let httpClient = getHttpClient parameters.CorrelationId
+                    do! Auth.addAuthorizationHeader httpClient
                     let serviceUrl = $"{Current().ServerUri}/storage/getUploadUri"
                     let jsonContent = createJsonContent parameters
                     let! response = httpClient.PostAsync(serviceUrl, jsonContent)
@@ -318,6 +321,7 @@ module Storage =
                 | ObjectStorageProvider.Unknown -> return Error(GraceError.Create (getErrorMessage StorageError.NotImplemented) parameters.CorrelationId)
                 | ObjectStorageProvider.AzureBlobStorage ->
                     let httpClient = getHttpClient parameters.CorrelationId
+                    do! Auth.addAuthorizationHeader httpClient
                     let serviceUrl = $"{Current().ServerUri}/storage/getDownloadUri"
                     let jsonContent = createJsonContent parameters
                     let! response = httpClient.PostAsync(serviceUrl, jsonContent)

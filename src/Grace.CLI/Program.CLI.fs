@@ -124,9 +124,11 @@ module GraceCommand =
         rootCommand.Subcommands.Add(Owner.Build)
         rootCommand.Subcommands.Add(Config.Build)
         rootCommand.Subcommands.Add(History.Build)
+        rootCommand.Subcommands.Add(Auth.Build)
         rootCommand.Subcommands.Add(Maintenance.Build)
         rootCommand.Subcommands.Add(PromotionGroupCommand.Build)
         rootCommand.Subcommands.Add(Admin.Build)
+        rootCommand.Subcommands.Add(Access.Build)
 
         let Alias = Command("alias", "Display aliases for Grace commands.")
         let ListAliases = Command("list", "Display aliases for Grace commands.")
@@ -258,6 +260,7 @@ module GraceCommand =
     [<EntryPoint>]
     let main args =
         let startTime = getCurrentInstant ()
+        Auth.configureSdkAuth ()
 
         // Create a MemoryCache instance.
         //let memoryCacheOptions = MemoryCacheOptions(TrackStatistics = false, TrackLinkedCacheEntries = false)
@@ -479,7 +482,11 @@ module GraceCommand =
                             else
                                 StringComparison.InvariantCulture
 
-                        let isAllowed = args.Any(fun arg -> arg.Equals("config", comparison) || arg.Equals("history", comparison))
+                        let isAllowed =
+                            args.Any(fun arg ->
+                                arg.Equals("config", comparison)
+                                || arg.Equals("history", comparison)
+                                || arg.Equals("auth", comparison))
 
                         if isAllowed then
                             let parsed = rootCommand.Parse(args)

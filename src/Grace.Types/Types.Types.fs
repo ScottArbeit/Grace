@@ -505,7 +505,7 @@ module Types =
     // type Validations<'T, 'U> = 'T -> Result<bool, 'U> list
 
     /// Defines the specific permissions that can be granted to a user or group on a directory.
-    [<KnownType("GetKnownTypes"); GenerateSerializer>]
+    [<KnownType("GetKnownTypes")>]
     type DirectoryPermission =
         | FullControl
         | Modify
@@ -529,13 +529,21 @@ module Types =
     ///
     /// This is combined with a RelativePath to define a PathPermission.
     [<GenerateSerializer>]
-    type ClaimPermission = { Claim: string; DirectoryPermission: DirectoryPermission }
+    type ClaimPermission =
+        { [<Id 0u>]
+          Claim: string
+          [<Id 1u>]
+          DirectoryPermission: DirectoryPermission }
 
     /// Defines a set of claims and their permissions that should be applied to a relative path in the repository.
     ///
     /// NOTE: This type is being used only at the directory level for now, but I intend to implement it at the file level as well.
     [<GenerateSerializer>]
-    type PathPermission = { Path: RelativePath; Permissions: List<ClaimPermission> }
+    type PathPermission =
+        { [<Id 0u>]
+          Path: RelativePath
+          [<Id 1u>]
+          Permissions: List<ClaimPermission> }
 
     /// Cleans up extra backslashes (escape characters) and converts \r\n to Environment.NewLine.
     let cleanJson (s: string) = s.Replace("\\\\\\\\", @"\").Replace("\\\\", @"\").Replace(@"\r\n", Environment.NewLine)

@@ -181,7 +181,12 @@ module HistoryStorage =
                 if proc.Start() then
                     if proc.WaitForExit(2000) then
                         let output = proc.StandardOutput.ReadToEnd().Trim()
-                        if proc.ExitCode = 0 && not <| String.IsNullOrWhiteSpace(output) && not (output.Equals("HEAD", StringComparison.OrdinalIgnoreCase)) then
+
+                        if
+                            proc.ExitCode = 0
+                            && not <| String.IsNullOrWhiteSpace(output)
+                            && not (output.Equals("HEAD", StringComparison.OrdinalIgnoreCase))
+                        then
                             Some output
                         else
                             None
@@ -486,6 +491,7 @@ module HistoryStorage =
                 let repoRoot = tryFindRepoRoot input.cwd
                 let repoName = tryGetRepoName repoRoot
                 let repoBranch = tryGetGitBranch repoRoot
+
                 { id = Guid.NewGuid()
                   timestampUtc = input.timestampUtc
                   argvOriginal = redactedOriginal

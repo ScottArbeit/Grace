@@ -33,8 +33,14 @@ module UserConfiguration =
         member val RedactRegexes = defaultRedactRegexes () with get, set
         member val DestructiveTokenRegexes = defaultDestructiveTokenRegexes () with get, set
 
+    type AuthConfiguration() =
+        member val ActiveAccountId = String.Empty with get, set
+        member val ActiveTenantId = String.Empty with get, set
+        member val ActiveUsername = String.Empty with get, set
+
     type UserConfiguration() =
         member val History = HistoryConfiguration() with get, set
+        member val Auth = AuthConfiguration() with get, set
 
         override this.ToString() = serialize this
 
@@ -62,6 +68,13 @@ module UserConfiguration =
                 configuration
 
         normalized.History <- normalizeHistory normalized.History
+
+        normalized.Auth <-
+            if obj.ReferenceEquals(normalized.Auth, null) then
+                AuthConfiguration()
+            else
+                normalized.Auth
+
         normalized
 
     let private getUserProfileDirectory () =

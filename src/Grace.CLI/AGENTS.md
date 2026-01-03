@@ -11,6 +11,7 @@ Read `../AGENTS.md` for global expectations before updating CLI code.
 - Create handlers with `CommandHandler.Create(...)` that delegate to reusable services (often via `Grace.SDK`).
 - Use Spectre.Console for user interaction, but keep core logic testable and separate from console presentation.
 - Maintain alignment with DTOs and contracts defined in `Grace.Types`.
+- Auth commands now support PATs with precedence `GRACE_TOKEN` > local token file (`~/.grace/grace_token`) > MSAL cache; keep token values out of output except on creation.
 
 ## Project Rules
 1. Keep handlers thin; move heavier logic into services or helpers that are straightforward to unit test.

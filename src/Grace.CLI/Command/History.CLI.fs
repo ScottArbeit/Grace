@@ -520,10 +520,10 @@ module History =
         elif Directory.Exists(entryCwd) then
             Ok(entryCwd, false)
         else if canPrompt && not yes then
-            let message =
-                $"Recorded working directory not found: {Markup.Escape(entryCwd)}. Use current directory instead?"
+            let message = $"Recorded working directory not found: {Markup.Escape(entryCwd)}. Use current directory instead?"
 
             let useCurrent = AnsiConsole.Confirm(message, defaultValue = true)
+
             if useCurrent then
                 Ok(Environment.CurrentDirectory, true)
             else
@@ -602,9 +602,7 @@ module History =
                                 return -1
                             | Ok(cwd, usedFallback) ->
                                 if usedFallback && not (parseResult |> silent) then
-                                    AnsiConsole.MarkupLine(
-                                        $"[yellow]Recorded working directory not found; using current directory: {Markup.Escape(cwd)}[/]"
-                                    )
+                                    AnsiConsole.MarkupLine($"[yellow]Recorded working directory not found; using current directory: {Markup.Escape(cwd)}[/]")
 
                                 let commandLine = HistoryStorage.buildCommandLine argvToRun
 
@@ -651,9 +649,7 @@ module History =
                                                 AnsiConsole.MarkupLine("[red]Failed to start Grace process.[/]")
                                                 return -1
                                         with ex ->
-                                            AnsiConsole.MarkupLine(
-                                                $"[red]Failed to start Grace process: {Markup.Escape(ex.Message)}[/]"
-                                            )
+                                            AnsiConsole.MarkupLine($"[red]Failed to start Grace process: {Markup.Escape(ex.Message)}[/]")
                                             return -1
             }
 
