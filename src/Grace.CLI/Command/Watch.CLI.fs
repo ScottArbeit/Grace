@@ -48,7 +48,7 @@ module Watch =
                 Required = false,
                 Description = "The repository's owner ID <Guid>.",
                 Arity = ArgumentArity.ZeroOrOne,
-                DefaultValueFactory = (fun _ -> if Current().OwnerId = Guid.Empty then Guid.NewGuid() else Current().OwnerId)
+                DefaultValueFactory = (fun _ -> OwnerId.Empty)
             )
 
         let ownerName =
@@ -65,12 +65,7 @@ module Watch =
                 Required = false,
                 Description = "The repository's organization ID <Guid>.",
                 Arity = ArgumentArity.ExactlyOne,
-                DefaultValueFactory =
-                    (fun _ ->
-                        if Current().OrganizationId = Guid.Empty then
-                            Guid.NewGuid()
-                        else
-                            Current().OrganizationId)
+                DefaultValueFactory = (fun _ -> OrganizationId.Empty)
             )
 
         let organizationName =
@@ -88,12 +83,7 @@ module Watch =
                 Required = false,
                 Description = "The repository's ID <Guid>.",
                 Arity = ArgumentArity.ExactlyOne,
-                DefaultValueFactory =
-                    (fun _ ->
-                        if Current().RepositoryId = Guid.Empty then
-                            Guid.NewGuid()
-                        else
-                            Current().RepositoryId)
+                DefaultValueFactory = (fun _ -> RepositoryId.Empty)
             )
 
         let repositoryName =
@@ -112,7 +102,7 @@ module Watch =
                 Required = false,
                 Description = "The branch's ID <Guid>.",
                 Arity = ArgumentArity.ExactlyOne,
-                DefaultValueFactory = (fun _ -> if Current().BranchId = Guid.Empty then Guid.NewGuid() else Current().BranchId)
+                DefaultValueFactory = (fun _ -> BranchId.Empty)
             )
 
         let branchName =
@@ -146,7 +136,7 @@ module Watch =
     let fileDeleted filePath = logToConsole $"In Delete: filePath: {filePath}"
 
     let isNotDirectory path = not <| Directory.Exists(path)
-    let updateInProgress () = File.Exists(updateInProgressFileName)
+    let updateInProgress () = File.Exists(updateInProgressFileName ())
     let updateNotInProgress () = not <| updateInProgress ()
 
     let OnCreated (args: FileSystemEventArgs) =
@@ -204,18 +194,18 @@ module Watch =
         logToAnsiConsole Colors.Error $"I saw that the FileSystemWatcher threw an exception: {args.GetException().Message}. grace watch should be restarted."
 
     let OnGraceUpdateInProgressCreated (args: FileSystemEventArgs) =
-        if args.FullPath = updateInProgressFileName then
+        if args.FullPath = updateInProgressFileName () then
             if updateInProgress () then
                 logToAnsiConsole Colors.Important $"Update is in progress from another Grace instance."
             else
-                logToAnsiConsole Colors.Important $"{updateInProgressFileName} should already exist, but it doesn't."
+                logToAnsiConsole Colors.Important $"{updateInProgressFileName ()} should already exist, but it doesn't."
 
     let OnGraceUpdateInProgressDeleted (args: FileSystemEventArgs) =
-        if args.FullPath = updateInProgressFileName then
+        if args.FullPath = updateInProgressFileName () then
             if updateNotInProgress () then
                 logToAnsiConsole Colors.Important $"Update has finished in another Grace instance."
             else
-                logToAnsiConsole Colors.Important $"{updateInProgressFileName} should have been deleted, but it hasn't yet."
+                logToAnsiConsole Colors.Important $"{updateInProgressFileName ()} should have been deleted, but it hasn't yet."
 
     /// Creates a FileSystemWatcher for the given path.
     let createFileSystemWatcher path =
@@ -459,10 +449,10 @@ module Watch =
                     use errored =
                         Observable.FromEventPattern<ErrorEventArgs>(rootDirectoryFileSystemWatcher, "Error").Select(fun e -> e.EventArgs).Subscribe(OnError) // I want all of the errors.
 
-                    Directory.CreateDirectory(Path.GetDirectoryName(updateInProgressFileName))
+                    Directory.CreateDirectory(Path.GetDirectoryName(updateInProgressFileName ()))
                     |> ignore
 
-                    use updateInProgressFileSystemWatcher = createFileSystemWatcher (Path.GetDirectoryName(updateInProgressFileName))
+                    use updateInProgressFileSystemWatcher = createFileSystemWatcher (Path.GetDirectoryName(updateInProgressFileName ()))
 
                     use updateInProgressChanged =
                         Observable

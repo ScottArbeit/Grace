@@ -2,6 +2,13 @@
 
 This project uses **bd** (beads) for issue tracking. The repo is initialized at the root `.beads`, so run `bd` from the repo root.
 
+## Before You Start (MANDATORY)
+- Always run `bd ready --json` from repo root before doing anything else.
+- You MUST claim or create an issue before editing code:
+  - If a suitable issue exists: `bd update <id> --status in_progress`
+  - If none exist: create a new issue, then set it in progress.
+- Do not make code changes until an issue is in progress.
+
 ## Quick Reference
 
 ```bash

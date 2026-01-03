@@ -55,7 +55,7 @@ module Common =
                 Description = "CorrelationId for end-to-end tracking <String>.",
                 Arity = ArgumentArity.ExactlyOne,
                 Recursive = true,
-                DefaultValueFactory = (fun _ -> generateCorrelationId ())
+                DefaultValueFactory = (fun _ -> CorrelationId.Empty)
             )
 
         let output =
@@ -71,7 +71,7 @@ module Common =
                 .AcceptOnlyFromAmong(listCases<OutputFormat> ())
 
     /// Gets the correlationId value from the command's ParseResult.
-    let getCorrelationId (parseResult: ParseResult) = parseResult.GetValue(Options.correlationId)
+    let getCorrelationId (parseResult: ParseResult) = Services.resolveCorrelationId parseResult
 
     module Validations =
         /// Checks that a given name option is a valid Grace name. If the option is not present, it does not return an error.

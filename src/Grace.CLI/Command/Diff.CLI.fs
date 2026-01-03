@@ -44,7 +44,7 @@ module Diff =
                 Required = false,
                 Description = "The repository's owner ID <Guid>.",
                 Arity = ArgumentArity.ZeroOrOne,
-                DefaultValueFactory = (fun _ -> Current().OwnerId)
+                DefaultValueFactory = (fun _ -> OwnerId.Empty)
             )
 
         let ownerName =
@@ -61,7 +61,7 @@ module Diff =
                 Required = false,
                 Description = "The repository's organization ID <Guid>.",
                 Arity = ArgumentArity.ZeroOrOne,
-                DefaultValueFactory = (fun _ -> Current().OrganizationId)
+                DefaultValueFactory = (fun _ -> OrganizationId.Empty)
             )
 
         let organizationName =
@@ -79,7 +79,7 @@ module Diff =
                 Required = false,
                 Description = "The repository's Id <Guid>.",
                 Arity = ArgumentArity.ExactlyOne,
-                DefaultValueFactory = (fun _ -> Current().RepositoryId)
+                DefaultValueFactory = (fun _ -> RepositoryId.Empty)
             )
 
         let repositoryName =
@@ -98,7 +98,7 @@ module Diff =
                 Required = false,
                 Description = "The branch's ID <Guid>.",
                 Arity = ArgumentArity.ExactlyOne,
-                DefaultValueFactory = (fun _ -> Current().BranchId)
+                DefaultValueFactory = (fun _ -> BranchId.Empty)
             )
 
         let branchName =

@@ -49,7 +49,7 @@ module Reference =
                 Required = false,
                 Description = "The branch's ID <Guid>.",
                 Arity = ArgumentArity.ExactlyOne,
-                DefaultValueFactory = (fun _ -> Current().BranchId)
+                DefaultValueFactory = (fun _ -> BranchId.Empty)
             )
 
         let branchName =
@@ -70,7 +70,7 @@ module Reference =
                 Required = false,
                 Description = "The repository's owner ID <Guid>.",
                 Arity = ArgumentArity.ZeroOrOne,
-                DefaultValueFactory = (fun _ -> Current().OwnerId)
+                DefaultValueFactory = (fun _ -> OwnerId.Empty)
             )
 
         let ownerName =
@@ -87,7 +87,7 @@ module Reference =
                 Required = false,
                 Description = "The repository's organization ID <Guid>.",
                 Arity = ArgumentArity.ExactlyOne,
-                DefaultValueFactory = (fun _ -> Current().OrganizationId)
+                DefaultValueFactory = (fun _ -> OrganizationId.Empty)
             )
 
         let organizationName =
@@ -105,7 +105,7 @@ module Reference =
                 Required = false,
                 Description = "The repository's ID <Guid>.",
                 Arity = ArgumentArity.ExactlyOne,
-                DefaultValueFactory = (fun _ -> Current().RepositoryId)
+                DefaultValueFactory = (fun _ -> RepositoryId.Empty)
             )
 
         let repositoryName =
@@ -133,7 +133,7 @@ module Reference =
                 Required = false,
                 Description = "The name of the parent branch. [default: current branch]",
                 Arity = ArgumentArity.ExactlyOne,
-                DefaultValueFactory = (fun _ -> $"{Current().BranchName}")
+                DefaultValueFactory = (fun _ -> String.Empty)
             )
 
         let newName = new Option<String>(OptionName.NewName, Required = true, Description = "The new name of the branch.", Arity = ArgumentArity.ExactlyOne)
