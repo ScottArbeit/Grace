@@ -3,6 +3,7 @@ namespace Grace.CLI
 open Grace.CLI.Command
 open Grace.CLI.Common
 open Grace.CLI.Services
+open Grace.CLI.Text
 open Grace.Shared
 open Grace.Shared.Client.Configuration
 open Grace.Shared.Converters
@@ -41,7 +42,11 @@ module Configuration =
 
 module GraceCommand =
 
-    type OptionToUpdate = { optionName: string; command: string; display: string; displayOnCreate: string }
+    type OptionToUpdate =
+        { optionAlias: string
+          display: string
+          displayOnCreate: string
+          createParentCommand: string }
 
     /// Built-in aliases for Grace commands.
     let private aliases =
@@ -101,6 +106,43 @@ module GraceCommand =
             gatherAllOptions parentCommand allOptions
         else
             allOptions
+
+    let private replaceDefaultValue (line: string) (defaultValueText: string) =
+        let startIndex = line.IndexOf("[default:", StringComparison.OrdinalIgnoreCase)
+
+        if startIndex >= 0 then
+            let endIndex = line.IndexOf("]", startIndex)
+
+            if endIndex > startIndex then
+                $"{line.Substring(0, startIndex)}[default: {defaultValueText}]{line.Substring(endIndex + 1)}"
+            else
+                line
+        else
+            line
+
+    let private rewriteHelpDefaults (helpText: string) (defaultsByAlias: IDictionary<string, string>) =
+        let lines = helpText.Split(Environment.NewLine)
+        let mutable pendingAlias: string option = None
+
+        for i in 0 .. lines.Length - 1 do
+            let line = lines[i]
+            let matchedAlias = defaultsByAlias.Keys |> Seq.tryFind (fun alias -> line.Contains(alias))
+
+            match matchedAlias with
+            | Some alias -> pendingAlias <- Some alias
+            | None -> ()
+
+            match pendingAlias with
+            | Some alias when line.Contains("[default:", StringComparison.OrdinalIgnoreCase) ->
+                lines[i] <- replaceDefaultValue line defaultsByAlias[alias]
+                pendingAlias <- None
+            | Some alias when alias = OptionName.CorrelationId && line.Contains("CorrelationId") ->
+                if not <| line.Contains("[default:", StringComparison.OrdinalIgnoreCase) then
+                    lines[i] <- $"{line} [default: {defaultsByAlias[alias]}]"
+                pendingAlias <- None
+            | _ -> ()
+
+        String.Join(Environment.NewLine, lines)
 
     let rootCommand =
         // Create the root of the command tree.
@@ -261,6 +303,7 @@ module GraceCommand =
     let main args =
         let startTime = getCurrentInstant ()
         Auth.configureSdkAuth ()
+        Services.resetInvocationCorrelationId ()
 
         // Create a MemoryCache instance.
         //let memoryCacheOptions = MemoryCacheOptions(TrackStatistics = false, TrackLinkedCacheEntries = false)
@@ -308,124 +351,117 @@ module GraceCommand =
                 try
                     //let commandLineConfiguration = ParserConfiguration rootCommand
 
-                    // Right now, in order to handle default values, we need to read the Grace configuration file
-                    //   as the commands are being built, and before they're executed.
-                    // For instance, when the command is `grace repo create...`, the `repo` command is built by
-                    //   System.CommandLine in-memory, and that causes `graceconfig.json` to be read to get
-                    //   default values for things like OwnerId, OrganizationId, etc.
-                    // If grace is being run in a directory where there's no config, that obviously won't work, so,
-                    //   first, we check if we have a config file.
-                    // If we do have a config file, great! we can parse it and use it.
-                    // If we don't, we're just going to print an error message and exit.
-
-                    if configurationFileExists () then
-                        if args.Length > 0 then
-                            let firstToken = if isCaseInsensitive then args[0].ToLowerInvariant() else args[0]
-
-                            // Adjust the casing of any options in the args array for case-insensitive OSes.
-                            let properCasedArgs =
-                                args
-                                |> Array.map (fun arg ->
-                                    if isCaseInsensitive && arg.StartsWith("--") then
-                                        arg.ToLowerInvariant()
-                                    else
-                                        arg)
-
-                            // Check if the first token is an alias for a command.
-                            if aliases.ContainsKey(firstToken) then
-                                let newArgs = List<string>()
-
-                                // Reverse the expanded command so we insert them in the right order.
-                                for token in aliases[firstToken].Reverse() do
-                                    newArgs.Insert(0, token)
-
-                                for token in properCasedArgs[1..] do
-                                    newArgs.Add(token)
-
-                                //let newArgsString = String.Join(" ", newArgs)
-                                //logToAnsiConsole Colors.Verbose $"Using alias for command: {firstToken} -> {newArgsString}."
-                                argvNormalized <- newArgs.ToArray()
-                                parseResult <- rootCommand.Parse(newArgs)
-                            else
-                                //let argsString = String.Join(" ", properCasedArgs)
-                                //logToAnsiConsole Colors.Verbose $"No alias; parsing command line arguments: {argsString}."
-                                argvNormalized <- properCasedArgs
-                                parseResult <- rootCommand.Parse(properCasedArgs)
+                    let argvToParse =
+                        if args.Length = 0 then
+                            [| helpOptions[0] |]
                         else
-                            // If we have no tokens, we want to show the help text for the command,
-                            //   so we parse the command again with one of the help options to get the help text.
-                            parseResult <- rootCommand.Parse(helpOptions[0])
+                            argvNormalized
 
-                        parseSucceeded <- parseResult.Errors.Count = 0
-                        // Write the ParseResult to Services as global context for the CLI.
-                        Services.parseResult <- parseResult
+                    parseResult <- rootCommand.Parse(argvToParse)
+                    parseSucceeded <- parseResult.Errors.Count = 0
+                    // Write the ParseResult to Services as global context for the CLI.
+                    Services.parseResult <- parseResult
 
-                        match parseResult.Action with
-                        | :? HelpAction as helpAction ->
-                            if
-                                parseResult.Tokens.Count = 0
-                                || (parseResult.Tokens.Count = 1
-                                    && helpOptions.Contains(parseResult.Tokens[0].Value))
-                            then
-                                // This is where we configure how help is displayed by Grace.
-                                // We want to show the help text for the command, and then the feedback section at the end.
-                                let graceFiglet = FigletText($"Grace")
-                                graceFiglet.Justification <- Justify.Center
-                                graceFiglet.Color <- Color.Green3_1
-                                AnsiConsole.Write(graceFiglet)
-                                let graceFiglet = FigletText($"Version Control System")
-                                graceFiglet.Justification <- Justify.Center
-                                graceFiglet.Color <- Color.DarkOrange
-                                AnsiConsole.Write(graceFiglet)
-                                AnsiConsole.WriteLine()
+                    match parseResult.Action with
+                    | :? HelpAction ->
+                        if
+                            parseResult.Tokens.Count = 0
+                            || (parseResult.Tokens.Count = 1 && helpOptions.Contains(parseResult.Tokens[0].Value))
+                        then
+                            // This is where we configure how help is displayed by Grace.
+                            // We want to show the help text for the command, and then the feedback section at the end.
+                            let graceFiglet = FigletText($"Grace")
+                            graceFiglet.Justification <- Justify.Center
+                            graceFiglet.Color <- Color.Green3_1
+                            AnsiConsole.Write(graceFiglet)
+                            let graceFiglet = FigletText($"Version Control System")
+                            graceFiglet.Justification <- Justify.Center
+                            graceFiglet.Color <- Color.DarkOrange
+                            AnsiConsole.Write(graceFiglet)
+                            AnsiConsole.WriteLine()
 
-                                for i in 0 .. rootCommand.Options.Count - 1 do
-                                    match rootCommand.Options[i] with
-                                    | :? HelpOption as defaultHelpOption -> defaultHelpOption.Action <- FeedbackSection(defaultHelpOption.Action :?> HelpAction)
-                                    | _ -> ()
+                            for i in 0 .. rootCommand.Options.Count - 1 do
+                                match rootCommand.Options[i] with
+                                | :? HelpOption as defaultHelpOption ->
+                                    defaultHelpOption.Action <- FeedbackSection(defaultHelpOption.Action :?> HelpAction)
+                                | _ -> ()
 
-                            //helpAction.Builder.CustomizeLayout(fun layoutContext ->
-                            //    HelpBuilder.Default
-                            //        .GetLayout()
-                            //        .Where(fun section ->
-                            //            not
-                            //            <| section.Method.Name.Contains("Synopsis", StringComparison.InvariantCultureIgnoreCase))
-                            //        .Append(feedbackSection))
+                        //helpAction.Builder.CustomizeLayout(fun layoutContext ->
+                        //    HelpBuilder.Default
+                        //        .GetLayout()
+                        //        .Where(fun section ->
+                        //            not
+                        //            <| section.Method.Name.Contains("Synopsis", StringComparison.InvariantCultureIgnoreCase))
+                        //        .Append(feedbackSection))
 
-                            // We're passing a new List<Option> here, because we're going to be adding to it recursively in gatherAllOptions.
-                            let allOptions = gatherAllOptions rootCommand (List<Option>())
+                        // We're passing a new List<Option> here, because we're going to be adding to it recursively in gatherAllOptions.
+                        let allOptions = gatherAllOptions parseResult.CommandResult.Command (List<Option>())
 
-                            // This section sets the display of the default value for these options in all commands in Grace CLI.
-                            // Without setting the display values here, by default, we'd get something like
-                            //   "[default: thing-we-said-in-the-Option-definition] [default:e4def31b-4547-4f6b-9324-56eba666b4b2]"
-                            //   i.e. whatever the generated Guid value on create might be.
-                            let optionsToUpdate =
-                                [ { optionName = "correlation-id"; command = String.Empty; display = "new NanoId"; displayOnCreate = "new NanoId" }
-                                  { optionName = "branch-id"; command = "Branch"; display = "current branch"; displayOnCreate = "new Guid" }
-                                  { optionName = "organization-id"; command = "Organization"; display = "current organization"; displayOnCreate = "new Guid" }
-                                  { optionName = "owner-id"; command = "Owner"; display = "current owner"; displayOnCreate = "new Guid" }
-                                  { optionName = "repository-id"; command = "Repository"; display = "current repository"; displayOnCreate = "new Guid" }
-                                  { optionName = "parent-branch-id"
-                                    command = "Branch"
-                                    display = "current branch, empty if parentBranchName is provided"
-                                    displayOnCreate = "current branch, empty if parentBranchName is provided" } ]
+                        // This section sets the display of the default value for these options in all commands in Grace CLI.
+                        // Without setting the display values here, by default, we'd get something like
+                        //   "[default: thing-we-said-in-the-Option-definition] [default:e4def31b-4547-4f6b-9324-56eba666b4b2]"
+                        //   i.e. whatever the generated Guid value on create might be.
+                        let optionsToUpdate =
+                            [ { optionAlias = OptionName.CorrelationId
+                                display = "new NanoId"
+                                displayOnCreate = "new NanoId"
+                                createParentCommand = String.Empty }
+                              { optionAlias = OptionName.OwnerId
+                                display = "current OwnerId"
+                                displayOnCreate = "new Guid"
+                                createParentCommand = "owner" }
+                              { optionAlias = OptionName.OrganizationId
+                                display = "current OrganizationId"
+                                displayOnCreate = "new Guid"
+                                createParentCommand = "organization" }
+                              { optionAlias = OptionName.RepositoryId
+                                display = "current RepositoryId"
+                                displayOnCreate = "new Guid"
+                                createParentCommand = "repository" }
+                              { optionAlias = OptionName.BranchId
+                                display = "current BranchId"
+                                displayOnCreate = "new Guid"
+                                createParentCommand = "branch" } ]
 
-                            //optionsToUpdate
-                            //|> List.iter (fun optionToUpdate ->
-                            //    allOptions
-                            //    |> Seq.where (fun opt -> opt.Name = optionToUpdate.optionName)
-                            //    |> Seq.iter (fun option ->
-                            //        if
-                            //            parseResult.CommandResult.Command.Aliases.Any(fun alias -> alias = "create")
-                            //            && parseResult.CommandResult.Command.Parents.Any(fun parent ->
-                            //                parent.Name.Equals(optionToUpdate.command, StringComparison.InvariantCultureIgnoreCase))
-                            //        then
-                            //            helpAction.Builder.CustomizeSymbol(option, defaultValue = optionToUpdate.displayOnCreate)
-                            //        else
-                            //            helpAction.Builder.CustomizeSymbol(option, defaultValue = optionToUpdate.display)))
+                        let isCreate =
+                            parseResult.CommandResult.Command.Name.Equals("create", StringComparison.OrdinalIgnoreCase)
 
-                            returnValue <- parseResult.Invoke()
-                        | _ ->
+                        let parentCommands = parseResult.CommandResult.Command.Parents.OfType<Command>()
+
+                        let defaultsByAlias =
+                            optionsToUpdate
+                            |> Seq.map (fun optionToUpdate ->
+                                let useCreateDisplay =
+                                    isCreate
+                                    && not <| String.IsNullOrWhiteSpace(optionToUpdate.createParentCommand)
+                                    && parentCommands.Any(fun parent ->
+                                        parent.Name.Equals(optionToUpdate.createParentCommand, StringComparison.OrdinalIgnoreCase))
+
+                                let defaultValueText =
+                                    if useCreateDisplay then
+                                        optionToUpdate.displayOnCreate
+                                    else
+                                        optionToUpdate.display
+
+                                optionToUpdate.optionAlias, defaultValueText)
+                            |> dict
+
+                        use writer = new StringWriter()
+                        let originalOut = Console.Out
+
+                        let invokeResult =
+                            try
+                                Console.SetOut(writer)
+                                parseResult.Invoke()
+                            finally
+                                Console.SetOut(originalOut)
+
+                        let helpText = writer.ToString()
+                        let rewrittenHelpText = rewriteHelpDefaults helpText defaultsByAlias
+                        Console.Write(rewrittenHelpText)
+                        returnValue <- invokeResult
+                    | _ ->
+                        if configurationFileExists () then
                             //parseResult <- caseInsensitiveMiddleware (rootCommand, parseResult, isCaseInsensitive)
 
                             if parseResult |> hasOutput then
@@ -472,38 +508,38 @@ module GraceCommand =
                                     )
 
                                 AnsiConsole.WriteLine()
-                    else
-                        // We don't have a config file, so write an error message and exit.
-                        AnsiConsole.Write(new Rule())
-
-                        let comparison =
-                            if isCaseInsensitive then
-                                StringComparison.InvariantCultureIgnoreCase
-                            else
-                                StringComparison.InvariantCulture
-
-                        let isAllowed =
-                            args.Any(fun arg ->
-                                arg.Equals("config", comparison)
-                                || arg.Equals("history", comparison)
-                                || arg.Equals("auth", comparison))
-
-                        if isAllowed then
-                            let parsed = rootCommand.Parse(args)
-                            parseResult <- parsed
-                            parseSucceeded <- parsed.Errors.Count = 0
-                            let! invokedReturnValue = parsed.InvokeAsync()
-                            returnValue <- invokedReturnValue
-                            ()
                         else
-                            AnsiConsole.MarkupLine($"[{Colors.Important}]{getLocalizedString StringResourceName.GraceConfigFileNotFound}[/]")
+                            // We don't have a config file, so write an error message and exit.
+                            AnsiConsole.Write(new Rule())
 
-                        printParseResult parseResult
-                        let finishTime = getCurrentInstant ()
-                        let elapsed = (finishTime - startTime).Plus(Duration.FromMilliseconds(110.0)) // Adding 110ms for .NET Runtime startup time.
+                            let comparison =
+                                if isCaseInsensitive then
+                                    StringComparison.InvariantCultureIgnoreCase
+                                else
+                                    StringComparison.InvariantCulture
 
-                        AnsiConsole.Write((new Rule($"[{Colors.Important}]Elapsed: {elapsed.TotalSeconds:F3}s. Exit code: {returnValue}.[/]")).RightJustified())
+                            let allowedCommands = [ "config"; "history"; "auth" ]
 
+                            let isAllowed =
+                                let command = parseResult.CommandResult.Command
+
+                                Seq.append [ command ] (command.Parents.OfType<Command>())
+                                |> Seq.exists (fun cmd ->
+                                    allowedCommands
+                                    |> List.exists (fun allowed -> cmd.Name.Equals(allowed, comparison)))
+
+                            if isAllowed then
+                                let! invokedReturnValue = parseResult.InvokeAsync()
+                                returnValue <- invokedReturnValue
+                                ()
+                            else
+                                AnsiConsole.MarkupLine($"[{Colors.Important}]{getLocalizedString StringResourceName.GraceConfigFileNotFound}[/]")
+
+                            printParseResult parseResult
+                            let finishTime = getCurrentInstant ()
+                            let elapsed = (finishTime - startTime).Plus(Duration.FromMilliseconds(110.0)) // Adding 110ms for .NET Runtime startup time.
+
+                            AnsiConsole.Write((new Rule($"[{Colors.Important}]Elapsed: {elapsed.TotalSeconds:F3}s. Exit code: {returnValue}.[/]")).RightJustified())
                     return returnValue
                 with ex ->
                     AnsiConsole.WriteException ex

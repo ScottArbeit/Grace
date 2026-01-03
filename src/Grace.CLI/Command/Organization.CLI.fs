@@ -39,7 +39,7 @@ module Organization =
                 Required = false,
                 Description = "The organization's owner ID <Guid>.",
                 Arity = ArgumentArity.ExactlyOne,
-                DefaultValueFactory = (fun _ -> if Current().OwnerId = Guid.Empty then Guid.NewGuid() else Current().OwnerId)
+                DefaultValueFactory = (fun _ -> OwnerId.Empty)
             )
 
         let ownerName =
@@ -56,12 +56,7 @@ module Organization =
                 Required = false,
                 Description = "The organization ID <Guid>.",
                 Arity = ArgumentArity.ExactlyOne,
-                DefaultValueFactory =
-                    (fun _ ->
-                        if Current().OrganizationId = Guid.Empty then
-                            Guid.NewGuid()
-                        else
-                            Current().OrganizationId)
+                DefaultValueFactory = (fun _ -> OrganizationId.Empty)
             )
 
         let organizationName =

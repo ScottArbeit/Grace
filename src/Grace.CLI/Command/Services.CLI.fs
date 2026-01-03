@@ -83,6 +83,9 @@ module Services =
 
     let mutable graceWatchStatusUpdateTime = Instant.MinValue
     let mutable parseResult: ParseResult = null
+    let mutable private invocationCorrelationId: CorrelationId option = None
+
+    let resetInvocationCorrelationId () = invocationCorrelationId <- None
 
     // Extension methods for dealing with local file changes.
     type DirectoryVersion with
@@ -1274,7 +1277,7 @@ module Services =
         newGraceStatus
 
     /// Gets the file name used to indicate to `grace watch` that updates are in progress from another Grace command, and that it should ignore them.
-    let updateInProgressFileName =
+    let updateInProgressFileName () =
         let directory = Path.Combine(Path.GetTempPath(), "Grace", Current().BranchName)
         Directory.CreateDirectory(directory) |> ignore
 
@@ -1575,19 +1578,54 @@ module Services =
         else
             false
 
+    let resolveCorrelationId (parseResult: ParseResult) : CorrelationId =
+        if
+            isOptionPresent parseResult OptionName.CorrelationId
+            && not <| isOptionResultImplicit parseResult OptionName.CorrelationId
+        then
+            parseResult.GetValue(OptionName.CorrelationId)
+        else
+            match invocationCorrelationId with
+            | Some correlationId -> correlationId
+            | None ->
+                let correlationId = generateCorrelationId ()
+                invocationCorrelationId <- Some correlationId
+                correlationId
+
     /// Adjusts command-line options to account for whether Id's or Name's were explicitly specified by the user,
     ///    or should be taken from default values.
     let getNormalizedIdsAndNames (parseResult: ParseResult) =
 
-        let getNormalizedId (idOption: string) (nameOption: string) =
-            if
-                isOptionResultImplicit parseResult idOption
-                && isOptionPresent parseResult nameOption
-                && not <| isOptionResultImplicit parseResult nameOption
-            then
+        let isExplicitName (nameOption: string) =
+            isOptionPresent parseResult nameOption
+            && not <| isOptionResultImplicit parseResult nameOption
+            && not <| String.IsNullOrWhiteSpace(parseResult.GetValue<string>(nameOption))
+
+        let needsFallback (idOption: string) (nameOption: string) =
+            isOptionPresent parseResult idOption
+            && isOptionResultImplicit parseResult idOption
+            && parseResult.GetValue<Guid>(idOption) = Guid.Empty
+            && not <| isExplicitName nameOption
+
+        let needsConfigFallback =
+            needsFallback OptionName.OwnerId OptionName.OwnerName
+            || needsFallback OptionName.OrganizationId OptionName.OrganizationName
+            || needsFallback OptionName.RepositoryId OptionName.RepositoryName
+            || needsFallback OptionName.BranchId OptionName.BranchName
+
+        let config = if needsConfigFallback then Some(Current()) else None
+
+        let getNormalizedId (idOption: string) (nameOption: string) (configValue: Guid) =
+            let isImplicit = isOptionResultImplicit parseResult idOption
+            let explicitName = isExplicitName nameOption
+            let idValue = parseResult.GetValue<Guid>(idOption)
+
+            if isImplicit && explicitName then
                 Guid.Empty
+            elif isImplicit && idValue = Guid.Empty && not explicitName then
+                configValue
             else
-                parseResult.GetValue<Guid>(idOption)
+                idValue
 
         // If the name was specified on the command line, but the id wasn't (i.e. the default value was specified, and Implicit = true),
         //   then we should only send the name, and we set the id to Guid.Empty.
@@ -1595,13 +1633,19 @@ module Services =
         let mutable graceIds = GraceIds.Default
 
         if isOptionPresent parseResult OptionName.CorrelationId then
-            graceIds <- { graceIds with CorrelationId = parseResult.GetValue(OptionName.CorrelationId) }
+            graceIds <- { graceIds with CorrelationId = resolveCorrelationId parseResult }
 
         if
             isOptionPresent parseResult OptionName.OwnerId
             || isOptionPresent parseResult OptionName.OwnerName
         then
-            let ownerId = getNormalizedId OptionName.OwnerId OptionName.OwnerName
+            let ownerId =
+                let configValue =
+                    config
+                    |> Option.map (fun current -> current.OwnerId)
+                    |> Option.defaultValue OwnerId.Empty
+
+                getNormalizedId OptionName.OwnerId OptionName.OwnerName configValue
 
             graceIds <-
                 { graceIds with
@@ -1614,7 +1658,13 @@ module Services =
             isOptionPresent parseResult OptionName.OrganizationId
             || isOptionPresent parseResult OptionName.OrganizationName
         then
-            let organizationId = getNormalizedId OptionName.OrganizationId OptionName.OrganizationName
+            let organizationId =
+                let configValue =
+                    config
+                    |> Option.map (fun current -> current.OrganizationId)
+                    |> Option.defaultValue OrganizationId.Empty
+
+                getNormalizedId OptionName.OrganizationId OptionName.OrganizationName configValue
 
             graceIds <-
                 { graceIds with
@@ -1627,7 +1677,13 @@ module Services =
             isOptionPresent parseResult OptionName.RepositoryId
             || isOptionPresent parseResult OptionName.RepositoryName
         then
-            let repositoryId = getNormalizedId OptionName.RepositoryId OptionName.RepositoryName
+            let repositoryId =
+                let configValue =
+                    config
+                    |> Option.map (fun current -> current.RepositoryId)
+                    |> Option.defaultValue RepositoryId.Empty
+
+                getNormalizedId OptionName.RepositoryId OptionName.RepositoryName configValue
 
             graceIds <-
                 { graceIds with
@@ -1640,7 +1696,13 @@ module Services =
             isOptionPresent parseResult OptionName.BranchId
             || isOptionPresent parseResult OptionName.BranchName
         then
-            let branchId = getNormalizedId OptionName.BranchId OptionName.BranchName
+            let branchId =
+                let configValue =
+                    config
+                    |> Option.map (fun current -> current.BranchId)
+                    |> Option.defaultValue BranchId.Empty
+
+                getNormalizedId OptionName.BranchId OptionName.BranchName configValue
 
             graceIds <-
                 { graceIds with

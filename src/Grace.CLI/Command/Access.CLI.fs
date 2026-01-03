@@ -33,7 +33,7 @@ module Access =
                 Required = false,
                 Description = "The owner ID <Guid>.",
                 Arity = ArgumentArity.ZeroOrOne,
-                DefaultValueFactory = (fun _ -> if Current().OwnerId = Guid.Empty then Guid.Empty else Current().OwnerId)
+                DefaultValueFactory = (fun _ -> OwnerId.Empty)
             )
 
         let organizationId =
@@ -42,12 +42,7 @@ module Access =
                 Required = false,
                 Description = "The organization ID <Guid>.",
                 Arity = ArgumentArity.ZeroOrOne,
-                DefaultValueFactory =
-                    (fun _ ->
-                        if Current().OrganizationId = Guid.Empty then
-                            Guid.Empty
-                        else
-                            Current().OrganizationId)
+                DefaultValueFactory = (fun _ -> OrganizationId.Empty)
             )
 
         let repositoryId =
@@ -57,12 +52,7 @@ module Access =
                 Required = false,
                 Description = "The repository ID <Guid>.",
                 Arity = ArgumentArity.ZeroOrOne,
-                DefaultValueFactory =
-                    (fun _ ->
-                        if Current().RepositoryId = Guid.Empty then
-                            Guid.Empty
-                        else
-                            Current().RepositoryId)
+                DefaultValueFactory = (fun _ -> RepositoryId.Empty)
             )
 
         let branchId =
@@ -71,7 +61,7 @@ module Access =
                 Required = false,
                 Description = "The branch ID <Guid>.",
                 Arity = ArgumentArity.ZeroOrOne,
-                DefaultValueFactory = (fun _ -> if Current().BranchId = Guid.Empty then Guid.Empty else Current().BranchId)
+                DefaultValueFactory = (fun _ -> BranchId.Empty)
             )
 
         let principalTypeRequired =

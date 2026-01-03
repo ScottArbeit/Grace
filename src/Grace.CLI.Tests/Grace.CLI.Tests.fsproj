@@ -11,11 +11,12 @@
 		<OtherFlags>--test:ParallelIlxGen</OtherFlags>
 	</PropertyGroup>
 
-	<ItemGroup>
-		<Compile Include="Auth.Tests.fs" />
-		<Compile Include="HistoryStorage.Tests.fs" />
-		<Compile Include="Program.fs" />
-	</ItemGroup>
+  <ItemGroup>
+    <Compile Include="Auth.Tests.fs" />
+    <Compile Include="HelpDoesNotReadConfig.Tests.fs" />
+    <Compile Include="HistoryStorage.Tests.fs" />
+    <Compile Include="Program.fs" />
+  </ItemGroup>
 
 	<ItemGroup>
 		<PackageReference Include="FsCheck" Version="3.2.0" />

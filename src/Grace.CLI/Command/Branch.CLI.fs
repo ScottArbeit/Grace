@@ -65,7 +65,7 @@ module Branch =
                 Required = false,
                 Description = "The repository's owner ID <Guid>.",
                 Arity = ArgumentArity.ZeroOrOne,
-                DefaultValueFactory = (fun _ -> if Current().OwnerId = Guid.Empty then Guid.NewGuid() else Current().OwnerId)
+                DefaultValueFactory = (fun _ -> OwnerId.Empty)
             )
 
         let ownerName =
@@ -82,12 +82,7 @@ module Branch =
                 Required = false,
                 Description = "The repository's organization ID <Guid>.",
                 Arity = ArgumentArity.ExactlyOne,
-                DefaultValueFactory =
-                    (fun _ ->
-                        if Current().OrganizationId = Guid.Empty then
-                            Guid.NewGuid()
-                        else
-                            Current().OrganizationId)
+                DefaultValueFactory = (fun _ -> OrganizationId.Empty)
             )
 
         let organizationName =
@@ -105,12 +100,7 @@ module Branch =
                 Required = false,
                 Description = "The repository's ID <Guid>.",
                 Arity = ArgumentArity.ExactlyOne,
-                DefaultValueFactory =
-                    (fun _ ->
-                        if Current().RepositoryId = Guid.Empty then
-                            Guid.NewGuid()
-                        else
-                            Current().RepositoryId)
+                DefaultValueFactory = (fun _ -> RepositoryId.Empty)
             )
 
         let repositoryName =
@@ -129,7 +119,7 @@ module Branch =
                 Required = false,
                 Description = "The branch's ID <Guid>.",
                 Arity = ArgumentArity.ExactlyOne,
-                DefaultValueFactory = (fun _ -> if Current().BranchId = Guid.Empty then Guid.NewGuid() else Current().BranchId)
+                DefaultValueFactory = (fun _ -> BranchId.Empty)
             )
 
         let branchName =
@@ -160,7 +150,7 @@ module Branch =
                 Required = false,
                 Description = "The name of the parent branch. [default: current branch]",
                 Arity = ArgumentArity.ExactlyOne,
-                DefaultValueFactory = (fun _ -> $"{Current().BranchName}")
+                DefaultValueFactory = (fun _ -> String.Empty)
             )
 
         let newName = new Option<String>(OptionName.NewName, Required = true, Description = "The new name of the branch.", Arity = ArgumentArity.ExactlyOne)
@@ -484,7 +474,27 @@ module Branch =
                             graceIds <- { graceIds with BranchId = branchId; BranchIdString = $"{branchId}" }
 
                         let parentBranchId = parseResult.GetValue(Options.parentBranchId)
-                        let parentBranchName = parseResult.GetValue(Options.parentBranchName) |> valueOrEmpty
+                        let parentBranchNameResult = parseResult.GetResult(Options.parentBranchName)
+                        let parentBranchIdResult = parseResult.GetResult(Options.parentBranchId)
+                        let parentBranchNameExplicit =
+                            not <| isNull parentBranchNameResult
+                            && not parentBranchNameResult.Implicit
+                        let parentBranchIdExplicit =
+                            not <| isNull parentBranchIdResult
+                            && not parentBranchIdResult.Implicit
+
+                        let parentBranchName =
+                            let suppliedParentBranchName = parseResult.GetValue(Options.parentBranchName) |> valueOrEmpty
+
+                            if
+                                not parentBranchNameExplicit
+                                && not parentBranchIdExplicit
+                                && suppliedParentBranchName = String.Empty
+                                && parentBranchId = Guid.Empty
+                            then
+                                Current().BranchName
+                            else
+                                suppliedParentBranchName
 
                         let! parentBranchIdString =
                             task {
@@ -2635,7 +2645,7 @@ module Branch =
 
                                             // Write the UpdatesInProgress file to let grace watch know to ignore these changes.
                                             // This file is deleted in the finally clause.
-                                            do! File.WriteAllTextAsync(updateInProgressFileName, "`grace switch` is in progress.")
+                                            do! File.WriteAllTextAsync(updateInProgressFileName (), "`grace switch` is in progress.")
 
                                             // Update working directory based on new GraceStatus.Index
                                             do!
@@ -2657,7 +2667,7 @@ module Branch =
                                             t |> setProgressTaskValue showOutput 100.0
                                         finally
                                             // Delete the UpdatesInProgress file.
-                                            File.Delete(updateInProgressFileName)
+                                            File.Delete(updateInProgressFileName ())
 
                                     | Error error ->
                                         logToAnsiConsole Colors.Verbose $"Failed downloading files from object storage for {directoryVersion.RelativePath}."
@@ -2801,13 +2811,13 @@ module Branch =
 
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
-                Directory.CreateDirectory(Path.GetDirectoryName(updateInProgressFileName))
+                Directory.CreateDirectory(Path.GetDirectoryName(updateInProgressFileName ()))
                 |> ignore
 
                 try
                     if parseResult |> verbose then printParseResult parseResult
 
-                    do! File.WriteAllTextAsync(updateInProgressFileName, "`grace switch` is in progress.")
+                    do! File.WriteAllTextAsync(updateInProgressFileName (), "`grace switch` is in progress.")
 
                     let graceIds = parseResult |> getNormalizedIdsAndNames
 
@@ -2830,8 +2840,8 @@ module Branch =
                     let! result = switchHandler parseResult switchParameters
                     return result
                 finally
-                    if File.Exists(updateInProgressFileName) then
-                        File.Delete(updateInProgressFileName)
+                    if File.Exists(updateInProgressFileName ()) then
+                        File.Delete(updateInProgressFileName ())
             }
 
     let rebaseHandler (graceIds: GraceIds) (graceStatus: GraceStatus) =
@@ -3224,13 +3234,13 @@ module Branch =
 
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
-                Directory.CreateDirectory(Path.GetDirectoryName(updateInProgressFileName))
+                Directory.CreateDirectory(Path.GetDirectoryName(updateInProgressFileName ()))
                 |> ignore
 
                 try
                     if parseResult |> verbose then printParseResult parseResult
 
-                    do! File.WriteAllTextAsync(updateInProgressFileName, "`grace rebase` is in progress.")
+                    do! File.WriteAllTextAsync(updateInProgressFileName (), "`grace rebase` is in progress.")
 
                     let graceIds = parseResult |> getNormalizedIdsAndNames
                     let! graceStatus = readGraceStatusFile ()
@@ -3238,8 +3248,8 @@ module Branch =
                     let! result = rebaseHandler graceIds graceStatus
                     return result
                 finally
-                    if File.Exists(updateInProgressFileName) then
-                        File.Delete(updateInProgressFileName)
+                    if File.Exists(updateInProgressFileName ()) then
+                        File.Delete(updateInProgressFileName ())
             }
 
     let private statusHandler (parseResult: ParseResult) =
