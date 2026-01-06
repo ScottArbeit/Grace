@@ -17,6 +17,7 @@
     <Compile Include="HelpDoesNotReadConfig.Tests.fs" />
     <Compile Include="HistoryStorage.Tests.fs" />
     <Compile Include="WorkItem.Commands.Tests.fs" />
+    <Compile Include="Review.Commands.Tests.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
 
