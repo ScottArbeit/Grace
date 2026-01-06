@@ -20,9 +20,14 @@
     <Compile Include="Owner.Server.Tests.fs" />
     <Compile Include="Repository.Server.Tests.fs" />
     <Compile Include="AuthMapping.Unit.Tests.fs" />
-		<Compile Include="Authorization.Unit.Tests.fs" />
-		<Compile Include="Auth.Server.Tests.fs" />
-		<Compile Include="AccessControl.Server.Tests.fs" />
+    <Compile Include="Authorization.Unit.Tests.fs" />
+    <Compile Include="Policy.Determinism.Tests.fs" />
+    <Compile Include="Stage0.Determinism.Tests.fs" />
+    <Compile Include="Evidence.Determinism.Tests.fs" />
+    <Compile Include="ReviewPacket.Determinism.Tests.fs" />
+    <Compile Include="Queue.Gates.Conflict.Tests.fs" />
+                <Compile Include="Auth.Server.Tests.fs" />
+                <Compile Include="AccessControl.Server.Tests.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
 
