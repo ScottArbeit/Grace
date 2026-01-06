@@ -24,7 +24,7 @@ type AuthEndpoints() =
             let! response = Client.GetAsync("/auth/login")
             response.EnsureSuccessStatusCode() |> ignore
             let! body = response.Content.ReadAsStringAsync()
-            Assert.That(body, Does.Contain("No login providers are configured."))
+            Assert.That(body, Does.Contain("Interactive browser login is not available on the server in this phase."))
         }
 
     [<Test>]

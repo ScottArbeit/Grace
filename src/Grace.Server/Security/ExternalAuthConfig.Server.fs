@@ -6,20 +6,7 @@ open Microsoft.Extensions.Configuration
 open System
 
 module ExternalAuthConfig =
-
-    [<Literal>]
-    let MicrosoftProviderId = "microsoft"
-
-    [<Literal>]
-    let MicrosoftScheme = "Microsoft"
-
-    [<Literal>]
-    let MicrosoftDisplayName = "Microsoft"
-
-    type MicrosoftAuthConfig =
-        { ClientId: string; ClientSecret: string option; TenantId: string; Authority: string; ApiScope: string; CliClientId: string option }
-
-    type AuthProvider = { Id: string; DisplayName: string; Scheme: string }
+    type OidcAuthConfig = { Authority: string; Audience: string }
 
     let private tryGetConfigValue (configuration: IConfiguration) (name: string) =
         if isNull configuration then
@@ -28,39 +15,34 @@ module ExternalAuthConfig =
             let value = configuration[getConfigKey name]
             if String.IsNullOrWhiteSpace value then None else Some(value.Trim())
 
-    let private getTenantId (configuration: IConfiguration) =
-        tryGetConfigValue configuration EnvironmentVariables.GraceAuthMicrosoftTenantId
-        |> Option.defaultValue "common"
+    let private normalizeAuthority (authority: string) =
+        let trimmed = authority.Trim()
 
-    let private getAuthority (configuration: IConfiguration) (tenantId: string) =
-        tryGetConfigValue configuration EnvironmentVariables.GraceAuthMicrosoftAuthority
-        |> Option.defaultValue ($"https://login.microsoftonline.com/{tenantId}")
+        if trimmed.EndsWith("/", StringComparison.Ordinal) then
+            trimmed
+        else
+            $"{trimmed}/"
 
-    let private getApiScope (configuration: IConfiguration) (clientId: string) =
-        tryGetConfigValue configuration EnvironmentVariables.GraceAuthMicrosoftApiScope
-        |> Option.defaultValue ($"api://{clientId}/access")
+    let tryGetOidcConfig (configuration: IConfiguration) =
+        match
+            tryGetConfigValue configuration EnvironmentVariables.GraceAuthOidcAuthority,
+            tryGetConfigValue configuration EnvironmentVariables.GraceAuthOidcAudience
+        with
+        | Some authority, Some audience -> Some { Authority = normalizeAuthority authority; Audience = audience.Trim() }
+        | _ -> None
 
-    let tryGetMicrosoftConfig (configuration: IConfiguration) =
-        match tryGetConfigValue configuration EnvironmentVariables.GraceAuthMicrosoftClientId with
-        | None -> None
-        | Some clientId ->
-            let tenantId = getTenantId configuration
-            let authority = getAuthority configuration tenantId
-            let apiScope = getApiScope configuration clientId
-            let clientSecret = tryGetConfigValue configuration EnvironmentVariables.GraceAuthMicrosoftClientSecret
-            let cliClientId = tryGetConfigValue configuration EnvironmentVariables.GraceAuthMicrosoftCliClientId
+    let isOidcConfigured (configuration: IConfiguration) = tryGetOidcConfig configuration |> Option.isSome
 
-            Some
-                { ClientId = clientId; ClientSecret = clientSecret; TenantId = tenantId; Authority = authority; ApiScope = apiScope; CliClientId = cliClientId }
+    let warnIfMicrosoftConfigPresent (configuration: IConfiguration) =
+        let deprecated =
+            [ EnvironmentVariables.GraceAuthMicrosoftClientId
+              EnvironmentVariables.GraceAuthMicrosoftClientSecret
+              EnvironmentVariables.GraceAuthMicrosoftTenantId
+              EnvironmentVariables.GraceAuthMicrosoftAuthority
+              EnvironmentVariables.GraceAuthMicrosoftApiScope
+              EnvironmentVariables.GraceAuthMicrosoftCliClientId ]
 
-    let isMicrosoftWebConfigured (configuration: IConfiguration) =
-        match tryGetMicrosoftConfig configuration with
-        | Some config ->
-            match config.ClientSecret with
-            | Some secret when not (String.IsNullOrWhiteSpace secret) -> true
-            | _ -> false
-        | None -> false
+        let isSet name = tryGetConfigValue configuration name |> Option.isSome
 
-    let getEnabledProviders (configuration: IConfiguration) =
-        [ if isMicrosoftWebConfigured configuration then
-              { Id = MicrosoftProviderId; DisplayName = MicrosoftDisplayName; Scheme = MicrosoftScheme } ]
+        if deprecated |> List.exists isSet then
+            logToConsole "Deprecated Microsoft auth settings are ignored. Configure grace__auth__oidc__authority and grace__auth__oidc__audience instead."

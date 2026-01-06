@@ -1620,12 +1620,9 @@ module Services =
             let explicitName = isExplicitName nameOption
             let idValue = parseResult.GetValue<Guid>(idOption)
 
-            if isImplicit && explicitName then
-                Guid.Empty
-            elif isImplicit && idValue = Guid.Empty && not explicitName then
-                configValue
-            else
-                idValue
+            if isImplicit && explicitName then Guid.Empty
+            elif isImplicit && idValue = Guid.Empty && not explicitName then configValue
+            else idValue
 
         // If the name was specified on the command line, but the id wasn't (i.e. the default value was specified, and Implicit = true),
         //   then we should only send the name, and we set the id to Guid.Empty.

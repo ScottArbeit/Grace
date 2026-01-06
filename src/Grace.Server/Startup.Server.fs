@@ -24,9 +24,7 @@ open Grace.Types.Types
 open Grace.Types.Authorization
 open Grace.Types.PersonalAccessToken
 open Microsoft.AspNetCore.Authentication
-open Microsoft.AspNetCore.Authentication.Cookies
 open Microsoft.AspNetCore.Authentication.JwtBearer
-open Microsoft.AspNetCore.Authentication.OpenIdConnect
 open Microsoft.AspNetCore.Builder
 open Microsoft.AspNetCore.Hosting
 open Microsoft.AspNetCore.Http
@@ -690,10 +688,15 @@ module Application =
                     )
                 |> ignore
             else
+                ExternalAuthConfig.warnIfMicrosoftConfigPresent configuration
+
+                let oidcConfig = ExternalAuthConfig.tryGetOidcConfig configuration
+                let hasOidc = oidcConfig |> Option.isSome
+
                 let authBuilder =
                     services.AddAuthentication(fun options ->
                         options.DefaultScheme <- "GraceAuth"
-                        options.DefaultChallengeScheme <- ExternalAuthConfig.MicrosoftScheme)
+                        options.DefaultChallengeScheme <- "GraceAuth")
 
                 authBuilder
                     .AddPolicyScheme(
@@ -712,16 +715,14 @@ module Application =
 
                                         if token.StartsWith(TokenPrefix, StringComparison.Ordinal) then
                                             PersonalAccessTokenAuth.SchemeName
-                                        else
+                                        else if hasOidc then
                                             JwtBearerDefaults.AuthenticationScheme
+                                        else
+                                            PersonalAccessTokenAuth.SchemeName
+                                    else if hasOidc then
+                                        JwtBearerDefaults.AuthenticationScheme
                                     else
-                                        CookieAuthenticationDefaults.AuthenticationScheme
-                    )
-                    .AddCookie(
-                        CookieAuthenticationDefaults.AuthenticationScheme,
-                        fun options ->
-                            options.SlidingExpiration <- true
-                            options.Cookie.HttpOnly <- true
+                                        PersonalAccessTokenAuth.SchemeName
                     )
                     .AddScheme<AuthenticationSchemeOptions, PersonalAccessTokenAuth.PersonalAccessTokenAuthHandler>(
                         PersonalAccessTokenAuth.SchemeName,
@@ -729,116 +730,21 @@ module Application =
                     )
                 |> ignore
 
-                match ExternalAuthConfig.tryGetMicrosoftConfig configuration with
-                | Some microsoftConfig ->
-                    let authority =
-                        let trimmed = microsoftConfig.Authority.TrimEnd('/')
-
-                        if trimmed.EndsWith("/v2.0", StringComparison.OrdinalIgnoreCase) then
-                            trimmed
-                        else
-                            $"{trimmed}/v2.0"
-
-                    let apiAudience =
-                        let trimmed = microsoftConfig.ApiScope.TrimEnd('/')
-
-                        if String.IsNullOrWhiteSpace trimmed then microsoftConfig.ClientId
-                        elif trimmed.Contains("/") then trimmed.Substring(0, trimmed.LastIndexOf('/'))
-                        else trimmed
-
-                    let issuerValidator: IssuerValidator =
-                        let allowAnyTenant =
-                            let tenantId = microsoftConfig.TenantId.Trim()
-
-                            tenantId.Equals("common", StringComparison.OrdinalIgnoreCase)
-                            || tenantId.Equals("organizations", StringComparison.OrdinalIgnoreCase)
-                            || tenantId.Equals("consumers", StringComparison.OrdinalIgnoreCase)
-
-                        let prefix = "https://login.microsoftonline.com/"
-                        let suffix = "/v2.0"
-
-                        IssuerValidator(fun issuer _ _ ->
-                            if String.IsNullOrWhiteSpace issuer then
-                                raise (SecurityTokenInvalidIssuerException("Issuer is missing."))
-
-                            let normalized = issuer.TrimEnd('/')
-
-                            let matchesPattern =
-                                normalized.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
-                                && normalized.EndsWith(suffix, StringComparison.OrdinalIgnoreCase)
-
-                            if not matchesPattern then
-                                raise (SecurityTokenInvalidIssuerException($"Issuer '{issuer}' is not a valid Microsoft v2 issuer."))
-
-                            if allowAnyTenant then
-                                issuer
-                            else
-                                let tenantSegment = normalized.Substring(prefix.Length, normalized.Length - prefix.Length - suffix.Length)
-
-                                if tenantSegment.Equals(microsoftConfig.TenantId, StringComparison.OrdinalIgnoreCase) then
-                                    issuer
-                                else
-                                    raise (SecurityTokenInvalidIssuerException($"Issuer '{issuer}' does not match tenant '{microsoftConfig.TenantId}'.")))
-
-                    if microsoftConfig.ClientSecret.IsSome then
-                        authBuilder.AddOpenIdConnect(
-                            ExternalAuthConfig.MicrosoftScheme,
-                            fun options ->
-                                options.Authority <- authority
-                                options.ClientId <- microsoftConfig.ClientId
-                                options.ClientSecret <- microsoftConfig.ClientSecret.Value
-                                options.CallbackPath <- PathString("/signin-microsoft")
-                                options.SignInScheme <- CookieAuthenticationDefaults.AuthenticationScheme
-                                // Force auth code flow to avoid id_token implicit requirements.
-                                options.ResponseType <- "code"
-                                options.UsePkce <- true
-                                options.SaveTokens <- true
-                                // Request Graph scope so userinfo succeeds.
-                                options.GetClaimsFromUserInfoEndpoint <- true
-                                options.Scope.Clear()
-                                options.Scope.Add("openid") |> ignore
-                                options.Scope.Add("profile") |> ignore
-                                options.Scope.Add("email") |> ignore
-                                options.Scope.Add("User.Read") |> ignore
-
-                                // Do not mix API scopes with Graph scopes in a single auth code request.
-
-                                options.Events <- OpenIdConnectEvents()
-
-                                options.Events.OnAuthorizationCodeReceived <-
-                                    Func<AuthorizationCodeReceivedContext, Task>(fun context ->
-                                        let scopeValue = String.Join(" ", options.Scope)
-
-                                        if not (String.IsNullOrWhiteSpace scopeValue) then
-                                            context.TokenEndpointRequest.Scope <- scopeValue
-
-                                        Task.CompletedTask)
-
-                                options.Events <- OpenIdConnectEvents()
-                                options.Events.OnAuthorizationCodeReceived <-
-                                    Func<AuthorizationCodeReceivedContext, Task>(fun context ->
-                                        let scopeValue = String.Join(" ", options.Scope)
-                                        if not (String.IsNullOrWhiteSpace scopeValue) then
-                                            context.TokenEndpointRequest.Scope <- scopeValue
-                                        Task.CompletedTask)
-
-                                options.TokenValidationParameters <-
-                                    TokenValidationParameters(NameClaimType = "name", RoleClaimType = "roles", IssuerValidator = issuerValidator)
-                        )
-                        |> ignore
-
+                match oidcConfig with
+                | Some config ->
                     authBuilder.AddJwtBearer(
                         JwtBearerDefaults.AuthenticationScheme,
                         fun options ->
-                            options.Authority <- authority
+                            options.Authority <- config.Authority
+                            options.Audience <- config.Audience
 
                             options.TokenValidationParameters <-
                                 TokenValidationParameters(
                                     ValidateIssuer = true,
+                                    ValidateAudience = true,
                                     NameClaimType = "name",
                                     RoleClaimType = "roles",
-                                    ValidAudiences = [| apiAudience; microsoftConfig.ClientId; microsoftConfig.ApiScope |],
-                                    IssuerValidator = issuerValidator
+                                    ValidAudience = config.Audience
                                 )
                     )
                     |> ignore

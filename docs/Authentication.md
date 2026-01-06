@@ -1,80 +1,113 @@
-# Authentication (Microsoft MSA + Entra)
+# Authentication (Auth0 OIDC)
 
-Grace currently supports Microsoft identity for both web and CLI clients. This uses:
-- A **web app registration** for the Grace Server (confidential client).
-- A **public client app registration** for Grace CLI (device code flow).
+Grace uses Auth0 as the identity broker for CLI and API authentication.
+The server accepts either a Grace PAT (`grace_pat_v1_...`) or a JWT access
+token minted by Auth0 for the Grace API audience.
 
-GitHub and Google sign-in are planned but not yet implemented. The `/auth/login` page will list those providers once configured.
+Interactive browser login is CLI-only in this phase. The server does not
+host a web login flow.
 
-## App Registrations (Azure Portal)
+## Auth0 tenant setup
 
-### 1) Grace Server (Web app, confidential client)
-1. Create a new **App registration** (Accounts: "Accounts in any organizational directory and personal Microsoft accounts").
-2. Add a **Web** redirect URI for your server:
-   - Local dev: `https://localhost:5001/signin-oidc` (or your local HTTPS port).
-   - Deployed: `https://<your-domain>/signin-oidc`.
-3. Create a **Client secret** (Certificates & secrets).
-4. **Expose an API**:
-   - Application ID URI: `api://<server-client-id>` (or your preferred URI).
-   - Add scope: `access`.
+You need three Auth0 applications: an API (audience), a native app for
+the CLI, and an M2M app for agents.
 
-This produces:
-- Server **Client ID**
-- Server **Client Secret**
-- API scope: `api://<server-client-id>/access` (default used by Grace)
+### Grace API (Auth0 API / audience)
 
-### 2) Grace CLI (Public client)
-1. Create a new **App registration** (same account type as above).
-2. Add a **Mobile and desktop** redirect URI:
-   - `http://localhost` (device code flow does not rely on redirect, but this is commonly used).
-3. **API permissions**:
-   - Add delegated permission for the server API scope: `access`.
-   - Grant admin consent if required by your tenant.
+1. Create an API in Auth0.
+2. Set the Identifier (Audience) to a stable value, for example
+   `https://api.gracevcs.dev`.
+3. Leave the token profile as Auth0 default or RFC 9068.
 
-This produces:
-- CLI **Client ID**
+### Grace CLI (Auth0 native app)
 
-## Environment Variables
+1. Create a Native application in Auth0.
+2. Add a loopback callback URL (fixed port):
+   - `http://127.0.0.1:8400/callback`
+3. Enable Authorization Code + PKCE and Device Authorization.
+4. Enable Refresh Token Rotation and allow `offline_access` scope.
+
+### Grace Agents (Auth0 M2M app)
+
+1. Create a Machine to Machine application.
+2. Authorize it to call the Grace API with appropriate scopes.
+
+## Environment variables
 
 ### Grace Server
+
 Required:
-- `grace__auth__microsoft__client_id` = Server Client ID
-- `grace__auth__microsoft__client_secret` = Server Client Secret
+
+- `grace__auth__oidc__authority` = Auth0 issuer, e.g.
+  `https://<tenant>.us.auth0.com/`
+- `grace__auth__oidc__audience` = API audience, e.g.
+  `https://api.gracevcs.dev`
+
+### Grace CLI (interactive)
+
+Required:
+
+- `grace__auth__oidc__authority`
+- `grace__auth__oidc__audience`
+- `grace__auth__oidc__cli_client_id`
 
 Optional:
-- `grace__auth__microsoft__tenant_id` = Tenant ID (default: `common`)
-- `grace__auth__microsoft__authority` = Authority override (default: `https://login.microsoftonline.com/{tenant_id}`)
-- `grace__auth__microsoft__api_scope` = API scope override (default: `api://{client_id}/access`)
-- `grace__auth__microsoft__cli_client_id` = CLI Client ID (optional but recommended to keep in the same config)
 
-### Grace CLI
+- `grace__auth__oidc__cli_redirect_port` (default `8400`)
+- `grace__auth__oidc__cli_scopes` (default `openid profile email
+  offline_access`)
+
+### Grace CLI (M2M)
+
 Required:
-- `grace__auth__microsoft__cli_client_id` = CLI Client ID
-- `grace__auth__microsoft__api_scope` = API scope (ex: `api://<server-client-id>/access`)
+
+- `grace__auth__oidc__authority`
+- `grace__auth__oidc__audience`
+- `grace__auth__oidc__m2m_client_id`
+- `grace__auth__oidc__m2m_client_secret`
 
 Optional:
-- `grace__auth__microsoft__tenant_id` = Tenant ID (default: `common`)
-- `grace__auth__microsoft__authority` = Authority override
 
-## Using the Web Login
+- `grace__auth__oidc__m2m_scopes`
 
-- Browse to `https://<server>/auth/login`
-- Choose **Microsoft**
-- A cookie session is established after successful login.
+### PAT mode
 
-## Using the CLI (Device Code)
+- `GRACE_TOKEN` = Grace personal access token (PAT only).
 
-Common commands:
-- `grace auth login` (device code sign-in)
+`GRACE_TOKEN_FILE` and local plaintext token files are disabled.
+
+## CLI usage
+
+### Interactive login (humans)
+
+Commands:
+
+- `grace auth login` (default PKCE, falls back to device flow)
+- `grace auth login --auth pkce`
+- `grace auth login --auth device`
 - `grace auth status`
 - `grace auth whoami`
 - `grace auth logout`
 
-Tokens are cached using MSAL in:
-- `~/.grace/grace_msal_cache.bin`
+Interactive sessions require OS-backed secure storage (MSAL Extensions).
+If secure storage is unavailable, use PAT or M2M.
 
-Grace CLI attaches the Bearer token automatically for SDK calls once authenticated.
+### M2M login (agents)
 
-## Future Providers (GitHub, Google)
+Set the M2M environment variables and run any CLI command. Access tokens
+are cached in-memory per CLI invocation only.
 
-GitHub and Google providers are not wired yet. When added, they will appear in `/auth/login` with additional environment variables and app registration steps.
+### PAT login (agents)
+
+Set `GRACE_TOKEN` to a Grace PAT. Any non-PAT value is rejected.
+
+## Server authentication
+
+Grace.Server validates:
+
+- PATs (`grace_pat_v1_...`) via the Grace PAT scheme.
+- Auth0 JWT access tokens via JWT bearer validation with the configured
+  authority and audience.
+
+The `/auth/login` endpoint is informational only. It does not initiate
+an interactive web login flow.

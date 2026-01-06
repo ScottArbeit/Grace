@@ -42,11 +42,7 @@ module Configuration =
 
 module GraceCommand =
 
-    type OptionToUpdate =
-        { optionAlias: string
-          display: string
-          displayOnCreate: string
-          createParentCommand: string }
+    type OptionToUpdate = { optionAlias: string; display: string; displayOnCreate: string; createParentCommand: string }
 
     /// Built-in aliases for Grace commands.
     let private aliases =
@@ -162,8 +158,7 @@ module GraceCommand =
                                 else
                                     String.Empty
 
-                            if not <| String.IsNullOrWhiteSpace(suffix) then
-                                output.Add(suffix)
+                            if not <| String.IsNullOrWhiteSpace(suffix) then output.Add(suffix)
 
                             foundEnd <- true
 
@@ -391,11 +386,7 @@ module GraceCommand =
                 try
                     //let commandLineConfiguration = ParserConfiguration rootCommand
 
-                    let argvToParse =
-                        if args.Length = 0 then
-                            [| helpOptions[0] |]
-                        else
-                            argvNormalized
+                    let argvToParse = if args.Length = 0 then [| helpOptions[0] |] else argvNormalized
 
                     parseResult <- rootCommand.Parse(argvToParse)
                     parseSucceeded <- parseResult.Errors.Count = 0
@@ -406,7 +397,8 @@ module GraceCommand =
                     | :? HelpAction ->
                         if
                             parseResult.Tokens.Count = 0
-                            || (parseResult.Tokens.Count = 1 && helpOptions.Contains(parseResult.Tokens[0].Value))
+                            || (parseResult.Tokens.Count = 1
+                                && helpOptions.Contains(parseResult.Tokens[0].Value))
                         then
                             // This is where we configure how help is displayed by Grace.
                             // We want to show the help text for the command, and then the feedback section at the end.
@@ -422,8 +414,7 @@ module GraceCommand =
 
                             for i in 0 .. rootCommand.Options.Count - 1 do
                                 match rootCommand.Options[i] with
-                                | :? HelpOption as defaultHelpOption ->
-                                    defaultHelpOption.Action <- FeedbackSection(defaultHelpOption.Action :?> HelpAction)
+                                | :? HelpOption as defaultHelpOption -> defaultHelpOption.Action <- FeedbackSection(defaultHelpOption.Action :?> HelpAction)
                                 | _ -> ()
 
                         //helpAction.Builder.CustomizeLayout(fun layoutContext ->
@@ -446,10 +437,7 @@ module GraceCommand =
                                 display = "new NanoId"
                                 displayOnCreate = "new NanoId"
                                 createParentCommand = String.Empty }
-                              { optionAlias = OptionName.OwnerId
-                                display = "current OwnerId"
-                                displayOnCreate = "new Guid"
-                                createParentCommand = "owner" }
+                              { optionAlias = OptionName.OwnerId; display = "current OwnerId"; displayOnCreate = "new Guid"; createParentCommand = "owner" }
                               { optionAlias = OptionName.OrganizationId
                                 display = "current OrganizationId"
                                 displayOnCreate = "new Guid"
@@ -458,13 +446,9 @@ module GraceCommand =
                                 display = "current RepositoryId"
                                 displayOnCreate = "new Guid"
                                 createParentCommand = "repository" }
-                              { optionAlias = OptionName.BranchId
-                                display = "current BranchId"
-                                displayOnCreate = "new Guid"
-                                createParentCommand = "branch" } ]
+                              { optionAlias = OptionName.BranchId; display = "current BranchId"; displayOnCreate = "new Guid"; createParentCommand = "branch" } ]
 
-                        let isCreate =
-                            parseResult.CommandResult.Command.Name.Equals("create", StringComparison.OrdinalIgnoreCase)
+                        let isCreate = parseResult.CommandResult.Command.Name.Equals("create", StringComparison.OrdinalIgnoreCase)
 
                         let parentCommands = parseResult.CommandResult.Command.Parents.OfType<Command>()
 
@@ -579,7 +563,10 @@ module GraceCommand =
                             let finishTime = getCurrentInstant ()
                             let elapsed = (finishTime - startTime).Plus(Duration.FromMilliseconds(110.0)) // Adding 110ms for .NET Runtime startup time.
 
-                            AnsiConsole.Write((new Rule($"[{Colors.Important}]Elapsed: {elapsed.TotalSeconds:F3}s. Exit code: {returnValue}.[/]")).RightJustified())
+                            AnsiConsole.Write(
+                                (new Rule($"[{Colors.Important}]Elapsed: {elapsed.TotalSeconds:F3}s. Exit code: {returnValue}.[/]")).RightJustified()
+                            )
+
                     return returnValue
                 with ex ->
                     AnsiConsole.WriteException ex

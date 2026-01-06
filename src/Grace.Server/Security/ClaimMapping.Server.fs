@@ -36,19 +36,7 @@ module ClaimMapping =
 
         match existing with
         | Some _ -> None
-        | None ->
-            let tenantId = tryGetClaimValue principal [ "tid" ]
-            let objectId = tryGetClaimValue principal [ "oid" ]
-
-            match tenantId, objectId with
-            | Some tid, Some oid -> Some($"{tid}:{oid}")
-            | _ ->
-                let issuer = tryGetClaimValue principal [ "iss" ]
-                let subject = tryGetClaimValue principal [ "sub"; ClaimTypes.NameIdentifier ]
-
-                match issuer, subject with
-                | Some iss, Some sub -> Some($"{iss}|{sub}")
-                | _ -> tryGetClaimValue principal [ "sub"; ClaimTypes.NameIdentifier; "preferred_username"; ClaimTypes.Email ]
+        | None -> tryGetClaimValue principal [ "sub"; ClaimTypes.NameIdentifier ]
 
     let mapClaims (principal: ClaimsPrincipal) =
         let claimsToAdd = ResizeArray<Claim>()
@@ -77,6 +65,14 @@ module ClaimMapping =
                 claimsToAdd.Add(Claim(PrincipalMapper.GraceClaim, value))
 
         for value in getClaimValues principal "scp" |> List.collect splitScopes do
+            if existingGraceClaims.Add(value) then
+                claimsToAdd.Add(Claim(PrincipalMapper.GraceClaim, value))
+
+        for value in getClaimValues principal "scope" |> List.collect splitScopes do
+            if existingGraceClaims.Add(value) then
+                claimsToAdd.Add(Claim(PrincipalMapper.GraceClaim, value))
+
+        for value in getClaimValues principal "permissions" do
             if existingGraceClaims.Add(value) then
                 claimsToAdd.Add(Claim(PrincipalMapper.GraceClaim, value))
 

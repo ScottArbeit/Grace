@@ -38,7 +38,7 @@ module Auth =
         | Some value when not (String.IsNullOrWhiteSpace value) -> value
         | _ -> "/"
 
-    let private renderLoginPage (providers: ExternalAuthConfig.AuthProvider list) (returnUrl: string) (apiOnlyProvider: string option) =
+    let private renderLoginPage (returnUrl: string) =
         let builder = StringBuilder()
         builder.AppendLine("<!doctype html>") |> ignore
         builder.AppendLine("<html lang=\"en\">") |> ignore
@@ -49,24 +49,10 @@ module Auth =
         builder.AppendLine("<body>") |> ignore
         builder.AppendLine("<h1>Sign in to Grace</h1>") |> ignore
 
-        if providers |> List.isEmpty then
-            match apiOnlyProvider with
-            | Some provider ->
-                builder.AppendLine(
-                    $"<p>{provider} login is configured for API tokens only. Set {EnvironmentVariables.GraceAuthMicrosoftClientSecret} to enable browser login.</p>"
-                )
-                |> ignore
-            | None -> builder.AppendLine("<p>No login providers are configured.</p>") |> ignore
-        else
-            builder.AppendLine("<ul>") |> ignore
-
-            for provider in providers do
-                let encodedReturnUrl = Uri.EscapeDataString(returnUrl)
-
-                builder.AppendLine($"<li><a href=\"/auth/login/{provider.Id}?returnUrl={encodedReturnUrl}\">{provider.DisplayName}</a></li>")
-                |> ignore
-
-            builder.AppendLine("</ul>") |> ignore
+        builder.AppendLine(
+            "<p>Interactive browser login is not available on the server in this phase. Use the CLI (grace auth login) or provide GRACE_TOKEN / Auth0 M2M credentials.</p>"
+        )
+        |> ignore
 
         builder.AppendLine("</body></html>") |> ignore
         builder.ToString()
@@ -74,45 +60,13 @@ module Auth =
     let Login: HttpHandler =
         fun next context ->
             task {
-                let configuration = ApplicationContext.Configuration()
-
-                let providers =
-                    if isTesting () then
-                        []
-                    else
-                        ExternalAuthConfig.getEnabledProviders configuration
-
-                let apiOnlyProvider =
-                    if isTesting () then
-                        None
-                    else
-                        match ExternalAuthConfig.tryGetMicrosoftConfig configuration with
-                        | Some config when config.ClientSecret.IsNone -> Some ExternalAuthConfig.MicrosoftDisplayName
-                        | _ -> None
-
                 let returnUrl = getReturnUrl context
-                let html = renderLoginPage providers returnUrl apiOnlyProvider
+                let html = renderLoginPage returnUrl
                 return! htmlString html next context
             }
 
     let LoginProvider (providerId: string) : HttpHandler =
-        fun next context ->
-            task {
-                let configuration = ApplicationContext.Configuration()
-                let returnUrl = getReturnUrl context
-
-                let isMicrosoft = providerId.Equals(ExternalAuthConfig.MicrosoftProviderId, StringComparison.OrdinalIgnoreCase)
-
-                if isTesting () then
-                    return! RequestErrors.NOT_FOUND "Login provider not available." next context
-                elif isMicrosoft && ExternalAuthConfig.isMicrosoftWebConfigured configuration then
-                    let properties = AuthenticationProperties()
-                    properties.RedirectUri <- returnUrl
-                    do! context.ChallengeAsync(ExternalAuthConfig.MicrosoftScheme, properties)
-                    return Some context
-                else
-                    return! RequestErrors.NOT_FOUND "Login provider not available." next context
-            }
+        fun next context -> task { return! RequestErrors.NOT_FOUND "Login provider not available." next context }
 
     let Logout: HttpHandler =
         fun next context ->
