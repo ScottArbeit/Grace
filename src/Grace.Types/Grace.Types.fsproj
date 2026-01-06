@@ -28,6 +28,12 @@
         <Compile Include="Reference.Types.fs" />
         <Compile Include="Branch.Types.fs" />
         <Compile Include="PromotionGroup.Types.fs" />
+        <Compile Include="WorkItem.Types.fs" />
+        <Compile Include="Policy.Types.fs" />
+        <Compile Include="RequiredAction.Types.fs" />
+        <Compile Include="Review.Types.fs" />
+        <Compile Include="Queue.Types.fs" />
+        <Compile Include="Eventing.Types.fs" />
         <Compile Include="Diff.Types.fs" />
         <Compile Include="DirectoryVersion.Types.fs" />
         <Compile Include="Reminder.Types.fs" />

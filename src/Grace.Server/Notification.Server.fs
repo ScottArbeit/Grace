@@ -7,12 +7,14 @@ open FSharp.Control
 open Grace.Actors.Extensions.ActorProxy
 open Grace.Actors.Services
 open Grace.Server.ApplicationContext
+open Grace.Server.DerivedComputation
 open Grace.Shared
 open Grace.Shared.AzureEnvironment
 open Grace.Shared.Constants
 open Grace.Shared.Utilities
 open Grace.Types
 open Grace.Types.Events
+open Grace.Types.Reference
 open Grace.Types.Types
 open Microsoft.AspNetCore.Builder
 open Microsoft.AspNetCore.SignalR
@@ -39,6 +41,7 @@ module Notification =
         abstract member NotifyOnCommit: BranchName * BranchName * BranchId * ReferenceId -> Task
         abstract member NotifyOnCheckpoint: BranchName * BranchName * BranchId * ReferenceId -> Task
         abstract member NotifyOnSave: BranchName * BranchName * BranchId * ReferenceId -> Task
+        abstract member NotifyEvent: Eventing.EventEnvelope -> Task
         abstract member ServerToClientMessage: string -> Task
 
     type NotificationHub() =
@@ -168,6 +171,24 @@ module Notification =
             }
             :> Task
 
+        member this.NotifyEvent(envelope: Eventing.EventEnvelope) =
+            task {
+                if not <| isNull (this.Clients) then
+                    let groupKey =
+                        if envelope.RepositoryId = RepositoryId.Empty then
+                            String.Empty
+                        else
+                            $"{envelope.RepositoryId}"
+
+                    if String.IsNullOrWhiteSpace groupKey then
+                        do! this.Clients.All.NotifyEvent(envelope)
+                    else
+                        do! this.Clients.Group(groupKey).NotifyEvent(envelope)
+                else
+                    logToConsole $"No SignalR clients connected."
+            }
+            :> Task
+
     module Subscriber =
         /// Gets the ReferenceDto for the given ReferenceId.
         let getReferenceDto referenceId repositoryId correlationId =
@@ -281,17 +302,19 @@ module Notification =
                         correlationId
                     )
 
+                    do! DerivedComputation.handleReferenceEvent referenceEvent
+
                     match referenceEvent.Event with
-                    | Reference.Created(referenceId,
-                                        ownerId,
-                                        organizationId,
-                                        repositoryId,
-                                        branchId,
-                                        directoryId,
-                                        sha256Hash,
-                                        referenceType,
-                                        referenceText,
-                                        links) ->
+                    | ReferenceEventType.Created(referenceId,
+                                                 ownerId,
+                                                 organizationId,
+                                                 repositoryId,
+                                                 branchId,
+                                                 directoryId,
+                                                 sha256Hash,
+                                                 referenceType,
+                                                 referenceText,
+                                                 links) ->
                         match referenceType with
                         | ReferenceType.Promotion ->
                             let! branchDto = getBranchDto branchId repositoryId correlationId
@@ -460,6 +483,17 @@ module Notification =
 
                     logToConsole
                         $"Received RepositoryEvent: {getDiscriminatedUnionFullName repositoryEvent.Event} {Environment.NewLine}{repositoryEvent.Metadata}"
+                | PolicyEvent policyEvent ->
+                    let correlationId = policyEvent.Metadata.CorrelationId
+
+                    log.LogInformation(
+                        "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Received PolicyEvent notification.",
+                        getCurrentInstantExtended (),
+                        getMachineName,
+                        correlationId
+                    )
+
+                    do! DerivedComputation.handlePolicyEvent policyEvent
                 | PromotionGroupEvent promotionGroupEvent ->
                     let correlationId = promotionGroupEvent.Metadata.CorrelationId
 
@@ -469,6 +503,84 @@ module Notification =
                         getMachineName,
                         correlationId
                     )
+                | WorkItemEvent workItemEvent ->
+                    let correlationId = workItemEvent.Metadata.CorrelationId
+
+                    log.LogInformation(
+                        "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Received WorkItemEvent notification.",
+                        getCurrentInstantExtended (),
+                        getMachineName,
+                        correlationId
+                    )
+                | ReviewEvent reviewEvent ->
+                    let correlationId = reviewEvent.Metadata.CorrelationId
+
+                    log.LogInformation(
+                        "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Received ReviewEvent notification.",
+                        getCurrentInstantExtended (),
+                        getMachineName,
+                        correlationId
+                    )
+                | Stage0Event stage0Event ->
+                    let correlationId = stage0Event.Metadata.CorrelationId
+
+                    log.LogInformation(
+                        "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Received Stage0Event notification.",
+                        getCurrentInstantExtended (),
+                        getMachineName,
+                        correlationId
+                    )
+                | CandidateEvent candidateEvent ->
+                    let correlationId = candidateEvent.Metadata.CorrelationId
+
+                    log.LogInformation(
+                        "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Received CandidateEvent notification.",
+                        getCurrentInstantExtended (),
+                        getMachineName,
+                        correlationId
+                    )
+                | GateAttestationEvent attestationEvent ->
+                    let correlationId = attestationEvent.Metadata.CorrelationId
+
+                    log.LogInformation(
+                        "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Received GateAttestationEvent notification.",
+                        getCurrentInstantExtended (),
+                        getMachineName,
+                        correlationId
+                    )
+                | ConflictReceiptEvent conflictReceiptEvent ->
+                    let correlationId = conflictReceiptEvent.Metadata.CorrelationId
+
+                    log.LogInformation(
+                        "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Received ConflictReceiptEvent notification.",
+                        getCurrentInstantExtended (),
+                        getMachineName,
+                        correlationId
+                    )
+                | QueueEvent queueEvent ->
+                    let correlationId = queueEvent.Metadata.CorrelationId
+
+                    log.LogInformation(
+                        "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Received QueueEvent notification.",
+                        getCurrentInstantExtended (),
+                        getMachineName,
+                        correlationId
+                    )
+
+                match EventingPublisher.tryCreateEnvelope graceEvent with
+                | Some envelope ->
+                    if not <| isNull hubContext then
+                        let groupKey =
+                            if envelope.RepositoryId = RepositoryId.Empty then
+                                String.Empty
+                            else
+                                $"{envelope.RepositoryId}"
+
+                        if String.IsNullOrWhiteSpace groupKey then
+                            do! hubContext.Clients.All.NotifyEvent(envelope)
+                        else
+                            do! hubContext.Clients.Group(groupKey).NotifyEvent(envelope)
+                | None -> ()
 
             //return! setStatusCode StatusCodes.Status204NoContent next context
             }
