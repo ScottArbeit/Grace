@@ -41,6 +41,8 @@ Read `../AGENTS.md` for global expectations before updating CLI code.
 - `grace work` covers create/show/status and linking references or promotion groups.
 - `grace review` covers inbox/open/checkpoint/delta/resolve/deepen. Inbox and
   delta remain CLI stubs until server endpoints land.
+- `grace queue` covers status/enqueue/pause/resume/dequeue/retry; prefer
+  `--branch` but `--branch-id`/`--branch-name` still work.
 
 ## Validation
 

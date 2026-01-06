@@ -41,6 +41,7 @@
                 <Compile Include="Command\PromotionGroup.CLI.fs" />
                 <Compile Include="Command\WorkItem.CLI.fs" />
                 <Compile Include="Command\Review.CLI.fs" />
+                <Compile Include="Command\Queue.CLI.fs" />
                 <Compile Include="Command\Access.CLI.fs" />
 		<Compile Include="Command\Admin.CLI.fs" />
 		<Compile Include="HistoryStorage.CLI.fs" />
