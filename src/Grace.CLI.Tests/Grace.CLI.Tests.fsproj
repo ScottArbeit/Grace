@@ -16,6 +16,7 @@
     <Compile Include="AuthTokenBundle.Tests.fs" />
     <Compile Include="HelpDoesNotReadConfig.Tests.fs" />
     <Compile Include="HistoryStorage.Tests.fs" />
+    <Compile Include="WorkItem.Commands.Tests.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
 

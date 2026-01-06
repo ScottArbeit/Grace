@@ -204,6 +204,7 @@ module GraceCommand =
         rootCommand.Subcommands.Add(Auth.Build)
         rootCommand.Subcommands.Add(Maintenance.Build)
         rootCommand.Subcommands.Add(PromotionGroupCommand.Build)
+        rootCommand.Subcommands.Add(WorkItemCommand.Build)
         rootCommand.Subcommands.Add(Admin.Build)
         rootCommand.Subcommands.Add(Access.Build)
 

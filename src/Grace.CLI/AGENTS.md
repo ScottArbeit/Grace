@@ -36,6 +36,10 @@ Read `../AGENTS.md` for global expectations before updating CLI code.
 - `grace history` commands operate without requiring a repo `graceconfig.json`.
   Avoid `Configuration.Current()` in history-related flows.
 
+## Continuous Review Commands
+
+- `grace work` covers create/show/status and linking references or promotion groups.
+
 ## Validation
 
 - Add option parsing tests and handler unit tests for new functionality.
