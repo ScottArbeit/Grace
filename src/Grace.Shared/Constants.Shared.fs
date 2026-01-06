@@ -238,27 +238,59 @@ module Constants =
         [<Literal>]
         let GraceTokenFile = "GRACE_TOKEN_FILE"
 
-        /// External authentication settings for Microsoft (MSA + Entra).
+        /// External authentication settings for Auth0 / OIDC.
+        [<Literal>]
+        let GraceAuthOidcAuthority = "grace__auth__oidc__authority"
+
+        /// External authentication settings for Auth0 / OIDC.
+        [<Literal>]
+        let GraceAuthOidcAudience = "grace__auth__oidc__audience"
+
+        /// External authentication settings for Auth0 / OIDC CLI application.
+        [<Literal>]
+        let GraceAuthOidcCliClientId = "grace__auth__oidc__cli_client_id"
+
+        /// External authentication settings for Auth0 / OIDC CLI application.
+        [<Literal>]
+        let GraceAuthOidcCliRedirectPort = "grace__auth__oidc__cli_redirect_port"
+
+        /// External authentication settings for Auth0 / OIDC CLI application.
+        [<Literal>]
+        let GraceAuthOidcCliScopes = "grace__auth__oidc__cli_scopes"
+
+        /// External authentication settings for Auth0 / OIDC machine-to-machine auth.
+        [<Literal>]
+        let GraceAuthOidcM2mClientId = "grace__auth__oidc__m2m_client_id"
+
+        /// External authentication settings for Auth0 / OIDC machine-to-machine auth.
+        [<Literal>]
+        let GraceAuthOidcM2mClientSecret = "grace__auth__oidc__m2m_client_secret"
+
+        /// External authentication settings for Auth0 / OIDC machine-to-machine auth.
+        [<Literal>]
+        let GraceAuthOidcM2mScopes = "grace__auth__oidc__m2m_scopes"
+
+        /// Deprecated: External authentication settings for Microsoft (MSA + Entra).
         [<Literal>]
         let GraceAuthMicrosoftClientId = "grace__auth__microsoft__client_id"
 
-        /// External authentication settings for Microsoft (MSA + Entra).
+        /// Deprecated: External authentication settings for Microsoft (MSA + Entra).
         [<Literal>]
         let GraceAuthMicrosoftClientSecret = "grace__auth__microsoft__client_secret"
 
-        /// External authentication settings for Microsoft (MSA + Entra).
+        /// Deprecated: External authentication settings for Microsoft (MSA + Entra).
         [<Literal>]
         let GraceAuthMicrosoftTenantId = "grace__auth__microsoft__tenant_id"
 
-        /// External authentication settings for Microsoft (MSA + Entra).
+        /// Deprecated: External authentication settings for Microsoft (MSA + Entra).
         [<Literal>]
         let GraceAuthMicrosoftAuthority = "grace__auth__microsoft__authority"
 
-        /// External authentication settings for Microsoft (MSA + Entra).
+        /// Deprecated: External authentication settings for Microsoft (MSA + Entra).
         [<Literal>]
         let GraceAuthMicrosoftApiScope = "grace__auth__microsoft__api_scope"
 
-        /// External authentication settings for Microsoft (MSA + Entra).
+        /// Deprecated: External authentication settings for Microsoft (MSA + Entra).
         [<Literal>]
         let GraceAuthMicrosoftCliClientId = "grace__auth__microsoft__cli_client_id"
 

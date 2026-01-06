@@ -108,11 +108,8 @@ public partial class Program
                     .WithOtlpExporter();
 
                 var forwardedAuthKeys = new List<string>();
-                AddOptionalEnvironment(graceServer, configuration, EnvironmentVariables.GraceAuthMicrosoftClientId, forwardedAuthKeys);
-                AddOptionalEnvironment(graceServer, configuration, EnvironmentVariables.GraceAuthMicrosoftClientSecret, forwardedAuthKeys);
-                AddOptionalEnvironment(graceServer, configuration, EnvironmentVariables.GraceAuthMicrosoftTenantId, forwardedAuthKeys);
-                AddOptionalEnvironment(graceServer, configuration, EnvironmentVariables.GraceAuthMicrosoftAuthority, forwardedAuthKeys);
-                AddOptionalEnvironment(graceServer, configuration, EnvironmentVariables.GraceAuthMicrosoftApiScope, forwardedAuthKeys);
+                AddOptionalEnvironment(graceServer, configuration, EnvironmentVariables.GraceAuthOidcAuthority, forwardedAuthKeys);
+                AddOptionalEnvironment(graceServer, configuration, EnvironmentVariables.GraceAuthOidcAudience, forwardedAuthKeys);
                 LogForwardedSettings("Grace.Server auth settings", forwardedAuthKeys);
 
                 if (isTestRun)
@@ -341,11 +338,8 @@ public partial class Program
                     .WithOtlpExporter();
 
                 var forwardedAuthKeys = new List<string>();
-                AddOptionalEnvironment(graceServer, configuration, EnvironmentVariables.GraceAuthMicrosoftClientId, forwardedAuthKeys);
-                AddOptionalEnvironment(graceServer, configuration, EnvironmentVariables.GraceAuthMicrosoftClientSecret, forwardedAuthKeys);
-                AddOptionalEnvironment(graceServer, configuration, EnvironmentVariables.GraceAuthMicrosoftTenantId, forwardedAuthKeys);
-                AddOptionalEnvironment(graceServer, configuration, EnvironmentVariables.GraceAuthMicrosoftAuthority, forwardedAuthKeys);
-                AddOptionalEnvironment(graceServer, configuration, EnvironmentVariables.GraceAuthMicrosoftApiScope, forwardedAuthKeys);
+                AddOptionalEnvironment(graceServer, configuration, EnvironmentVariables.GraceAuthOidcAuthority, forwardedAuthKeys);
+                AddOptionalEnvironment(graceServer, configuration, EnvironmentVariables.GraceAuthOidcAudience, forwardedAuthKeys);
                 LogForwardedSettings("Grace.Server auth settings", forwardedAuthKeys);
 
                 Console.WriteLine("Grace.Server publish/production environment configured (Azure resources with MI by default).");

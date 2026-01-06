@@ -476,12 +476,8 @@ module Branch =
                         let parentBranchId = parseResult.GetValue(Options.parentBranchId)
                         let parentBranchNameResult = parseResult.GetResult(Options.parentBranchName)
                         let parentBranchIdResult = parseResult.GetResult(Options.parentBranchId)
-                        let parentBranchNameExplicit =
-                            not <| isNull parentBranchNameResult
-                            && not parentBranchNameResult.Implicit
-                        let parentBranchIdExplicit =
-                            not <| isNull parentBranchIdResult
-                            && not parentBranchIdResult.Implicit
+                        let parentBranchNameExplicit = not <| isNull parentBranchNameResult && not parentBranchNameResult.Implicit
+                        let parentBranchIdExplicit = not <| isNull parentBranchIdResult && not parentBranchIdResult.Implicit
 
                         let parentBranchName =
                             let suppliedParentBranchName = parseResult.GetValue(Options.parentBranchName) |> valueOrEmpty
