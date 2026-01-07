@@ -41,6 +41,22 @@ module QueueCommandTests =
         exitCode |> should equal -1
 
     [<Test>]
+    let ``queue enqueue rejects invalid work item id`` () =
+        let parseResult =
+            GraceCommand.rootCommand.Parse(
+                withIdsAndSilent
+                    [| "queue"
+                       "enqueue"
+                       "--branch-id"
+                       branchId.ToString()
+                       "--work"
+                       "not-a-guid" |]
+            )
+
+        let exitCode = parseResult.Invoke()
+        exitCode |> should equal -1
+
+    [<Test>]
     let ``queue dequeue rejects invalid candidate id`` () =
         let parseResult =
             GraceCommand.rootCommand.Parse(

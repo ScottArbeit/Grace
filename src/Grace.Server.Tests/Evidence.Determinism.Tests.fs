@@ -16,6 +16,12 @@ type EvidenceDeterminism() =
 
     let buildSection (line: string) (position: int) = [| DiffPiece(line, ChangeType.Modified, Nullable<int>(position)) |]
 
+    let buildSectionFromLines (lines: string list) =
+        lines
+        |> List.mapi (fun index line -> DiffPiece(line, ChangeType.Modified, Nullable<int>(index + 1)))
+        |> List.toArray
+
+
     let buildFileDiff (relativePath: string) (lines: (string * int) list) =
         let inlineDiff = List<DiffPiece[]>()
 
@@ -25,6 +31,49 @@ type EvidenceDeterminism() =
         FileDiff.Create relativePath (Sha256Hash "sha1") instant (Sha256Hash "sha2") instant false inlineDiff (List<DiffPiece[]>()) (List<DiffPiece[]>())
 
     let buildDiff (fileDiffs: FileDiff list) = { DiffDto.Default with HasDifferences = true; FileDiffs = List<FileDiff>(fileDiffs) }
+
+    [<Test>]
+    member _.EvidenceRedactionFlagsWhenPatternMatches() =
+        let file = buildFileDiff "secrets.txt" [ "password=secret", 1 ]
+        let budget = { MaxFiles = 5; MaxHunksPerFile = 5; MaxLinesPerHunk = 5; MaxTotalBytes = 4096; MaxTokens = 2000 }
+        let diff = buildDiff [ file ]
+
+        let evidence, _ = Evidence.buildEvidenceSet EvidenceStage.Triage budget None [ "password=\w+" ] diff
+        let slice = evidence.Slices |> List.head
+
+        Assert.That(slice.IsRedacted, Is.True)
+        Assert.That(slice.Content, Does.Contain("***REDACTED***"))
+
+    [<Test>]
+    member _.EvidenceBudgetsRespectHunksAndLines() =
+        let sections = List<DiffPiece[]>()
+        sections.Add(buildSectionFromLines [ "one"; "two"; "three" ])
+        sections.Add(buildSectionFromLines [ "four" ])
+
+        let inlineDiff = List<DiffPiece[]>(sections)
+
+        let fileDiff =
+            FileDiff.Create "multi.txt" (Sha256Hash "sha1") instant (Sha256Hash "sha2") instant false inlineDiff (List<DiffPiece[]>()) (List<DiffPiece[]>())
+
+        let budget = { MaxFiles = 5; MaxHunksPerFile = 1; MaxLinesPerHunk = 1; MaxTotalBytes = 4096; MaxTokens = 2000 }
+        let diff = buildDiff [ fileDiff ]
+
+        let evidence, _ = Evidence.buildEvidenceSet EvidenceStage.Triage budget None [] diff
+        let slice = evidence.Slices |> List.head
+
+        Assert.That(evidence.Slices.Length, Is.EqualTo(1))
+        Assert.That(slice.StartLine, Is.EqualTo(1))
+        Assert.That(slice.EndLine, Is.EqualTo(1))
+        Assert.That(slice.Content, Is.EqualTo("one"))
+
+    [<Test>]
+    member _.EvidenceBudgetCapsTotalBytes() =
+        let file = buildFileDiff "tiny.txt" [ "a", 1; "b", 2 ]
+        let budget = { MaxFiles = 5; MaxHunksPerFile = 5; MaxLinesPerHunk = 5; MaxTotalBytes = 1; MaxTokens = 2000 }
+        let diff = buildDiff [ file ]
+
+        let evidence, _ = Evidence.buildEvidenceSet EvidenceStage.Triage budget None [] diff
+        Assert.That(evidence.Slices.Length, Is.EqualTo(1))
 
     [<Test>]
     member _.EvidenceSelectionIsDeterministicAcrossFileOrdering() =

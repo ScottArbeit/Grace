@@ -60,6 +60,9 @@ module Queue =
         |> Seq.distinctBy (fun action -> action.RequiredActionType, action.TargetId, action.Reason)
         |> Seq.toList
 
+    let internal requiresPolicySnapshotForInitialization (queueExists: bool) (policySnapshotId: string) =
+        not queueExists && String.IsNullOrEmpty(policySnapshotId)
+
     let processCommand<'T when 'T :> QueueParameters> (context: HttpContext) (validations: Validations<'T>) (command: 'T -> ValueTask<PromotionQueueCommand>) =
         task {
             let commandName = context.Items["Command"] :?> string
@@ -289,7 +292,7 @@ module Queue =
                             let! exists = actorProxy.Exists correlationId
 
                             if not exists then
-                                if String.IsNullOrEmpty(parameters.PolicySnapshotId) then
+                                if requiresPolicySnapshotForInitialization exists parameters.PolicySnapshotId then
                                     let graceError = GraceError.Create "PolicySnapshotId is required to initialize the queue." correlationId
 
                                     return! context |> result400BadRequest graceError

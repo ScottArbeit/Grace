@@ -24,6 +24,11 @@ open System.Threading.Tasks
 
 module Stage0 =
 
+    let internal hasDuplicateCorrelationId (events: seq<Stage0Event>) (metadata: EventMetadata) =
+        events
+        |> Seq.exists (fun ev -> ev.Metadata.CorrelationId = metadata.CorrelationId)
+
+
     type Stage0Actor([<PersistentState(StateName.Stage0, Constants.GraceActorStorage)>] state: IPersistentState<List<Stage0Event>>) =
         inherit Grain()
 
@@ -110,7 +115,7 @@ module Stage0 =
             member this.Handle command metadata =
                 let isValid (command: Stage0Command) (metadata: EventMetadata) =
                     task {
-                        if state.State.Exists(fun ev -> ev.Metadata.CorrelationId = metadata.CorrelationId) then
+                        if hasDuplicateCorrelationId state.State metadata then
                             return Error(GraceError.Create (Stage0Error.getErrorMessage Stage0Error.DuplicateCorrelationId) metadata.CorrelationId)
                         else
                             return Ok command

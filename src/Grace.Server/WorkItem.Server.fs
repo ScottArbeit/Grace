@@ -176,6 +176,31 @@ module WorkItem =
                 return! context |> result500ServerError graceError
         }
 
+    let internal buildUpdateCommands (parameters: UpdateWorkItemParameters) =
+        [ if not <| String.IsNullOrEmpty(parameters.Title) then
+              WorkItemCommand.SetTitle parameters.Title
+          if not <| String.IsNullOrEmpty(parameters.Description) then
+              WorkItemCommand.SetDescription parameters.Description
+          if not <| String.IsNullOrEmpty(parameters.Status) then
+              let status = discriminatedUnionFromString<WorkItemStatus> parameters.Status |> Option.get
+              WorkItemCommand.SetStatus status
+          if not <| String.IsNullOrEmpty(parameters.Constraints) then
+              WorkItemCommand.SetConstraints parameters.Constraints
+          if not <| String.IsNullOrEmpty(parameters.Notes) then
+              WorkItemCommand.SetNotes parameters.Notes
+          if not <| String.IsNullOrEmpty(parameters.ArchitecturalNotes) then
+              WorkItemCommand.SetArchitecturalNotes parameters.ArchitecturalNotes
+          if not <| String.IsNullOrEmpty(parameters.MigrationNotes) then
+              WorkItemCommand.SetMigrationNotes parameters.MigrationNotes ]
+
+    let internal validateLinkReferenceParameters (parameters: LinkReferenceParameters) =
+        [| Guid.isValidAndNotEmptyGuid parameters.WorkItemId WorkItemError.InvalidWorkItemId
+           Guid.isValidAndNotEmptyGuid parameters.ReferenceId WorkItemError.InvalidReferenceId |]
+
+    let internal validateLinkPromotionGroupParameters (parameters: LinkPromotionGroupParameters) =
+        [| Guid.isValidAndNotEmptyGuid parameters.WorkItemId WorkItemError.InvalidWorkItemId
+           Guid.isValidAndNotEmptyGuid parameters.PromotionGroupId WorkItemError.InvalidPromotionGroupId |]
+
     /// Creates a new work item.
     let Create: HttpHandler =
         fun (_next: HttpFunc) (context: HttpContext) ->
@@ -244,22 +269,7 @@ module WorkItem =
                     let actorProxy = WorkItem.CreateActorProxy workItemId graceIds.RepositoryId correlationId
                     let metadata = createMetadata context
 
-                    let commands =
-                        [ if not <| String.IsNullOrEmpty(parameters.Title) then
-                              WorkItemCommand.SetTitle parameters.Title
-                          if not <| String.IsNullOrEmpty(parameters.Description) then
-                              WorkItemCommand.SetDescription parameters.Description
-                          if not <| String.IsNullOrEmpty(parameters.Status) then
-                              let status = discriminatedUnionFromString<WorkItemStatus> parameters.Status |> Option.get
-                              WorkItemCommand.SetStatus status
-                          if not <| String.IsNullOrEmpty(parameters.Constraints) then
-                              WorkItemCommand.SetConstraints parameters.Constraints
-                          if not <| String.IsNullOrEmpty(parameters.Notes) then
-                              WorkItemCommand.SetNotes parameters.Notes
-                          if not <| String.IsNullOrEmpty(parameters.ArchitecturalNotes) then
-                              WorkItemCommand.SetArchitecturalNotes parameters.ArchitecturalNotes
-                          if not <| String.IsNullOrEmpty(parameters.MigrationNotes) then
-                              WorkItemCommand.SetMigrationNotes parameters.MigrationNotes ]
+                    let commands = buildUpdateCommands parameters
 
                     if commands.IsEmpty then
                         let graceError =
@@ -326,9 +336,7 @@ module WorkItem =
     let LinkReference: HttpHandler =
         fun (_next: HttpFunc) (context: HttpContext) ->
             task {
-                let validations (parameters: LinkReferenceParameters) =
-                    [| Guid.isValidAndNotEmptyGuid parameters.WorkItemId WorkItemError.InvalidWorkItemId
-                       Guid.isValidAndNotEmptyGuid parameters.ReferenceId WorkItemError.InvalidReferenceId |]
+                let validations (parameters: LinkReferenceParameters) = validateLinkReferenceParameters parameters
 
                 let command (parameters: LinkReferenceParameters) =
                     WorkItemCommand.LinkReference(Guid.Parse(parameters.ReferenceId))
@@ -342,9 +350,7 @@ module WorkItem =
     let LinkPromotionGroup: HttpHandler =
         fun (_next: HttpFunc) (context: HttpContext) ->
             task {
-                let validations (parameters: LinkPromotionGroupParameters) =
-                    [| Guid.isValidAndNotEmptyGuid parameters.WorkItemId WorkItemError.InvalidWorkItemId
-                       Guid.isValidAndNotEmptyGuid parameters.PromotionGroupId WorkItemError.InvalidPromotionGroupId |]
+                let validations (parameters: LinkPromotionGroupParameters) = validateLinkPromotionGroupParameters parameters
 
                 let command (parameters: LinkPromotionGroupParameters) =
                     WorkItemCommand.LinkPromotionGroup(Guid.Parse(parameters.PromotionGroupId))

@@ -19,6 +19,14 @@ module DerivedComputation =
 
     let log = loggerFactory.CreateLogger("DerivedComputation.Server")
 
+
+    let internal shouldRecordStage0 referenceType =
+        match referenceType with
+        | ReferenceType.Commit
+        | ReferenceType.Checkpoint
+        | ReferenceType.Promotion -> true
+        | _ -> false
+
     let handleReferenceEvent (referenceEvent: ReferenceEvent) =
         task {
             match referenceEvent.Event with
@@ -33,9 +41,7 @@ module DerivedComputation =
                                          referenceText,
                                          links) ->
                 match referenceType with
-                | ReferenceType.Commit
-                | ReferenceType.Checkpoint
-                | ReferenceType.Promotion ->
+                | _ when shouldRecordStage0 referenceType ->
                     let correlationId = referenceEvent.Metadata.CorrelationId
                     let policyActorProxy = Policy.CreateActorProxy branchId repositoryId correlationId
 

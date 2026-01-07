@@ -85,8 +85,12 @@
 
 	<ItemGroup>
 		<ProjectReference Include="..\Grace.Types\Grace.Types.fsproj" />
-		<ProjectReference Include="..\Grace.Shared\Grace.Shared.fsproj" />
-	</ItemGroup>
+        <ProjectReference Include="..\Grace.Shared\Grace.Shared.fsproj" />
+        </ItemGroup>
+
+        <ItemGroup>
+                <InternalsVisibleTo Include="Grace.Server.Tests" />
+        </ItemGroup>
 
 	<!--<ItemGroup>
 	  <Reference Include="Dapr.Actors">

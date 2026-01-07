@@ -7,6 +7,8 @@ open Grace.SDK
 open Grace.Shared
 open Grace.Shared.Utilities
 open Grace.Shared.Validation.Errors
+open Grace.Types.Policy
+open Grace.Types.Queue
 open Grace.Types.Review
 open Grace.Types.Types
 open Spectre.Console
@@ -149,7 +151,13 @@ module ReviewCommand =
         else
             Ok parsed
 
-    let private resolvePolicySnapshotId (parseResult: ParseResult) (graceIds: GraceIds) (candidateId: Guid) =
+    let internal resolvePolicySnapshotIdWith
+        (getCandidate: Parameters.Queue.CandidateParameters -> Task<GraceResult<IntegrationCandidate>>)
+        (getPolicy: Parameters.Policy.GetPolicyParameters -> Task<GraceResult<PolicySnapshot option>>)
+        (parseResult: ParseResult)
+        (graceIds: GraceIds)
+        (candidateId: Guid)
+        =
         task {
             let rawPolicySnapshotId =
                 parseResult.GetValue(Options.policySnapshotId)
@@ -171,7 +179,7 @@ module ReviewCommand =
                         CorrelationId = graceIds.CorrelationId
                     )
 
-                match! Candidate.Get(candidateParameters) with
+                match! getCandidate candidateParameters with
                 | Error error -> return Error error
                 | Ok candidateReturnValue ->
                     let candidate = candidateReturnValue.ReturnValue
@@ -191,7 +199,7 @@ module ReviewCommand =
                                 CorrelationId = graceIds.CorrelationId
                             )
 
-                        match! Policy.GetCurrent(policyParameters) with
+                        match! getPolicy policyParameters with
                         | Error error -> return Error error
                         | Ok policyReturnValue ->
                             match policyReturnValue.ReturnValue with
@@ -199,6 +207,9 @@ module ReviewCommand =
                             | _ ->
                                 return Error(GraceError.Create (ReviewError.getErrorMessage ReviewError.InvalidPolicySnapshotId) (getCorrelationId parseResult))
         }
+
+    let private resolvePolicySnapshotId (parseResult: ParseResult) (graceIds: GraceIds) (candidateId: Guid) =
+        resolvePolicySnapshotIdWith Candidate.Get Policy.GetCurrent parseResult graceIds candidateId
 
     let private writePacketSummary (parseResult: ParseResult) (packet: ReviewPacket) =
         if not (parseResult |> json) && not (parseResult |> silent) then

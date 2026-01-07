@@ -28,6 +28,14 @@ type QueueGatesConflict() =
             Conflicts = conflicts
             CreatedAt = Instant.FromUtc(2025, 1, 1, 0, 0) }
 
+    let buildRequiredAction actionType reason =
+        { RequiredActionType = actionType
+          TargetId = None
+          Reason = reason
+          Parameters = Dictionary<string, string>()
+          SuggestedCliCommand = None
+          SuggestedApiCall = None }
+
     [<Test>]
     member _.PromotionQueueDtoUpdatesDeterministically() =
         let branchId = Guid.NewGuid()
@@ -83,6 +91,51 @@ type QueueGatesConflict() =
         Assert.That(updatedMatch, Is.True)
 
     [<Test>]
+    member _.RetryCandidateClearsRequiredActionsAndSetsPending() =
+        let action = buildRequiredAction RequiredActionType.ResolveConflict "Resolve conflict."
+        let candidate = { IntegrationCandidate.Default with Status = CandidateStatus.Failed; RequiredActions = [ action ] }
+
+        let clearedEvent: CandidateEvent = { Event = CandidateEventType.RequiredActionsCleared; Metadata = metadata (Instant.FromUtc(2025, 1, 3, 0, 0)) }
+
+        let statusEvent: CandidateEvent =
+            { Event = CandidateEventType.StatusSet CandidateStatus.Pending; Metadata = metadata (Instant.FromUtc(2025, 1, 3, 0, 1)) }
+
+        let updated =
+            candidate
+            |> IntegrationCandidateDto.UpdateDto clearedEvent
+            |> IntegrationCandidateDto.UpdateDto statusEvent
+
+        Assert.That(updated.RequiredActions, Is.Empty)
+        Assert.That(updated.Status, Is.EqualTo(CandidateStatus.Pending))
+
+    [<Test>]
+    member _.CanceledCandidateStatusIsRecorded() =
+        let candidate = { IntegrationCandidate.Default with Status = CandidateStatus.Running }
+        let event: CandidateEvent = { Event = CandidateEventType.StatusSet CandidateStatus.Canceled; Metadata = metadata (Instant.FromUtc(2025, 1, 4, 0, 0)) }
+
+        let updated = IntegrationCandidateDto.UpdateDto event candidate
+
+        Assert.That(updated.Status, Is.EqualTo(CandidateStatus.Canceled))
+
+    [<Test>]
+    member _.CandidateDequeuedRemovesFromQueue() =
+        let candidateId = Guid.NewGuid()
+
+        let queue =
+            { PromotionQueue.Default with
+                TargetBranchId = Guid.NewGuid()
+                CandidateIds = [ candidateId ]
+                RunningCandidateId = Some candidateId
+                State = QueueState.Running }
+
+        let event: PromotionQueueEvent =
+            { Event = PromotionQueueEventType.CandidateDequeued candidateId; Metadata = metadata (Instant.FromUtc(2025, 1, 5, 0, 0)) }
+
+        let updated = PromotionQueueDto.UpdateDto event queue
+
+        Assert.That(updated.CandidateIds, Is.Empty)
+
+    [<Test>]
     member _.RequiredActionsIncludePolicyConflictAndGate() =
         let conflict = { ConflictAnalysis.Default with FilePath = "src/Auth.fs" }
         let candidate = buildCandidate CandidateStatus.Blocked (PolicySnapshotId String.Empty) [ conflict ]
@@ -93,6 +146,21 @@ type QueueGatesConflict() =
         Assert.That(types, Does.Contain(RequiredActionType.AcknowledgePolicyChange))
         Assert.That(types, Does.Contain(RequiredActionType.ResolveConflict))
         Assert.That(types, Does.Contain(RequiredActionType.RunGate))
+
+    [<Test>]
+    member _.RequiredActionsIncludeFixGateFailureOnlyForFailedCandidates() =
+        let candidate = buildCandidate CandidateStatus.Blocked (PolicySnapshotId "policy") []
+
+        let blockedActions = Grace.Server.Queue.computeRequiredActions candidate
+        let blockedTypes = blockedActions |> List.map (fun action -> action.RequiredActionType)
+
+        Assert.That(blockedTypes, Does.Not.Contain(RequiredActionType.FixGateFailure))
+
+        let failedCandidate = buildCandidate CandidateStatus.Failed (PolicySnapshotId "policy") []
+        let failedActions = Grace.Server.Queue.computeRequiredActions failedCandidate
+        let failedTypes = failedActions |> List.map (fun action -> action.RequiredActionType)
+
+        Assert.That(failedTypes, Does.Contain(RequiredActionType.FixGateFailure))
 
     [<Test>]
     member _.GateResultsRespectPolicySnapshotAndRegistry() =
@@ -106,3 +174,24 @@ type QueueGatesConflict() =
         let missingAttestation = Gates.runGate "missing" context |> Async.AwaitTask |> Async.RunSynchronously
         Assert.That(missingAttestation.Result, Is.EqualTo(GateResult.Block))
         Assert.That(missingAttestation.GateVersion, Is.EqualTo("unknown"))
+
+    [<Test>]
+    member _.BuildTestGateDefaultsToSkipped() =
+        let candidate = buildCandidate CandidateStatus.Pending (PolicySnapshotId "policy") []
+        let context = { GateContext.Candidate = candidate; PolicySnapshot = None; CorrelationId = "corr-gate"; Principal = UserId "tester" }
+
+        let attestation = Gates.runGate "build-test" context |> Async.AwaitTask |> Async.RunSynchronously
+
+        Assert.That(attestation.Result, Is.EqualTo(GateResult.Skipped))
+
+    [<Test>]
+    member _.QueueInitializationRequiresPolicySnapshotWhenQueueMissing() =
+        let requiresSnapshot = Grace.Server.Queue.requiresPolicySnapshotForInitialization false String.Empty
+
+        let noRequirementWhenProvided = Grace.Server.Queue.requiresPolicySnapshotForInitialization false "snapshot"
+
+        let noRequirementWhenQueueExists = Grace.Server.Queue.requiresPolicySnapshotForInitialization true String.Empty
+
+        Assert.That(requiresSnapshot, Is.True)
+        Assert.That(noRequirementWhenProvided, Is.False)
+        Assert.That(noRequirementWhenQueueExists, Is.False)

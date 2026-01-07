@@ -175,6 +175,10 @@ module Policy =
                 return! context |> result500ServerError graceError
         }
 
+    let internal validateAcknowledgeParameters (parameters: AcknowledgePolicyParameters) =
+        [| Guid.isValidAndNotEmptyGuid parameters.TargetBranchId PolicyError.InvalidTargetBranchId
+           String.isNotEmpty parameters.PolicySnapshotId PolicyError.InvalidPolicySnapshotId |]
+
     /// Gets the current policy snapshot.
     let GetCurrent: HttpHandler =
         fun (_next: HttpFunc) (context: HttpContext) ->
@@ -200,9 +204,7 @@ module Policy =
             task {
                 let graceIds = getGraceIds context
 
-                let validations (parameters: AcknowledgePolicyParameters) =
-                    [| Guid.isValidAndNotEmptyGuid parameters.TargetBranchId PolicyError.InvalidTargetBranchId
-                       String.isNotEmpty parameters.PolicySnapshotId PolicyError.InvalidPolicySnapshotId |]
+                let validations (parameters: AcknowledgePolicyParameters) = validateAcknowledgeParameters parameters
 
                 let command (parameters: AcknowledgePolicyParameters) =
                     let policySnapshotId = PolicySnapshotId parameters.PolicySnapshotId
