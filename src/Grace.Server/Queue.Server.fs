@@ -151,6 +151,98 @@ module Queue =
                 return! context |> result500ServerError graceError
         }
 
+    let processCommandWithParameters<'T when 'T :> QueueParameters>
+        (context: HttpContext)
+        (parameters: 'T)
+        (validations: Validations<'T>)
+        (command: 'T -> ValueTask<PromotionQueueCommand>)
+        =
+        task {
+            let commandName = context.Items["Command"] :?> string
+            let graceIds = getGraceIds context
+            let correlationId = getCorrelationId context
+            let parameterDictionary = Dictionary<string, obj>()
+
+            try
+                use activity = activitySource.StartActivity("processCommandWithParameters", ActivityKind.Server)
+                parameterDictionary.AddRange(getParametersAsDictionary parameters)
+
+                parameters.OwnerId <- graceIds.OwnerIdString
+                parameters.OrganizationId <- graceIds.OrganizationIdString
+                parameters.RepositoryId <- graceIds.RepositoryIdString
+
+                let handleCommand targetBranchId cmd =
+                    task {
+                        let actorProxy = PromotionQueue.CreateActorProxy targetBranchId graceIds.RepositoryId correlationId
+                        let metadata = createMetadata context
+
+                        match! actorProxy.Handle cmd metadata with
+                        | Ok graceReturnValue ->
+                            graceReturnValue
+                                .enhance(parameterDictionary)
+                                .enhance(nameof OwnerId, graceIds.OwnerId)
+                                .enhance(nameof OrganizationId, graceIds.OrganizationId)
+                                .enhance(nameof RepositoryId, graceIds.RepositoryId)
+                                .enhance(nameof BranchId, targetBranchId)
+                                .enhance("Command", commandName)
+                                .enhance ("Path", context.Request.Path.Value)
+                            |> ignore
+
+                            return! context |> result200Ok graceReturnValue
+                        | Error graceError ->
+                            graceError
+                                .enhance(parameterDictionary)
+                                .enhance(nameof OwnerId, graceIds.OwnerId)
+                                .enhance(nameof OrganizationId, graceIds.OrganizationId)
+                                .enhance(nameof RepositoryId, graceIds.RepositoryId)
+                                .enhance(nameof BranchId, targetBranchId)
+                                .enhance("Command", commandName)
+                                .enhance ("Path", context.Request.Path.Value)
+                            |> ignore
+
+                            return! context |> result400BadRequest graceError
+                    }
+
+                let validationResults = validations parameters
+                let! validationsPassed = validationResults |> allPass
+
+                if validationsPassed then
+                    let! cmd = command parameters
+                    let targetBranchId = Guid.Parse(parameters.TargetBranchId)
+                    return! handleCommand targetBranchId cmd
+                else
+                    let! error = validationResults |> getFirstError
+                    let errorMessage = QueueError.getErrorMessage error
+
+                    let graceError =
+                        (GraceError.Create errorMessage correlationId)
+                            .enhance(parameterDictionary)
+                            .enhance(nameof OwnerId, graceIds.OwnerId)
+                            .enhance(nameof OrganizationId, graceIds.OrganizationId)
+                            .enhance(nameof RepositoryId, graceIds.RepositoryId)
+                            .enhance("Command", commandName)
+                            .enhance ("Path", context.Request.Path.Value)
+
+                    return! context |> result400BadRequest graceError
+            with ex ->
+                log.LogError(
+                    ex,
+                    "{CurrentInstant}: Exception in Queue.Server.processCommandWithParameters. CorrelationId: {correlationId}.",
+                    getCurrentInstantExtended (),
+                    correlationId
+                )
+
+                let graceError =
+                    (GraceError.CreateWithException ex String.Empty correlationId)
+                        .enhance(parameterDictionary)
+                        .enhance(nameof OwnerId, graceIds.OwnerId)
+                        .enhance(nameof OrganizationId, graceIds.OrganizationId)
+                        .enhance(nameof RepositoryId, graceIds.RepositoryId)
+                        .enhance ("Path", context.Request.Path.Value)
+
+                return! context |> result500ServerError graceError
+        }
+
     let processQuery<'T, 'U when 'T :> QueueParameters>
         (context: HttpContext)
         (parameters: 'T)
@@ -284,7 +376,7 @@ module Queue =
                         task {
                             context.Items["Command"] <- nameof Enqueue
                             let command (_: EnqueueParameters) = PromotionQueueCommand.Enqueue candidateId |> returnValueTask
-                            return! processCommand context (fun _ -> [||]) command
+                            return! processCommandWithParameters context parameters (fun _ -> [||]) command
                         }
 
                     let continueEnqueue () =
