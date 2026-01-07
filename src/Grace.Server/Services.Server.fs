@@ -48,10 +48,18 @@ module Services =
 
     /// Creates common metadata for Grace events.
     let createMetadata (context: HttpContext) : EventMetadata =
-        { Timestamp = getCurrentInstant ()
-          CorrelationId = context.Items[Constants.CorrelationId].ToString()
-          Principal = context.User.Identity.Name
-          Properties = new Dictionary<string, string>() }
+        let metadata =
+            { Timestamp = getCurrentInstant ()
+              CorrelationId = context.Items[Constants.CorrelationId].ToString()
+              Principal = context.User.Identity.Name
+              Properties = new Dictionary<string, string>() }
+
+        let graceIds = getGraceIds context
+
+        if graceIds.RepositoryId <> RepositoryId.Empty then
+            metadata.Properties[nameof RepositoryId] <- $"{graceIds.RepositoryId}"
+
+        metadata
 
     /// Parses the incoming request body into the specified type.
     let parse<'T when 'T :> CommonParameters> (context: HttpContext) =
