@@ -8,6 +8,7 @@ open Grace.Shared
 open Grace.Shared.Constants
 open Grace.Shared.Parameters.Auth
 open Grace.Shared.Utilities
+open Grace.Types.Auth
 open Grace.Types.PersonalAccessToken
 open Grace.Types.Types
 open Microsoft.AspNetCore.Authentication
@@ -95,6 +96,23 @@ module Auth =
                     let correlationId = getCorrelationId context
                     let returnValue = GraceReturnValue.Create info correlationId
                     return! context |> result200Ok returnValue
+            }
+
+    let OidcConfig (configuration: IConfiguration) : HttpHandler =
+        fun next context ->
+            task {
+                let correlationId = getCorrelationId context
+
+                match ExternalAuthConfig.tryGetOidcClientConfig configuration with
+                | Some config ->
+                    let returnValue = GraceReturnValue.Create config correlationId
+                    return! context |> result200Ok returnValue
+                | None ->
+                    let message =
+                        $"OIDC authentication is not configured. Set {Constants.EnvironmentVariables.GraceAuthOidcAuthority}, {Constants.EnvironmentVariables.GraceAuthOidcAudience}, and {Constants.EnvironmentVariables.GraceAuthOidcCliClientId}."
+
+                    let error = GraceError.Create message correlationId
+                    return! context |> result400BadRequest error
             }
 
     let private tryGetConfigValue (configuration: IConfiguration) (name: string) =

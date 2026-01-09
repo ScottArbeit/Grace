@@ -14,6 +14,8 @@
   <ItemGroup>
     <Compile Include="Auth.Tests.fs" />
     <Compile Include="AuthTokenBundle.Tests.fs" />
+    <Compile Include="Connect.Tests.fs" />
+    <Compile Include="CommandParsing.Tests.fs" />
     <Compile Include="HelpDoesNotReadConfig.Tests.fs" />
     <Compile Include="HistoryStorage.Tests.fs" />
     <Compile Include="WorkItem.Commands.Tests.fs" />

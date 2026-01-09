@@ -5,21 +5,42 @@ open Grace.CLI
 open Grace.Shared.Client.Configuration
 open Grace.Shared.Utilities
 open NUnit.Framework
+open Spectre.Console
 open System
 open System.IO
 
 [<NonParallelizable>]
 module HelpDoesNotReadConfigTests =
+    let private setAnsiConsoleOutput (writer: TextWriter) =
+        let settings = AnsiConsoleSettings()
+        settings.Out <- AnsiConsoleOutput(writer)
+        AnsiConsole.Console <- AnsiConsole.Create(settings)
+
     let private runWithCapturedOutput (args: string array) =
         use writer = new StringWriter()
         let originalOut = Console.Out
 
         try
             Console.SetOut(writer)
+            setAnsiConsoleOutput writer
             let exitCode = GraceCommand.main args
             exitCode, writer.ToString()
         finally
             Console.SetOut(originalOut)
+            setAnsiConsoleOutput originalOut
+
+    let private captureOutput (action: unit -> unit) =
+        use writer = new StringWriter()
+        let originalOut = Console.Out
+
+        try
+            Console.SetOut(writer)
+            setAnsiConsoleOutput writer
+            action ()
+            writer.ToString()
+        finally
+            Console.SetOut(originalOut)
+            setAnsiConsoleOutput originalOut
 
 
     let private withTempDir (action: string -> unit) =
@@ -29,6 +50,7 @@ module HelpDoesNotReadConfigTests =
 
         try
             Environment.CurrentDirectory <- tempDir
+            resetConfiguration ()
             action tempDir
         finally
             Environment.CurrentDirectory <- originalDir
@@ -90,6 +112,25 @@ module HelpDoesNotReadConfigTests =
             output |> should contain "[default: current OrganizationId]"
             output |> should contain "[default: new Guid]"
             output |> should not' (contain "00000000-0000-0000-0000-0000000000000"))
+
+    [<Test>]
+    let ``verbose parse result shows resolved ids`` () =
+        withTempDir (fun root ->
+            let ownerId = Guid.NewGuid()
+            let orgId = Guid.NewGuid()
+            let repoId = Guid.NewGuid()
+            let branchId = Guid.NewGuid()
+            writeValidConfig root ownerId orgId repoId branchId
+
+            let parseResult = GraceCommand.rootCommand.Parse([| "access"; "grant-role" |])
+
+            let output = captureOutput (fun () -> Common.printParseResult parseResult)
+
+            output |> should contain "Resolved values:"
+            output |> should contain $"{ownerId}"
+            output |> should contain $"{orgId}"
+            output |> should contain $"{repoId}"
+            output |> should contain $"{branchId}")
 
     [<Test>]
     let ``getNormalizedIdsAndNames falls back to config ids`` () =

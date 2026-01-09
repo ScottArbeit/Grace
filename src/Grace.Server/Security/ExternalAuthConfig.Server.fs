@@ -2,6 +2,7 @@ namespace Grace.Server.Security
 
 open Grace.Shared.Constants
 open Grace.Shared.Utilities
+open Grace.Types.Auth
 open Microsoft.Extensions.Configuration
 open System
 
@@ -29,6 +30,16 @@ module ExternalAuthConfig =
             tryGetConfigValue configuration EnvironmentVariables.GraceAuthOidcAudience
         with
         | Some authority, Some audience -> Some { Authority = normalizeAuthority authority; Audience = audience.Trim() }
+        | _ -> None
+
+    let tryGetOidcClientConfig (configuration: IConfiguration) =
+        match
+            tryGetConfigValue configuration EnvironmentVariables.GraceAuthOidcAuthority,
+            tryGetConfigValue configuration EnvironmentVariables.GraceAuthOidcAudience,
+            tryGetConfigValue configuration EnvironmentVariables.GraceAuthOidcCliClientId
+        with
+        | Some authority, Some audience, Some cliClientId ->
+            Some { Authority = normalizeAuthority authority; Audience = audience.Trim(); CliClientId = cliClientId.Trim() }
         | _ -> None
 
     let isOidcConfigured (configuration: IConfiguration) = tryGetOidcConfig configuration |> Option.isSome

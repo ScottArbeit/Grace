@@ -35,10 +35,14 @@ Read `../AGENTS.md` for global expectations before updating CLI code.
 
 - `grace history` commands operate without requiring a repo `graceconfig.json`.
   Avoid `Configuration.Current()` in history-related flows.
+- `grace connect` accepts a positional shortcut in the form
+  `owner/organization/repository`; do not combine it with explicit owner,
+  organization, or repository options.
 
 ## Continuous Review Commands
 
-- `grace work` covers create/show/status and linking references or promotion groups.
+- `grace work` covers create/show/status and linking references or promotion
+  groups.
 - `grace review` covers inbox/open/checkpoint/delta/resolve/deepen. Inbox and
   delta remain CLI stubs until server endpoints land.
 - `grace queue` covers status/enqueue/pause/resume/dequeue/retry; prefer

@@ -1567,14 +1567,45 @@ module Services =
             return newFileVersions
         }
 
+    let private matchesOptionName (option: Option) (optionName: string) =
+        let normalizedName = optionName.TrimStart('-')
+        let hasAlias alias = option.Aliases |> Seq.exists (fun optionAlias -> optionAlias = alias)
+
+        option.Name = optionName
+        || option.Name = normalizedName
+        || hasAlias optionName
+        || hasAlias normalizedName
+
+    let rec private hasOptionInCommandResult (commandResult: CommandResult) (optionName: string) =
+        if isNull commandResult then
+            false
+        elif
+            commandResult.Command.Options
+            |> Seq.exists (fun option -> matchesOptionName option optionName)
+        then
+            true
+        else
+            match commandResult.Parent with
+            | :? CommandResult as parent -> hasOptionInCommandResult parent optionName
+            | _ -> false
+
     /// Checks if an option was present in the definition of the command.
-    let isOptionPresent (parseResult: ParseResult) (optionName: string) = not <| isNull (parseResult.GetResult(optionName))
+    let isOptionPresent (parseResult: ParseResult) (optionName: string) =
+        if not <| isNull (parseResult.GetResult(optionName)) then
+            true
+        else
+            hasOptionInCommandResult parseResult.CommandResult optionName
 
     /// Checks if an option was implicitly specified (i.e. the default value was used), or explicitly specified by the user.
     let isOptionResultImplicit (parseResult: ParseResult) (optionName: string) =
         if isOptionPresent parseResult optionName then
-            let option = parseResult.GetResult(optionName) :?> OptionResult
-            option.Implicit
+            let result = parseResult.GetResult(optionName)
+
+            if isNull result then
+                true
+            else
+                let option = result :?> OptionResult
+                option.Implicit
         else
             false
 

@@ -44,3 +44,5 @@ Consult `../AGENTS.md` for global policies before modifying the SDK.
   APIs (January 6, 2026).
 - Queue SDK adds pause/resume/dequeue helpers aligned to server routes
   (January 6, 2026).
+- Added `Auth.getOidcClientConfig` for fetching server-provided OIDC client
+  configuration (January 8, 2026).
