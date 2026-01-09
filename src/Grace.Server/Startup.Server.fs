@@ -97,7 +97,11 @@ module Application =
 
     type Startup(configuration: IConfiguration) =
 
-        do ApplicationContext.setConfiguration configuration
+        do
+            ApplicationContext.setConfiguration configuration
+
+            ApplicationContext.configurePubSubSettings ()
+            |> ApplicationContext.setPubSubSettings
 
         let notLoggedIn = RequestErrors.UNAUTHORIZED "Basic" "Some Realm" "You must be logged in."
 
@@ -554,6 +558,7 @@ module Application =
                   "/auth"
                   [ GET
                         [ route "/me" Auth.Me
+                          route "/oidc/config" (Auth.OidcConfig configuration)
                           route "/login" Auth.Login
                           routef "/login/%s" (fun providerId -> Auth.LoginProvider providerId)
                           route "/logout" Auth.Logout ]

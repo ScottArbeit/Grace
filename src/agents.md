@@ -22,7 +22,8 @@ Treat this file as the canonical high-level brief; each project folder contains 
 - Default to F# for new code unless stakeholders specify another language; surface trade-offs if deviation seems necessary.
 - Use `task { }` for asynchronous workflows and keep side effects isolated; ensure any awaited operations remain within the computation expression.
 - Prefer a functional style with immutable data, small pure functions, and explicit dependencies passed as parameters.
-- Apply the modern indexer syntax (`myList[0]`) for lists, arrays, and sequences; avoid the legacy `.[ ]` form.
+- Prefer collections from `System.Collections.Generic` (e.g., `List<T>`, `Dictionary<K,V>`) over F#-specific collections unless pattern matching or discriminated unions are needed.
+- Apply the modern indexer syntax (`myList[0]`) for lists, arrays, and sequences; avoid the legacy `.[ ]` form. When procesing those collections, prefer LINQ-style syntax over F# list 
 - Structure modules so that domain types live in `Grace.Types`, shared helpers in `Grace.Shared`, and orchestration in the appropriate project-specific assembly.
 - Add lightweight inline comments when control flow or transformations are non-obvious, and log key variable values in functions longer than ten lines to aid diagnostics.
 - Format code with `fantomas` and include comprehensive, copy/paste-ready snippets when sharing examples.

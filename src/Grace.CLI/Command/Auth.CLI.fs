@@ -85,33 +85,52 @@ module Auth =
 
     let private defaultCliScopes () = [ "openid"; "profile"; "email"; "offline_access" ]
 
-    let private tryGetOidcCliConfig () =
+    let private buildOidcCliConfig (authority: string) (audience: string) (clientId: string) =
+        let redirectPort =
+            match tryGetEnv Constants.EnvironmentVariables.GraceAuthOidcCliRedirectPort with
+            | Some raw ->
+                match Int32.TryParse raw with
+                | true, parsed when parsed > 0 -> parsed
+                | _ -> 8391
+            | None -> 8391
+
+        let scopes =
+            match tryGetEnv Constants.EnvironmentVariables.GraceAuthOidcCliScopes with
+            | Some raw when not (String.IsNullOrWhiteSpace raw) -> parseScopes raw
+            | _ -> defaultCliScopes ()
+
+        { Authority = normalizeAuthority authority; Audience = audience.Trim(); ClientId = clientId.Trim(); RedirectPort = redirectPort; Scopes = scopes }
+
+    let private tryGetOidcCliConfigFromEnv () =
         match
             tryGetEnv Constants.EnvironmentVariables.GraceAuthOidcAuthority,
             tryGetEnv Constants.EnvironmentVariables.GraceAuthOidcAudience,
             tryGetEnv Constants.EnvironmentVariables.GraceAuthOidcCliClientId
         with
-        | Some authority, Some audience, Some clientId ->
-            let redirectPort =
-                match tryGetEnv Constants.EnvironmentVariables.GraceAuthOidcCliRedirectPort with
-                | Some raw ->
-                    match Int32.TryParse raw with
-                    | true, parsed when parsed > 0 -> parsed
-                    | _ -> 8391
-                | None -> 8391
-
-            let scopes =
-                match tryGetEnv Constants.EnvironmentVariables.GraceAuthOidcCliScopes with
-                | Some raw when not (String.IsNullOrWhiteSpace raw) -> parseScopes raw
-                | _ -> defaultCliScopes ()
-
-            Some
-                { Authority = normalizeAuthority authority
-                  Audience = audience.Trim()
-                  ClientId = clientId.Trim()
-                  RedirectPort = redirectPort
-                  Scopes = scopes }
+        | Some authority, Some audience, Some clientId -> Some(buildOidcCliConfig authority audience clientId)
         | _ -> None
+
+    let private tryGetOidcCliConfigFromServer (correlationId: string) =
+        task {
+            match tryGetEnv Constants.EnvironmentVariables.GraceServerUri with
+            | None -> return Ok None
+            | Some _ ->
+                let parameters = CommonParameters(CorrelationId = correlationId)
+                let! result = Grace.SDK.Auth.getOidcClientConfig parameters
+
+                match result with
+                | Ok graceReturnValue ->
+                    let config = graceReturnValue.ReturnValue
+                    return Ok(Some(buildOidcCliConfig config.Authority config.Audience config.CliClientId))
+                | Error error -> return Error error
+        }
+
+    let private tryGetOidcCliConfig (correlationId: string) =
+        task {
+            match tryGetOidcCliConfigFromEnv () with
+            | Some config -> return Ok(Some config)
+            | None -> return! tryGetOidcCliConfigFromServer correlationId
+        }
 
     let private tryGetOidcM2mConfig () =
         match
@@ -678,14 +697,18 @@ module Auth =
                             | Error message -> return Error message
                             | Ok token -> return Ok(Some token.AccessToken)
                     | None ->
-                        match tryGetOidcCliConfig () with
-                        | None ->
+                        let correlationId = ensureNonEmptyCorrelationId String.Empty
+                        let! cliConfigResult = tryGetOidcCliConfig correlationId
+
+                        match cliConfigResult with
+                        | Ok None ->
                             return
                                 Error
                                     $"Authentication is not configured. Set {Constants.EnvironmentVariables.GraceAuthOidcAuthority}, {Constants.EnvironmentVariables.GraceAuthOidcAudience}, and {Constants.EnvironmentVariables.GraceAuthOidcCliClientId} (or provide GRACE_TOKEN / M2M credentials)."
-                        | Some cliConfig ->
+                        | Ok(Some cliConfig) ->
                             let! tokenResult = tryGetInteractiveTokenAsync cliConfig
                             return tokenResult
+                        | Error error -> return Error error.Error
         }
 
     let private tryGetAccessTokenForSdk () =
@@ -818,8 +841,10 @@ module Auth =
             task {
                 let correlationId = parseResult |> getCorrelationId
 
-                match tryGetOidcCliConfig () with
-                | None ->
+                let! cliConfigResult = tryGetOidcCliConfig correlationId
+
+                match cliConfigResult with
+                | Ok None ->
                     return
                         Error(
                             GraceError.Create
@@ -827,7 +852,7 @@ module Auth =
                                 correlationId
                         )
                         |> renderOutput parseResult
-                | Some config ->
+                | Ok(Some config) ->
                     let desiredAuth =
                         let raw = parseResult.GetValue(LoginOptions.auth)
 
@@ -884,6 +909,7 @@ module Auth =
                                 return
                                     Ok(GraceReturnValue.Create "Authenticated." correlationId)
                                     |> renderOutput parseResult
+                | Error error -> return Error error |> renderOutput parseResult
             }
 
     type Status() =
@@ -913,7 +939,16 @@ module Auth =
 
                 let m2mConfigured = tryGetOidcM2mConfig () |> Option.isSome
 
-                let cliConfig = tryGetOidcCliConfig ()
+                let! cliConfigResult = tryGetOidcCliConfig correlationId
+                let mutable configError: string option = None
+
+                let cliConfig =
+                    match cliConfigResult with
+                    | Ok value -> value
+                    | Error error ->
+                        configError <- Some error.Error
+                        None
+
                 let mutable interactiveBundle: TokenBundle option = None
                 let mutable secureStoreError: string option = None
 
@@ -973,6 +1008,10 @@ module Auth =
                     | Some message -> AnsiConsole.MarkupLine($"[{Colors.Important}]Secure storage:[/] {Markup.Escape(message)}")
                     | None -> ()
 
+                    match configError with
+                    | Some message -> AnsiConsole.MarkupLine($"[{Colors.Important}]Auth config:[/] {Markup.Escape(message)}")
+                    | None -> ()
+
                     if not (List.isEmpty deprecatedSettings) then
                         let joined = String.Join(", ", deprecatedSettings)
                         AnsiConsole.MarkupLine($"[{Colors.Important}]Deprecated Microsoft settings ignored:[/] {Markup.Escape(joined)}")
@@ -991,12 +1030,14 @@ module Auth =
             task {
                 let correlationId = parseResult |> getCorrelationId
 
-                match tryGetOidcCliConfig () with
-                | None ->
+                let! cliConfigResult = tryGetOidcCliConfig correlationId
+
+                match cliConfigResult with
+                | Ok None ->
                     return
                         Error(GraceError.Create "Interactive authentication is not configured." correlationId)
                         |> renderOutput parseResult
-                | Some config ->
+                | Ok(Some config) ->
                     let! storeResult = verifySecureStoreAsync config
 
                     match storeResult with
@@ -1010,6 +1051,7 @@ module Auth =
                         return
                             Ok(GraceReturnValue.Create "Signed out." correlationId)
                             |> renderOutput parseResult
+                | Error error -> return Error error |> renderOutput parseResult
             }
 
     type WhoAmI() =

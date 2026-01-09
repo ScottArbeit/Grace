@@ -518,8 +518,9 @@ module DirectoryVersion =
                             tags.Add("RecursiveSize", $"{directoryVersionDto.RecursiveSize}")
 
                             // Write the JSON using MessagePack serialization for efficiency.
-                            let blockBlobOpenWriteOptions = BlockBlobOpenWriteOptions(Tags = tags)
-                            blockBlobOpenWriteOptions.HttpHeaders.ContentType <- "application/msgpack"
+                            let blockBlobOpenWriteOptions =
+                                BlockBlobOpenWriteOptions(Tags = tags, HttpHeaders = BlobHttpHeaders(ContentType = "application/msgpack"))
+
                             use! blobStream = directoryVersionBlobClient.OpenWriteAsync(overwrite = true, options = blockBlobOpenWriteOptions)
                             do! MessagePackSerializer.SerializeAsync(blobStream, subdirectoryVersionsList, messagePackSerializerOptions)
                             do! blobStream.DisposeAsync()

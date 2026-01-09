@@ -1,0 +1,38 @@
+{
+  "OwnerName": "",
+  "OrganizationName": "",
+  "RepositoryName": "",
+  "BranchName": "",
+  "DefaultBranchName": "",
+  "Themes": [
+    {
+      "Name": "Default",
+      "DisplayColorOptions": {
+        "added": "#00AF5F",
+        "changed": "#800080",
+        "deemphasized": "#808080",
+        "deleted": "#8B0000",
+        "error": "#FF0000",
+        "highlighted": "#FFFFFF",
+        "important": "#E5C07B",
+        "verbose": "#FF7E00"
+      }
+    }
+  ],
+  "LineEndings": "PlatformDependent",
+  "Prefetch": [
+    ""
+  ],
+  "RootDirectory": "D:\\Source\\Grace",
+  "StandardizedRootDirectory": "D:/Source/Grace",
+  "GraceDirectory": "D:\\Source\\Grace",
+  "ObjectDirectory": "D:\\Source\\Grace",
+  "GraceStatusFile": "gracestatus.msgpack",
+  "GraceObjectCacheFile": "graceObjectCache.msgpack",
+  "DirectoryVersionCache": "D:\\Source\\Grace",
+  "ConfigurationDirectory": "D:\\Source\\Grace",
+  "ObjectStorageProvider": "unknown",
+  "ServerUri": "http://127.0.0.1:5000",
+  "ProgramVersion": "0.1",
+  "ConfigurationVersion": ""
+}

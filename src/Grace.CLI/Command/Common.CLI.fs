@@ -240,6 +240,54 @@ module Common =
     /// Rewrites "[" to "[[" and "]" to "]]".
     let escapeBrackets s = s.ToString().Replace("[", "[[").Replace("]", "]]")
 
+    let private resolvedValueOptionNames =
+        [ OptionName.OwnerId
+          OptionName.OwnerName
+          OptionName.OrganizationId
+          OptionName.OrganizationName
+          OptionName.RepositoryId
+          OptionName.RepositoryName
+          OptionName.BranchId
+          OptionName.BranchName ]
+
+    let private shouldShowResolvedValues (parseResult: ParseResult) = resolvedValueOptionNames |> List.exists (isOptionPresent parseResult)
+
+    let private tryBuildResolvedValuesText (parseResult: ParseResult) =
+        if
+            isNull parseResult
+            || not (configurationFileExists ())
+            || not (shouldShowResolvedValues parseResult)
+        then
+            None
+        else
+            let graceIds = Services.getNormalizedIdsAndNames parseResult
+            let sb = stringBuilderPool.Get()
+
+            try
+                let appendLine label value = sb.AppendLine($"{label}: {value}") |> ignore
+
+                let appendName label (value: string) = if not <| String.IsNullOrWhiteSpace(value) then appendLine label value
+
+                if graceIds.HasOwner then
+                    appendLine "OwnerId" graceIds.OwnerId
+                    appendName "OwnerName" graceIds.OwnerName
+
+                if graceIds.HasOrganization then
+                    appendLine "OrganizationId" graceIds.OrganizationId
+                    appendName "OrganizationName" graceIds.OrganizationName
+
+                if graceIds.HasRepository then
+                    appendLine "RepositoryId" graceIds.RepositoryId
+                    appendName "RepositoryName" graceIds.RepositoryName
+
+                if graceIds.HasBranch then
+                    appendLine "BranchId" graceIds.BranchId
+                    appendName "BranchName" graceIds.BranchName
+
+                if sb.Length > 0 then Some(sb.ToString()) else None
+            finally
+                stringBuilderPool.Return sb
+
     /// Prints the ParseResult with markup.
     let printParseResult (parseResult: ParseResult) =
         if not <| isNull parseResult then
@@ -267,6 +315,13 @@ module Common =
                 AnsiConsole.MarkupLine($"[{Colors.Verbose}]Parameter values:[/]")
                 AnsiConsole.MarkupLine($"[{Colors.Verbose}]{escapeBrackets (sb.ToString())}[/]")
                 AnsiConsole.WriteLine()
+
+                match tryBuildResolvedValuesText parseResult with
+                | Some resolvedValues ->
+                    AnsiConsole.MarkupLine($"[{Colors.Verbose}]Resolved values:[/]")
+                    AnsiConsole.MarkupLine($"[{Colors.Verbose}]{escapeBrackets resolvedValues}[/]")
+                    AnsiConsole.WriteLine()
+                | None -> ()
             finally
                 stringBuilderPool.Return sb
 

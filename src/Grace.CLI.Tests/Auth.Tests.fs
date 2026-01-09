@@ -26,7 +26,8 @@ module AuthTests =
             withEnv Constants.EnvironmentVariables.GraceAuthOidcAudience None (fun () ->
                 withEnv Constants.EnvironmentVariables.GraceAuthOidcCliClientId None (fun () ->
                     withEnv Constants.EnvironmentVariables.GraceAuthOidcM2mClientId None (fun () ->
-                        withEnv Constants.EnvironmentVariables.GraceAuthOidcM2mClientSecret None action))))
+                        withEnv Constants.EnvironmentVariables.GraceAuthOidcM2mClientSecret None (fun () ->
+                            withEnv Constants.EnvironmentVariables.GraceServerUri None action)))))
 
     [<Test>]
     let ``tryGetAccessToken returns Error when auth is not configured`` () =

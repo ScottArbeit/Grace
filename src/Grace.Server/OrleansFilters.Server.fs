@@ -47,22 +47,37 @@ module Orleans =
 
                         let partitionKey =
                             match grainType with
+                            | StateName.AccessControl -> grainId.Key.ToString()
                             | StateName.Branch -> repositoryId ()
+                            | StateName.ConflictReceipt -> repositoryId ()
                             | StateName.Diff -> repositoryId ()
                             | StateName.DirectoryAppearance -> repositoryId ()
                             | StateName.DirectoryVersion -> repositoryId ()
                             | StateName.FileAppearance -> repositoryId ()
+                            | StateName.GateAttestation -> repositoryId ()
+                            | StateName.IntegrationCandidate -> repositoryId ()
                             | StateName.NamedSection -> repositoryId ()
                             | StateName.Organization -> StateName.Organization
                             | StateName.Owner -> StateName.Owner
                             | StateName.PersonalAccessToken -> grainId.Key.ToString()
+                            | StateName.Policy -> repositoryId ()
+                            | StateName.PromotionQueue -> repositoryId ()
                             | StateName.Reference -> repositoryId ()
                             | StateName.Reminder -> StateName.Reminder
                             | StateName.Repository -> organizationId ()
                             | StateName.RepositoryPermission -> repositoryId ()
-                            | StateName.AccessControl -> grainId.Key.ToString()
+                            | StateName.Review -> repositoryId ()
+                            | StateName.Stage0 -> repositoryId ()
                             | StateName.User -> StateName.User
-                            | _ -> raise (ArgumentException($"Unknown grain type in {nameof GracePartitionKeyProvider}: {grainType}"))
+                            | StateName.WorkItem -> repositoryId ()
+                            | _ ->
+                                raise (
+                                    ArgumentException(
+                                        $"In {typeof<GracePartitionKeyProvider>.Name}.GetPartitionKey: No partition key assigned for grain type: {grainType}."
+                                    )
+                                )
+
+                                String.Empty
 
                         let correlationid = getCorrelationId ()
 
