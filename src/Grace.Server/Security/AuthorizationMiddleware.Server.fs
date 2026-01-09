@@ -42,25 +42,50 @@ module AuthorizationMiddleware =
             let headText = formatResource head
             if tail.IsEmpty then headText else $"{headText} (+{tail.Length} more)"
 
-    let private logMissingAuthentication (context: HttpContext) (operation: Operation) =
+    let private formatPrincipal (principal: Principal) = $"{principal.PrincipalType}:{principal.PrincipalId}"
+
+    let private formatPrincipals (principals: Principal list) =
+        match principals with
+        | [] -> "None"
+        | _ -> principals |> List.map formatPrincipal |> String.concat ", "
+
+    let private tryGetIdentityName (context: HttpContext) =
+        let identity = context.User.Identity
+
+        if isNull identity || String.IsNullOrWhiteSpace identity.Name then
+            None
+        else
+            Some identity.Name
+
+    let private formatPrincipalSummary (context: HttpContext) (principals: Principal list) =
+        if principals.IsEmpty then
+            match tryGetIdentityName context with
+            | Some name -> $"Identity:{name}"
+            | None -> "None"
+        else
+            formatPrincipals principals
+
+    let private logMissingAuthentication (context: HttpContext) (operation: Operation) (principalSummary: string) =
         if log.IsEnabled(LogLevel.Warning) then
             log.LogWarning(
-                "{CurrentInstant}: Node: {HostName}; CorrelationId: {CorrelationId}; Authorization: Authentication required for {operation}. Path: {path}.",
+                "{CurrentInstant}: Node: {HostName}; CorrelationId: {CorrelationId}; Authorization: Authentication required for {operation}. Principal: {principal}. Path: {path}.",
                 getCurrentInstantExtended (),
                 getMachineName,
                 getCorrelationId context,
                 operation,
+                principalSummary,
                 context.Request.Path.ToString()
             )
 
-    let private logDenied (context: HttpContext) (operation: Operation) (resourceSummary: string) (reason: string) =
+    let private logDenied (context: HttpContext) (operation: Operation) (principalSummary: string) (resourceSummary: string) (reason: string) =
         if log.IsEnabled(LogLevel.Warning) then
             log.LogWarning(
-                "{CurrentInstant}: Node: {HostName}; CorrelationId: {CorrelationId}; Authorization denied for {operation} on {resourceSummary}. Reason: {reason}. Path: {path}.",
+                "{CurrentInstant}: Node: {HostName}; CorrelationId: {CorrelationId}; Authorization denied for {operation} by {principal} on {resourceSummary}. Reason: {reason}. Path: {path}.",
                 getCurrentInstantExtended (),
                 getMachineName,
                 getCorrelationId context,
                 operation,
+                principalSummary,
                 resourceSummary,
                 reason,
                 context.Request.Path.ToString()
@@ -71,10 +96,13 @@ module AuthorizationMiddleware =
             task {
                 match PrincipalMapper.tryGetUserId context.User with
                 | None ->
-                    logMissingAuthentication context operation
+                    let principalSummary = PrincipalMapper.getPrincipals context.User |> formatPrincipalSummary context
+
+                    logMissingAuthentication context operation principalSummary
                     return! RequestErrors.UNAUTHORIZED "Grace" "Access" "Authentication required." next context
                 | Some _ ->
                     let principals = PrincipalMapper.getPrincipals context.User
+                    let principalSummary = formatPrincipals principals
                     let claims = PrincipalMapper.getEffectiveClaims context.User
                     let evaluator = context.RequestServices.GetRequiredService<IGracePermissionEvaluator>()
                     let! resource = resourceFromContext context
@@ -83,7 +111,7 @@ module AuthorizationMiddleware =
                     match decision with
                     | Allowed _ -> return! next context
                     | Denied reason ->
-                        logDenied context operation (formatResource resource) reason
+                        logDenied context operation principalSummary (formatResource resource) reason
                         return! forbidden reason next context
             }
 
@@ -92,27 +120,30 @@ module AuthorizationMiddleware =
             task {
                 match PrincipalMapper.tryGetUserId context.User with
                 | None ->
-                    logMissingAuthentication context operation
+                    let principalSummary = PrincipalMapper.getPrincipals context.User |> formatPrincipalSummary context
+
+                    logMissingAuthentication context operation principalSummary
                     return! RequestErrors.UNAUTHORIZED "Grace" "Access" "Authentication required." next context
                 | Some _ ->
                     let principals = PrincipalMapper.getPrincipals context.User
+                    let principalSummary = formatPrincipals principals
                     let claims = PrincipalMapper.getEffectiveClaims context.User
                     let evaluator = context.RequestServices.GetRequiredService<IGracePermissionEvaluator>()
                     let! resources = resourcesFromContext context
 
-                    let rec checkResources remaining =
-                        task {
-                            match remaining with
-                            | [] -> return! next context
-                            | resource :: rest ->
-                                let! decision = evaluator.CheckAsync(principals, claims, operation, resource)
+                    let mutable deniedReason: string option = None
 
-                                match decision with
-                                | Allowed _ -> return! checkResources rest
-                                | Denied reason ->
-                                    logDenied context operation (formatResourceSummary resources) reason
-                                    return! forbidden reason next context
-                        }
+                    for resource in resources do
+                        if deniedReason.IsNone then
+                            let! decision = evaluator.CheckAsync(principals, claims, operation, resource)
 
-                    return! checkResources resources
+                            match decision with
+                            | Allowed _ -> ()
+                            | Denied reason -> deniedReason <- Some reason
+
+                    match deniedReason with
+                    | None -> return! next context
+                    | Some reason ->
+                        logDenied context operation principalSummary (formatResourceSummary resources) reason
+                        return! forbidden reason next context
             }
