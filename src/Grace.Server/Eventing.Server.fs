@@ -99,7 +99,7 @@ module EventingPublisher =
         | ReviewEvent reviewEvent ->
             let ownerId, organizationId, repositoryId =
                 match reviewEvent.Event with
-                | Review.PacketUpserted packet -> packet.OwnerId, packet.OrganizationId, packet.RepositoryId
+                | ReviewEventType.PacketUpserted packet -> packet.OwnerId, packet.OrganizationId, packet.RepositoryId
                 | _ ->
                     OwnerId.Empty,
                     OrganizationId.Empty,
