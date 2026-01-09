@@ -21,6 +21,17 @@ module HelpDoesNotReadConfigTests =
         finally
             Console.SetOut(originalOut)
 
+    let private captureOutput (action: unit -> unit) =
+        use writer = new StringWriter()
+        let originalOut = Console.Out
+
+        try
+            Console.SetOut(writer)
+            action ()
+            writer.ToString()
+        finally
+            Console.SetOut(originalOut)
+
 
     let private withTempDir (action: string -> unit) =
         let tempDir = Path.Combine(Path.GetTempPath(), $"grace-cli-tests-{Guid.NewGuid():N}")
@@ -29,6 +40,7 @@ module HelpDoesNotReadConfigTests =
 
         try
             Environment.CurrentDirectory <- tempDir
+            resetConfiguration ()
             action tempDir
         finally
             Environment.CurrentDirectory <- originalDir
@@ -90,6 +102,25 @@ module HelpDoesNotReadConfigTests =
             output |> should contain "[default: current OrganizationId]"
             output |> should contain "[default: new Guid]"
             output |> should not' (contain "00000000-0000-0000-0000-0000000000000"))
+
+    [<Test>]
+    let ``verbose parse result shows resolved ids`` () =
+        withTempDir (fun root ->
+            let ownerId = Guid.NewGuid()
+            let orgId = Guid.NewGuid()
+            let repoId = Guid.NewGuid()
+            let branchId = Guid.NewGuid()
+            writeValidConfig root ownerId orgId repoId branchId
+
+            let parseResult = GraceCommand.rootCommand.Parse([| "access"; "grant-role" |])
+
+            let output = captureOutput (fun () -> Common.printParseResult parseResult)
+
+            output |> should contain "Resolved values:"
+            output |> should contain $"{ownerId}"
+            output |> should contain $"{orgId}"
+            output |> should contain $"{repoId}"
+            output |> should contain $"{branchId}")
 
     [<Test>]
     let ``getNormalizedIdsAndNames falls back to config ids`` () =

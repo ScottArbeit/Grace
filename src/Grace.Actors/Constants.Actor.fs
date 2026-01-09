@@ -117,6 +117,9 @@ module Constants =
         let Branch = "Branch"
 
         [<Literal>]
+        let ConflictReceipt = "ConflictReceipt"
+
+        [<Literal>]
         let Diff = "Diff"
 
         [<Literal>]
@@ -129,16 +132,13 @@ module Constants =
         let FileAppearance = "FileApp"
 
         [<Literal>]
-        let NamedSection = "NamedSection"
+        let GateAttestation = "GateAttestation"
 
         [<Literal>]
         let IntegrationCandidate = "IntegrationCandidate"
 
         [<Literal>]
-        let GateAttestation = "GateAttestation"
-
-        [<Literal>]
-        let ConflictReceipt = "ConflictReceipt"
+        let NamedSection = "NamedSection"
 
         [<Literal>]
         let Organization = "Organization"

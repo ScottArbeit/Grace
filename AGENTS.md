@@ -1,10 +1,12 @@
 # Agent Instructions
 
-Other `AGENTS.md` files exist in subdirectories, refer to them for more specific context.
+Other `AGENTS.md` files exist in subdirectories, refer to them for more specific
+context.
 
 ## Issue Tracking
 
 This project uses **bd (beads)** for issue tracking.
+Always use `bd` commands to manage your work.
 Run `bd prime` for workflow context, or install hooks (`bd hooks install`) for auto-injection.
 
 **Quick reference:**

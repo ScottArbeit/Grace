@@ -21,6 +21,7 @@
         <Compile Include="..\Grace.Shared\Utilities.Shared.fs" Link="Utilities.Shared.fs" />
         <Compile Include="Types.Types.fs" />
         <Compile Include="Authorization.Types.fs" />
+        <Compile Include="Auth.Types.fs" />
         <Compile Include="PersonalAccessToken.Types.fs" />
         <Compile Include="Owner.Types.fs" />
         <Compile Include="Organization.Types.fs" />

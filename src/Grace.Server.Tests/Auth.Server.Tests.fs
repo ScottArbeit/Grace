@@ -3,10 +3,13 @@ namespace Grace.Server.Tests
 open Grace.Server.Tests.Services
 open Grace.Server.Security
 open Grace.Shared
+open Grace.Shared.Constants
 open Grace.Shared.Utilities
 open Grace.Types.PersonalAccessToken
+open Grace.Types.Auth
 open Grace.Types.Types
 open NUnit.Framework
+open System
 open System.Net
 open System.Net.Http
 open System.Net.Http.Headers
@@ -32,6 +35,40 @@ type AuthEndpoints() =
         task {
             let! response = Client.GetAsync("/auth/login/microsoft")
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.NotFound))
+        }
+
+    [<Test>]
+    member _.AuthOidcConfigReturnsConfiguredValues() =
+        task {
+            let rawAuthority = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.GraceAuthOidcAuthority)
+
+            let rawAudience = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.GraceAuthOidcAudience)
+
+            let rawClientId = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.GraceAuthOidcCliClientId)
+
+            Assert.That(rawAuthority, Is.Not.Null.And.Not.Empty)
+            Assert.That(rawAudience, Is.Not.Null.And.Not.Empty)
+            Assert.That(rawClientId, Is.Not.Null.And.Not.Empty)
+
+            let normalizeAuthority (value: string) =
+                let trimmed = value.Trim()
+
+                if trimmed.EndsWith("/", StringComparison.Ordinal) then
+                    trimmed
+                else
+                    $"{trimmed}/"
+
+            use unauthenticatedClient = new HttpClient()
+            unauthenticatedClient.BaseAddress <- Client.BaseAddress
+
+            let! response = unauthenticatedClient.GetAsync("/auth/oidc/config")
+            response.EnsureSuccessStatusCode() |> ignore
+
+            let! returnValue = deserializeContent<GraceReturnValue<OidcClientConfig>> response
+
+            Assert.That(returnValue.ReturnValue.Authority, Is.EqualTo(normalizeAuthority rawAuthority))
+            Assert.That(returnValue.ReturnValue.Audience, Is.EqualTo(rawAudience.Trim()))
+            Assert.That(returnValue.ReturnValue.CliClientId, Is.EqualTo(rawClientId.Trim()))
         }
 
     [<Test>]

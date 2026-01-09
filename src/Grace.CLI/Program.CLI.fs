@@ -545,7 +545,7 @@ module GraceCommand =
                                 else
                                     StringComparison.InvariantCulture
 
-                            let allowedCommands = [ "config"; "history"; "auth" ]
+                            let allowedCommands = [ "config"; "history"; "auth"; "connect" ]
 
                             let isAllowed =
                                 let command = parseResult.CommandResult.Command
