@@ -42,6 +42,17 @@ module HelpDoesNotReadConfigTests =
             Console.SetOut(originalOut)
             setAnsiConsoleOutput originalOut
 
+    let private captureOutput (action: unit -> unit) =
+        use writer = new StringWriter()
+        let originalOut = Console.Out
+
+        try
+            Console.SetOut(writer)
+            action ()
+            writer.ToString()
+        finally
+            Console.SetOut(originalOut)
+
 
     let private withTempDir (action: string -> unit) =
         let tempDir = Path.Combine(Path.GetTempPath(), $"grace-cli-tests-{Guid.NewGuid():N}")

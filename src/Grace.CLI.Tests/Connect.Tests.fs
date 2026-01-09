@@ -19,7 +19,6 @@ module ConnectTests =
         let settings = AnsiConsoleSettings()
         settings.Out <- AnsiConsoleOutput(writer)
         AnsiConsole.Console <- AnsiConsole.Create(settings)
-
     let private runWithCapturedOutput (args: string array) =
         use writer = new StringWriter()
         let originalOut = Console.Out
