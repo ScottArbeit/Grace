@@ -41,6 +41,15 @@ module Constants =
         let GlobalLock = "GlobalLockActor"
 
         [<Literal>]
+        let IntegrationCandidate = "IntegrationCandidateActor"
+
+        [<Literal>]
+        let GateAttestation = "GateAttestationActor"
+
+        [<Literal>]
+        let ConflictReceipt = "ConflictReceiptActor"
+
+        [<Literal>]
         let GrainRepository = "GrainRepository"
 
         [<Literal>]
@@ -68,6 +77,18 @@ module Constants =
         let PromotionGroup = "PromotionGroupActor"
 
         [<Literal>]
+        let PromotionQueue = "PromotionQueueActor"
+
+        [<Literal>]
+        let Policy = "PolicyActor"
+
+        [<Literal>]
+        let Review = "ReviewActor"
+
+        [<Literal>]
+        let Stage0 = "Stage0Actor"
+
+        [<Literal>]
         let Reference = "ReferenceActor"
 
         [<Literal>]
@@ -84,6 +105,9 @@ module Constants =
 
         [<Literal>]
         let User = "UserActor"
+
+        [<Literal>]
+        let WorkItem = "WorkItemActor"
 
     module StateName =
         [<Literal>]
@@ -108,6 +132,15 @@ module Constants =
         let NamedSection = "NamedSection"
 
         [<Literal>]
+        let IntegrationCandidate = "IntegrationCandidate"
+
+        [<Literal>]
+        let GateAttestation = "GateAttestation"
+
+        [<Literal>]
+        let ConflictReceipt = "ConflictReceipt"
+
+        [<Literal>]
         let Organization = "Organization"
 
         [<Literal>]
@@ -118,6 +151,18 @@ module Constants =
 
         [<Literal>]
         let PromotionGroup = "PromotionGroup"
+
+        [<Literal>]
+        let PromotionQueue = "PromotionQueue"
+
+        [<Literal>]
+        let Policy = "Policy"
+
+        [<Literal>]
+        let Review = "Review"
+
+        [<Literal>]
+        let Stage0 = "Stage0"
 
         [<Literal>]
         let Reference = "Ref"
@@ -133,6 +178,9 @@ module Constants =
 
         [<Literal>]
         let User = "User"
+
+        [<Literal>]
+        let WorkItem = "WorkItem"
 
     /// Constants for the different types of reminders.
     module ReminderType =

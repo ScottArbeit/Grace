@@ -64,6 +64,30 @@ module Types =
     /// The Id of the reference.
     type ReferenceId = Guid
 
+    /// The Id of the work item.
+    type WorkItemId = Guid
+
+    /// The Id of the integration candidate.
+    type CandidateId = Guid
+
+    /// The Id of the review packet.
+    type ReviewPacketId = Guid
+
+    /// The Id of the review checkpoint.
+    type ReviewCheckpointId = Guid
+
+    /// The Id of the gate attestation.
+    type GateAttestationId = Guid
+
+    /// The Id of a Stage 0 analysis.
+    type Stage0AnalysisId = Guid
+
+    /// The Id of an analysis receipt.
+    type AnalysisReceiptId = Guid
+
+    /// The Id of a conflict resolution receipt.
+    type ConflictReceiptId = Guid
+
     /// The text of the reference, generally submitted as the -m parameter in `grace save/checkpoint/commit/etc.`.
     type ReferenceText = string
 

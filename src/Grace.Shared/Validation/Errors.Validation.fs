@@ -645,6 +645,194 @@ module Errors =
             | Some error -> PromotionGroupError.getErrorMessage error
             | None -> String.Empty
 
+    type WorkItemError =
+        | DuplicateCorrelationId
+        | FailedWhileApplyingEvent
+        | WorkItemAlreadyExists
+        | WorkItemDoesNotExist
+        | InvalidWorkItemId
+        | InvalidReferenceId
+        | InvalidPromotionGroupId
+        | InvalidStatus
+
+        interface IErrorDiscriminatedUnion
+
+        static member getErrorMessage(workItemError: WorkItemError) : string =
+            match workItemError with
+            | DuplicateCorrelationId -> "A command with this correlation ID has already been processed."
+            | FailedWhileApplyingEvent -> "An error occurred while processing the work item event."
+            | WorkItemAlreadyExists -> "A work item with this ID already exists."
+            | WorkItemDoesNotExist -> "The specified work item does not exist."
+            | InvalidWorkItemId -> "The work item ID is invalid."
+            | InvalidReferenceId -> "The reference ID is invalid."
+            | InvalidPromotionGroupId -> "The promotion group ID is invalid."
+            | InvalidStatus -> "The work item status is invalid."
+
+        static member getErrorMessage(workItemError: WorkItemError option) : string =
+            match workItemError with
+            | Some error -> WorkItemError.getErrorMessage error
+            | None -> String.Empty
+
+    type PolicyError =
+        | DuplicateCorrelationId
+        | FailedWhileApplyingEvent
+        | PolicySnapshotAlreadyExists
+        | PolicySnapshotDoesNotExist
+        | InvalidTargetBranchId
+        | InvalidPolicySnapshotId
+
+        interface IErrorDiscriminatedUnion
+
+        static member getErrorMessage(policyError: PolicyError) : string =
+            match policyError with
+            | DuplicateCorrelationId -> "A command with this correlation ID has already been processed."
+            | FailedWhileApplyingEvent -> "An error occurred while processing the policy event."
+            | PolicySnapshotAlreadyExists -> "The policy snapshot already exists."
+            | PolicySnapshotDoesNotExist -> "The policy snapshot does not exist."
+            | InvalidTargetBranchId -> "The target branch ID is invalid."
+            | InvalidPolicySnapshotId -> "The policy snapshot ID is invalid."
+
+        static member getErrorMessage(policyError: PolicyError option) : string =
+            match policyError with
+            | Some error -> PolicyError.getErrorMessage error
+            | None -> String.Empty
+
+    type ReviewError =
+        | DuplicateCorrelationId
+        | FailedWhileApplyingEvent
+        | ReviewPacketDoesNotExist
+        | FindingDoesNotExist
+        | InvalidCandidateId
+        | InvalidFindingId
+        | InvalidReferenceId
+        | InvalidPolicySnapshotId
+        | InvalidResolutionState
+        | InvalidChapterId
+
+        interface IErrorDiscriminatedUnion
+
+        static member getErrorMessage(reviewError: ReviewError) : string =
+            match reviewError with
+            | DuplicateCorrelationId -> "A command with this correlation ID has already been processed."
+            | FailedWhileApplyingEvent -> "An error occurred while processing the review event."
+            | ReviewPacketDoesNotExist -> "The review packet does not exist."
+            | FindingDoesNotExist -> "The specified finding does not exist."
+            | InvalidCandidateId -> "The candidate ID is invalid."
+            | InvalidFindingId -> "The finding ID is invalid."
+            | InvalidReferenceId -> "The reference ID is invalid."
+            | InvalidPolicySnapshotId -> "The policy snapshot ID is invalid."
+            | InvalidResolutionState -> "The resolution state is invalid."
+            | InvalidChapterId -> "The chapter ID is invalid."
+
+        static member getErrorMessage(reviewError: ReviewError option) : string =
+            match reviewError with
+            | Some error -> ReviewError.getErrorMessage error
+            | None -> String.Empty
+
+    type Stage0Error =
+        | DuplicateCorrelationId
+        | FailedWhileApplyingEvent
+
+        interface IErrorDiscriminatedUnion
+
+        static member getErrorMessage(stage0Error: Stage0Error) : string =
+            match stage0Error with
+            | DuplicateCorrelationId -> "A command with this correlation ID has already been processed."
+            | FailedWhileApplyingEvent -> "An error occurred while processing the Stage 0 analysis event."
+
+        static member getErrorMessage(stage0Error: Stage0Error option) : string =
+            match stage0Error with
+            | Some error -> Stage0Error.getErrorMessage error
+            | None -> String.Empty
+
+    type QueueError =
+        | DuplicateCorrelationId
+        | FailedWhileApplyingEvent
+        | QueueAlreadyInitialized
+        | QueueNotInitialized
+        | CandidateNotInQueue
+        | InvalidTargetBranchId
+        | InvalidCandidateId
+        | InvalidPolicySnapshotId
+
+        interface IErrorDiscriminatedUnion
+
+        static member getErrorMessage(queueError: QueueError) : string =
+            match queueError with
+            | DuplicateCorrelationId -> "A command with this correlation ID has already been processed."
+            | FailedWhileApplyingEvent -> "An error occurred while processing the queue event."
+            | QueueAlreadyInitialized -> "The promotion queue is already initialized."
+            | QueueNotInitialized -> "The promotion queue has not been initialized."
+            | CandidateNotInQueue -> "The specified candidate is not in the queue."
+            | InvalidTargetBranchId -> "The target branch ID is invalid."
+            | InvalidCandidateId -> "The candidate ID is invalid."
+            | InvalidPolicySnapshotId -> "The policy snapshot ID is invalid."
+
+        static member getErrorMessage(queueError: QueueError option) : string =
+            match queueError with
+            | Some error -> QueueError.getErrorMessage error
+            | None -> String.Empty
+
+    type CandidateError =
+        | DuplicateCorrelationId
+        | FailedWhileApplyingEvent
+        | CandidateAlreadyExists
+        | CandidateDoesNotExist
+
+        interface IErrorDiscriminatedUnion
+
+        static member getErrorMessage(candidateError: CandidateError) : string =
+            match candidateError with
+            | DuplicateCorrelationId -> "A command with this correlation ID has already been processed."
+            | FailedWhileApplyingEvent -> "An error occurred while processing the candidate event."
+            | CandidateAlreadyExists -> "The integration candidate already exists."
+            | CandidateDoesNotExist -> "The integration candidate does not exist."
+
+        static member getErrorMessage(candidateError: CandidateError option) : string =
+            match candidateError with
+            | Some error -> CandidateError.getErrorMessage error
+            | None -> String.Empty
+
+    type GateAttestationError =
+        | DuplicateCorrelationId
+        | FailedWhileApplyingEvent
+        | GateAttestationAlreadyExists
+        | GateAttestationDoesNotExist
+
+        interface IErrorDiscriminatedUnion
+
+        static member getErrorMessage(attestationError: GateAttestationError) : string =
+            match attestationError with
+            | DuplicateCorrelationId -> "A command with this correlation ID has already been processed."
+            | FailedWhileApplyingEvent -> "An error occurred while processing the gate attestation event."
+            | GateAttestationAlreadyExists -> "The gate attestation already exists."
+            | GateAttestationDoesNotExist -> "The gate attestation does not exist."
+
+        static member getErrorMessage(attestationError: GateAttestationError option) : string =
+            match attestationError with
+            | Some error -> GateAttestationError.getErrorMessage error
+            | None -> String.Empty
+
+    type ConflictReceiptError =
+        | DuplicateCorrelationId
+        | FailedWhileApplyingEvent
+        | ConflictReceiptAlreadyExists
+        | ConflictReceiptDoesNotExist
+
+        interface IErrorDiscriminatedUnion
+
+        static member getErrorMessage(receiptError: ConflictReceiptError) : string =
+            match receiptError with
+            | DuplicateCorrelationId -> "A command with this correlation ID has already been processed."
+            | FailedWhileApplyingEvent -> "An error occurred while processing the conflict receipt event."
+            | ConflictReceiptAlreadyExists -> "The conflict receipt already exists."
+            | ConflictReceiptDoesNotExist -> "The conflict receipt does not exist."
+
+        static member getErrorMessage(receiptError: ConflictReceiptError option) : string =
+            match receiptError with
+            | Some error -> ConflictReceiptError.getErrorMessage error
+            | None -> String.Empty
+
     type TestError =
         | TestFailed
 
@@ -700,6 +888,14 @@ module Errors =
         | :? RepositoryError as repositoryError -> RepositoryError.getErrorMessage repositoryError
         | :? StorageError as storageError -> StorageError.getErrorMessage storageError
         | :? TestError as testError -> TestError.getErrorMessage testError
+        | :? WorkItemError as workItemError -> WorkItemError.getErrorMessage workItemError
+        | :? PolicyError as policyError -> PolicyError.getErrorMessage policyError
+        | :? ReviewError as reviewError -> ReviewError.getErrorMessage reviewError
+        | :? Stage0Error as stage0Error -> Stage0Error.getErrorMessage stage0Error
+        | :? QueueError as queueError -> QueueError.getErrorMessage queueError
+        | :? CandidateError as candidateError -> CandidateError.getErrorMessage candidateError
+        | :? GateAttestationError as attestationError -> GateAttestationError.getErrorMessage attestationError
+        | :? ConflictReceiptError as receiptError -> ConflictReceiptError.getErrorMessage receiptError
         | _ -> String.Empty
 
     /// Given an optional error object, returns the corresponding error message string, or an empty string if None.

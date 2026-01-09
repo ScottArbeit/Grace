@@ -38,8 +38,11 @@
 		<Compile Include="Command\DirectoryVersion.CLI.fs" />
 		<Compile Include="Command\Watch.CLI.fs" />
 		<Compile Include="Command\Maintenance.CLI.fs" />
-		<Compile Include="Command\PromotionGroup.CLI.fs" />
-		<Compile Include="Command\Access.CLI.fs" />
+                <Compile Include="Command\PromotionGroup.CLI.fs" />
+                <Compile Include="Command\WorkItem.CLI.fs" />
+                <Compile Include="Command\Review.CLI.fs" />
+                <Compile Include="Command\Queue.CLI.fs" />
+                <Compile Include="Command\Access.CLI.fs" />
 		<Compile Include="Command\Admin.CLI.fs" />
 		<Compile Include="HistoryStorage.CLI.fs" />
 		<Compile Include="Command\History.CLI.fs" />
@@ -76,7 +79,10 @@
 		<ProjectReference Include="..\Grace.Shared\Grace.Shared.fsproj" />
 		<ProjectReference Include="..\Grace.Types\Grace.Types.fsproj" />
 	</ItemGroup>
-	<ItemGroup>
-		<PackageReference Update="FSharp.Core" Version="10.0.100" />
-	</ItemGroup>
+  <ItemGroup>
+    <PackageReference Update="FSharp.Core" Version="10.0.100" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="Grace.CLI.Tests" />
+  </ItemGroup>
 </Project>

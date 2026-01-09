@@ -375,6 +375,76 @@ module Application =
                           route "/delete" PromotionGroup.Delete
                           |> addMetadata typeof<PromotionGroup.DeletePromotionGroupParameters> ] ]
               subRoute
+                  "/work"
+                  [ POST
+                        [ route "/create" WorkItem.Create
+                          |> addMetadata typeof<WorkItem.CreateWorkItemParameters>
+
+                          route "/get" WorkItem.Get |> addMetadata typeof<WorkItem.GetWorkItemParameters>
+
+                          route "/update" WorkItem.Update
+                          |> addMetadata typeof<WorkItem.UpdateWorkItemParameters>
+
+                          route "/link/reference" WorkItem.LinkReference
+                          |> addMetadata typeof<WorkItem.LinkReferenceParameters>
+
+                          route "/link/promotion-group" WorkItem.LinkPromotionGroup
+                          |> addMetadata typeof<WorkItem.LinkPromotionGroupParameters> ] ]
+              subRoute
+                  "/policy"
+                  [ POST
+                        [ route "/current" Policy.GetCurrent
+                          |> addMetadata typeof<Policy.GetPolicyParameters>
+
+                          route "/acknowledge" Policy.Acknowledge
+                          |> addMetadata typeof<Policy.AcknowledgePolicyParameters> ] ]
+              subRoute
+                  "/review"
+                  [ POST
+                        [ route "/packet" Review.GetPacket
+                          |> addMetadata typeof<Review.GetReviewPacketParameters>
+
+                          route "/checkpoint" Review.Checkpoint
+                          |> addMetadata typeof<Review.ReviewCheckpointParameters>
+
+                          route "/resolve" Review.ResolveFinding
+                          |> addMetadata typeof<Review.ResolveFindingParameters>
+
+                          route "/deepen" Review.Deepen
+                          |> addMetadata typeof<Review.DeepenReviewParameters> ] ]
+              subRoute
+                  "/queue"
+                  [ POST
+                        [ route "/status" Queue.Status |> addMetadata typeof<Queue.QueueStatusParameters>
+
+                          route "/enqueue" Queue.Enqueue |> addMetadata typeof<Queue.EnqueueParameters>
+
+                          route "/pause" Queue.Pause |> addMetadata typeof<Queue.QueueActionParameters>
+
+                          route "/resume" Queue.Resume |> addMetadata typeof<Queue.QueueActionParameters>
+
+                          route "/dequeue" Queue.Dequeue
+                          |> addMetadata typeof<Queue.CandidateActionParameters> ] ]
+              subRoute
+                  "/candidate"
+                  [ POST
+                        [ route "/get" Queue.GetCandidate |> addMetadata typeof<Queue.CandidateParameters>
+
+                          route "/cancel" Queue.CancelCandidate
+                          |> addMetadata typeof<Queue.CandidateActionParameters>
+
+                          route "/retry" Queue.RetryCandidate
+                          |> addMetadata typeof<Queue.CandidateActionParameters>
+
+                          route "/required-actions" Queue.RequiredActions
+                          |> addMetadata typeof<Queue.CandidateParameters>
+
+                          route "/attestations" Queue.Attestations
+                          |> addMetadata typeof<Queue.CandidateAttestationsParameters>
+
+                          route "/gate/rerun" Queue.RerunGate
+                          |> addMetadata typeof<Queue.CandidateGateRerunParameters> ] ]
+              subRoute
                   "/repository"
                   [ POST
                         [ route "/create" Repository.Create
@@ -845,6 +915,9 @@ module Application =
                 //        options.Configuration.AbortOnConnectFail <- false
                 //)
                 .AddJsonProtocol(fun options -> options.PayloadSerializerOptions <- Constants.JsonSerializerOptions)
+            |> ignore
+
+            services.AddSingleton<ReviewModels.IReviewModelProvider>(fun _ -> ReviewModels.createProvider configuration)
             |> ignore
 
             logToConsole $"Exiting ConfigureServices."

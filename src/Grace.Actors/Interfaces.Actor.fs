@@ -13,6 +13,10 @@ open Grace.Types.Repository
 open Grace.Types.Organization
 open Grace.Types.Owner
 open Grace.Types.PersonalAccessToken
+open Grace.Types.Policy
+open Grace.Types.Review
+open Grace.Types.Queue
+open Grace.Types.WorkItem
 open Grace.Types.Types
 open Grace.Shared.Utilities
 open NodaTime
@@ -360,6 +364,139 @@ module Interfaces =
 
         /// Validates incoming commands and converts them to events that are stored in the database.
         abstract member Handle: command: PromotionGroupCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
+
+    /// Defines the operations for the Policy actor.
+    [<Interface>]
+    type IPolicyActor =
+        inherit IGrainWithGuidKey
+
+        /// Returns the current policy snapshot.
+        abstract member GetCurrent: correlationId: CorrelationId -> Task<PolicySnapshot option>
+
+        /// Returns all policy snapshots.
+        abstract member GetSnapshots: correlationId: CorrelationId -> Task<IReadOnlyList<PolicySnapshot>>
+
+        /// Returns policy acknowledgements.
+        abstract member GetAcknowledgements: correlationId: CorrelationId -> Task<IReadOnlyList<PolicyAcknowledgement>>
+
+        /// Validates incoming commands and converts them to events that are stored in the database.
+        abstract member Handle: command: PolicyCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
+
+    /// Defines the operations for the Review actor.
+    [<Interface>]
+    type IReviewActor =
+        inherit IGrainWithGuidKey
+
+        /// Returns the current review packet.
+        abstract member GetPacket: correlationId: CorrelationId -> Task<ReviewPacket option>
+
+        /// Returns checkpoints for this review target.
+        abstract member GetCheckpoints: correlationId: CorrelationId -> Task<IReadOnlyList<ReviewCheckpoint>>
+
+        /// Validates incoming commands and converts them to events that are stored in the database.
+        abstract member Handle: command: ReviewCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
+
+    /// Defines the operations for the Stage 0 analysis actor.
+    [<Interface>]
+    type IStage0Actor =
+        inherit IGrainWithGuidKey
+
+        /// Returns true if this Stage 0 analysis already exists in the database.
+        abstract member Exists: correlationId: CorrelationId -> Task<bool>
+
+        /// Returns the current Stage 0 analysis.
+        abstract member Get: correlationId: CorrelationId -> Task<Stage0Analysis option>
+
+        /// Returns the list of events handled by this Stage 0 analysis.
+        abstract member GetEvents: correlationId: CorrelationId -> Task<IReadOnlyList<Stage0Event>>
+
+        /// Validates incoming commands and converts them to events that are stored in the database.
+        abstract member Handle: command: Stage0Command -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
+
+    /// Defines the operations for the PromotionQueue actor.
+    [<Interface>]
+    type IPromotionQueueActor =
+        inherit IGrainWithGuidKey
+
+        /// Returns true if this promotion queue already exists in the database.
+        abstract member Exists: correlationId: CorrelationId -> Task<bool>
+
+        /// Returns the current state of the promotion queue.
+        abstract member Get: correlationId: CorrelationId -> Task<PromotionQueue>
+
+        /// Returns the list of events handled by this promotion queue.
+        abstract member GetEvents: correlationId: CorrelationId -> Task<IReadOnlyList<PromotionQueueEvent>>
+
+        /// Validates incoming commands and converts them to events that are stored in the database.
+        abstract member Handle: command: PromotionQueueCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
+
+    /// Defines the operations for the IntegrationCandidate actor.
+    [<Interface>]
+    type IIntegrationCandidateActor =
+        inherit IGrainWithGuidKey
+
+        /// Returns true if this integration candidate already exists in the database.
+        abstract member Exists: correlationId: CorrelationId -> Task<bool>
+
+        /// Returns the current state of the integration candidate.
+        abstract member Get: correlationId: CorrelationId -> Task<IntegrationCandidate option>
+
+        /// Returns the list of events handled by this integration candidate.
+        abstract member GetEvents: correlationId: CorrelationId -> Task<IReadOnlyList<CandidateEvent>>
+
+        /// Validates incoming commands and converts them to events that are stored in the database.
+        abstract member Handle: command: CandidateCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
+
+    /// Defines the operations for the GateAttestation actor.
+    [<Interface>]
+    type IGateAttestationActor =
+        inherit IGrainWithGuidKey
+
+        /// Returns true if this gate attestation already exists in the database.
+        abstract member Exists: correlationId: CorrelationId -> Task<bool>
+
+        /// Returns the current gate attestation.
+        abstract member Get: correlationId: CorrelationId -> Task<GateAttestation option>
+
+        /// Returns the list of events handled by this gate attestation.
+        abstract member GetEvents: correlationId: CorrelationId -> Task<IReadOnlyList<GateAttestationEvent>>
+
+        /// Validates incoming commands and converts them to events that are stored in the database.
+        abstract member Handle: command: GateAttestationCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
+
+    /// Defines the operations for the ConflictReceipt actor.
+    [<Interface>]
+    type IConflictReceiptActor =
+        inherit IGrainWithGuidKey
+
+        /// Returns true if this conflict receipt already exists in the database.
+        abstract member Exists: correlationId: CorrelationId -> Task<bool>
+
+        /// Returns the current conflict receipt.
+        abstract member Get: correlationId: CorrelationId -> Task<ConflictReceipt option>
+
+        /// Returns the list of events handled by this conflict receipt.
+        abstract member GetEvents: correlationId: CorrelationId -> Task<IReadOnlyList<ConflictReceiptEvent>>
+
+        /// Validates incoming commands and converts them to events that are stored in the database.
+        abstract member Handle: command: ConflictReceiptCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
+
+    /// Defines the operations for the WorkItem actor.
+    [<Interface>]
+    type IWorkItemActor =
+        inherit IGrainWithGuidKey
+
+        /// Returns true if this work item already exists in the database.
+        abstract member Exists: correlationId: CorrelationId -> Task<bool>
+
+        /// Returns the current state of the work item.
+        abstract member Get: correlationId: CorrelationId -> Task<WorkItemDto>
+
+        /// Returns the list of events handled by this work item.
+        abstract member GetEvents: correlationId: CorrelationId -> Task<IReadOnlyList<WorkItemEvent>>
+
+        /// Validates incoming commands and converts them to events that are stored in the database.
+        abstract member Handle: command: WorkItemCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
 
     /// Defines the operations for the Repository actor.
     [<Interface>]

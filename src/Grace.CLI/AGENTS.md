@@ -36,6 +36,14 @@ Read `../AGENTS.md` for global expectations before updating CLI code.
 - `grace history` commands operate without requiring a repo `graceconfig.json`.
   Avoid `Configuration.Current()` in history-related flows.
 
+## Continuous Review Commands
+
+- `grace work` covers create/show/status and linking references or promotion groups.
+- `grace review` covers inbox/open/checkpoint/delta/resolve/deepen. Inbox and
+  delta remain CLI stubs until server endpoints land.
+- `grace queue` covers status/enqueue/pause/resume/dequeue/retry; prefer
+  `--branch` but `--branch-id`/`--branch-name` still work.
+
 ## Validation
 
 - Add option parsing tests and handler unit tests for new functionality.

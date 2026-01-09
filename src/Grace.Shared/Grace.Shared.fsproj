@@ -29,6 +29,9 @@
         <Compile Include="Converters\BranchDtoConverter.Shared.fs" />
         <Compile Include="Services.Shared.fs" />
         <Compile Include="Diff.Shared.fs" />
+        <Compile Include="Evidence.Shared.fs" />
+        <Compile Include="ReviewPacket.Shared.fs" />
+        <Compile Include="BaselineDrift.Shared.fs" />
         <Compile Include="Client\Theme.Shared.fs" />
         <Compile Include="Client\Configuration.Shared.fs" />
         <Compile Include="Client\UserConfiguration.Shared.fs" />
@@ -45,6 +48,10 @@
         <Compile Include="Parameters\Storage.Parameters.fs" />
         <Compile Include="Parameters\PromotionGroup.Parameters.fs" />
         <Compile Include="Parameters\Reminder.Parameters.fs" />
+        <Compile Include="Parameters\WorkItem.Parameters.fs" />
+        <Compile Include="Parameters\Policy.Parameters.fs" />
+        <Compile Include="Parameters\Review.Parameters.fs" />
+        <Compile Include="Parameters\Queue.Parameters.fs" />
         <Compile Include="Validation\Errors.Validation.fs" />
         <Compile Include="Validation\Common.Validation.fs" />
         <Compile Include="Validation\Utilities.Validation.fs" />

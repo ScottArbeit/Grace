@@ -253,14 +253,26 @@ module Common =
                     |> Seq.sortBy (fun option -> option.Name)
                     |> Seq.toIReadOnlyList
 
-                for option in optionList do
-                    let value = parseResult.GetValue(option.Name)
+                let tryGetValue (option: Option) =
+                    let result = parseResult.GetResult(option.Name)
 
-                    if not (isNull value) then
+                    if isNull result then
+                        None
+                    else
+                        try
+                            let value = parseResult.GetValue(option.Name)
+                            if isNull value then None else Some value
+                        with :? InvalidOperationException ->
+                            None
+
+                for option in optionList do
+                    match tryGetValue option with
+                    | Some value ->
                         if option.ValueType.IsArray then
                             sb.AppendLine($"{option.Name}: {serialize value}") |> ignore
                         else
                             sb.AppendLine($"{option.Name}: {value}") |> ignore
+                    | None -> ()
 
                 AnsiConsole.MarkupLine($"[{Colors.Verbose}]{escapeBrackets (parseResult.ToString())}[/]")
                 AnsiConsole.WriteLine()
