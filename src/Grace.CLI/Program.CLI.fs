@@ -92,6 +92,38 @@ module GraceCommand =
 
         AnsiConsole.Write(table)
 
+    let internal tryGetTopLevelCommandFromArgs (args: string array) (isCaseInsensitive: bool) =
+        if isNull args || args.Length = 0 then
+            None
+        else
+            let comparison =
+                if isCaseInsensitive then
+                    StringComparison.InvariantCultureIgnoreCase
+                else
+                    StringComparison.InvariantCulture
+
+            let isOptionWithValue (token: string) =
+                token.Equals(OptionName.Output, comparison)
+                || token.Equals("-o", comparison)
+                || token.Equals(OptionName.CorrelationId, comparison)
+                || token.Equals("-c", comparison)
+
+            let rec loop index =
+                if index >= args.Length then
+                    None
+                else
+                    let token = args[index]
+
+                    if token = "--" then
+                        if index + 1 < args.Length then Some args[index + 1] else None
+                    elif token.StartsWith("-", StringComparison.Ordinal) then
+                        let nextIndex = if isOptionWithValue token then index + 2 else index + 1
+                        loop nextIndex
+                    else
+                        Some token
+
+            loop 0
+
     /// Gathers the available options for the current command and all its parents, which are applied hierarchically.
     [<TailCall>]
     let rec gatherAllOptions (command: Command) (allOptions: List<Option>) =
@@ -554,6 +586,10 @@ module GraceCommand =
                                 |> Seq.exists (fun cmd ->
                                     allowedCommands
                                     |> List.exists (fun allowed -> cmd.Name.Equals(allowed, comparison)))
+                                || (tryGetTopLevelCommandFromArgs argvNormalized isCaseInsensitive
+                                    |> Option.exists (fun topLevel ->
+                                        allowedCommands
+                                        |> List.exists (fun allowed -> topLevel.Equals(allowed, comparison))))
 
                             if isAllowed then
                                 let! invokedReturnValue = parseResult.InvokeAsync()
