@@ -5,21 +5,29 @@ open Grace.CLI
 open Grace.Shared.Client.Configuration
 open Grace.Shared.Utilities
 open NUnit.Framework
+open Spectre.Console
 open System
 open System.IO
 
 [<NonParallelizable>]
 module HelpDoesNotReadConfigTests =
+    let private setAnsiConsoleOutput (writer: TextWriter) =
+        let settings = AnsiConsoleSettings()
+        settings.Out <- AnsiConsoleOutput(writer)
+        AnsiConsole.Console <- AnsiConsole.Create(settings)
+
     let private runWithCapturedOutput (args: string array) =
         use writer = new StringWriter()
         let originalOut = Console.Out
 
         try
             Console.SetOut(writer)
+            setAnsiConsoleOutput writer
             let exitCode = GraceCommand.main args
             exitCode, writer.ToString()
         finally
             Console.SetOut(originalOut)
+            setAnsiConsoleOutput originalOut
 
     let private captureOutput (action: unit -> unit) =
         use writer = new StringWriter()
@@ -27,10 +35,12 @@ module HelpDoesNotReadConfigTests =
 
         try
             Console.SetOut(writer)
+            setAnsiConsoleOutput writer
             action ()
             writer.ToString()
         finally
             Console.SetOut(originalOut)
+            setAnsiConsoleOutput originalOut
 
 
     let private withTempDir (action: string -> unit) =

@@ -9,21 +9,29 @@ open Grace.Types.Branch
 open Grace.Types.Reference
 open Grace.Types.Types
 open NUnit.Framework
+open Spectre.Console
 open System
 open System.IO
 
 [<NonParallelizable>]
 module ConnectTests =
+    let private setAnsiConsoleOutput (writer: TextWriter) =
+        let settings = AnsiConsoleSettings()
+        settings.Out <- AnsiConsoleOutput(writer)
+        AnsiConsole.Console <- AnsiConsole.Create(settings)
+
     let private runWithCapturedOutput (args: string array) =
         use writer = new StringWriter()
         let originalOut = Console.Out
 
         try
             Console.SetOut(writer)
+            setAnsiConsoleOutput writer
             let exitCode = GraceCommand.main args
             exitCode, writer.ToString()
         finally
             Console.SetOut(originalOut)
+            setAnsiConsoleOutput originalOut
 
     let private withTempDir (action: string -> unit) =
         let tempDir = Path.Combine(Path.GetTempPath(), $"grace-cli-tests-{Guid.NewGuid():N}")
