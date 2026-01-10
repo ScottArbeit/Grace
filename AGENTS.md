@@ -3,6 +3,29 @@
 Other `AGENTS.md` files exist in subdirectories, refer to them for more specific
 context.
 
+## Agent Quickstart (Local)
+
+Prerequisites:
+
+- PowerShell 7.x
+- .NET 10 SDK
+- Docker Desktop (required for `-Full`)
+
+Commands:
+
+- `pwsh ./scripts/bootstrap.ps1`
+- `pwsh ./scripts/validate.ps1 -Fast`
+
+Use `pwsh ./scripts/validate.ps1 -Full` for Aspire integration coverage.
+Optional: `pwsh ./scripts/install-githooks.ps1` to add a pre-commit
+`validate -Fast` hook.
+
+More context:
+
+- `src/AGENTS.md`
+- `src/docs/ASPIRE_SETUP.md`
+- `src/docs/ENVIRONMENT.md`
+
 ## Issue Tracking
 
 This project uses **bd (beads)** for issue tracking.
