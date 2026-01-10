@@ -1,10 +1,12 @@
 <Project>
-	<PropertyGroup>
-		<AccelerateBuildsInVisualStudio>true</AccelerateBuildsInVisualStudio>
-		<ProduceReferenceAssembly>true</ProduceReferenceAssembly>
-		<SuppressNETCoreSdkPreviewMessage>true</SuppressNETCoreSdkPreviewMessage>
-		<NoWarn>$(NoWarn);NETSDK1057</NoWarn>
-		<PublishProfile>DefaultContainer</PublishProfile>
-		<OtherFlags>$(OtherFlags) --test:GraphBasedChecking</OtherFlags>
-	</PropertyGroup>
+    <PropertyGroup>
+        <AccelerateBuildsInVisualStudio>true</AccelerateBuildsInVisualStudio>
+        <ProduceReferenceAssembly>true</ProduceReferenceAssembly>
+        <SuppressNETCoreSdkPreviewMessage>true</SuppressNETCoreSdkPreviewMessage>
+        <EnableNETAnalyzers>true</EnableNETAnalyzers>
+        <AnalysisLevel>latest</AnalysisLevel>
+        <NoWarn>$(NoWarn);NETSDK1057</NoWarn>
+        <PublishProfile>DefaultContainer</PublishProfile>
+        <OtherFlags>$(OtherFlags) --test:GraphBasedChecking</OtherFlags>
+    </PropertyGroup>
 </Project>
