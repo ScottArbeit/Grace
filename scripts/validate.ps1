@@ -24,6 +24,21 @@ function Get-FormatTargets {
     $git = Get-Command git -ErrorAction SilentlyContinue
     $separator = [System.IO.Path]::DirectorySeparatorChar
     $prefix = "src{0}" -f $separator
+    $root = (Get-Location).Path
+    $isCi = $env:GITHUB_ACTIONS -eq "true" -or $env:CI -eq "true"
+
+    if ($isCi) {
+        $targets =
+            Get-ChildItem -Path "src" -Recurse -File
+            | Where-Object {
+                $extension = $_.Extension.ToLowerInvariant()
+                $extension -in @(".fs", ".fsi", ".fsx") -and
+                $_.FullName -notmatch "[\\/](bin|obj)[\\/]"
+            }
+            | ForEach-Object { [System.IO.Path]::GetRelativePath($root, $_.FullName) }
+
+        return [string[]]($targets | Select-Object -Unique)
+    }
 
     if ($null -ne $git) {
         $statusLines = & git status --porcelain
@@ -42,7 +57,7 @@ function Get-FormatTargets {
                 continue
             }
 
-            $extension = [System.IO.Path]::GetExtension($path)
+            $extension = [System.IO.Path]::GetExtension($path).ToLowerInvariant()
             if ($extension -in @(".fs", ".fsi", ".fsx")) {
                 $targets += $path
             }
