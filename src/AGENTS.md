@@ -61,6 +61,127 @@ Optional: `pwsh ./scripts/install-githooks.ps1` to add a pre-commit
 - Format code with `dotnet tool run fantomas --recurse .` (from `./src`) and
   include comprehensive, copy/paste-ready snippets when sharing examples.
 
+### Avoid FS3511 in resumable computation expressions (`task { }`, `backgroundTask { }`)
+
+FS3511 warnings indicate the compiler could not statically compile a resumable
+state machine. These warnings are treated as regressions (and will fail the
+build with warnings-as-errors enabled).
+
+1. **Do not define `let rec` inside `task { }`.**
+
+   Bad:
+
+   ```fsharp
+   task {
+       let rec poll () = task { return! poll () }
+       return! poll ()
+   }
+   ```
+
+   Good:
+
+   ```fsharp
+   task {
+       let mutable finished = false
+       while not finished do
+           finished <- true
+       return ()
+   }
+   ```
+
+2. **Avoid `for ... in ... do` loops inside `task { }`.**
+
+   Bad:
+
+   ```fsharp
+   task {
+       for item in items do
+           doSomething item
+   }
+   ```
+
+   Good:
+
+   ```fsharp
+   task {
+       items |> Seq.iter doSomething
+   }
+   ```
+
+3. **Keep `try/with` minimal inside `task { }`.**
+
+   Bad:
+
+   ```fsharp
+   task {
+       try
+           let! result = doWork ()
+           return result
+       with ex ->
+           return Error ex.Message
+   }
+   ```
+
+   Good:
+
+   ```fsharp
+   let doWorkImpl () = task { return! doWork () }
+
+   let doWork () =
+       task {
+           try
+               return! doWorkImpl ()
+           with ex ->
+               return Error ex.Message
+       }
+   ```
+
+4. **Move complex pure work out of `task { }`.**
+
+   Bad:
+
+   ```fsharp
+   task {
+       return { bundle with FieldA = valueA; FieldB = valueB }
+   }
+   ```
+
+   Good:
+
+   ```fsharp
+   let updateBundle bundle valueA valueB =
+       { bundle with FieldA = valueA; FieldB = valueB }
+
+   task {
+       return updateBundle bundle valueA valueB
+   }
+   ```
+
+5. **Prefer `let!` + `match` over `match!` in large orchestration blocks.**
+
+   Bad:
+
+   ```fsharp
+   task {
+       match! fetch () with
+       | Ok value -> return value
+       | Error err -> return failwith err
+   }
+   ```
+
+   Good:
+
+   ```fsharp
+   task {
+       let! result = fetch ()
+       match result with
+       | Ok value -> return value
+       | Error err -> return failwith err
+   }
+   ```
+
+6. **Policy:** FS3511 warnings are treated as regressions.
+
 ## Agent-Friendly Context Practices
 
 - Start with the relevant `AGENTS.md` file(s) to load key patterns,

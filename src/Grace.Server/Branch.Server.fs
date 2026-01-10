@@ -1672,106 +1672,119 @@ module Branch =
                         |> result500ServerError (GraceError.CreateWithException ex String.Empty correlationId)
             }
 
+    let private tryResolveRootDirectoryVersion
+        (parameters: GetBranchVersionParameters)
+        (actorProxy: IBranchActor)
+        (context: HttpContext)
+        (repositoryId: RepositoryId)
+        (correlationId: CorrelationId)
+        =
+        task {
+            if not <| String.IsNullOrEmpty(parameters.Sha256Hash) then
+                return! getRootDirectoryVersionBySha256Hash repositoryId parameters.Sha256Hash correlationId
+            elif not <| String.IsNullOrEmpty(parameters.ReferenceId) then
+                return! getRootDirectoryVersionByReferenceId repositoryId (Guid.Parse(parameters.ReferenceId)) correlationId
+            else
+                let! branchDto = actorProxy.Get(getCorrelationId context)
+                let! latestReference = getLatestReference branchDto.RepositoryId branchDto.BranchId
+
+                match latestReference with
+                | Some referenceDto -> return! getRootDirectoryVersionBySha256Hash repositoryId referenceDto.Sha256Hash correlationId
+                | None -> return None
+        }
+
+    let private getVersionImpl (next: HttpFunc) (context: HttpContext) =
+        task {
+            let graceIds = getGraceIds context
+            let correlationId = getCorrelationId context
+
+            let validations (parameters: GetBranchVersionParameters) =
+                [| String.isEmptyOrValidSha256Hash parameters.Sha256Hash BranchError.InvalidSha256Hash
+                   Guid.isValidAndNotEmptyGuid parameters.ReferenceId BranchError.InvalidReferenceId |]
+
+            let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
+                task {
+                    let parameters = context.Items["GetVersionParameters"] :?> GetBranchVersionParameters
+
+                    let repositoryId = Guid.Parse(parameters.RepositoryId)
+
+                    let! rootDirectoryVersion =
+                        tryResolveRootDirectoryVersion parameters actorProxy context repositoryId correlationId
+
+                    match rootDirectoryVersion with
+                    | Some rootDirectoryVersion ->
+                        let directoryVersionActorProxy =
+                            DirectoryVersion.CreateActorProxy rootDirectoryVersion.DirectoryVersionId repositoryId correlationId
+
+                        let! directoryVersionDtos = directoryVersionActorProxy.GetRecursiveDirectoryVersions false correlationId
+
+                        let directoryIds = directoryVersionDtos.Select(fun dv -> dv.DirectoryVersion.DirectoryVersionId).ToList()
+
+                        return directoryIds
+                    | None -> return List<DirectoryVersionId>()
+                }
+
+            let! parameters = context |> parse<GetBranchVersionParameters>
+
+            let! repositoryIdResult =
+                resolveRepositoryId graceIds.OwnerId graceIds.OrganizationId parameters.RepositoryId parameters.RepositoryName parameters.CorrelationId
+
+            match repositoryIdResult with
+            | Some repositoryId ->
+                let repositoryIdString = $"{repositoryId}"
+                parameters.RepositoryId <- repositoryIdString
+
+                if not <| String.IsNullOrEmpty(parameters.BranchId) || not <| String.IsNullOrEmpty(parameters.BranchName) then
+                    logToConsole $"In Branch.GetVersion: parameters.BranchId: {parameters.BranchId}; parameters.BranchName: {parameters.BranchName}"
+
+                    let! branchIdResult =
+                        resolveBranchId
+                            parameters.OwnerId
+                            parameters.OrganizationId
+                            repositoryId
+                            parameters.BranchId
+                            parameters.BranchName
+                            parameters.CorrelationId
+
+                    match branchIdResult with
+                    | Some branchId -> parameters.BranchId <- $"{branchId}"
+                    | None -> () // This should never happen because it would get caught in validations.
+                elif not <| String.IsNullOrEmpty(parameters.ReferenceId) then
+                    logToConsole $"In Branch.GetVersion: parameters.ReferenceId: {parameters.ReferenceId}"
+                    let referenceGuid = Guid.Parse(parameters.ReferenceId)
+                    let referenceActorProxy = Reference.CreateActorProxy referenceGuid repositoryId correlationId
+
+                    let! referenceDto = referenceActorProxy.Get(getCorrelationId context)
+                    logToConsole $"referenceDto.ReferenceId: {referenceDto.ReferenceId}"
+                    parameters.BranchId <- $"{referenceDto.BranchId}"
+                elif not <| String.IsNullOrEmpty(parameters.Sha256Hash) then
+                    logToConsole $"In Branch.GetVersion: parameters.Sha256Hash: {parameters.Sha256Hash}"
+
+                    let! referenceResult = getReferenceBySha256Hash graceIds.RepositoryId graceIds.BranchId parameters.Sha256Hash
+
+                    match referenceResult with
+                    | Some referenceDto ->
+                        logToConsole $"referenceDto.ReferenceId: {referenceDto.ReferenceId}"
+                        parameters.BranchId <- $"{referenceDto.BranchId}"
+                    | None -> ()
+                else
+                    () // This should never happen because it would get caught in validations.
+            | None -> () // This should never happen because it would get caught in validations.
+
+            // Now that we've populated BranchId for sure...
+            context.Items.Add("GetVersionParameters", parameters)
+            return! processQuery context parameters validations 1 query
+        }
+
     let GetVersion: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let startTime = getCurrentInstant ()
                 let graceIds = getGraceIds context
                 let correlationId = getCorrelationId context
-                let repositoryId = Guid.Parse(graceIds.RepositoryIdString)
 
                 try
-                    let validations (parameters: GetBranchVersionParameters) =
-                        [| String.isEmptyOrValidSha256Hash parameters.Sha256Hash BranchError.InvalidSha256Hash
-                           Guid.isValidAndNotEmptyGuid parameters.ReferenceId BranchError.InvalidReferenceId |]
-
-                    let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
-                        task {
-                            let parameters = context.Items["GetVersionParameters"] :?> GetBranchVersionParameters
-
-                            let repositoryId = Guid.Parse(parameters.RepositoryId)
-
-                            let! rootDirectoryVersion =
-                                task {
-                                    if not <| String.IsNullOrEmpty(parameters.Sha256Hash) then
-                                        return! getRootDirectoryVersionBySha256Hash repositoryId parameters.Sha256Hash correlationId
-                                    elif not <| String.IsNullOrEmpty(parameters.ReferenceId) then
-                                        return! getRootDirectoryVersionByReferenceId repositoryId (Guid.Parse(parameters.ReferenceId)) correlationId
-                                    else
-                                        let! branchDto = actorProxy.Get(getCorrelationId context)
-                                        let! latestReference = getLatestReference branchDto.RepositoryId branchDto.BranchId
-
-                                        match latestReference with
-                                        | Some referenceDto -> return! getRootDirectoryVersionBySha256Hash repositoryId referenceDto.Sha256Hash correlationId
-                                        | None -> return None
-                                }
-
-                            match rootDirectoryVersion with
-                            | Some rootDirectoryVersion ->
-                                let directoryVersionActorProxy =
-                                    DirectoryVersion.CreateActorProxy rootDirectoryVersion.DirectoryVersionId repositoryId correlationId
-
-                                let! directoryVersionDtos = directoryVersionActorProxy.GetRecursiveDirectoryVersions false correlationId
-
-                                let directoryIds = directoryVersionDtos.Select(fun dv -> dv.DirectoryVersion.DirectoryVersionId).ToList()
-
-                                return directoryIds
-                            | None -> return List<DirectoryVersionId>()
-                        }
-
-                    let! parameters = context |> parse<GetBranchVersionParameters>
-
-                    let! repositoryId =
-                        resolveRepositoryId graceIds.OwnerId graceIds.OrganizationId parameters.RepositoryId parameters.RepositoryName parameters.CorrelationId
-
-                    match repositoryId with
-                    | Some repositoryId ->
-                        let repositoryIdString = $"{repositoryId}"
-                        parameters.RepositoryId <- repositoryIdString
-
-                        if
-                            not <| String.IsNullOrEmpty(parameters.BranchId)
-                            || not <| String.IsNullOrEmpty(parameters.BranchName)
-                        then
-                            logToConsole $"In Branch.GetVersion: parameters.BranchId: {parameters.BranchId}; parameters.BranchName: {parameters.BranchName}"
-
-                            match!
-                                resolveBranchId
-                                    parameters.OwnerId
-                                    parameters.OrganizationId
-                                    repositoryId
-                                    parameters.BranchId
-                                    parameters.BranchName
-                                    parameters.CorrelationId
-                            with
-                            | Some branchId -> parameters.BranchId <- $"{branchId}"
-                            | None -> () // This should never happen because it would get caught in validations.
-                        elif not <| String.IsNullOrEmpty(parameters.ReferenceId) then
-                            logToConsole $"In Branch.GetVersion: parameters.ReferenceId: {parameters.ReferenceId}"
-                            let referenceGuid = Guid.Parse(parameters.ReferenceId)
-                            let referenceActorProxy = Reference.CreateActorProxy referenceGuid repositoryId correlationId
-
-                            let! referenceDto = referenceActorProxy.Get(getCorrelationId context)
-                            logToConsole $"referenceDto.ReferenceId: {referenceDto.ReferenceId}"
-                            parameters.BranchId <- $"{referenceDto.BranchId}"
-                        elif not <| String.IsNullOrEmpty(parameters.Sha256Hash) then
-                            logToConsole $"In Branch.GetVersion: parameters.Sha256Hash: {parameters.Sha256Hash}"
-
-                            match! getReferenceBySha256Hash graceIds.RepositoryId graceIds.BranchId parameters.Sha256Hash with
-                            | Some referenceDto ->
-                                logToConsole $"referenceDto.ReferenceId: {referenceDto.ReferenceId}"
-                                parameters.BranchId <- $"{referenceDto.BranchId}"
-                            | None -> // Reference Id was not found in the database.
-                                ()
-                        // I really want to return a 404 here, have to figure that out.
-                        //return! returnResult HttpStatusCode.NotFound (GraceError.Create "Reference not found." (getCorrelationId context)) context
-                        else
-                            () // This should never happen because it would get caught in validations.
-                    | None -> () // This should never happen because it would get caught in validations.
-
-                    // Now that we've populated BranchId for sure...
-                    context.Items.Add("GetVersionParameters", parameters)
-                    return! processQuery context parameters validations 1 query
+                    return! getVersionImpl next context
                 with ex ->
                     let duration_ms = getDurationRightAligned_ms startTime
 

@@ -636,8 +636,7 @@ module History =
                                             startInfo.RedirectStandardOutput <- false
                                             startInfo.RedirectStandardError <- false
 
-                                            for arg in argvToRun do
-                                                startInfo.ArgumentList.Add(arg)
+                                            argvToRun |> Array.iter startInfo.ArgumentList.Add
 
                                             use proc = new Process()
                                             proc.StartInfo <- startInfo

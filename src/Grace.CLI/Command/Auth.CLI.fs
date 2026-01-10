@@ -453,34 +453,36 @@ module Auth =
             let tokenEndpoint = buildEndpoint config.Authority "oauth/token"
             let expiresAt = getCurrentInstant().Plus(Duration.FromSeconds(float deviceCode.ExpiresIn))
             let mutable delaySeconds = deviceCode.IntervalSeconds
+            let mutable finished = false
+            let mutable finalResult = Error "Device code expired. Please try again."
 
-            let rec poll () =
-                task {
-                    if getCurrentInstant () >= expiresAt then
-                        return Error "Device code expired. Please try again."
-                    else
-                        let formValues =
-                            [ "grant_type", "urn:ietf:params:oauth:grant-type:device_code"
-                              "device_code", deviceCode.DeviceCode
-                              "client_id", config.ClientId ]
+            while not finished do
+                if getCurrentInstant () >= expiresAt then
+                    finished <- true
+                    finalResult <- Error "Device code expired. Please try again."
+                else
+                    let formValues =
+                        [ "grant_type", "urn:ietf:params:oauth:grant-type:device_code"
+                          "device_code", deviceCode.DeviceCode
+                          "client_id", config.ClientId ]
 
-                        let! response = postFormAsync tokenEndpoint formValues
+                    let! response = postFormAsync tokenEndpoint formValues
 
-                        match response with
-                        | Ok json -> return parseTokenResponse json
-                        | Error message ->
-                            if message.StartsWith("authorization_pending", StringComparison.OrdinalIgnoreCase) then
-                                do! Task.Delay(TimeSpan.FromSeconds(float delaySeconds))
-                                return! poll ()
-                            elif message.StartsWith("slow_down", StringComparison.OrdinalIgnoreCase) then
-                                delaySeconds <- delaySeconds + 5
-                                do! Task.Delay(TimeSpan.FromSeconds(float delaySeconds))
-                                return! poll ()
-                            else
-                                return Error message
-                }
+                    match response with
+                    | Ok json ->
+                        finished <- true
+                        finalResult <- parseTokenResponse json
+                    | Error message ->
+                        if message.StartsWith("authorization_pending", StringComparison.OrdinalIgnoreCase) then
+                            do! Task.Delay(TimeSpan.FromSeconds(float delaySeconds))
+                        elif message.StartsWith("slow_down", StringComparison.OrdinalIgnoreCase) then
+                            delaySeconds <- delaySeconds + 5
+                            do! Task.Delay(TimeSpan.FromSeconds(float delaySeconds))
+                        else
+                            finished <- true
+                            finalResult <- Error message
 
-            return! poll ()
+            return finalResult
         }
 
     let private tryAcquireTokenWithPkceAsync (config: OidcCliConfig) (parseResult: ParseResult) =
@@ -588,6 +590,23 @@ module Auth =
                 return! pollDeviceCodeAsync config deviceCode
         }
 
+    let private applyRefreshToken (bundle: TokenBundle) (refreshed: TokenResponse) (now: Instant) : TokenBundle =
+        let expiresIn = refreshed.ExpiresIn |> Option.defaultValue 3600
+        let expiresAt = now.Plus(Duration.FromSeconds(float expiresIn))
+        let refreshToken = refreshed.RefreshToken |> Option.defaultValue bundle.RefreshToken
+        let scopes = refreshed.Scope |> Option.defaultValue bundle.Scopes
+        let issuer = tryGetJwtClaim refreshed.AccessToken "iss" |> Option.defaultValue bundle.Issuer
+        let subject = tryGetJwtClaim refreshed.AccessToken "sub" |> Option.orElse bundle.Subject
+
+        { bundle with
+            RefreshToken = refreshToken
+            AccessToken = refreshed.AccessToken
+            AccessTokenExpiresAt = expiresAt
+            Issuer = issuer
+            Scopes = scopes
+            Subject = subject
+            UpdatedAt = now }
+
     let private tryRefreshTokenAsync (config: OidcCliConfig) (bundle: TokenBundle) =
         task {
             if String.IsNullOrWhiteSpace bundle.RefreshToken then
@@ -610,23 +629,8 @@ module Auth =
                     | Error message -> return Error message
                     | Ok refreshed ->
                         let now = getCurrentInstant ()
-                        let expiresIn = refreshed.ExpiresIn |> Option.defaultValue 3600
-                        let expiresAt = now.Plus(Duration.FromSeconds(float expiresIn))
-                        let refreshToken = refreshed.RefreshToken |> Option.defaultValue bundle.RefreshToken
-                        let scopes = refreshed.Scope |> Option.defaultValue bundle.Scopes
-                        let issuer = tryGetJwtClaim refreshed.AccessToken "iss" |> Option.defaultValue bundle.Issuer
-                        let subject = tryGetJwtClaim refreshed.AccessToken "sub" |> Option.orElse bundle.Subject
-
-                        return
-                            Ok
-                                { bundle with
-                                    RefreshToken = refreshToken
-                                    AccessToken = refreshed.AccessToken
-                                    AccessTokenExpiresAt = expiresAt
-                                    Issuer = issuer
-                                    Scopes = scopes
-                                    Subject = subject
-                                    UpdatedAt = now }
+                        let updated = applyRefreshToken bundle refreshed now
+                        return Ok updated
         }
 
     let private safetyWindow = Duration.FromSeconds(90.0)
@@ -1136,6 +1140,34 @@ module Auth =
                         | Error error -> return Error error |> renderOutput parseResult
             }
 
+    let private renderTokenList (parseResult: ParseResult) (tokens: TokenSummary list) =
+        let table = Table(Border = TableBorder.Rounded)
+        table.AddColumn("Name") |> ignore
+        table.AddColumn("TokenId") |> ignore
+        table.AddColumn("Created") |> ignore
+        table.AddColumn("Expires") |> ignore
+        table.AddColumn("Last Used") |> ignore
+        table.AddColumn("Revoked") |> ignore
+
+        tokens
+        |> List.iter (fun token ->
+            let created = instantToLocalTime token.CreatedAt
+            let expiresText = formatInstantOption token.ExpiresAt
+            let lastUsed = formatInstantOption token.LastUsedAt
+            let revoked = formatInstantOption token.RevokedAt
+
+            table.AddRow(
+                Markup.Escape(token.Name),
+                token.TokenId.ToString(),
+                Markup.Escape(created),
+                Markup.Escape(expiresText),
+                Markup.Escape(lastUsed),
+                Markup.Escape(revoked)
+            )
+            |> ignore)
+
+        AnsiConsole.Write(table)
+
     type TokenList() =
         inherit AsynchronousCommandLineAction()
 
@@ -1159,32 +1191,7 @@ module Auth =
                 match result with
                 | Ok graceReturnValue ->
                     if parseResult |> hasOutput then
-                        let table = Table(Border = TableBorder.Rounded)
-                        table.AddColumn("Name") |> ignore
-                        table.AddColumn("TokenId") |> ignore
-                        table.AddColumn("Created") |> ignore
-                        table.AddColumn("Expires") |> ignore
-                        table.AddColumn("Last Used") |> ignore
-                        table.AddColumn("Revoked") |> ignore
-
-                        graceReturnValue.ReturnValue
-                        |> List.iter (fun token ->
-                            let created = instantToLocalTime token.CreatedAt
-                            let expiresText = formatInstantOption token.ExpiresAt
-                            let lastUsed = formatInstantOption token.LastUsedAt
-                            let revoked = formatInstantOption token.RevokedAt
-
-                            table.AddRow(
-                                Markup.Escape(token.Name),
-                                token.TokenId.ToString(),
-                                Markup.Escape(created),
-                                Markup.Escape(expiresText),
-                                Markup.Escape(lastUsed),
-                                Markup.Escape(revoked)
-                            )
-                            |> ignore)
-
-                        AnsiConsole.Write(table)
+                        renderTokenList parseResult graceReturnValue.ReturnValue
 
                     return Ok graceReturnValue |> renderOutput parseResult
                 | Error error -> return Error error |> renderOutput parseResult
