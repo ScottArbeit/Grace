@@ -186,8 +186,7 @@ module ReminderService =
                         secondsToDelayReminderProcessing
                     )
 
-                    // Initial delay before processing reminders; I'm using the same delay time we use to wait for Dapr to be ready, because
-                    //   Grace.Server will shut down if Dapr isn't ready before this delay finishes.
+                    // Initial delay before processing reminders; allowing the server to fully start up.
                     do! Task.Delay(TimeSpan.FromSeconds(secondsToDelayReminderProcessing), stoppingToken)
 
                     log.LogInformation(
