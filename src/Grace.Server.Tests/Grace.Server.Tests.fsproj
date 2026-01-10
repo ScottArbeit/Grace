@@ -15,8 +15,8 @@
 
   <ItemGroup>
     <Compile Include="AspireTestHost.fs" />
-    <Compile Include="Smoke.Server.Tests.fs" />
     <Compile Include="General.Server.Tests.fs" />
+    <Compile Include="Smoke.Server.Tests.fs" />
     <Compile Include="Slop.Server.Tests.fs" />
     <Compile Include="Validations.Server.Tests.fs" />
     <Compile Include="Owner.Server.Tests.fs" />
