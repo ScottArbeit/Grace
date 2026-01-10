@@ -640,7 +640,8 @@ module Connect =
 
                                                         let additionalEntries = ResizeArray<string>()
 
-                                                        for entry in zipArchive.Entries do
+                                                        zipArchive.Entries
+                                                        |> Seq.iter (fun entry ->
                                                             if not <| String.IsNullOrEmpty(entry.Name) then
                                                                 let entryRelativePath = normalizeFilePath entry.FullName
 
@@ -683,7 +684,7 @@ module Connect =
 
                                                                     if parseResult |> verbose then
                                                                         AnsiConsole.MarkupLine $"[{Colors.Important}]Wrote {fileVersion.RelativePath}.[/]"
-                                                                | false, _ -> additionalEntries.Add(entry.FullName)
+                                                                | false, _ -> additionalEntries.Add(entry.FullName))
 
                                                         if additionalEntries.Count > 0 && (parseResult |> verbose) then
                                                             AnsiConsole.MarkupLine

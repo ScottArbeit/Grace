@@ -377,58 +377,63 @@ module ReviewCommand =
                 return result |> renderOutput parseResult
             }
 
+    let private resolveHandlerImpl (parseResult: ParseResult) =
+        task {
+            if parseResult |> verbose then printParseResult parseResult
+            let graceIds = parseResult |> getNormalizedIdsAndNames
+
+            let candidateIdRaw =
+                parseResult.GetValue(Options.candidateId)
+                |> Option.ofObj
+                |> Option.defaultValue String.Empty
+
+            match tryParseGuid candidateIdRaw ReviewError.InvalidCandidateId parseResult with
+            | Error error -> return Error error
+            | Ok candidateId ->
+                let findingIdRaw = parseResult.GetValue(Options.findingId)
+
+                match tryParseGuid findingIdRaw ReviewError.InvalidFindingId parseResult with
+                | Error error -> return Error error
+                | Ok findingId ->
+                    let approve = parseResult.GetValue(Options.approve)
+                    let requestChanges = parseResult.GetValue(Options.requestChanges)
+
+                    if approve = requestChanges then
+                        return Error(GraceError.Create "Specify exactly one of --approve or --request-changes." (getCorrelationId parseResult))
+                    else
+                        let resolutionState =
+                            if approve then
+                                FindingResolutionState.Approved
+                            else
+                                FindingResolutionState.NeedsChanges
+
+                        let note =
+                            parseResult.GetValue(Options.note)
+                            |> Option.ofObj
+                            |> Option.defaultValue String.Empty
+
+                        let parameters =
+                            Parameters.Review.ResolveFindingParameters(
+                                CandidateId = candidateId.ToString(),
+                                FindingId = findingId.ToString(),
+                                ResolutionState = getDiscriminatedUnionCaseName resolutionState,
+                                Note = note,
+                                OwnerId = graceIds.OwnerIdString,
+                                OwnerName = graceIds.OwnerName,
+                                OrganizationId = graceIds.OrganizationIdString,
+                                OrganizationName = graceIds.OrganizationName,
+                                RepositoryId = graceIds.RepositoryIdString,
+                                RepositoryName = graceIds.RepositoryName,
+                                CorrelationId = graceIds.CorrelationId
+                            )
+
+                        return! Review.ResolveFinding(parameters)
+        }
+
     let private resolveHandler (parseResult: ParseResult) =
         task {
             try
-                if parseResult |> verbose then printParseResult parseResult
-                let graceIds = parseResult |> getNormalizedIdsAndNames
-
-                let candidateIdRaw =
-                    parseResult.GetValue(Options.candidateId)
-                    |> Option.ofObj
-                    |> Option.defaultValue String.Empty
-
-                match tryParseGuid candidateIdRaw ReviewError.InvalidCandidateId parseResult with
-                | Error error -> return Error error
-                | Ok candidateId ->
-                    let findingIdRaw = parseResult.GetValue(Options.findingId)
-
-                    match tryParseGuid findingIdRaw ReviewError.InvalidFindingId parseResult with
-                    | Error error -> return Error error
-                    | Ok findingId ->
-                        let approve = parseResult.GetValue(Options.approve)
-                        let requestChanges = parseResult.GetValue(Options.requestChanges)
-
-                        if approve = requestChanges then
-                            return Error(GraceError.Create "Specify exactly one of --approve or --request-changes." (getCorrelationId parseResult))
-                        else
-                            let resolutionState =
-                                if approve then
-                                    FindingResolutionState.Approved
-                                else
-                                    FindingResolutionState.NeedsChanges
-
-                            let note =
-                                parseResult.GetValue(Options.note)
-                                |> Option.ofObj
-                                |> Option.defaultValue String.Empty
-
-                            let parameters =
-                                Parameters.Review.ResolveFindingParameters(
-                                    CandidateId = candidateId.ToString(),
-                                    FindingId = findingId.ToString(),
-                                    ResolutionState = getDiscriminatedUnionCaseName resolutionState,
-                                    Note = note,
-                                    OwnerId = graceIds.OwnerIdString,
-                                    OwnerName = graceIds.OwnerName,
-                                    OrganizationId = graceIds.OrganizationIdString,
-                                    OrganizationName = graceIds.OrganizationName,
-                                    RepositoryId = graceIds.RepositoryIdString,
-                                    RepositoryName = graceIds.RepositoryName,
-                                    CorrelationId = graceIds.CorrelationId
-                                )
-
-                            return! Review.ResolveFinding(parameters)
+                return! resolveHandlerImpl parseResult
             with ex ->
                 return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
         }

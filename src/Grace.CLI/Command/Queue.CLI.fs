@@ -399,69 +399,84 @@ module QueueCommand =
                 return result |> renderOutput parseResult
             }
 
+    let private buildEnqueueParameters
+        (graceIds: GraceIds)
+        (targetBranchId: Guid)
+        (candidateId: Guid)
+        (promotionGroupIdRaw: string)
+        (workItemId: string)
+        (policySnapshotId: string)
+        =
+        Parameters.Queue.EnqueueParameters(
+            TargetBranchId = targetBranchId.ToString(),
+            CandidateId = candidateId.ToString(),
+            PromotionGroupId = promotionGroupIdRaw,
+            WorkItemId = workItemId,
+            PolicySnapshotId = policySnapshotId,
+            OwnerId = graceIds.OwnerIdString,
+            OwnerName = graceIds.OwnerName,
+            OrganizationId = graceIds.OrganizationIdString,
+            OrganizationName = graceIds.OrganizationName,
+            RepositoryId = graceIds.RepositoryIdString,
+            RepositoryName = graceIds.RepositoryName,
+            CorrelationId = graceIds.CorrelationId
+        )
+
+    let private enqueueHandlerImpl (parseResult: ParseResult) =
+        task {
+            if parseResult |> verbose then printParseResult parseResult
+            let graceIds = parseResult |> getNormalizedIdsAndNames
+
+            let candidateIdRaw =
+                parseResult.GetValue(Options.candidateIdOptional)
+                |> Option.ofObj
+                |> Option.defaultValue (Guid.NewGuid().ToString())
+
+            match tryParseGuid candidateIdRaw QueueError.InvalidCandidateId parseResult with
+            | Error error -> return Error error
+            | Ok candidateId ->
+                let promotionGroupIdRaw =
+                    parseResult.GetValue(Options.promotionGroupId)
+                    |> Option.ofObj
+                    |> Option.defaultValue String.Empty
+
+                let! targetBranchIdResult =
+                    if String.IsNullOrWhiteSpace promotionGroupIdRaw then
+                        resolveTargetBranchId parseResult graceIds
+                    else
+                        resolveTargetBranchIdFromPromotionGroup parseResult graceIds promotionGroupIdRaw
+
+                match targetBranchIdResult with
+                | Error error -> return Error error
+                | Ok targetBranchId ->
+                    let! policySnapshotIdResult = resolvePolicySnapshotId parseResult graceIds targetBranchId
+
+                    match policySnapshotIdResult with
+                    | Error error -> return Error error
+                    | Ok policySnapshotId ->
+                        let workItemIdRaw =
+                            parseResult.GetValue(Options.workItemId)
+                            |> Option.ofObj
+                            |> Option.defaultValue String.Empty
+
+                        match tryParseWorkItemId workItemIdRaw parseResult with
+                        | Error error -> return Error error
+                        | Ok workItemId ->
+                            let parameters =
+                                buildEnqueueParameters graceIds targetBranchId candidateId promotionGroupIdRaw workItemId policySnapshotId
+
+                            let! result = Queue.Enqueue(parameters)
+
+                            if not (parseResult |> json) && not (parseResult |> silent) then
+                                AnsiConsole.MarkupLine($"[green]Enqueued candidate[/] {Markup.Escape(candidateId.ToString())}")
+
+                            return result
+        }
+
     let private enqueueHandler (parseResult: ParseResult) =
         task {
             try
-                if parseResult |> verbose then printParseResult parseResult
-                let graceIds = parseResult |> getNormalizedIdsAndNames
-
-                let candidateIdRaw =
-                    parseResult.GetValue(Options.candidateIdOptional)
-                    |> Option.ofObj
-                    |> Option.defaultValue (Guid.NewGuid().ToString())
-
-                match tryParseGuid candidateIdRaw QueueError.InvalidCandidateId parseResult with
-                | Error error -> return Error error
-                | Ok candidateId ->
-                    let promotionGroupIdRaw =
-                        parseResult.GetValue(Options.promotionGroupId)
-                        |> Option.ofObj
-                        |> Option.defaultValue String.Empty
-
-                    let! targetBranchIdResult =
-                        if String.IsNullOrWhiteSpace promotionGroupIdRaw then
-                            resolveTargetBranchId parseResult graceIds
-                        else
-                            resolveTargetBranchIdFromPromotionGroup parseResult graceIds promotionGroupIdRaw
-
-                    match targetBranchIdResult with
-                    | Error error -> return Error error
-                    | Ok targetBranchId ->
-                        let! policySnapshotIdResult = resolvePolicySnapshotId parseResult graceIds targetBranchId
-
-                        match policySnapshotIdResult with
-                        | Error error -> return Error error
-                        | Ok policySnapshotId ->
-                            let workItemIdRaw =
-                                parseResult.GetValue(Options.workItemId)
-                                |> Option.ofObj
-                                |> Option.defaultValue String.Empty
-
-                            match tryParseWorkItemId workItemIdRaw parseResult with
-                            | Error error -> return Error error
-                            | Ok workItemId ->
-                                let parameters =
-                                    Parameters.Queue.EnqueueParameters(
-                                        TargetBranchId = targetBranchId.ToString(),
-                                        CandidateId = candidateId.ToString(),
-                                        PromotionGroupId = promotionGroupIdRaw,
-                                        WorkItemId = workItemId,
-                                        PolicySnapshotId = policySnapshotId,
-                                        OwnerId = graceIds.OwnerIdString,
-                                        OwnerName = graceIds.OwnerName,
-                                        OrganizationId = graceIds.OrganizationIdString,
-                                        OrganizationName = graceIds.OrganizationName,
-                                        RepositoryId = graceIds.RepositoryIdString,
-                                        RepositoryName = graceIds.RepositoryName,
-                                        CorrelationId = graceIds.CorrelationId
-                                    )
-
-                                let! result = Queue.Enqueue(parameters)
-
-                                if not (parseResult |> json) && not (parseResult |> silent) then
-                                    AnsiConsole.MarkupLine($"[green]Enqueued candidate[/] {Markup.Escape(candidateId.ToString())}")
-
-                                return result
+                return! enqueueHandlerImpl parseResult
             with ex ->
                 return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
         }

@@ -156,101 +156,106 @@ module Admin =
                 )
 
         // List subcommand
+        let private listRemindersImpl (parseResult: ParseResult) =
+            task {
+                if parseResult |> verbose then printParseResult parseResult
+
+                let validateIncomingParameters = parseResult |> Grace.CLI.Common.Validations.CommonValidations
+
+                match validateIncomingParameters with
+                | Ok _ ->
+                    let graceIds = parseResult |> getNormalizedIdsAndNames
+
+                    let parameters =
+                        ListRemindersParameters(
+                            OwnerId = graceIds.OwnerIdString,
+                            OwnerName = graceIds.OwnerName,
+                            OrganizationId = graceIds.OrganizationIdString,
+                            OrganizationName = graceIds.OrganizationName,
+                            RepositoryId = graceIds.RepositoryIdString,
+                            RepositoryName = graceIds.RepositoryName,
+                            MaxCount = parseResult.GetValue(Options.maxCount),
+                            ReminderType =
+                                (parseResult.GetValue(Options.reminderType)
+                                 |> Option.ofObj
+                                 |> Option.defaultValue ""),
+                            ActorName =
+                                (parseResult.GetValue(Options.actorName)
+                                 |> Option.ofObj
+                                 |> Option.defaultValue ""),
+                            DueAfter = (parseResult.GetValue(Options.dueAfter) |> Option.ofObj |> Option.defaultValue ""),
+                            DueBefore =
+                                (parseResult.GetValue(Options.dueBefore)
+                                 |> Option.ofObj
+                                 |> Option.defaultValue ""),
+                            CorrelationId = getCorrelationId parseResult
+                        )
+
+                    let! result =
+                        if parseResult |> hasOutput then
+                            progress
+                                .Columns(progressColumns)
+                                .StartAsync(fun progressContext ->
+                                    task {
+                                        let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+                                        let! response = Reminder.List(parameters)
+                                        t0.Increment(100.0)
+                                        return response
+                                    })
+                        else
+                            Reminder.List(parameters)
+
+                    match result with
+                    | Ok graceReturnValue ->
+                        if parseResult |> hasOutput then
+                            let reminders = graceReturnValue.ReturnValue
+
+                            if Seq.isEmpty reminders then
+                                logToAnsiConsole Colors.Highlighted "No reminders found."
+                            else
+                                let table = Table(Border = TableBorder.DoubleEdge)
+
+                                table.AddColumns(
+                                    [| TableColumn($"[{Colors.Important}]Reminder ID[/]")
+                                       TableColumn($"[{Colors.Important}]Type[/]")
+                                       TableColumn($"[{Colors.Important}]Actor[/]")
+                                       TableColumn($"[{Colors.Important}]Fire Time[/]")
+                                       TableColumn($"[{Colors.Important}]Created At[/]") |]
+                                )
+                                |> ignore
+
+                                reminders
+                                |> Seq.iter (fun reminder ->
+                                    let actorIdDisplay =
+                                        if String.IsNullOrEmpty(reminder.ActorId) then "(empty)"
+                                        elif reminder.ActorId.Length > 8 then reminder.ActorId.Substring(0, 8) + "..."
+                                        else reminder.ActorId
+
+                                    table.AddRow(
+                                        $"[{Colors.Deemphasized}]{reminder.ReminderId}[/]",
+                                        $"{reminder.ReminderType}",
+                                        $"{reminder.ActorName}:{actorIdDisplay}",
+                                        instantToLocalTime reminder.ReminderTime,
+                                        instantToLocalTime reminder.CreatedAt
+                                    )
+                                    |> ignore)
+
+                                AnsiConsole.Write(table)
+
+                        return result |> renderOutput parseResult
+                    | Error graceError ->
+                        logToAnsiConsole Colors.Error (Markup.Escape($"{graceError}"))
+                        return result |> renderOutput parseResult
+                | Error error -> return Error error |> renderOutput parseResult
+            }
+
         type List() =
             inherit AsynchronousCommandLineAction()
 
             override this.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
                 task {
                     try
-                        if parseResult |> verbose then printParseResult parseResult
-
-                        let validateIncomingParameters = parseResult |> Grace.CLI.Common.Validations.CommonValidations
-
-                        match validateIncomingParameters with
-                        | Ok _ ->
-                            let graceIds = parseResult |> getNormalizedIdsAndNames
-
-                            let parameters =
-                                ListRemindersParameters(
-                                    OwnerId = graceIds.OwnerIdString,
-                                    OwnerName = graceIds.OwnerName,
-                                    OrganizationId = graceIds.OrganizationIdString,
-                                    OrganizationName = graceIds.OrganizationName,
-                                    RepositoryId = graceIds.RepositoryIdString,
-                                    RepositoryName = graceIds.RepositoryName,
-                                    MaxCount = parseResult.GetValue(Options.maxCount),
-                                    ReminderType =
-                                        (parseResult.GetValue(Options.reminderType)
-                                         |> Option.ofObj
-                                         |> Option.defaultValue ""),
-                                    ActorName =
-                                        (parseResult.GetValue(Options.actorName)
-                                         |> Option.ofObj
-                                         |> Option.defaultValue ""),
-                                    DueAfter = (parseResult.GetValue(Options.dueAfter) |> Option.ofObj |> Option.defaultValue ""),
-                                    DueBefore =
-                                        (parseResult.GetValue(Options.dueBefore)
-                                         |> Option.ofObj
-                                         |> Option.defaultValue ""),
-                                    CorrelationId = getCorrelationId parseResult
-                                )
-
-                            let! result =
-                                if parseResult |> hasOutput then
-                                    progress
-                                        .Columns(progressColumns)
-                                        .StartAsync(fun progressContext ->
-                                            task {
-                                                let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
-                                                let! response = Reminder.List(parameters)
-                                                t0.Increment(100.0)
-                                                return response
-                                            })
-                                else
-                                    Reminder.List(parameters)
-
-                            match result with
-                            | Ok graceReturnValue ->
-                                if parseResult |> hasOutput then
-                                    let reminders = graceReturnValue.ReturnValue
-
-                                    if Seq.isEmpty reminders then
-                                        logToAnsiConsole Colors.Highlighted "No reminders found."
-                                    else
-                                        let table = Table(Border = TableBorder.DoubleEdge)
-
-                                        table.AddColumns(
-                                            [| TableColumn($"[{Colors.Important}]Reminder ID[/]")
-                                               TableColumn($"[{Colors.Important}]Type[/]")
-                                               TableColumn($"[{Colors.Important}]Actor[/]")
-                                               TableColumn($"[{Colors.Important}]Fire Time[/]")
-                                               TableColumn($"[{Colors.Important}]Created At[/]") |]
-                                        )
-                                        |> ignore
-
-                                        for reminder in reminders do
-                                            let actorIdDisplay =
-                                                if String.IsNullOrEmpty(reminder.ActorId) then "(empty)"
-                                                elif reminder.ActorId.Length > 8 then reminder.ActorId.Substring(0, 8) + "..."
-                                                else reminder.ActorId
-
-                                            table.AddRow(
-                                                $"[{Colors.Deemphasized}]{reminder.ReminderId}[/]",
-                                                $"{reminder.ReminderType}",
-                                                $"{reminder.ActorName}:{actorIdDisplay}",
-                                                instantToLocalTime reminder.ReminderTime,
-                                                instantToLocalTime reminder.CreatedAt
-                                            )
-                                            |> ignore
-
-                                        AnsiConsole.Write(table)
-
-                                return result |> renderOutput parseResult
-                            | Error graceError ->
-                                logToAnsiConsole Colors.Error (Markup.Escape($"{graceError}"))
-                                return result |> renderOutput parseResult
-                        | Error error -> return Error error |> renderOutput parseResult
-
+                        return! listRemindersImpl parseResult
                     with ex ->
                         return
                             renderOutput

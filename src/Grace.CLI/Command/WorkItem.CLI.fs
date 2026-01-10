@@ -124,55 +124,60 @@ module WorkItemCommand =
         else
             Ok parsed
 
+    let private createHandlerImpl (parseResult: ParseResult) =
+        task {
+            if parseResult |> verbose then printParseResult parseResult
+            let graceIds = parseResult |> getNormalizedIdsAndNames
+
+            let title = parseResult.GetValue(Options.title)
+
+            if String.IsNullOrWhiteSpace title then
+                return Error(GraceError.Create "Title is required." (getCorrelationId parseResult))
+            else
+                let description =
+                    parseResult.GetValue(Options.description)
+                    |> Option.ofObj
+                    |> Option.defaultValue String.Empty
+
+                let workItemId =
+                    parseResult.GetValue(Options.workItemId)
+                    |> Option.ofObj
+                    |> Option.defaultValue (Guid.NewGuid().ToString())
+
+                let parameters =
+                    Parameters.WorkItem.CreateWorkItemParameters(
+                        WorkItemId = workItemId,
+                        Title = title,
+                        Description = description,
+                        OwnerId = graceIds.OwnerIdString,
+                        OwnerName = graceIds.OwnerName,
+                        OrganizationId = graceIds.OrganizationIdString,
+                        OrganizationName = graceIds.OrganizationName,
+                        RepositoryId = graceIds.RepositoryIdString,
+                        RepositoryName = graceIds.RepositoryName,
+                        CorrelationId = graceIds.CorrelationId
+                    )
+
+                if parseResult |> hasOutput then
+                    return!
+                        progress
+                            .Columns(progressColumns)
+                            .StartAsync(fun progressContext ->
+                                task {
+                                    let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+
+                                    let! result = WorkItem.Create(parameters)
+                                    t0.Increment(100.0)
+                                    return result
+                                })
+                else
+                    return! WorkItem.Create(parameters)
+        }
+
     let private createHandler (parseResult: ParseResult) =
         task {
             try
-                if parseResult |> verbose then printParseResult parseResult
-                let graceIds = parseResult |> getNormalizedIdsAndNames
-
-                let title = parseResult.GetValue(Options.title)
-
-                if String.IsNullOrWhiteSpace title then
-                    return Error(GraceError.Create "Title is required." (getCorrelationId parseResult))
-                else
-                    let description =
-                        parseResult.GetValue(Options.description)
-                        |> Option.ofObj
-                        |> Option.defaultValue String.Empty
-
-                    let workItemId =
-                        parseResult.GetValue(Options.workItemId)
-                        |> Option.ofObj
-                        |> Option.defaultValue (Guid.NewGuid().ToString())
-
-                    let parameters =
-                        Parameters.WorkItem.CreateWorkItemParameters(
-                            WorkItemId = workItemId,
-                            Title = title,
-                            Description = description,
-                            OwnerId = graceIds.OwnerIdString,
-                            OwnerName = graceIds.OwnerName,
-                            OrganizationId = graceIds.OrganizationIdString,
-                            OrganizationName = graceIds.OrganizationName,
-                            RepositoryId = graceIds.RepositoryIdString,
-                            RepositoryName = graceIds.RepositoryName,
-                            CorrelationId = graceIds.CorrelationId
-                        )
-
-                    if parseResult |> hasOutput then
-                        return!
-                            progress
-                                .Columns(progressColumns)
-                                .StartAsync(fun progressContext ->
-                                    task {
-                                        let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
-
-                                        let! result = WorkItem.Create(parameters)
-                                        t0.Increment(100.0)
-                                        return result
-                                    })
-                    else
-                        return! WorkItem.Create(parameters)
+                return! createHandlerImpl parseResult
             with ex ->
                 return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
         }

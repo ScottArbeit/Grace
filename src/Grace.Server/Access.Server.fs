@@ -246,6 +246,30 @@ module Access =
                         | Error error -> return! context |> result400BadRequest error
             })
 
+    let private parseClaimPermissions
+        (claimPermissions: IList<ClaimPermissionInput>)
+        (correlationId: CorrelationId)
+        : Result<List<ClaimPermission>, GraceError>
+        =
+        let permissions = List<ClaimPermission>()
+
+        let error =
+            claimPermissions
+            |> Seq.tryPick (fun permission ->
+                if String.IsNullOrWhiteSpace permission.Claim then
+                    Some(GraceError.Create "Claim is required." correlationId)
+                else
+                    match discriminatedUnionFromString<DirectoryPermission> permission.DirectoryPermission with
+                    | None ->
+                        Some(GraceError.Create $"Invalid DirectoryPermission '{permission.DirectoryPermission}'." correlationId)
+                    | Some parsed ->
+                        permissions.Add({ Claim = permission.Claim; DirectoryPermission = parsed })
+                        None)
+
+        match error with
+        | Some error -> Error error
+        | None -> Ok permissions
+
     let UpsertPathPermission: HttpHandler =
         requireGraceUser (fun next context ->
             task {
@@ -270,23 +294,9 @@ module Access =
                                     context
                                     |> result400BadRequest (GraceError.Create "ClaimPermissions are required." correlationId)
                             else
-                                let permissions = List<ClaimPermission>()
-                                let mutable permissionError: GraceError option = None
-
-                                for permission in parameters.ClaimPermissions do
-                                    if permissionError.IsNone then
-                                        if String.IsNullOrWhiteSpace permission.Claim then
-                                            permissionError <- Some(GraceError.Create "Claim is required." correlationId)
-                                        else
-                                            match discriminatedUnionFromString<DirectoryPermission> permission.DirectoryPermission with
-                                            | None ->
-                                                permissionError <-
-                                                    Some(GraceError.Create $"Invalid DirectoryPermission '{permission.DirectoryPermission}'." correlationId)
-                                            | Some parsed -> permissions.Add({ Claim = permission.Claim; DirectoryPermission = parsed })
-
-                                match permissionError with
-                                | Some error -> return! context |> result400BadRequest error
-                                | None ->
+                                match parseClaimPermissions parameters.ClaimPermissions correlationId with
+                                | Error error -> return! context |> result400BadRequest error
+                                | Ok permissions ->
                                     let pathPermission = { Path = parameters.Path; Permissions = permissions }
 
                                     let actorProxy = ActorProxy.RepositoryPermission.CreateActorProxy repositoryId correlationId
