@@ -9,6 +9,7 @@ open Grace.Shared.Client
 open Grace.Shared.Client.Configuration
 open Grace.Shared.Parameters.Common
 open Grace.Shared.Utilities
+open Grace.Types.PersonalAccessToken
 open Grace.Types.Types
 open Microsoft.Identity.Client.Extensions.Msal
 open Spectre.Console
@@ -1140,7 +1141,7 @@ module Auth =
                         | Error error -> return Error error |> renderOutput parseResult
             }
 
-    let private renderTokenList (parseResult: ParseResult) (tokens: TokenSummary list) =
+    let private renderTokenList (parseResult: ParseResult) (tokens: PersonalAccessTokenSummary list) =
         let table = Table(Border = TableBorder.Rounded)
         table.AddColumn("Name") |> ignore
         table.AddColumn("TokenId") |> ignore

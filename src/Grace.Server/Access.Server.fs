@@ -247,7 +247,7 @@ module Access =
             })
 
     let private parseClaimPermissions
-        (claimPermissions: IList<ClaimPermissionInput>)
+        (claimPermissions: IList<ClaimPermissionParameters>)
         (correlationId: CorrelationId)
         : Result<List<ClaimPermission>, GraceError>
         =
