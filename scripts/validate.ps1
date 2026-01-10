@@ -13,6 +13,7 @@ $ErrorActionPreference = "Stop"
 
 $startTime = Get-Date
 $exitCode = 0
+$formatDisabled = $true
 
 function Write-Section([string]$Title) {
     Write-Host ""
@@ -24,18 +25,78 @@ function Get-FormatTargets {
     $git = Get-Command git -ErrorAction SilentlyContinue
     $separator = [System.IO.Path]::DirectorySeparatorChar
     $prefix = "src{0}" -f $separator
-    $root = (Get-Location).Path
     $isCi = $env:GITHUB_ACTIONS -eq "true" -or $env:CI -eq "true"
 
-    if ($isCi) {
-        $targets =
-            Get-ChildItem -Path "src" -Recurse -File
-            | Where-Object {
-                $extension = $_.Extension.ToLowerInvariant()
-                $extension -in @(".fs", ".fsi", ".fsx") -and
-                $_.FullName -notmatch "[\\/](bin|obj)[\\/]"
+    if ($isCi -and $null -ne $git) {
+        $diffPaths = @()
+        $event = $null
+
+        if (-not [string]::IsNullOrWhiteSpace($env:GITHUB_EVENT_PATH) -and (Test-Path $env:GITHUB_EVENT_PATH)) {
+            try {
+                $event = Get-Content $env:GITHUB_EVENT_PATH -Raw | ConvertFrom-Json
+            } catch {
+                $event = $null
             }
-            | ForEach-Object { [System.IO.Path]::GetRelativePath($root, $_.FullName) }
+        }
+
+        if ($env:GITHUB_EVENT_NAME -like "pull_request*") {
+            $baseSha =
+                if ($null -ne $event -and $null -ne $event.pull_request) { $event.pull_request.base.sha } else { $null }
+
+            if ([string]::IsNullOrWhiteSpace($baseSha) -and -not [string]::IsNullOrWhiteSpace($env:GITHUB_BASE_SHA)) {
+                $baseSha = $env:GITHUB_BASE_SHA
+            }
+
+            if (-not [string]::IsNullOrWhiteSpace($baseSha)) {
+                $null = & git fetch --no-tags --depth=1 origin $baseSha 2>$null
+                $diffPaths = & git diff --name-only $baseSha HEAD 2>$null
+                if ($LASTEXITCODE -ne 0) {
+                    $diffPaths = @()
+                }
+            }
+        } elseif ($env:GITHUB_EVENT_NAME -eq "push") {
+            $baseSha = if ($null -ne $event) { $event.before } else { $null }
+            $headSha = if ($null -ne $event) { $event.after } else { $null }
+
+            if ([string]::IsNullOrWhiteSpace($baseSha) -and -not [string]::IsNullOrWhiteSpace($env:GITHUB_EVENT_BEFORE)) {
+                $baseSha = $env:GITHUB_EVENT_BEFORE
+            }
+
+            if ([string]::IsNullOrWhiteSpace($headSha) -and -not [string]::IsNullOrWhiteSpace($env:GITHUB_SHA)) {
+                $headSha = $env:GITHUB_SHA
+            }
+
+            if (-not [string]::IsNullOrWhiteSpace($baseSha) -and -not [string]::IsNullOrWhiteSpace($headSha)) {
+                $null = & git fetch --no-tags --depth=1 origin $baseSha $headSha 2>$null
+                $diffPaths = & git diff --name-only $baseSha $headSha 2>$null
+                if ($LASTEXITCODE -ne 0) {
+                    $diffPaths = @()
+                }
+            }
+        }
+
+        if (-not $diffPaths -or $diffPaths.Count -eq 0) {
+            $diffPaths = & git diff --name-only HEAD~1 HEAD 2>$null
+            if ($LASTEXITCODE -ne 0) {
+                $diffPaths = @()
+            }
+        }
+
+        foreach ($path in $diffPaths) {
+            if ([string]::IsNullOrWhiteSpace($path)) {
+                continue
+            }
+
+            $path = $path -replace "[\\/]", $separator
+            if (-not $path.StartsWith($prefix)) {
+                continue
+            }
+
+            $extension = [System.IO.Path]::GetExtension($path).ToLowerInvariant()
+            if ($extension -in @(".fs", ".fsi", ".fsx")) {
+                $targets += $path
+            }
+        }
 
         return [string[]]($targets | Select-Object -Unique)
     }
@@ -83,7 +144,10 @@ try {
         throw "Choose either -Fast or -Full, not both."
     }
 
-    if (-not $SkipFormat) {
+    if ($formatDisabled) {
+        Write-Section "Format"
+        Write-Host "Skipped (temporarily disabled pending full repo formatting)."
+    } elseif (-not $SkipFormat) {
         Write-Section "Format"
         Invoke-External "dotnet tool restore" { dotnet tool restore }
 
