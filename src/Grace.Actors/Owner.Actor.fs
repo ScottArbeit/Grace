@@ -105,14 +105,19 @@ module Owner =
                     |> ignore
 
                     return Ok returnValue
-                with ex ->
+                with
+                | ex ->
                     let exceptionResponse = ExceptionResponse.Create ex
                     log.LogError(ex, "Exception in Owner.Actor: event: {event}", (serialize ownerEvent))
                     log.LogError("Exception details: {exception}", serialize exceptionResponse)
                     let graceError = GraceError.Create (getErrorMessage OwnerError.FailedWhileApplyingEvent) ownerEvent.Metadata.CorrelationId
 
                     graceError
-                        .enhance("Exception details", exceptionResponse.``exception`` + exceptionResponse.innerException)
+                        .enhance(
+                            "Exception details",
+                            exceptionResponse.``exception``
+                            + exceptionResponse.innerException
+                        )
                         .enhance(nameof OwnerId, ownerDto.OwnerId)
                         .enhance(nameof OwnerName, ownerDto.OwnerName)
                         .enhance (nameof OwnerEventType, getDiscriminatedUnionFullName ownerEvent.Event)
@@ -257,7 +262,7 @@ module Owner =
                             return Error(GraceError.Create (getErrorMessage OwnerError.DuplicateCorrelationId) metadata.CorrelationId)
                         else
                             match command with
-                            | OwnerCommand.Create(_, _) ->
+                            | OwnerCommand.Create (_, _) ->
                                 match ownerDto.UpdatedAt with
                                 | Some _ -> return Error(GraceError.Create (getErrorMessage OwnerError.OwnerIdAlreadyExists) metadata.CorrelationId)
                                 | None -> return Ok command
@@ -273,7 +278,7 @@ module Owner =
                             let! eventResult =
                                 task {
                                     match command with
-                                    | OwnerCommand.Create(ownerId, ownerName) -> return Ok(OwnerEventType.Created(ownerId, ownerName))
+                                    | OwnerCommand.Create (ownerId, ownerName) -> return Ok(OwnerEventType.Created(ownerId, ownerName))
                                     | OwnerCommand.SetName newName ->
                                         // Clear the OwnerNameActor for the old name.
                                         let ownerNameActor = OwnerName.CreateActorProxy ownerDto.OwnerName metadata.CorrelationId
@@ -289,16 +294,14 @@ module Owner =
                                     | OwnerCommand.SetType ownerType -> return Ok(OwnerEventType.TypeSet ownerType)
                                     | OwnerCommand.SetSearchVisibility searchVisibility -> return Ok(OwnerEventType.SearchVisibilitySet searchVisibility)
                                     | OwnerCommand.SetDescription description -> return Ok(OwnerEventType.DescriptionSet description)
-                                    | OwnerCommand.DeleteLogical(force, deleteReason) ->
+                                    | OwnerCommand.DeleteLogical (force, deleteReason) ->
                                         // Get the list of organizations that aren't already deleted.
                                         let! organizations = getOrganizations ownerDto.OwnerId Int32.MaxValue false
 
                                         // If the owner contains active organizations, and the force flag is not set, return an error.
-                                        if
-                                            not <| force
-                                            && organizations.Length > 0
-                                            && organizations.Any(fun organization -> organization.DeletedAt |> Option.isNone)
-                                        then
+                                        if not <| force
+                                           && organizations.Length > 0
+                                           && organizations.Any(fun organization -> organization.DeletedAt |> Option.isNone) then
                                             let metadataObj =
                                                 Dictionary<string, obj>(metadata.Properties.Select(fun kvp -> KeyValuePair<string, obj>(kvp.Key, kvp.Value)))
 
@@ -318,7 +321,8 @@ module Owner =
                                                     { DeleteReason = deleteReason; CorrelationId = metadata.CorrelationId }
 
                                                 do!
-                                                    (this :> IGraceReminderWithGuidKey).ScheduleReminderAsync
+                                                    (this :> IGraceReminderWithGuidKey)
+                                                        .ScheduleReminderAsync
                                                         ReminderTypes.PhysicalDeletion
                                                         DefaultPhysicalDeletionReminderDuration
                                                         (ReminderState.OwnerPhysicalDeletion physicalDeletionReminderState)
@@ -341,7 +345,8 @@ module Owner =
                                 //logToConsole $"In Owner.Actor.Handle(): GraceEvent: {serialize event}; Metadata: {serialize metadata}"
                                 return! this.ApplyEvent { Event = event; Metadata = metadata }
                             | Error error -> return Error error
-                        with ex ->
+                        with
+                        | ex ->
                             let metadataObj = Dictionary<string, obj>(metadata.Properties.Select(fun kvp -> KeyValuePair<string, obj>(kvp.Key, kvp.Value)))
                             return Error(GraceError.CreateWithMetadata ex String.Empty metadata.CorrelationId metadataObj)
                     }

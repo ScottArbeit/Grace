@@ -48,7 +48,9 @@ module Auth =
         |> ignore
 
         builder.AppendLine("<body>") |> ignore
-        builder.AppendLine("<h1>Sign in to Grace</h1>") |> ignore
+
+        builder.AppendLine("<h1>Sign in to Grace</h1>")
+        |> ignore
 
         builder.AppendLine(
             "<p>Interactive browser login is not available on the server in this phase. Use the CLI (grace auth login) or provide GRACE_TOKEN / Auth0 M2M credentials.</p>"
@@ -83,7 +85,9 @@ module Auth =
                 match PrincipalMapper.tryGetUserId context.User with
                 | None -> return! RequestErrors.UNAUTHORIZED "Grace" "Auth" "Authentication required." next context
                 | Some userId ->
-                    let claims = PrincipalMapper.getEffectiveClaims context.User |> Set.toList
+                    let claims =
+                        PrincipalMapper.getEffectiveClaims context.User
+                        |> Set.toList
 
                     let rawClaims =
                         context.User.Claims

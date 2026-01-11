@@ -100,7 +100,8 @@ module Policy =
                             .enhance ("Path", context.Request.Path.Value)
 
                     return! context |> result400BadRequest graceError
-            with ex ->
+            with
+            | ex ->
                 log.LogError(
                     ex,
                     "{CurrentInstant}: Exception in Policy.Server.processCommand. CorrelationId: {correlationId}.",
@@ -163,7 +164,8 @@ module Policy =
                             .enhance ("Path", context.Request.Path.Value)
 
                     return! context |> result400BadRequest graceError
-            with ex ->
+            with
+            | ex ->
                 let graceError =
                     (GraceError.CreateWithException ex String.Empty correlationId)
                         .enhance(parameterDictionary)
@@ -176,8 +178,10 @@ module Policy =
         }
 
     let internal validateAcknowledgeParameters (parameters: AcknowledgePolicyParameters) =
-        [| Guid.isValidAndNotEmptyGuid parameters.TargetBranchId PolicyError.InvalidTargetBranchId
-           String.isNotEmpty parameters.PolicySnapshotId PolicyError.InvalidPolicySnapshotId |]
+        [|
+            Guid.isValidAndNotEmptyGuid parameters.TargetBranchId PolicyError.InvalidTargetBranchId
+            String.isNotEmpty parameters.PolicySnapshotId PolicyError.InvalidPolicySnapshotId
+        |]
 
     /// Gets the current policy snapshot.
     let GetCurrent: HttpHandler =
@@ -186,7 +190,9 @@ module Policy =
                 let graceIds = getGraceIds context
 
                 let validations (parameters: GetPolicyParameters) =
-                    [| Guid.isValidAndNotEmptyGuid parameters.TargetBranchId PolicyError.InvalidTargetBranchId |]
+                    [|
+                        Guid.isValidAndNotEmptyGuid parameters.TargetBranchId PolicyError.InvalidTargetBranchId
+                    |]
 
                 let query (context: HttpContext) _ (actorProxy: IPolicyActor) = actorProxy.GetCurrent(getCorrelationId context)
 
@@ -194,7 +200,7 @@ module Policy =
                 parameters.OwnerId <- graceIds.OwnerIdString
                 parameters.OrganizationId <- graceIds.OrganizationIdString
                 parameters.RepositoryId <- graceIds.RepositoryIdString
-                context.Items["Command"] <- "GetCurrent"
+                context.Items[ "Command" ] <- "GetCurrent"
                 return! processQuery context parameters validations query
             }
 
@@ -223,6 +229,6 @@ module Policy =
                     PolicyCommand.Acknowledge(policySnapshotId, UserId principal, note)
                     |> returnValueTask
 
-                context.Items["Command"] <- nameof Acknowledge
+                context.Items[ "Command" ] <- nameof Acknowledge
                 return! processCommand context validations command
             }

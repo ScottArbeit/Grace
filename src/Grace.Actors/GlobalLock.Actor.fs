@@ -17,9 +17,11 @@ open System.Threading.Tasks
 module GlobalLock =
 
     type LockState =
-        { IsLocked: bool
-          LockedBy: string option
-          LockedAt: Instant option }
+        {
+            IsLocked: bool
+            LockedBy: string option
+            LockedAt: Instant option
+        }
 
         static member Unlocked = { IsLocked = false; LockedBy = None; LockedAt = None }
 
@@ -54,7 +56,10 @@ module GlobalLock =
                         instanceName <- lockedBy
                         Ok() |> returnTask
                     else
-                        Error "Not locked by the calling instance." |> returnTask
-                | None -> Error "Cannot release the lock. The lock has not been acquired." |> returnTask //blah
+                        Error "Not locked by the calling instance."
+                        |> returnTask
+                | None ->
+                    Error "Cannot release the lock. The lock has not been acquired."
+                    |> returnTask //blah
 
             member this.IsLocked() = lockState.IsLocked |> returnTask

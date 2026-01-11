@@ -33,14 +33,20 @@ module PrincipalMapper =
         let groupIds = getClaims principal GraceGroupIdClaim
 
         let principals =
-            [ if userId.IsSome then
-                  { PrincipalType = PrincipalType.User; PrincipalId = userId.Value }
-              for groupId in groupIds do
-                  { PrincipalType = PrincipalType.Group; PrincipalId = groupId } ]
+            [
+                if userId.IsSome then
+                    { PrincipalType = PrincipalType.User; PrincipalId = userId.Value }
+                for groupId in groupIds do
+                    { PrincipalType = PrincipalType.Group; PrincipalId = groupId }
+            ]
 
         principals
 
     let getEffectiveClaims (principal: ClaimsPrincipal) =
         let claimValues = getClaims principal GraceClaim |> Set.ofList
-        let groupClaims = getClaims principal GraceGroupIdClaim |> Set.ofList
+
+        let groupClaims =
+            getClaims principal GraceGroupIdClaim
+            |> Set.ofList
+
         Set.union claimValues groupClaims

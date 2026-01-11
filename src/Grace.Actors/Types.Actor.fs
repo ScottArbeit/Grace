@@ -26,8 +26,10 @@ module Types =
         | Final
 
     type Timing =
-        { Time: Instant
-          ActorStateName: string
-          Flag: TimingFlag }
+        {
+            Time: Instant
+            ActorStateName: string
+            Flag: TimingFlag
+        }
 
         static member Create (flag: TimingFlag) actorStateName = { Time = getCurrentInstant (); ActorStateName = actorStateName; Flag = flag }

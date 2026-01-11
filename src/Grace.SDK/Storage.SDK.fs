@@ -60,8 +60,12 @@ module Storage =
 
                     let tempFileInfo = FileInfo(tempFilePath)
                     let objectFileInfo = FileInfo(objectFilePath)
-                    Directory.CreateDirectory(tempFileInfo.Directory.FullName) |> ignore
-                    Directory.CreateDirectory(objectFileInfo.Directory.FullName) |> ignore
+
+                    Directory.CreateDirectory(tempFileInfo.Directory.FullName)
+                    |> ignore
+
+                    Directory.CreateDirectory(objectFileInfo.Directory.FullName)
+                    |> ignore
                     //logToConsole $"tempFilePath: {tempFilePath}; objectFilePath: {objectFilePath}"
 
                     // Download the file from object storage.
@@ -98,7 +102,8 @@ module Storage =
                 | AWSS3 -> return Error(GraceError.Create (getErrorMessage StorageError.NotImplemented) correlationId)
                 | GoogleCloudStorage -> return Error(GraceError.Create (getErrorMessage StorageError.NotImplemented) correlationId)
                 | ObjectStorageProvider.Unknown -> return Error(GraceError.Create (getErrorMessage StorageError.NotImplemented) correlationId)
-            with ex ->
+            with
+            | ex ->
                 logToConsole $"Exception downloading {fileVersion.GetObjectFileName}: {ex.Message}"
                 return Error(GraceError.Create (getErrorMessage StorageError.ObjectStorageException) correlationId)
         }
@@ -130,15 +135,19 @@ module Storage =
                             let fileVersionList = StringBuilder()
 
                             for fileVersion in parameters.FileVersions do
-                                fileVersionList.Append($"{fileVersion.RelativePath}; ") |> ignore
+                                fileVersionList.Append($"{fileVersion.RelativePath}; ")
+                                |> ignore
 
-                            return Error graceError |> enhance "fileVersions" $"{fileVersionList}"
+                            return
+                                Error graceError
+                                |> enhance "fileVersions" $"{fileVersionList}"
                     | AWSS3 -> return Error(GraceError.Create (getErrorMessage StorageError.NotImplemented) correlationId)
                     | GoogleCloudStorage -> return Error(GraceError.Create (getErrorMessage StorageError.NotImplemented) correlationId)
                     | ObjectStorageProvider.Unknown -> return Error(GraceError.Create (getErrorMessage StorageError.NotImplemented) correlationId)
                 else
                     return Error(GraceError.Create (getErrorMessage StorageError.FilesMustNotBeEmpty) correlationId)
-            with ex ->
+            with
+            | ex ->
                 let exceptionResponse = ExceptionResponse.Create ex
                 return Error(GraceError.Create (exceptionResponse.ToString()) correlationId)
         }
@@ -267,7 +276,8 @@ module Storage =
                         else
                             let error = (GraceError.Create $"Failed to upload file {normalizedObjectFilePath} to object storage." correlationId)
                             return Error error
-                    with ex ->
+                    with
+                    | ex ->
                         if ex.Message.Contains("The specified blob already exists.") then
                             // If the file already exists in Blob Storage, we don't need to do anything.
                             let returnValue = GraceReturnValue.Create "File already exists in object storage." correlationId
@@ -280,7 +290,8 @@ module Storage =
                             return Error(GraceError.Create (exceptionResponse.ToString()) correlationId)
                 | ObjectStorageProvider.AWSS3 -> return Error(GraceError.Create (getErrorMessage StorageError.NotImplemented) correlationId)
                 | ObjectStorageProvider.GoogleCloudStorage -> return Error(GraceError.Create (getErrorMessage StorageError.NotImplemented) correlationId)
-            with ex ->
+            with
+            | ex ->
                 let exceptionResponse = ExceptionResponse.Create ex
                 return Error(GraceError.Create (exceptionResponse.ToString()) correlationId)
         }
@@ -307,7 +318,8 @@ module Storage =
                 | ObjectStorageProvider.AWSS3 -> return Error(GraceError.Create (getErrorMessage StorageError.NotImplemented) parameters.CorrelationId)
                 | ObjectStorageProvider.GoogleCloudStorage ->
                     return Error(GraceError.Create (getErrorMessage StorageError.NotImplemented) parameters.CorrelationId)
-            with ex ->
+            with
+            | ex ->
                 let exceptionResponse = ExceptionResponse.Create ex
                 logToConsole $"exception: {exceptionResponse.ToString()}"
                 return Error(GraceError.Create (exceptionResponse.ToString()) parameters.CorrelationId)
@@ -331,7 +343,8 @@ module Storage =
                 | ObjectStorageProvider.AWSS3 -> return Error(GraceError.Create (getErrorMessage StorageError.NotImplemented) parameters.CorrelationId)
                 | ObjectStorageProvider.GoogleCloudStorage ->
                     return Error(GraceError.Create (getErrorMessage StorageError.NotImplemented) parameters.CorrelationId)
-            with ex ->
+            with
+            | ex ->
                 let exceptionResponse = ExceptionResponse.Create ex
                 logToConsole $"exception: {exceptionResponse.ToString()}"
                 return Error(GraceError.Create (exceptionResponse.ToString()) parameters.CorrelationId)

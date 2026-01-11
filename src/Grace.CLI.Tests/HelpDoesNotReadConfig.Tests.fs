@@ -58,8 +58,8 @@ module HelpDoesNotReadConfigTests =
             if Directory.Exists(tempDir) then
                 try
                     Directory.Delete(tempDir, true)
-                with _ ->
-                    ()
+                with
+                | _ -> ()
 
     let private writeInvalidConfig (root: string) =
         let graceDir = Path.Combine(root, ".grace")
@@ -81,37 +81,68 @@ module HelpDoesNotReadConfigTests =
     let ``help works with invalid config`` () =
         withTempDir (fun root ->
             writeInvalidConfig root
-            let exitCode, _ = runWithCapturedOutput [| "access"; "grant-role"; "-h" |]
+
+            let exitCode, _ =
+                runWithCapturedOutput [| "access"
+                                         "grant-role"
+                                         "-h" |]
+
             exitCode |> should equal 0)
 
     [<Test>]
     let ``help works without config`` () =
         withTempDir (fun _ ->
-            let exitCode, _ = runWithCapturedOutput [| "access"; "grant-role"; "-h" |]
+            let exitCode, _ =
+                runWithCapturedOutput [| "access"
+                                         "grant-role"
+                                         "-h" |]
+
             exitCode |> should equal 0)
 
     [<Test>]
     let ``help shows symbolic defaults`` () =
         withTempDir (fun _ ->
-            let exitCode, output = runWithCapturedOutput [| "access"; "grant-role"; "-h" |]
+            let exitCode, output =
+                runWithCapturedOutput [| "access"
+                                         "grant-role"
+                                         "-h" |]
+
             exitCode |> should equal 0
 
-            output |> should contain "[default: current OwnerId]"
-            output |> should contain "[default: current OrganizationId]"
-            output |> should contain "[default: current RepositoryId]"
-            output |> should contain "[default: current BranchId]"
+            output
+            |> should contain "[default: current OwnerId]"
+
+            output
+            |> should contain "[default: current OrganizationId]"
+
+            output
+            |> should contain "[default: current RepositoryId]"
+
+            output
+            |> should contain "[default: current BranchId]"
+
             output |> should contain "[default: new NanoId]")
 
     [<Test>]
     let ``create help rewrites empty guid defaults`` () =
         withTempDir (fun _ ->
-            let exitCode, output = runWithCapturedOutput [| "repository"; "create"; "-h" |]
+            let exitCode, output =
+                runWithCapturedOutput [| "repository"
+                                         "create"
+                                         "-h" |]
+
             exitCode |> should equal 0
 
-            output |> should contain "[default: current OwnerId]"
-            output |> should contain "[default: current OrganizationId]"
+            output
+            |> should contain "[default: current OwnerId]"
+
+            output
+            |> should contain "[default: current OrganizationId]"
+
             output |> should contain "[default: new Guid]"
-            output |> should not' (contain "00000000-0000-0000-0000-0000000000000"))
+
+            output
+            |> should not' (contain "00000000-0000-0000-0000-0000000000000"))
 
     [<Test>]
     let ``verbose parse result shows resolved ids`` () =

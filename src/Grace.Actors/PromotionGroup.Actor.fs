@@ -107,7 +107,9 @@ module PromotionGroup =
                     do! state.WriteStateAsync()
 
                     // Update the DTO with the event.
-                    promotionGroupDto <- promotionGroupDto |> PromotionGroupDto.UpdateDto promotionGroupEvent
+                    promotionGroupDto <-
+                        promotionGroupDto
+                        |> PromotionGroupDto.UpdateDto promotionGroupEvent
 
                     // Publish the event to the rest of the world.
                     let graceEvent = GraceEvent.PromotionGroupEvent promotionGroupEvent
@@ -122,7 +124,8 @@ module PromotionGroup =
                             .enhance (nameof PromotionGroupEventType, getDiscriminatedUnionFullName promotionGroupEvent.Event)
 
                     return Ok graceReturnValue
-                with ex ->
+                with
+                | ex ->
                     log.LogError(
                         ex,
                         "{CurrentInstant}: Node: {hostName}; CorrelationId: {correlationId}; Failed to apply event {eventType} for promotion group {promotionGroupId}.",
@@ -158,7 +161,9 @@ module PromotionGroup =
 
             member this.GetEvents correlationId =
                 this.correlationId <- correlationId
-                state.State :> IReadOnlyList<PromotionGroupEvent> |> returnTask
+
+                state.State :> IReadOnlyList<PromotionGroupEvent>
+                |> returnTask
 
             member this.IsDeleted correlationId =
                 this.correlationId <- correlationId
@@ -172,8 +177,9 @@ module PromotionGroup =
                                 Error(GraceError.Create (PromotionGroupError.getErrorMessage PromotionGroupError.DuplicateCorrelationId) metadata.CorrelationId)
                         else
                             match command with
-                            | Create(promotionGroupId, ownerId, organizationId, repositoryId, targetBranchId, description, scheduledAt) ->
-                                if promotionGroupDto.PromotionGroupId <> PromotionGroupId.Empty then
+                            | Create (promotionGroupId, ownerId, organizationId, repositoryId, targetBranchId, description, scheduledAt) ->
+                                if promotionGroupDto.PromotionGroupId
+                                   <> PromotionGroupId.Empty then
                                     return
                                         Error(
                                             GraceError.Create
@@ -268,7 +274,7 @@ module PromotionGroup =
                                                 (PromotionGroupError.getErrorMessage PromotionGroupError.PromotionGroupCannotBeBlocked)
                                                 metadata.CorrelationId
                                         )
-                            | DeleteLogical(force, deleteReason) ->
+                            | DeleteLogical (force, deleteReason) ->
                                 match promotionGroupDto.Status with
                                 | Running
                                 | Succeeded ->
@@ -286,7 +292,7 @@ module PromotionGroup =
                         let! promotionGroupEventType =
                             task {
                                 match command with
-                                | Create(promotionGroupId, ownerId, organizationId, repositoryId, targetBranchId, description, scheduledAt) ->
+                                | Create (promotionGroupId, ownerId, organizationId, repositoryId, targetBranchId, description, scheduledAt) ->
                                     return Created(promotionGroupId, ownerId, organizationId, repositoryId, targetBranchId, description, scheduledAt)
                                 | AddPromotion promotionId ->
                                     let order = promotionGroupDto.Promotions.Length
@@ -298,7 +304,7 @@ module PromotionGroup =
                                 | Start -> return Started
                                 | Complete success -> return Completed success
                                 | Block reason -> return Blocked reason
-                                | DeleteLogical(force, deleteReason) -> return LogicalDeleted(force, deleteReason)
+                                | DeleteLogical (force, deleteReason) -> return LogicalDeleted(force, deleteReason)
                             }
 
                         let promotionGroupEvent = { Event = promotionGroupEventType; Metadata = metadata }

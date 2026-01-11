@@ -586,4 +586,8 @@ module Interfaces =
             tokenId: PersonalAccessTokenId -> now: Instant -> correlationId: CorrelationId -> Task<Result<PersonalAccessTokenSummary, GraceError>>
 
         abstract member ValidateToken:
-            tokenId: PersonalAccessTokenId -> secret: byte[] -> now: Instant -> correlationId: CorrelationId -> Task<PersonalAccessTokenValidationResult option>
+            tokenId: PersonalAccessTokenId ->
+            secret: byte [] ->
+            now: Instant ->
+            correlationId: CorrelationId ->
+                Task<PersonalAccessTokenValidationResult option>

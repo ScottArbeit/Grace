@@ -24,7 +24,9 @@ module DirectoryAppearance =
         member val public RepositoryId: RepositoryId = RepositoryId.Empty with get, set
 
     type DirectoryAppearanceActor
-        ([<PersistentState(StateName.DirectoryAppearance, Constants.GraceActorStorage)>] state: IPersistentState<SortedSet<Appearance>>) =
+        (
+            [<PersistentState(StateName.DirectoryAppearance, Constants.GraceActorStorage)>] state: IPersistentState<SortedSet<Appearance>>
+        ) =
         inherit Grain()
 
         let actorName = ActorName.DirectoryAppearance
@@ -74,6 +76,8 @@ module DirectoryAppearance =
                 }
                 :> Task
 
-            member this.Contains appearance correlationId = directoryAppearanceDto.Appearances.Contains(appearance) |> returnTask
+            member this.Contains appearance correlationId =
+                directoryAppearanceDto.Appearances.Contains(appearance)
+                |> returnTask
 
             member this.Appearances correlationId = directoryAppearanceDto.Appearances |> returnTask

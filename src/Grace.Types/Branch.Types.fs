@@ -15,12 +15,14 @@ module Branch =
 
     /// The state held in the database when creating a physical deletion reminder for a branch.
     type PhysicalDeletionReminderState =
-        { RepositoryId: RepositoryId
-          BranchId: BranchId
-          BranchName: BranchName
-          ParentBranchId: ParentBranchId
-          DeleteReason: DeleteReason
-          CorrelationId: CorrelationId }
+        {
+            RepositoryId: RepositoryId
+            BranchId: BranchId
+            BranchName: BranchName
+            ParentBranchId: ParentBranchId
+            DeleteReason: DeleteReason
+            CorrelationId: CorrelationId
+        }
 
     /// Defines the commands for the Branch actor.
     [<KnownType("GetKnownTypes")>]
@@ -109,72 +111,82 @@ module Branch =
 
     /// The BranchDto is a data transfer object that represents a branch in the system.
     type BranchDto =
-        { Class: string
-          BranchId: BranchId
-          BranchName: BranchName
-          ParentBranchId: BranchId
-          OwnerId: OwnerId
-          OrganizationId: OrganizationId
-          RepositoryId: RepositoryId
-          BasedOn: ReferenceDto
-          UserId: UserId
-          AssignEnabled: bool
-          PromotionEnabled: bool
-          CommitEnabled: bool
-          CheckpointEnabled: bool
-          SaveEnabled: bool
-          TagEnabled: bool
-          ExternalEnabled: bool
-          AutoRebaseEnabled: bool
-          PromotionMode: BranchPromotionMode
-          LatestReference: ReferenceDto
-          LatestPromotion: ReferenceDto
-          LatestCommit: ReferenceDto
-          LatestCheckpoint: ReferenceDto
-          LatestSave: ReferenceDto
-          ShouldRecomputeLatestReferences: bool
-          CreatedAt: Instant
-          UpdatedAt: Instant option
-          DeletedAt: Instant option
-          DeleteReason: DeleteReason }
+        {
+            Class: string
+            BranchId: BranchId
+            BranchName: BranchName
+            ParentBranchId: BranchId
+            OwnerId: OwnerId
+            OrganizationId: OrganizationId
+            RepositoryId: RepositoryId
+            BasedOn: ReferenceDto
+            UserId: UserId
+            AssignEnabled: bool
+            PromotionEnabled: bool
+            CommitEnabled: bool
+            CheckpointEnabled: bool
+            SaveEnabled: bool
+            TagEnabled: bool
+            ExternalEnabled: bool
+            AutoRebaseEnabled: bool
+            PromotionMode: BranchPromotionMode
+            LatestReference: ReferenceDto
+            LatestPromotion: ReferenceDto
+            LatestCommit: ReferenceDto
+            LatestCheckpoint: ReferenceDto
+            LatestSave: ReferenceDto
+            ShouldRecomputeLatestReferences: bool
+            CreatedAt: Instant
+            UpdatedAt: Instant option
+            DeletedAt: Instant option
+            DeleteReason: DeleteReason
+        }
 
         static member Default =
-            { Class = nameof BranchDto
-              BranchId = BranchId.Empty
-              BranchName = BranchName "root"
-              ParentBranchId = Constants.DefaultParentBranchId
-              OwnerId = OwnerId.Empty
-              OrganizationId = OrganizationId.Empty
-              RepositoryId = RepositoryId.Empty
-              BasedOn = ReferenceDto.Default
-              UserId = UserId String.Empty
-              AssignEnabled = false
-              PromotionEnabled = false
-              CommitEnabled = false
-              CheckpointEnabled = false
-              SaveEnabled = false
-              TagEnabled = false
-              ExternalEnabled = false
-              AutoRebaseEnabled = true
-              PromotionMode = BranchPromotionMode.IndividualOnly
-              LatestReference = ReferenceDto.Default
-              LatestPromotion = ReferenceDto.Default
-              LatestCommit = ReferenceDto.Default
-              LatestCheckpoint = ReferenceDto.Default
-              LatestSave = ReferenceDto.Default
-              ShouldRecomputeLatestReferences = true
-              CreatedAt = Constants.DefaultTimestamp
-              UpdatedAt = None
-              DeletedAt = None
-              DeleteReason = String.Empty }
+            {
+                Class = nameof BranchDto
+                BranchId = BranchId.Empty
+                BranchName = BranchName "root"
+                ParentBranchId = Constants.DefaultParentBranchId
+                OwnerId = OwnerId.Empty
+                OrganizationId = OrganizationId.Empty
+                RepositoryId = RepositoryId.Empty
+                BasedOn = ReferenceDto.Default
+                UserId = UserId String.Empty
+                AssignEnabled = false
+                PromotionEnabled = false
+                CommitEnabled = false
+                CheckpointEnabled = false
+                SaveEnabled = false
+                TagEnabled = false
+                ExternalEnabled = false
+                AutoRebaseEnabled = true
+                PromotionMode = BranchPromotionMode.IndividualOnly
+                LatestReference = ReferenceDto.Default
+                LatestPromotion = ReferenceDto.Default
+                LatestCommit = ReferenceDto.Default
+                LatestCheckpoint = ReferenceDto.Default
+                LatestSave = ReferenceDto.Default
+                ShouldRecomputeLatestReferences = true
+                CreatedAt = Constants.DefaultTimestamp
+                UpdatedAt = None
+                DeletedAt = None
+                DeleteReason = String.Empty
+            }
 
         static member UpdateDto branchEvent currentBranchDto =
             let branchEventType = branchEvent.Event
 
             let newBranchDto =
                 match branchEventType with
-                | Created(branchId, branchName, parentBranchId, basedOn, ownerId, organizationId, repositoryId, initialPermissions) ->
-                    let basedOnReferenceDto = deserialize<ReferenceDto> (branchEvent.Metadata.Properties["basedOnReferenceDto"].ToString())
+                | Created (branchId, branchName, parentBranchId, basedOn, ownerId, organizationId, repositoryId, initialPermissions) ->
+                    let basedOnReferenceDto =
+                        deserialize<ReferenceDto> (
+                            branchEvent
+                                .Metadata
+                                .Properties[ "basedOnReferenceDto" ]
+                                .ToString()
+                        )
 
                     let mutable branchDto =
                         { BranchDto.Default with
@@ -185,7 +197,8 @@ module Branch =
                             OwnerId = ownerId
                             OrganizationId = organizationId
                             RepositoryId = repositoryId
-                            CreatedAt = branchEvent.Metadata.Timestamp }
+                            CreatedAt = branchEvent.Metadata.Timestamp
+                        }
 
                     for referenceType in initialPermissions do
                         branchDto <-
@@ -200,26 +213,34 @@ module Branch =
 
                     branchDto
                 | Rebased referenceId ->
-                    let basedOnReferenceDto = deserialize<ReferenceDto> (branchEvent.Metadata.Properties["basedOnReferenceDto"].ToString())
+                    let basedOnReferenceDto =
+                        deserialize<ReferenceDto> (
+                            branchEvent
+                                .Metadata
+                                .Properties[ "basedOnReferenceDto" ]
+                                .ToString()
+                        )
+
                     { currentBranchDto with BasedOn = basedOnReferenceDto }
                 | NameSet branchName -> { currentBranchDto with BranchName = branchName }
-                | Assigned(referenceDto, directoryVersion, sha256Hash, referenceText) ->
+                | Assigned (referenceDto, directoryVersion, sha256Hash, referenceText) ->
                     { currentBranchDto with LatestPromotion = referenceDto; BasedOn = referenceDto; ShouldRecomputeLatestReferences = true }
 
-                | Promoted(referenceDto, directoryVersion, sha256Hash, referenceText) ->
+                | Promoted (referenceDto, directoryVersion, sha256Hash, referenceText) ->
                     { currentBranchDto with LatestPromotion = referenceDto; BasedOn = referenceDto; ShouldRecomputeLatestReferences = true }
 
-                | Committed(referenceDto, directoryVersion, sha256Hash, referenceText) ->
+                | Committed (referenceDto, directoryVersion, sha256Hash, referenceText) ->
                     { currentBranchDto with LatestCommit = referenceDto; ShouldRecomputeLatestReferences = true }
 
-                | Checkpointed(referenceDto, directoryVersion, sha256Hash, referenceText) ->
+                | Checkpointed (referenceDto, directoryVersion, sha256Hash, referenceText) ->
                     { currentBranchDto with LatestCheckpoint = referenceDto; ShouldRecomputeLatestReferences = true }
 
-                | Saved(referenceDto, directoryVersion, sha256Hash, referenceText) ->
+                | Saved (referenceDto, directoryVersion, sha256Hash, referenceText) ->
                     { currentBranchDto with LatestSave = referenceDto; ShouldRecomputeLatestReferences = true }
 
-                | Tagged(referenceDto, directoryVersion, sha256Hash, referenceText) -> { currentBranchDto with ShouldRecomputeLatestReferences = true }
-                | ExternalCreated(referenceDto, directoryVersion, sha256Hash, referenceText) -> { currentBranchDto with ShouldRecomputeLatestReferences = true }
+                | Tagged (referenceDto, directoryVersion, sha256Hash, referenceText) -> { currentBranchDto with ShouldRecomputeLatestReferences = true }
+                | ExternalCreated (referenceDto, directoryVersion, sha256Hash, referenceText) ->
+                    { currentBranchDto with ShouldRecomputeLatestReferences = true }
                 | EnabledAssign enabled -> { currentBranchDto with AssignEnabled = enabled }
                 | EnabledPromotion enabled -> { currentBranchDto with PromotionEnabled = enabled }
                 | EnabledCommit enabled -> { currentBranchDto with CommitEnabled = enabled }
@@ -231,7 +252,7 @@ module Branch =
                 | PromotionModeSet promotionMode -> { currentBranchDto with PromotionMode = promotionMode }
                 | ReferenceRemoved _ -> currentBranchDto
                 | ParentBranchUpdated newParentBranchId -> { currentBranchDto with ParentBranchId = newParentBranchId }
-                | LogicalDeleted(force, deleteReason, reassignedChildBranches, childrenReassignedTo) ->
+                | LogicalDeleted (force, deleteReason, reassignedChildBranches, childrenReassignedTo) ->
                     { currentBranchDto with DeletedAt = Some(getCurrentInstant ()); DeleteReason = deleteReason }
 
                 | PhysicalDeleted -> currentBranchDto // Do nothing because it's about to be deleted anyway.

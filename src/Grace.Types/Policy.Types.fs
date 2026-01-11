@@ -23,12 +23,23 @@ module Policy =
     /// Default policy values.
     [<GenerateSerializer>]
     type PolicyDefaults =
-        { RequireHumanReview: bool; DeepAnalysis: PolicyAnalysisSettings; Triage: PolicyAnalysisSettings; NonTrivialSignal: PolicyNonTrivialSignal }
+        {
+            RequireHumanReview: bool
+            DeepAnalysis: PolicyAnalysisSettings
+            Triage: PolicyAnalysisSettings
+            NonTrivialSignal: PolicyNonTrivialSignal
+        }
 
     /// Rule for policy triggers.
     [<GenerateSerializer>]
     type PolicyRule =
-        { PathMatches: string option; FileMatches: string option; ApiSurfaceChanged: bool option; DependencyChanged: bool option; ConfigChanged: bool option }
+        {
+            PathMatches: string option
+            FileMatches: string option
+            ApiSurfaceChanged: bool option
+            DependencyChanged: bool option
+            ConfigChanged: bool option
+        }
 
     /// Redaction configuration for evidence extraction.
     [<GenerateSerializer>]
@@ -58,52 +69,63 @@ module Policy =
     /// Compiled policy ruleset.
     [<GenerateSerializer>]
     type PolicyRuleset =
-        { Defaults: PolicyDefaults
-          HumanReviewRequiredWhen: PolicyRule list
-          DeepAnalysisRequiredWhen: PolicyRule list
-          SensitivePaths: string list
-          Redaction: PolicyRedaction
-          ApprovalRules: PolicyApprovalRules
-          Queue: PolicyQueueRules }
+        {
+            Defaults: PolicyDefaults
+            HumanReviewRequiredWhen: PolicyRule list
+            DeepAnalysisRequiredWhen: PolicyRule list
+            SensitivePaths: string list
+            Redaction: PolicyRedaction
+            ApprovalRules: PolicyApprovalRules
+            Queue: PolicyQueueRules
+        }
 
     /// Immutable snapshot of the compiled policy.
     [<GenerateSerializer>]
     type PolicySnapshot =
-        { Class: string
-          PolicySnapshotId: PolicySnapshotId
-          OwnerId: OwnerId
-          OrganizationId: OrganizationId
-          RepositoryId: RepositoryId
-          TargetBranchId: BranchId
-          PolicyVersion: int
-          ParserVersion: string
-          SourceHash: Sha256Hash
-          Rules: PolicyRuleset
-          CreatedAt: Instant }
+        {
+            Class: string
+            PolicySnapshotId: PolicySnapshotId
+            OwnerId: OwnerId
+            OrganizationId: OrganizationId
+            RepositoryId: RepositoryId
+            TargetBranchId: BranchId
+            PolicyVersion: int
+            ParserVersion: string
+            SourceHash: Sha256Hash
+            Rules: PolicyRuleset
+            CreatedAt: Instant
+        }
 
         static member Default =
-            { Class = nameof PolicySnapshot
-              PolicySnapshotId = Sha256Hash String.Empty
-              OwnerId = OwnerId.Empty
-              OrganizationId = OrganizationId.Empty
-              RepositoryId = RepositoryId.Empty
-              TargetBranchId = BranchId.Empty
-              PolicyVersion = 1
-              ParserVersion = String.Empty
-              SourceHash = Sha256Hash String.Empty
-              Rules =
-                { Defaults =
-                    { RequireHumanReview = true
-                      DeepAnalysis = { Enabled = true; MaxTokens = 12000 }
-                      Triage = { Enabled = true; MaxTokens = 2500 }
-                      NonTrivialSignal = { ChurnLinesThreshold = 80; TouchedSensitivePaths = true; DependencyConfigChanges = true; ApiSurfaceChanges = true } }
-                  HumanReviewRequiredWhen = []
-                  DeepAnalysisRequiredWhen = []
-                  SensitivePaths = []
-                  Redaction = { Enabled = false; Patterns = []; DenylistPaths = [] }
-                  ApprovalRules = { BaselineDriftReackThreshold = { ChurnLines = 50; FilesTouched = 5 } }
-                  Queue = { OnFailure = QueueFailureAction.PauseQueue } }
-              CreatedAt = Constants.DefaultTimestamp }
+            {
+                Class = nameof PolicySnapshot
+                PolicySnapshotId = Sha256Hash String.Empty
+                OwnerId = OwnerId.Empty
+                OrganizationId = OrganizationId.Empty
+                RepositoryId = RepositoryId.Empty
+                TargetBranchId = BranchId.Empty
+                PolicyVersion = 1
+                ParserVersion = String.Empty
+                SourceHash = Sha256Hash String.Empty
+                Rules =
+                    {
+                        Defaults =
+                            {
+                                RequireHumanReview = true
+                                DeepAnalysis = { Enabled = true; MaxTokens = 12000 }
+                                Triage = { Enabled = true; MaxTokens = 2500 }
+                                NonTrivialSignal =
+                                    { ChurnLinesThreshold = 80; TouchedSensitivePaths = true; DependencyConfigChanges = true; ApiSurfaceChanges = true }
+                            }
+                        HumanReviewRequiredWhen = []
+                        DeepAnalysisRequiredWhen = []
+                        SensitivePaths = []
+                        Redaction = { Enabled = false; Patterns = []; DenylistPaths = [] }
+                        ApprovalRules = { BaselineDriftReackThreshold = { ChurnLines = 50; FilesTouched = 5 } }
+                        Queue = { OnFailure = QueueFailureAction.PauseQueue }
+                    }
+                CreatedAt = Constants.DefaultTimestamp
+            }
 
     /// Acknowledgement of a policy snapshot.
     [<GenerateSerializer>]

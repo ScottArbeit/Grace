@@ -13,38 +13,49 @@ module PersonalAccessToken =
 
     [<GenerateSerializer>]
     type PersonalAccessTokenSummary =
-        { [<Id 0u>]
-          TokenId: PersonalAccessTokenId
-          [<Id 1u>]
-          Name: string
-          [<Id 2u>]
-          CreatedAt: Instant
-          [<Id 3u>]
-          ExpiresAt: Instant option
-          [<Id 4u>]
-          LastUsedAt: Instant option
-          [<Id 5u>]
-          RevokedAt: Instant option }
+        {
+            [<Id 0u>]
+            TokenId: PersonalAccessTokenId
+            [<Id 1u>]
+            Name: string
+            [<Id 2u>]
+            CreatedAt: Instant
+            [<Id 3u>]
+            ExpiresAt: Instant option
+            [<Id 4u>]
+            LastUsedAt: Instant option
+            [<Id 5u>]
+            RevokedAt: Instant option
+        }
 
     [<GenerateSerializer>]
     type PersonalAccessTokenCreated =
-        { [<Id 0u>]
-          Token: string
-          [<Id 1u>]
-          Summary: PersonalAccessTokenSummary }
+        {
+            [<Id 0u>]
+            Token: string
+            [<Id 1u>]
+            Summary: PersonalAccessTokenSummary
+        }
 
     [<GenerateSerializer>]
     type PersonalAccessTokenValidationResult =
-        { [<Id 0u>]
-          TokenId: PersonalAccessTokenId
-          [<Id 1u>]
-          UserId: Types.UserId
-          [<Id 2u>]
-          Claims: string list
-          [<Id 3u>]
-          GroupIds: string list }
+        {
+            [<Id 0u>]
+            TokenId: PersonalAccessTokenId
+            [<Id 1u>]
+            UserId: Types.UserId
+            [<Id 2u>]
+            Claims: string list
+            [<Id 3u>]
+            GroupIds: string list
+        }
 
-    let private base64UrlEncode (bytes: byte array) = Convert.ToBase64String(bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_')
+    let private base64UrlEncode (bytes: byte array) =
+        Convert
+            .ToBase64String(bytes)
+            .TrimEnd('=')
+            .Replace('+', '-')
+            .Replace('/', '_')
 
     let private tryBase64UrlDecode (value: string) =
         try
@@ -52,8 +63,8 @@ module PersonalAccessToken =
             let padding = (4 - (normalized.Length % 4)) % 4
             let padded = normalized + String.replicate padding "="
             Some(Convert.FromBase64String(padded))
-        with _ ->
-            None
+        with
+        | _ -> None
 
     let formatToken (userId: string) (tokenId: Guid) (secret: byte array) =
         let userIdBytes = Encoding.UTF8.GetBytes(userId)
@@ -84,7 +95,8 @@ module PersonalAccessToken =
                     | Some userIdBytes, Some secretBytes ->
                         let userId = Encoding.UTF8.GetString(userIdBytes)
 
-                        if String.IsNullOrWhiteSpace userId || secretBytes.Length <> 32 then
+                        if String.IsNullOrWhiteSpace userId
+                           || secretBytes.Length <> 32 then
                             None
                         else
                             Some(userId, tokenId, secretBytes)

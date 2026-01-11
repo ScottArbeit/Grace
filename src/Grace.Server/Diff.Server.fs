@@ -120,7 +120,8 @@ module Diff =
                     graceError.Properties.Add($"DirectoryVersionId1", $"{parameters.DirectoryVersionId1}")
                     graceError.Properties.Add($"DirectoryVersionId2", $"{parameters.DirectoryVersionId2}")
                     return! context |> result400BadRequest graceError
-            with ex ->
+            with
+            | ex ->
                 return!
                     context
                     |> result500ServerError (GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (getCorrelationId context))
@@ -135,18 +136,20 @@ module Diff =
                     let repositoryId = Guid.Parse(graceIds.RepositoryIdString)
 
                     let validations (parameters: PopulateParameters) =
-                        [| Guid.isNotEmpty parameters.DirectoryVersionId1 DiffError.InvalidDirectoryVersionId
-                           Guid.isNotEmpty parameters.DirectoryVersionId2 DiffError.InvalidDirectoryVersionId
-                           DirectoryVersion.directoryIdExists
-                               parameters.DirectoryVersionId1
-                               repositoryId
-                               parameters.CorrelationId
-                               DiffError.DirectoryDoesNotExist
-                           DirectoryVersion.directoryIdExists
-                               parameters.DirectoryVersionId2
-                               repositoryId
-                               parameters.CorrelationId
-                               DiffError.DirectoryDoesNotExist |]
+                        [|
+                            Guid.isNotEmpty parameters.DirectoryVersionId1 DiffError.InvalidDirectoryVersionId
+                            Guid.isNotEmpty parameters.DirectoryVersionId2 DiffError.InvalidDirectoryVersionId
+                            DirectoryVersion.directoryIdExists
+                                parameters.DirectoryVersionId1
+                                repositoryId
+                                parameters.CorrelationId
+                                DiffError.DirectoryDoesNotExist
+                            DirectoryVersion.directoryIdExists
+                                parameters.DirectoryVersionId2
+                                repositoryId
+                                parameters.CorrelationId
+                                DiffError.DirectoryDoesNotExist
+                        |]
 
                     let query (context: HttpContext) _ (actorProxy: IDiffActor) =
                         task {
@@ -156,7 +159,8 @@ module Diff =
 
                     let! parameters = context |> parse<PopulateParameters>
                     return! processQuery context parameters validations query
-                with ex ->
+                with
+                | ex ->
                     return!
                         context
                         |> result500ServerError (GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (getCorrelationId context))
@@ -171,18 +175,20 @@ module Diff =
                     let repositoryId = Guid.Parse(graceIds.RepositoryIdString)
 
                     let validations (parameters: GetDiffParameters) =
-                        [| Guid.isNotEmpty parameters.DirectoryVersionId1 DiffError.InvalidDirectoryVersionId
-                           Guid.isNotEmpty parameters.DirectoryVersionId2 DiffError.InvalidDirectoryVersionId
-                           DirectoryVersion.directoryIdExists
-                               parameters.DirectoryVersionId1
-                               repositoryId
-                               parameters.CorrelationId
-                               DiffError.DirectoryDoesNotExist
-                           DirectoryVersion.directoryIdExists
-                               parameters.DirectoryVersionId2
-                               repositoryId
-                               parameters.CorrelationId
-                               DiffError.DirectoryDoesNotExist |]
+                        [|
+                            Guid.isNotEmpty parameters.DirectoryVersionId1 DiffError.InvalidDirectoryVersionId
+                            Guid.isNotEmpty parameters.DirectoryVersionId2 DiffError.InvalidDirectoryVersionId
+                            DirectoryVersion.directoryIdExists
+                                parameters.DirectoryVersionId1
+                                repositoryId
+                                parameters.CorrelationId
+                                DiffError.DirectoryDoesNotExist
+                            DirectoryVersion.directoryIdExists
+                                parameters.DirectoryVersionId2
+                                repositoryId
+                                parameters.CorrelationId
+                                DiffError.DirectoryDoesNotExist
+                        |]
 
                     let query (context: HttpContext) _ (actorProxy: IDiffActor) =
                         task {
@@ -195,7 +201,8 @@ module Diff =
                     let! parameters = context |> parse<GetDiffParameters>
 
                     return! processQuery context parameters validations query
-                with ex ->
+                with
+                | ex ->
                     return!
                         context
                         |> result500ServerError (GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (getCorrelationId context))
@@ -207,10 +214,12 @@ module Diff =
             task {
                 try
                     let validations (parameters: GetDiffBySha256HashParameters) =
-                        [| String.isNotEmpty parameters.Sha256Hash1 DiffError.Sha256HashIsRequired
-                           String.isNotEmpty parameters.Sha256Hash2 DiffError.Sha256HashIsRequired
-                           String.isValidSha256Hash parameters.Sha256Hash1 DiffError.InvalidSha256Hash
-                           String.isValidSha256Hash parameters.Sha256Hash2 DiffError.InvalidSha256Hash |]
+                        [|
+                            String.isNotEmpty parameters.Sha256Hash1 DiffError.Sha256HashIsRequired
+                            String.isNotEmpty parameters.Sha256Hash2 DiffError.Sha256HashIsRequired
+                            String.isValidSha256Hash parameters.Sha256Hash1 DiffError.InvalidSha256Hash
+                            String.isValidSha256Hash parameters.Sha256Hash2 DiffError.InvalidSha256Hash
+                        |]
 
                     let query (context: HttpContext) _ (actorProxy: IDiffActor) =
                         task {
@@ -232,7 +241,8 @@ module Diff =
                     | _ -> ()
 
                     return! processQuery context parameters validations query
-                with ex ->
+                with
+                | ex ->
                     return!
                         context
                         |> result500ServerError (GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (getCorrelationId context))

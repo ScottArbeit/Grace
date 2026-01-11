@@ -10,7 +10,9 @@ open Grace.Shared.Client.Configuration
 open Grace.Shared.Utilities
 open Grace.Types.Owner
 open Grace.Types.Branch
+open Grace.Types.Organization
 open Grace.Types.Reference
+open Grace.Types.Repository
 open Grace.Types.Types
 open Grace.Shared.Validation.Common
 open Grace.Shared.Validation.Errors
@@ -197,14 +199,17 @@ module Connect =
             if String.IsNullOrWhiteSpace(value) then
                 Error(GraceError.Create "Repository shortcut must be in the form owner/organization/repository." (getCorrelationId parseResult))
             else
-                let parts = value.Trim().Split('/', StringSplitOptions.RemoveEmptyEntries)
+                let parts =
+                    value
+                        .Trim()
+                        .Split('/', StringSplitOptions.RemoveEmptyEntries)
 
                 if parts.Length <> 3 then
                     Error(GraceError.Create "Repository shortcut must be in the form owner/organization/repository." (getCorrelationId parseResult))
                 else
-                    let ownerName = parts[0].Trim()
-                    let organizationName = parts[1].Trim()
-                    let repositoryName = parts[2].Trim()
+                    let ownerName = parts[ 0 ].Trim()
+                    let organizationName = parts[ 1 ].Trim()
+                    let repositoryName = parts[ 2 ].Trim()
 
                     match validateGraceName ownerName OwnerError.InvalidOwnerName parseResult with
                     | Error error -> Error error
@@ -219,7 +224,8 @@ module Connect =
     let private hasExplicitOwner (parseResult: ParseResult) =
         tryGetExplicitValue parseResult Options.ownerId
         |> Option.exists (fun ownerId -> ownerId <> Guid.Empty)
-        || (tryGetExplicitNonEmptyString parseResult Options.ownerName |> Option.isSome)
+        || (tryGetExplicitNonEmptyString parseResult Options.ownerName
+            |> Option.isSome)
 
     let private hasExplicitOrganization (parseResult: ParseResult) =
         tryGetExplicitValue parseResult Options.organizationId
@@ -230,18 +236,17 @@ module Connect =
     let private hasExplicitRepository (parseResult: ParseResult) =
         tryGetExplicitValue parseResult Options.repositoryId
         |> Option.exists (fun repositoryId -> repositoryId <> Guid.Empty)
-        || (tryGetExplicitNonEmptyString parseResult Options.repositoryName |> Option.isSome)
+        || (tryGetExplicitNonEmptyString parseResult Options.repositoryName
+            |> Option.isSome)
 
     let internal applyRepositoryShortcut (parseResult: ParseResult) (graceIds: GraceIds) =
         match tryGetRepositoryShortcut parseResult with
         | Error error -> Error error
         | Ok None -> Ok graceIds
-        | Ok(Some shortcut) ->
-            if
-                hasExplicitOwner parseResult
-                || hasExplicitOrganization parseResult
-                || hasExplicitRepository parseResult
-            then
+        | Ok (Some shortcut) ->
+            if hasExplicitOwner parseResult
+               || hasExplicitOrganization parseResult
+               || hasExplicitRepository parseResult then
                 Error(
                     GraceError.Create
                         "Provide either the repository shortcut or the owner/organization/repository options, not both."
@@ -261,7 +266,8 @@ module Connect =
                         RepositoryName = shortcut.RepositoryName
                         HasOwner = true
                         HasOrganization = true
-                        HasRepository = true }
+                        HasRepository = true
+                    }
 
     let internal getDirectoryVersionSelection (parseResult: ParseResult) =
         match tryGetExplicitValue parseResult Options.directoryVersionId with
@@ -272,25 +278,161 @@ module Connect =
             | _ ->
                 match tryGetExplicitNonEmptyString parseResult Options.referenceType with
                 | Some referenceTypeRaw ->
-                    let referenceType = discriminatedUnionFromString<ReferenceType>(referenceTypeRaw).Value
+                    let referenceType =
+                        discriminatedUnionFromString<ReferenceType>(
+                            referenceTypeRaw
+                        )
+                            .Value
+
                     UseReferenceType referenceType
                 | None -> UseDefault
 
     let internal tryGetDirectoryIdFromBranch (referenceType: ReferenceType) (branchDto: BranchDto) =
         match referenceType with
-        | ReferenceType.Promotion when branchDto.LatestPromotion.DirectoryId <> Guid.Empty -> Some branchDto.LatestPromotion.DirectoryId
+        | ReferenceType.Promotion when
+            branchDto.LatestPromotion.DirectoryId
+            <> Guid.Empty
+            ->
+            Some branchDto.LatestPromotion.DirectoryId
         | ReferenceType.Commit when branchDto.LatestCommit.DirectoryId <> Guid.Empty -> Some branchDto.LatestCommit.DirectoryId
-        | ReferenceType.Checkpoint when branchDto.LatestCheckpoint.DirectoryId <> Guid.Empty -> Some branchDto.LatestCheckpoint.DirectoryId
+        | ReferenceType.Checkpoint when
+            branchDto.LatestCheckpoint.DirectoryId
+            <> Guid.Empty
+            ->
+            Some branchDto.LatestCheckpoint.DirectoryId
         | ReferenceType.Save when branchDto.LatestSave.DirectoryId <> Guid.Empty -> Some branchDto.LatestSave.DirectoryId
         | _ -> None
 
     let internal resolveDefaultDirectoryVersionId (branchDto: BranchDto) =
-        if branchDto.LatestPromotion.DirectoryId <> Guid.Empty then
+        if branchDto.LatestPromotion.DirectoryId
+           <> Guid.Empty then
             Some branchDto.LatestPromotion.DirectoryId
         elif branchDto.BasedOn.DirectoryId <> Guid.Empty then
             Some branchDto.BasedOn.DirectoryId
         else
             None
+
+    let private selectLatestReference (references: ReferenceDto seq) =
+        references
+        |> Seq.sortByDescending (fun reference ->
+            reference.UpdatedAt
+            |> Option.defaultValue reference.CreatedAt)
+        |> Seq.tryHead
+
+    let private resolveDirectoryVersionIdFromReferenceType
+        (graceIds: GraceIds)
+        (ownerDto: OwnerDto)
+        (organizationDto: OrganizationDto)
+        (repositoryDto: RepositoryDto)
+        (branchDto: BranchDto)
+        (referenceType: ReferenceType)
+        =
+        task {
+            match tryGetDirectoryIdFromBranch referenceType branchDto with
+            | Some directoryId -> return Ok directoryId
+            | None ->
+                let getReferencesParameters =
+                    Parameters.Branch.GetReferencesParameters(
+                        OwnerId = $"{ownerDto.OwnerId}",
+                        OwnerName = ownerDto.OwnerName,
+                        OrganizationId = $"{organizationDto.OrganizationId}",
+                        OrganizationName = organizationDto.OrganizationName,
+                        RepositoryId = $"{repositoryDto.RepositoryId}",
+                        RepositoryName = repositoryDto.RepositoryName,
+                        BranchId = $"{branchDto.BranchId}",
+                        BranchName = branchDto.BranchName,
+                        MaxCount = 50,
+                        CorrelationId = graceIds.CorrelationId
+                    )
+
+                let referencesTask =
+                    match referenceType with
+                    | ReferenceType.Tag -> Branch.GetTags(getReferencesParameters)
+                    | ReferenceType.External -> Branch.GetExternals(getReferencesParameters)
+                    | ReferenceType.Rebase -> Branch.GetRebases(getReferencesParameters)
+                    | _ -> Task.FromResult(Ok(GraceReturnValue.Create [||] graceIds.CorrelationId))
+
+                let! referencesResult = referencesTask
+
+                match referencesResult with
+                | Ok returnValue ->
+                    match selectLatestReference returnValue.ReturnValue with
+                    | Some reference -> return Ok reference.DirectoryId
+                    | None ->
+                        return Error(GraceError.Create $"No {referenceType} references were found for branch {branchDto.BranchName}." graceIds.CorrelationId)
+                | Error error -> return Error error
+        }
+
+    let private resolveTargetDirectoryVersionId
+        (parseResult: ParseResult)
+        (graceIds: GraceIds)
+        (ownerDto: OwnerDto)
+        (organizationDto: OrganizationDto)
+        (repositoryDto: RepositoryDto)
+        (branchDto: BranchDto)
+        =
+        task {
+            match getDirectoryVersionSelection parseResult with
+            | UseDirectoryVersionId directoryVersionId -> return Ok directoryVersionId
+            | UseReferenceId referenceId ->
+                let getReferenceParameters =
+                    Parameters.Branch.GetReferenceParameters(
+                        OwnerId = $"{ownerDto.OwnerId}",
+                        OwnerName = ownerDto.OwnerName,
+                        OrganizationId = $"{organizationDto.OrganizationId}",
+                        OrganizationName = organizationDto.OrganizationName,
+                        RepositoryId = $"{repositoryDto.RepositoryId}",
+                        RepositoryName = repositoryDto.RepositoryName,
+                        BranchId = $"{branchDto.BranchId}",
+                        BranchName = branchDto.BranchName,
+                        ReferenceId = $"{referenceId}",
+                        CorrelationId = graceIds.CorrelationId
+                    )
+
+                let! referenceResult = Branch.GetReference(getReferenceParameters)
+
+                return
+                    match referenceResult with
+                    | Ok returnValue -> Ok returnValue.ReturnValue.DirectoryId
+                    | Error error -> Error error
+            | UseReferenceType referenceType ->
+                return! resolveDirectoryVersionIdFromReferenceType graceIds ownerDto organizationDto repositoryDto branchDto referenceType
+            | UseDefault ->
+                match resolveDefaultDirectoryVersionId branchDto with
+                | Some directoryVersionId -> return Ok directoryVersionId
+                | None -> return Error(GraceError.Create "No downloadable version found for this branch." graceIds.CorrelationId)
+        }
+
+    let private collectFileConflicts (fileVersions: FileVersion array) (force: bool) =
+        let conflicts = ResizeArray<string>()
+        let filesToSkip = HashSet<RelativePath>()
+
+        let rec loop index =
+            task {
+                if index >= fileVersions.Length then
+                    return conflicts, filesToSkip
+                else
+                    let fileVersion = fileVersions[index]
+                    let filePath = Path.Combine(Current().RootDirectory, fileVersion.RelativePath)
+
+                    if File.Exists(filePath) then
+                        try
+                            use stream = File.OpenRead(filePath)
+
+                            let! localHash = Grace.Shared.Services.computeSha256ForFile stream fileVersion.RelativePath
+
+                            if localHash = fileVersion.Sha256Hash then
+                                filesToSkip.Add(fileVersion.RelativePath)
+                                |> ignore
+                            elif not force then
+                                conflicts.Add(fileVersion.RelativePath)
+                        with
+                        | _ -> if not force then conflicts.Add(fileVersion.RelativePath)
+
+                    return! loop (index + 1)
+            }
+
+        loop 0
 
     let private ensureConfigurationFileExists () =
         if not <| configurationFileExists () then
@@ -299,7 +441,8 @@ module Connect =
             Directory.CreateDirectory(graceDirPath) |> ignore
 
             if not <| File.Exists(graceConfigPath) then
-                GraceConfiguration() |> saveConfigFile graceConfigPath
+                GraceConfiguration()
+                |> saveConfigFile graceConfigPath
 
     let private reloadConfiguration () =
         resetConfiguration ()
@@ -319,15 +462,18 @@ module Connect =
 
         let ownerValid =
             graceIds.OwnerId <> Guid.Empty
-            || not <| String.IsNullOrWhiteSpace(graceIds.OwnerName)
+            || not
+               <| String.IsNullOrWhiteSpace(graceIds.OwnerName)
 
         let organizationValid =
             graceIds.OrganizationId <> Guid.Empty
-            || not <| String.IsNullOrWhiteSpace(graceIds.OrganizationName)
+            || not
+               <| String.IsNullOrWhiteSpace(graceIds.OrganizationName)
 
         let repositoryValid =
             graceIds.RepositoryId <> Guid.Empty
-            || not <| String.IsNullOrWhiteSpace(graceIds.RepositoryName)
+            || not
+               <| String.IsNullOrWhiteSpace(graceIds.RepositoryName)
 
         if not ownerValid then
             Error(GraceError.Create (getErrorMessage OwnerError.EitherOwnerIdOrOwnerNameRequired) correlationId)
@@ -338,392 +484,344 @@ module Connect =
         else
             Ok()
 
+    let private getOwnerOrganizationRepository (graceIds: GraceIds) =
+        task {
+            let ownerParameters =
+                Parameters.Owner.GetOwnerParameters(OwnerId = graceIds.OwnerIdString, OwnerName = graceIds.OwnerName, CorrelationId = graceIds.CorrelationId)
+
+            let! ownerResult = Grace.SDK.Owner.Get(ownerParameters)
+
+            let organizationParameters =
+                Parameters.Organization.GetOrganizationParameters(
+                    OwnerId = graceIds.OwnerIdString,
+                    OwnerName = graceIds.OwnerName,
+                    OrganizationId = graceIds.OrganizationIdString,
+                    OrganizationName = graceIds.OrganizationName,
+                    CorrelationId = graceIds.CorrelationId
+                )
+
+            let! organizationResult = Organization.Get(organizationParameters)
+
+            let repositoryParameters =
+                Parameters.Repository.GetRepositoryParameters(
+                    OwnerId = graceIds.OwnerIdString,
+                    OwnerName = graceIds.OwnerName,
+                    OrganizationId = graceIds.OrganizationIdString,
+                    OrganizationName = graceIds.OrganizationName,
+                    RepositoryId = graceIds.RepositoryIdString,
+                    RepositoryName = graceIds.RepositoryName,
+                    CorrelationId = graceIds.CorrelationId
+                )
+
+            let! repositoryResult = Repository.Get(repositoryParameters)
+
+            match (ownerResult, organizationResult, repositoryResult) with
+            | (Ok owner, Ok organization, Ok repository) -> return Ok(owner.ReturnValue, organization.ReturnValue, repository.ReturnValue)
+            | (Error error, _, _) -> return Error error
+            | (_, Error error, _) -> return Error error
+            | (_, _, Error error) -> return Error error
+        }
+
+    let private getBranchForConnect
+        (parseResult: ParseResult)
+        (graceIds: GraceIds)
+        (ownerDto: OwnerDto)
+        (organizationDto: OrganizationDto)
+        (repositoryDto: RepositoryDto)
+        =
+        task {
+            let branchId =
+                tryGetExplicitValue parseResult Options.branchId
+                |> Option.filter (fun value -> value <> Guid.Empty)
+
+            let branchName = tryGetExplicitNonEmptyString parseResult Options.branchName
+
+            let branchParameters =
+                match branchId, branchName with
+                | Some id, _ ->
+                    Parameters.Branch.GetBranchParameters(
+                        OwnerId = $"{ownerDto.OwnerId}",
+                        OrganizationId = $"{organizationDto.OrganizationId}",
+                        RepositoryId = $"{repositoryDto.RepositoryId}",
+                        BranchId = $"{id}",
+                        CorrelationId = graceIds.CorrelationId
+                    )
+                | None, Some name ->
+                    Parameters.Branch.GetBranchParameters(
+                        OwnerId = $"{ownerDto.OwnerId}",
+                        OrganizationId = $"{organizationDto.OrganizationId}",
+                        RepositoryId = $"{repositoryDto.RepositoryId}",
+                        BranchName = name,
+                        CorrelationId = graceIds.CorrelationId
+                    )
+                | None, None ->
+                    Parameters.Branch.GetBranchParameters(
+                        OwnerId = $"{ownerDto.OwnerId}",
+                        OrganizationId = $"{organizationDto.OrganizationId}",
+                        RepositoryId = $"{repositoryDto.RepositoryId}",
+                        BranchName = $"{repositoryDto.DefaultBranchName}",
+                        CorrelationId = graceIds.CorrelationId
+                    )
+
+            let! branchResult = Branch.Get(branchParameters)
+
+            return
+                match branchResult with
+                | Ok graceReturnValue -> Ok graceReturnValue.ReturnValue
+                | Error error -> Error error
+        }
+
+    let private buildFileVersionsByRelativePath (fileVersions: FileVersion array) =
+        let lookup = Dictionary<RelativePath, FileVersion>(fileVersions.Length, StringComparer.OrdinalIgnoreCase)
+
+        fileVersions
+        |> Seq.iter (fun fileVersion -> lookup[normalizeFilePath fileVersion.RelativePath] <- fileVersion)
+
+        lookup
+
+    let private extractZipEntries
+        (parseResult: ParseResult)
+        (fileVersionsByRelativePath: Dictionary<RelativePath, FileVersion>)
+        (filesToSkip: HashSet<RelativePath>)
+        (zipFile: Stream)
+        =
+        use zipFile = zipFile
+        use zipArchive = new ZipArchive(zipFile, ZipArchiveMode.Read)
+
+        AnsiConsole.MarkupLine $"[{Colors.Important}]Streaming contents from .zip file.[/]"
+        AnsiConsole.MarkupLine $"[{Colors.Important}]Starting to write files to disk.[/]"
+
+        let additionalEntries = ResizeArray<string>()
+
+        zipArchive.Entries
+        |> Seq.iter (fun entry ->
+            if not <| String.IsNullOrEmpty(entry.Name) then
+                let entryRelativePath = normalizeFilePath entry.FullName
+
+                match fileVersionsByRelativePath.TryGetValue(entryRelativePath) with
+                | true, fileVersion ->
+                    let objectFileName =
+                        if String.IsNullOrWhiteSpace(entry.Comment) then
+                            fileVersion.GetObjectFileName
+                        else
+                            entry.Comment
+
+                    let fileInfo = FileInfo(Path.Combine(Current().RootDirectory, fileVersion.RelativePath))
+
+                    let objectFileInfo = FileInfo(Path.Combine(Current().ObjectDirectory, fileVersion.RelativePath, objectFileName))
+
+                    Directory.CreateDirectory(fileInfo.DirectoryName)
+                    |> ignore
+
+                    Directory.CreateDirectory(objectFileInfo.DirectoryName)
+                    |> ignore
+
+                    let writeWorkingFile =
+                        not
+                        <| filesToSkip.Contains(fileVersion.RelativePath)
+
+                    let writeObjectFile = not objectFileInfo.Exists
+
+                    if fileVersion.IsBinary then
+                        if writeWorkingFile then entry.ExtractToFile(fileInfo.FullName, true)
+                        if writeObjectFile then entry.ExtractToFile(objectFileInfo.FullName, true)
+                    else
+                        let uncompressAndWriteToFile (zipEntry: ZipArchiveEntry) (fileInfo: FileInfo) =
+                            use entryStream = zipEntry.Open()
+                            use fileStream = fileInfo.Create()
+                            use gzipStream = new GZipStream(entryStream, CompressionMode.Decompress)
+                            gzipStream.CopyTo(fileStream)
+
+                        if writeWorkingFile then uncompressAndWriteToFile entry fileInfo
+                        if writeObjectFile then uncompressAndWriteToFile entry objectFileInfo
+
+                    if parseResult |> verbose then
+                        AnsiConsole.MarkupLine $"[{Colors.Important}]Wrote {fileVersion.RelativePath}.[/]"
+                | false, _ -> additionalEntries.Add(entry.FullName))
+
+        if additionalEntries.Count > 0
+           && (parseResult |> verbose) then
+            AnsiConsole.MarkupLine $"[{Colors.Deemphasized}]Zip contained {additionalEntries.Count} additional entry(ies). Ignored.[/]"
+
+        AnsiConsole.MarkupLine $"[{Colors.Important}]Finished writing files to disk.[/]"
+
+    let private updateObjectCacheFromGraceStatus (graceStatus: GraceStatus) (objectCache: GraceObjectCache) =
+        let _ =
+            Parallel.ForEach(
+                graceStatus.Index.Values,
+                Constants.ParallelOptions,
+                (fun localDirectoryVersion ->
+                    if
+                        not
+                        <| objectCache.Index.ContainsKey(localDirectoryVersion.DirectoryVersionId)
+                    then
+                        objectCache.Index.AddOrUpdate(
+                            localDirectoryVersion.DirectoryVersionId,
+                            (fun _ -> localDirectoryVersion),
+                            (fun _ _ -> localDirectoryVersion)
+                        )
+                        |> ignore)
+            )
+
+        ()
+
+    let private retrieveDefaultBranchAndWrite
+        (parseResult: ParseResult)
+        (graceIds: GraceIds)
+        (ownerDto: OwnerDto)
+        (organizationDto: OrganizationDto)
+        (repositoryDto: RepositoryDto)
+        (branchDto: BranchDto)
+        =
+        task {
+            let! directoryVersionResult = resolveTargetDirectoryVersionId parseResult graceIds ownerDto organizationDto repositoryDto branchDto
+
+            match directoryVersionResult with
+            | Error error -> return (Error error |> renderOutput parseResult)
+            | Ok directoryVersionId ->
+                let getDirectoryContentsParameters =
+                    Parameters.DirectoryVersion.GetParameters(
+                        OwnerId = $"{ownerDto.OwnerId}",
+                        OrganizationId = $"{organizationDto.OrganizationId}",
+                        RepositoryId = $"{repositoryDto.RepositoryId}",
+                        DirectoryVersionId = $"{directoryVersionId}",
+                        CorrelationId = graceIds.CorrelationId
+                    )
+
+                AnsiConsole.MarkupLine $"[{Colors.Important}]Retrieving all DirectoryVersions.[/]"
+
+                let! directoryVersionsResult = DirectoryVersion.GetDirectoryVersionsRecursive(getDirectoryContentsParameters)
+
+                let getZipFileParameters =
+                    Parameters.DirectoryVersion.GetZipFileParameters(
+                        OwnerId = $"{ownerDto.OwnerId}",
+                        OrganizationId = $"{organizationDto.OrganizationId}",
+                        RepositoryId = $"{repositoryDto.RepositoryId}",
+                        DirectoryVersionId = $"{directoryVersionId}",
+                        CorrelationId = graceIds.CorrelationId
+                    )
+
+                AnsiConsole.MarkupLine $"[{Colors.Important}]Retrieving zip file download uri.[/]"
+                let! getZipFileResult = DirectoryVersion.GetZipFile(getZipFileParameters)
+                AnsiConsole.MarkupLine $"[{Colors.Important}]Finished getting zip file download uri.[/]"
+
+                match (directoryVersionsResult, getZipFileResult) with
+                | (Ok directoryVerionsReturnValue, Ok getZipFileReturnValue) ->
+                    AnsiConsole.MarkupLine $"[{Colors.Important}]Retrieved all DirectoryVersions.[/]"
+
+                    let directoryVersionDtos = directoryVerionsReturnValue.ReturnValue
+
+                    let fileVersions =
+                        directoryVersionDtos
+                        |> Seq.map (fun directoryVersionDto -> directoryVersionDto.DirectoryVersion)
+                        |> Seq.collect (fun dv -> dv.Files)
+                        |> Seq.toArray
+
+                    let force = parseResult.GetValue(Options.force)
+
+                    let! conflicts, filesToSkip = collectFileConflicts fileVersions force
+
+                    if conflicts.Count > 0 then
+                        AnsiConsole.MarkupLine $"[{Colors.Error}]Found {conflicts.Count} conflicting file(s). Use --force to overwrite.[/]"
+
+                        if parseResult |> verbose then
+                            conflicts
+                            |> Seq.sort
+                            |> Seq.iter (fun conflict -> AnsiConsole.MarkupLine $"[{Colors.Error}]{conflict}[/]")
+
+                        return
+                            (Error(GraceError.Create "Conflicting files exist in the working directory." graceIds.CorrelationId)
+                             |> renderOutput parseResult)
+                    else
+                        let fileVersionsByRelativePath = buildFileVersionsByRelativePath fileVersions
+
+                        let uriWithSharedAccessSignature = getZipFileReturnValue.ReturnValue
+
+                        // Download the .zip file to temp directory.
+                        let blobClient = BlobClient(uriWithSharedAccessSignature)
+
+                        let! zipFile = blobClient.OpenReadAsync(bufferSize = 64 * 1024)
+                        extractZipEntries parseResult fileVersionsByRelativePath filesToSkip zipFile
+
+                        AnsiConsole.MarkupLine $"[{Colors.Important}]Creating Grace Index file.[/]"
+                        let! previousGraceStatus = readGraceStatusFile ()
+                        let! graceStatus = createNewGraceStatusFile previousGraceStatus parseResult
+                        do! writeGraceStatusFile graceStatus
+
+                        AnsiConsole.MarkupLine $"[{Colors.Important}]Creating Grace Object Cache Index file.[/]"
+                        let! objectCache = readGraceObjectCacheFile ()
+                        updateObjectCacheFromGraceStatus graceStatus objectCache
+                        do! writeGraceObjectCacheFile objectCache
+                        return 0
+                | (Error error, _) -> return (Error error |> renderOutput parseResult)
+                | (_, Error error) -> return (Error error |> renderOutput parseResult)
+        }
+
+    let private connectImpl (parseResult: ParseResult) : Task<int> =
+        task {
+            if parseResult |> verbose then printParseResult parseResult
+            ensureConfigurationFileExists ()
+            reloadConfiguration ()
+            applyServerAddressOverride parseResult
+            let validateIncomingParameters = Validations.CommonValidations parseResult
+
+            match validateIncomingParameters with
+            | Error error -> return (Error error |> renderOutput parseResult)
+            | Ok _ ->
+                let graceIds = getNormalizedIdsAndNames parseResult
+
+                match applyRepositoryShortcut parseResult graceIds with
+                | Error error -> return (Error error |> renderOutput parseResult)
+                | Ok graceIds ->
+                    match validateRequiredIds parseResult graceIds with
+                    | Error error -> return (Error error |> renderOutput parseResult)
+                    | Ok () ->
+                        do! Auth.ensureAccessToken parseResult
+
+                        let! ownerOrgRepoResult = getOwnerOrganizationRepository graceIds
+
+                        match ownerOrgRepoResult with
+                        | Ok (ownerDto, organizationDto, repositoryDto) ->
+                            AnsiConsole.MarkupLine $"[{Colors.Important}]Found owner, organization, and repository.[/]"
+
+                            let! branchResult = getBranchForConnect parseResult graceIds ownerDto organizationDto repositoryDto
+
+                            match branchResult with
+                            | Ok branchDto ->
+                                AnsiConsole.MarkupLine $"[{Colors.Important}]Retrieved branch {branchDto.BranchName}.[/]"
+                                // Write the new configuration to the config file.
+                                let newConfig = Current()
+                                newConfig.OwnerId <- ownerDto.OwnerId
+                                newConfig.OwnerName <- ownerDto.OwnerName
+                                newConfig.OrganizationId <- organizationDto.OrganizationId
+                                newConfig.OrganizationName <- organizationDto.OrganizationName
+                                newConfig.RepositoryId <- repositoryDto.RepositoryId
+                                newConfig.RepositoryName <- repositoryDto.RepositoryName
+                                newConfig.BranchId <- branchDto.BranchId
+                                newConfig.BranchName <- branchDto.BranchName
+                                newConfig.DefaultBranchName <- repositoryDto.DefaultBranchName
+                                newConfig.ObjectStorageProvider <- repositoryDto.ObjectStorageProvider
+                                updateConfiguration newConfig
+                                reloadConfiguration ()
+                                AnsiConsole.MarkupLine $"[{Colors.Important}]Wrote new Grace configuration file.[/]"
+
+                                let retrieveDefaultBranch = parseResult.GetValue(Options.retrieveDefaultBranch)
+
+                                if retrieveDefaultBranch then
+                                    return! retrieveDefaultBranchAndWrite parseResult graceIds ownerDto organizationDto repositoryDto branchDto
+                                else
+                                    return 0
+                            | Error error -> return (Error error |> renderOutput parseResult)
+                        | Error error -> return (Error error |> renderOutput parseResult)
+        }
+
     type Connect() =
         inherit AsynchronousCommandLineAction()
 
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: Threading.CancellationToken) : Task<int> =
             task {
                 try
-                    if parseResult |> verbose then printParseResult parseResult
-                    ensureConfigurationFileExists ()
-                    reloadConfiguration ()
-                    applyServerAddressOverride parseResult
-                    let validateIncomingParameters = Validations.CommonValidations parseResult
-
-                    match validateIncomingParameters with
-                    | Error error -> return (Error error |> renderOutput parseResult)
-                    | Ok _ ->
-                        let graceIds = getNormalizedIdsAndNames parseResult
-
-                        match applyRepositoryShortcut parseResult graceIds with
-                        | Error error -> return (Error error |> renderOutput parseResult)
-                        | Ok graceIds ->
-                            match validateRequiredIds parseResult graceIds with
-                            | Error error -> return (Error error |> renderOutput parseResult)
-                            | Ok() ->
-                                do! Auth.ensureAccessToken parseResult
-
-                                let ownerParameters =
-                                    Parameters.Owner.GetOwnerParameters(
-                                        OwnerId = graceIds.OwnerIdString,
-                                        OwnerName = graceIds.OwnerName,
-                                        CorrelationId = graceIds.CorrelationId
-                                    )
-
-                                let! ownerResult = Grace.SDK.Owner.Get(ownerParameters)
-
-                                let organizationParameters =
-                                    Parameters.Organization.GetOrganizationParameters(
-                                        OwnerId = graceIds.OwnerIdString,
-                                        OwnerName = graceIds.OwnerName,
-                                        OrganizationId = graceIds.OrganizationIdString,
-                                        OrganizationName = graceIds.OrganizationName,
-                                        CorrelationId = graceIds.CorrelationId
-                                    )
-
-                                let! organizationResult = Organization.Get(organizationParameters)
-
-                                let repositoryParameters =
-                                    Parameters.Repository.GetRepositoryParameters(
-                                        OwnerId = graceIds.OwnerIdString,
-                                        OwnerName = graceIds.OwnerName,
-                                        OrganizationId = graceIds.OrganizationIdString,
-                                        OrganizationName = graceIds.OrganizationName,
-                                        RepositoryId = graceIds.RepositoryIdString,
-                                        RepositoryName = graceIds.RepositoryName,
-                                        CorrelationId = graceIds.CorrelationId
-                                    )
-
-                                let! repositoryResult = Repository.Get(repositoryParameters)
-
-                                match (ownerResult, organizationResult, repositoryResult) with
-                                | (Ok owner, Ok organization, Ok repository) ->
-                                    let ownerDto = owner.ReturnValue
-                                    let organizationDto = organization.ReturnValue
-                                    let repositoryDto = repository.ReturnValue
-                                    AnsiConsole.MarkupLine $"[{Colors.Important}]Found owner, organization, and repository.[/]"
-
-                                    let branchId =
-                                        tryGetExplicitValue parseResult Options.branchId
-                                        |> Option.filter (fun value -> value <> Guid.Empty)
-
-                                    let branchName = tryGetExplicitNonEmptyString parseResult Options.branchName
-
-                                    let branchParameters =
-                                        match branchId, branchName with
-                                        | Some id, _ ->
-                                            Parameters.Branch.GetBranchParameters(
-                                                OwnerId = $"{ownerDto.OwnerId}",
-                                                OrganizationId = $"{organizationDto.OrganizationId}",
-                                                RepositoryId = $"{repositoryDto.RepositoryId}",
-                                                BranchId = $"{id}",
-                                                CorrelationId = graceIds.CorrelationId
-                                            )
-                                        | None, Some name ->
-                                            Parameters.Branch.GetBranchParameters(
-                                                OwnerId = $"{ownerDto.OwnerId}",
-                                                OrganizationId = $"{organizationDto.OrganizationId}",
-                                                RepositoryId = $"{repositoryDto.RepositoryId}",
-                                                BranchName = name,
-                                                CorrelationId = graceIds.CorrelationId
-                                            )
-                                        | None, None ->
-                                            Parameters.Branch.GetBranchParameters(
-                                                OwnerId = $"{ownerDto.OwnerId}",
-                                                OrganizationId = $"{organizationDto.OrganizationId}",
-                                                RepositoryId = $"{repositoryDto.RepositoryId}",
-                                                BranchName = $"{repositoryDto.DefaultBranchName}",
-                                                CorrelationId = graceIds.CorrelationId
-                                            )
-
-                                    match! Branch.Get(branchParameters) with
-                                    | Ok graceReturnValue ->
-                                        let branchDto = graceReturnValue.ReturnValue
-                                        AnsiConsole.MarkupLine $"[{Colors.Important}]Retrieved branch {branchDto.BranchName}.[/]"
-                                        // Write the new configuration to the config file.
-                                        let newConfig = Current()
-                                        newConfig.OwnerId <- ownerDto.OwnerId
-                                        newConfig.OwnerName <- ownerDto.OwnerName
-                                        newConfig.OrganizationId <- organizationDto.OrganizationId
-                                        newConfig.OrganizationName <- organizationDto.OrganizationName
-                                        newConfig.RepositoryId <- repositoryDto.RepositoryId
-                                        newConfig.RepositoryName <- repositoryDto.RepositoryName
-                                        newConfig.BranchId <- branchDto.BranchId
-                                        newConfig.BranchName <- branchDto.BranchName
-                                        newConfig.DefaultBranchName <- repositoryDto.DefaultBranchName
-                                        newConfig.ObjectStorageProvider <- repositoryDto.ObjectStorageProvider
-                                        updateConfiguration newConfig
-                                        reloadConfiguration ()
-                                        AnsiConsole.MarkupLine $"[{Colors.Important}]Wrote new Grace configuration file.[/]"
-                                        let retrieveDefaultBranch = parseResult.GetValue(Options.retrieveDefaultBranch)
-
-                                        if retrieveDefaultBranch then
-                                            let selectLatestReference (references: ReferenceDto seq) =
-                                                references
-                                                |> Seq.sortByDescending (fun reference -> reference.UpdatedAt |> Option.defaultValue reference.CreatedAt)
-                                                |> Seq.tryHead
-
-                                            let resolveDirectoryVersionIdFromReferenceType (referenceType: ReferenceType) =
-                                                task {
-                                                    match tryGetDirectoryIdFromBranch referenceType branchDto with
-                                                    | Some directoryId -> return Ok directoryId
-                                                    | None ->
-                                                        let getReferencesParameters =
-                                                            Parameters.Branch.GetReferencesParameters(
-                                                                OwnerId = $"{ownerDto.OwnerId}",
-                                                                OwnerName = ownerDto.OwnerName,
-                                                                OrganizationId = $"{organizationDto.OrganizationId}",
-                                                                OrganizationName = organizationDto.OrganizationName,
-                                                                RepositoryId = $"{repositoryDto.RepositoryId}",
-                                                                RepositoryName = repositoryDto.RepositoryName,
-                                                                BranchId = $"{branchDto.BranchId}",
-                                                                BranchName = branchDto.BranchName,
-                                                                MaxCount = 50,
-                                                                CorrelationId = graceIds.CorrelationId
-                                                            )
-
-                                                        let! referencesResult =
-                                                            match referenceType with
-                                                            | ReferenceType.Tag -> Branch.GetTags(getReferencesParameters)
-                                                            | ReferenceType.External -> Branch.GetExternals(getReferencesParameters)
-                                                            | ReferenceType.Rebase -> Branch.GetRebases(getReferencesParameters)
-                                                            | _ -> task { return Ok(GraceReturnValue.Create [||] graceIds.CorrelationId) }
-
-                                                        match referencesResult with
-                                                        | Ok returnValue ->
-                                                            match selectLatestReference returnValue.ReturnValue with
-                                                            | Some reference -> return Ok reference.DirectoryId
-                                                            | None ->
-                                                                return
-                                                                    Error(
-                                                                        GraceError.Create
-                                                                            $"No {referenceType} references were found for branch {branchDto.BranchName}."
-                                                                            graceIds.CorrelationId
-                                                                    )
-                                                        | Error error -> return Error error
-                                                }
-
-                                            let resolveTargetDirectoryVersionId () =
-                                                task {
-                                                    match getDirectoryVersionSelection parseResult with
-                                                    | UseDirectoryVersionId directoryVersionId -> return Ok directoryVersionId
-                                                    | UseReferenceId referenceId ->
-                                                        let getReferenceParameters =
-                                                            Parameters.Branch.GetReferenceParameters(
-                                                                OwnerId = $"{ownerDto.OwnerId}",
-                                                                OwnerName = ownerDto.OwnerName,
-                                                                OrganizationId = $"{organizationDto.OrganizationId}",
-                                                                OrganizationName = organizationDto.OrganizationName,
-                                                                RepositoryId = $"{repositoryDto.RepositoryId}",
-                                                                RepositoryName = repositoryDto.RepositoryName,
-                                                                BranchId = $"{branchDto.BranchId}",
-                                                                BranchName = branchDto.BranchName,
-                                                                ReferenceId = $"{referenceId}",
-                                                                CorrelationId = graceIds.CorrelationId
-                                                            )
-
-                                                        match! Branch.GetReference(getReferenceParameters) with
-                                                        | Ok returnValue -> return Ok returnValue.ReturnValue.DirectoryId
-                                                        | Error error -> return Error error
-                                                    | UseReferenceType referenceType -> return! resolveDirectoryVersionIdFromReferenceType referenceType
-                                                    | UseDefault ->
-                                                        match resolveDefaultDirectoryVersionId branchDto with
-                                                        | Some directoryVersionId -> return Ok directoryVersionId
-                                                        | None ->
-                                                            return
-                                                                Error(GraceError.Create "No downloadable version found for this branch." graceIds.CorrelationId)
-                                                }
-
-                                            match! resolveTargetDirectoryVersionId () with
-                                            | Error error -> return (Error error |> renderOutput parseResult)
-                                            | Ok directoryVersionId ->
-                                                let getDirectoryContentsParameters =
-                                                    Parameters.DirectoryVersion.GetParameters(
-                                                        OwnerId = $"{ownerDto.OwnerId}",
-                                                        OrganizationId = $"{organizationDto.OrganizationId}",
-                                                        RepositoryId = $"{repositoryDto.RepositoryId}",
-                                                        DirectoryVersionId = $"{directoryVersionId}",
-                                                        CorrelationId = graceIds.CorrelationId
-                                                    )
-
-                                                AnsiConsole.MarkupLine $"[{Colors.Important}]Retrieving all DirectoryVersions.[/]"
-
-                                                let! directoryVersionsResult = DirectoryVersion.GetDirectoryVersionsRecursive(getDirectoryContentsParameters)
-
-                                                let getZipFileParameters =
-                                                    Parameters.DirectoryVersion.GetZipFileParameters(
-                                                        OwnerId = $"{ownerDto.OwnerId}",
-                                                        OrganizationId = $"{organizationDto.OrganizationId}",
-                                                        RepositoryId = $"{repositoryDto.RepositoryId}",
-                                                        DirectoryVersionId = $"{directoryVersionId}",
-                                                        CorrelationId = graceIds.CorrelationId
-                                                    )
-
-                                                AnsiConsole.MarkupLine $"[{Colors.Important}]Retrieving zip file download uri.[/]"
-                                                let! getZipFileResult = DirectoryVersion.GetZipFile(getZipFileParameters)
-                                                AnsiConsole.MarkupLine $"[{Colors.Important}]Finished getting zip file download uri.[/]"
-
-                                                match (directoryVersionsResult, getZipFileResult) with
-                                                | (Ok directoryVerionsReturnValue, Ok getZipFileReturnValue) ->
-                                                    AnsiConsole.MarkupLine $"[{Colors.Important}]Retrieved all DirectoryVersions.[/]"
-
-                                                    let directoryVersionDtos = directoryVerionsReturnValue.ReturnValue
-
-                                                    let fileVersions =
-                                                        directoryVersionDtos
-                                                        |> Seq.map (fun directoryVersionDto -> directoryVersionDto.DirectoryVersion)
-                                                        |> Seq.collect (fun dv -> dv.Files)
-                                                        |> Seq.toArray
-
-                                                    let force = parseResult.GetValue(Options.force)
-
-                                                    let! conflicts, filesToSkip =
-                                                        task {
-                                                            let conflicts = ResizeArray<string>()
-                                                            let filesToSkip = HashSet<RelativePath>()
-
-                                                            for fileVersion in fileVersions do
-                                                                let filePath = Path.Combine(Current().RootDirectory, fileVersion.RelativePath)
-
-                                                                if File.Exists(filePath) then
-                                                                    try
-                                                                        use stream = File.OpenRead(filePath)
-
-                                                                        let! localHash =
-                                                                            Grace.Shared.Services.computeSha256ForFile stream fileVersion.RelativePath
-
-                                                                        if localHash = fileVersion.Sha256Hash then
-                                                                            filesToSkip.Add(fileVersion.RelativePath) |> ignore
-                                                                        elif not force then
-                                                                            conflicts.Add(fileVersion.RelativePath)
-                                                                    with _ ->
-                                                                        if not force then conflicts.Add(fileVersion.RelativePath)
-
-                                                            return conflicts, filesToSkip
-                                                        }
-
-                                                    if conflicts.Count > 0 then
-                                                        AnsiConsole.MarkupLine
-                                                            $"[{Colors.Error}]Found {conflicts.Count} conflicting file(s). Use --force to overwrite.[/]"
-
-                                                        if parseResult |> verbose then
-                                                            conflicts
-                                                            |> Seq.sort
-                                                            |> Seq.iter (fun conflict -> AnsiConsole.MarkupLine $"[{Colors.Error}]{conflict}[/]")
-
-                                                        return
-                                                            (Error(GraceError.Create "Conflicting files exist in the working directory." graceIds.CorrelationId)
-                                                             |> renderOutput parseResult)
-
-                                                    else
-                                                        let fileVersionsByRelativePath =
-                                                            let lookup =
-                                                                Dictionary<RelativePath, FileVersion>(fileVersions.Length, StringComparer.OrdinalIgnoreCase)
-
-                                                            fileVersions
-                                                            |> Seq.iter (fun fileVersion -> lookup[normalizeFilePath fileVersion.RelativePath] <- fileVersion)
-
-                                                            lookup
-
-                                                        let uriWithSharedAccessSignature = getZipFileReturnValue.ReturnValue
-
-                                                        // Download the .zip file to temp directory.
-                                                        let blobClient = BlobClient(uriWithSharedAccessSignature)
-
-                                                        // Loop through the ZipArchiveEntry list, identify if each file version is binary, and extract
-                                                        //   each one accordingly.
-                                                        use! zipFile = blobClient.OpenReadAsync(bufferSize = 64 * 1024)
-                                                        use zipArchive = new ZipArchive(zipFile, ZipArchiveMode.Read)
-
-                                                        AnsiConsole.MarkupLine $"[{Colors.Important}]Streaming contents from .zip file.[/]"
-                                                        AnsiConsole.MarkupLine $"[{Colors.Important}]Starting to write files to disk.[/]"
-
-                                                        let additionalEntries = ResizeArray<string>()
-
-                                                        for entry in zipArchive.Entries do
-                                                            if not <| String.IsNullOrEmpty(entry.Name) then
-                                                                let entryRelativePath = normalizeFilePath entry.FullName
-
-                                                                match fileVersionsByRelativePath.TryGetValue(entryRelativePath) with
-                                                                | true, fileVersion ->
-                                                                    let objectFileName =
-                                                                        if String.IsNullOrWhiteSpace(entry.Comment) then
-                                                                            fileVersion.GetObjectFileName
-                                                                        else
-                                                                            entry.Comment
-
-                                                                    let fileInfo = FileInfo(Path.Combine(Current().RootDirectory, fileVersion.RelativePath))
-
-                                                                    let objectFileInfo =
-                                                                        FileInfo(
-                                                                            Path.Combine(Current().ObjectDirectory, fileVersion.RelativePath, objectFileName)
-                                                                        )
-
-                                                                    Directory.CreateDirectory(fileInfo.DirectoryName) |> ignore
-                                                                    Directory.CreateDirectory(objectFileInfo.DirectoryName) |> ignore
-
-                                                                    let writeWorkingFile = not <| filesToSkip.Contains(fileVersion.RelativePath)
-
-                                                                    let writeObjectFile = not objectFileInfo.Exists
-
-                                                                    if fileVersion.IsBinary then
-                                                                        if writeWorkingFile then entry.ExtractToFile(fileInfo.FullName, true)
-
-                                                                        if writeObjectFile then entry.ExtractToFile(objectFileInfo.FullName, true)
-                                                                    else
-                                                                        let uncompressAndWriteToFile (zipEntry: ZipArchiveEntry) (fileInfo: FileInfo) =
-                                                                            use entryStream = zipEntry.Open()
-                                                                            use fileStream = fileInfo.Create()
-                                                                            use gzipStream = new GZipStream(entryStream, CompressionMode.Decompress)
-                                                                            gzipStream.CopyTo(fileStream)
-
-                                                                        if writeWorkingFile then uncompressAndWriteToFile entry fileInfo
-
-                                                                        if writeObjectFile then uncompressAndWriteToFile entry objectFileInfo
-
-                                                                    if parseResult |> verbose then
-                                                                        AnsiConsole.MarkupLine $"[{Colors.Important}]Wrote {fileVersion.RelativePath}.[/]"
-                                                                | false, _ -> additionalEntries.Add(entry.FullName)
-
-                                                        if additionalEntries.Count > 0 && (parseResult |> verbose) then
-                                                            AnsiConsole.MarkupLine
-                                                                $"[{Colors.Deemphasized}]Zip contained {additionalEntries.Count} additional entry(ies). Ignored.[/]"
-
-                                                        AnsiConsole.MarkupLine $"[{Colors.Important}]Finished writing files to disk.[/]"
-
-                                                        AnsiConsole.MarkupLine $"[{Colors.Important}]Creating Grace Index file.[/]"
-                                                        let! previousGraceStatus = readGraceStatusFile ()
-                                                        let! graceStatus = createNewGraceStatusFile previousGraceStatus parseResult
-                                                        do! writeGraceStatusFile graceStatus
-
-                                                        AnsiConsole.MarkupLine $"[{Colors.Important}]Creating Grace Object Cache Index file.[/]"
-                                                        let! objectCache = readGraceObjectCacheFile ()
-
-                                                        let _ =
-                                                            Parallel.ForEach(
-                                                                graceStatus.Index.Values,
-                                                                Constants.ParallelOptions,
-                                                                (fun localDirectoryVersion ->
-                                                                    if not <| objectCache.Index.ContainsKey(localDirectoryVersion.DirectoryVersionId) then
-                                                                        objectCache.Index.AddOrUpdate(
-                                                                            localDirectoryVersion.DirectoryVersionId,
-                                                                            (fun _ -> localDirectoryVersion),
-                                                                            (fun _ _ -> localDirectoryVersion)
-                                                                        )
-                                                                        |> ignore)
-                                                            )
-
-                                                        do! writeGraceObjectCacheFile objectCache
-                                                        return 0
-                                                | (Error error, _) -> return (Error error |> renderOutput parseResult)
-                                                | (_, Error error) -> return (Error error |> renderOutput parseResult)
-
-                                        else
-                                            return 0
-                                    | Error error -> return (Error error |> renderOutput parseResult)
-                                | (Error error, _, _) -> return (Error error |> renderOutput parseResult)
-                                | (_, Error error, _) -> return (Error error |> renderOutput parseResult)
-                                | (_, _, Error error) -> return (Error error |> renderOutput parseResult)
+                    return! connectImpl parseResult
                 with
                 | :? OperationCanceledException -> return -1
                 | ex ->

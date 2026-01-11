@@ -32,7 +32,10 @@ module Timing =
                 | 0
                 | 1 -> ()
                 | _ ->
-                    sb.AppendLine().AppendLine(String.replicate 80 "=") |> ignore
+                    sb
+                        .AppendLine()
+                        .AppendLine(String.replicate 80 "=")
+                    |> ignore
 
                     sb.AppendLine($"CorrelationId: {correlationId}; Path: {path}; Timings: {timingList.Count} ")
                     |> ignore
@@ -59,17 +62,29 @@ module Timing =
                             else
                                 ":" + currentTiming.ActorStateName
 
-                        let milliseconds = $"{(timingList[i].Time - previousTiming.Time).TotalMilliseconds:F3}"
-                        let paddedDuration = (String.replicate (Math.Max(7 - milliseconds.Length, 0)) " ") + milliseconds // Right-align, 7 characters.
+                        let milliseconds =
+                            $"{(timingList[i].Time - previousTiming.Time)
+                                   .TotalMilliseconds:F3}"
+
+                        let paddedDuration =
+                            (String.replicate (Math.Max(7 - milliseconds.Length, 0)) " ")
+                            + milliseconds // Right-align, 7 characters.
 
                         sb.AppendLine(
                             $"  {formatInstantExtended currentTiming.Time}: Duration: {paddedDuration}ms; {getDiscriminatedUnionCaseName previousTiming.Flag}{previousActorStateName} -> {getDiscriminatedUnionCaseName currentTiming.Flag}{currentActorStateName}"
                         )
                         |> ignore
 
-                    let duration = timingList.Last().Time.Minus(timingList.First().Time)
+                    let duration =
+                        timingList
+                            .Last()
+                            .Time.Minus(timingList.First().Time)
+
                     let milliseconds = $"{duration.TotalMilliseconds:F3}"
-                    let paddedDuration = (String.replicate (Math.Max(7 - milliseconds.Length, 0)) " ") + milliseconds // Right-align, 7 characters.
+
+                    let paddedDuration =
+                        (String.replicate (Math.Max(7 - milliseconds.Length, 0)) " ")
+                        + milliseconds // Right-align, 7 characters.
 
                     let space = " "
 

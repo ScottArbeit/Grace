@@ -160,7 +160,11 @@ type AuthEndpoints() =
             let! listReturn = deserializeContent<GraceReturnValue<PersonalAccessTokenSummary list>> listResponse
 
             let createdId = createdReturn.ReturnValue.Summary.TokenId
-            let containsToken = listReturn.ReturnValue |> List.exists (fun token -> token.TokenId = createdId)
+
+            let containsToken =
+                listReturn.ReturnValue
+                |> List.exists (fun token -> token.TokenId = createdId)
+
             Assert.That(containsToken, Is.True)
 
             let revokeParameters = Grace.Shared.Parameters.Auth.RevokePersonalAccessTokenParameters()
@@ -171,7 +175,10 @@ type AuthEndpoints() =
             let listWithRevoked = Grace.Shared.Parameters.Auth.ListPersonalAccessTokensParameters()
             listWithRevoked.IncludeRevoked <- true
             let! revokedResponse = Client.PostAsync("/auth/token/list", createJsonContent listWithRevoked)
-            revokedResponse.EnsureSuccessStatusCode() |> ignore
+
+            revokedResponse.EnsureSuccessStatusCode()
+            |> ignore
+
             let! revokedReturn = deserializeContent<GraceReturnValue<PersonalAccessTokenSummary list>> revokedResponse
 
             let revokedToken =

@@ -58,15 +58,16 @@ module Load =
             | Error error -> logToConsole $"{error}"
 
             match!
-                Organization.Create(
-                    Organization.CreateOrganizationParameters(
-                        OwnerId = $"{ownerId}",
-                        OrganizationId = $"{organizationId}",
-                        OrganizationName = organizationName,
-                        CorrelationId = generateCorrelationId ()
+                Organization.Create
+                    (
+                        Organization.CreateOrganizationParameters(
+                            OwnerId = $"{ownerId}",
+                            OrganizationId = $"{organizationId}",
+                            OrganizationName = organizationName,
+                            CorrelationId = generateCorrelationId ()
+                        )
                     )
-                )
-            with
+                with
             | Ok result -> logToConsole $"Created organization {organizationId} with OrganizationName {organizationName}."
             | Error error -> logToConsole $"{error}"
 
@@ -118,7 +119,8 @@ module Load =
                                         )
                                     )
 
-                                repositoryIds.AddOrUpdate(i, repositoryId, (fun _ _ -> repositoryId)) |> ignore
+                                repositoryIds.AddOrUpdate(i, repositoryId, (fun _ _ -> repositoryId))
+                                |> ignore
 
                                 match repo with
                                 | Ok r ->
@@ -158,16 +160,17 @@ module Load =
                                         )
 
                                     match!
-                                        Branch.Get(
-                                            Branch.GetBranchParameters(
-                                                OwnerId = $"{ownerId}",
-                                                OrganizationId = $"{organizationId}",
-                                                RepositoryId = $"{repositoryId}",
-                                                BranchName = Constants.InitialBranchName,
-                                                CorrelationId = generateCorrelationId ()
+                                        Branch.Get
+                                            (
+                                                Branch.GetBranchParameters(
+                                                    OwnerId = $"{ownerId}",
+                                                    OrganizationId = $"{organizationId}",
+                                                    RepositoryId = $"{repositoryId}",
+                                                    BranchName = Constants.InitialBranchName,
+                                                    CorrelationId = generateCorrelationId ()
+                                                )
                                             )
-                                        )
-                                    with
+                                        with
                                     | Ok mainBranch ->
                                         logToConsole $"Adding parentBranchId {i}; mainBranch.ReturnValue.BranchId: {mainBranch.ReturnValue.BranchId}."
 
@@ -222,8 +225,8 @@ module Load =
 
                                         logToConsole $"Added to ids: {(ownerId, organizationId, repositoryId, branchId)}; Count: {ids.Count}."
                                     | Error error -> logToConsole $"Error creating branch {i}: {error}."
-                                with ex ->
-                                    logToConsole $"i: {i}; exception; repositoryId: {repositoryId}; parentBranchId: {parentBranchId}."
+                                with
+                                | ex -> logToConsole $"i: {i}; exception; repositoryId: {repositoryId}; parentBranchId: {parentBranchId}."
                             }
                         ))
                 )
@@ -243,12 +246,18 @@ module Load =
                         ValueTask(
                             task {
                                 if i % 250 = 0 then
-                                    let chunkTPS = float 250 / (getCurrentInstant () - chunkStartInstant).TotalSeconds
+                                    let chunkTPS =
+                                        float 250
+                                        / (getCurrentInstant () - chunkStartInstant)
+                                            .TotalSeconds
+
                                     chunkTransactionsPerSecond.Add(chunkTPS)
 
                                     let rollingAverage = chunkTransactionsPerSecond.TakeLast(20).Average()
 
-                                    let totalTPS = float i / (getCurrentInstant () - setupTime).TotalSeconds
+                                    let totalTPS =
+                                        float i
+                                        / (getCurrentInstant () - setupTime).TotalSeconds
 
                                     let threads = $"ThreadCount: {ThreadPool.ThreadCount}; PendingWorkItemCount: {ThreadPool.PendingWorkItemCount}"
 
@@ -456,7 +465,11 @@ module Load =
             let mainProcessingTime = getCurrentInstant ()
             logToConsole "Main processing complete."
             logToConsole $"Processing time:  {mainProcessingTime - setupTime}."
-            logToConsole $"Transactions/sec: {float numberOfEvents / (mainProcessingTime - setupTime).TotalSeconds}"
+
+            logToConsole
+                $"Transactions/sec: {float numberOfEvents
+                                     / (mainProcessingTime - setupTime).TotalSeconds}"
+
             logToConsole "Starting tear down."
 
             // Tear down; delete branches and repositories, then delete organization and owner.
@@ -501,7 +514,10 @@ module Load =
             // Delete repositories.
             do!
                 Parallel.ForEachAsync(
-                    ids.Values.Select(fun (ownerId, organizationId, repositoryId, branchId) -> (ownerId, organizationId, repositoryId)).Distinct(),
+                    ids
+                        .Values
+                        .Select(fun (ownerId, organizationId, repositoryId, branchId) -> (ownerId, organizationId, repositoryId))
+                        .Distinct(),
                     deleteParallelOptions,
                     (fun id (cancellationToken: CancellationToken) ->
                         ValueTask(
@@ -560,7 +576,11 @@ module Load =
             printfn $"Processing time:  {mainProcessingTime - setupTime}."
             printfn $"Tear down:        {endTime - mainProcessingTime}."
             printfn $"Total:            {endTime - startTime}."
-            printfn $"Transactions/sec: {float numberOfEvents / (mainProcessingTime - setupTime).TotalSeconds}"
+
+            printfn
+                $"Transactions/sec: {float numberOfEvents
+                                     / (mainProcessingTime - setupTime).TotalSeconds}"
+
             return 0
         })
             .Result

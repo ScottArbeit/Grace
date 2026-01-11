@@ -133,8 +133,7 @@ module Maintenance =
 
                                     let t4 = progressContext.AddTask($"[{Color.DodgerBlue1}]Ensure object cache index is up-to-date.[/]", autoStart = false)
 
-                                    let t5 =
-                                        progressContext.AddTask($"[{Color.DodgerBlue1}]Ensure files are uploaded to object storage.[/]", autoStart = false)
+                                    let t5 = progressContext.AddTask($"[{Color.DodgerBlue1}]Ensure files are uploaded to object storage.[/]", autoStart = false)
 
                                     let t6 =
                                         progressContext.AddTask(
@@ -170,7 +169,8 @@ module Maintenance =
                                             Constants.ParallelOptions,
                                             (fun ldv ->
                                                 for fileVersion in ldv.Files do
-                                                    fileVersions.TryAdd(fileVersion.RelativePath, fileVersion) |> ignore)
+                                                    fileVersions.TryAdd(fileVersion.RelativePath, fileVersion)
+                                                    |> ignore)
                                         )
 
                                     let incrementAmount = 100.0 / double fileVersions.Count
@@ -185,7 +185,8 @@ module Maintenance =
                                                 let fullObjectPath = fileVersion.FullObjectPath
 
                                                 if not <| File.Exists(fullObjectPath) then
-                                                    Directory.CreateDirectory(Path.GetDirectoryName(fullObjectPath)) |> ignore // If the directory already exists, this will do nothing.
+                                                    Directory.CreateDirectory(Path.GetDirectoryName(fullObjectPath))
+                                                    |> ignore // If the directory already exists, this will do nothing.
 
                                                     File.Copy(Path.Combine(Current().RootDirectory, fileVersion.RelativePath), fullObjectPath)
 
@@ -204,7 +205,10 @@ module Maintenance =
                                             graceStatus.Index.Values,
                                             Constants.ParallelOptions,
                                             (fun localDirectoryVersion ->
-                                                if not <| objectCache.Index.ContainsKey(localDirectoryVersion.DirectoryVersionId) then
+                                                if
+                                                    not
+                                                    <| objectCache.Index.ContainsKey(localDirectoryVersion.DirectoryVersionId)
+                                                then
                                                     objectCache.Index.AddOrUpdate(
                                                         localDirectoryVersion.DirectoryVersionId,
                                                         (fun _ -> localDirectoryVersion),
@@ -251,14 +255,20 @@ module Maintenance =
                                                                     RepositoryId = graceIds.RepositoryIdString,
                                                                     RepositoryName = graceIds.RepositoryName,
                                                                     CorrelationId = getCorrelationId parseResult,
-                                                                    FileVersions = fileVersions.Select(fun kvp -> kvp.Value.ToFileVersion).ToArray()
+                                                                    FileVersions =
+                                                                        fileVersions
+                                                                            .Select(fun kvp -> kvp.Value.ToFileVersion)
+                                                                            .ToArray()
                                                                 )
 
                                                             match! Storage.GetUploadMetadataForFiles getUploadMetadataForFilesParameters with
                                                             | Ok graceReturnValue ->
                                                                 let uploadMetadata = graceReturnValue.ReturnValue
                                                                 // Increment the counter for the files that we don't have to upload.
-                                                                t5.Increment(incrementAmount * double (fileVersions.Count() - uploadMetadata.Count))
+                                                                t5.Increment(
+                                                                    incrementAmount
+                                                                    * double (fileVersions.Count() - uploadMetadata.Count)
+                                                                )
 
                                                                 // Index all of the file versions by their SHA256 hash; we'll look up the files to upload with it.
                                                                 let filesIndexedByRelativePath =
@@ -275,7 +285,8 @@ module Maintenance =
                                                                             ValueTask(
                                                                                 task {
                                                                                     let fileVersion =
-                                                                                        filesIndexedByRelativePath[upload.RelativePath].ToFileVersion
+                                                                                        filesIndexedByRelativePath[upload.RelativePath]
+                                                                                            .ToFileVersion
 
                                                                                     let! result =
                                                                                         Storage.SaveFileToObjectStorage
@@ -332,7 +343,11 @@ module Maintenance =
                                     //   so we process the deepest paths first, and the new children exist before the parent is created.
                                     //   Within each segment group, we'll parallelize the processing for performance.
                                     let segmentGroups =
-                                        graceStatus.Index.Values.GroupBy(fun dv -> countSegments dv.RelativePath).OrderByDescending(fun group -> group.Key)
+                                        graceStatus
+                                            .Index
+                                            .Values
+                                            .GroupBy(fun dv -> countSegments dv.RelativePath)
+                                            .OrderByDescending(fun group -> group.Key)
 
                                     for group in segmentGroups do
                                         let directoryVersionGroups = group.Chunk(chunkSize)
@@ -355,13 +370,18 @@ module Maintenance =
                                                             saveDirectoryVersionsParameters.CorrelationId <- getCorrelationId parseResult
 
                                                             saveDirectoryVersionsParameters.DirectoryVersions <-
-                                                                directoryVersionGroup.Select(fun dv -> dv.ToDirectoryVersion).ToList()
+                                                                directoryVersionGroup
+                                                                    .Select(fun dv -> dv.ToDirectoryVersion)
+                                                                    .ToList()
 
                                                             match! DirectoryVersion.SaveDirectoryVersions saveDirectoryVersionsParameters with
                                                             | Ok result -> succeeded.Enqueue(result)
                                                             | Error error -> errors.Enqueue(error)
 
-                                                            t6.Increment(incrementAmount * double directoryVersionGroup.Length)
+                                                            t6.Increment(
+                                                                incrementAmount
+                                                                * double directoryVersionGroup.Length
+                                                            )
                                                         }
                                                     ))
                                             )
@@ -382,7 +402,12 @@ module Maintenance =
                                     return graceStatus
                                 })
 
-                    let fileCount = graceStatus.Index.Values.Select(fun directoryVersion -> directoryVersion.Files.Count).Sum()
+                    let fileCount =
+                        graceStatus
+                            .Index
+                            .Values
+                            .Select(fun directoryVersion -> directoryVersion.Files.Count)
+                            .Sum()
 
                     let totalFileSize = graceStatus.Index.Values.Sum(fun directoryVersion -> directoryVersion.Files.Sum(fun f -> int64 f.Size))
 
@@ -407,7 +432,8 @@ module Maintenance =
                             Constants.ParallelOptions,
                             (fun ldv ->
                                 for fileVersion in ldv.Files do
-                                    fileVersions.TryAdd(fileVersion.RelativePath, fileVersion) |> ignore)
+                                    fileVersions.TryAdd(fileVersion.RelativePath, fileVersion)
+                                    |> ignore)
                         )
 
                     let plr =
@@ -419,7 +445,8 @@ module Maintenance =
                                 let fullObjectPath = fileVersion.FullObjectPath
 
                                 if not <| File.Exists(fullObjectPath) then
-                                    Directory.CreateDirectory(Path.GetDirectoryName(fullObjectPath)) |> ignore
+                                    Directory.CreateDirectory(Path.GetDirectoryName(fullObjectPath))
+                                    |> ignore
 
                                     File.Copy(Path.Combine(Current().RootDirectory, fileVersion.RelativePath), fullObjectPath))
                         )
@@ -448,7 +475,10 @@ module Maintenance =
                                                     RepositoryId = graceIds.RepositoryIdString,
                                                     RepositoryName = graceIds.RepositoryName,
                                                     CorrelationId = getCorrelationId parseResult,
-                                                    FileVersions = (fileVersions |> Seq.map (fun kvp -> kvp.Value.ToFileVersion) |> Seq.toArray)
+                                                    FileVersions =
+                                                        (fileVersions
+                                                         |> Seq.map (fun kvp -> kvp.Value.ToFileVersion)
+                                                         |> Seq.toArray)
                                                 )
 
                                             match! Storage.GetUploadMetadataForFiles getUploadMetadataForFilesParameters with
@@ -467,7 +497,9 @@ module Maintenance =
                                                         (fun upload ct ->
                                                             ValueTask(
                                                                 task {
-                                                                    let fileVersion = filesIndexedBySha256Hash[upload.Sha256Hash].ToFileVersion
+                                                                    let fileVersion =
+                                                                        filesIndexedBySha256Hash[upload.Sha256Hash]
+                                                                            .ToFileVersion
 
                                                                     let! result =
                                                                         Storage.SaveFileToObjectStorage
@@ -502,7 +534,8 @@ module Maintenance =
                     | AWSS3 -> return 0
                     | GoogleCloudStorage -> return 0
 
-            with ex ->
+            with
+            | ex ->
                 logToAnsiConsole Colors.Error $"Exception in UpdateIndex: {ExceptionResponse.Create ex}"
                 return -1
         }
@@ -591,7 +624,12 @@ module Maintenance =
                 let! graceStatus = readGraceStatusFile ()
                 let directoryCount = graceStatus.Index.Count
 
-                let fileCount = graceStatus.Index.Values.Select(fun directoryVersion -> directoryVersion.Files.Count).Sum()
+                let fileCount =
+                    graceStatus
+                        .Index
+                        .Values
+                        .Select(fun directoryVersion -> directoryVersion.Files.Count)
+                        .Sum()
 
                 let totalFileSize = graceStatus.Index.Values.Sum(fun directoryVersion -> directoryVersion.Files.Sum(fun f -> int64 f.Size))
 
@@ -620,7 +658,12 @@ module Maintenance =
                 let! graceStatus = readGraceStatusFile ()
                 let directoryCount = graceStatus.Index.Count
 
-                let fileCount = graceStatus.Index.Values.Select(fun directoryVersion -> directoryVersion.Files.Count).Sum()
+                let fileCount =
+                    graceStatus
+                        .Index
+                        .Values
+                        .Select(fun directoryVersion -> directoryVersion.Files.Count)
+                        .Sum()
 
                 let totalFileSize = graceStatus.Index.Values.Sum(fun directoryVersion -> directoryVersion.Files.Sum(fun f -> int64 f.Size))
 
@@ -655,7 +698,10 @@ module Maintenance =
                             )
 
                         let rightAlignedDirectoryVersionId =
-                            (String.replicate (longestRelativePath - directoryVersion.RelativePath.Length) " ")
+                            (String.replicate
+                                (longestRelativePath
+                                 - directoryVersion.RelativePath.Length)
+                                " ")
                             + $"({directoryVersion.DirectoryVersionId})"
 
                         AnsiConsole.MarkupLine(
@@ -677,8 +723,8 @@ module Maintenance =
         try
             let _ = messagePackSerializerOptions.Resolver.GetFormatterWithVerify<'T>()
             printfn "%s: formatter OK" label
-        with ex ->
-            printfn "%s: formatter MISSING\n%s" label (ex.ToString())
+        with
+        | ex -> printfn "%s: formatter MISSING\n%s" label (ex.ToString())
 
     type CheckIgnoreEntries() =
         inherit AsynchronousCommandLineAction()
@@ -709,7 +755,7 @@ module Maintenance =
                 // Probe the usual suspects
                 verify<Instant> "NodaTime.Instant"
                 verify<Uri> "System.Uri"
-                verify<byte[]> "byte[]"
+                verify<byte []> "byte[]"
                 verify<ReadOnlyMemory<byte>> "ReadOnlyMemory<byte>"
                 verify<Guid> "Guid"
 
@@ -721,7 +767,7 @@ module Maintenance =
 
                 // Also probe the generic containers which appear in your model
                 verify<List<Grace.Types.Types.DirectoryVersion>> "List<DirectoryVersion>"
-                verify<Grace.Types.Types.DirectoryVersion[]> "DirectoryVersion[]"
+                verify<Grace.Types.Types.DirectoryVersion []> "DirectoryVersion[]"
                 return 0
             }
 
@@ -776,7 +822,10 @@ module Maintenance =
         checkIgnoreEntriesCommand.Action <- new CheckIgnoreEntries()
         maintenanceCommand.Subcommands.Add(checkIgnoreEntriesCommand)
 
-        let testCommand = new Command("test", Description = "Just a test.") |> addCommonOptions
+        let testCommand =
+            new Command("test", Description = "Just a test.")
+            |> addCommonOptions
+
         testCommand.Action <- new Test()
         maintenanceCommand.Subcommands.Add(testCommand)
 

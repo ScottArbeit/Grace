@@ -27,7 +27,10 @@ type PolicyDeterminism() =
                 if endIndex < 0 then
                     None
                 else
-                    markdown.Substring(afterStart + 1, endIndex - afterStart - 1).Trim() |> Some
+                    markdown
+                        .Substring(afterStart + 1, endIndex - afterStart - 1)
+                        .Trim()
+                    |> Some
 
     let computeSnapshotId (parserVersion: string) (policyBlock: string) =
         let bytes = Encoding.UTF8.GetBytes($"{parserVersion}\n{policyBlock}")
@@ -39,13 +42,15 @@ type PolicyDeterminism() =
         let markdown =
             String.concat
                 "\n"
-                [ "# Grace Instructions"
-                  "Intro text."
-                  "```grace-policy"
-                  "version: 1"
-                  "defaults: {}"
-                  "```"
-                  "More details." ]
+                [
+                    "# Grace Instructions"
+                    "Intro text."
+                    "```grace-policy"
+                    "version: 1"
+                    "defaults: {}"
+                    "```"
+                    "More details."
+                ]
 
         let result = extractPolicyBlock markdown
         Assert.That(result, Is.EqualTo(Some("version: 1\ndefaults: {}")))

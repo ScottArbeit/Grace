@@ -86,7 +86,7 @@ module PromotionGroupCommand =
             new Option<String>("--promotion-id", [| "-p" |], Required = true, Description = "The promotion ID <Guid>.", Arity = ArgumentArity.ExactlyOne)
 
         let promotionIds =
-            new Option<String[]>(
+            new Option<String []>(
                 "--promotion-ids",
                 Required = true,
                 Description = "List of promotion IDs in the desired order.",
@@ -222,8 +222,8 @@ module PromotionGroupCommand =
                                 })
                 else
                     return! PromotionGroup.Create(parameters)
-            with ex ->
-                return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
+            with
+            | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
         }
 
     type Create() =
@@ -267,8 +267,8 @@ module PromotionGroupCommand =
                                 })
                 else
                     return! PromotionGroup.Get(parameters)
-            with ex ->
-                return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
+            with
+            | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
         }
 
     type Get() =
@@ -314,8 +314,8 @@ module PromotionGroupCommand =
                                 })
                 else
                     return! PromotionGroup.AddPromotion(parameters)
-            with ex ->
-                return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
+            with
+            | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
         }
 
     type AddPromotion() =
@@ -361,8 +361,8 @@ module PromotionGroupCommand =
                                 })
                 else
                     return! PromotionGroup.RemovePromotion(parameters)
-            with ex ->
-                return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
+            with
+            | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
         }
 
     type RemovePromotion() =
@@ -408,8 +408,8 @@ module PromotionGroupCommand =
                                 })
                 else
                     return! PromotionGroup.ReorderPromotions(parameters)
-            with ex ->
-                return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
+            with
+            | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
         }
 
     type Reorder() =
@@ -459,8 +459,8 @@ module PromotionGroupCommand =
                                 })
                 else
                     return! PromotionGroup.Schedule(parameters)
-            with ex ->
-                return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
+            with
+            | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
         }
 
     type Schedule() =
@@ -504,8 +504,8 @@ module PromotionGroupCommand =
                                 })
                 else
                     return! PromotionGroup.MarkReady(parameters)
-            with ex ->
-                return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
+            with
+            | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
         }
 
     type MarkReady() =
@@ -549,8 +549,8 @@ module PromotionGroupCommand =
                                 })
                 else
                     return! PromotionGroup.Start(parameters)
-            with ex ->
-                return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
+            with
+            | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
         }
 
     type Start() =
@@ -596,8 +596,8 @@ module PromotionGroupCommand =
                                 })
                 else
                     return! PromotionGroup.Block(parameters)
-            with ex ->
-                return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
+            with
+            | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
         }
 
     type Block() =
@@ -649,8 +649,8 @@ module PromotionGroupCommand =
                                 })
                 else
                     return! PromotionGroup.Delete(parameters)
-            with ex ->
-                return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
+            with
+            | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
         }
 
     type Delete() =
@@ -713,8 +713,8 @@ module PromotionGroupCommand =
                                 })
                 else
                     return! PromotionGroup.List(parameters)
-            with ex ->
-                return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
+            with
+            | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
         }
 
     type List() =

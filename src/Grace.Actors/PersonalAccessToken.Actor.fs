@@ -20,16 +20,18 @@ module PersonalAccessToken =
 
     [<GenerateSerializer>]
     type PersonalAccessTokenRecord =
-        { TokenId: PersonalAccessTokenId
-          Name: string
-          CreatedAt: Instant
-          ExpiresAt: Instant option
-          LastUsedAt: Instant option
-          RevokedAt: Instant option
-          Salt: byte array
-          Hash: byte array
-          Claims: string list
-          GroupIds: string list }
+        {
+            TokenId: PersonalAccessTokenId
+            Name: string
+            CreatedAt: Instant
+            ExpiresAt: Instant option
+            LastUsedAt: Instant option
+            RevokedAt: Instant option
+            Salt: byte array
+            Hash: byte array
+            Claims: string list
+            GroupIds: string list
+        }
 
     [<GenerateSerializer>]
     type PersonalAccessTokenState = { Tokens: PersonalAccessTokenRecord list }
@@ -38,7 +40,9 @@ module PersonalAccessToken =
         let Empty = { Tokens = [] }
 
     type PersonalAccessTokenActor
-        ([<PersistentState(StateName.PersonalAccessToken, Grace.Shared.Constants.GraceActorStorage)>] state: IPersistentState<PersonalAccessTokenState>) =
+        (
+            [<PersistentState(StateName.PersonalAccessToken, Grace.Shared.Constants.GraceActorStorage)>] state: IPersistentState<PersonalAccessTokenState>
+        ) =
         inherit Grain()
 
         let log = loggerFactory.CreateLogger("PersonalAccessToken.Actor")
@@ -60,12 +64,14 @@ module PersonalAccessToken =
             }
 
         member private _.Summarize(record: PersonalAccessTokenRecord) =
-            { TokenId = record.TokenId
-              Name = record.Name
-              CreatedAt = record.CreatedAt
-              ExpiresAt = record.ExpiresAt
-              LastUsedAt = record.LastUsedAt
-              RevokedAt = record.RevokedAt }
+            {
+                TokenId = record.TokenId
+                Name = record.Name
+                CreatedAt = record.CreatedAt
+                ExpiresAt = record.ExpiresAt
+                LastUsedAt = record.LastUsedAt
+                RevokedAt = record.RevokedAt
+            }
 
         member private _.ComputeHash (salt: byte array) (secret: byte array) =
             let combined = Array.zeroCreate<byte> (salt.Length + secret.Length)
@@ -98,16 +104,18 @@ module PersonalAccessToken =
                     let hash = this.ComputeHash salt secret
 
                     let record =
-                        { TokenId = tokenId
-                          Name = name
-                          CreatedAt = now
-                          ExpiresAt = expiresAt
-                          LastUsedAt = None
-                          RevokedAt = None
-                          Salt = salt
-                          Hash = hash
-                          Claims = claims
-                          GroupIds = groupIds }
+                        {
+                            TokenId = tokenId
+                            Name = name
+                            CreatedAt = now
+                            ExpiresAt = expiresAt
+                            LastUsedAt = None
+                            RevokedAt = None
+                            Salt = salt
+                            Hash = hash
+                            Claims = claims
+                            GroupIds = groupIds
+                        }
 
                     tokenState <- { tokenState with Tokens = record :: tokenState.Tokens }
                     do! this.SaveState()
@@ -149,11 +157,17 @@ module PersonalAccessToken =
 
         member private this.RevokeToken (tokenId: PersonalAccessTokenId) (now: Instant) (correlationId: CorrelationId) =
             task {
-                match tokenState.Tokens |> List.tryFind (fun token -> token.TokenId = tokenId) with
+                match tokenState.Tokens
+                      |> List.tryFind (fun token -> token.TokenId = tokenId)
+                    with
                 | None -> return Error(GraceError.Create "Token not found." correlationId)
                 | Some record ->
                     let updated = { record with RevokedAt = Some now }
-                    let remaining = tokenState.Tokens |> List.filter (fun token -> token.TokenId <> tokenId)
+
+                    let remaining =
+                        tokenState.Tokens
+                        |> List.filter (fun token -> token.TokenId <> tokenId)
+
                     tokenState <- { tokenState with Tokens = updated :: remaining }
                     do! this.SaveState()
                     return Ok(this.Summarize updated)
@@ -166,7 +180,9 @@ module PersonalAccessToken =
                     | None -> false
                     | Some expiresAt -> expiresAt <= now
 
-                match tokenState.Tokens |> List.tryFind (fun token -> token.TokenId = tokenId) with
+                match tokenState.Tokens
+                      |> List.tryFind (fun token -> token.TokenId = tokenId)
+                    with
                 | None -> return None
                 | Some record ->
                     if record.RevokedAt.IsSome || isExpired record then
@@ -176,7 +192,10 @@ module PersonalAccessToken =
 
                         if CryptographicOperations.FixedTimeEquals(computed, record.Hash) then
                             let updated = { record with LastUsedAt = Some now }
-                            let remaining = tokenState.Tokens |> List.filter (fun token -> token.TokenId <> tokenId)
+
+                            let remaining =
+                                tokenState.Tokens
+                                |> List.filter (fun token -> token.TokenId <> tokenId)
 
                             tokenState <- { tokenState with Tokens = updated :: remaining }
                             do! this.SaveState()

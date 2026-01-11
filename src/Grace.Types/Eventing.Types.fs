@@ -30,14 +30,16 @@ module Eventing =
     /// Envelope for push events (SignalR/webhook).
     [<GenerateSerializer>]
     type EventEnvelope =
-        { EventType: EventType
-          Timestamp: Instant
-          CorrelationId: CorrelationId
-          OwnerId: OwnerId
-          OrganizationId: OrganizationId
-          RepositoryId: RepositoryId
-          TargetBranchId: BranchId option
-          CandidateId: CandidateId option
-          WorkItemId: WorkItemId option
-          PromotionGroupId: PromotionGroup.PromotionGroupId option
-          Payload: string }
+        {
+            EventType: EventType
+            Timestamp: Instant
+            CorrelationId: CorrelationId
+            OwnerId: OwnerId
+            OrganizationId: OrganizationId
+            RepositoryId: RepositoryId
+            TargetBranchId: BranchId option
+            CandidateId: CandidateId option
+            WorkItemId: WorkItemId option
+            PromotionGroupId: PromotionGroup.PromotionGroupId option
+            Payload: string
+        }

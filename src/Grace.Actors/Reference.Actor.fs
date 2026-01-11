@@ -124,7 +124,9 @@ module Reference =
                     do! state.WriteStateAsync()
 
                     // Update the referenceDto with the event.
-                    referenceDto <- referenceDto |> ReferenceDto.UpdateDto referenceEvent
+                    referenceDto <-
+                        referenceDto
+                        |> ReferenceDto.UpdateDto referenceEvent
 
                     // Publish the event to the rest of the world.
                     let graceEvent = GraceEvent.ReferenceEvent referenceEvent
@@ -132,7 +134,7 @@ module Reference =
 
                     // If this is a Save or Checkpoint reference, schedule a physical deletion based on the default delays from the repository.
                     match referenceEvent.Event with
-                    | Created(referenceId, ownerId, organizationId, repositoryId, branchId, directoryId, sha256Hash, referenceType, referenceText, links) ->
+                    | Created (referenceId, ownerId, organizationId, repositoryId, branchId, directoryId, sha256Hash, referenceType, referenceText, links) ->
                         do!
                             match referenceDto.ReferenceType with
                             | ReferenceType.Save ->
@@ -141,15 +143,18 @@ module Reference =
                                     let! repositoryDto = repositoryActorProxy.Get correlationId
 
                                     let reminderState: PhysicalDeletionReminderState =
-                                        { RepositoryId = referenceDto.RepositoryId
-                                          BranchId = referenceDto.BranchId
-                                          DirectoryVersionId = referenceDto.DirectoryId
-                                          Sha256Hash = referenceDto.Sha256Hash
-                                          DeleteReason = $"Save: automatic deletion after {repositoryDto.SaveDays} days"
-                                          CorrelationId = correlationId }
+                                        {
+                                            RepositoryId = referenceDto.RepositoryId
+                                            BranchId = referenceDto.BranchId
+                                            DirectoryVersionId = referenceDto.DirectoryId
+                                            Sha256Hash = referenceDto.Sha256Hash
+                                            DeleteReason = $"Save: automatic deletion after {repositoryDto.SaveDays} days"
+                                            CorrelationId = correlationId
+                                        }
 
                                     do!
-                                        (this :> IGraceReminderWithGuidKey).ScheduleReminderAsync
+                                        (this :> IGraceReminderWithGuidKey)
+                                            .ScheduleReminderAsync
                                             ReminderTypes.PhysicalDeletion
                                             (Duration.FromDays(float repositoryDto.SaveDays))
                                             (ReminderState.ReferencePhysicalDeletion reminderState)
@@ -161,15 +166,18 @@ module Reference =
                                     let! repositoryDto = repositoryActorProxy.Get correlationId
 
                                     let reminderState: PhysicalDeletionReminderState =
-                                        { RepositoryId = referenceDto.RepositoryId
-                                          BranchId = referenceDto.BranchId
-                                          DirectoryVersionId = referenceDto.DirectoryId
-                                          Sha256Hash = referenceDto.Sha256Hash
-                                          DeleteReason = $"Checkpoint: automatic deletion after {repositoryDto.CheckpointDays} days"
-                                          CorrelationId = correlationId }
+                                        {
+                                            RepositoryId = referenceDto.RepositoryId
+                                            BranchId = referenceDto.BranchId
+                                            DirectoryVersionId = referenceDto.DirectoryId
+                                            Sha256Hash = referenceDto.Sha256Hash
+                                            DeleteReason = $"Checkpoint: automatic deletion after {repositoryDto.CheckpointDays} days"
+                                            CorrelationId = correlationId
+                                        }
 
                                     do!
-                                        (this :> IGraceReminderWithGuidKey).ScheduleReminderAsync
+                                        (this :> IGraceReminderWithGuidKey)
+                                            .ScheduleReminderAsync
                                             ReminderTypes.PhysicalDeletion
                                             (Duration.FromDays(float repositoryDto.CheckpointDays))
                                             (ReminderState.ReferencePhysicalDeletion reminderState)
@@ -189,7 +197,8 @@ module Reference =
                             .enhance (nameof ReferenceEventType, getDiscriminatedUnionFullName referenceEvent.Event)
 
                     return Ok graceReturnValue
-                with ex ->
+                with
+                | ex ->
                     log.LogError(
                         ex,
                         "{CurrentInstant}: Node: {hostName}; CorrelationId: {correlationId}; Failed to apply event {eventType} for reference {referenceId} in repository {repositoryId} on branch {branchId} with directory version {directoryVersionId}.",
@@ -222,7 +231,8 @@ module Reference =
             member this.Exists correlationId =
                 this.correlationId <- correlationId
 
-                not <| referenceDto.ReferenceId.Equals(ReferenceDto.Default.ReferenceId)
+                not
+                <| referenceDto.ReferenceId.Equals(ReferenceDto.Default.ReferenceId)
                 |> returnTask
 
             member this.Get correlationId =
@@ -244,7 +254,7 @@ module Reference =
                             return Error(GraceError.Create (getErrorMessage ReferenceError.DuplicateCorrelationId) metadata.CorrelationId)
                         else
                             match command with
-                            | Create(referenceId, ownerId, organizationId, repositoryId, branchId, directoryId, sha256Hash, referenceType, referenceText, links) ->
+                            | Create (referenceId, ownerId, organizationId, repositoryId, branchId, directoryId, sha256Hash, referenceType, referenceText, links) ->
                                 match referenceDto.UpdatedAt with
                                 | Some _ -> return Error(GraceError.Create (getErrorMessage ReferenceError.ReferenceAlreadyExists) metadata.CorrelationId)
                                 | None -> return Ok command
@@ -259,16 +269,16 @@ module Reference =
                         let! referenceEventType =
                             task {
                                 match command with
-                                | Create(referenceId,
-                                         ownerId,
-                                         organizationId,
-                                         repositoryId,
-                                         branchId,
-                                         directoryId,
-                                         sha256Hash,
-                                         referenceType,
-                                         referenceText,
-                                         links) ->
+                                | Create (referenceId,
+                                          ownerId,
+                                          organizationId,
+                                          repositoryId,
+                                          branchId,
+                                          directoryId,
+                                          sha256Hash,
+                                          referenceType,
+                                          referenceText,
+                                          links) ->
                                     return
                                         Created(
                                             referenceId,
@@ -284,7 +294,7 @@ module Reference =
                                         )
                                 | AddLink link -> return LinkAdded link
                                 | RemoveLink link -> return LinkRemoved link
-                                | DeleteLogical(force, deleteReason) ->
+                                | DeleteLogical (force, deleteReason) ->
                                     let tryGetLogicalDeleteDaysFromMetadata () =
                                         match metadata.Properties.TryGetValue("RepositoryLogicalDeleteDays") with
                                         | true, value ->
@@ -309,15 +319,18 @@ module Reference =
                                             }
 
                                     let reminderState: PhysicalDeletionReminderState =
-                                        { RepositoryId = referenceDto.RepositoryId
-                                          BranchId = referenceDto.BranchId
-                                          DirectoryVersionId = referenceDto.DirectoryId
-                                          Sha256Hash = referenceDto.Sha256Hash
-                                          DeleteReason = deleteReason
-                                          CorrelationId = metadata.CorrelationId }
+                                        {
+                                            RepositoryId = referenceDto.RepositoryId
+                                            BranchId = referenceDto.BranchId
+                                            DirectoryVersionId = referenceDto.DirectoryId
+                                            Sha256Hash = referenceDto.Sha256Hash
+                                            DeleteReason = deleteReason
+                                            CorrelationId = metadata.CorrelationId
+                                        }
 
                                     do!
-                                        (this :> IGraceReminderWithGuidKey).ScheduleReminderAsync
+                                        (this :> IGraceReminderWithGuidKey)
+                                            .ScheduleReminderAsync
                                             ReminderTypes.PhysicalDeletion
                                             (Duration.FromDays(float logicalDeleteDays))
                                             (ReminderState.ReferencePhysicalDeletion reminderState)

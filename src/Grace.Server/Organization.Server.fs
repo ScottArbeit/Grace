@@ -125,7 +125,8 @@ module Organization =
                             .enhance ("Error", errorMessage)
 
                     return! context |> result400BadRequest graceError
-            with ex ->
+            with
+            | ex ->
                 log.LogError(
                     ex,
                     "{CurrentInstant}: Exception in Organization.Server.processCommand. CorrelationId: {correlationId}.",
@@ -189,7 +190,8 @@ module Organization =
                             .enhance ("Path", context.Request.Path.Value)
 
                     return! context |> result400BadRequest graceError
-            with ex ->
+            with
+            | ex ->
                 let graceError =
                     (GraceError.Create $"{ExceptionResponse.Create ex}" correlationId)
                         .enhance(parameterDictionary)
@@ -205,20 +207,22 @@ module Organization =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: CreateOrganizationParameters) =
-                    [| Organization.organizationDoesNotExist
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.OrganizationId
-                           parameters.OrganizationName
-                           parameters.CorrelationId
-                           OrganizationIdAlreadyExists
-                       Organization.organizationNameIsUniqueWithinOwner
-                           parameters.OwnerId
-                           parameters.OwnerName
-                           parameters.OrganizationName
-                           context
-                           parameters.CorrelationId
-                           OrganizationNameAlreadyExists |]
+                    [|
+                        Organization.organizationDoesNotExist
+                            parameters.OwnerId
+                            parameters.OwnerName
+                            parameters.OrganizationId
+                            parameters.OrganizationName
+                            parameters.CorrelationId
+                            OrganizationIdAlreadyExists
+                        Organization.organizationNameIsUniqueWithinOwner
+                            parameters.OwnerId
+                            parameters.OwnerName
+                            parameters.OrganizationName
+                            context
+                            parameters.CorrelationId
+                            OrganizationNameAlreadyExists
+                    |]
 
                 let command (parameters: CreateOrganizationParameters) =
                     task {
@@ -238,11 +242,15 @@ module Organization =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: SetOrganizationNameParameters) =
-                    [| String.isNotEmpty parameters.NewName OrganizationError.OrganizationNameIsRequired
-                       String.isValidGraceName parameters.NewName OrganizationError.InvalidOrganizationName
-                       Organization.organizationIsNotDeleted context parameters.CorrelationId OrganizationError.OrganizationIsDeleted |]
+                    [|
+                        String.isNotEmpty parameters.NewName OrganizationError.OrganizationNameIsRequired
+                        String.isValidGraceName parameters.NewName OrganizationError.InvalidOrganizationName
+                        Organization.organizationIsNotDeleted context parameters.CorrelationId OrganizationError.OrganizationIsDeleted
+                    |]
 
-                let command (parameters: SetOrganizationNameParameters) = SetName(OrganizationName parameters.NewName) |> returnValueTask
+                let command (parameters: SetOrganizationNameParameters) =
+                    SetName(OrganizationName parameters.NewName)
+                    |> returnValueTask
 
                 context.Items.Add("Command", nameof SetName)
                 return! processCommand context validations command
@@ -253,11 +261,18 @@ module Organization =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: SetOrganizationTypeParameters) =
-                    [| DiscriminatedUnion.isMemberOf<OrganizationType, OrganizationError> parameters.OrganizationType OrganizationError.InvalidOrganizationType
-                       Organization.organizationIsNotDeleted context parameters.CorrelationId OrganizationError.OrganizationIsDeleted |]
+                    [|
+                        DiscriminatedUnion.isMemberOf<OrganizationType, OrganizationError> parameters.OrganizationType OrganizationError.InvalidOrganizationType
+                        Organization.organizationIsNotDeleted context parameters.CorrelationId OrganizationError.OrganizationIsDeleted
+                    |]
 
                 let command (parameters: SetOrganizationTypeParameters) =
-                    SetType(discriminatedUnionFromString<OrganizationType>(parameters.OrganizationType).Value)
+                    SetType(
+                        discriminatedUnionFromString<OrganizationType>(
+                            parameters.OrganizationType
+                        )
+                            .Value
+                    )
                     |> returnValueTask
 
                 context.Items.Add("Command", nameof SetType)
@@ -269,12 +284,19 @@ module Organization =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: SetOrganizationSearchVisibilityParameters) =
-                    [| String.isNotEmpty parameters.SearchVisibility SearchVisibilityIsRequired
-                       DiscriminatedUnion.isMemberOf<SearchVisibility, OrganizationError> parameters.SearchVisibility OrganizationError.InvalidSearchVisibility
-                       Organization.organizationIsNotDeleted context parameters.CorrelationId OrganizationError.OrganizationIsDeleted |]
+                    [|
+                        String.isNotEmpty parameters.SearchVisibility SearchVisibilityIsRequired
+                        DiscriminatedUnion.isMemberOf<SearchVisibility, OrganizationError> parameters.SearchVisibility OrganizationError.InvalidSearchVisibility
+                        Organization.organizationIsNotDeleted context parameters.CorrelationId OrganizationError.OrganizationIsDeleted
+                    |]
 
                 let command (parameters: SetOrganizationSearchVisibilityParameters) =
-                    SetSearchVisibility(discriminatedUnionFromString<SearchVisibility>(parameters.SearchVisibility).Value)
+                    SetSearchVisibility(
+                        discriminatedUnionFromString<SearchVisibility>(
+                            parameters.SearchVisibility
+                        )
+                            .Value
+                    )
                     |> returnValueTask
 
                 context.Items.Add("Command", nameof SetSearchVisibility)
@@ -286,11 +308,15 @@ module Organization =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: SetOrganizationDescriptionParameters) =
-                    [| String.isNotEmpty parameters.Description OrganizationError.DescriptionIsRequired
-                       String.maxLength parameters.Description 2048 OrganizationError.DescriptionIsTooLong
-                       Organization.organizationIsNotDeleted context parameters.CorrelationId OrganizationError.OrganizationIsDeleted |]
+                    [|
+                        String.isNotEmpty parameters.Description OrganizationError.DescriptionIsRequired
+                        String.maxLength parameters.Description 2048 OrganizationError.DescriptionIsTooLong
+                        Organization.organizationIsNotDeleted context parameters.CorrelationId OrganizationError.OrganizationIsDeleted
+                    |]
 
-                let command (parameters: SetOrganizationDescriptionParameters) = SetDescription(parameters.Description) |> returnValueTask
+                let command (parameters: SetOrganizationDescriptionParameters) =
+                    SetDescription(parameters.Description)
+                    |> returnValueTask
 
                 context.Items.Add("Command", nameof SetDescription)
                 return! processCommand context validations command
@@ -302,7 +328,9 @@ module Organization =
             task {
                 try
                     let validations (parameters: ListRepositoriesParameters) =
-                        [| Organization.organizationIsNotDeleted context parameters.CorrelationId OrganizationIsDeleted |]
+                        [|
+                            Organization.organizationIsNotDeleted context parameters.CorrelationId OrganizationIsDeleted
+                        |]
 
                     let query (context: HttpContext) (maxCount: int) (actorProxy: IOrganizationActor) =
                         task {
@@ -312,7 +340,8 @@ module Organization =
 
                     let! parameters = context |> parse<ListRepositoriesParameters>
                     return! processQuery context parameters validations 1 query
-                with ex ->
+                with
+                | ex ->
                     return!
                         context
                         |> result500ServerError (GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId context))
@@ -323,10 +352,14 @@ module Organization =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: DeleteOrganizationParameters) =
-                    [| String.isNotEmpty parameters.DeleteReason OrganizationError.DeleteReasonIsRequired
-                       Organization.organizationIsNotDeleted context parameters.CorrelationId OrganizationError.OrganizationIsDeleted |]
+                    [|
+                        String.isNotEmpty parameters.DeleteReason OrganizationError.DeleteReasonIsRequired
+                        Organization.organizationIsNotDeleted context parameters.CorrelationId OrganizationError.OrganizationIsDeleted
+                    |]
 
-                let command (parameters: DeleteOrganizationParameters) = DeleteLogical(parameters.Force, parameters.DeleteReason) |> returnValueTask
+                let command (parameters: DeleteOrganizationParameters) =
+                    DeleteLogical(parameters.Force, parameters.DeleteReason)
+                    |> returnValueTask
 
                 context.Items.Add("Command", nameof DeleteLogical)
                 return! processCommand context validations command
@@ -337,7 +370,9 @@ module Organization =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: OrganizationParameters) =
-                    [| Organization.organizationIsDeleted context parameters.CorrelationId OrganizationIsNotDeleted |]
+                    [|
+                        Organization.organizationIsDeleted context parameters.CorrelationId OrganizationIsNotDeleted
+                    |]
 
                 let command (parameters: OrganizationParameters) = Undelete |> returnValueTask
 
@@ -354,7 +389,9 @@ module Organization =
 
                 try
                     let validations (parameters: GetOrganizationParameters) =
-                        [| Organization.organizationIsNotDeleted context parameters.CorrelationId OrganizationIsDeleted |]
+                        [|
+                            Organization.organizationIsNotDeleted context parameters.CorrelationId OrganizationIsDeleted
+                        |]
 
                     let query (context: HttpContext) (maxCount: int) (actorProxy: IOrganizationActor) =
                         task { return! actorProxy.Get(getCorrelationId context) }
@@ -376,7 +413,8 @@ module Organization =
                     )
 
                     return result
-                with ex ->
+                with
+                | ex ->
                     let duration_ms = getDurationRightAligned_ms startTime
 
                     let graceError =

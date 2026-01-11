@@ -26,18 +26,16 @@ module Diff =
         let mutable mostRecentUnchangedLines = 0
         let mutable changeIsInProcess = false
         let diffList = List<DiffPiece>()
-        let diffSections = List<DiffPiece[]>()
+        let diffSections = List<DiffPiece []>()
 
         for i = 0 to diffLines.Count - 1 do
             let diffLine = diffLines[i]
 
             // If we have two consecutive unchanged lines, and we're already in the middle of a change, finish out that change
             //  by adding those two unchanged lines.
-            if
-                diffLine.Type = ChangeType.Unchanged
-                && (i < diffLines.Count - 1)
-                && (diffLines[i + 1].Type = ChangeType.Unchanged)
-            then
+            if diffLine.Type = ChangeType.Unchanged
+               && (i < diffLines.Count - 1)
+               && (diffLines[i + 1].Type = ChangeType.Unchanged) then
                 mostRecentUnchangedLines <- i
 
                 if changeIsInProcess then
@@ -50,12 +48,11 @@ module Diff =
                     diffList.Clear()
 
             // We have changes to process.
-            elif
-                diffLine.Type = ChangeType.Deleted
-                || diffLine.Type = ChangeType.Inserted
-                || diffLine.Type = ChangeType.Modified
-                || (diffLine.Type = ChangeType.Imaginary && includeImaginary)
-            then
+            elif diffLine.Type = ChangeType.Deleted
+                 || diffLine.Type = ChangeType.Inserted
+                 || diffLine.Type = ChangeType.Modified
+                 || (diffLine.Type = ChangeType.Imaginary
+                     && includeImaginary) then
                 if not <| changeIsInProcess then
                     // We're starting a new diff section, so flip the flag and write the most recent
                     // unchanged lines to start the section.
@@ -103,21 +100,21 @@ module Diff =
                     let diffLines = inlineDiffPaneModel.Lines
                     processDiffModel diffLines false
                 else
-                    List<DiffPiece[]>()
+                    List<DiffPiece []>()
 
             let sideBySideOldSections =
                 if sideBySideDiffModel.OldText.HasDifferences then
                     let diffLines = sideBySideDiffModel.OldText.Lines
                     processDiffModel diffLines true
                 else
-                    List<DiffPiece[]>()
+                    List<DiffPiece []>()
 
             let sideBySideNewSections =
                 if sideBySideDiffModel.NewText.HasDifferences then
                     let diffLines = sideBySideDiffModel.NewText.Lines
                     processDiffModel diffLines true
                 else
-                    List<DiffPiece[]>()
+                    List<DiffPiece []>()
 
             return {| InlineDiff = inlineDiffSections; SideBySideOld = sideBySideOldSections; SideBySideNew = sideBySideNewSections |}
         }

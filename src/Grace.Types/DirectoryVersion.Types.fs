@@ -47,23 +47,27 @@ module DirectoryVersion =
     /// The DirectoryVersionDto is a data transfer object that represents a directory version in the system.
     [<MessagePackObject>]
     type DirectoryVersionDto =
-        { [<Key(0)>]
-          DirectoryVersion: DirectoryVersion
-          [<Key(1)>]
-          RecursiveSize: int64
-          [<Key(2)>]
-          DeletedAt: Instant option
-          [<Key(3)>]
-          DeleteReason: DeleteReason
-          [<Key(4)>]
-          HashesValidated: bool }
+        {
+            [<Key(0)>]
+            DirectoryVersion: DirectoryVersion
+            [<Key(1)>]
+            RecursiveSize: int64
+            [<Key(2)>]
+            DeletedAt: Instant option
+            [<Key(3)>]
+            DeleteReason: DeleteReason
+            [<Key(4)>]
+            HashesValidated: bool
+        }
 
         static member Default =
-            { DirectoryVersion = DirectoryVersion.Default
-              RecursiveSize = Constants.InitialDirectorySize
-              DeletedAt = None
-              DeleteReason = String.Empty
-              HashesValidated = false }
+            {
+                DirectoryVersion = DirectoryVersion.Default
+                RecursiveSize = Constants.InitialDirectorySize
+                DeletedAt = None
+                DeleteReason = String.Empty
+                HashesValidated = false
+            }
 
         static member UpdateDto directoryVersionEvent currentDirectoryVersionDto =
             let directoryVersionEventType = directoryVersionEvent.Event

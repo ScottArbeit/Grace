@@ -56,7 +56,7 @@ module Review =
                     let updatedPacket = { packet with CreatedAt = createdAt; UpdatedAt = Some reviewEvent.Metadata.Timestamp }
 
                     reviewPacket <- Some updatedPacket
-                | FindingResolved(findingId, resolutionState, resolvedBy, note) ->
+                | FindingResolved (findingId, resolutionState, resolvedBy, note) ->
                     reviewPacket <-
                         reviewPacket
                         |> Option.map (fun packet ->
@@ -68,7 +68,8 @@ module Review =
                                             ResolutionState = resolutionState
                                             ResolvedBy = Some resolvedBy
                                             ResolvedAt = Some reviewEvent.Metadata.Timestamp
-                                            ResolutionNote = note }
+                                            ResolutionNote = note
+                                        }
                                     else
                                         finding)
 
@@ -98,7 +99,7 @@ module Review =
                         let updatedPacket = { packet with CreatedAt = createdAt; UpdatedAt = Some reviewEvent.Metadata.Timestamp }
 
                         reviewPacket <- Some updatedPacket
-                    | FindingResolved(findingId, resolutionState, resolvedBy, note) ->
+                    | FindingResolved (findingId, resolutionState, resolvedBy, note) ->
                         reviewPacket <-
                             reviewPacket
                             |> Option.map (fun packet ->
@@ -110,7 +111,8 @@ module Review =
                                                 ResolutionState = resolutionState
                                                 ResolvedBy = Some resolvedBy
                                                 ResolvedAt = Some reviewEvent.Metadata.Timestamp
-                                                ResolutionNote = note }
+                                                ResolutionNote = note
+                                            }
                                         else
                                             finding)
 
@@ -131,7 +133,8 @@ module Review =
                             .enhance (nameof ReviewEventType, getDiscriminatedUnionFullName reviewEvent.Event)
 
                     return Ok returnValue
-                with ex ->
+                with
+                | ex ->
                     log.LogError(
                         ex,
                         "{CurrentInstant}: Node: {hostName}; CorrelationId: {correlationId}; Failed to apply event {eventType} for review.",
@@ -169,7 +172,9 @@ module Review =
 
             member this.GetCheckpoints correlationId =
                 this.correlationId <- correlationId
-                (checkpoints :> IReadOnlyList<ReviewCheckpoint>) |> returnTask
+
+                (checkpoints :> IReadOnlyList<ReviewCheckpoint>)
+                |> returnTask
 
             member this.Handle command metadata =
                 let isValid (command: ReviewCommand) (metadata: EventMetadata) =
@@ -180,12 +185,14 @@ module Review =
                             match command with
                             | UpsertPacket _ -> return Ok command
                             | AddCheckpoint _ -> return Ok command
-                            | ResolveFinding(findingId, _, _, _) ->
+                            | ResolveFinding (findingId, _, _, _) ->
                                 match reviewPacket with
                                 | None ->
                                     return Error(GraceError.Create (ReviewError.getErrorMessage ReviewError.ReviewPacketDoesNotExist) metadata.CorrelationId)
                                 | Some packet ->
-                                    let exists = packet.Findings |> List.exists (fun finding -> finding.FindingId = findingId)
+                                    let exists =
+                                        packet.Findings
+                                        |> List.exists (fun finding -> finding.FindingId = findingId)
 
                                     if exists then
                                         return Ok command
@@ -199,7 +206,7 @@ module Review =
                             task {
                                 match command with
                                 | UpsertPacket packet -> return PacketUpserted packet
-                                | ResolveFinding(findingId, resolutionState, resolvedBy, note) ->
+                                | ResolveFinding (findingId, resolutionState, resolvedBy, note) ->
                                     return FindingResolved(findingId, resolutionState, resolvedBy, note)
                                 | AddCheckpoint checkpoint -> return CheckpointAdded checkpoint
                             }

@@ -61,7 +61,9 @@ module Stage0 =
                     state.State.Add(stage0Event)
                     do! state.WriteStateAsync()
 
-                    stage0Analysis <- stage0Analysis |> Stage0AnalysisDto.UpdateDto stage0Event
+                    stage0Analysis <-
+                        stage0Analysis
+                        |> Stage0AnalysisDto.UpdateDto stage0Event
 
                     let graceEvent = GraceEvent.Stage0Event stage0Event
                     do! publishGraceEvent graceEvent stage0Event.Metadata
@@ -73,7 +75,8 @@ module Stage0 =
                             .enhance (nameof Stage0EventType, getDiscriminatedUnionFullName stage0Event.Event)
 
                     return Ok returnValue
-                with ex ->
+                with
+                | ex ->
                     log.LogError(
                         ex,
                         "{CurrentInstant}: Node: {hostName}; CorrelationId: {correlationId}; Failed to apply event {eventType} for Stage 0 analysis {stage0AnalysisId}.",
@@ -97,7 +100,9 @@ module Stage0 =
         interface IStage0Actor with
             member this.Exists correlationId =
                 this.correlationId <- correlationId
-                (stage0Analysis.ReferenceId <> ReferenceId.Empty) |> returnTask
+
+                (stage0Analysis.ReferenceId <> ReferenceId.Empty)
+                |> returnTask
 
             member this.Get correlationId =
                 this.correlationId <- correlationId
@@ -110,7 +115,9 @@ module Stage0 =
 
             member this.GetEvents correlationId =
                 this.correlationId <- correlationId
-                state.State :> IReadOnlyList<Stage0Event> |> returnTask
+
+                state.State :> IReadOnlyList<Stage0Event>
+                |> returnTask
 
             member this.Handle command metadata =
                 let isValid (command: Stage0Command) (metadata: EventMetadata) =

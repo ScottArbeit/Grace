@@ -142,11 +142,9 @@ module ReviewCommand =
     let private tryParseGuid (value: string) (error: ReviewError) (parseResult: ParseResult) =
         let mutable parsed = Guid.Empty
 
-        if
-            String.IsNullOrWhiteSpace(value)
-            || Guid.TryParse(value, &parsed) = false
-            || parsed = Guid.Empty
-        then
+        if String.IsNullOrWhiteSpace(value)
+           || Guid.TryParse(value, &parsed) = false
+           || parsed = Guid.Empty then
             Error(GraceError.Create (ReviewError.getErrorMessage error) (getCorrelationId parseResult))
         else
             Ok parsed
@@ -212,7 +210,10 @@ module ReviewCommand =
         resolvePolicySnapshotIdWith Candidate.Get Policy.GetCurrent parseResult graceIds candidateId
 
     let private writePacketSummary (parseResult: ParseResult) (packet: ReviewPacket) =
-        if not (parseResult |> json) && not (parseResult |> silent) then
+        if
+            not (parseResult |> json)
+            && not (parseResult |> silent)
+        then
             AnsiConsole.MarkupLine($"[bold]Review Packet[/] {Markup.Escape(packet.ReviewPacketId.ToString())}")
 
             if not (String.IsNullOrWhiteSpace packet.Summary) then
@@ -285,13 +286,16 @@ module ReviewCommand =
                             match returnValue.ReturnValue with
                             | Some packet -> writePacketSummary parseResult packet
                             | None ->
-                                if not (parseResult |> json) && not (parseResult |> silent) then
+                                if
+                                    not (parseResult |> json)
+                                    && not (parseResult |> silent)
+                                then
                                     AnsiConsole.MarkupLine("[yellow]No review packet found.[/]")
 
                             return Ok returnValue
                         | Error error -> return Error error
-            with ex ->
-                return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
+            with
+            | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
         }
 
     type Open() =
@@ -348,8 +352,8 @@ module ReviewCommand =
                                 )
 
                             return! Review.Checkpoint(parameters)
-            with ex ->
-                return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
+            with
+            | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
         }
 
     type Checkpoint() =
@@ -377,60 +381,63 @@ module ReviewCommand =
                 return result |> renderOutput parseResult
             }
 
+    let private resolveHandlerImpl (parseResult: ParseResult) =
+        if parseResult |> verbose then printParseResult parseResult
+        let graceIds = parseResult |> getNormalizedIdsAndNames
+
+        let candidateIdRaw =
+            parseResult.GetValue(Options.candidateId)
+            |> Option.ofObj
+            |> Option.defaultValue String.Empty
+
+        match tryParseGuid candidateIdRaw ReviewError.InvalidCandidateId parseResult with
+        | Error error -> Task.FromResult(Error error)
+        | Ok candidateId ->
+            let findingIdRaw = parseResult.GetValue(Options.findingId)
+
+            match tryParseGuid findingIdRaw ReviewError.InvalidFindingId parseResult with
+            | Error error -> Task.FromResult(Error error)
+            | Ok findingId ->
+                let approve = parseResult.GetValue(Options.approve)
+                let requestChanges = parseResult.GetValue(Options.requestChanges)
+
+                if approve = requestChanges then
+                    Task.FromResult(Error(GraceError.Create "Specify exactly one of --approve or --request-changes." (getCorrelationId parseResult)))
+                else
+                    let resolutionState =
+                        if approve then
+                            FindingResolutionState.Approved
+                        else
+                            FindingResolutionState.NeedsChanges
+
+                    let note =
+                        parseResult.GetValue(Options.note)
+                        |> Option.ofObj
+                        |> Option.defaultValue String.Empty
+
+                    let parameters =
+                        Parameters.Review.ResolveFindingParameters(
+                            CandidateId = candidateId.ToString(),
+                            FindingId = findingId.ToString(),
+                            ResolutionState = getDiscriminatedUnionCaseName resolutionState,
+                            Note = note,
+                            OwnerId = graceIds.OwnerIdString,
+                            OwnerName = graceIds.OwnerName,
+                            OrganizationId = graceIds.OrganizationIdString,
+                            OrganizationName = graceIds.OrganizationName,
+                            RepositoryId = graceIds.RepositoryIdString,
+                            RepositoryName = graceIds.RepositoryName,
+                            CorrelationId = graceIds.CorrelationId
+                        )
+
+                    Review.ResolveFinding(parameters)
+
     let private resolveHandler (parseResult: ParseResult) =
         task {
             try
-                if parseResult |> verbose then printParseResult parseResult
-                let graceIds = parseResult |> getNormalizedIdsAndNames
-
-                let candidateIdRaw =
-                    parseResult.GetValue(Options.candidateId)
-                    |> Option.ofObj
-                    |> Option.defaultValue String.Empty
-
-                match tryParseGuid candidateIdRaw ReviewError.InvalidCandidateId parseResult with
-                | Error error -> return Error error
-                | Ok candidateId ->
-                    let findingIdRaw = parseResult.GetValue(Options.findingId)
-
-                    match tryParseGuid findingIdRaw ReviewError.InvalidFindingId parseResult with
-                    | Error error -> return Error error
-                    | Ok findingId ->
-                        let approve = parseResult.GetValue(Options.approve)
-                        let requestChanges = parseResult.GetValue(Options.requestChanges)
-
-                        if approve = requestChanges then
-                            return Error(GraceError.Create "Specify exactly one of --approve or --request-changes." (getCorrelationId parseResult))
-                        else
-                            let resolutionState =
-                                if approve then
-                                    FindingResolutionState.Approved
-                                else
-                                    FindingResolutionState.NeedsChanges
-
-                            let note =
-                                parseResult.GetValue(Options.note)
-                                |> Option.ofObj
-                                |> Option.defaultValue String.Empty
-
-                            let parameters =
-                                Parameters.Review.ResolveFindingParameters(
-                                    CandidateId = candidateId.ToString(),
-                                    FindingId = findingId.ToString(),
-                                    ResolutionState = getDiscriminatedUnionCaseName resolutionState,
-                                    Note = note,
-                                    OwnerId = graceIds.OwnerIdString,
-                                    OwnerName = graceIds.OwnerName,
-                                    OrganizationId = graceIds.OrganizationIdString,
-                                    OrganizationName = graceIds.OrganizationName,
-                                    RepositoryId = graceIds.RepositoryIdString,
-                                    RepositoryName = graceIds.RepositoryName,
-                                    CorrelationId = graceIds.CorrelationId
-                                )
-
-                            return! Review.ResolveFinding(parameters)
-            with ex ->
-                return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
+                return! resolveHandlerImpl parseResult
+            with
+            | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
         }
 
     type Resolve() =
@@ -475,8 +482,8 @@ module ReviewCommand =
                         )
 
                     return! Review.Deepen(parameters)
-            with ex ->
-                return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
+            with
+            | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
         }
 
     type Deepen() =
@@ -501,7 +508,12 @@ module ReviewCommand =
         let reviewCommand = new Command("review", Description = "Review packets and findings.")
 
         let inboxCommand = new Command("inbox", Description = "Show review inbox (stub).")
-        inboxCommand |> addOption Options.targetBranch |> addCommonOptions |> ignore
+
+        inboxCommand
+        |> addOption Options.targetBranch
+        |> addCommonOptions
+        |> ignore
+
         inboxCommand.Action <- new Inbox()
         reviewCommand.Subcommands.Add(inboxCommand)
 

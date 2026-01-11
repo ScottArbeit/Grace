@@ -27,35 +27,51 @@ module HistoryStorage =
     type Redaction = { kind: string; name: string; argIndex: int; originalLength: int option; placeholder: string }
 
     type HistoryEntry =
-        { id: Guid
-          timestampUtc: Instant
-          argvOriginal: string array
-          argvNormalized: string array
-          commandLine: string
-          cwd: string
-          repoRoot: string option
-          repoName: string option
-          repoBranch: string option
-          graceVersion: string
-          exitCode: int
-          durationMs: int64
-          parseSucceeded: bool
-          redactions: Redaction list
-          source: string option }
+        {
+            id: Guid
+            timestampUtc: Instant
+            argvOriginal: string array
+            argvNormalized: string array
+            commandLine: string
+            cwd: string
+            repoRoot: string option
+            repoName: string option
+            repoBranch: string option
+            graceVersion: string
+            exitCode: int
+            durationMs: int64
+            parseSucceeded: bool
+            redactions: Redaction list
+            source: string option
+        }
 
     type ReadResult = { Entries: HistoryEntry list; CorruptCount: int }
 
     type RecordInput =
-        { argvOriginal: string array
-          argvNormalized: string array
-          cwd: string
-          exitCode: int
-          durationMs: int64
-          parseSucceeded: bool
-          timestampUtc: Instant
-          source: string option }
+        {
+            argvOriginal: string array
+            argvNormalized: string array
+            cwd: string
+            exitCode: int
+            durationMs: int64
+            parseSucceeded: bool
+            timestampUtc: Instant
+            source: string option
+        }
 
-    let private lockBackoffMs = [| 25; 50; 100; 150; 200; 250; 300; 400; 500; 750 |]
+    let private lockBackoffMs =
+        [|
+            25
+            50
+            100
+            150
+            200
+            250
+            300
+            400
+            500
+            750
+        |]
 
     let getHistoryFilePath () =
         let userGraceDir = UserConfiguration.getUserGraceDirectory ()
@@ -65,7 +81,9 @@ module HistoryStorage =
         let userGraceDir = UserConfiguration.getUserGraceDirectory ()
         Path.Combine(userGraceDir, "history.lock")
 
-    let private ensureHistoryDirectory () = UserConfiguration.ensureUserGraceDirectory () |> ignore
+    let private ensureHistoryDirectory () =
+        UserConfiguration.ensureUserGraceDirectory ()
+        |> ignore
 
     let private getGraceVersion () =
         try
@@ -75,8 +93,8 @@ module HistoryStorage =
                 Constants.CurrentConfigurationVersion
             else
                 version.ToString()
-        with _ ->
-            Constants.CurrentConfigurationVersion
+        with
+        | _ -> Constants.CurrentConfigurationVersion
 
     let private tryAcquireLock () =
         ensureHistoryDirectory ()
@@ -89,8 +107,8 @@ module HistoryStorage =
                     let stream = new FileStream(lockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None)
 
                     acquired <- Some stream
-                with :? IOException ->
-                    Thread.Sleep(lockBackoffMs[attempt])
+                with
+                | :? IOException -> Thread.Sleep(lockBackoffMs[attempt])
 
         acquired
 
@@ -127,8 +145,8 @@ module HistoryStorage =
                     current <- current.Parent
 
             found
-        with _ ->
-            None
+        with
+        | _ -> None
 
     let tryParseDuration (value: string) =
         if String.IsNullOrWhiteSpace(value) then
@@ -154,8 +172,8 @@ module HistoryStorage =
             try
                 let name = DirectoryInfo(root).Name
                 if String.IsNullOrWhiteSpace(name) then None else Some name
-            with _ ->
-                None
+            with
+            | _ -> None
         | _ -> None
 
     let private hasGitMetadata (repoRoot: string) =
@@ -164,7 +182,10 @@ module HistoryStorage =
 
     let private tryGetGitBranch (repoRoot: string option) =
         match repoRoot with
-        | Some root when not <| String.IsNullOrWhiteSpace(root) && hasGitMetadata root ->
+        | Some root when
+            not <| String.IsNullOrWhiteSpace(root)
+            && hasGitMetadata root
+            ->
             try
                 let startInfo = ProcessStartInfo()
                 startInfo.FileName <- "git"
@@ -193,14 +214,14 @@ module HistoryStorage =
                     else
                         try
                             proc.Kill(true)
-                        with _ ->
-                            ()
+                        with
+                        | _ -> ()
 
                         None
                 else
                     None
-            with _ ->
-                None
+            with
+            | _ -> None
         | _ -> None
 
     let private buildSensitiveOptionSet (historyConfig: UserConfiguration.HistoryConfiguration) =
@@ -222,9 +243,16 @@ module HistoryStorage =
             for pattern in patterns do
                 if not <| String.IsNullOrWhiteSpace(pattern) then
                     try
-                        regexes.Add(Regex(pattern, RegexOptions.Compiled ||| RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1.0)))
-                    with _ ->
-                        ()
+                        regexes.Add(
+                            Regex(
+                                pattern,
+                                RegexOptions.Compiled
+                                ||| RegexOptions.CultureInvariant,
+                                TimeSpan.FromSeconds(1.0)
+                            )
+                        )
+                    with
+                    | _ -> ()
 
         regexes |> Seq.toList
 
@@ -237,7 +265,10 @@ module HistoryStorage =
         while i < redacted.Length do
             let current = redacted[i]
 
-            if not <| String.IsNullOrWhiteSpace(current) && current.StartsWith("--") then
+            if
+                not <| String.IsNullOrWhiteSpace(current)
+                && current.StartsWith("--")
+            then
                 let optionPart = current.Substring(2)
                 let equalsIndex = optionPart.IndexOf('=')
 
@@ -260,11 +291,13 @@ module HistoryStorage =
                             redacted[i + 1] <- Placeholder
 
                             redactions.Add(
-                                { kind = "OptionValue"
-                                  name = optionName
-                                  argIndex = i + 1
-                                  originalLength = Some optionValue.Length
-                                  placeholder = Placeholder }
+                                {
+                                    kind = "OptionValue"
+                                    name = optionName
+                                    argIndex = i + 1
+                                    originalLength = Some optionValue.Length
+                                    placeholder = Placeholder
+                                }
                             )
 
             i <- i + 1
@@ -342,14 +375,15 @@ module HistoryStorage =
                                     corrupt <- corrupt + 1
                                 else
                                     entries.Add(entry)
-                            with _ ->
-                                corrupt <- corrupt + 1
+                            with
+                            | _ -> corrupt <- corrupt + 1
 
                         line <- reader.ReadLine()
 
                     result <- { Entries = entries |> Seq.toList; CorruptCount = corrupt }
                     success <- true
-                with :? IOException ->
+                with
+                | :? IOException ->
                     Thread.Sleep(lockBackoffMs[attempts])
                     attempts <- attempts + 1
 
@@ -395,8 +429,8 @@ module HistoryStorage =
                     try
                         File.Replace(tempPath, historyPath, backupPath, true)
                         tryDeleteFile backupPath
-                    with :? IOException ->
-                        File.Move(tempPath, historyPath, true)
+                    with
+                    | :? IOException -> File.Move(tempPath, historyPath, true)
                 else
                     File.Move(tempPath, historyPath)
 
@@ -418,32 +452,43 @@ module HistoryStorage =
 
         let retentionCutoff =
             if historyConfig.RetentionDays > 0 then
-                Some(getCurrentInstant().Minus(Duration.FromDays(float historyConfig.RetentionDays)))
+                Some(
+                    getCurrentInstant()
+                        .Minus(Duration.FromDays(float historyConfig.RetentionDays))
+                )
             else
                 None
 
         let retained =
             match retentionCutoff with
-            | Some cutoff -> entries |> List.filter (fun entry -> entry.timestampUtc >= cutoff)
+            | Some cutoff ->
+                entries
+                |> List.filter (fun entry -> entry.timestampUtc >= cutoff)
             | None -> entries
 
         let trimmed =
-            if historyConfig.MaxEntries > 0 && retained.Length > historyConfig.MaxEntries then
+            if historyConfig.MaxEntries > 0
+               && retained.Length > historyConfig.MaxEntries then
                 retained
                 |> List.sortByDescending (fun entry -> entry.timestampUtc)
                 |> List.truncate historyConfig.MaxEntries
             else
                 retained
 
-        let trimmedOrdered = trimmed |> List.sortBy (fun entry -> entry.timestampUtc)
+        let trimmedOrdered =
+            trimmed
+            |> List.sortBy (fun entry -> entry.timestampUtc)
 
         let exceedsSize =
             if historyConfig.MaxFileBytes > 0L then
-                fileInfo.Exists && fileInfo.Length > historyConfig.MaxFileBytes
+                fileInfo.Exists
+                && fileInfo.Length > historyConfig.MaxFileBytes
             else
                 false
 
-        let exceedsCount = historyConfig.MaxEntries > 0 && entries.Length > historyConfig.MaxEntries
+        let exceedsCount =
+            historyConfig.MaxEntries > 0
+            && entries.Length > historyConfig.MaxEntries
 
         let exceedsRetention = retained.Length <> entries.Length
 
@@ -475,12 +520,17 @@ module HistoryStorage =
 
             let isHistory = commandName.Equals("history", StringComparison.InvariantCultureIgnoreCase)
 
-            if isHistory && not historyConfig.RecordHistoryCommands then false else true
+            if isHistory
+               && not historyConfig.RecordHistoryCommands then
+                false
+            else
+                true
 
     let recordInvocation (input: RecordInput) =
         let loadResult = UserConfiguration.loadUserConfiguration ()
 
-        if not <| shouldRecord input loadResult.Configuration.History then
+        if not
+           <| shouldRecord input loadResult.Configuration.History then
             None
         else
             let redactedNormalized, redactions = redactArguments input.argvNormalized loadResult.Configuration.History
@@ -492,28 +542,30 @@ module HistoryStorage =
                 let repoName = tryGetRepoName repoRoot
                 let repoBranch = tryGetGitBranch repoRoot
 
-                { id = Guid.NewGuid()
-                  timestampUtc = input.timestampUtc
-                  argvOriginal = redactedOriginal
-                  argvNormalized = redactedNormalized
-                  commandLine = buildCommandLine redactedNormalized
-                  cwd = input.cwd
-                  repoRoot = repoRoot
-                  repoName = repoName
-                  repoBranch = repoBranch
-                  graceVersion = getGraceVersion ()
-                  exitCode = input.exitCode
-                  durationMs = input.durationMs
-                  parseSucceeded = input.parseSucceeded
-                  redactions = redactions
-                  source = input.source }
+                {
+                    id = Guid.NewGuid()
+                    timestampUtc = input.timestampUtc
+                    argvOriginal = redactedOriginal
+                    argvNormalized = redactedNormalized
+                    commandLine = buildCommandLine redactedNormalized
+                    cwd = input.cwd
+                    repoRoot = repoRoot
+                    repoName = repoName
+                    repoBranch = repoBranch
+                    graceVersion = getGraceVersion ()
+                    exitCode = input.exitCode
+                    durationMs = input.durationMs
+                    parseSucceeded = input.parseSucceeded
+                    redactions = redactions
+                    source = input.source
+                }
 
             Some(entry, loadResult.Configuration.History)
 
     let tryRecordInvocation (input: RecordInput) =
         match recordInvocation input with
         | None -> ()
-        | Some(entry, historyConfig) ->
+        | Some (entry, historyConfig) ->
             let onFailure () = Console.Error.WriteLine("Grace history: failed to acquire history lock; skipping history recording.")
 
             withHistoryLock
@@ -546,4 +598,5 @@ module HistoryStorage =
         let patterns = historyConfig.DestructiveTokenRegexes
         let regexes = buildRegexes patterns
 
-        regexes |> List.exists (fun regex -> regex.IsMatch(commandLine))
+        regexes
+        |> List.exists (fun regex -> regex.IsMatch(commandLine))
