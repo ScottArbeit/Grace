@@ -30,6 +30,9 @@ Read `../AGENTS.md` for global expectations before updating CLI code.
    expanding behavior instead of breaking existing scripts.
 3. Capture new command patterns or usage tips in this document to guide future
    agents.
+4. Root help grouping lives in `src/Grace.CLI/Program.CLI.fs` under
+   `rootHelpSections`; update the section lists when adding or renaming
+   top-level commands so new entries do not silently drift into "Other".
 
 ## Recent Patterns
 
