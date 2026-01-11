@@ -43,14 +43,23 @@ module Validations =
             task {
                 let mutable ownerGuid = Guid.Empty
 
-                if (not <| String.IsNullOrEmpty(ownerId)) && Guid.TryParse(ownerId, &ownerGuid) then
+                if
+                    (not <| String.IsNullOrEmpty(ownerId))
+                    && Guid.TryParse(ownerId, &ownerGuid)
+                then
                     match memoryCache.GetOwnerIdEntry ownerGuid with
                     | Some value ->
                         match value with
                         | MemoryCache.Exists -> return Ok()
                         | MemoryCache.DoesNotExist -> return Error error
-                        | _ -> return! ownerExists ownerId correlationId |> optionToResult error
-                    | None -> return! ownerExists ownerId correlationId |> optionToResult error
+                        | _ ->
+                            return!
+                                ownerExists ownerId correlationId
+                                |> optionToResult error
+                    | None ->
+                        return!
+                            ownerExists ownerId correlationId
+                            |> optionToResult error
                 else
                     return Error error
             }
@@ -61,7 +70,10 @@ module Validations =
             task {
                 let mutable ownerGuid = Guid.Empty
                 //logToConsole $"In ownerIdDoesNotExist: ownerId: {ownerId}; correlationId: {correlationId}"
-                if (not <| String.IsNullOrEmpty(ownerId)) && Guid.TryParse(ownerId, &ownerGuid) then
+                if
+                    (not <| String.IsNullOrEmpty(ownerId))
+                    && Guid.TryParse(ownerId, &ownerGuid)
+                then
                     let ownerActorProxy = Owner.CreateActorProxy ownerGuid correlationId
                     //logToConsole $"In ownerIdDoesNotExist: ownerActorProxy: {serialize ownerActorProxy}"
                     let! exists = ownerActorProxy.Exists correlationId
@@ -98,8 +110,14 @@ module Validations =
                     match value with
                     | MemoryCache.DoesNotExist -> return Ok()
                     | MemoryCache.Exists -> return Error error
-                    | _ -> return! ownerIsDeleted graceIds.OwnerIdString correlationId |> optionToResult error
-                | None -> return! ownerIsDeleted graceIds.OwnerIdString correlationId |> optionToResult error
+                    | _ ->
+                        return!
+                            ownerIsDeleted graceIds.OwnerIdString correlationId
+                            |> optionToResult error
+                | None ->
+                    return!
+                        ownerIsDeleted graceIds.OwnerIdString correlationId
+                        |> optionToResult error
             }
             |> ValidationResult
 
@@ -115,7 +133,8 @@ module Validations =
         /// Validates that the given ownerId does not already exist in the database.
         let ownerDoesNotExist<'T> ownerId ownerName correlationId (error: 'T) =
             task {
-                if not <| String.IsNullOrEmpty(ownerId) && not <| String.IsNullOrEmpty(ownerName) then
+                if not <| String.IsNullOrEmpty(ownerId)
+                   && not <| String.IsNullOrEmpty(ownerName) then
                     match! ownerExists ownerId ownerName correlationId error with
                     | Ok _ -> return Error error
                     | Error _ -> return Ok()
@@ -140,8 +159,14 @@ module Validations =
                         match value with
                         | MemoryCache.Exists -> return Ok()
                         | MemoryCache.DoesNotExist -> return Error error
-                        | _ -> return! organizationExists organizationId correlationId |> optionToResult error
-                    | None -> return! organizationExists organizationId correlationId |> optionToResult error
+                        | _ ->
+                            return!
+                                organizationExists organizationId correlationId
+                                |> optionToResult error
+                    | None ->
+                        return!
+                            organizationExists organizationId correlationId
+                            |> optionToResult error
                 else
                     return Ok()
             }
@@ -201,11 +226,18 @@ module Validations =
                             match value with
                             | MemoryCache.Exists -> return Ok()
                             | MemoryCache.DoesNotExist -> return Error error
-                            | _ -> return! organizationExists organizationId correlationId |> optionToResult error
-                        | None -> return! organizationExists organizationId correlationId |> optionToResult error
+                            | _ ->
+                                return!
+                                    organizationExists organizationId correlationId
+                                    |> optionToResult error
+                        | None ->
+                            return!
+                                organizationExists organizationId correlationId
+                                |> optionToResult error
                     else
                         return Error error
-                with ex ->
+                with
+                | ex ->
                     log.LogError(ex, "{CurrentInstant}: Exception in Grace.Server.Validations.organizationExists.", getCurrentInstantExtended ())
 
                     return Error error
@@ -374,14 +406,23 @@ module Validations =
             task {
                 let mutable branchGuid = Guid.Empty
 
-                if (not <| String.IsNullOrEmpty(branchId)) && Guid.TryParse(branchId, &branchGuid) then
+                if
+                    (not <| String.IsNullOrEmpty(branchId))
+                    && Guid.TryParse(branchId, &branchGuid)
+                then
                     match memoryCache.GetBranchIdEntry branchGuid with
                     | Some value ->
                         match value with
                         | MemoryCache.Exists -> return Ok()
                         | MemoryCache.DoesNotExist -> return Error error
-                        | _ -> return! branchExists branchGuid repositoryId correlationId |> optionToResult error
-                    | None -> return! branchExists branchGuid repositoryId correlationId |> optionToResult error
+                        | _ ->
+                            return!
+                                branchExists branchGuid repositoryId correlationId
+                                |> optionToResult error
+                    | None ->
+                        return!
+                            branchExists branchGuid repositoryId correlationId
+                            |> optionToResult error
                 else
                     return Ok()
             }
@@ -392,7 +433,10 @@ module Validations =
             task {
                 let mutable branchGuid = Guid.Empty
 
-                if (not <| String.IsNullOrEmpty(branchId)) && Guid.TryParse(branchId, &branchGuid) then
+                if
+                    (not <| String.IsNullOrEmpty(branchId))
+                    && Guid.TryParse(branchId, &branchGuid)
+                then
                     let branchActorProxy = Branch.CreateActorProxy branchGuid repositoryId correlationId
 
                     let! exists = branchActorProxy.Exists correlationId

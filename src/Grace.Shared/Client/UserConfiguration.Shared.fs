@@ -17,11 +17,27 @@ module UserConfiguration =
     [<Literal>]
     let private DefaultRetentionDays = 90
 
-    let defaultRedactOptionNames () = [| "token"; "sas"; "sig"; "password"; "connection-string"; "connectionstring" |]
+    let defaultRedactOptionNames () =
+        [|
+            "token"
+            "sas"
+            "sig"
+            "password"
+            "connection-string"
+            "connectionstring"
+        |]
 
-    let defaultRedactRegexes () = [| "(?i)(sig=)[^&]+"; "(?i)(token=)[^&]+"; "(?i)(password=)[^&]+" |]
+    let defaultRedactRegexes () =
+        [|
+            "(?i)(sig=)[^&]+"
+            "(?i)(token=)[^&]+"
+            "(?i)(password=)[^&]+"
+        |]
 
-    let defaultDestructiveTokenRegexes () = [| "(?i)\\b(delete|remove|purge|destroy|reset|drop)\\b" |]
+    let defaultDestructiveTokenRegexes () =
+        [|
+            "(?i)\\b(delete|remove|purge|destroy|reset|drop)\\b"
+        |]
 
     type HistoryConfiguration() =
         member val Enabled = false with get, set
@@ -110,8 +126,8 @@ module UserConfiguration =
             let json = serialize (normalizeConfiguration configuration)
             File.WriteAllText(path, json)
             Ok()
-        with ex ->
-            Error $"Failed to write user configuration: {ex.Message}"
+        with
+        | ex -> Error $"Failed to write user configuration: {ex.Message}"
 
     let loadUserConfiguration () =
         let defaultConfiguration = UserConfiguration()
@@ -131,14 +147,19 @@ module UserConfiguration =
                 let configuration = JsonSerializer.Deserialize<UserConfiguration>(json, Constants.JsonSerializerOptions)
 
                 if obj.ReferenceEquals(configuration, null) then
-                    { Configuration = defaultConfiguration
-                      WasCorrupt = true
-                      ErrorMessage = Some "User configuration file is empty or invalid JSON."
-                      CreatedNew = false }
+                    {
+                        Configuration = defaultConfiguration
+                        WasCorrupt = true
+                        ErrorMessage = Some "User configuration file is empty or invalid JSON."
+                        CreatedNew = false
+                    }
                 else
                     { Configuration = normalizeConfiguration configuration; WasCorrupt = false; ErrorMessage = None; CreatedNew = false }
-        with ex ->
-            { Configuration = defaultConfiguration
-              WasCorrupt = true
-              ErrorMessage = Some $"Failed to read user configuration: {ex.Message}"
-              CreatedNew = false }
+        with
+        | ex ->
+            {
+                Configuration = defaultConfiguration
+                WasCorrupt = true
+                ErrorMessage = Some $"Failed to read user configuration: {ex.Message}"
+                CreatedNew = false
+            }

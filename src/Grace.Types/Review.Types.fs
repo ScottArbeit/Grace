@@ -59,68 +59,76 @@ module Review =
     /// Stage 0 deterministic analysis output.
     [<GenerateSerializer>]
     type DeterministicRiskProfile =
-        { ReferenceId: ReferenceId
-          PolicySnapshotId: PolicySnapshotId
-          ChangedPaths: PathChange list
-          Churn: ChurnMetrics
-          SensitivePathsTouched: RelativePath list
-          DependencyConfigChanges: RelativePath list
-          ApiSurfaceSignals: RelativePath list
-          TestEvidence: TestEvidencePresence
-          GeneratedFiles: RelativePath list
-          BinaryFiles: RelativePath list
-          Volatility: VolatilitySignal option
-          TriggersFired: DeterministicTrigger list
-          IsNonTrivialSignal: bool
-          NonTrivialTriggers: DeterministicTrigger list
-          CreatedAt: Instant }
+        {
+            ReferenceId: ReferenceId
+            PolicySnapshotId: PolicySnapshotId
+            ChangedPaths: PathChange list
+            Churn: ChurnMetrics
+            SensitivePathsTouched: RelativePath list
+            DependencyConfigChanges: RelativePath list
+            ApiSurfaceSignals: RelativePath list
+            TestEvidence: TestEvidencePresence
+            GeneratedFiles: RelativePath list
+            BinaryFiles: RelativePath list
+            Volatility: VolatilitySignal option
+            TriggersFired: DeterministicTrigger list
+            IsNonTrivialSignal: bool
+            NonTrivialTriggers: DeterministicTrigger list
+            CreatedAt: Instant
+        }
 
         static member Default =
-            { ReferenceId = ReferenceId.Empty
-              PolicySnapshotId = PolicySnapshotId String.Empty
-              ChangedPaths = []
-              Churn = { LinesAdded = 0; LinesRemoved = 0; FilesChanged = 0; RenamedCount = 0 }
-              SensitivePathsTouched = []
-              DependencyConfigChanges = []
-              ApiSurfaceSignals = []
-              TestEvidence = TestEvidencePresence.Unknown
-              GeneratedFiles = []
-              BinaryFiles = []
-              Volatility = None
-              TriggersFired = []
-              IsNonTrivialSignal = false
-              NonTrivialTriggers = []
-              CreatedAt = Constants.DefaultTimestamp }
+            {
+                ReferenceId = ReferenceId.Empty
+                PolicySnapshotId = PolicySnapshotId String.Empty
+                ChangedPaths = []
+                Churn = { LinesAdded = 0; LinesRemoved = 0; FilesChanged = 0; RenamedCount = 0 }
+                SensitivePathsTouched = []
+                DependencyConfigChanges = []
+                ApiSurfaceSignals = []
+                TestEvidence = TestEvidencePresence.Unknown
+                GeneratedFiles = []
+                BinaryFiles = []
+                Volatility = None
+                TriggersFired = []
+                IsNonTrivialSignal = false
+                NonTrivialTriggers = []
+                CreatedAt = Constants.DefaultTimestamp
+            }
 
     /// Stored Stage 0 analysis record.
     [<GenerateSerializer>]
     type Stage0Analysis =
-        { Class: string
-          Stage0AnalysisId: Stage0AnalysisId
-          OwnerId: OwnerId
-          OrganizationId: OrganizationId
-          RepositoryId: RepositoryId
-          ReferenceId: ReferenceId
-          WorkItemId: WorkItemId option
-          CandidateId: CandidateId option
-          PolicySnapshotId: PolicySnapshotId
-          RiskProfile: DeterministicRiskProfile
-          CreatedAt: Instant
-          UpdatedAt: Instant option }
+        {
+            Class: string
+            Stage0AnalysisId: Stage0AnalysisId
+            OwnerId: OwnerId
+            OrganizationId: OrganizationId
+            RepositoryId: RepositoryId
+            ReferenceId: ReferenceId
+            WorkItemId: WorkItemId option
+            CandidateId: CandidateId option
+            PolicySnapshotId: PolicySnapshotId
+            RiskProfile: DeterministicRiskProfile
+            CreatedAt: Instant
+            UpdatedAt: Instant option
+        }
 
         static member Default =
-            { Class = nameof Stage0Analysis
-              Stage0AnalysisId = Guid.Empty
-              OwnerId = OwnerId.Empty
-              OrganizationId = OrganizationId.Empty
-              RepositoryId = RepositoryId.Empty
-              ReferenceId = ReferenceId.Empty
-              WorkItemId = None
-              CandidateId = None
-              PolicySnapshotId = PolicySnapshotId String.Empty
-              RiskProfile = DeterministicRiskProfile.Default
-              CreatedAt = Constants.DefaultTimestamp
-              UpdatedAt = None }
+            {
+                Class = nameof Stage0Analysis
+                Stage0AnalysisId = Guid.Empty
+                OwnerId = OwnerId.Empty
+                OrganizationId = OrganizationId.Empty
+                RepositoryId = RepositoryId.Empty
+                ReferenceId = ReferenceId.Empty
+                WorkItemId = None
+                CandidateId = None
+                PolicySnapshotId = PolicySnapshotId String.Empty
+                RiskProfile = DeterministicRiskProfile.Default
+                CreatedAt = Constants.DefaultTimestamp
+                UpdatedAt = None
+            }
 
     /// Commands for the Stage 0 analysis actor.
     [<KnownType("GetKnownTypes")>]
@@ -184,48 +192,56 @@ module Review =
     /// Summary of evidence selection for auditability.
     [<GenerateSerializer>]
     type EvidenceSetSummary =
-        { Stage: EvidenceStage
-          SelectedFiles: RelativePath list
-          SliceSummaries: EvidenceSliceSummary list
-          Budget: EvidenceBudget
-          TotalBytes: int
-          EstimatedTokens: int
-          TopReasons: EvidenceScoreReason list }
+        {
+            Stage: EvidenceStage
+            SelectedFiles: RelativePath list
+            SliceSummaries: EvidenceSliceSummary list
+            Budget: EvidenceBudget
+            TotalBytes: int
+            EstimatedTokens: int
+            TopReasons: EvidenceScoreReason list
+        }
 
     /// Receipt describing a model analysis run.
     [<GenerateSerializer>]
     type AnalysisReceipt =
-        { AnalysisReceiptId: AnalysisReceiptId
-          Stage: EvidenceStage
-          PolicySnapshotId: PolicySnapshotId
-          EvidenceHash: Sha256Hash
-          EvidenceSummary: EvidenceSetSummary
-          ModelId: string
-          MaxTokens: int
-          OutputHash: Sha256Hash
-          TriggerReasons: string list
-          CreatedAt: Instant
-          Principal: UserId }
+        {
+            AnalysisReceiptId: AnalysisReceiptId
+            Stage: EvidenceStage
+            PolicySnapshotId: PolicySnapshotId
+            EvidenceHash: Sha256Hash
+            EvidenceSummary: EvidenceSetSummary
+            ModelId: string
+            MaxTokens: int
+            OutputHash: Sha256Hash
+            TriggerReasons: string list
+            CreatedAt: Instant
+            Principal: UserId
+        }
 
         static member Default =
-            { AnalysisReceiptId = Guid.Empty
-              Stage = EvidenceStage.Triage
-              PolicySnapshotId = PolicySnapshotId String.Empty
-              EvidenceHash = Sha256Hash String.Empty
-              EvidenceSummary =
-                { Stage = EvidenceStage.Triage
-                  SelectedFiles = []
-                  SliceSummaries = []
-                  Budget = { MaxFiles = 0; MaxHunksPerFile = 0; MaxLinesPerHunk = 0; MaxTotalBytes = 0; MaxTokens = 0 }
-                  TotalBytes = 0
-                  EstimatedTokens = 0
-                  TopReasons = [] }
-              ModelId = String.Empty
-              MaxTokens = 0
-              OutputHash = Sha256Hash String.Empty
-              TriggerReasons = []
-              CreatedAt = Constants.DefaultTimestamp
-              Principal = UserId String.Empty }
+            {
+                AnalysisReceiptId = Guid.Empty
+                Stage = EvidenceStage.Triage
+                PolicySnapshotId = PolicySnapshotId String.Empty
+                EvidenceHash = Sha256Hash String.Empty
+                EvidenceSummary =
+                    {
+                        Stage = EvidenceStage.Triage
+                        SelectedFiles = []
+                        SliceSummaries = []
+                        Budget = { MaxFiles = 0; MaxHunksPerFile = 0; MaxLinesPerHunk = 0; MaxTotalBytes = 0; MaxTokens = 0 }
+                        TotalBytes = 0
+                        EstimatedTokens = 0
+                        TopReasons = []
+                    }
+                ModelId = String.Empty
+                MaxTokens = 0
+                OutputHash = Sha256Hash String.Empty
+                TriggerReasons = []
+                CreatedAt = Constants.DefaultTimestamp
+                Principal = UserId String.Empty
+            }
 
     /// The Id of a deterministic chapter.
     type ChapterId = Sha256Hash
@@ -279,33 +295,44 @@ module Review =
     /// Record describing a review finding.
     [<GenerateSerializer>]
     type Finding =
-        { FindingId: FindingId
-          Severity: FindingSeverity
-          Category: FindingCategory
-          Description: string
-          Rationale: string
-          RequiredActionType: string
-          EvidenceReferences: EvidenceReference list
-          ResolutionState: FindingResolutionState
-          ResolvedBy: UserId option
-          ResolvedAt: Instant option
-          ResolutionNote: string option }
+        {
+            FindingId: FindingId
+            Severity: FindingSeverity
+            Category: FindingCategory
+            Description: string
+            Rationale: string
+            RequiredActionType: string
+            EvidenceReferences: EvidenceReference list
+            ResolutionState: FindingResolutionState
+            ResolvedBy: UserId option
+            ResolvedAt: Instant option
+            ResolutionNote: string option
+        }
 
     /// Deterministic chapter representation.
     [<GenerateSerializer>]
     type Chapter =
-        { ChapterId: ChapterId; Title: string; Summary: string; Paths: RelativePath list; FindingIds: FindingId list; Evidence: EvidenceSliceSummary list }
+        {
+            ChapterId: ChapterId
+            Title: string
+            Summary: string
+            Paths: RelativePath list
+            FindingIds: FindingId list
+            Evidence: EvidenceSliceSummary list
+        }
 
     /// Review checkpoint for incremental review tracking.
     [<GenerateSerializer>]
     type ReviewCheckpoint =
-        { ReviewCheckpointId: ReviewCheckpointId
-          CandidateId: CandidateId option
-          PromotionGroupId: PromotionGroup.PromotionGroupId option
-          ReviewedUpToReferenceId: ReferenceId
-          PolicySnapshotId: PolicySnapshotId
-          Reviewer: UserId
-          Timestamp: Instant }
+        {
+            ReviewCheckpointId: ReviewCheckpointId
+            CandidateId: CandidateId option
+            PromotionGroupId: PromotionGroup.PromotionGroupId option
+            ReviewedUpToReferenceId: ReferenceId
+            PolicySnapshotId: PolicySnapshotId
+            Reviewer: UserId
+            Timestamp: Instant
+        }
 
     /// Summary of gate attestations included in the review packet.
     [<GenerateSerializer>]
@@ -314,42 +341,46 @@ module Review =
     /// Primary review packet for a candidate or promotion group.
     [<GenerateSerializer>]
     type ReviewPacket =
-        { Class: string
-          ReviewPacketId: ReviewPacketId
-          OwnerId: OwnerId
-          OrganizationId: OrganizationId
-          RepositoryId: RepositoryId
-          CandidateId: CandidateId option
-          PromotionGroupId: PromotionGroup.PromotionGroupId option
-          PolicySnapshotId: PolicySnapshotId
-          Summary: string
-          Chapters: Chapter list
-          Findings: Finding list
-          ImpactMap: string
-          EvidenceSetSummary: EvidenceSetSummary option
-          GateSummary: GateSummary option
-          EscalationReceiptIds: AnalysisReceiptId list
-          CreatedAt: Instant
-          UpdatedAt: Instant option }
+        {
+            Class: string
+            ReviewPacketId: ReviewPacketId
+            OwnerId: OwnerId
+            OrganizationId: OrganizationId
+            RepositoryId: RepositoryId
+            CandidateId: CandidateId option
+            PromotionGroupId: PromotionGroup.PromotionGroupId option
+            PolicySnapshotId: PolicySnapshotId
+            Summary: string
+            Chapters: Chapter list
+            Findings: Finding list
+            ImpactMap: string
+            EvidenceSetSummary: EvidenceSetSummary option
+            GateSummary: GateSummary option
+            EscalationReceiptIds: AnalysisReceiptId list
+            CreatedAt: Instant
+            UpdatedAt: Instant option
+        }
 
         static member Default =
-            { Class = nameof ReviewPacket
-              ReviewPacketId = ReviewPacketId.Empty
-              OwnerId = OwnerId.Empty
-              OrganizationId = OrganizationId.Empty
-              RepositoryId = RepositoryId.Empty
-              CandidateId = None
-              PromotionGroupId = None
-              PolicySnapshotId = PolicySnapshotId String.Empty
-              Summary = String.Empty
-              Chapters = []
-              Findings = []
-              ImpactMap = String.Empty
-              EvidenceSetSummary = None
-              GateSummary = None
-              EscalationReceiptIds = []
-              CreatedAt = Constants.DefaultTimestamp
-              UpdatedAt = None }
+            {
+                Class = nameof ReviewPacket
+                ReviewPacketId = ReviewPacketId.Empty
+                OwnerId = OwnerId.Empty
+                OrganizationId = OrganizationId.Empty
+                RepositoryId = RepositoryId.Empty
+                CandidateId = None
+                PromotionGroupId = None
+                PolicySnapshotId = PolicySnapshotId String.Empty
+                Summary = String.Empty
+                Chapters = []
+                Findings = []
+                ImpactMap = String.Empty
+                EvidenceSetSummary = None
+                GateSummary = None
+                EscalationReceiptIds = []
+                CreatedAt = Constants.DefaultTimestamp
+                UpdatedAt = None
+            }
 
     /// Defines the commands for the Review actor.
     [<KnownType("GetKnownTypes")>]

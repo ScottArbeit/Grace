@@ -62,36 +62,40 @@ module Queue =
     /// Attestation record for a gate run.
     [<GenerateSerializer>]
     type GateAttestation =
-        { GateAttestationId: GateAttestationId
-          OwnerId: OwnerId
-          OrganizationId: OrganizationId
-          RepositoryId: RepositoryId
-          CandidateId: CandidateId
-          PolicySnapshotId: PolicySnapshotId
-          BaselineHeadReferenceId: ReferenceId
-          GateName: string
-          GateVersion: string
-          Result: GateResult
-          ArtifactUris: string list
-          Summary: string
-          Timestamp: Instant
-          Principal: string }
+        {
+            GateAttestationId: GateAttestationId
+            OwnerId: OwnerId
+            OrganizationId: OrganizationId
+            RepositoryId: RepositoryId
+            CandidateId: CandidateId
+            PolicySnapshotId: PolicySnapshotId
+            BaselineHeadReferenceId: ReferenceId
+            GateName: string
+            GateVersion: string
+            Result: GateResult
+            ArtifactUris: string list
+            Summary: string
+            Timestamp: Instant
+            Principal: string
+        }
 
         static member Default =
-            { GateAttestationId = Guid.Empty
-              OwnerId = OwnerId.Empty
-              OrganizationId = OrganizationId.Empty
-              RepositoryId = RepositoryId.Empty
-              CandidateId = CandidateId.Empty
-              PolicySnapshotId = PolicySnapshotId String.Empty
-              BaselineHeadReferenceId = ReferenceId.Empty
-              GateName = String.Empty
-              GateVersion = String.Empty
-              Result = GateResult.Skipped
-              ArtifactUris = []
-              Summary = String.Empty
-              Timestamp = Constants.DefaultTimestamp
-              Principal = String.Empty }
+            {
+                GateAttestationId = Guid.Empty
+                OwnerId = OwnerId.Empty
+                OrganizationId = OrganizationId.Empty
+                RepositoryId = RepositoryId.Empty
+                CandidateId = CandidateId.Empty
+                PolicySnapshotId = PolicySnapshotId String.Empty
+                BaselineHeadReferenceId = ReferenceId.Empty
+                GateName = String.Empty
+                GateVersion = String.Empty
+                Result = GateResult.Skipped
+                ArtifactUris = []
+                Summary = String.Empty
+                Timestamp = Constants.DefaultTimestamp
+                Principal = String.Empty
+            }
 
     /// Defines the commands for the GateAttestation actor.
     [<KnownType("GetKnownTypes")>]
@@ -125,28 +129,32 @@ module Queue =
     /// Conflict resolution receipt for a candidate.
     [<GenerateSerializer>]
     type ConflictReceipt =
-        { ConflictReceiptId: ConflictReceiptId
-          OwnerId: OwnerId
-          OrganizationId: OrganizationId
-          RepositoryId: RepositoryId
-          CandidateId: CandidateId
-          FilePath: string
-          Resolution: ConflictResolutionOutcome
-          AcceptedBy: UserId option
-          Timestamp: Instant
-          Notes: string option }
+        {
+            ConflictReceiptId: ConflictReceiptId
+            OwnerId: OwnerId
+            OrganizationId: OrganizationId
+            RepositoryId: RepositoryId
+            CandidateId: CandidateId
+            FilePath: string
+            Resolution: ConflictResolutionOutcome
+            AcceptedBy: UserId option
+            Timestamp: Instant
+            Notes: string option
+        }
 
         static member Default =
-            { ConflictReceiptId = Guid.Empty
-              OwnerId = OwnerId.Empty
-              OrganizationId = OrganizationId.Empty
-              RepositoryId = RepositoryId.Empty
-              CandidateId = CandidateId.Empty
-              FilePath = String.Empty
-              Resolution = ConflictResolutionOutcome.Default
-              AcceptedBy = None
-              Timestamp = Constants.DefaultTimestamp
-              Notes = None }
+            {
+                ConflictReceiptId = Guid.Empty
+                OwnerId = OwnerId.Empty
+                OrganizationId = OrganizationId.Empty
+                RepositoryId = RepositoryId.Empty
+                CandidateId = CandidateId.Empty
+                FilePath = String.Empty
+                Resolution = ConflictResolutionOutcome.Default
+                AcceptedBy = None
+                Timestamp = Constants.DefaultTimestamp
+                Notes = None
+            }
 
     /// Defines the commands for the ConflictReceipt actor.
     [<KnownType("GetKnownTypes")>]
@@ -180,46 +188,50 @@ module Queue =
     /// Represents an integration candidate queued for promotion.
     [<GenerateSerializer>]
     type IntegrationCandidate =
-        { Class: string
-          CandidateId: CandidateId
-          OwnerId: OwnerId
-          OrganizationId: OrganizationId
-          RepositoryId: RepositoryId
-          WorkItemId: WorkItemId
-          PromotionGroupId: PromotionGroupId option
-          TargetBranchId: BranchId
-          PolicySnapshotId: PolicySnapshotId
-          BaselineHeadReferenceId: ReferenceId
-          Status: CandidateStatus
-          RequiredActions: RequiredActionDto list
-          ReviewPacketId: ReviewPacketId option
-          LastCheckpointId: ReviewCheckpointId option
-          GateAttestationIds: GateAttestationId list
-          Conflicts: ConflictAnalysis list
-          ConflictReceiptIds: ConflictReceiptId list
-          CreatedAt: Instant
-          UpdatedAt: Instant option }
+        {
+            Class: string
+            CandidateId: CandidateId
+            OwnerId: OwnerId
+            OrganizationId: OrganizationId
+            RepositoryId: RepositoryId
+            WorkItemId: WorkItemId
+            PromotionGroupId: PromotionGroupId option
+            TargetBranchId: BranchId
+            PolicySnapshotId: PolicySnapshotId
+            BaselineHeadReferenceId: ReferenceId
+            Status: CandidateStatus
+            RequiredActions: RequiredActionDto list
+            ReviewPacketId: ReviewPacketId option
+            LastCheckpointId: ReviewCheckpointId option
+            GateAttestationIds: GateAttestationId list
+            Conflicts: ConflictAnalysis list
+            ConflictReceiptIds: ConflictReceiptId list
+            CreatedAt: Instant
+            UpdatedAt: Instant option
+        }
 
         static member Default =
-            { Class = nameof IntegrationCandidate
-              CandidateId = CandidateId.Empty
-              OwnerId = OwnerId.Empty
-              OrganizationId = OrganizationId.Empty
-              RepositoryId = RepositoryId.Empty
-              WorkItemId = WorkItemId.Empty
-              PromotionGroupId = None
-              TargetBranchId = BranchId.Empty
-              PolicySnapshotId = PolicySnapshotId String.Empty
-              BaselineHeadReferenceId = ReferenceId.Empty
-              Status = CandidateStatus.Pending
-              RequiredActions = []
-              ReviewPacketId = None
-              LastCheckpointId = None
-              GateAttestationIds = []
-              Conflicts = []
-              ConflictReceiptIds = []
-              CreatedAt = Constants.DefaultTimestamp
-              UpdatedAt = None }
+            {
+                Class = nameof IntegrationCandidate
+                CandidateId = CandidateId.Empty
+                OwnerId = OwnerId.Empty
+                OrganizationId = OrganizationId.Empty
+                RepositoryId = RepositoryId.Empty
+                WorkItemId = WorkItemId.Empty
+                PromotionGroupId = None
+                TargetBranchId = BranchId.Empty
+                PolicySnapshotId = PolicySnapshotId String.Empty
+                BaselineHeadReferenceId = ReferenceId.Empty
+                Status = CandidateStatus.Pending
+                RequiredActions = []
+                ReviewPacketId = None
+                LastCheckpointId = None
+                GateAttestationIds = []
+                Conflicts = []
+                ConflictReceiptIds = []
+                CreatedAt = Constants.DefaultTimestamp
+                UpdatedAt = None
+            }
 
     /// Defines the commands for the IntegrationCandidate actor.
     [<KnownType("GetKnownTypes")>]
@@ -273,36 +285,47 @@ module Queue =
                         GateAttestationIds =
                             currentCandidate.GateAttestationIds
                             |> List.append [ gateAttestationId ]
-                            |> List.distinct }
-                | ConflictAdded conflict -> { currentCandidate with Conflicts = currentCandidate.Conflicts |> List.append [ conflict ] }
+                            |> List.distinct
+                    }
+                | ConflictAdded conflict ->
+                    { currentCandidate with
+                        Conflicts =
+                            currentCandidate.Conflicts
+                            |> List.append [ conflict ]
+                    }
                 | ConflictReceiptAdded conflictReceiptId ->
                     { currentCandidate with
                         ConflictReceiptIds =
                             currentCandidate.ConflictReceiptIds
                             |> List.append [ conflictReceiptId ]
-                            |> List.distinct }
+                            |> List.distinct
+                    }
 
             { updated with UpdatedAt = Some candidateEvent.Metadata.Timestamp }
 
     /// Promotion queue for a target branch.
     [<GenerateSerializer>]
     type PromotionQueue =
-        { Class: string
-          TargetBranchId: BranchId
-          CandidateIds: CandidateId list
-          RunningCandidateId: CandidateId option
-          State: QueueState
-          PolicySnapshotId: PolicySnapshotId
-          UpdatedAt: Instant option }
+        {
+            Class: string
+            TargetBranchId: BranchId
+            CandidateIds: CandidateId list
+            RunningCandidateId: CandidateId option
+            State: QueueState
+            PolicySnapshotId: PolicySnapshotId
+            UpdatedAt: Instant option
+        }
 
         static member Default =
-            { Class = nameof PromotionQueue
-              TargetBranchId = BranchId.Empty
-              CandidateIds = []
-              RunningCandidateId = None
-              State = QueueState.Idle
-              PolicySnapshotId = PolicySnapshotId String.Empty
-              UpdatedAt = None }
+            {
+                Class = nameof PromotionQueue
+                TargetBranchId = BranchId.Empty
+                CandidateIds = []
+                RunningCandidateId = None
+                State = QueueState.Idle
+                PolicySnapshotId = PolicySnapshotId String.Empty
+                UpdatedAt = None
+            }
 
     /// Defines the commands for the PromotionQueue actor.
     [<KnownType("GetKnownTypes")>]
@@ -346,14 +369,15 @@ module Queue =
         let UpdateDto (promotionQueueEvent: PromotionQueueEvent) (currentQueue: PromotionQueue) =
             let newQueue =
                 match promotionQueueEvent.Event with
-                | Initialized(targetBranchId, policySnapshotId) ->
+                | Initialized (targetBranchId, policySnapshotId) ->
                     { PromotionQueue.Default with TargetBranchId = targetBranchId; PolicySnapshotId = policySnapshotId }
                 | CandidateEnqueued candidateId -> { currentQueue with CandidateIds = currentQueue.CandidateIds @ [ candidateId ] }
                 | CandidateDequeued candidateId ->
                     { currentQueue with
                         CandidateIds =
                             currentQueue.CandidateIds
-                            |> List.filter (fun existing -> existing <> candidateId) }
+                            |> List.filter (fun existing -> existing <> candidateId)
+                    }
                 | RunningCandidateSet candidateId -> { currentQueue with RunningCandidateId = candidateId; State = QueueState.Running }
                 | Paused -> { currentQueue with State = QueueState.Paused }
                 | Resumed ->

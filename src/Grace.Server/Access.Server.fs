@@ -37,7 +37,8 @@ module Access =
             Error(GraceError.Create $"{fieldName} must be a valid Guid." correlationId)
 
     let private parsePrincipal (principalType: string) (principalId: string) (correlationId: CorrelationId) =
-        if String.IsNullOrWhiteSpace principalType || String.IsNullOrWhiteSpace principalId then
+        if String.IsNullOrWhiteSpace principalType
+           || String.IsNullOrWhiteSpace principalId then
             Error(GraceError.Create "PrincipalType and PrincipalId are required." correlationId)
         else
             match discriminatedUnionFromString<PrincipalType> principalType with
@@ -153,12 +154,15 @@ module Access =
             | None -> Error(GraceError.Create $"Invalid Operation '{operation}'." correlationId)
 
     let private tryParsePrincipalFilter (principalType: string) (principalId: string) (correlationId: CorrelationId) =
-        if String.IsNullOrWhiteSpace principalType && String.IsNullOrWhiteSpace principalId then
+        if String.IsNullOrWhiteSpace principalType
+           && String.IsNullOrWhiteSpace principalId then
             Ok None
-        elif String.IsNullOrWhiteSpace principalType || String.IsNullOrWhiteSpace principalId then
+        elif String.IsNullOrWhiteSpace principalType
+             || String.IsNullOrWhiteSpace principalId then
             Error(GraceError.Create "PrincipalType and PrincipalId must be provided together." correlationId)
         else
-            parsePrincipal principalType principalId correlationId |> Result.map Some
+            parsePrincipal principalType principalId correlationId
+            |> Result.map Some
 
     let GrantRole: HttpHandler =
         requireGraceUser (fun next context ->
@@ -178,20 +182,22 @@ module Access =
                                 |> result400BadRequest (GraceError.Create "RoleId is required." correlationId)
                         else
                             let assignment =
-                                { Principal = principal
-                                  Scope = scope
-                                  RoleId = parameters.RoleId
-                                  Source =
-                                    if String.IsNullOrWhiteSpace parameters.Source then
-                                        "manual"
-                                    else
-                                        parameters.Source
-                                  SourceDetail =
-                                    if String.IsNullOrWhiteSpace parameters.SourceDetail then
-                                        None
-                                    else
-                                        Some parameters.SourceDetail
-                                  CreatedAt = getCurrentInstant () }
+                                {
+                                    Principal = principal
+                                    Scope = scope
+                                    RoleId = parameters.RoleId
+                                    Source =
+                                        if String.IsNullOrWhiteSpace parameters.Source then
+                                            "manual"
+                                        else
+                                            parameters.Source
+                                    SourceDetail =
+                                        if String.IsNullOrWhiteSpace parameters.SourceDetail then
+                                            None
+                                        else
+                                            Some parameters.SourceDetail
+                                    CreatedAt = getCurrentInstant ()
+                                }
 
                             let scopeKey = AccessControl.getScopeKey scope
                             let actorProxy = ActorProxy.AccessControl.CreateActorProxy scopeKey correlationId
@@ -246,54 +252,60 @@ module Access =
                         | Error error -> return! context |> result400BadRequest error
             })
 
+    let private parseClaimPermissions (claimPermissions: IList<ClaimPermissionParameters>) (correlationId: string) : Result<List<ClaimPermission>, GraceError> =
+        if isNull claimPermissions
+           || claimPermissions.Count = 0 then
+            Error(GraceError.Create "ClaimPermissions are required." correlationId)
+        else
+            let folder (state: Result<List<ClaimPermission>, GraceError>) (permission: ClaimPermissionParameters) =
+                match state with
+                | Error _ -> state
+                | Ok permissions ->
+                    if String.IsNullOrWhiteSpace permission.Claim then
+                        Error(GraceError.Create "Claim is required." correlationId)
+                    else
+                        match discriminatedUnionFromString<DirectoryPermission> permission.DirectoryPermission with
+                        | None -> Error(GraceError.Create $"Invalid DirectoryPermission '{permission.DirectoryPermission}'." correlationId)
+                        | Some parsed ->
+                            permissions.Add({ Claim = permission.Claim; DirectoryPermission = parsed })
+                            Ok permissions
+
+            claimPermissions
+            |> Seq.fold folder (Ok(List<ClaimPermission>()))
+
+    let private tryBuildUpsertPathPermission (parameters: UpsertPathPermissionParameters) (correlationId: string) =
+        match parseGuid parameters.OwnerId (nameof parameters.OwnerId) correlationId with
+        | Error error -> Error error
+        | Ok _ ->
+            match parseGuid parameters.OrganizationId (nameof parameters.OrganizationId) correlationId with
+            | Error error -> Error error
+            | Ok _ ->
+                match parseGuid parameters.RepositoryId (nameof parameters.RepositoryId) correlationId with
+                | Error error -> Error error
+                | Ok repositoryId ->
+                    if String.IsNullOrWhiteSpace parameters.Path then
+                        Error(GraceError.Create "Path is required." correlationId)
+                    else
+                        match parseClaimPermissions parameters.ClaimPermissions correlationId with
+                        | Error error -> Error error
+                        | Ok permissions -> Ok(repositoryId, { Path = parameters.Path; Permissions = permissions })
+
     let UpsertPathPermission: HttpHandler =
         requireGraceUser (fun next context ->
             task {
                 let! parameters = context |> parse<UpsertPathPermissionParameters>
                 let correlationId = parameters.CorrelationId
 
-                match parseGuid parameters.OwnerId (nameof parameters.OwnerId) correlationId with
+                match tryBuildUpsertPathPermission parameters correlationId with
                 | Error error -> return! context |> result400BadRequest error
-                | Ok _ ->
-                    match parseGuid parameters.OrganizationId (nameof parameters.OrganizationId) correlationId with
+                | Ok (repositoryId, pathPermission) ->
+                    let actorProxy = ActorProxy.RepositoryPermission.CreateActorProxy repositoryId correlationId
+
+                    let! upsertResult = actorProxy.Handle (RepositoryPermissionCommand.UpsertPathPermission pathPermission) (createMetadata context)
+
+                    match upsertResult with
+                    | Ok returnValue -> return! context |> result200Ok returnValue
                     | Error error -> return! context |> result400BadRequest error
-                    | Ok _ ->
-                        match parseGuid parameters.RepositoryId (nameof parameters.RepositoryId) correlationId with
-                        | Error error -> return! context |> result400BadRequest error
-                        | Ok repositoryId ->
-                            if String.IsNullOrWhiteSpace parameters.Path then
-                                return!
-                                    context
-                                    |> result400BadRequest (GraceError.Create "Path is required." correlationId)
-                            else if isNull parameters.ClaimPermissions || parameters.ClaimPermissions.Count = 0 then
-                                return!
-                                    context
-                                    |> result400BadRequest (GraceError.Create "ClaimPermissions are required." correlationId)
-                            else
-                                let permissions = List<ClaimPermission>()
-                                let mutable permissionError: GraceError option = None
-
-                                for permission in parameters.ClaimPermissions do
-                                    if permissionError.IsNone then
-                                        if String.IsNullOrWhiteSpace permission.Claim then
-                                            permissionError <- Some(GraceError.Create "Claim is required." correlationId)
-                                        else
-                                            match discriminatedUnionFromString<DirectoryPermission> permission.DirectoryPermission with
-                                            | None ->
-                                                permissionError <-
-                                                    Some(GraceError.Create $"Invalid DirectoryPermission '{permission.DirectoryPermission}'." correlationId)
-                                            | Some parsed -> permissions.Add({ Claim = permission.Claim; DirectoryPermission = parsed })
-
-                                match permissionError with
-                                | Some error -> return! context |> result400BadRequest error
-                                | None ->
-                                    let pathPermission = { Path = parameters.Path; Permissions = permissions }
-
-                                    let actorProxy = ActorProxy.RepositoryPermission.CreateActorProxy repositoryId correlationId
-
-                                    match! actorProxy.Handle (RepositoryPermissionCommand.UpsertPathPermission pathPermission) (createMetadata context) with
-                                    | Ok returnValue -> return! context |> result200Ok returnValue
-                                    | Error error -> return! context |> result400BadRequest error
             })
 
     let RemovePathPermission: HttpHandler =

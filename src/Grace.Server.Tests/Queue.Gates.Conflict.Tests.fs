@@ -26,15 +26,18 @@ type QueueGatesConflict() =
             PolicySnapshotId = policySnapshotId
             Status = status
             Conflicts = conflicts
-            CreatedAt = Instant.FromUtc(2025, 1, 1, 0, 0) }
+            CreatedAt = Instant.FromUtc(2025, 1, 1, 0, 0)
+        }
 
     let buildRequiredAction actionType reason =
-        { RequiredActionType = actionType
-          TargetId = None
-          Reason = reason
-          Parameters = Dictionary<string, string>()
-          SuggestedCliCommand = None
-          SuggestedApiCall = None }
+        {
+            RequiredActionType = actionType
+            TargetId = None
+            Reason = reason
+            Parameters = Dictionary<string, string>()
+            SuggestedCliCommand = None
+            SuggestedApiCall = None
+        }
 
     [<Test>]
     member _.PromotionQueueDtoUpdatesDeterministically() =
@@ -43,11 +46,13 @@ type QueueGatesConflict() =
         let snapshotId = PolicySnapshotId "policy"
 
         let events: PromotionQueueEvent list =
-            [ { Event = PromotionQueueEventType.Initialized(branchId, snapshotId); Metadata = metadata (Instant.FromUtc(2025, 1, 1, 0, 0)) }
-              { Event = PromotionQueueEventType.CandidateEnqueued candidateId; Metadata = metadata (Instant.FromUtc(2025, 1, 1, 0, 1)) }
-              { Event = PromotionQueueEventType.RunningCandidateSet(Some candidateId); Metadata = metadata (Instant.FromUtc(2025, 1, 1, 0, 2)) }
-              { Event = PromotionQueueEventType.Paused; Metadata = metadata (Instant.FromUtc(2025, 1, 1, 0, 3)) }
-              { Event = PromotionQueueEventType.Resumed; Metadata = metadata (Instant.FromUtc(2025, 1, 1, 0, 4)) } ]
+            [
+                { Event = PromotionQueueEventType.Initialized(branchId, snapshotId); Metadata = metadata (Instant.FromUtc(2025, 1, 1, 0, 0)) }
+                { Event = PromotionQueueEventType.CandidateEnqueued candidateId; Metadata = metadata (Instant.FromUtc(2025, 1, 1, 0, 1)) }
+                { Event = PromotionQueueEventType.RunningCandidateSet(Some candidateId); Metadata = metadata (Instant.FromUtc(2025, 1, 1, 0, 2)) }
+                { Event = PromotionQueueEventType.Paused; Metadata = metadata (Instant.FromUtc(2025, 1, 1, 0, 3)) }
+                { Event = PromotionQueueEventType.Resumed; Metadata = metadata (Instant.FromUtc(2025, 1, 1, 0, 4)) }
+            ]
 
         let finalState =
             events
@@ -126,7 +131,8 @@ type QueueGatesConflict() =
                 TargetBranchId = Guid.NewGuid()
                 CandidateIds = [ candidateId ]
                 RunningCandidateId = Some candidateId
-                State = QueueState.Running }
+                State = QueueState.Running
+            }
 
         let event: PromotionQueueEvent =
             { Event = PromotionQueueEventType.CandidateDequeued candidateId; Metadata = metadata (Instant.FromUtc(2025, 1, 5, 0, 0)) }
@@ -141,7 +147,10 @@ type QueueGatesConflict() =
         let candidate = buildCandidate CandidateStatus.Blocked (PolicySnapshotId String.Empty) [ conflict ]
 
         let actions = Grace.Server.Queue.computeRequiredActions candidate
-        let types = actions |> List.map (fun action -> action.RequiredActionType)
+
+        let types =
+            actions
+            |> List.map (fun action -> action.RequiredActionType)
 
         Assert.That(types, Does.Contain(RequiredActionType.AcknowledgePolicyChange))
         Assert.That(types, Does.Contain(RequiredActionType.ResolveConflict))
@@ -152,13 +161,19 @@ type QueueGatesConflict() =
         let candidate = buildCandidate CandidateStatus.Blocked (PolicySnapshotId "policy") []
 
         let blockedActions = Grace.Server.Queue.computeRequiredActions candidate
-        let blockedTypes = blockedActions |> List.map (fun action -> action.RequiredActionType)
+
+        let blockedTypes =
+            blockedActions
+            |> List.map (fun action -> action.RequiredActionType)
 
         Assert.That(blockedTypes, Does.Not.Contain(RequiredActionType.FixGateFailure))
 
         let failedCandidate = buildCandidate CandidateStatus.Failed (PolicySnapshotId "policy") []
         let failedActions = Grace.Server.Queue.computeRequiredActions failedCandidate
-        let failedTypes = failedActions |> List.map (fun action -> action.RequiredActionType)
+
+        let failedTypes =
+            failedActions
+            |> List.map (fun action -> action.RequiredActionType)
 
         Assert.That(failedTypes, Does.Contain(RequiredActionType.FixGateFailure))
 
@@ -167,11 +182,19 @@ type QueueGatesConflict() =
         let candidate = buildCandidate CandidateStatus.Pending (PolicySnapshotId "policy") []
         let context = { GateContext.Candidate = candidate; PolicySnapshot = None; CorrelationId = "corr-gate"; Principal = UserId "tester" }
 
-        let policyAttestation = Gates.runGate "policy" context |> Async.AwaitTask |> Async.RunSynchronously
+        let policyAttestation =
+            Gates.runGate "policy" context
+            |> Async.AwaitTask
+            |> Async.RunSynchronously
+
         Assert.That(policyAttestation.Result, Is.EqualTo(GateResult.Block))
         Assert.That(policyAttestation.Summary, Does.Contain("missing"))
 
-        let missingAttestation = Gates.runGate "missing" context |> Async.AwaitTask |> Async.RunSynchronously
+        let missingAttestation =
+            Gates.runGate "missing" context
+            |> Async.AwaitTask
+            |> Async.RunSynchronously
+
         Assert.That(missingAttestation.Result, Is.EqualTo(GateResult.Block))
         Assert.That(missingAttestation.GateVersion, Is.EqualTo("unknown"))
 
@@ -180,7 +203,10 @@ type QueueGatesConflict() =
         let candidate = buildCandidate CandidateStatus.Pending (PolicySnapshotId "policy") []
         let context = { GateContext.Candidate = candidate; PolicySnapshot = None; CorrelationId = "corr-gate"; Principal = UserId "tester" }
 
-        let attestation = Gates.runGate "build-test" context |> Async.AwaitTask |> Async.RunSynchronously
+        let attestation =
+            Gates.runGate "build-test" context
+            |> Async.AwaitTask
+            |> Async.RunSynchronously
 
         Assert.That(attestation.Result, Is.EqualTo(GateResult.Skipped))
 

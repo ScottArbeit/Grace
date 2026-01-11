@@ -23,13 +23,15 @@ open Grace.Types
 open Grace.Shared.Utilities
 
 type TestHostState =
-    { App: DistributedApplication
-      Client: HttpClient
-      GraceServerBaseAddress: string
-      ServiceBusConnectionString: string
-      ServiceBusTopic: string
-      ServiceBusServerSubscription: string
-      ServiceBusTestSubscription: string }
+    {
+        App: DistributedApplication
+        Client: HttpClient
+        GraceServerBaseAddress: string
+        ServiceBusConnectionString: string
+        ServiceBusTopic: string
+        ServiceBusServerSubscription: string
+        ServiceBusTestSubscription: string
+    }
 
 module AspireTestHost =
 
@@ -60,7 +62,9 @@ module AspireTestHost =
             endpoints
             |> List.tryFind (fun endpoint -> endpoint.EndpointAnnotation.UriScheme.Equals(scheme, StringComparison.OrdinalIgnoreCase))
 
-        match byScheme "http" |> Option.orElseWith (fun () -> byScheme "https") with
+        match byScheme "http"
+              |> Option.orElseWith (fun () -> byScheme "https")
+            with
         | Some endpoint -> endpoint.EndpointAnnotation.Name
         | None ->
             match endpoints with
@@ -75,13 +79,19 @@ module AspireTestHost =
             let executionContext = DistributedApplicationExecutionContext(DistributedApplicationOperation.Run)
 
             let! configuration =
-                ExecutionConfigurationBuilder.Create(resource).WithEnvironmentVariablesConfig().BuildAsync(executionContext, logger, CancellationToken.None)
+                ExecutionConfigurationBuilder
+                    .Create(resource)
+                    .WithEnvironmentVariablesConfig()
+                    .BuildAsync(executionContext, logger, CancellationToken.None)
 
             if not (isNull configuration.Exception) then raise configuration.Exception
 
             let env = configuration.EnvironmentVariables
 
-            return env |> Seq.map (fun kvp -> kvp.Key, string kvp.Value) |> Map.ofSeq
+            return
+                env
+                |> Seq.map (fun kvp -> kvp.Key, string kvp.Value)
+                |> Map.ofSeq
         }
 
     let private describeResourceState (notificationService: ResourceNotificationService) (resourceName: string) =
@@ -103,7 +113,8 @@ module AspireTestHost =
                         else
                             report.ExceptionText
 
-                    $"{report.Name}={status}: {description} {exceptionText}".Trim())
+                    $"{report.Name}={status}: {description} {exceptionText}"
+                        .Trim())
                 |> String.concat "; "
 
             $"State={snapshot.State}; Health={snapshot.HealthStatus}; ExitCode={snapshot.ExitCode}; HealthReports=[{healthReports}]"
@@ -132,7 +143,11 @@ module AspireTestHost =
                     else
                         keepGoing <- false
             finally
-                enumerator.DisposeAsync().AsTask().GetAwaiter().GetResult()
+                enumerator
+                    .DisposeAsync()
+                    .AsTask()
+                    .GetAwaiter()
+                    .GetResult()
 
             return lines |> Seq.toList
         }
@@ -147,7 +162,8 @@ module AspireTestHost =
             try
                 let! _ = notificationService.WaitForResourceHealthyAsync(resourceName, ct)
                 ()
-            with ex ->
+            with
+            | ex ->
                 let details = describeResourceState notificationService resourceName
                 let! logLines = getResourceLogsAsync app resourceName
 
@@ -214,24 +230,38 @@ module AspireTestHost =
             | Some value when not (String.IsNullOrWhiteSpace value) -> value
             | _ -> "<missing>"
 
-        [ Constants.EnvironmentVariables.GraceLogDirectory
-          Constants.EnvironmentVariables.OrleansClusterId
-          Constants.EnvironmentVariables.OrleansServiceId
-          Constants.EnvironmentVariables.DiffContainerName
-          Constants.EnvironmentVariables.DirectoryVersionContainerName
-          Constants.EnvironmentVariables.ZipFileContainerName
-          Constants.EnvironmentVariables.AzureCosmosDBConnectionString
-          Constants.EnvironmentVariables.AzureStorageConnectionString
-          Constants.EnvironmentVariables.AzureServiceBusConnectionString ]
+        [
+            Constants.EnvironmentVariables.GraceLogDirectory
+            Constants.EnvironmentVariables.OrleansClusterId
+            Constants.EnvironmentVariables.OrleansServiceId
+            Constants.EnvironmentVariables.DiffContainerName
+            Constants.EnvironmentVariables.DirectoryVersionContainerName
+            Constants.EnvironmentVariables.ZipFileContainerName
+            Constants.EnvironmentVariables.AzureCosmosDBConnectionString
+            Constants.EnvironmentVariables.AzureStorageConnectionString
+            Constants.EnvironmentVariables.AzureServiceBusConnectionString
+        ]
         |> List.map (fun key ->
             if key.Equals(Constants.EnvironmentVariables.AzureCosmosDBConnectionString, StringComparison.OrdinalIgnoreCase) then
-                let value = env |> Map.tryFind key |> Option.defaultValue String.Empty
+                let value =
+                    env
+                    |> Map.tryFind key
+                    |> Option.defaultValue String.Empty
+
                 $"{key}={redactCosmosConnectionString value}"
             else if key.Equals(Constants.EnvironmentVariables.AzureStorageConnectionString, StringComparison.OrdinalIgnoreCase) then
-                let value = env |> Map.tryFind key |> Option.defaultValue String.Empty
+                let value =
+                    env
+                    |> Map.tryFind key
+                    |> Option.defaultValue String.Empty
+
                 $"{key}={redactStorageConnectionString value}"
             else if key.Equals(Constants.EnvironmentVariables.AzureServiceBusConnectionString, StringComparison.OrdinalIgnoreCase) then
-                let value = env |> Map.tryFind key |> Option.defaultValue String.Empty
+                let value =
+                    env
+                    |> Map.tryFind key
+                    |> Option.defaultValue String.Empty
+
                 $"{key}={redactServiceBusConnectionString value}"
             else
                 $"{key}={get key}")
@@ -258,8 +288,8 @@ module AspireTestHost =
                     Some($"Latest Grace.Server log: {path}{Environment.NewLine}{tail}")
             else
                 None
-        with _ ->
-            None
+        with
+        | _ -> None
 
     let private waitForServiceBusReadyAsync (state: TestHostState) =
         task {
@@ -287,7 +317,8 @@ module AspireTestHost =
 
                     let! _ = receiver.PeekMessageAsync()
                     ready <- true
-                with ex ->
+                with
+                | ex ->
                     lastError <- ex.Message
                     do! Task.Delay(TimeSpan.FromSeconds(1.0))
         }
@@ -296,10 +327,8 @@ module AspireTestHost =
         task {
             if String.IsNullOrWhiteSpace connectionString then
                 return ()
-            else if
-                String.IsNullOrWhiteSpace databaseName
-                || String.IsNullOrWhiteSpace containerName
-            then
+            else if String.IsNullOrWhiteSpace databaseName
+                    || String.IsNullOrWhiteSpace containerName then
                 return ()
             else
                 let handler =
@@ -330,9 +359,14 @@ module AspireTestHost =
                     attempt <- attempt + 1
 
                     try
-                        let! _ = client.ReadAccountAsync().WaitAsync(perCallTimeout)
+                        let! _ =
+                            client
+                                .ReadAccountAsync()
+                                .WaitAsync(perCallTimeout)
+
                         ready <- true
-                    with ex ->
+                    with
+                    | ex ->
                         lastError <- ex.Message
                         do! Task.Delay(TimeSpan.FromSeconds(1.0))
         }
@@ -374,27 +408,34 @@ module AspireTestHost =
             do! waitForResourceHealthyAsync notificationService app serviceBusEmulatorResourceName cts.Token
             let! env = getEnvironmentVariablesAsync app graceServerResourceName
 
-            match env |> Map.tryFind Constants.EnvironmentVariables.GraceLogDirectory with
+            match env
+                  |> Map.tryFind Constants.EnvironmentVariables.GraceLogDirectory
+                with
             | Some value when not (String.IsNullOrWhiteSpace value) -> Console.WriteLine($"GraceLogDirectory: {value}")
             | _ -> Console.WriteLine("GraceLogDirectory: <missing>")
 
-            match env |> Map.tryFind Constants.EnvironmentVariables.DebugEnvironment with
+            match env
+                  |> Map.tryFind Constants.EnvironmentVariables.DebugEnvironment
+                with
             | Some value when not (String.IsNullOrWhiteSpace value) -> Console.WriteLine($"DebugEnvironment: {value}")
             | _ -> Console.WriteLine("DebugEnvironment: <missing>")
 
-            match env |> Map.tryFind Constants.EnvironmentVariables.AzureStorageConnectionString with
+            match env
+                  |> Map.tryFind Constants.EnvironmentVariables.AzureStorageConnectionString
+                with
             | Some value when not (String.IsNullOrWhiteSpace value) -> Console.WriteLine($"AzureStorageConnectionString: {redactStorageConnectionString value}")
             | _ -> Console.WriteLine("AzureStorageConnectionString: <missing>")
 
-            match
-                env
-                |> Map.tryFind Constants.EnvironmentVariables.AzureServiceBusConnectionString
-            with
+            match env
+                  |> Map.tryFind Constants.EnvironmentVariables.AzureServiceBusConnectionString
+                with
             | Some value when not (String.IsNullOrWhiteSpace value) ->
                 Console.WriteLine($"AzureServiceBusConnectionString: {redactServiceBusConnectionString value}")
             | _ -> Console.WriteLine("AzureServiceBusConnectionString: <missing>")
 
-            match env |> Map.tryFind Constants.EnvironmentVariables.AzureCosmosDBConnectionString with
+            match env
+                  |> Map.tryFind Constants.EnvironmentVariables.AzureCosmosDBConnectionString
+                with
             | Some value when not (String.IsNullOrWhiteSpace value) -> Console.WriteLine($"AzureCosmosDBConnectionString: {redactCosmosConnectionString value}")
             | _ -> Console.WriteLine("AzureCosmosDBConnectionString: <missing>")
 
@@ -417,7 +458,8 @@ module AspireTestHost =
 
             try
                 do! waitForResourceHealthyAsync notificationService app graceServerResourceName cts.Token
-            with ex ->
+            with
+            | ex ->
                 let details = describeResourceState notificationService graceServerResourceName
                 let! logLines = getResourceLogsAsync app graceServerResourceName
                 let envDetails = formatEnvDiagnostics env
@@ -494,13 +536,15 @@ module AspireTestHost =
             let baseAddress = endpointUri.ToString().TrimEnd('/')
 
             let state =
-                { App = app
-                  Client = client
-                  GraceServerBaseAddress = baseAddress
-                  ServiceBusConnectionString = serviceBusConnectionString
-                  ServiceBusTopic = serviceBusTopic
-                  ServiceBusServerSubscription = serviceBusSubscription
-                  ServiceBusTestSubscription = serviceBusTestSubscription }
+                {
+                    App = app
+                    Client = client
+                    GraceServerBaseAddress = baseAddress
+                    ServiceBusConnectionString = serviceBusConnectionString
+                    ServiceBusTopic = serviceBusTopic
+                    ServiceBusServerSubscription = serviceBusSubscription
+                    ServiceBusTestSubscription = serviceBusTestSubscription
+                }
 
             do! waitForServiceBusReadyAsync state
 
@@ -604,7 +648,7 @@ module AspireTestHost =
 
                     let tryMatchOwnerCreated (ownerEvent: Owner.OwnerEvent) =
                         match ownerEvent.Event with
-                        | Owner.OwnerEventType.Created(createdOwnerId, _) when hasParsedOwnerId && createdOwnerId = parsedOwnerId -> true
+                        | Owner.OwnerEventType.Created (createdOwnerId, _) when hasParsedOwnerId && createdOwnerId = parsedOwnerId -> true
                         | _ -> false
 
                     let matchesOwnerCreated =
@@ -612,12 +656,13 @@ module AspireTestHost =
                             match JsonSerializer.Deserialize<Events.GraceEvent>(body, Constants.JsonSerializerOptions) with
                             | Events.GraceEvent.OwnerEvent ownerEvent -> tryMatchOwnerCreated ownerEvent
                             | _ -> false
-                        with _ ->
+                        with
+                        | _ ->
                             try
                                 let ownerEvent = JsonSerializer.Deserialize<Owner.OwnerEvent>(body, Constants.JsonSerializerOptions)
                                 tryMatchOwnerCreated ownerEvent
-                            with _ ->
-                                false
+                            with
+                            | _ -> false
 
                     if matchesOwnerCreated then found <- Some message
 

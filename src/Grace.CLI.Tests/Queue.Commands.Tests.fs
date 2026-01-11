@@ -15,26 +15,30 @@ module QueueCommandTests =
     let private withIds (args: string array) =
         Array.append
             args
-            [| "--owner-id"
-               ownerId.ToString()
-               "--organization-id"
-               organizationId.ToString()
-               "--repository-id"
-               repositoryId.ToString() |]
+            [|
+                "--owner-id"
+                ownerId.ToString()
+                "--organization-id"
+                organizationId.ToString()
+                "--repository-id"
+                repositoryId.ToString()
+            |]
 
-    let private withIdsAndSilent (args: string array) = args |> Array.append [| "--output"; "Silent" |] |> withIds
+    let private withIdsAndSilent (args: string array) =
+        args
+        |> Array.append [| "--output"; "Silent" |]
+        |> withIds
 
     [<Test>]
     let ``queue enqueue rejects invalid candidate id`` () =
         let parseResult =
             GraceCommand.rootCommand.Parse(
-                withIdsAndSilent
-                    [| "queue"
-                       "enqueue"
-                       "--branch-id"
-                       branchId.ToString()
-                       "--candidate"
-                       "not-a-guid" |]
+                withIdsAndSilent [| "queue"
+                                    "enqueue"
+                                    "--branch-id"
+                                    branchId.ToString()
+                                    "--candidate"
+                                    "not-a-guid" |]
             )
 
         let exitCode = parseResult.Invoke()
@@ -44,13 +48,12 @@ module QueueCommandTests =
     let ``queue enqueue rejects invalid work item id`` () =
         let parseResult =
             GraceCommand.rootCommand.Parse(
-                withIdsAndSilent
-                    [| "queue"
-                       "enqueue"
-                       "--branch-id"
-                       branchId.ToString()
-                       "--work"
-                       "not-a-guid" |]
+                withIdsAndSilent [| "queue"
+                                    "enqueue"
+                                    "--branch-id"
+                                    branchId.ToString()
+                                    "--work"
+                                    "not-a-guid" |]
             )
 
         let exitCode = parseResult.Invoke()
@@ -60,13 +63,12 @@ module QueueCommandTests =
     let ``queue dequeue rejects invalid candidate id`` () =
         let parseResult =
             GraceCommand.rootCommand.Parse(
-                withIdsAndSilent
-                    [| "queue"
-                       "dequeue"
-                       "--branch-id"
-                       branchId.ToString()
-                       "--candidate"
-                       "not-a-guid" |]
+                withIdsAndSilent [| "queue"
+                                    "dequeue"
+                                    "--branch-id"
+                                    branchId.ToString()
+                                    "--candidate"
+                                    "not-a-guid" |]
             )
 
         let exitCode = parseResult.Invoke()
@@ -76,13 +78,12 @@ module QueueCommandTests =
     let ``queue retry rejects invalid candidate id`` () =
         let parseResult =
             GraceCommand.rootCommand.Parse(
-                withIdsAndSilent
-                    [| "queue"
-                       "retry"
-                       "--branch-id"
-                       branchId.ToString()
-                       "--candidate"
-                       "not-a-guid" |]
+                withIdsAndSilent [| "queue"
+                                    "retry"
+                                    "--branch-id"
+                                    branchId.ToString()
+                                    "--candidate"
+                                    "not-a-guid" |]
             )
 
         let exitCode = parseResult.Invoke()

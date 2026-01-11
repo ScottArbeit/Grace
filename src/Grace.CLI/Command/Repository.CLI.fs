@@ -255,7 +255,7 @@ module Repository =
                 DefaultValueFactory = (fun _ -> 0.8f)
             )
 
-        confidenceThreshold.Validators.Add(fun optionResult ->
+        confidenceThreshold.Validators.Add (fun optionResult ->
             let parseResult = optionResult.GetValueOrDefault<float32>()
 
             if parseResult < 0.0f || parseResult > 1.0f then
@@ -278,14 +278,17 @@ module Repository =
                         let repositoryId = Guid.NewGuid()
                         graceIds <- { graceIds with RepositoryId = repositoryId; RepositoryIdString = $"{repositoryId}" }
 
-                    let validateIncomingParameters = parseResult |> Grace.CLI.Common.Validations.CommonValidations
+                    let validateIncomingParameters =
+                        parseResult
+                        |> Grace.CLI.Common.Validations.CommonValidations
 
                     match validateIncomingParameters with
                     | Ok _ ->
                         let repositoryIdOption = parseResult.GetResult(Options.repositoryId)
 
                         let repositoryId =
-                            if isNull repositoryIdOption || repositoryIdOption.Implicit then
+                            if isNull repositoryIdOption
+                               || repositoryIdOption.Implicit then
                                 Guid.NewGuid().ToString()
                             else
                                 graceIds.RepositoryIdString
@@ -359,7 +362,8 @@ module Repository =
                                 return result |> renderOutput parseResult
                     | Error error -> return Error error |> renderOutput parseResult
 
-                with ex ->
+                with
+                | ex ->
                     return
                         renderOutput
                             parseResult
@@ -371,7 +375,8 @@ module Repository =
     let ``Directory must be a valid path`` (parseResult: ParseResult) =
         if
             parseResult.CommandResult.Command.Options.Contains(Options.directory)
-            && not <| Directory.Exists(parseResult.GetValue(Options.directory))
+            && not
+               <| Directory.Exists(parseResult.GetValue(Options.directory))
         then
             Error(GraceError.Create (RepositoryError.getErrorMessage InvalidDirectory) (getCorrelationId parseResult))
         else
@@ -477,7 +482,8 @@ module Repository =
                                                             Constants.ParallelOptions,
                                                             (fun ldv ->
                                                                 for fileVersion in ldv.Files do
-                                                                    fileVersions.TryAdd(fileVersion.RelativePath, fileVersion) |> ignore)
+                                                                    fileVersions.TryAdd(fileVersion.RelativePath, fileVersion)
+                                                                    |> ignore)
                                                         )
 
                                                     let incrementAmount = 100.0 / double fileVersions.Count
@@ -492,7 +498,8 @@ module Repository =
                                                                 let fullObjectPath = fileVersion.FullObjectPath
 
                                                                 if not <| File.Exists(fullObjectPath) then
-                                                                    Directory.CreateDirectory(Path.GetDirectoryName(fullObjectPath)) |> ignore // If the directory already exists, this will do nothing.
+                                                                    Directory.CreateDirectory(Path.GetDirectoryName(fullObjectPath))
+                                                                    |> ignore // If the directory already exists, this will do nothing.
 
                                                                     File.Copy(Path.Combine(Current().RootDirectory, fileVersion.RelativePath), fullObjectPath)
 
@@ -511,7 +518,10 @@ module Repository =
                                                             graceStatus.Index.Values,
                                                             Constants.ParallelOptions,
                                                             (fun ldv ->
-                                                                if not <| objectCache.Index.ContainsKey(ldv.DirectoryVersionId) then
+                                                                if
+                                                                    not
+                                                                    <| objectCache.Index.ContainsKey(ldv.DirectoryVersionId)
+                                                                then
                                                                     objectCache.Index.AddOrUpdate(ldv.DirectoryVersionId, (fun _ -> ldv), (fun _ _ -> ldv))
                                                                     |> ignore
 
@@ -565,13 +575,14 @@ module Repository =
                                                                                 let uploadMetadata = graceReturnValue.ReturnValue
                                                                                 // Increment the counter for the files that we don't have to upload.
                                                                                 t5.Increment(
-                                                                                    incrementAmount * double (fileVersions.Count() - uploadMetadata.Count)
+                                                                                    incrementAmount
+                                                                                    * double (fileVersions.Count() - uploadMetadata.Count)
                                                                                 )
 
                                                                                 // Index all of the file versions by their SHA256 hash; we'll look up the files to upload with it.
                                                                                 let filesIndexedBySha256Hash =
                                                                                     Dictionary<Sha256Hash, LocalFileVersion>(
-                                                                                        fileVersions.Select(fun kvp ->
+                                                                                        fileVersions.Select (fun kvp ->
                                                                                             KeyValuePair(kvp.Value.Sha256Hash, kvp.Value))
                                                                                     )
 
@@ -604,8 +615,7 @@ module Repository =
                                                                                             ))
                                                                                     )
 
-                                                                            | Error error ->
-                                                                                AnsiConsole.Write((new Panel($"{error}")).BorderColor(Color.Red3))
+                                                                            | Error error -> AnsiConsole.Write((new Panel($"{error}")).BorderColor(Color.Red3))
                                                                         }
                                                                     ))
                                                             )
@@ -639,7 +649,9 @@ module Repository =
                                                     //   so we process the deepest paths first, and the new children exist before the parent is created.
                                                     //   Within each segment group, we'll parallelize the processing for performance.
                                                     let segmentGroups =
-                                                        graceStatus.Index.Values
+                                                        graceStatus
+                                                            .Index
+                                                            .Values
                                                             .GroupBy(fun dv -> countSegments dv.RelativePath)
                                                             .OrderByDescending(fun group -> group.Key)
 
@@ -663,7 +675,9 @@ module Repository =
                                                                             saveParameters.CorrelationId <- getCorrelationId parseResult
 
                                                                             saveParameters.DirectoryVersions <-
-                                                                                directoryVersionGroup.Select(fun dv -> dv.ToDirectoryVersion).ToList()
+                                                                                directoryVersionGroup
+                                                                                    .Select(fun dv -> dv.ToDirectoryVersion)
+                                                                                    .ToList()
 
                                                                             let! sdvResult = DirectoryVersion.SaveDirectoryVersions saveParameters
 
@@ -671,7 +685,10 @@ module Repository =
                                                                             | Ok result -> succeeded.Enqueue(result)
                                                                             | Error error -> errors.Enqueue(error)
 
-                                                                            t6.Increment(incrementAmount * double directoryVersionGroup.Length)
+                                                                            t6.Increment(
+                                                                                incrementAmount
+                                                                                * double directoryVersionGroup.Length
+                                                                            )
                                                                         }
                                                                     ))
                                                             )
@@ -693,7 +710,12 @@ module Repository =
 
                                                 })
 
-                                    let fileCount = graceStatus.Index.Values.Select(fun directoryVersion -> directoryVersion.Files.Count).Sum()
+                                    let fileCount =
+                                        graceStatus
+                                            .Index
+                                            .Values
+                                            .Select(fun directoryVersion -> directoryVersion.Files.Count)
+                                            .Sum()
 
                                     let totalFileSize = graceStatus.Index.Values.Sum(fun directoryVersion -> directoryVersion.Files.Sum(fun f -> int64 f.Size))
 
@@ -725,8 +747,8 @@ module Repository =
                     // Test on repositories with multiple branches and references - should fail.
                     | Error error -> return Error error
                 | Error error -> return Error error
-            with ex ->
-                return Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
+            with
+            | ex -> return Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
         }
 
     type Init() =
@@ -738,7 +760,10 @@ module Repository =
                     if parseResult |> verbose then printParseResult parseResult
 
                     let graceIds = parseResult |> getNormalizedIdsAndNames
-                    let validateIncomingParameters = parseResult |> Grace.CLI.Common.Validations.CommonValidations
+
+                    let validateIncomingParameters =
+                        parseResult
+                        |> Grace.CLI.Common.Validations.CommonValidations
 
                     match validateIncomingParameters with
                     | Ok _ ->
@@ -759,7 +784,8 @@ module Repository =
                         return result |> renderOutput parseResult
                     | Error error -> return Error error |> renderOutput parseResult
 
-                with ex ->
+                with
+                | ex ->
                     return
                         renderOutput
                             parseResult
@@ -776,7 +802,10 @@ module Repository =
                 try
                     if parseResult |> verbose then printParseResult parseResult
                     let graceIds = parseResult |> getNormalizedIdsAndNames
-                    let validateIncomingParameters = parseResult |> Grace.CLI.Common.Validations.CommonValidations
+
+                    let validateIncomingParameters =
+                        parseResult
+                        |> Grace.CLI.Common.Validations.CommonValidations
 
                     match validateIncomingParameters with
                     | Ok _ ->
@@ -814,7 +843,8 @@ module Repository =
                         | Error graceError -> return Error graceError |> renderOutput parseResult
                     | Error error -> return Error error |> renderOutput parseResult
 
-                with ex ->
+                with
+                | ex ->
                     return
                         renderOutput
                             parseResult
@@ -830,7 +860,10 @@ module Repository =
                 try
                     if parseResult |> verbose then printParseResult parseResult
                     let graceIds = parseResult |> getNormalizedIdsAndNames
-                    let validateIncomingParameters = parseResult |> Grace.CLI.Common.Validations.CommonValidations
+
+                    let validateIncomingParameters =
+                        parseResult
+                        |> Grace.CLI.Common.Validations.CommonValidations
 
                     match validateIncomingParameters with
                     | Ok _ ->
@@ -869,13 +902,15 @@ module Repository =
                                 let table = Table(Border = TableBorder.DoubleEdge)
 
                                 table.AddColumns(
-                                    [| TableColumn($"[{Colors.Important}]Branch name[/]")
-                                       TableColumn($"[{Colors.Important}]Branch Id[/]")
-                                       TableColumn($"[{Colors.Important}]SHA-256 hash[/]")
-                                       TableColumn($"[{Colors.Important}]Based on latest promotion[/]")
-                                       TableColumn($"[{Colors.Important}]Parent branch[/]")
-                                       TableColumn($"[{Colors.Important}]When[/]", Alignment = Justify.Right)
-                                       TableColumn($"[{Colors.Important}]Updated at[/]") |]
+                                    [|
+                                        TableColumn($"[{Colors.Important}]Branch name[/]")
+                                        TableColumn($"[{Colors.Important}]Branch Id[/]")
+                                        TableColumn($"[{Colors.Important}]SHA-256 hash[/]")
+                                        TableColumn($"[{Colors.Important}]Based on latest promotion[/]")
+                                        TableColumn($"[{Colors.Important}]Parent branch[/]")
+                                        TableColumn($"[{Colors.Important}]When[/]", Alignment = Justify.Right)
+                                        TableColumn($"[{Colors.Important}]Updated at[/]")
+                                    |]
                                 )
                                 |> ignore
 
@@ -883,18 +918,26 @@ module Repository =
 
                                 // Get the parent branch names and latest promotions for all branches
                                 let parents =
-                                    allBranches.Select(fun branch ->
-                                        {| BranchId = branch.BranchId
-                                           BranchName =
-                                            if branch.ParentBranchId = Constants.DefaultParentBranchId then
-                                                "root"
-                                            else
-                                                allBranches.Where(fun br -> br.BranchId = branch.ParentBranchId).Select(fun br -> br.BranchName).First()
-                                           LatestPromotion =
-                                            if branch.ParentBranchId = Constants.DefaultParentBranchId then
-                                                branch.LatestPromotion
-                                            else
-                                                allBranches.Where(fun br -> br.BranchId = branch.ParentBranchId).Select(fun br -> br.LatestPromotion).First() |})
+                                    allBranches.Select (fun branch ->
+                                        {|
+                                            BranchId = branch.BranchId
+                                            BranchName =
+                                                if branch.ParentBranchId = Constants.DefaultParentBranchId then
+                                                    "root"
+                                                else
+                                                    allBranches
+                                                        .Where(fun br -> br.BranchId = branch.ParentBranchId)
+                                                        .Select(fun br -> br.BranchName)
+                                                        .First()
+                                            LatestPromotion =
+                                                if branch.ParentBranchId = Constants.DefaultParentBranchId then
+                                                    branch.LatestPromotion
+                                                else
+                                                    allBranches
+                                                        .Where(fun br -> br.BranchId = branch.ParentBranchId)
+                                                        .Select(fun br -> br.LatestPromotion)
+                                                        .First()
+                                        |})
 
                                 let branchesWithParentNames =
                                     allBranches
@@ -903,13 +946,15 @@ module Repository =
                                             (fun branch -> branch.BranchId),
                                             (fun parent -> parent.BranchId),
                                             (fun branch parent ->
-                                                {| BranchId = branch.BranchId
-                                                   BranchName = branch.BranchName
-                                                   Sha256Hash = branch.LatestReference.Sha256Hash
-                                                   UpdatedAt = branch.UpdatedAt
-                                                   Ago = ago branch.CreatedAt
-                                                   ParentBranchName = parent.BranchName
-                                                   BasedOnLatestPromotion = (branch.BasedOn.ReferenceId = parent.LatestPromotion.ReferenceId) |})
+                                                {|
+                                                    BranchId = branch.BranchId
+                                                    BranchName = branch.BranchName
+                                                    Sha256Hash = branch.LatestReference.Sha256Hash
+                                                    UpdatedAt = branch.UpdatedAt
+                                                    Ago = ago branch.CreatedAt
+                                                    ParentBranchName = parent.BranchName
+                                                    BasedOnLatestPromotion = (branch.BasedOn.ReferenceId = parent.LatestPromotion.ReferenceId)
+                                                |})
                                         )
                                         .OrderBy(fun branch -> branch.UpdatedAt)
 
@@ -939,7 +984,8 @@ module Repository =
                         | Error _ -> return result |> renderOutput parseResult
                     | Error error -> return Error error |> renderOutput parseResult
 
-                with ex ->
+                with
+                | ex ->
                     return
                         renderOutput
                             parseResult
@@ -955,7 +1001,10 @@ module Repository =
                 try
                     if parseResult |> verbose then printParseResult parseResult
                     let graceIds = parseResult |> getNormalizedIdsAndNames
-                    let validateIncomingParameters = parseResult |> Grace.CLI.Common.Validations.CommonValidations
+
+                    let validateIncomingParameters =
+                        parseResult
+                        |> Grace.CLI.Common.Validations.CommonValidations
 
                     match validateIncomingParameters with
                     | Ok _ ->
@@ -967,7 +1016,9 @@ module Repository =
                                 OrganizationName = graceIds.OrganizationName,
                                 RepositoryId = graceIds.RepositoryIdString,
                                 RepositoryName = graceIds.RepositoryName,
-                                Visibility = (parseResult.GetValue(Options.visibility)).ToString(),
+                                Visibility =
+                                    (parseResult.GetValue(Options.visibility))
+                                        .ToString(),
                                 CorrelationId = getCorrelationId parseResult
                             )
 
@@ -989,7 +1040,8 @@ module Repository =
                         return result |> renderOutput parseResult
                     | Error error -> return Error error |> renderOutput parseResult
 
-                with ex ->
+                with
+                | ex ->
                     return
                         renderOutput
                             parseResult
@@ -1005,7 +1057,10 @@ module Repository =
                 try
                     if parseResult |> verbose then printParseResult parseResult
                     let graceIds = parseResult |> getNormalizedIdsAndNames
-                    let validateIncomingParameters = parseResult |> Grace.CLI.Common.Validations.CommonValidations
+
+                    let validateIncomingParameters =
+                        parseResult
+                        |> Grace.CLI.Common.Validations.CommonValidations
 
                     match validateIncomingParameters with
                     | Ok _ ->
@@ -1039,7 +1094,8 @@ module Repository =
                         return result |> renderOutput parseResult
                     | Error error -> return Error error |> renderOutput parseResult
 
-                with ex ->
+                with
+                | ex ->
                     return
                         renderOutput
                             parseResult
@@ -1055,7 +1111,10 @@ module Repository =
                 try
                     if parseResult |> verbose then printParseResult parseResult
                     let graceIds = parseResult |> getNormalizedIdsAndNames
-                    let validateIncomingParameters = parseResult |> Grace.CLI.Common.Validations.CommonValidations
+
+                    let validateIncomingParameters =
+                        parseResult
+                        |> Grace.CLI.Common.Validations.CommonValidations
 
                     match validateIncomingParameters with
                     | Ok _ ->
@@ -1089,7 +1148,8 @@ module Repository =
                         return result |> renderOutput parseResult
                     | Error error -> return Error error |> renderOutput parseResult
 
-                with ex ->
+                with
+                | ex ->
                     return
                         renderOutput
                             parseResult
@@ -1105,7 +1165,10 @@ module Repository =
                 try
                     if parseResult |> verbose then printParseResult parseResult
                     let graceIds = parseResult |> getNormalizedIdsAndNames
-                    let validateIncomingParameters = parseResult |> Grace.CLI.Common.Validations.CommonValidations
+
+                    let validateIncomingParameters =
+                        parseResult
+                        |> Grace.CLI.Common.Validations.CommonValidations
 
                     match validateIncomingParameters with
                     | Ok _ ->
@@ -1139,7 +1202,8 @@ module Repository =
                         return result |> renderOutput parseResult
                     | Error error -> return Error error |> renderOutput parseResult
 
-                with ex ->
+                with
+                | ex ->
                     return
                         renderOutput
                             parseResult
@@ -1155,7 +1219,10 @@ module Repository =
                 try
                     if parseResult |> verbose then printParseResult parseResult
                     let graceIds = parseResult |> getNormalizedIdsAndNames
-                    let validateIncomingParameters = parseResult |> Grace.CLI.Common.Validations.CommonValidations
+
+                    let validateIncomingParameters =
+                        parseResult
+                        |> Grace.CLI.Common.Validations.CommonValidations
 
                     match validateIncomingParameters with
                     | Ok _ ->
@@ -1189,7 +1256,8 @@ module Repository =
                         return result |> renderOutput parseResult
                     | Error error -> return Error error |> renderOutput parseResult
 
-                with ex ->
+                with
+                | ex ->
                     return
                         renderOutput
                             parseResult
@@ -1205,7 +1273,10 @@ module Repository =
                 try
                     if parseResult |> verbose then printParseResult parseResult
                     let graceIds = parseResult |> getNormalizedIdsAndNames
-                    let validateIncomingParameters = parseResult |> Grace.CLI.Common.Validations.CommonValidations
+
+                    let validateIncomingParameters =
+                        parseResult
+                        |> Grace.CLI.Common.Validations.CommonValidations
 
                     match validateIncomingParameters with
                     | Ok _ ->
@@ -1239,7 +1310,8 @@ module Repository =
                         return result |> renderOutput parseResult
                     | Error error -> return Error error |> renderOutput parseResult
 
-                with ex ->
+                with
+                | ex ->
                     return
                         renderOutput
                             parseResult
@@ -1255,7 +1327,10 @@ module Repository =
                 try
                     if parseResult |> verbose then printParseResult parseResult
                     let graceIds = parseResult |> getNormalizedIdsAndNames
-                    let validateIncomingParameters = parseResult |> Grace.CLI.Common.Validations.CommonValidations
+
+                    let validateIncomingParameters =
+                        parseResult
+                        |> Grace.CLI.Common.Validations.CommonValidations
 
                     match validateIncomingParameters with
                     | Ok _ ->
@@ -1289,7 +1364,8 @@ module Repository =
                         return result |> renderOutput parseResult
                     | Error error -> return Error error |> renderOutput parseResult
 
-                with ex ->
+                with
+                | ex ->
                     return
                         renderOutput
                             parseResult
@@ -1305,7 +1381,10 @@ module Repository =
                 try
                     if parseResult |> verbose then printParseResult parseResult
                     let graceIds = parseResult |> getNormalizedIdsAndNames
-                    let validateIncomingParameters = parseResult |> Grace.CLI.Common.Validations.CommonValidations
+
+                    let validateIncomingParameters =
+                        parseResult
+                        |> Grace.CLI.Common.Validations.CommonValidations
 
                     match validateIncomingParameters with
                     | Ok _ ->
@@ -1338,7 +1417,8 @@ module Repository =
                         return result |> renderOutput parseResult
                     | Error error -> return Error error |> renderOutput parseResult
 
-                with ex ->
+                with
+                | ex ->
                     return
                         renderOutput
                             parseResult
@@ -1394,8 +1474,8 @@ module Repository =
                     else
                         return! command enablePromotionTypeParameters
                 | Error error -> return Error error
-            with ex ->
-                return Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
+            with
+            | ex -> return Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
         }
 
     // Set-DefaultServerApiVersion subcommand
@@ -1408,7 +1488,10 @@ module Repository =
                 try
                     if parseResult |> verbose then printParseResult parseResult
                     let graceIds = parseResult |> getNormalizedIdsAndNames
-                    let validateIncomingParameters = parseResult |> Grace.CLI.Common.Validations.CommonValidations
+
+                    let validateIncomingParameters =
+                        parseResult
+                        |> Grace.CLI.Common.Validations.CommonValidations
 
                     match validateIncomingParameters with
                     | Ok _ ->
@@ -1443,7 +1526,8 @@ module Repository =
                         return result |> renderOutput parseResult
                     | Error error -> return Error error |> renderOutput parseResult
 
-                with ex ->
+                with
+                | ex ->
                     return
                         renderOutput
                             parseResult
@@ -1459,7 +1543,10 @@ module Repository =
                 try
                     if parseResult |> verbose then printParseResult parseResult
                     let graceIds = parseResult |> getNormalizedIdsAndNames
-                    let validateIncomingParameters = parseResult |> Grace.CLI.Common.Validations.CommonValidations
+
+                    let validateIncomingParameters =
+                        parseResult
+                        |> Grace.CLI.Common.Validations.CommonValidations
 
                     match validateIncomingParameters with
                     | Ok _ ->
@@ -1493,7 +1580,8 @@ module Repository =
                         return result |> renderOutput parseResult
                     | Error error -> return Error error |> renderOutput parseResult
 
-                with ex ->
+                with
+                | ex ->
                     return
                         renderOutput
                             parseResult
@@ -1509,7 +1597,10 @@ module Repository =
                 try
                     if parseResult |> verbose then printParseResult parseResult
                     let graceIds = parseResult |> getNormalizedIdsAndNames
-                    let validateIncomingParameters = parseResult |> Grace.CLI.Common.Validations.CommonValidations
+
+                    let validateIncomingParameters =
+                        parseResult
+                        |> Grace.CLI.Common.Validations.CommonValidations
 
                     match validateIncomingParameters with
                     | Ok _ ->
@@ -1543,7 +1634,8 @@ module Repository =
                         return result |> renderOutput parseResult
                     | Error error -> return Error error |> renderOutput parseResult
 
-                with ex ->
+                with
+                | ex ->
                     return
                         renderOutput
                             parseResult
@@ -1559,7 +1651,10 @@ module Repository =
                 try
                     if parseResult |> verbose then printParseResult parseResult
                     let graceIds = parseResult |> getNormalizedIdsAndNames
-                    let validateIncomingParameters = parseResult |> Grace.CLI.Common.Validations.CommonValidations
+
+                    let validateIncomingParameters =
+                        parseResult
+                        |> Grace.CLI.Common.Validations.CommonValidations
 
                     match validateIncomingParameters with
                     | Ok _ ->
@@ -1594,7 +1689,8 @@ module Repository =
                         return result |> renderOutput parseResult
                     | Error error -> return Error error |> renderOutput parseResult
 
-                with ex ->
+                with
+                | ex ->
                     return
                         renderOutput
                             parseResult
@@ -1610,7 +1706,10 @@ module Repository =
                 try
                     if parseResult |> verbose then printParseResult parseResult
                     let graceIds = parseResult |> getNormalizedIdsAndNames
-                    let validateIncomingParameters = parseResult |> Grace.CLI.Common.Validations.CommonValidations
+
+                    let validateIncomingParameters =
+                        parseResult
+                        |> Grace.CLI.Common.Validations.CommonValidations
 
                     match validateIncomingParameters with
                     | Ok _ ->
@@ -1645,7 +1744,8 @@ module Repository =
                         return result |> renderOutput parseResult
                     | Error error -> return Error error |> renderOutput parseResult
 
-                with ex ->
+                with
+                | ex ->
                     return
                         renderOutput
                             parseResult
@@ -1661,7 +1761,10 @@ module Repository =
                 try
                     if parseResult |> verbose then printParseResult parseResult
                     let graceIds = parseResult |> getNormalizedIdsAndNames
-                    let validateIncomingParameters = parseResult |> Grace.CLI.Common.Validations.CommonValidations
+
+                    let validateIncomingParameters =
+                        parseResult
+                        |> Grace.CLI.Common.Validations.CommonValidations
 
                     match validateIncomingParameters with
                     | Ok _ ->
@@ -1694,7 +1797,8 @@ module Repository =
                         return result |> renderOutput parseResult
                     | Error error -> return Error error |> renderOutput parseResult
 
-                with ex ->
+                with
+                | ex ->
                     return
                         renderOutput
                             parseResult
@@ -1710,7 +1814,10 @@ module Repository =
                 try
                     if parseResult |> verbose then printParseResult parseResult
                     let graceIds = parseResult |> getNormalizedIdsAndNames
-                    let validateIncomingParameters = parseResult |> Grace.CLI.Common.Validations.CommonValidations
+
+                    let validateIncomingParameters =
+                        parseResult
+                        |> Grace.CLI.Common.Validations.CommonValidations
 
                     match validateIncomingParameters with
                     | Ok _ ->
@@ -1743,7 +1850,8 @@ module Repository =
                         return result |> renderOutput parseResult
                     | Error error -> return Error error |> renderOutput parseResult
 
-                with ex ->
+                with
+                | ex ->
                     return
                         renderOutput
                             parseResult
@@ -1759,7 +1867,10 @@ module Repository =
                 try
                     if parseResult |> verbose then printParseResult parseResult
                     let graceIds = parseResult |> getNormalizedIdsAndNames
-                    let validateIncomingParameters = parseResult |> Grace.CLI.Common.Validations.CommonValidations
+
+                    let validateIncomingParameters =
+                        parseResult
+                        |> Grace.CLI.Common.Validations.CommonValidations
 
                     match validateIncomingParameters with
                     | Ok _ ->
@@ -1792,7 +1903,8 @@ module Repository =
                         return result |> renderOutput parseResult
                     | Error error -> return Error error |> renderOutput parseResult
 
-                with ex ->
+                with
+                | ex ->
                     return
                         renderOutput
                             parseResult

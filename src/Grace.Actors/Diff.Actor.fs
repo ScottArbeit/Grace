@@ -76,19 +76,26 @@ module Diff =
                     // Find the entries that changed
                     if
                         newerLookupCache.ContainsKey((fileSystemEntryType, relativePath))
-                        && sha256Hash <> newerLookupCache.Item((fileSystemEntryType, relativePath))
+                        && sha256Hash
+                           <> newerLookupCache.Item((fileSystemEntryType, relativePath))
                     then
                         differences.Add(FileSystemDifference.Create Change fileSystemEntryType relativePath)
 
                     // Find the entries that were deleted
-                    elif not <| newerLookupCache.ContainsKey((fileSystemEntryType, relativePath)) then
+                    elif
+                        not
+                        <| newerLookupCache.ContainsKey((fileSystemEntryType, relativePath))
+                    then
                         differences.Add(FileSystemDifference.Create Delete fileSystemEntryType relativePath)
 
                 // Find the entries that were added
                 for kvp in newerLookupCache do
                     let ((fileSystemEntryType, relativePath), sha256Hash) = kvp.Deconstruct()
 
-                    if not <| olderLookupCache.ContainsKey((fileSystemEntryType, relativePath)) then
+                    if
+                        not
+                        <| olderLookupCache.ContainsKey((fileSystemEntryType, relativePath))
+                    then
                         differences.Add(FileSystemDifference.Create Add fileSystemEntryType relativePath)
 
                 return differences
@@ -114,7 +121,9 @@ module Diff =
 
                 for directoryVersionDto in directoryVersionDtos do
                     let directoryVersion = directoryVersionDto.DirectoryVersion
-                    graceIndex.TryAdd(directoryVersion.RelativePath, directoryVersion) |> ignore
+
+                    graceIndex.TryAdd(directoryVersion.RelativePath, directoryVersion)
+                    |> ignore
 
                 return (graceIndex, directoryCreatedAt)
             }
@@ -211,7 +220,8 @@ module Diff =
                     try
 
                         // If it's already populated, skip this.
-                        if diffDto.DirectoryVersionId1 <> DiffDto.Default.DirectoryVersionId1 then
+                        if diffDto.DirectoryVersionId1
+                           <> DiffDto.Default.DirectoryVersionId1 then
                             return
                                 Ok(
                                     (GraceReturnValue.Create<string> "DiffActor.Compute: already populated." correlationId)
@@ -289,7 +299,7 @@ module Diff =
                                                         let! result2 = getFileStream graceIndex2 difference.RelativePath repositoryDto
 
                                                         match (result1, result2) with
-                                                        | (Ok(fileStream1, fileVersion1), Ok(fileStream2, fileVersion2)) ->
+                                                        | (Ok (fileStream1, fileVersion1), Ok (fileStream2, fileVersion2)) ->
                                                             try
                                                                 // Compare the streams using DiffPlex, and get the Inline and Side-by-Side diffs.
                                                                 let! diffResults =
@@ -347,7 +357,8 @@ module Diff =
                                     Directory1CreatedAt = createdAt1
                                     DirectoryVersionId2 = directoryVersionId2
                                     Directory2CreatedAt = createdAt2
-                                    Differences = differences }
+                                    Differences = differences
+                                }
 
                             state.State <- diffDto
                             do! state.WriteStateAsync()
@@ -372,17 +383,22 @@ module Diff =
                                         .enhance("RepositoryId", $"{diffDto.RepositoryId}")
                                         .enhance ("HasDifferences", $"{diffDto.HasDifferences}")
                                 )
-                    with ex ->
+                    with
+                    | ex ->
                         logToConsole $"Exception in DiffActor.Compute(): {ExceptionResponse.Create ex}"
                         logToConsole $"directoryVersionId1: {diffDto.DirectoryVersionId1}; directoryVersionId2: {diffDto.DirectoryVersionId2}"
 
                         if not <| isNull Activity.Current then
-                            Activity.Current
+                            Activity
+                                .Current
                                 .SetStatus(ActivityStatusCode.Error, "Exception while creating diff.")
                                 .AddTag("ex.Message", ex.Message)
                                 .AddTag("ex.StackTrace", ex.StackTrace)
 
-                                .AddTag("directoryVersionId1", $"{diffDto.DirectoryVersionId1}")
+                                .AddTag(
+                                    "directoryVersionId1",
+                                    $"{diffDto.DirectoryVersionId1}"
+                                )
                                 .AddTag("directoryVersionId2", $"{diffDto.DirectoryVersionId2}")
                             |> ignore
 

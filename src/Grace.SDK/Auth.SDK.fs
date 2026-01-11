@@ -28,8 +28,8 @@ module Auth =
             | Some provider ->
                 try
                     return! provider ()
-                with _ ->
-                    return None
+                with
+                | _ -> return None
         }
 
     let addAuthorizationHeader (httpClient: HttpClient) =
@@ -69,7 +69,8 @@ module Auth =
                     return
                         Error graceError
                         |> enhance "ServerResponseTime" $"{(endTime - startTime).TotalMilliseconds:F3} ms"
-            with ex ->
+            with
+            | ex ->
                 let exceptionResponse = Utilities.ExceptionResponse.Create ex
                 return Error(GraceError.Create (serialize exceptionResponse) parameters.CorrelationId)
         }

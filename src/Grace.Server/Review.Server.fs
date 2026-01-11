@@ -101,7 +101,8 @@ module Review =
                             .enhance ("Path", context.Request.Path.Value)
 
                     return! context |> result400BadRequest graceError
-            with ex ->
+            with
+            | ex ->
                 log.LogError(
                     ex,
                     "{CurrentInstant}: Exception in Review.Server.processCommand. CorrelationId: {correlationId}.",
@@ -164,7 +165,8 @@ module Review =
                             .enhance ("Path", context.Request.Path.Value)
 
                     return! context |> result400BadRequest graceError
-            with ex ->
+            with
+            | ex ->
                 let graceError =
                     (GraceError.CreateWithException ex String.Empty correlationId)
                         .enhance(parameterDictionary)
@@ -183,7 +185,9 @@ module Review =
                 let graceIds = getGraceIds context
 
                 let validations (parameters: GetReviewPacketParameters) =
-                    [| Guid.isValidAndNotEmptyGuid parameters.CandidateId ReviewError.InvalidCandidateId |]
+                    [|
+                        Guid.isValidAndNotEmptyGuid parameters.CandidateId ReviewError.InvalidCandidateId
+                    |]
 
                 let query (context: HttpContext) _ (actorProxy: IReviewActor) = actorProxy.GetPacket(getCorrelationId context)
 
@@ -191,7 +195,7 @@ module Review =
                 parameters.OwnerId <- graceIds.OwnerIdString
                 parameters.OrganizationId <- graceIds.OrganizationIdString
                 parameters.RepositoryId <- graceIds.RepositoryIdString
-                context.Items["Command"] <- "GetPacket"
+                context.Items[ "Command" ] <- "GetPacket"
                 return! processQuery context parameters validations query
             }
 
@@ -203,9 +207,11 @@ module Review =
                 let correlationId = getCorrelationId context
 
                 let validations (parameters: ReviewCheckpointParameters) =
-                    [| Guid.isValidAndNotEmptyGuid parameters.CandidateId ReviewError.InvalidCandidateId
-                       Guid.isValidAndNotEmptyGuid parameters.ReviewedUpToReferenceId ReviewError.InvalidReferenceId
-                       String.isNotEmpty parameters.PolicySnapshotId ReviewError.InvalidPolicySnapshotId |]
+                    [|
+                        Guid.isValidAndNotEmptyGuid parameters.CandidateId ReviewError.InvalidCandidateId
+                        Guid.isValidAndNotEmptyGuid parameters.ReviewedUpToReferenceId ReviewError.InvalidReferenceId
+                        String.isNotEmpty parameters.PolicySnapshotId ReviewError.InvalidPolicySnapshotId
+                    |]
 
                 let command (parameters: ReviewCheckpointParameters) =
                     let candidateId = Guid.Parse(parameters.CandidateId)
@@ -227,17 +233,20 @@ module Review =
                             context.User.Identity.Name
 
                     let checkpoint =
-                        { ReviewCheckpointId = Guid.NewGuid()
-                          CandidateId = Some candidateId
-                          PromotionGroupId = promotionGroupId
-                          ReviewedUpToReferenceId = Guid.Parse(parameters.ReviewedUpToReferenceId)
-                          PolicySnapshotId = PolicySnapshotId parameters.PolicySnapshotId
-                          Reviewer = UserId principal
-                          Timestamp = getCurrentInstant () }
+                        {
+                            ReviewCheckpointId = Guid.NewGuid()
+                            CandidateId = Some candidateId
+                            PromotionGroupId = promotionGroupId
+                            ReviewedUpToReferenceId = Guid.Parse(parameters.ReviewedUpToReferenceId)
+                            PolicySnapshotId = PolicySnapshotId parameters.PolicySnapshotId
+                            Reviewer = UserId principal
+                            Timestamp = getCurrentInstant ()
+                        }
 
-                    ReviewCommand.AddCheckpoint checkpoint |> returnValueTask
+                    ReviewCommand.AddCheckpoint checkpoint
+                    |> returnValueTask
 
-                context.Items["Command"] <- nameof Checkpoint
+                context.Items[ "Command" ] <- nameof Checkpoint
                 return! processCommand context validations command
             }
 
@@ -248,9 +257,11 @@ module Review =
                 let graceIds = getGraceIds context
 
                 let validations (parameters: ResolveFindingParameters) =
-                    [| Guid.isValidAndNotEmptyGuid parameters.CandidateId ReviewError.InvalidCandidateId
-                       Guid.isValidAndNotEmptyGuid parameters.FindingId ReviewError.InvalidFindingId
-                       DiscriminatedUnion.isMemberOf<FindingResolutionState, ReviewError> parameters.ResolutionState ReviewError.InvalidResolutionState |]
+                    [|
+                        Guid.isValidAndNotEmptyGuid parameters.CandidateId ReviewError.InvalidCandidateId
+                        Guid.isValidAndNotEmptyGuid parameters.FindingId ReviewError.InvalidFindingId
+                        DiscriminatedUnion.isMemberOf<FindingResolutionState, ReviewError> parameters.ResolutionState ReviewError.InvalidResolutionState
+                    |]
 
                 let command (parameters: ResolveFindingParameters) =
                     let principal =
@@ -272,7 +283,7 @@ module Review =
                     ReviewCommand.ResolveFinding(Guid.Parse(parameters.FindingId), resolutionState, UserId principal, note)
                     |> returnValueTask
 
-                context.Items["Command"] <- nameof ResolveFinding
+                context.Items[ "Command" ] <- nameof ResolveFinding
                 return! processCommand context validations command
             }
 

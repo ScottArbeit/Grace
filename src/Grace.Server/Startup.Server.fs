@@ -83,7 +83,8 @@ module Application =
                                 let! _ = cosmosClient.ReadAccountAsync()
                                 log.LogInformation("Cosmos DB emulator ready.")
                                 return ()
-                            with ex ->
+                            with
+                            | ex ->
                                 log.LogWarning("Cosmos DB emulator not ready, retry {Try}...", i)
                                 do! Task.Delay(1000, ct)
                                 return! loop (i + 1)
@@ -107,7 +108,12 @@ module Application =
 
         let mustBeLoggedIn = requiresAuthentication notLoggedIn
 
-        let graceServerVersion = FileVersionInfo.GetVersionInfo(Assembly.GetExecutingAssembly().Location).FileVersion
+        let graceServerVersion =
+            FileVersionInfo
+                .GetVersionInfo(
+                    Assembly.GetExecutingAssembly().Location
+                )
+                .FileVersion
 
         let repositoryResourceFromContext (context: HttpContext) =
             task {
@@ -119,7 +125,9 @@ module Application =
             task {
                 context.Request.EnableBuffering()
                 let! parameters = context.BindJsonAsync<Storage.GetUploadMetadataForFilesParameters>()
-                context.Request.Body.Seek(0L, IO.SeekOrigin.Begin) |> ignore
+
+                context.Request.Body.Seek(0L, IO.SeekOrigin.Begin)
+                |> ignore
 
                 let graceIds = Services.getGraceIds context
 
@@ -138,465 +146,498 @@ module Application =
         let requirePathWrite: HttpHandler = AuthorizationMiddleware.requiresPermissions Operation.PathWrite uploadPathResourcesFromContext
 
         let endpoints =
-            [ GET
-                  [ route
-                        "/"
-                        (warbler (fun _ ->
-                            htmlString
-                                $"<h1>Hello From Grace Server {graceServerVersion}!</h1><br/><p>The current server time is: {getCurrentInstantExtended ()}.</p>"))
-                    route
-                        "/healthz"
-                        (warbler (fun _ ->
-                            htmlString $"<h1>Grace server seems healthy!</h1><br/><p>The current server time is: {getCurrentInstantExtended ()}.</p>")) ]
-              PUT []
-              subRoute
-                  "/branch"
-                  [ POST
-                        [ route "/assign" Branch.Assign |> addMetadata typeof<Branch.AssignParameters>
+            [
+                GET [ route
+                          "/"
+                          (warbler (fun _ ->
+                              htmlString
+                                  $"<h1>Hello From Grace Server {graceServerVersion}!</h1><br/><p>The current server time is: {getCurrentInstantExtended ()}.</p>"))
+                      route
+                          "/healthz"
+                          (warbler (fun _ ->
+                              htmlString $"<h1>Grace server seems healthy!</h1><br/><p>The current server time is: {getCurrentInstantExtended ()}.</p>")) ]
+                PUT []
+                subRoute
+                    "/branch"
+                    [
+                        POST [ route "/assign" Branch.Assign
+                               |> addMetadata typeof<Branch.AssignParameters>
 
-                          route "/checkpoint" Branch.Checkpoint
-                          |> addMetadata typeof<Branch.CreateReferenceParameters>
+                               route "/checkpoint" Branch.Checkpoint
+                               |> addMetadata typeof<Branch.CreateReferenceParameters>
 
-                          route "/commit" Branch.Commit
-                          |> addMetadata typeof<Branch.CreateReferenceParameters>
+                               route "/commit" Branch.Commit
+                               |> addMetadata typeof<Branch.CreateReferenceParameters>
 
-                          route "/create" Branch.Create
-                          |> addMetadata typeof<Branch.CreateBranchParameters>
+                               route "/create" Branch.Create
+                               |> addMetadata typeof<Branch.CreateBranchParameters>
 
-                          route "/createExternal" Branch.CreateExternal
-                          |> addMetadata typeof<Branch.CreateReferenceParameters>
+                               route "/createExternal" Branch.CreateExternal
+                               |> addMetadata typeof<Branch.CreateReferenceParameters>
 
-                          route "/delete" Branch.Delete
-                          |> addMetadata typeof<Branch.DeleteBranchParameters>
+                               route "/delete" Branch.Delete
+                               |> addMetadata typeof<Branch.DeleteBranchParameters>
 
-                          route "/enableAssign" Branch.EnableAssign
-                          |> addMetadata typeof<Branch.EnableFeatureParameters>
+                               route "/enableAssign" Branch.EnableAssign
+                               |> addMetadata typeof<Branch.EnableFeatureParameters>
 
-                          route "/enableAutoRebase" Branch.EnableAutoRebase
-                          |> addMetadata typeof<Branch.EnableFeatureParameters>
+                               route "/enableAutoRebase" Branch.EnableAutoRebase
+                               |> addMetadata typeof<Branch.EnableFeatureParameters>
 
-                          route "/enableCheckpoint" Branch.EnableCheckpoint
-                          |> addMetadata typeof<Branch.EnableFeatureParameters>
+                               route "/enableCheckpoint" Branch.EnableCheckpoint
+                               |> addMetadata typeof<Branch.EnableFeatureParameters>
 
-                          route "/enableCommit" Branch.EnableCommit
-                          |> addMetadata typeof<Branch.EnableFeatureParameters>
+                               route "/enableCommit" Branch.EnableCommit
+                               |> addMetadata typeof<Branch.EnableFeatureParameters>
 
-                          route "/enableExternal" Branch.EnableExternal
-                          |> addMetadata typeof<Branch.EnableFeatureParameters>
+                               route "/enableExternal" Branch.EnableExternal
+                               |> addMetadata typeof<Branch.EnableFeatureParameters>
 
-                          route "/enablePromotion" Branch.EnablePromotion
-                          |> addMetadata typeof<Branch.EnableFeatureParameters>
+                               route "/enablePromotion" Branch.EnablePromotion
+                               |> addMetadata typeof<Branch.EnableFeatureParameters>
 
-                          route "/enableSave" Branch.EnableSave
-                          |> addMetadata typeof<Branch.EnableFeatureParameters>
+                               route "/enableSave" Branch.EnableSave
+                               |> addMetadata typeof<Branch.EnableFeatureParameters>
 
-                          route "/enableTag" Branch.EnableTag
-                          |> addMetadata typeof<Branch.EnableFeatureParameters>
+                               route "/enableTag" Branch.EnableTag
+                               |> addMetadata typeof<Branch.EnableFeatureParameters>
 
-                          route "/setPromotionMode" Branch.SetPromotionMode
-                          |> addMetadata typeof<Branch.SetPromotionModeParameters>
+                               route "/setPromotionMode" Branch.SetPromotionMode
+                               |> addMetadata typeof<Branch.SetPromotionModeParameters>
 
-                          route "/get" Branch.Get |> addMetadata typeof<Branch.GetBranchParameters>
+                               route "/get" Branch.Get
+                               |> addMetadata typeof<Branch.GetBranchParameters>
 
-                          route "/getEvents" Branch.GetEvents
-                          |> addMetadata typeof<Branch.GetBranchParameters>
+                               route "/getEvents" Branch.GetEvents
+                               |> addMetadata typeof<Branch.GetBranchParameters>
 
-                          route "/getExternals" Branch.GetExternals
-                          |> addMetadata typeof<Branch.GetReferenceParameters>
+                               route "/getExternals" Branch.GetExternals
+                               |> addMetadata typeof<Branch.GetReferenceParameters>
 
-                          route "/getCheckpoints" Branch.GetCheckpoints
-                          |> addMetadata typeof<Branch.GetBranchParameters>
+                               route "/getCheckpoints" Branch.GetCheckpoints
+                               |> addMetadata typeof<Branch.GetBranchParameters>
 
-                          route "/getCommits" Branch.GetCommits
-                          |> addMetadata typeof<Branch.GetBranchParameters>
+                               route "/getCommits" Branch.GetCommits
+                               |> addMetadata typeof<Branch.GetBranchParameters>
 
-                          route "/getDiffsForReferenceType" Branch.GetDiffsForReferenceType
-                          |> addMetadata typeof<Branch.GetDiffsForReferenceTypeParameters>
+                               route "/getDiffsForReferenceType" Branch.GetDiffsForReferenceType
+                               |> addMetadata typeof<Branch.GetDiffsForReferenceTypeParameters>
 
-                          route "/getParentBranch" Branch.GetParentBranch
-                          |> addMetadata typeof<Branch.GetBranchParameters>
+                               route "/getParentBranch" Branch.GetParentBranch
+                               |> addMetadata typeof<Branch.GetBranchParameters>
 
-                          route "/getPromotions" Branch.GetPromotions
-                          |> addMetadata typeof<Branch.GetReferenceParameters>
+                               route "/getPromotions" Branch.GetPromotions
+                               |> addMetadata typeof<Branch.GetReferenceParameters>
 
-                          route "/getRecursiveSize" Branch.GetRecursiveSize
-                          |> addMetadata typeof<Branch.ListContentsParameters>
+                               route "/getRecursiveSize" Branch.GetRecursiveSize
+                               |> addMetadata typeof<Branch.ListContentsParameters>
 
-                          route "/getReference" Branch.GetReference
-                          |> addMetadata typeof<Branch.GetReferenceParameters>
+                               route "/getReference" Branch.GetReference
+                               |> addMetadata typeof<Branch.GetReferenceParameters>
 
-                          route "/getReferences" Branch.GetReferences
-                          |> addMetadata typeof<Branch.GetReferencesParameters>
+                               route "/getReferences" Branch.GetReferences
+                               |> addMetadata typeof<Branch.GetReferencesParameters>
 
-                          route "/getSaves" Branch.GetSaves
-                          |> addMetadata typeof<Branch.GetReferenceParameters>
+                               route "/getSaves" Branch.GetSaves
+                               |> addMetadata typeof<Branch.GetReferenceParameters>
 
-                          route "/getTags" Branch.GetTags
-                          |> addMetadata typeof<Branch.GetReferenceParameters>
+                               route "/getTags" Branch.GetTags
+                               |> addMetadata typeof<Branch.GetReferenceParameters>
 
-                          route "/getVersion" Branch.GetVersion
-                          |> addMetadata typeof<Branch.GetBranchVersionParameters>
+                               route "/getVersion" Branch.GetVersion
+                               |> addMetadata typeof<Branch.GetBranchVersionParameters>
 
-                          route "/listContents" Branch.ListContents
-                          |> addMetadata typeof<Branch.ListContentsParameters>
+                               route "/listContents" Branch.ListContents
+                               |> addMetadata typeof<Branch.ListContentsParameters>
 
-                          route "/promote" Branch.Promote
-                          |> addMetadata typeof<Branch.CreateReferenceParameters>
+                               route "/promote" Branch.Promote
+                               |> addMetadata typeof<Branch.CreateReferenceParameters>
 
-                          route "/rebase" Branch.Rebase |> addMetadata typeof<Branch.RebaseParameters>
+                               route "/rebase" Branch.Rebase
+                               |> addMetadata typeof<Branch.RebaseParameters>
 
-                          route "/save" Branch.Save
-                          |> addMetadata typeof<Branch.CreateReferenceParameters>
+                               route "/save" Branch.Save
+                               |> addMetadata typeof<Branch.CreateReferenceParameters>
 
-                          route "/tag" Branch.Tag |> addMetadata typeof<Branch.CreateReferenceParameters>
+                               route "/tag" Branch.Tag
+                               |> addMetadata typeof<Branch.CreateReferenceParameters>
 
-                          route "/updateParentBranch" Branch.UpdateParentBranch
-                          |> addMetadata typeof<Branch.UpdateParentBranchParameters> ] ]
-              subRoute
-                  "/diff"
-                  [ POST
-                        [ route "/getDiff" Diff.GetDiff |> addMetadata typeof<Diff.GetDiffParameters>
+                               route "/updateParentBranch" Branch.UpdateParentBranch
+                               |> addMetadata typeof<Branch.UpdateParentBranchParameters> ]
+                    ]
+                subRoute
+                    "/diff"
+                    [
+                        POST [ route "/getDiff" Diff.GetDiff
+                               |> addMetadata typeof<Diff.GetDiffParameters>
 
-                          route "/getDiffBySha256Hash" Diff.GetDiffBySha256Hash
-                          |> addMetadata typeof<Diff.GetDiffBySha256HashParameters>
+                               route "/getDiffBySha256Hash" Diff.GetDiffBySha256Hash
+                               |> addMetadata typeof<Diff.GetDiffBySha256HashParameters>
 
-                          route "/populate" Diff.Populate |> addMetadata typeof<Diff.PopulateParameters> ] ]
-              subRoute
-                  "/directory"
-                  [ POST
-                        [ route "/create" DirectoryVersion.Create
-                          |> addMetadata typeof<DirectoryVersion.CreateParameters>
+                               route "/populate" Diff.Populate
+                               |> addMetadata typeof<Diff.PopulateParameters> ]
+                    ]
+                subRoute
+                    "/directory"
+                    [
+                        POST [ route "/create" DirectoryVersion.Create
+                               |> addMetadata typeof<DirectoryVersion.CreateParameters>
 
-                          route "/get" DirectoryVersion.Get
-                          |> addMetadata typeof<DirectoryVersion.GetParameters>
+                               route "/get" DirectoryVersion.Get
+                               |> addMetadata typeof<DirectoryVersion.GetParameters>
 
-                          route "/getByDirectoryIds" DirectoryVersion.GetByDirectoryIds
-                          |> addMetadata typeof<DirectoryVersion.GetByDirectoryIdsParameters>
+                               route "/getByDirectoryIds" DirectoryVersion.GetByDirectoryIds
+                               |> addMetadata typeof<DirectoryVersion.GetByDirectoryIdsParameters>
 
-                          route "/getBySha256Hash" DirectoryVersion.GetBySha256Hash
-                          |> addMetadata typeof<DirectoryVersion.GetBySha256HashParameters>
+                               route "/getBySha256Hash" DirectoryVersion.GetBySha256Hash
+                               |> addMetadata typeof<DirectoryVersion.GetBySha256HashParameters>
 
-                          route "/getDirectoryVersionsRecursive" DirectoryVersion.GetDirectoryVersionsRecursive
-                          |> addMetadata typeof<DirectoryVersion.GetParameters>
+                               route "/getDirectoryVersionsRecursive" DirectoryVersion.GetDirectoryVersionsRecursive
+                               |> addMetadata typeof<DirectoryVersion.GetParameters>
 
-                          route "/getZipFile" DirectoryVersion.GetZipFile
-                          |> addMetadata typeof<DirectoryVersion.GetZipFileParameters>
+                               route "/getZipFile" DirectoryVersion.GetZipFile
+                               |> addMetadata typeof<DirectoryVersion.GetZipFileParameters>
 
-                          route "/saveDirectoryVersions" DirectoryVersion.SaveDirectoryVersions
-                          |> addMetadata typeof<DirectoryVersion.SaveDirectoryVersionsParameters> ] ]
-              subRoute "/notifications" [ GET [] ]
-              subRoute
-                  "/organization"
-                  [ POST
-                        [ route "/create" Organization.Create
-                          |> addMetadata typeof<Organization.CreateOrganizationParameters>
+                               route "/saveDirectoryVersions" DirectoryVersion.SaveDirectoryVersions
+                               |> addMetadata typeof<DirectoryVersion.SaveDirectoryVersionsParameters> ]
+                    ]
+                subRoute "/notifications" [ GET [] ]
+                subRoute
+                    "/organization"
+                    [
+                        POST [ route "/create" Organization.Create
+                               |> addMetadata typeof<Organization.CreateOrganizationParameters>
 
-                          route "/delete" Organization.Delete
-                          |> addMetadata typeof<Organization.DeleteOrganizationParameters>
+                               route "/delete" Organization.Delete
+                               |> addMetadata typeof<Organization.DeleteOrganizationParameters>
 
-                          route "/get" Organization.Get
-                          |> addMetadata typeof<Organization.GetOrganizationParameters>
+                               route "/get" Organization.Get
+                               |> addMetadata typeof<Organization.GetOrganizationParameters>
 
-                          route "/listRepositories" Organization.ListRepositories
-                          |> addMetadata typeof<Organization.GetOrganizationParameters>
+                               route "/listRepositories" Organization.ListRepositories
+                               |> addMetadata typeof<Organization.GetOrganizationParameters>
 
-                          route "/setDescription" Organization.SetDescription
-                          |> addMetadata typeof<Organization.SetOrganizationDescriptionParameters>
+                               route "/setDescription" Organization.SetDescription
+                               |> addMetadata typeof<Organization.SetOrganizationDescriptionParameters>
 
-                          route "/setName" Organization.SetName
-                          |> addMetadata typeof<Organization.SetOrganizationNameParameters>
+                               route "/setName" Organization.SetName
+                               |> addMetadata typeof<Organization.SetOrganizationNameParameters>
 
-                          route "/setSearchVisibility" Organization.SetSearchVisibility
-                          |> addMetadata typeof<Organization.SetOrganizationSearchVisibilityParameters>
+                               route "/setSearchVisibility" Organization.SetSearchVisibility
+                               |> addMetadata typeof<Organization.SetOrganizationSearchVisibilityParameters>
 
-                          route "/setType" Organization.SetType
-                          |> addMetadata typeof<Organization.SetOrganizationTypeParameters>
+                               route "/setType" Organization.SetType
+                               |> addMetadata typeof<Organization.SetOrganizationTypeParameters>
 
-                          route "/undelete" Organization.Undelete
-                          |> addMetadata typeof<Organization.UndeleteOrganizationParameters> ] ]
-              subRoute
-                  "/owner"
-                  [ POST
-                        [ route "/create" Owner.Create |> addMetadata typeof<Owner.CreateOwnerParameters>
+                               route "/undelete" Organization.Undelete
+                               |> addMetadata typeof<Organization.UndeleteOrganizationParameters> ]
+                    ]
+                subRoute
+                    "/owner"
+                    [
+                        POST [ route "/create" Owner.Create
+                               |> addMetadata typeof<Owner.CreateOwnerParameters>
 
-                          route "/delete" Owner.Delete |> addMetadata typeof<Owner.DeleteOwnerParameters>
+                               route "/delete" Owner.Delete
+                               |> addMetadata typeof<Owner.DeleteOwnerParameters>
 
-                          route "/get" Owner.Get |> addMetadata typeof<Owner.GetOwnerParameters>
+                               route "/get" Owner.Get
+                               |> addMetadata typeof<Owner.GetOwnerParameters>
+
+                               route "/listOrganizations" Owner.ListOrganizations
+                               |> addMetadata typeof<Owner.GetOwnerParameters>
+
+                               route "/setDescription" Owner.SetDescription
+                               |> addMetadata typeof<Owner.SetOwnerDescriptionParameters>
+
+                               route "/setName" Owner.SetName
+                               |> addMetadata typeof<Owner.SetOwnerNameParameters>
+
+                               route "/setSearchVisibility" Owner.SetSearchVisibility
+                               |> addMetadata typeof<Owner.SetOwnerSearchVisibilityParameters>
+
+                               route "/setType" Owner.SetType
+                               |> addMetadata typeof<Owner.SetOwnerTypeParameters>
 
-                          route "/listOrganizations" Owner.ListOrganizations
-                          |> addMetadata typeof<Owner.GetOwnerParameters>
+                               route "/undelete" Owner.Undelete
+                               |> addMetadata typeof<Owner.UndeleteOwnerParameters> ]
+                    ]
+                subRoute
+                    "/promotionGroup"
+                    [
+                        POST [ route "/create" PromotionGroup.Create
+                               |> addMetadata typeof<PromotionGroup.CreatePromotionGroupParameters>
+
+                               route "/get" PromotionGroup.Get
+                               |> addMetadata typeof<PromotionGroup.GetPromotionGroupParameters>
+
+                               route "/getEvents" PromotionGroup.GetEvents
+                               |> addMetadata typeof<PromotionGroup.GetPromotionGroupParameters>
+
+                               route "/addPromotion" PromotionGroup.AddPromotion
+                               |> addMetadata typeof<PromotionGroup.AddPromotionParameters>
+
+                               route "/removePromotion" PromotionGroup.RemovePromotion
+                               |> addMetadata typeof<PromotionGroup.RemovePromotionParameters>
+
+                               route "/reorderPromotions" PromotionGroup.ReorderPromotions
+                               |> addMetadata typeof<PromotionGroup.ReorderPromotionsParameters>
+
+                               route "/schedule" PromotionGroup.Schedule
+                               |> addMetadata typeof<PromotionGroup.ScheduleParameters>
+
+                               route "/markReady" PromotionGroup.MarkReady
+                               |> addMetadata typeof<PromotionGroup.MarkReadyParameters>
+
+                               route "/start" PromotionGroup.Start
+                               |> addMetadata typeof<PromotionGroup.StartParameters>
+
+                               route "/complete" PromotionGroup.Complete
+                               |> addMetadata typeof<PromotionGroup.CompleteParameters>
+
+                               route "/block" PromotionGroup.Block
+                               |> addMetadata typeof<PromotionGroup.BlockParameters>
+
+                               route "/delete" PromotionGroup.Delete
+                               |> addMetadata typeof<PromotionGroup.DeletePromotionGroupParameters> ]
+                    ]
+                subRoute
+                    "/work"
+                    [
+                        POST [ route "/create" WorkItem.Create
+                               |> addMetadata typeof<WorkItem.CreateWorkItemParameters>
 
-                          route "/setDescription" Owner.SetDescription
-                          |> addMetadata typeof<Owner.SetOwnerDescriptionParameters>
+                               route "/get" WorkItem.Get
+                               |> addMetadata typeof<WorkItem.GetWorkItemParameters>
 
-                          route "/setName" Owner.SetName
-                          |> addMetadata typeof<Owner.SetOwnerNameParameters>
+                               route "/update" WorkItem.Update
+                               |> addMetadata typeof<WorkItem.UpdateWorkItemParameters>
 
-                          route "/setSearchVisibility" Owner.SetSearchVisibility
-                          |> addMetadata typeof<Owner.SetOwnerSearchVisibilityParameters>
+                               route "/link/reference" WorkItem.LinkReference
+                               |> addMetadata typeof<WorkItem.LinkReferenceParameters>
 
-                          route "/setType" Owner.SetType
-                          |> addMetadata typeof<Owner.SetOwnerTypeParameters>
+                               route "/link/promotion-group" WorkItem.LinkPromotionGroup
+                               |> addMetadata typeof<WorkItem.LinkPromotionGroupParameters> ]
+                    ]
+                subRoute
+                    "/policy"
+                    [
+                        POST [ route "/current" Policy.GetCurrent
+                               |> addMetadata typeof<Policy.GetPolicyParameters>
 
-                          route "/undelete" Owner.Undelete
-                          |> addMetadata typeof<Owner.UndeleteOwnerParameters> ] ]
-              subRoute
-                  "/promotionGroup"
-                  [ POST
-                        [ route "/create" PromotionGroup.Create
-                          |> addMetadata typeof<PromotionGroup.CreatePromotionGroupParameters>
+                               route "/acknowledge" Policy.Acknowledge
+                               |> addMetadata typeof<Policy.AcknowledgePolicyParameters> ]
+                    ]
+                subRoute
+                    "/review"
+                    [
+                        POST [ route "/packet" Review.GetPacket
+                               |> addMetadata typeof<Review.GetReviewPacketParameters>
 
-                          route "/get" PromotionGroup.Get
-                          |> addMetadata typeof<PromotionGroup.GetPromotionGroupParameters>
+                               route "/checkpoint" Review.Checkpoint
+                               |> addMetadata typeof<Review.ReviewCheckpointParameters>
 
-                          route "/getEvents" PromotionGroup.GetEvents
-                          |> addMetadata typeof<PromotionGroup.GetPromotionGroupParameters>
+                               route "/resolve" Review.ResolveFinding
+                               |> addMetadata typeof<Review.ResolveFindingParameters>
 
-                          route "/addPromotion" PromotionGroup.AddPromotion
-                          |> addMetadata typeof<PromotionGroup.AddPromotionParameters>
+                               route "/deepen" Review.Deepen
+                               |> addMetadata typeof<Review.DeepenReviewParameters> ]
+                    ]
+                subRoute
+                    "/queue"
+                    [
+                        POST [ route "/status" Queue.Status
+                               |> addMetadata typeof<Queue.QueueStatusParameters>
 
-                          route "/removePromotion" PromotionGroup.RemovePromotion
-                          |> addMetadata typeof<PromotionGroup.RemovePromotionParameters>
+                               route "/enqueue" Queue.Enqueue
+                               |> addMetadata typeof<Queue.EnqueueParameters>
 
-                          route "/reorderPromotions" PromotionGroup.ReorderPromotions
-                          |> addMetadata typeof<PromotionGroup.ReorderPromotionsParameters>
+                               route "/pause" Queue.Pause
+                               |> addMetadata typeof<Queue.QueueActionParameters>
 
-                          route "/schedule" PromotionGroup.Schedule
-                          |> addMetadata typeof<PromotionGroup.ScheduleParameters>
+                               route "/resume" Queue.Resume
+                               |> addMetadata typeof<Queue.QueueActionParameters>
 
-                          route "/markReady" PromotionGroup.MarkReady
-                          |> addMetadata typeof<PromotionGroup.MarkReadyParameters>
+                               route "/dequeue" Queue.Dequeue
+                               |> addMetadata typeof<Queue.CandidateActionParameters> ]
+                    ]
+                subRoute
+                    "/candidate"
+                    [
+                        POST [ route "/get" Queue.GetCandidate
+                               |> addMetadata typeof<Queue.CandidateParameters>
 
-                          route "/start" PromotionGroup.Start
-                          |> addMetadata typeof<PromotionGroup.StartParameters>
+                               route "/cancel" Queue.CancelCandidate
+                               |> addMetadata typeof<Queue.CandidateActionParameters>
 
-                          route "/complete" PromotionGroup.Complete
-                          |> addMetadata typeof<PromotionGroup.CompleteParameters>
+                               route "/retry" Queue.RetryCandidate
+                               |> addMetadata typeof<Queue.CandidateActionParameters>
 
-                          route "/block" PromotionGroup.Block
-                          |> addMetadata typeof<PromotionGroup.BlockParameters>
+                               route "/required-actions" Queue.RequiredActions
+                               |> addMetadata typeof<Queue.CandidateParameters>
 
-                          route "/delete" PromotionGroup.Delete
-                          |> addMetadata typeof<PromotionGroup.DeletePromotionGroupParameters> ] ]
-              subRoute
-                  "/work"
-                  [ POST
-                        [ route "/create" WorkItem.Create
-                          |> addMetadata typeof<WorkItem.CreateWorkItemParameters>
+                               route "/attestations" Queue.Attestations
+                               |> addMetadata typeof<Queue.CandidateAttestationsParameters>
 
-                          route "/get" WorkItem.Get |> addMetadata typeof<WorkItem.GetWorkItemParameters>
+                               route "/gate/rerun" Queue.RerunGate
+                               |> addMetadata typeof<Queue.CandidateGateRerunParameters> ]
+                    ]
+                subRoute
+                    "/repository"
+                    [
+                        POST [ route "/create" Repository.Create
+                               |> addMetadata typeof<Repository.CreateRepositoryParameters>
 
-                          route "/update" WorkItem.Update
-                          |> addMetadata typeof<WorkItem.UpdateWorkItemParameters>
+                               route "/delete" Repository.Delete
+                               |> addMetadata typeof<Repository.DeleteRepositoryParameters>
 
-                          route "/link/reference" WorkItem.LinkReference
-                          |> addMetadata typeof<WorkItem.LinkReferenceParameters>
+                               route "/exists" Repository.Exists
+                               |> addMetadata typeof<Repository.RepositoryParameters>
 
-                          route "/link/promotion-group" WorkItem.LinkPromotionGroup
-                          |> addMetadata typeof<WorkItem.LinkPromotionGroupParameters> ] ]
-              subRoute
-                  "/policy"
-                  [ POST
-                        [ route "/current" Policy.GetCurrent
-                          |> addMetadata typeof<Policy.GetPolicyParameters>
+                               route "/get" Repository.Get
+                               |> addMetadata typeof<Repository.RepositoryParameters>
 
-                          route "/acknowledge" Policy.Acknowledge
-                          |> addMetadata typeof<Policy.AcknowledgePolicyParameters> ] ]
-              subRoute
-                  "/review"
-                  [ POST
-                        [ route "/packet" Review.GetPacket
-                          |> addMetadata typeof<Review.GetReviewPacketParameters>
-
-                          route "/checkpoint" Review.Checkpoint
-                          |> addMetadata typeof<Review.ReviewCheckpointParameters>
-
-                          route "/resolve" Review.ResolveFinding
-                          |> addMetadata typeof<Review.ResolveFindingParameters>
-
-                          route "/deepen" Review.Deepen
-                          |> addMetadata typeof<Review.DeepenReviewParameters> ] ]
-              subRoute
-                  "/queue"
-                  [ POST
-                        [ route "/status" Queue.Status |> addMetadata typeof<Queue.QueueStatusParameters>
-
-                          route "/enqueue" Queue.Enqueue |> addMetadata typeof<Queue.EnqueueParameters>
-
-                          route "/pause" Queue.Pause |> addMetadata typeof<Queue.QueueActionParameters>
-
-                          route "/resume" Queue.Resume |> addMetadata typeof<Queue.QueueActionParameters>
-
-                          route "/dequeue" Queue.Dequeue
-                          |> addMetadata typeof<Queue.CandidateActionParameters> ] ]
-              subRoute
-                  "/candidate"
-                  [ POST
-                        [ route "/get" Queue.GetCandidate |> addMetadata typeof<Queue.CandidateParameters>
-
-                          route "/cancel" Queue.CancelCandidate
-                          |> addMetadata typeof<Queue.CandidateActionParameters>
-
-                          route "/retry" Queue.RetryCandidate
-                          |> addMetadata typeof<Queue.CandidateActionParameters>
-
-                          route "/required-actions" Queue.RequiredActions
-                          |> addMetadata typeof<Queue.CandidateParameters>
-
-                          route "/attestations" Queue.Attestations
-                          |> addMetadata typeof<Queue.CandidateAttestationsParameters>
-
-                          route "/gate/rerun" Queue.RerunGate
-                          |> addMetadata typeof<Queue.CandidateGateRerunParameters> ] ]
-              subRoute
-                  "/repository"
-                  [ POST
-                        [ route "/create" Repository.Create
-                          |> addMetadata typeof<Repository.CreateRepositoryParameters>
-
-                          route "/delete" Repository.Delete
-                          |> addMetadata typeof<Repository.DeleteRepositoryParameters>
-
-                          route "/exists" Repository.Exists
-                          |> addMetadata typeof<Repository.RepositoryParameters>
-
-                          route "/get" Repository.Get
-                          |> addMetadata typeof<Repository.RepositoryParameters>
-
-                          route "/getBranches" Repository.GetBranches
-                          |> addMetadata typeof<Repository.GetBranchesParameters>
-
-                          route "/getBranchesByBranchId" Repository.GetBranchesByBranchId
-                          |> addMetadata typeof<Repository.GetBranchesByBranchIdParameters>
-
-                          route "/getReferencesByReferenceId" Repository.GetReferencesByReferenceId
-                          |> addMetadata typeof<Repository.GetReferencesByReferenceIdParameters>
-
-                          route "/isEmpty" Repository.IsEmpty
-                          |> addMetadata typeof<Repository.IsEmptyParameters>
-
-                          route "/setAllowsLargeFiles" Repository.SetAllowsLargeFiles
-                          |> addMetadata typeof<Repository.SetAllowsLargeFilesParameters>
-
-                          route "/setAnonymousAccess" Repository.SetAnonymousAccess
-                          |> addMetadata typeof<Repository.SetAnonymousAccessParameters>
-
-                          route "/setCheckpointDays" Repository.SetCheckpointDays
-                          |> addMetadata typeof<Repository.SetCheckpointDaysParameters>
-
-                          route "/setDiffCacheDays" Repository.SetDiffCacheDays
-                          |> addMetadata typeof<Repository.SetDiffCacheDaysParameters>
-
-                          route "/setDirectoryVersionCacheDays" Repository.SetDirectoryVersionCacheDays
-                          |> addMetadata typeof<Repository.SetDirectoryVersionCacheDaysParameters>
-
-                          route "/setDefaultServerApiVersion" Repository.SetDefaultServerApiVersion
-                          |> addMetadata typeof<Repository.SetDefaultServerApiVersionParameters>
-
-                          route "/setConflictResolutionPolicy" Repository.SetConflictResolutionPolicy
-                          |> addMetadata typeof<Repository.SetConflictResolutionPolicyParameters>
-
-                          route "/setDescription" (composeHandlers requireRepoAdmin Repository.SetDescription)
-                          |> addMetadata typeof<Repository.SetRepositoryDescriptionParameters>
-
-                          route "/setLogicalDeleteDays" Repository.SetLogicalDeleteDays
-                          |> addMetadata typeof<Repository.SetLogicalDeleteDaysParameters>
-
-                          route "/setName" Repository.SetName
-                          |> addMetadata typeof<Repository.SetRepositoryNameParameters>
-
-                          route "/setRecordSaves" Repository.SetRecordSaves
-                          |> addMetadata typeof<Repository.RecordSavesParameters>
-
-                          route "/setSaveDays" Repository.SetSaveDays
-                          |> addMetadata typeof<Repository.SetSaveDaysParameters>
-
-                          route "/setStatus" Repository.SetStatus
-                          |> addMetadata typeof<Repository.SetRepositoryStatusParameters>
-
-                          route "/setVisibility" Repository.SetVisibility
-                          |> addMetadata typeof<Repository.SetRepositoryVisibilityParameters>
-
-                          route "/undelete" Repository.Undelete
-                          |> addMetadata typeof<Repository.UndeleteRepositoryParameters> ] ]
-              subRoute
-                  "/storage"
-                  [ POST
-                        [ route "/getUploadMetadataForFiles" (composeHandlers requirePathWrite Storage.GetUploadMetadataForFiles)
-                          |> addMetadata typeof<Storage.GetUploadMetadataForFilesParameters>
-
-                          route "/getDownloadUri" Storage.GetDownloadUri
-                          |> addMetadata typeof<Storage.GetDownloadUriParameters>
-
-                          route "/getUploadUri" Storage.GetUploadUris
-                          |> addMetadata typeof<Storage.GetUploadUriParameters> ] ]
-              subRoute
-                  "/access"
-                  [ POST
-                        [ route "/grantRole" Access.GrantRole
-                          |> addMetadata typeof<Access.GrantRoleParameters>
-
-                          route "/revokeRole" Access.RevokeRole
-                          |> addMetadata typeof<Access.RevokeRoleParameters>
-
-                          route "/listRoleAssignments" Access.ListRoleAssignments
-                          |> addMetadata typeof<Access.ListRoleAssignmentsParameters>
-
-                          route "/upsertPathPermission" Access.UpsertPathPermission
-                          |> addMetadata typeof<Access.UpsertPathPermissionParameters>
-
-                          route "/removePathPermission" Access.RemovePathPermission
-                          |> addMetadata typeof<Access.RemovePathPermissionParameters>
-
-                          route "/listPathPermissions" Access.ListPathPermissions
-                          |> addMetadata typeof<Access.ListPathPermissionsParameters>
-
-                          route "/checkPermission" Access.CheckPermission
-                          |> addMetadata typeof<Access.CheckPermissionParameters> ]
-                    GET [ route "/listRoles" Access.ListRoles ] ]
-              subRoute
-                  "/auth"
-                  [ GET
-                        [ route "/me" Auth.Me
-                          route "/oidc/config" (Auth.OidcConfig configuration)
-                          route "/login" Auth.Login
-                          routef "/login/%s" (fun providerId -> Auth.LoginProvider providerId)
-                          route "/logout" Auth.Logout ]
-                    POST
-                        [ route "/token/create" (Auth.TokenCreate configuration)
-                          |> addMetadata typeof<Auth.CreatePersonalAccessTokenParameters>
-                          route "/token/list" (Auth.TokenList configuration)
-                          |> addMetadata typeof<Auth.ListPersonalAccessTokensParameters>
-                          route "/token/revoke" (Auth.TokenRevoke configuration)
-                          |> addMetadata typeof<Auth.RevokePersonalAccessTokenParameters> ] ]
-              subRoute
-                  "/reminder"
-                  [ POST
-                        [ route "/list" Reminder.List
-                          |> addMetadata typeof<Reminder.ListRemindersParameters>
-
-                          route "/get" Reminder.Get |> addMetadata typeof<Reminder.GetReminderParameters>
-
-                          route "/delete" Reminder.Delete
-                          |> addMetadata typeof<Reminder.DeleteReminderParameters>
-
-                          route "/updateTime" Reminder.UpdateTime
-                          |> addMetadata typeof<Reminder.UpdateReminderTimeParameters>
-
-                          route "/reschedule" Reminder.Reschedule
-                          |> addMetadata typeof<Reminder.RescheduleReminderParameters>
-
-                          route "/create" Reminder.Create
-                          |> addMetadata typeof<Reminder.CreateReminderParameters> ] ]
-              subRoute
-                  "/admin"
-                  [ POST
-                        [
+                               route "/getBranches" Repository.GetBranches
+                               |> addMetadata typeof<Repository.GetBranchesParameters>
+
+                               route "/getBranchesByBranchId" Repository.GetBranchesByBranchId
+                               |> addMetadata typeof<Repository.GetBranchesByBranchIdParameters>
+
+                               route "/getReferencesByReferenceId" Repository.GetReferencesByReferenceId
+                               |> addMetadata typeof<Repository.GetReferencesByReferenceIdParameters>
+
+                               route "/isEmpty" Repository.IsEmpty
+                               |> addMetadata typeof<Repository.IsEmptyParameters>
+
+                               route "/setAllowsLargeFiles" Repository.SetAllowsLargeFiles
+                               |> addMetadata typeof<Repository.SetAllowsLargeFilesParameters>
+
+                               route "/setAnonymousAccess" Repository.SetAnonymousAccess
+                               |> addMetadata typeof<Repository.SetAnonymousAccessParameters>
+
+                               route "/setCheckpointDays" Repository.SetCheckpointDays
+                               |> addMetadata typeof<Repository.SetCheckpointDaysParameters>
+
+                               route "/setDiffCacheDays" Repository.SetDiffCacheDays
+                               |> addMetadata typeof<Repository.SetDiffCacheDaysParameters>
+
+                               route "/setDirectoryVersionCacheDays" Repository.SetDirectoryVersionCacheDays
+                               |> addMetadata typeof<Repository.SetDirectoryVersionCacheDaysParameters>
+
+                               route "/setDefaultServerApiVersion" Repository.SetDefaultServerApiVersion
+                               |> addMetadata typeof<Repository.SetDefaultServerApiVersionParameters>
+
+                               route "/setConflictResolutionPolicy" Repository.SetConflictResolutionPolicy
+                               |> addMetadata typeof<Repository.SetConflictResolutionPolicyParameters>
+
+                               route "/setDescription" (composeHandlers requireRepoAdmin Repository.SetDescription)
+                               |> addMetadata typeof<Repository.SetRepositoryDescriptionParameters>
+
+                               route "/setLogicalDeleteDays" Repository.SetLogicalDeleteDays
+                               |> addMetadata typeof<Repository.SetLogicalDeleteDaysParameters>
+
+                               route "/setName" Repository.SetName
+                               |> addMetadata typeof<Repository.SetRepositoryNameParameters>
+
+                               route "/setRecordSaves" Repository.SetRecordSaves
+                               |> addMetadata typeof<Repository.RecordSavesParameters>
+
+                               route "/setSaveDays" Repository.SetSaveDays
+                               |> addMetadata typeof<Repository.SetSaveDaysParameters>
+
+                               route "/setStatus" Repository.SetStatus
+                               |> addMetadata typeof<Repository.SetRepositoryStatusParameters>
+
+                               route "/setVisibility" Repository.SetVisibility
+                               |> addMetadata typeof<Repository.SetRepositoryVisibilityParameters>
+
+                               route "/undelete" Repository.Undelete
+                               |> addMetadata typeof<Repository.UndeleteRepositoryParameters> ]
+                    ]
+                subRoute
+                    "/storage"
+                    [
+                        POST [ route "/getUploadMetadataForFiles" (composeHandlers requirePathWrite Storage.GetUploadMetadataForFiles)
+                               |> addMetadata typeof<Storage.GetUploadMetadataForFilesParameters>
+
+                               route "/getDownloadUri" Storage.GetDownloadUri
+                               |> addMetadata typeof<Storage.GetDownloadUriParameters>
+
+                               route "/getUploadUri" Storage.GetUploadUris
+                               |> addMetadata typeof<Storage.GetUploadUriParameters> ]
+                    ]
+                subRoute
+                    "/access"
+                    [
+                        POST [ route "/grantRole" Access.GrantRole
+                               |> addMetadata typeof<Access.GrantRoleParameters>
+
+                               route "/revokeRole" Access.RevokeRole
+                               |> addMetadata typeof<Access.RevokeRoleParameters>
+
+                               route "/listRoleAssignments" Access.ListRoleAssignments
+                               |> addMetadata typeof<Access.ListRoleAssignmentsParameters>
+
+                               route "/upsertPathPermission" Access.UpsertPathPermission
+                               |> addMetadata typeof<Access.UpsertPathPermissionParameters>
+
+                               route "/removePathPermission" Access.RemovePathPermission
+                               |> addMetadata typeof<Access.RemovePathPermissionParameters>
+
+                               route "/listPathPermissions" Access.ListPathPermissions
+                               |> addMetadata typeof<Access.ListPathPermissionsParameters>
+
+                               route "/checkPermission" Access.CheckPermission
+                               |> addMetadata typeof<Access.CheckPermissionParameters> ]
+                        GET [ route "/listRoles" Access.ListRoles ]
+                    ]
+                subRoute
+                    "/auth"
+                    [
+                        GET [ route "/me" Auth.Me
+                              route "/oidc/config" (Auth.OidcConfig configuration)
+                              route "/login" Auth.Login
+                              routef "/login/%s" (fun providerId -> Auth.LoginProvider providerId)
+                              route "/logout" Auth.Logout ]
+                        POST [ route "/token/create" (Auth.TokenCreate configuration)
+                               |> addMetadata typeof<Auth.CreatePersonalAccessTokenParameters>
+                               route "/token/list" (Auth.TokenList configuration)
+                               |> addMetadata typeof<Auth.ListPersonalAccessTokensParameters>
+                               route "/token/revoke" (Auth.TokenRevoke configuration)
+                               |> addMetadata typeof<Auth.RevokePersonalAccessTokenParameters> ]
+                    ]
+                subRoute
+                    "/reminder"
+                    [
+                        POST [ route "/list" Reminder.List
+                               |> addMetadata typeof<Reminder.ListRemindersParameters>
+
+                               route "/get" Reminder.Get
+                               |> addMetadata typeof<Reminder.GetReminderParameters>
+
+                               route "/delete" Reminder.Delete
+                               |> addMetadata typeof<Reminder.DeleteReminderParameters>
+
+                               route "/updateTime" Reminder.UpdateTime
+                               |> addMetadata typeof<Reminder.UpdateReminderTimeParameters>
+
+                               route "/reschedule" Reminder.Reschedule
+                               |> addMetadata typeof<Reminder.RescheduleReminderParameters>
+
+                               route "/create" Reminder.Create
+                               |> addMetadata typeof<Reminder.CreateReminderParameters> ]
+                    ]
+                subRoute
+                    "/admin"
+                    [
+                        POST [
 #if DEBUG
-                          route "/deleteAllFromCosmosDB" Storage.DeleteAllFromCosmosDB
-                          route "/deleteAllRemindersFromCosmosDB" Storage.DeleteAllRemindersFromCosmosDB
+                               route "/deleteAllFromCosmosDB" Storage.DeleteAllFromCosmosDB
+                               route "/deleteAllRemindersFromCosmosDB" Storage.DeleteAllRemindersFromCosmosDB
 #endif
-                        ] ] ]
+                                ]
+                    ]
+            ]
 
         let notFoundHandler = "Not Found" |> text |> RequestErrors.notFound
 
@@ -623,12 +664,16 @@ module Application =
                 try
                     if not <| isNull user.Claims then
                         for claim in user.Claims do
-                            claimsList.Append($"{claim.Type}:{claim.Value};") |> ignore
+                            claimsList.Append($"{claim.Type}:{claim.Value};")
+                            |> ignore
 
                     if claimsList.Length > 1 then
-                        claimsList.Remove(claimsList.Length - 1, 1) |> ignore
+                        claimsList.Remove(claimsList.Length - 1, 1)
+                        |> ignore
 
-                    activity.AddTag("enduser.id", user.Identity.Name).AddTag("enduser.claims", claimsList.ToString())
+                    activity
+                        .AddTag("enduser.id", user.Identity.Name)
+                        .AddTag("enduser.claims", claimsList.ToString())
                     |> ignore
                 finally
                     stringBuilderPool.Return(claimsList)
@@ -666,7 +711,15 @@ module Application =
             let globalOpenTelemetryAttributes = Dictionary<string, obj>()
             globalOpenTelemetryAttributes.Add("host.name", Environment.MachineName)
             globalOpenTelemetryAttributes.Add("process.pid", Environment.ProcessId)
-            globalOpenTelemetryAttributes.Add("process.starttime", Process.GetCurrentProcess().StartTime.ToUniversalTime().ToString("u"))
+
+            globalOpenTelemetryAttributes.Add(
+                "process.starttime",
+                Process
+                    .GetCurrentProcess()
+                    .StartTime.ToUniversalTime()
+                    .ToString("u")
+            )
+
             globalOpenTelemetryAttributes.Add("process.executable.name", Process.GetCurrentProcess().ProcessName)
             globalOpenTelemetryAttributes.Add("process.runtime.version", System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription)
 
@@ -687,7 +740,10 @@ module Application =
 
             otel
                 .ConfigureResource(fun resourceBuilder ->
-                    resourceBuilder.AddService(graceServerAppId).AddTelemetrySdk().AddAttributes(globalOpenTelemetryAttributes)
+                    resourceBuilder
+                        .AddService(graceServerAppId)
+                        .AddTelemetrySdk()
+                        .AddAttributes(globalOpenTelemetryAttributes)
                     |> ignore)
 
                 .WithMetrics(fun metricsBuilder ->
@@ -698,16 +754,25 @@ module Application =
                         .AddPrometheusExporter(fun prometheusOptions -> prometheusOptions.ScrapeEndpointPath <- "/metrics")
                     |> ignore
 
-                    if not <| String.IsNullOrWhiteSpace(azureMonitorConnectionString) then
+                    if
+                        not
+                        <| String.IsNullOrWhiteSpace(azureMonitorConnectionString)
+                    then
                         logToConsole "OpenTelemetry: Configuring Azure Monitor metrics exporter"
 
                         metricsBuilder.AddAzureMonitorMetricExporter(fun options -> options.ConnectionString <- azureMonitorConnectionString)
                         |> ignore)
                 .WithTracing(fun traceBuilder ->
-                    traceBuilder.AddAspNetCoreInstrumentation().AddHttpClientInstrumentation().AddSource(graceServerAppId)
+                    traceBuilder
+                        .AddAspNetCoreInstrumentation()
+                        .AddHttpClientInstrumentation()
+                        .AddSource(graceServerAppId)
                     |> ignore
 
-                    if not <| String.IsNullOrWhiteSpace(tracingOtlpEndpoint) then
+                    if
+                        not
+                        <| String.IsNullOrWhiteSpace(tracingOtlpEndpoint)
+                    then
                         logToConsole $"OpenTelemetry: Configuring OTLP exporter to {tracingOtlpEndpoint}"
 
                         traceBuilder.AddOtlpExporter(fun options -> options.Endpoint <- Uri(tracingOtlpEndpoint))
@@ -715,7 +780,10 @@ module Application =
                     else
                         traceBuilder.AddConsoleExporter() |> ignore
 
-                    if not <| String.IsNullOrWhiteSpace(azureMonitorConnectionString) then
+                    if
+                        not
+                        <| String.IsNullOrWhiteSpace(azureMonitorConnectionString)
+                    then
                         logToConsole "OpenTelemetry: Configuring Azure Monitor trace exporter"
 
                         traceBuilder.AddAzureMonitorTraceExporter(fun options -> options.ConnectionString <- azureMonitorConnectionString)
@@ -756,7 +824,7 @@ module Application =
                                     else
                                         TestAuth.SchemeName
                     )
-                    .AddScheme<AuthenticationSchemeOptions, GraceTestAuthHandler>(TestAuth.SchemeName, fun _ -> ())
+                    .AddScheme<AuthenticationSchemeOptions, GraceTestAuthHandler>(TestAuth.SchemeName, (fun _ -> ()))
                     .AddScheme<AuthenticationSchemeOptions, PersonalAccessTokenAuth.PersonalAccessTokenAuthHandler>(
                         PersonalAccessTokenAuth.SchemeName,
                         fun _ -> ()
@@ -769,7 +837,7 @@ module Application =
                 let hasOidc = oidcConfig |> Option.isSome
 
                 let authBuilder =
-                    services.AddAuthentication(fun options ->
+                    services.AddAuthentication (fun options ->
                         options.DefaultScheme <- "GraceAuth"
                         options.DefaultChallengeScheme <- "GraceAuth")
 
@@ -831,7 +899,7 @@ module Application =
             services.AddSingleton<IGracePermissionEvaluator, GracePermissionEvaluator>()
             |> ignore
 
-            services.AddW3CLogging(fun options ->
+            services.AddW3CLogging (fun options ->
                 options.FileName <- "Grace.Server.log-"
 
                 options.LogDirectory <- Path.Combine(Environment.GetEnvironmentVariable("TEMP"), "Grace.Server.Logs"))
@@ -841,7 +909,9 @@ module Application =
                 .AddHostedService<CosmosWarmup>()
                 .AddGiraffe()
                 // Next line adds the Json serializer that Giraffe uses internally.
-                .AddSingleton<Json.ISerializer>(Json.Serializer(Constants.JsonSerializerOptions))
+                .AddSingleton<Json.ISerializer>(
+                    Json.Serializer(Constants.JsonSerializerOptions)
+                )
                 .AddSingleton<IPartitionKeyProvider, GracePartitionKeyProvider>()
                 .AddRouting()
                 .AddLogging()
@@ -849,11 +919,13 @@ module Application =
                 .AddHostedService<Notification.Subscriber.GraceEventSubscriptionService>()
                 .AddHttpLogging()
                 .AddOrleans(fun siloBuilder ->
-                    siloBuilder.Services.AddSerializer(fun serializerBuilder -> serializerBuilder.AddNodaTimeSerializers() |> ignore)
+                    siloBuilder.Services.AddSerializer (fun serializerBuilder ->
+                        serializerBuilder.AddNodaTimeSerializers()
+                        |> ignore)
                     |> ignore)
             |> ignore
 
-            services.AddSingleton<CosmosClient>(fun serviceProvider ->
+            services.AddSingleton<CosmosClient> (fun serviceProvider ->
                 let cosmosConnectionString = configuration.GetValue<string>(getConfigKey Constants.EnvironmentVariables.AzureCosmosDBConnectionString)
 
                 // Force SNI = "localhost" while we connect to 127.0.0.1.
@@ -886,7 +958,7 @@ module Application =
             |> ignore
 
             let apiVersioningBuilder =
-                services.AddApiVersioning(fun options ->
+                services.AddApiVersioning (fun options ->
                     options.ReportApiVersions <- true
                     options.DefaultApiVersion <- new ApiVersion(1, 0)
                     options.AssumeDefaultVersionWhenUnspecified <- true
@@ -898,7 +970,7 @@ module Application =
                             new MediaTypeApiVersionReader("x-api-version")
                         ))
 
-            apiVersioningBuilder.AddApiExplorer(fun options ->
+            apiVersioningBuilder.AddApiExplorer (fun options ->
                 // add the versioned api explorer, which also adds IApiVersionDescriptionProvider service
                 // note: the specified format code will format the version as "'v'major[.minor][-status]"
                 options.GroupNameFormat <- "'v'VVV"
@@ -936,17 +1008,14 @@ module Application =
 
             let diffContainerName = Environment.GetEnvironmentVariable Constants.EnvironmentVariables.DiffContainerName
 
-            if not <| containers.Any(fun c -> c.Name = diffContainerName) then
+            if not
+               <| containers.Any(fun c -> c.Name = diffContainerName) then
                 logToConsole $"Creating blob container: {diffContainerName}."
 
                 blobServiceClient.CreateBlobContainer(diffContainerName, PublicAccessType.None)
                 |> ignore
 
-            if env.IsDevelopment() then
-                app //.UseSwagger()
-                    //.UseSwaggerUI(fun config -> config.SwaggerEndpoint("/swagger", "Grace Server API"))
-                    .UseDeveloperExceptionPage()
-                |> ignore
+            if env.IsDevelopment() then app.UseDeveloperExceptionPage() |> ignore
 
             app
                 //.UseMiddleware<FakeMiddleware>()
@@ -966,13 +1035,17 @@ module Application =
                     endpointBuilder.MapGiraffeEndpoints(endpoints)
 
                     // Add Prometheus scraping endpoint
-                    endpointBuilder.MapPrometheusScrapingEndpoint() |> ignore
+                    endpointBuilder.MapPrometheusScrapingEndpoint()
+                    |> ignore
 
                     // Add SignalR hub endpoints
-                    endpointBuilder.MapHub<Notification.NotificationHub>("/notifications") |> ignore)
+                    endpointBuilder.MapHub<Notification.NotificationHub>("/notifications")
+                    |> ignore)
 
                 // If we get here, we didn't find a route.
-                .UseGiraffe(notFoundHandler)
+                .UseGiraffe(
+                    notFoundHandler
+                )
 
             // Set the global ApplicationContext.
             ApplicationContext.serviceProvider <- app.ApplicationServices

@@ -60,7 +60,9 @@ module Organization =
                     do! state.WriteStateAsync()
 
                     // Update the Dto based on the current event.
-                    organizationDto <- organizationDto |> OrganizationDto.UpdateDto organizationEvent
+                    organizationDto <-
+                        organizationDto
+                        |> OrganizationDto.UpdateDto organizationEvent
 
                     // Publish the event to the rest of the world.
                     let graceEvent = OrganizationEvent organizationEvent
@@ -74,7 +76,8 @@ module Organization =
                             .enhance (nameof OrganizationEventType, getDiscriminatedUnionFullName organizationEvent.Event)
 
                     return Ok returnValue
-                with ex ->
+                with
+                | ex ->
                     let exceptionResponse = ExceptionResponse.Create ex
 
                     let graceError =
@@ -83,7 +86,11 @@ module Organization =
                             organizationEvent.Metadata.CorrelationId
 
                     graceError
-                        .enhance("Exception details", exceptionResponse.``exception`` + exceptionResponse.innerException)
+                        .enhance(
+                            "Exception details",
+                            exceptionResponse.``exception``
+                            + exceptionResponse.innerException
+                        )
                         .enhance(nameof OrganizationId, organizationDto.OrganizationId)
                         .enhance(nameof OrganizationName, organizationDto.OrganizationName)
                         .enhance (nameof OrganizationEventType, getDiscriminatedUnionFullName organizationEvent.Event)
@@ -229,7 +236,7 @@ module Organization =
                             return Error(GraceError.Create (getErrorMessage OrganizationError.DuplicateCorrelationId) metadata.CorrelationId)
                         else
                             match command with
-                            | OrganizationCommand.Create(organizationId, organizationName, ownerId) ->
+                            | OrganizationCommand.Create (organizationId, organizationName, ownerId) ->
                                 match organizationDto.UpdatedAt with
                                 | Some _ ->
                                     return Error(GraceError.Create (OrganizationError.getErrorMessage OrganizationIdAlreadyExists) metadata.CorrelationId)
@@ -246,23 +253,21 @@ module Organization =
                             let! eventResult =
                                 task {
                                     match command with
-                                    | OrganizationCommand.Create(organizationId, organizationName, ownerId) ->
+                                    | OrganizationCommand.Create (organizationId, organizationName, ownerId) ->
                                         return Ok(OrganizationEventType.Created(organizationId, organizationName, ownerId))
-                                    | OrganizationCommand.SetName(organizationName) -> return Ok(OrganizationEventType.NameSet(organizationName))
-                                    | OrganizationCommand.SetType(organizationType) -> return Ok(OrganizationEventType.TypeSet(organizationType))
-                                    | OrganizationCommand.SetSearchVisibility(searchVisibility) ->
+                                    | OrganizationCommand.SetName (organizationName) -> return Ok(OrganizationEventType.NameSet(organizationName))
+                                    | OrganizationCommand.SetType (organizationType) -> return Ok(OrganizationEventType.TypeSet(organizationType))
+                                    | OrganizationCommand.SetSearchVisibility (searchVisibility) ->
                                         return Ok(OrganizationEventType.SearchVisibilitySet(searchVisibility))
-                                    | OrganizationCommand.SetDescription(description) -> return Ok(OrganizationEventType.DescriptionSet(description))
-                                    | OrganizationCommand.DeleteLogical(force, deleteReason) ->
+                                    | OrganizationCommand.SetDescription (description) -> return Ok(OrganizationEventType.DescriptionSet(description))
+                                    | OrganizationCommand.DeleteLogical (force, deleteReason) ->
                                         // Get the list of branches that aren't already deleted.
                                         let! repositories = getRepositories organizationDto.OwnerId organizationDto.OrganizationId Int32.MaxValue false
 
                                         // If the organization contains repositories, and any of them isn't already deleted, and the force flag is not set, return an error.
-                                        if
-                                            not <| force
-                                            && repositories.Length > 0
-                                            && repositories.Any(fun repository -> repository.DeletedAt |> Option.isNone)
-                                        then
+                                        if not <| force
+                                           && repositories.Length > 0
+                                           && repositories.Any(fun repository -> repository.DeletedAt |> Option.isNone) then
                                             let metadataObj =
                                                 Dictionary<string, obj>(metadata.Properties.Select(fun kvp -> KeyValuePair<string, obj>(kvp.Key, kvp.Value)))
 
@@ -282,7 +287,8 @@ module Organization =
                                                     { DeleteReason = deleteReason; CorrelationId = metadata.CorrelationId }
 
                                                 do!
-                                                    (this :> IGraceReminderWithGuidKey).ScheduleReminderAsync
+                                                    (this :> IGraceReminderWithGuidKey)
+                                                        .ScheduleReminderAsync
                                                         ReminderTypes.PhysicalDeletion
                                                         DefaultPhysicalDeletionReminderDuration
                                                         (ReminderState.OrganizationPhysicalDeletion physicalDeletionReminderState)
@@ -304,7 +310,8 @@ module Organization =
                             match eventResult with
                             | Ok event -> return! this.ApplyEvent { Event = event; Metadata = metadata }
                             | Error error -> return Error error
-                        with ex ->
+                        with
+                        | ex ->
                             let metadataObj = Dictionary<string, obj>(metadata.Properties.Select(fun kvp -> KeyValuePair<string, obj>(kvp.Key, kvp.Value)))
                             return Error(GraceError.CreateWithMetadata ex String.Empty metadata.CorrelationId metadataObj)
                     }

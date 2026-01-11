@@ -47,7 +47,9 @@ module WorkItem =
 
             logActorActivation log this.IdentityString activateStartTime (getActorActivationMessage state.RecordExists)
 
-            workItemDto <- state.State |> Seq.fold (fun dto ev -> WorkItemDto.UpdateDto ev dto) workItemDto
+            workItemDto <-
+                state.State
+                |> Seq.fold (fun dto ev -> WorkItemDto.UpdateDto ev dto) workItemDto
 
             Task.CompletedTask
 
@@ -71,7 +73,8 @@ module WorkItem =
                             .enhance (nameof WorkItemEventType, getDiscriminatedUnionFullName workItemEvent.Event)
 
                     return Ok returnValue
-                with ex ->
+                with
+                | ex ->
                     log.LogError(
                         ex,
                         "{CurrentInstant}: Node: {hostName}; CorrelationId: {correlationId}; Failed to apply event {eventType} for work item {workItemId}.",
@@ -96,7 +99,8 @@ module WorkItem =
             member this.Exists correlationId =
                 this.correlationId <- correlationId
 
-                not <| workItemDto.WorkItemId.Equals(WorkItemDto.Default.WorkItemId)
+                not
+                <| workItemDto.WorkItemId.Equals(WorkItemDto.Default.WorkItemId)
                 |> returnTask
 
             member this.Get correlationId =
@@ -105,7 +109,9 @@ module WorkItem =
 
             member this.GetEvents correlationId =
                 this.correlationId <- correlationId
-                state.State :> IReadOnlyList<WorkItemEvent> |> returnTask
+
+                state.State :> IReadOnlyList<WorkItemEvent>
+                |> returnTask
 
             member this.Handle command metadata =
                 let isValid (command: WorkItemCommand) (metadata: EventMetadata) =
@@ -131,7 +137,7 @@ module WorkItem =
                         let! workItemEventType =
                             task {
                                 match command with
-                                | Create(workItemId, ownerId, organizationId, repositoryId, title, description) ->
+                                | Create (workItemId, ownerId, organizationId, repositoryId, title, description) ->
                                     return Created(workItemId, ownerId, organizationId, repositoryId, title, description)
                                 | SetTitle title -> return TitleSet title
                                 | SetDescription description -> return DescriptionSet description

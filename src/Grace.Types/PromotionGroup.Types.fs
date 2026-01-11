@@ -28,11 +28,13 @@ module PromotionGroup =
     /// Defines the outcome of a conflict resolution by the model.
     [<GenerateSerializer>]
     type ConflictResolutionOutcome =
-        { ModelResolution: string
-          Confidence: float // 0.0 to 1.0
-          Accepted: bool option } // None = not reviewed yet
+        {
+            ModelResolution: string
+            Confidence: float // 0.0 to 1.0
+            Accepted: bool option
+        }
 
-        static member Default = { ModelResolution = String.Empty; Confidence = 0.0; Accepted = None }
+        static member Default = { ModelResolution = String.Empty; Confidence = 0.0; Accepted = None } // None = not reviewed yet
 
     /// Represents a hunk of conflicting content.
     [<GenerateSerializer>]
@@ -41,18 +43,22 @@ module PromotionGroup =
     /// Analysis of a conflict in a file.
     [<GenerateSerializer>]
     type ConflictAnalysis =
-        { FilePath: string
-          OriginalHunks: ConflictHunk list
-          Resolution: ConflictResolutionOutcome option }
+        {
+            FilePath: string
+            OriginalHunks: ConflictHunk list
+            Resolution: ConflictResolutionOutcome option
+        }
 
         static member Default = { FilePath = String.Empty; OriginalHunks = []; Resolution = None }
 
     /// Represents a promotion within a promotion group.
     [<GenerateSerializer>]
     type PromotionInGroup =
-        { PromotionId: ReferenceId
-          Order: int
-          Conflicts: ConflictAnalysis list option }
+        {
+            PromotionId: ReferenceId
+            Order: int
+            Conflicts: ConflictAnalysis list option
+        }
 
         static member Default = { PromotionId = ReferenceId.Empty; Order = 0; Conflicts = None }
 
@@ -118,46 +124,50 @@ module PromotionGroup =
 
     /// The PromotionGroupDto is a data transfer object that represents a promotion group in the system.
     type PromotionGroupDto =
-        { Class: string
-          PromotionGroupId: PromotionGroupId
-          OwnerId: OwnerId
-          OrganizationId: OrganizationId
-          RepositoryId: RepositoryId
-          TargetBranchId: BranchId
-          Status: PromotionGroupStatus
-          CreatedBy: UserId
-          Description: string
-          CreatedAt: Instant
-          ScheduledAt: Instant option
-          Promotions: PromotionInGroup list
-          ExecutionLog: PromotionGroupExecutionEvent list
-          UpdatedAt: Instant option
-          DeletedAt: Instant option
-          DeleteReason: DeleteReason }
+        {
+            Class: string
+            PromotionGroupId: PromotionGroupId
+            OwnerId: OwnerId
+            OrganizationId: OrganizationId
+            RepositoryId: RepositoryId
+            TargetBranchId: BranchId
+            Status: PromotionGroupStatus
+            CreatedBy: UserId
+            Description: string
+            CreatedAt: Instant
+            ScheduledAt: Instant option
+            Promotions: PromotionInGroup list
+            ExecutionLog: PromotionGroupExecutionEvent list
+            UpdatedAt: Instant option
+            DeletedAt: Instant option
+            DeleteReason: DeleteReason
+        }
 
         static member Default =
-            { Class = nameof PromotionGroupDto
-              PromotionGroupId = PromotionGroupId.Empty
-              OwnerId = OwnerId.Empty
-              OrganizationId = OrganizationId.Empty
-              RepositoryId = RepositoryId.Empty
-              TargetBranchId = BranchId.Empty
-              Status = PromotionGroupStatus.Draft
-              CreatedBy = UserId String.Empty
-              Description = String.Empty
-              CreatedAt = Constants.DefaultTimestamp
-              ScheduledAt = None
-              Promotions = []
-              ExecutionLog = []
-              UpdatedAt = None
-              DeletedAt = None
-              DeleteReason = String.Empty }
+            {
+                Class = nameof PromotionGroupDto
+                PromotionGroupId = PromotionGroupId.Empty
+                OwnerId = OwnerId.Empty
+                OrganizationId = OrganizationId.Empty
+                RepositoryId = RepositoryId.Empty
+                TargetBranchId = BranchId.Empty
+                Status = PromotionGroupStatus.Draft
+                CreatedBy = UserId String.Empty
+                Description = String.Empty
+                CreatedAt = Constants.DefaultTimestamp
+                ScheduledAt = None
+                Promotions = []
+                ExecutionLog = []
+                UpdatedAt = None
+                DeletedAt = None
+                DeleteReason = String.Empty
+            }
 
         /// Updates the PromotionGroupDto based on the PromotionGroupEvent.
         static member UpdateDto promotionGroupEvent currentDto =
             let newDto =
                 match promotionGroupEvent.Event with
-                | Created(promotionGroupId, ownerId, organizationId, repositoryId, targetBranchId, description, scheduledAt) ->
+                | Created (promotionGroupId, ownerId, organizationId, repositoryId, targetBranchId, description, scheduledAt) ->
                     { PromotionGroupDto.Default with
                         PromotionGroupId = promotionGroupId
                         OwnerId = ownerId
@@ -167,20 +177,29 @@ module PromotionGroup =
                         Description = description
                         ScheduledAt = scheduledAt
                         CreatedBy = UserId promotionGroupEvent.Metadata.Principal
-                        CreatedAt = promotionGroupEvent.Metadata.Timestamp }
-                | PromotionAdded(promotionId, order) ->
+                        CreatedAt = promotionGroupEvent.Metadata.Timestamp
+                    }
+                | PromotionAdded (promotionId, order) ->
                     let newPromotion = { PromotionId = promotionId; Order = order; Conflicts = None }
                     { currentDto with Promotions = currentDto.Promotions @ [ newPromotion ] }
                 | PromotionRemoved promotionId ->
-                    let filtered = currentDto.Promotions |> List.filter (fun p -> p.PromotionId <> promotionId)
+                    let filtered =
+                        currentDto.Promotions
+                        |> List.filter (fun p -> p.PromotionId <> promotionId)
                     // Re-normalize ordering
-                    let renumbered = filtered |> List.mapi (fun i p -> { p with Order = i })
+                    let renumbered =
+                        filtered
+                        |> List.mapi (fun i p -> { p with Order = i })
+
                     { currentDto with Promotions = renumbered }
                 | PromotionsReordered promotionIds ->
                     let reordered =
                         promotionIds
                         |> List.mapi (fun i pid ->
-                            let existing = currentDto.Promotions |> List.find (fun p -> p.PromotionId = pid)
+                            let existing =
+                                currentDto.Promotions
+                                |> List.find (fun p -> p.PromotionId = pid)
+
                             { existing with Order = i })
 
                     { currentDto with Promotions = reordered }
@@ -191,7 +210,7 @@ module PromotionGroup =
                     let newStatus = if success then PromotionGroupStatus.Succeeded else PromotionGroupStatus.Failed
                     { currentDto with Status = newStatus }
                 | Blocked reason -> { currentDto with Status = PromotionGroupStatus.Blocked }
-                | ConflictAnalyzed(promotionId, analysis) ->
+                | ConflictAnalyzed (promotionId, analysis) ->
                     let updatedPromotions =
                         currentDto.Promotions
                         |> List.map (fun p ->
@@ -202,6 +221,6 @@ module PromotionGroup =
                                 p)
 
                     { currentDto with Promotions = updatedPromotions }
-                | LogicalDeleted(force, deleteReason) -> { currentDto with DeletedAt = Some(getCurrentInstant ()); DeleteReason = deleteReason }
+                | LogicalDeleted (force, deleteReason) -> { currentDto with DeletedAt = Some(getCurrentInstant ()); DeleteReason = deleteReason }
 
             { newDto with UpdatedAt = Some promotionGroupEvent.Metadata.Timestamp }

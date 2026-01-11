@@ -84,7 +84,8 @@ module DirectoryVersion =
                         return Valid(fileVersion, computedHash, stopwatch.Elapsed.TotalMilliseconds)
                     else
                         return HashMismatch(fileVersion, fileVersion.Sha256Hash, computedHash, stopwatch.Elapsed.TotalMilliseconds)
-            with ex ->
+            with
+            | ex ->
                 stopwatch.Stop()
                 return ValidationError(fileVersion, ex.Message, stopwatch.Elapsed.TotalMilliseconds)
         }
@@ -100,12 +101,16 @@ module DirectoryVersion =
             |> Seq.iter (fun previousFile -> previousFilesLookup.Add(previousFile.RelativePath, previousFile.Sha256Hash))
 
             // Return files that are not in the old set (new or changed)
-            newFiles.Where(fun f -> not (previousFilesLookup.Contains(KeyValuePair(f.RelativePath, f.Sha256Hash)))).ToArray()
+            newFiles
+                .Where(fun f -> not (previousFilesLookup.Contains(KeyValuePair(f.RelativePath, f.Sha256Hash))))
+                .ToArray()
         else
             newFiles.ToArray()
 
     type DirectoryVersionActor
-        ([<PersistentState(StateName.DirectoryVersion, Constants.GraceActorStorage)>] state: IPersistentState<List<DirectoryVersionEvent>>) =
+        (
+            [<PersistentState(StateName.DirectoryVersion, Constants.GraceActorStorage)>] state: IPersistentState<List<DirectoryVersionEvent>>
+        ) =
         inherit Grain()
 
         static let actorName = ActorName.DirectoryVersion
@@ -130,7 +135,9 @@ module DirectoryVersion =
             directoryVersionDto <-
                 state.State
                 |> Seq.fold
-                    (fun directoryVersionDto directoryVersionEvent -> directoryVersionDto |> DirectoryVersionDto.UpdateDto directoryVersionEvent)
+                    (fun directoryVersionDto directoryVersionEvent ->
+                        directoryVersionDto
+                        |> DirectoryVersionDto.UpdateDto directoryVersionEvent)
                     DirectoryVersionDto.Default
 
             logActorActivation log this.IdentityString activateStartTime (getActorActivationMessage state.RecordExists)
@@ -278,7 +285,9 @@ module DirectoryVersion =
                     do! state.WriteStateAsync()
 
                     // Update the Dto with the event.
-                    directoryVersionDto <- directoryVersionDto |> DirectoryVersionDto.UpdateDto directoryVersionEvent
+                    directoryVersionDto <-
+                        directoryVersionDto
+                        |> DirectoryVersionDto.UpdateDto directoryVersionEvent
 
                     // Publish the event to the rest of the world.
                     let graceEvent = GraceEvent.DirectoryVersionEvent directoryVersionEvent
@@ -294,7 +303,8 @@ module DirectoryVersion =
                     |> ignore
 
                     return Ok returnValue
-                with ex ->
+                with
+                | ex ->
                     let graceError =
                         GraceError.CreateWithException
                             ex
@@ -312,7 +322,9 @@ module DirectoryVersion =
             }
 
         interface IHasRepositoryId with
-            member this.GetRepositoryId correlationId = directoryVersionDto.DirectoryVersion.RepositoryId |> returnTask
+            member this.GetRepositoryId correlationId =
+                directoryVersionDto.DirectoryVersion.RepositoryId
+                |> returnTask
 
         interface IDirectoryVersionActor with
             member this.Exists correlationId =
@@ -334,23 +346,33 @@ module DirectoryVersion =
 
             member this.GetCreatedAt correlationId =
                 this.correlationId <- correlationId
-                directoryVersionDto.DirectoryVersion.CreatedAt |> returnTask
+
+                directoryVersionDto.DirectoryVersion.CreatedAt
+                |> returnTask
 
             member this.GetDirectories correlationId =
                 this.correlationId <- correlationId
-                directoryVersionDto.DirectoryVersion.Directories |> returnTask
+
+                directoryVersionDto.DirectoryVersion.Directories
+                |> returnTask
 
             member this.GetFiles correlationId =
                 this.correlationId <- correlationId
-                directoryVersionDto.DirectoryVersion.Files |> returnTask
+
+                directoryVersionDto.DirectoryVersion.Files
+                |> returnTask
 
             member this.GetSha256Hash correlationId =
                 this.correlationId <- correlationId
-                directoryVersionDto.DirectoryVersion.Sha256Hash |> returnTask
+
+                directoryVersionDto.DirectoryVersion.Sha256Hash
+                |> returnTask
 
             member this.GetSize correlationId =
                 this.correlationId <- correlationId
-                directoryVersionDto.DirectoryVersion.Size |> returnTask
+
+                directoryVersionDto.DirectoryVersion.Size
+                |> returnTask
 
             member this.GetRecursiveDirectoryVersions (forceRegenerate: bool) correlationId =
                 this.correlationId <- correlationId
@@ -371,7 +393,8 @@ module DirectoryVersion =
                         // Check if the subdirectory versions have already been generated and cached.
                         let cachedSubdirectoryVersions =
                             task {
-                                if not forceRegenerate && directoryVersionBlobClient.Exists() then
+                                if not forceRegenerate
+                                   && directoryVersionBlobClient.Exists() then
                                     use! blobStream = directoryVersionBlobClient.OpenReadAsync()
 
                                     let! directoryVersions =
@@ -483,7 +506,8 @@ module DirectoryVersion =
                                                             (fun _ _ -> directoryVersionDto)
                                                         )
                                                         |> ignore
-                                                with ex ->
+                                                with
+                                                | ex ->
                                                     log.LogError(
                                                         "{CurrentInstant}: Error in {methodName}; DirectoryId: {directoryId}; Exception: {exception}",
                                                         getCurrentInstantExtended (),
@@ -497,7 +521,10 @@ module DirectoryVersion =
 
                             // Sort the subdirectory versions by their relative path.
                             let subdirectoryVersionsList =
-                                subdirectoryVersionDtos.Values.OrderBy(fun directoryVersionDto -> directoryVersionDto.DirectoryVersion.RelativePath).ToArray()
+                                subdirectoryVersionDtos
+                                    .Values
+                                    .OrderBy(fun directoryVersionDto -> directoryVersionDto.DirectoryVersion.RelativePath)
+                                    .ToArray()
 
                             // Save the recursive results to Azure Blob Storage.
                             let repositoryActorProxy =
@@ -536,7 +563,8 @@ module DirectoryVersion =
                                 { DeleteReason = getDiscriminatedUnionCaseName ReminderTypes.DeleteCachedState; CorrelationId = correlationId }
 
                             do!
-                                (this :> IGraceReminderWithGuidKey).ScheduleReminderAsync
+                                (this :> IGraceReminderWithGuidKey)
+                                    .ScheduleReminderAsync
                                     ReminderTypes.DeleteCachedState
                                     (Duration.FromDays(float repositoryDto.DirectoryVersionCacheDays))
                                     (ReminderState.DirectoryVersionDeleteCachedState deletionReminderState)
@@ -548,7 +576,8 @@ module DirectoryVersion =
                             )
 
                             return subdirectoryVersionsList
-                    with ex ->
+                    with
+                    | ex ->
                         log.LogError(
                             "{CurrentInstant}: Error in {methodName}. Exception: {exception}",
                             getCurrentInstantExtended (),
@@ -563,13 +592,12 @@ module DirectoryVersion =
                 let isValid command (metadata: EventMetadata) =
                     task {
                         match command with
-                        | DirectoryVersionCommand.Create(directoryVersion, repositoryDto) ->
+                        | DirectoryVersionCommand.Create (directoryVersion, repositoryDto) ->
                             if
-                                state.State.Any(fun e ->
+                                state.State.Any (fun e ->
                                     match e.Event with
                                     | DirectoryVersionEventType.Created _ -> true
-                                    | _ -> false)
-                            then
+                                    | _ -> false) then
                                 return
                                     Error(
                                         GraceError.Create
@@ -592,7 +620,7 @@ module DirectoryVersion =
                             let! event =
                                 task {
                                     match command with
-                                    | Create(directoryVersion, repositoryDto) ->
+                                    | Create (directoryVersion, repositoryDto) ->
                                         // Determine which files need validation using incremental validation logic.
                                         let! mostRecentDirectoryVersion =
                                             getMostRecentDirectoryVersionByRelativePath
@@ -655,15 +683,15 @@ module DirectoryVersion =
                                             validationResults
                                             |> Array.sumBy (fun result ->
                                                 match result with
-                                                | Valid(_, _, ms) -> ms
-                                                | HashMismatch(_, _, _, ms) -> ms
-                                                | MissingInStorage(_, ms) -> ms
-                                                | ValidationError(_, _, ms) -> ms)
+                                                | Valid (_, _, ms) -> ms
+                                                | HashMismatch (_, _, _, ms) -> ms
+                                                | MissingInStorage (_, ms) -> ms
+                                                | ValidationError (_, _, ms) -> ms)
 
                                         // Log validation results
                                         for result in validationResults do
                                             match result with
-                                            | Valid(fv, computedHash, elapsedMs) ->
+                                            | Valid (fv, computedHash, elapsedMs) ->
                                                 log.LogDebug(
                                                     "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; SHA-256 validation passed; File: {RelativePath}; Hash: {Hash}; ElapsedMs: {ElapsedMs}.",
                                                     getCurrentInstantExtended (),
@@ -673,7 +701,7 @@ module DirectoryVersion =
                                                     computedHash,
                                                     elapsedMs
                                                 )
-                                            | HashMismatch(fv, expectedHash, computedHash, elapsedMs) ->
+                                            | HashMismatch (fv, expectedHash, computedHash, elapsedMs) ->
                                                 log.LogWarning(
                                                     "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; SHA-256 hash mismatch; File: {RelativePath}; ExpectedHash: {ExpectedHash}; ComputedHash: {ComputedHash}; ElapsedMs: {ElapsedMs}.",
                                                     getCurrentInstantExtended (),
@@ -684,7 +712,7 @@ module DirectoryVersion =
                                                     computedHash,
                                                     elapsedMs
                                                 )
-                                            | MissingInStorage(fv, elapsedMs) ->
+                                            | MissingInStorage (fv, elapsedMs) ->
                                                 log.LogWarning(
                                                     "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; File not found in object storage; File: {RelativePath}; ExpectedHash: {ExpectedHash}; ElapsedMs: {ElapsedMs}.",
                                                     getCurrentInstantExtended (),
@@ -694,7 +722,7 @@ module DirectoryVersion =
                                                     fv.Sha256Hash,
                                                     elapsedMs
                                                 )
-                                            | ValidationError(fv, errorMessage, elapsedMs) ->
+                                            | ValidationError (fv, errorMessage, elapsedMs) ->
                                                 log.LogError(
                                                     "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; SHA-256 validation error; File: {RelativePath}; Error: {ErrorMessage}; ElapsedMs: {ElapsedMs}.",
                                                     getCurrentInstantExtended (),
@@ -712,10 +740,10 @@ module DirectoryVersion =
                                                 failures
                                                 |> List.map (fun failure ->
                                                     match failure with
-                                                    | HashMismatch(fv, expected, computed, _) ->
+                                                    | HashMismatch (fv, expected, computed, _) ->
                                                         $"File '{fv.RelativePath}': hash mismatch (expected: {expected}, computed: {computed})"
-                                                    | MissingInStorage(fv, _) -> $"File '{fv.RelativePath}': not found in object storage"
-                                                    | ValidationError(fv, msg, _) -> $"File '{fv.RelativePath}': validation error ({msg})"
+                                                    | MissingInStorage (fv, _) -> $"File '{fv.RelativePath}': not found in object storage"
+                                                    | ValidationError (fv, msg, _) -> $"File '{fv.RelativePath}': validation error ({msg})"
                                                     | _ -> "Unknown error")
                                                 |> String.concat "; "
 
@@ -787,7 +815,8 @@ module DirectoryVersion =
                                             { DeleteReason = getDiscriminatedUnionCaseName deleteReason; CorrelationId = metadata.CorrelationId }
 
                                         do!
-                                            (this :> IGraceReminderWithGuidKey).ScheduleReminderAsync
+                                            (this :> IGraceReminderWithGuidKey)
+                                                .ScheduleReminderAsync
                                                 ReminderTypes.PhysicalDeletion
                                                 (Duration.FromDays(float repositoryDto.LogicalDeleteDays))
                                                 (ReminderState.DirectoryVersionPhysicalDeletion physicalDeletionReminderState)
@@ -804,7 +833,8 @@ module DirectoryVersion =
                             match event with
                             | Ok event -> return! this.ApplyEvent { Event = event; Metadata = metadata }
                             | Error error -> return Error error
-                        with ex ->
+                        with
+                        | ex ->
                             let metadataObj = Dictionary<string, obj>(metadata.Properties.Select(fun kvp -> KeyValuePair<string, obj>(kvp.Key, kvp.Value)))
                             return Error(GraceError.CreateWithMetadata ex String.Empty metadata.CorrelationId metadataObj)
                     }
@@ -817,7 +847,8 @@ module DirectoryVersion =
                         match! isValid command metadata with
                         | Ok command -> return! processCommand command metadata
                         | Error error -> return Error error
-                    with ex ->
+                    with
+                    | ex ->
                         logToConsole $"Exception in DirectoryVersionActor.Handle(): {ExceptionResponse.Create ex}"
                         return Error(GraceError.CreateWithException ex "Exception in DirectoryVersionActor.Handle()" metadata.CorrelationId)
                 }
@@ -827,7 +858,11 @@ module DirectoryVersion =
 
                 task {
                     if directoryVersionDto.RecursiveSize = Constants.InitialDirectorySize then
-                        let! directoryVersions = (this :> IDirectoryVersionActor).GetRecursiveDirectoryVersions false correlationId
+                        let! directoryVersions =
+                            (this :> IDirectoryVersionActor)
+                                .GetRecursiveDirectoryVersions
+                                false
+                                correlationId
 
                         let recursiveSize =
                             directoryVersions
@@ -964,7 +999,8 @@ module DirectoryVersion =
                             { DeleteReason = getDiscriminatedUnionCaseName DeleteZipFile; CorrelationId = correlationId }
 
                         do!
-                            (this :> IGraceReminderWithGuidKey).ScheduleReminderAsync
+                            (this :> IGraceReminderWithGuidKey)
+                                .ScheduleReminderAsync
                                 DeleteZipFile
                                 (Duration.FromDays(float repositoryDto.DirectoryVersionCacheDays))
                                 (ReminderState.DirectoryVersionDeleteZipFile deletionReminderState)

@@ -56,7 +56,9 @@ module ConflictReceipt =
                     state.State.Add(receiptEvent)
                     do! state.WriteStateAsync()
 
-                    receipt <- receipt |> ConflictReceiptDto.UpdateDto receiptEvent
+                    receipt <-
+                        receipt
+                        |> ConflictReceiptDto.UpdateDto receiptEvent
 
                     let graceEvent = GraceEvent.ConflictReceiptEvent receiptEvent
                     do! publishGraceEvent graceEvent receiptEvent.Metadata
@@ -68,7 +70,8 @@ module ConflictReceipt =
                             .enhance (nameof ConflictReceiptEventType, getDiscriminatedUnionFullName receiptEvent.Event)
 
                     return Ok returnValue
-                with ex ->
+                with
+                | ex ->
                     log.LogError(
                         ex,
                         "{CurrentInstant}: Node: {hostName}; CorrelationId: {correlationId}; Failed to apply event {eventType} for conflict receipt {receiptId}.",
@@ -92,7 +95,10 @@ module ConflictReceipt =
         interface IConflictReceiptActor with
             member this.Exists correlationId =
                 this.correlationId <- correlationId
-                (receipt.ConflictReceiptId <> ConflictReceiptId.Empty) |> returnTask
+
+                (receipt.ConflictReceiptId
+                 <> ConflictReceiptId.Empty)
+                |> returnTask
 
             member this.Get correlationId =
                 this.correlationId <- correlationId
@@ -104,7 +110,9 @@ module ConflictReceipt =
 
             member this.GetEvents correlationId =
                 this.correlationId <- correlationId
-                state.State :> IReadOnlyList<ConflictReceiptEvent> |> returnTask
+
+                state.State :> IReadOnlyList<ConflictReceiptEvent>
+                |> returnTask
 
             member this.Handle command metadata =
                 let isValid (command: ConflictReceiptCommand) (metadata: EventMetadata) =
@@ -117,7 +125,8 @@ module ConflictReceipt =
                         else
                             match command with
                             | ConflictReceiptCommand.Create _ ->
-                                if receipt.ConflictReceiptId <> ConflictReceiptId.Empty then
+                                if receipt.ConflictReceiptId
+                                   <> ConflictReceiptId.Empty then
                                     return
                                         Error(
                                             GraceError.Create

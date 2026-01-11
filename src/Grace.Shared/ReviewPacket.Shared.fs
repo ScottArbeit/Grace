@@ -36,12 +36,14 @@ module ReviewPacket =
                 evidence
                 |> List.filter (fun slice -> orderedPaths |> List.contains slice.RelativePath)
 
-            { ChapterId = computeChapterId orderedPaths
-              Title = chapterKey
-              Summary = String.Empty
-              Paths = orderedPaths
-              FindingIds = []
-              Evidence = chapterEvidence })
+            {
+                ChapterId = computeChapterId orderedPaths
+                Title = chapterKey
+                Summary = String.Empty
+                Paths = orderedPaths
+                FindingIds = []
+                Evidence = chapterEvidence
+            })
 
     let assemblePacket
         (reviewPacketId: ReviewPacketId)
@@ -57,7 +59,9 @@ module ReviewPacket =
         =
         let paths =
             riskProfile
-            |> Option.map (fun profile -> profile.ChangedPaths |> List.map (fun path -> path.RelativePath))
+            |> Option.map (fun profile ->
+                profile.ChangedPaths
+                |> List.map (fun path -> path.RelativePath))
             |> Option.defaultValue []
 
         let evidence =
@@ -75,4 +79,5 @@ module ReviewPacket =
             PolicySnapshotId = policySnapshotId
             Chapters = buildChapters paths evidence
             EvidenceSetSummary = evidenceSummary
-            CreatedAt = createdAt }
+            CreatedAt = createdAt
+        }

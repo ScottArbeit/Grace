@@ -82,7 +82,8 @@ module Reminder =
                             .enhance ("Path", context.Request.Path.Value)
 
                     return! context |> result400BadRequest graceError
-            with ex ->
+            with
+            | ex ->
                 log.LogError(
                     ex,
                     "{CurrentInstant}: Exception in Reminder.Server.processQuery; Path: {path}; CorrelationId: {correlationId}.",
@@ -154,7 +155,8 @@ module Reminder =
                             .enhance ("Path", context.Request.Path.Value)
 
                     return! context |> result400BadRequest graceError
-            with ex ->
+            with
+            | ex ->
                 log.LogError(
                     ex,
                     "{CurrentInstant}: Exception in Reminder.Server.processCommand; Path: {path}; CorrelationId: {correlationId}.",
@@ -238,7 +240,8 @@ module Reminder =
                     )
 
                     return result
-                with ex ->
+                with
+                | ex ->
                     let duration_ms = getDurationRightAligned_ms startTime
 
                     log.LogError(
@@ -265,7 +268,10 @@ module Reminder =
                 let graceIds = getGraceIds context
 
                 try
-                    let validations (parameters: GetReminderParameters) = [| String.isNotEmpty parameters.ReminderId ReminderIdIsRequired |]
+                    let validations (parameters: GetReminderParameters) =
+                        [|
+                            String.isNotEmpty parameters.ReminderId ReminderIdIsRequired
+                        |]
 
                     let query (context: HttpContext) (parameters: GetReminderParameters) =
                         task {
@@ -295,7 +301,8 @@ module Reminder =
                     )
 
                     return result
-                with ex ->
+                with
+                | ex ->
                     let duration_ms = getDurationRightAligned_ms startTime
 
                     log.LogError(
@@ -321,7 +328,10 @@ module Reminder =
                 let graceIds = getGraceIds context
 
                 try
-                    let validations (parameters: DeleteReminderParameters) = [| String.isNotEmpty parameters.ReminderId ReminderIdIsRequired |]
+                    let validations (parameters: DeleteReminderParameters) =
+                        [|
+                            String.isNotEmpty parameters.ReminderId ReminderIdIsRequired
+                        |]
 
                     let command (context: HttpContext) (parameters: DeleteReminderParameters) =
                         task {
@@ -331,7 +341,7 @@ module Reminder =
 
                             return
                                 match result with
-                                | Ok() -> Ok "Reminder deleted successfully."
+                                | Ok () -> Ok "Reminder deleted successfully."
                                 | Error msg -> Error msg
                         }
 
@@ -351,7 +361,8 @@ module Reminder =
                     )
 
                     return result
-                with ex ->
+                with
+                | ex ->
                     let duration_ms = getDurationRightAligned_ms startTime
 
                     log.LogError(
@@ -378,8 +389,10 @@ module Reminder =
 
                 try
                     let validations (parameters: UpdateReminderTimeParameters) =
-                        [| String.isNotEmpty parameters.ReminderId ReminderIdIsRequired
-                           String.isNotEmpty parameters.FireAt InvalidReminderTime |]
+                        [|
+                            String.isNotEmpty parameters.ReminderId ReminderIdIsRequired
+                            String.isNotEmpty parameters.FireAt InvalidReminderTime
+                        |]
 
                     let command (context: HttpContext) (parameters: UpdateReminderTimeParameters) =
                         task {
@@ -423,7 +436,8 @@ module Reminder =
                     )
 
                     return result
-                with ex ->
+                with
+                | ex ->
                     let duration_ms = getDurationRightAligned_ms startTime
 
                     log.LogError(
@@ -466,8 +480,8 @@ module Reminder =
                     | _ -> None
                 else
                     None
-            with _ ->
-                None
+            with
+            | _ -> None
 
     /// Reschedules a reminder relative to now.
     let Reschedule: HttpHandler =
@@ -478,8 +492,10 @@ module Reminder =
 
                 try
                     let validations (parameters: RescheduleReminderParameters) =
-                        [| String.isNotEmpty parameters.ReminderId ReminderIdIsRequired
-                           String.isNotEmpty parameters.After InvalidReminderDuration |]
+                        [|
+                            String.isNotEmpty parameters.ReminderId ReminderIdIsRequired
+                            String.isNotEmpty parameters.After InvalidReminderDuration
+                        |]
 
                     let command (context: HttpContext) (parameters: RescheduleReminderParameters) =
                         task {
@@ -521,7 +537,8 @@ module Reminder =
                     )
 
                     return result
-                with ex ->
+                with
+                | ex ->
                     let duration_ms = getDurationRightAligned_ms startTime
 
                     log.LogError(
@@ -548,10 +565,12 @@ module Reminder =
 
                 try
                     let validations (parameters: CreateReminderParameters) =
-                        [| String.isNotEmpty parameters.ActorName ReminderActorNameIsRequired
-                           String.isNotEmpty parameters.ActorId ReminderActorIdIsRequired
-                           String.isNotEmpty parameters.ReminderType InvalidReminderType
-                           String.isNotEmpty parameters.FireAt InvalidReminderTime |]
+                        [|
+                            String.isNotEmpty parameters.ActorName ReminderActorNameIsRequired
+                            String.isNotEmpty parameters.ActorId ReminderActorIdIsRequired
+                            String.isNotEmpty parameters.ReminderType InvalidReminderType
+                            String.isNotEmpty parameters.FireAt InvalidReminderTime
+                        |]
 
                     let command (context: HttpContext) (parameters: CreateReminderParameters) =
                         task {
@@ -603,7 +622,8 @@ module Reminder =
                     )
 
                     return result
-                with ex ->
+                with
+                | ex ->
                     let duration_ms = getDurationRightAligned_ms startTime
 
                     log.LogError(

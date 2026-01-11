@@ -53,40 +53,44 @@ module Owner =
 
     /// The OwnerDto is a data transfer object that represents an owner in the system.
     type OwnerDto =
-        { Class: string
-          OwnerId: OwnerId
-          OwnerName: OwnerName
-          OwnerType: OwnerType
-          Description: string
-          SearchVisibility: SearchVisibility
-          CreatedAt: Instant
-          UpdatedAt: Instant option
-          DeletedAt: Instant option
-          DeleteReason: DeleteReason }
+        {
+            Class: string
+            OwnerId: OwnerId
+            OwnerName: OwnerName
+            OwnerType: OwnerType
+            Description: string
+            SearchVisibility: SearchVisibility
+            CreatedAt: Instant
+            UpdatedAt: Instant option
+            DeletedAt: Instant option
+            DeleteReason: DeleteReason
+        }
 
         /// Default instance of OwnerDto with empty or default values.
         static member Default =
-            { Class = nameof OwnerDto
-              OwnerId = OwnerId.Empty
-              OwnerName = String.Empty
-              OwnerType = OwnerType.Public
-              Description = String.Empty
-              SearchVisibility = Visible
-              CreatedAt = Constants.DefaultTimestamp
-              UpdatedAt = None
-              DeletedAt = None
-              DeleteReason = String.Empty }
+            {
+                Class = nameof OwnerDto
+                OwnerId = OwnerId.Empty
+                OwnerName = String.Empty
+                OwnerType = OwnerType.Public
+                Description = String.Empty
+                SearchVisibility = Visible
+                CreatedAt = Constants.DefaultTimestamp
+                UpdatedAt = None
+                DeletedAt = None
+                DeleteReason = String.Empty
+            }
 
         /// Updates the OwnerDto based on the OwnerEvent received.
         static member UpdateDto ownerEvent currentOwnerDto =
             let newOwnerDto =
                 match ownerEvent.Event with
-                | Created(ownerId, ownerName) -> { OwnerDto.Default with OwnerId = ownerId; OwnerName = ownerName; CreatedAt = ownerEvent.Metadata.Timestamp }
-                | NameSet(ownerName) -> { currentOwnerDto with OwnerName = ownerName }
-                | TypeSet(ownerType) -> { currentOwnerDto with OwnerType = ownerType }
-                | SearchVisibilitySet(searchVisibility) -> { currentOwnerDto with SearchVisibility = searchVisibility }
-                | DescriptionSet(description) -> { currentOwnerDto with Description = description }
-                | LogicalDeleted(_, deleteReason) -> { currentOwnerDto with DeletedAt = Some(getCurrentInstant ()); DeleteReason = deleteReason }
+                | Created (ownerId, ownerName) -> { OwnerDto.Default with OwnerId = ownerId; OwnerName = ownerName; CreatedAt = ownerEvent.Metadata.Timestamp }
+                | NameSet (ownerName) -> { currentOwnerDto with OwnerName = ownerName }
+                | TypeSet (ownerType) -> { currentOwnerDto with OwnerType = ownerType }
+                | SearchVisibilitySet (searchVisibility) -> { currentOwnerDto with SearchVisibility = searchVisibility }
+                | DescriptionSet (description) -> { currentOwnerDto with Description = description }
+                | LogicalDeleted (_, deleteReason) -> { currentOwnerDto with DeletedAt = Some(getCurrentInstant ()); DeleteReason = deleteReason }
                 | PhysicalDeleted -> currentOwnerDto // Do nothing because it's about to be deleted anyway.
                 | Undeleted -> { currentOwnerDto with DeletedAt = None; DeleteReason = String.Empty }
 

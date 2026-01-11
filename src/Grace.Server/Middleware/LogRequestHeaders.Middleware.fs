@@ -23,7 +23,7 @@ type LogRequestHeadersMiddleware(next: RequestDelegate) =
 #if DEBUG
         let middlewareTraceHeader = context.Request.Headers["X-MiddlewareTraceIn"]
 
-        context.Request.Headers["X-MiddlewareTraceIn"] <- $"{middlewareTraceHeader}{nameof LogRequestHeadersMiddleware} --> "
+        context.Request.Headers[ "X-MiddlewareTraceIn" ] <- $"{middlewareTraceHeader}{nameof LogRequestHeadersMiddleware} --> "
 #endif
         //let path = context.Request.Path.ToString()
 
@@ -57,6 +57,6 @@ type LogRequestHeadersMiddleware(next: RequestDelegate) =
 #if DEBUG
         let middlewareTraceOutHeader = context.Request.Headers["X-MiddlewareTraceOut"]
 
-        context.Request.Headers["X-MiddlewareTraceOut"] <- $"{middlewareTraceOutHeader}{nameof LogRequestHeadersMiddleware} --> "
+        context.Request.Headers[ "X-MiddlewareTraceOut" ] <- $"{middlewareTraceOutHeader}{nameof LogRequestHeadersMiddleware} --> "
 #endif
         nextTask

@@ -48,7 +48,7 @@ module AuthTests =
                 let result = Auth.tryGetAccessToken().GetAwaiter().GetResult()
 
                 match result with
-                | Ok(Some value) -> value |> should equal token
+                | Ok (Some value) -> value |> should equal token
                 | Ok None -> Assert.Fail("Expected GRACE_TOKEN to be returned.")
                 | Error message -> Assert.Fail($"Unexpected error: {message}")))
 

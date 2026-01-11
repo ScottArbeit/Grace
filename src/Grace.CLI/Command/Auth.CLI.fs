@@ -41,21 +41,30 @@ module Auth =
     type AuthInfo = { GraceUserId: string; Claims: string list }
 
     type TokenBundle =
-        { RefreshToken: string
-          AccessToken: string
-          AccessTokenExpiresAt: Instant
-          Issuer: string
-          Audience: string
-          Scopes: string
-          Subject: string option
-          ClientId: string
-          CreatedAt: Instant
-          UpdatedAt: Instant }
+        {
+            RefreshToken: string
+            AccessToken: string
+            AccessTokenExpiresAt: Instant
+            Issuer: string
+            Audience: string
+            Scopes: string
+            Subject: string option
+            ClientId: string
+            CreatedAt: Instant
+            UpdatedAt: Instant
+        }
 
     type TokenResponse = { AccessToken: string; RefreshToken: string option; ExpiresIn: int option; Scope: string option; TokenType: string option }
 
     type DeviceCodeResponse =
-        { DeviceCode: string; UserCode: string; VerificationUri: string; VerificationUriComplete: string option; ExpiresIn: int; IntervalSeconds: int }
+        {
+            DeviceCode: string
+            UserCode: string
+            VerificationUri: string
+            VerificationUriComplete: string option
+            ExpiresIn: int
+            IntervalSeconds: int
+        }
 
     type TokenStore = { Helper: MsalCacheHelper; StorageProperties: StorageCreationProperties; LockFilePath: string; InProcessLock: SemaphoreSlim }
 
@@ -83,7 +92,13 @@ module Auth =
         |> Seq.filter (fun scopeValue -> not (String.IsNullOrWhiteSpace scopeValue))
         |> Seq.toList
 
-    let private defaultCliScopes () = [ "openid"; "profile"; "email"; "offline_access" ]
+    let private defaultCliScopes () =
+        [
+            "openid"
+            "profile"
+            "email"
+            "offline_access"
+        ]
 
     let private buildOidcCliConfig (authority: string) (audience: string) (clientId: string) =
         let redirectPort =
@@ -102,11 +117,10 @@ module Auth =
         { Authority = normalizeAuthority authority; Audience = audience.Trim(); ClientId = clientId.Trim(); RedirectPort = redirectPort; Scopes = scopes }
 
     let private tryGetOidcCliConfigFromEnv () =
-        match
-            tryGetEnv Constants.EnvironmentVariables.GraceAuthOidcAuthority,
-            tryGetEnv Constants.EnvironmentVariables.GraceAuthOidcAudience,
-            tryGetEnv Constants.EnvironmentVariables.GraceAuthOidcCliClientId
-        with
+        match tryGetEnv Constants.EnvironmentVariables.GraceAuthOidcAuthority,
+              tryGetEnv Constants.EnvironmentVariables.GraceAuthOidcAudience,
+              tryGetEnv Constants.EnvironmentVariables.GraceAuthOidcCliClientId
+            with
         | Some authority, Some audience, Some clientId -> Some(buildOidcCliConfig authority audience clientId)
         | _ -> None
 
@@ -133,12 +147,11 @@ module Auth =
         }
 
     let private tryGetOidcM2mConfig () =
-        match
-            tryGetEnv Constants.EnvironmentVariables.GraceAuthOidcAuthority,
-            tryGetEnv Constants.EnvironmentVariables.GraceAuthOidcAudience,
-            tryGetEnv Constants.EnvironmentVariables.GraceAuthOidcM2mClientId,
-            tryGetEnv Constants.EnvironmentVariables.GraceAuthOidcM2mClientSecret
-        with
+        match tryGetEnv Constants.EnvironmentVariables.GraceAuthOidcAuthority,
+              tryGetEnv Constants.EnvironmentVariables.GraceAuthOidcAudience,
+              tryGetEnv Constants.EnvironmentVariables.GraceAuthOidcM2mClientId,
+              tryGetEnv Constants.EnvironmentVariables.GraceAuthOidcM2mClientSecret
+            with
         | Some authority, Some audience, Some clientId, Some clientSecret ->
             let scopes =
                 match tryGetEnv Constants.EnvironmentVariables.GraceAuthOidcM2mScopes with
@@ -146,11 +159,13 @@ module Auth =
                 | _ -> []
 
             Some
-                { Authority = normalizeAuthority authority
-                  Audience = audience.Trim()
-                  ClientId = clientId.Trim()
-                  ClientSecret = clientSecret
-                  Scopes = scopes }
+                {
+                    Authority = normalizeAuthority authority
+                    Audience = audience.Trim()
+                    ClientId = clientId.Trim()
+                    ClientSecret = clientSecret
+                    Scopes = scopes
+                }
         | _ -> None
 
     let private tryGetGraceTokenFromEnv () =
@@ -168,12 +183,14 @@ module Auth =
                     Error $"GRACE_TOKEN accepts Grace PATs only (prefix {Grace.Types.PersonalAccessToken.TokenPrefix}). Auth0 access tokens are not valid here."
 
     let private getDeprecatedMicrosoftSettings () =
-        [ Constants.EnvironmentVariables.GraceAuthMicrosoftClientId
-          Constants.EnvironmentVariables.GraceAuthMicrosoftClientSecret
-          Constants.EnvironmentVariables.GraceAuthMicrosoftTenantId
-          Constants.EnvironmentVariables.GraceAuthMicrosoftAuthority
-          Constants.EnvironmentVariables.GraceAuthMicrosoftApiScope
-          Constants.EnvironmentVariables.GraceAuthMicrosoftCliClientId ]
+        [
+            Constants.EnvironmentVariables.GraceAuthMicrosoftClientId
+            Constants.EnvironmentVariables.GraceAuthMicrosoftClientSecret
+            Constants.EnvironmentVariables.GraceAuthMicrosoftTenantId
+            Constants.EnvironmentVariables.GraceAuthMicrosoftAuthority
+            Constants.EnvironmentVariables.GraceAuthMicrosoftApiScope
+            Constants.EnvironmentVariables.GraceAuthMicrosoftCliClientId
+        ]
         |> List.choose (fun name -> tryGetEnv name |> Option.map (fun _ -> name))
 
     let private getTokenStoreNamespace (config: OidcCliConfig) =
@@ -181,7 +198,8 @@ module Auth =
             tryGetEnv Constants.EnvironmentVariables.GraceServerUri
             |> Option.defaultValue String.Empty
 
-        $"{config.Authority}|{config.Audience}|{config.ClientId}|{serverUri}".Trim()
+        $"{config.Authority}|{config.Audience}|{config.ClientId}|{serverUri}"
+            .Trim()
 
     let private hashNamespace (value: string) =
         use sha = SHA256.Create()
@@ -195,14 +213,17 @@ module Auth =
         task {
             let cacheRoot = UserConfiguration.getUserGraceDirectory ()
             let cacheDirectory = Path.Combine(cacheRoot, "auth")
-            Directory.CreateDirectory(cacheDirectory) |> ignore
+
+            Directory.CreateDirectory(cacheDirectory)
+            |> ignore
 
             let key = getTokenStoreNamespace config |> hashNamespace
             let fileName = $"grace_auth_{key}.bin"
             let builder = StorageCreationPropertiesBuilder(fileName, cacheDirectory)
 
             if OperatingSystem.IsMacOS() then
-                builder.WithMacKeyChain("Grace", "Grace.CLI.Auth") |> ignore
+                builder.WithMacKeyChain("Grace", "Grace.CLI.Auth")
+                |> ignore
             elif OperatingSystem.IsLinux() then
                 let attribute1 = KeyValuePair<string, string>("application", "grace")
                 let attribute2 = KeyValuePair<string, string>("scope", "auth")
@@ -214,15 +235,17 @@ module Auth =
             let! helper = MsalCacheHelper.CreateAsync(storageProperties, null)
 
             return
-                { Helper = helper
-                  StorageProperties = storageProperties
-                  LockFilePath = $"{storageProperties.CacheFilePath}.lock"
-                  InProcessLock = new SemaphoreSlim(1, 1) }
+                {
+                    Helper = helper
+                    StorageProperties = storageProperties
+                    LockFilePath = $"{storageProperties.CacheFilePath}.lock"
+                    InProcessLock = new SemaphoreSlim(1, 1)
+                }
         }
 
     let private getTokenStoreAsync (config: OidcCliConfig) =
         let key = getTokenStoreNamespace config
-        tokenStoreCache.GetOrAdd(key, fun _ -> createTokenStoreAsync config)
+        tokenStoreCache.GetOrAdd(key, (fun _ -> createTokenStoreAsync config))
 
     let private verifySecureStoreAsync (config: OidcCliConfig) =
         task {
@@ -230,8 +253,8 @@ module Auth =
                 let! store = getTokenStoreAsync config
                 store.Helper.VerifyPersistence()
                 return Ok store
-            with ex ->
-                return Error $"Secure token storage is unavailable: {ex.Message}"
+            with
+            | ex -> return Error $"Secure token storage is unavailable: {ex.Message}"
         }
 
     let private withTokenLock (store: TokenStore) (action: unit -> Task<'T>) =
@@ -255,8 +278,8 @@ module Auth =
                 let json = Encoding.UTF8.GetString(data)
                 let bundle = JsonSerializer.Deserialize<TokenBundle>(json, Constants.JsonSerializerOptions)
                 if obj.ReferenceEquals(bundle, null) then None else Some bundle
-        with _ ->
-            None
+        with
+        | _ -> None
 
     let private saveTokenBundle (store: TokenStore) (bundle: TokenBundle) =
         let json = JsonSerializer.Serialize(bundle, Constants.JsonSerializerOptions)
@@ -288,11 +311,13 @@ module Auth =
         | None -> Error "Token response missing access_token."
         | Some accessToken ->
             Ok
-                { AccessToken = accessToken
-                  RefreshToken = tryReadString root "refresh_token"
-                  ExpiresIn = tryReadInt root "expires_in"
-                  Scope = tryReadString root "scope"
-                  TokenType = tryReadString root "token_type" }
+                {
+                    AccessToken = accessToken
+                    RefreshToken = tryReadString root "refresh_token"
+                    ExpiresIn = tryReadInt root "expires_in"
+                    Scope = tryReadString root "scope"
+                    TokenType = tryReadString root "token_type"
+                }
 
     let private parseDeviceCodeResponse (json: string) =
         use document = JsonDocument.Parse(json)
@@ -301,15 +326,20 @@ module Auth =
         match tryReadString root "device_code", tryReadString root "user_code", tryReadString root "verification_uri", tryReadInt root "expires_in" with
         | Some deviceCode, Some userCode, Some verificationUri, Some expiresIn ->
             let verificationUriComplete = tryReadString root "verification_uri_complete"
-            let interval = tryReadInt root "interval" |> Option.defaultValue 5
+
+            let interval =
+                tryReadInt root "interval"
+                |> Option.defaultValue 5
 
             Ok
-                { DeviceCode = deviceCode
-                  UserCode = userCode
-                  VerificationUri = verificationUri
-                  VerificationUriComplete = verificationUriComplete
-                  ExpiresIn = expiresIn
-                  IntervalSeconds = max 1 interval }
+                {
+                    DeviceCode = deviceCode
+                    UserCode = userCode
+                    VerificationUri = verificationUri
+                    VerificationUriComplete = verificationUriComplete
+                    ExpiresIn = expiresIn
+                    IntervalSeconds = max 1 interval
+                }
         | _ -> Error "Device code response missing required fields."
 
     let private tryReadOAuthError (json: string) =
@@ -324,8 +354,8 @@ module Auth =
             | Some e, None -> Some e
             | None, Some d -> Some d
             | None, None -> None
-        with _ ->
-            None
+        with
+        | _ -> None
 
     let private buildEndpoint (authority: string) (path: string) = $"{authority.TrimEnd('/')}/{path.TrimStart('/')}"
 
@@ -333,12 +363,18 @@ module Auth =
 
     let private tryCreateAbsoluteUri (url: string) =
         match Uri.TryCreate(url, UriKind.Absolute) with
-        | true, uri when uri.Scheme = Uri.UriSchemeHttps || uri.Scheme = Uri.UriSchemeHttp -> Ok uri
+        | true, uri when
+            uri.Scheme = Uri.UriSchemeHttps
+            || uri.Scheme = Uri.UriSchemeHttp
+            ->
+            Ok uri
         | _ -> Error $"Invalid OIDC endpoint URL: {url}. Check {Constants.EnvironmentVariables.GraceAuthOidcAuthority}."
 
     let private postFormAsync (url: string) (formValues: (string * string) list) =
         task {
-            let contentValues = formValues |> Seq.map (fun (key, value) -> KeyValuePair(key, value))
+            let contentValues =
+                formValues
+                |> Seq.map (fun (key, value) -> KeyValuePair(key, value))
 
             use content = new FormUrlEncodedContent(contentValues)
 
@@ -362,18 +398,28 @@ module Auth =
             psi.UseShellExecute <- true
             Process.Start(psi) |> ignore
             Ok()
-        with ex ->
-            Error ex.Message
+        with
+        | ex -> Error ex.Message
 
     let private generateBase64Url (bytes: int) =
         let data = RandomNumberGenerator.GetBytes(bytes)
-        Convert.ToBase64String(data).TrimEnd('=').Replace('+', '-').Replace('/', '_')
+
+        Convert
+            .ToBase64String(data)
+            .TrimEnd('=')
+            .Replace('+', '-')
+            .Replace('/', '_')
 
     let private computeCodeChallenge (verifier: string) =
         use sha = SHA256.Create()
         let bytes = Encoding.ASCII.GetBytes(verifier)
         let hash = sha.ComputeHash(bytes)
-        Convert.ToBase64String(hash).TrimEnd('=').Replace('+', '-').Replace('/', '_')
+
+        Convert
+            .ToBase64String(hash)
+            .TrimEnd('=')
+            .Replace('+', '-')
+            .Replace('/', '_')
 
     let private tryGetJwtClaim (token: string) (claimType: string) =
         try
@@ -382,18 +428,25 @@ module Auth =
             if parts.Length < 2 then
                 None
             else
-                let payload = parts[1].Replace('-', '+').Replace('_', '/')
-                let padded = payload + String.replicate ((4 - payload.Length % 4) % 4) "="
+                let payload = parts[ 1 ].Replace('-', '+').Replace('_', '/')
+
+                let padded =
+                    payload
+                    + String.replicate ((4 - payload.Length % 4) % 4) "="
 
                 let json = Encoding.UTF8.GetString(Convert.FromBase64String(padded))
                 use document = JsonDocument.Parse(json)
                 tryReadString document.RootElement claimType
-        with _ ->
-            None
+        with
+        | _ -> None
 
     let private buildTokenBundle (config: OidcCliConfig) (tokenResponse: TokenResponse) =
         let now = getCurrentInstant ()
-        let expiresIn = tokenResponse.ExpiresIn |> Option.defaultValue 3600
+
+        let expiresIn =
+            tokenResponse.ExpiresIn
+            |> Option.defaultValue 3600
+
         let expiresAt = now.Plus(Duration.FromSeconds(float expiresIn))
 
         let issuer =
@@ -401,29 +454,38 @@ module Auth =
             |> Option.defaultValue config.Authority
 
         let subject = tryGetJwtClaim tokenResponse.AccessToken "sub"
-        let scopes = tokenResponse.Scope |> Option.defaultValue (String.Join(" ", config.Scopes))
 
-        { RefreshToken = tokenResponse.RefreshToken |> Option.defaultValue String.Empty
-          AccessToken = tokenResponse.AccessToken
-          AccessTokenExpiresAt = expiresAt
-          Issuer = issuer
-          Audience = config.Audience
-          Scopes = scopes
-          Subject = subject
-          ClientId = config.ClientId
-          CreatedAt = now
-          UpdatedAt = now }
+        let scopes =
+            tokenResponse.Scope
+            |> Option.defaultValue (String.Join(" ", config.Scopes))
+
+        {
+            RefreshToken =
+                tokenResponse.RefreshToken
+                |> Option.defaultValue String.Empty
+            AccessToken = tokenResponse.AccessToken
+            AccessTokenExpiresAt = expiresAt
+            Issuer = issuer
+            Audience = config.Audience
+            Scopes = scopes
+            Subject = subject
+            ClientId = config.ClientId
+            CreatedAt = now
+            UpdatedAt = now
+        }
 
     let private requestTokenWithAuthorizationCodeAsync (config: OidcCliConfig) (redirectUri: string) (code: string) (codeVerifier: string) =
         task {
             let tokenEndpoint = buildEndpoint config.Authority "oauth/token"
 
             let formValues =
-                [ "grant_type", "authorization_code"
-                  "client_id", config.ClientId
-                  "code", code
-                  "code_verifier", codeVerifier
-                  "redirect_uri", redirectUri ]
+                [
+                    "grant_type", "authorization_code"
+                    "client_id", config.ClientId
+                    "code", code
+                    "code_verifier", codeVerifier
+                    "redirect_uri", redirectUri
+                ]
 
             let! response = postFormAsync tokenEndpoint formValues
 
@@ -437,9 +499,11 @@ module Auth =
             let endpoint = buildEndpoint config.Authority "oauth/device/code"
 
             let formValues =
-                [ "client_id", config.ClientId
-                  "audience", config.Audience
-                  "scope", String.Join(" ", config.Scopes) ]
+                [
+                    "client_id", config.ClientId
+                    "audience", config.Audience
+                    "scope", String.Join(" ", config.Scopes)
+                ]
 
             let! response = postFormAsync endpoint formValues
 
@@ -451,36 +515,44 @@ module Auth =
     let private pollDeviceCodeAsync (config: OidcCliConfig) (deviceCode: DeviceCodeResponse) =
         task {
             let tokenEndpoint = buildEndpoint config.Authority "oauth/token"
-            let expiresAt = getCurrentInstant().Plus(Duration.FromSeconds(float deviceCode.ExpiresIn))
+
+            let expiresAt =
+                getCurrentInstant()
+                    .Plus(Duration.FromSeconds(float deviceCode.ExpiresIn))
+
             let mutable delaySeconds = deviceCode.IntervalSeconds
+            let mutable finished = false
+            let mutable finalResult = Error "Device code expired. Please try again."
 
-            let rec poll () =
-                task {
-                    if getCurrentInstant () >= expiresAt then
-                        return Error "Device code expired. Please try again."
-                    else
-                        let formValues =
-                            [ "grant_type", "urn:ietf:params:oauth:grant-type:device_code"
-                              "device_code", deviceCode.DeviceCode
-                              "client_id", config.ClientId ]
+            while not finished do
+                if getCurrentInstant () >= expiresAt then
+                    finished <- true
+                    finalResult <- Error "Device code expired. Please try again."
+                else
+                    let formValues =
+                        [
+                            "grant_type", "urn:ietf:params:oauth:grant-type:device_code"
+                            "device_code", deviceCode.DeviceCode
+                            "client_id", config.ClientId
+                        ]
 
-                        let! response = postFormAsync tokenEndpoint formValues
+                    let! response = postFormAsync tokenEndpoint formValues
 
-                        match response with
-                        | Ok json -> return parseTokenResponse json
-                        | Error message ->
-                            if message.StartsWith("authorization_pending", StringComparison.OrdinalIgnoreCase) then
-                                do! Task.Delay(TimeSpan.FromSeconds(float delaySeconds))
-                                return! poll ()
-                            elif message.StartsWith("slow_down", StringComparison.OrdinalIgnoreCase) then
-                                delaySeconds <- delaySeconds + 5
-                                do! Task.Delay(TimeSpan.FromSeconds(float delaySeconds))
-                                return! poll ()
-                            else
-                                return Error message
-                }
+                    match response with
+                    | Ok json ->
+                        finished <- true
+                        finalResult <- parseTokenResponse json
+                    | Error message ->
+                        if message.StartsWith("authorization_pending", StringComparison.OrdinalIgnoreCase) then
+                            do! Task.Delay(TimeSpan.FromSeconds(float delaySeconds))
+                        elif message.StartsWith("slow_down", StringComparison.OrdinalIgnoreCase) then
+                            delaySeconds <- delaySeconds + 5
+                            do! Task.Delay(TimeSpan.FromSeconds(float delaySeconds))
+                        else
+                            finished <- true
+                            finalResult <- Error message
 
-            return! poll ()
+            return finalResult
         }
 
     let private tryAcquireTokenWithPkceAsync (config: OidcCliConfig) (parseResult: ParseResult) =
@@ -493,12 +565,12 @@ module Auth =
                     listener.Prefixes.Add($"http://127.0.0.1:{config.RedirectPort}/")
                     listener.Start()
                     Ok()
-                with ex ->
-                    Error $"Failed to listen on {redirectUri}: {ex.Message}"
+                with
+                | ex -> Error $"Failed to listen on {redirectUri}: {ex.Message}"
 
             match startResult with
             | Error message -> return Error message
-            | Ok() ->
+            | Ok () ->
                 try
                     let state = generateBase64Url 16
                     let codeVerifier = generateBase64Url 32
@@ -507,14 +579,16 @@ module Auth =
                     let authorizeEndpoint = buildEndpoint config.Authority "authorize"
 
                     let query =
-                        [ "response_type", "code"
-                          "client_id", config.ClientId
-                          "redirect_uri", redirectUri
-                          "audience", config.Audience
-                          "scope", String.Join(" ", config.Scopes)
-                          "code_challenge", codeChallenge
-                          "code_challenge_method", "S256"
-                          "state", state ]
+                        [
+                            "response_type", "code"
+                            "client_id", config.ClientId
+                            "redirect_uri", redirectUri
+                            "audience", config.Audience
+                            "scope", String.Join(" ", config.Scopes)
+                            "code_challenge", codeChallenge
+                            "code_challenge_method", "S256"
+                            "state", state
+                        ]
                         |> List.map (fun (k, v) -> $"{Uri.EscapeDataString(k)}={Uri.EscapeDataString(v)}")
                         |> String.concat "&"
 
@@ -524,7 +598,7 @@ module Auth =
                     | Error message -> return Error message
                     | Ok _ ->
                         match tryLaunchBrowser url with
-                        | Ok() -> ()
+                        | Ok () -> ()
                         | Error message ->
                             AnsiConsole.MarkupLine($"[{Colors.Important}]Open this URL in your browser to continue:[/] {Markup.Escape(url)}")
                             AnsiConsole.MarkupLine($"[{Colors.Deemphasized}]Automatic launch failed: {Markup.Escape(message)}[/]")
@@ -541,7 +615,10 @@ module Auth =
                                 response.Close()
                             }
 
-                        if request.Url.AbsolutePath.TrimEnd('/') <> "/callback" then
+                        if
+                            request.Url.AbsolutePath.TrimEnd('/')
+                            <> "/callback"
+                        then
                             do! writeResponse "<html><body>Invalid callback path. You may close this window.</body></html>"
                             return Error "Unexpected callback path."
                         else
@@ -588,6 +665,36 @@ module Auth =
                 return! pollDeviceCodeAsync config deviceCode
         }
 
+    let private applyRefreshToken (bundle: TokenBundle) (refreshed: TokenResponse) (now: Instant) : TokenBundle =
+        let expiresIn = refreshed.ExpiresIn |> Option.defaultValue 3600
+        let expiresAt = now.Plus(Duration.FromSeconds(float expiresIn))
+
+        let refreshToken =
+            refreshed.RefreshToken
+            |> Option.defaultValue bundle.RefreshToken
+
+        let scopes =
+            refreshed.Scope
+            |> Option.defaultValue bundle.Scopes
+
+        let issuer =
+            tryGetJwtClaim refreshed.AccessToken "iss"
+            |> Option.defaultValue bundle.Issuer
+
+        let subject =
+            tryGetJwtClaim refreshed.AccessToken "sub"
+            |> Option.orElse bundle.Subject
+
+        { bundle with
+            RefreshToken = refreshToken
+            AccessToken = refreshed.AccessToken
+            AccessTokenExpiresAt = expiresAt
+            Issuer = issuer
+            Scopes = scopes
+            Subject = subject
+            UpdatedAt = now
+        }
+
     let private tryRefreshTokenAsync (config: OidcCliConfig) (bundle: TokenBundle) =
         task {
             if String.IsNullOrWhiteSpace bundle.RefreshToken then
@@ -596,10 +703,12 @@ module Auth =
                 let endpoint = buildEndpoint config.Authority "oauth/token"
 
                 let formValues =
-                    [ "grant_type", "refresh_token"
-                      "client_id", config.ClientId
-                      "refresh_token", bundle.RefreshToken
-                      "audience", config.Audience ]
+                    [
+                        "grant_type", "refresh_token"
+                        "client_id", config.ClientId
+                        "refresh_token", bundle.RefreshToken
+                        "audience", config.Audience
+                    ]
 
                 let! response = postFormAsync endpoint formValues
 
@@ -610,23 +719,8 @@ module Auth =
                     | Error message -> return Error message
                     | Ok refreshed ->
                         let now = getCurrentInstant ()
-                        let expiresIn = refreshed.ExpiresIn |> Option.defaultValue 3600
-                        let expiresAt = now.Plus(Duration.FromSeconds(float expiresIn))
-                        let refreshToken = refreshed.RefreshToken |> Option.defaultValue bundle.RefreshToken
-                        let scopes = refreshed.Scope |> Option.defaultValue bundle.Scopes
-                        let issuer = tryGetJwtClaim refreshed.AccessToken "iss" |> Option.defaultValue bundle.Issuer
-                        let subject = tryGetJwtClaim refreshed.AccessToken "sub" |> Option.orElse bundle.Subject
-
-                        return
-                            Ok
-                                { bundle with
-                                    RefreshToken = refreshToken
-                                    AccessToken = refreshed.AccessToken
-                                    AccessTokenExpiresAt = expiresAt
-                                    Issuer = issuer
-                                    Scopes = scopes
-                                    Subject = subject
-                                    UpdatedAt = now }
+                        let updated = applyRefreshToken bundle refreshed now
+                        return Ok updated
         }
 
     let private safetyWindow = Duration.FromSeconds(90.0)
@@ -665,7 +759,7 @@ module Auth =
         task {
             match tryGetGraceTokenFromEnv () with
             | Error message -> return Error message
-            | Ok(Some token) -> return Ok(Some token)
+            | Ok (Some token) -> return Ok(Some token)
             | Ok None ->
                 match tryGetEnv Constants.EnvironmentVariables.GraceTokenFile with
                 | Some _ ->
@@ -678,15 +772,20 @@ module Auth =
                         let endpoint = buildEndpoint m2mConfig.Authority "oauth/token"
 
                         let formValues =
-                            [ "grant_type", "client_credentials"
-                              "client_id", m2mConfig.ClientId
-                              "client_secret", m2mConfig.ClientSecret
-                              "audience", m2mConfig.Audience ]
+                            [
+                                "grant_type", "client_credentials"
+                                "client_id", m2mConfig.ClientId
+                                "client_secret", m2mConfig.ClientSecret
+                                "audience", m2mConfig.Audience
+                            ]
                             |> fun values ->
                                 if List.isEmpty m2mConfig.Scopes then
                                     values
                                 else
-                                    values @ [ "scope", String.Join(" ", m2mConfig.Scopes) ]
+                                    values
+                                    @ [
+                                        "scope", String.Join(" ", m2mConfig.Scopes)
+                                    ]
 
                         let! response = postFormAsync endpoint formValues
 
@@ -705,7 +804,7 @@ module Auth =
                             return
                                 Error
                                     $"Authentication is not configured. Set {Constants.EnvironmentVariables.GraceAuthOidcAuthority}, {Constants.EnvironmentVariables.GraceAuthOidcAudience}, and {Constants.EnvironmentVariables.GraceAuthOidcCliClientId} (or provide GRACE_TOKEN / M2M credentials)."
-                        | Ok(Some cliConfig) ->
+                        | Ok (Some cliConfig) ->
                             let! tokenResult = tryGetInteractiveTokenAsync cliConfig
                             return tokenResult
                         | Error error -> return Error error.Error
@@ -819,7 +918,7 @@ module Auth =
             let! tokenResult = tryGetAccessToken ()
 
             match tokenResult with
-            | Ok(Some _) -> return ()
+            | Ok (Some _) -> return ()
             | Ok None ->
                 Error(GraceError.Create "Authentication required. Run 'grace auth login' and try again." correlationId)
                 |> renderOutput parseResult
@@ -852,7 +951,7 @@ module Auth =
                                 correlationId
                         )
                         |> renderOutput parseResult
-                | Ok(Some config) ->
+                | Ok (Some config) ->
                     let desiredAuth =
                         let raw = parseResult.GetValue(LoginOptions.auth)
 
@@ -885,9 +984,14 @@ module Auth =
                                 }
 
                         match tokenResult with
-                        | Error message -> return Error(GraceError.Create message correlationId) |> renderOutput parseResult
+                        | Error message ->
+                            return
+                                Error(GraceError.Create message correlationId)
+                                |> renderOutput parseResult
                         | Ok response ->
-                            let refreshToken = response.RefreshToken |> Option.defaultValue String.Empty
+                            let refreshToken =
+                                response.RefreshToken
+                                |> Option.defaultValue String.Empty
 
                             if String.IsNullOrWhiteSpace refreshToken then
                                 return
@@ -923,13 +1027,13 @@ module Auth =
 
                 let graceTokenPresent =
                     match graceTokenResult with
-                    | Ok(Some _) -> true
+                    | Ok (Some _) -> true
                     | Ok None -> false
                     | Error _ -> true
 
                 let graceTokenValid =
                     match graceTokenResult with
-                    | Ok(Some _) -> true
+                    | Ok (Some _) -> true
                     | _ -> false
 
                 let graceTokenError =
@@ -966,8 +1070,14 @@ module Auth =
 
                 let interactiveConfigured = cliConfig |> Option.isSome
                 let interactiveTokenPresent = interactiveBundle |> Option.isSome
-                let interactiveExpiresAt = interactiveBundle |> Option.map (fun bundle -> bundle.AccessTokenExpiresAt)
-                let interactiveSubject = interactiveBundle |> Option.bind (fun bundle -> bundle.Subject)
+
+                let interactiveExpiresAt =
+                    interactiveBundle
+                    |> Option.map (fun bundle -> bundle.AccessTokenExpiresAt)
+
+                let interactiveSubject =
+                    interactiveBundle
+                    |> Option.bind (fun bundle -> bundle.Subject)
 
                 let activeSource =
                     if graceTokenValid then
@@ -1037,11 +1147,14 @@ module Auth =
                     return
                         Error(GraceError.Create "Interactive authentication is not configured." correlationId)
                         |> renderOutput parseResult
-                | Ok(Some config) ->
+                | Ok (Some config) ->
                     let! storeResult = verifySecureStoreAsync config
 
                     match storeResult with
-                    | Error message -> return Error(GraceError.Create message correlationId) |> renderOutput parseResult
+                    | Error message ->
+                        return
+                            Error(GraceError.Create message correlationId)
+                            |> renderOutput parseResult
                     | Ok store ->
                         do! withTokenLock store (fun () -> task { clearTokenBundle store })
 
@@ -1068,7 +1181,8 @@ module Auth =
                     if parseResult |> hasOutput then
                         AnsiConsole.MarkupLine($"[{Colors.Important}]Grace user id: {Markup.Escape(graceReturnValue.ReturnValue.GraceUserId)}[/]")
 
-                        if not <| List.isEmpty graceReturnValue.ReturnValue.Claims then
+                        if not
+                           <| List.isEmpty graceReturnValue.ReturnValue.Claims then
                             let claimList = String.Join(", ", graceReturnValue.ReturnValue.Claims)
                             AnsiConsole.MarkupLine($"[{Colors.Highlighted}]Claims:[/] {Markup.Escape(claimList)}")
 
@@ -1102,7 +1216,10 @@ module Auth =
                             parseDurationSeconds expiresInRaw
 
                     match expiresInResult with
-                    | Error message -> return Error(GraceError.Create message correlationId) |> renderOutput parseResult
+                    | Error message ->
+                        return
+                            Error(GraceError.Create message correlationId)
+                            |> renderOutput parseResult
                     | Ok expiresInSeconds ->
                         let parameters = Grace.Shared.Parameters.Auth.CreatePersonalAccessTokenParameters()
                         parameters.CorrelationId <- correlationId
@@ -1136,6 +1253,34 @@ module Auth =
                         | Error error -> return Error error |> renderOutput parseResult
             }
 
+    let private renderTokenList (_parseResult: ParseResult) (tokens: Grace.Types.PersonalAccessToken.PersonalAccessTokenSummary list) : unit =
+        let table = Table(Border = TableBorder.Rounded)
+        table.AddColumn("Name") |> ignore
+        table.AddColumn("TokenId") |> ignore
+        table.AddColumn("Created") |> ignore
+        table.AddColumn("Expires") |> ignore
+        table.AddColumn("Last Used") |> ignore
+        table.AddColumn("Revoked") |> ignore
+
+        tokens
+        |> List.iter (fun token ->
+            let created = instantToLocalTime token.CreatedAt
+            let expiresText = formatInstantOption token.ExpiresAt
+            let lastUsed = formatInstantOption token.LastUsedAt
+            let revoked = formatInstantOption token.RevokedAt
+
+            table.AddRow(
+                Markup.Escape(token.Name),
+                token.TokenId.ToString(),
+                Markup.Escape(created),
+                Markup.Escape(expiresText),
+                Markup.Escape(lastUsed),
+                Markup.Escape(revoked)
+            )
+            |> ignore)
+
+        AnsiConsole.Write(table)
+
     type TokenList() =
         inherit AsynchronousCommandLineAction()
 
@@ -1159,32 +1304,7 @@ module Auth =
                 match result with
                 | Ok graceReturnValue ->
                     if parseResult |> hasOutput then
-                        let table = Table(Border = TableBorder.Rounded)
-                        table.AddColumn("Name") |> ignore
-                        table.AddColumn("TokenId") |> ignore
-                        table.AddColumn("Created") |> ignore
-                        table.AddColumn("Expires") |> ignore
-                        table.AddColumn("Last Used") |> ignore
-                        table.AddColumn("Revoked") |> ignore
-
-                        graceReturnValue.ReturnValue
-                        |> List.iter (fun token ->
-                            let created = instantToLocalTime token.CreatedAt
-                            let expiresText = formatInstantOption token.ExpiresAt
-                            let lastUsed = formatInstantOption token.LastUsedAt
-                            let revoked = formatInstantOption token.RevokedAt
-
-                            table.AddRow(
-                                Markup.Escape(token.Name),
-                                token.TokenId.ToString(),
-                                Markup.Escape(created),
-                                Markup.Escape(expiresText),
-                                Markup.Escape(lastUsed),
-                                Markup.Escape(revoked)
-                            )
-                            |> ignore)
-
-                        AnsiConsole.Write(table)
+                        renderTokenList parseResult graceReturnValue.ReturnValue
 
                     return Ok graceReturnValue |> renderOutput parseResult
                 | Error error -> return Error error |> renderOutput parseResult
@@ -1257,13 +1377,13 @@ module Auth =
 
                 let graceTokenPresent =
                     match graceTokenResult with
-                    | Ok(Some _) -> true
+                    | Ok (Some _) -> true
                     | Ok None -> false
                     | Error _ -> true
 
                 let graceTokenValid =
                     match graceTokenResult with
-                    | Ok(Some _) -> true
+                    | Ok (Some _) -> true
                     | _ -> false
 
                 let graceTokenError =

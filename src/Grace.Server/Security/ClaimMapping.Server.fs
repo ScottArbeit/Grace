@@ -54,7 +54,9 @@ module ClaimMapping =
         for value in getClaimValues principal PrincipalMapper.GraceGroupIdClaim do
             existingGroupClaims.Add(value) |> ignore
 
-        let roleClaims = (getClaimValues principal "roles") @ (getClaimValues principal ClaimTypes.Role)
+        let roleClaims =
+            (getClaimValues principal "roles")
+            @ (getClaimValues principal ClaimTypes.Role)
 
         for value in roleClaims do
             if existingGraceClaims.Add(value) then
@@ -64,11 +66,15 @@ module ClaimMapping =
             if existingGraceClaims.Add(value) then
                 claimsToAdd.Add(Claim(PrincipalMapper.GraceClaim, value))
 
-        for value in getClaimValues principal "scp" |> List.collect splitScopes do
+        for value in
+            getClaimValues principal "scp"
+            |> List.collect splitScopes do
             if existingGraceClaims.Add(value) then
                 claimsToAdd.Add(Claim(PrincipalMapper.GraceClaim, value))
 
-        for value in getClaimValues principal "scope" |> List.collect splitScopes do
+        for value in
+            getClaimValues principal "scope"
+            |> List.collect splitScopes do
             if existingGraceClaims.Add(value) then
                 claimsToAdd.Add(Claim(PrincipalMapper.GraceClaim, value))
 

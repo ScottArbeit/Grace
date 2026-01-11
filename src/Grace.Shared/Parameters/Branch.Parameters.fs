@@ -92,7 +92,14 @@ module Branch =
 
     type GetLatestReferencesByReferenceTypeParameters() =
         inherit BranchParameters()
-        member val public ReferenceTypes: ReferenceType array = [| Promotion; Commit; Checkpoint; Save |] with get, set
+
+        member val public ReferenceTypes: ReferenceType array =
+            [|
+                Promotion
+                Commit
+                Checkpoint
+                Save
+            |] with get, set
 
     /// Parameters for the /branch/getDiffsForReferenceType endpoint.
     type GetDiffsForReferenceTypeParameters() =

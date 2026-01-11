@@ -146,10 +146,10 @@ module Services =
                         message.Subject <- "GraceEvent"
                         message.CorrelationId <- metadata.CorrelationId
                         message.MessageId <- $"{metadata.CorrelationId}-{getCurrentInstant().ToUnixTimeMilliseconds}" //Guid.NewGuid().ToString("N")
-                        message.ApplicationProperties["graceEventType"] <- getDiscriminatedUnionFullName graceEvent
+                        message.ApplicationProperties[ "graceEventType" ] <- getDiscriminatedUnionFullName graceEvent
 
                         for kvp in metadata.Properties do
-                            message.ApplicationProperties[kvp.Key] <- kvp.Value
+                            message.ApplicationProperties[ kvp.Key ] <- kvp.Value
 
                         do! serviceBusSender.Value.SendMessageAsync(message)
 
@@ -159,7 +159,8 @@ module Services =
                             metadata.CorrelationId,
                             getDiscriminatedUnionCaseName graceEvent
                         )
-                    with ex ->
+                    with
+                    | ex ->
                         log.LogError(
                             ex,
                             "{CurrentInstant}: Failed publishing GraceEvent via Azure Service Bus. CorrelationId: {CorrelationId}; EventType: {EventType}.",
@@ -208,7 +209,11 @@ module Services =
                 |> ignore)
 
             // Replaces any leading spaces or tabs at the start of each line with four spaces (multiline) and then trims leading/trailing whitespace from the entire multi-line string.
-            let trimmedSql = Regex.Replace(sb.ToString(), @"(?m)^[ \t]+", "    ").Trim()
+            let trimmedSql =
+                Regex
+                    .Replace(sb.ToString(), @"(?m)^[ \t]+", "    ")
+                    .Trim()
+
             trimmedSql
         finally
             stringBuilderPool.Return sb
@@ -310,7 +315,9 @@ module Services =
             return UriWithSharedAccessSignature($"{blobContainerClient.Uri}/{blobName}?{sasUriParameters}")
         }
 
-    let azureBlobReadPermissions = (BlobSasPermissions.Read ||| BlobSasPermissions.List) // These are the minimum permissions needed to read a file.
+    let azureBlobReadPermissions =
+        (BlobSasPermissions.Read
+         ||| BlobSasPermissions.List) // These are the minimum permissions needed to read a file.
 
     /// Gets a full Uri, including shared access signature, for reading from the object storage provider.
     let getUriWithReadSharedAccessSignature (repositoryDto: RepositoryDto) (blobName: string) (correlationId: CorrelationId) =
@@ -392,7 +399,7 @@ module Services =
                     //logToConsole $"QueryDefinition in ownerNameExists:{Environment.NewLine}{printQueryDefinition queryDefinition}"
 
                     let iterator =
-                        DefaultRetryPolicy.Execute(fun () ->
+                        DefaultRetryPolicy.Execute (fun () ->
                             cosmosContainer.GetItemQueryIterator<OwnerEventValue>(queryDefinition, requestOptions = queryRequestOptions))
 
                     while iterator.HasMoreResults do
@@ -473,7 +480,10 @@ module Services =
         task {
             let mutable ownerGuid = Guid.Empty
 
-            if not <| String.IsNullOrEmpty(ownerId) && Guid.TryParse(ownerId, &ownerGuid) then
+            if
+                not <| String.IsNullOrEmpty(ownerId)
+                && Guid.TryParse(ownerId, &ownerGuid)
+            then
                 // Check if we have this owner id in MemoryCache.
                 match memoryCache.GetOwnerIdEntry ownerGuid with
                 | Some value ->
@@ -617,7 +627,12 @@ module Services =
                             if iterator.HasMoreResults then
                                 let! currentResultSet = iterator.ReadNextAsync()
 
-                                let organizationId = currentResultSet.FirstOrDefault({ organizationId = String.Empty }).organizationId
+                                let organizationId =
+                                    currentResultSet
+                                        .FirstOrDefault(
+                                            { organizationId = String.Empty }
+                                        )
+                                        .organizationId
 
                                 if String.IsNullOrEmpty(organizationId) then
                                     // We didn't find the OrganizationId, so add this OrganizationName to the MemoryCache and indicate that we have already checked.
@@ -736,7 +751,12 @@ module Services =
                             if iterator.HasMoreResults then
                                 let! currentResultSet = iterator.ReadNextAsync()
 
-                                let repositoryIdString = currentResultSet.FirstOrDefault({ repositoryId = String.Empty }).repositoryId
+                                let repositoryIdString =
+                                    currentResultSet
+                                        .FirstOrDefault(
+                                            { repositoryId = String.Empty }
+                                        )
+                                        .repositoryId
 
                                 if String.IsNullOrEmpty(repositoryIdString) then
                                     // We didn't find the RepositoryId, so add this RepositoryName to the MemoryCache and indicate that we have already checked.
@@ -857,7 +877,13 @@ module Services =
 
                             if iterator.HasMoreResults then
                                 let! currentResultSet = iterator.ReadNextAsync()
-                                let branchId = currentResultSet.FirstOrDefault({ branchId = String.Empty }).branchId
+
+                                let branchId =
+                                    currentResultSet
+                                        .FirstOrDefault(
+                                            { branchId = String.Empty }
+                                        )
+                                        .branchId
 
                                 if String.IsNullOrEmpty(branchId) then
                                     // We didn't find the BranchId.
@@ -934,8 +960,12 @@ module Services =
 
                         while iterator.HasMoreResults do
                             let! results = iterator.ReadNextAsync()
-                            indexMetrics.Append($"{results.IndexMetrics}, ") |> ignore
-                            requestCharge.Append($"{results.RequestCharge:F3}, ") |> ignore
+
+                            indexMetrics.Append($"{results.IndexMetrics}, ")
+                            |> ignore
+
+                            requestCharge.Append($"{results.RequestCharge:F3}, ")
+                            |> ignore
 
                             let eventsForAllOrganizations = results.Resource
 
@@ -944,21 +974,23 @@ module Services =
                                 let organizationDto =
                                     eventsForOneOrganization.State
                                     |> Seq.fold
-                                        (fun organizationDto organizationEvent -> organizationDto |> OrganizationDto.UpdateDto organizationEvent)
+                                        (fun organizationDto organizationEvent ->
+                                            organizationDto
+                                            |> OrganizationDto.UpdateDto organizationEvent)
                                         OrganizationDto.Default
 
                                 organizations.Add(organizationDto))
 
-                        if
-                            (indexMetrics.Length >= 2)
-                            && (requestCharge.Length >= 2)
-                            && Activity.Current <> null
-                        then
-                            Activity.Current
+                        if (indexMetrics.Length >= 2)
+                           && (requestCharge.Length >= 2)
+                           && Activity.Current <> null then
+                            Activity
+                                .Current
                                 .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
                                 .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
                             |> ignore
-                    with ex ->
+                    with
+                    | ex ->
                         logToConsole $"Got an exception."
                         logToConsole $"{ExceptionResponse.Create ex}"
                 finally
@@ -966,7 +998,10 @@ module Services =
                     stringBuilderPool.Return(requestCharge)
             | MongoDB -> ()
 
-            return organizations.OrderBy(fun o -> o.OrganizationName).ToArray()
+            return
+                organizations
+                    .OrderBy(fun o -> o.OrganizationName)
+                    .ToArray()
         }
 
     /// Checks if the specified organization name is unique for the specified owner.
@@ -1006,7 +1041,9 @@ module Services =
                             let organizationDto =
                                 eventsForOneOrganization.State
                                 |> Seq.fold
-                                    (fun organizationDto organizationEvent -> organizationDto |> OrganizationDto.UpdateDto organizationEvent)
+                                    (fun organizationDto organizationEvent ->
+                                        organizationDto
+                                        |> OrganizationDto.UpdateDto organizationEvent)
                                     OrganizationDto.Default
 
                             organizations.Add(organizationDto))
@@ -1023,8 +1060,8 @@ module Services =
                     else
                         // The organization name is not unique.
                         return Ok false
-                with ex ->
-                    return Error $"{ExceptionResponse.Create ex}"
+                with
+                | ex -> return Error $"{ExceptionResponse.Create ex}"
             | MongoDB -> return Ok false
         }
 
@@ -1067,7 +1104,9 @@ module Services =
                             let repositoryDto =
                                 eventsForOneRepository.State
                                 |> Seq.fold
-                                    (fun repositoryDto repositoryEvent -> repositoryDto |> RepositoryDto.UpdateDto repositoryEvent)
+                                    (fun repositoryDto repositoryEvent ->
+                                        repositoryDto
+                                        |> RepositoryDto.UpdateDto repositoryEvent)
                                     RepositoryDto.Default
 
                             repositories.Add(repositoryDto))
@@ -1083,8 +1122,8 @@ module Services =
                         return Ok true
                     else
                         return Ok true // This else should never be hit.
-                with ex ->
-                    return Error $"{ExceptionResponse.Create ex}"
+                with
+                | ex -> return Error $"{ExceptionResponse.Create ex}"
             | MongoDB -> return Ok false
         }
 
@@ -1123,8 +1162,12 @@ module Services =
 
                         while iterator.HasMoreResults do
                             let! results = iterator.ReadNextAsync()
-                            indexMetrics.Append($"{results.IndexMetrics}, ") |> ignore
-                            requestCharge.Append($"{results.RequestCharge:F3}, ") |> ignore
+
+                            indexMetrics.Append($"{results.IndexMetrics}, ")
+                            |> ignore
+
+                            requestCharge.Append($"{results.RequestCharge:F3}, ")
+                            |> ignore
 
                             let eventsForAllRepositories = results.Resource
 
@@ -1133,21 +1176,23 @@ module Services =
                                 let repositoryDto =
                                     eventsForOneRepository.State
                                     |> Array.fold
-                                        (fun repositoryDto repositoryEvent -> repositoryDto |> RepositoryDto.UpdateDto repositoryEvent)
+                                        (fun repositoryDto repositoryEvent ->
+                                            repositoryDto
+                                            |> RepositoryDto.UpdateDto repositoryEvent)
                                         RepositoryDto.Default
 
                                 repositories.Add(repositoryDto))
 
-                        if
-                            (indexMetrics.Length >= 2)
-                            && (requestCharge.Length >= 2)
-                            && Activity.Current <> null
-                        then
-                            Activity.Current
+                        if (indexMetrics.Length >= 2)
+                           && (requestCharge.Length >= 2)
+                           && Activity.Current <> null then
+                            Activity
+                                .Current
                                 .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
                                 .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
                             |> ignore
-                    with ex ->
+                    with
+                    | ex ->
                         logToConsole $"Got an exception."
                         logToConsole $"{ExceptionResponse.Create ex}"
                 finally
@@ -1155,7 +1200,10 @@ module Services =
                     stringBuilderPool.Return(requestCharge)
             | MongoDB -> ()
 
-            return repositories.OrderBy(fun r -> r.RepositoryName).ToArray()
+            return
+                repositories
+                    .OrderBy(fun r -> r.RepositoryName)
+                    .ToArray()
         }
 
     /// Gets a list of references that match a provided SHA-256 hash.
@@ -1192,24 +1240,32 @@ module Services =
 
                     while iterator.HasMoreResults do
                         let! results = iterator.ReadNextAsync()
-                        indexMetrics.Append($"{results.IndexMetrics}, ") |> ignore
-                        requestCharge.Append($"{results.RequestCharge:F3}, ") |> ignore
+
+                        indexMetrics.Append($"{results.IndexMetrics}, ")
+                        |> ignore
+
+                        requestCharge.Append($"{results.RequestCharge:F3}, ")
+                        |> ignore
+
                         let eventsForAllReferences = results.Resource
 
                         eventsForAllReferences
                         |> Seq.iter (fun eventsForOneReference ->
                             let referenceDto =
                                 eventsForOneReference.State
-                                |> Array.fold (fun referenceDto referenceEvent -> referenceDto |> ReferenceDto.UpdateDto referenceEvent) ReferenceDto.Default
+                                |> Array.fold
+                                    (fun referenceDto referenceEvent ->
+                                        referenceDto
+                                        |> ReferenceDto.UpdateDto referenceEvent)
+                                    ReferenceDto.Default
 
                             references.Add(referenceDto))
 
-                    if
-                        (indexMetrics.Length >= 2)
-                        && (requestCharge.Length >= 2)
-                        && Activity.Current <> null
-                    then
-                        Activity.Current
+                    if (indexMetrics.Length >= 2)
+                       && (requestCharge.Length >= 2)
+                       && Activity.Current <> null then
+                        Activity
+                            .Current
                             .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
                             .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
                         |> ignore
@@ -1218,7 +1274,10 @@ module Services =
                     stringBuilderPool.Return(requestCharge)
             | MongoDB -> ()
 
-            return references.OrderBy(fun reference -> reference.CreatedAt).ToArray()
+            return
+                references
+                    .OrderBy(fun reference -> reference.CreatedAt)
+                    .ToArray()
         }
 
     /// Gets a reference by its SHA-256 hash.
@@ -1261,26 +1320,33 @@ module Services =
                     while iterator.HasMoreResults do
                         addTiming TimingFlag.BeforeStorageQuery "getReferences" correlationId
                         let! results = iterator.ReadNextAsync()
-                        indexMetrics.Append($"{results.IndexMetrics}, ") |> ignore
-                        requestCharge.Append($"{results.RequestCharge:F3}, ") |> ignore
+
+                        indexMetrics.Append($"{results.IndexMetrics}, ")
+                        |> ignore
+
+                        requestCharge.Append($"{results.RequestCharge:F3}, ")
+                        |> ignore
+
                         let eventsForAllReferences = results.Resource
 
                         eventsForAllReferences
                         |> Seq.iter (fun eventsForOneReference ->
                             let referenceDto =
                                 eventsForOneReference.State
-                                |> Array.fold (fun referenceDto referenceEvent -> referenceDto |> ReferenceDto.UpdateDto referenceEvent) ReferenceDto.Default
+                                |> Array.fold
+                                    (fun referenceDto referenceEvent ->
+                                        referenceDto
+                                        |> ReferenceDto.UpdateDto referenceEvent)
+                                    ReferenceDto.Default
 
                             references.Add(referenceDto))
 
                     //logToConsole
                     //    $"In Services.Actor.getReferences: BranchId: {branchId}; RepositoryId: {repositoryId}; Retrieved {references.Count} references.{Environment.NewLine}{printQueryDefinition queryDefinition}{Environment.NewLine}{serialize references}"
 
-                    if
-                        indexMetrics.Length >= 2
-                        && requestCharge.Length >= 2
-                        && Activity.Current <> null
-                    then
+                    if indexMetrics.Length >= 2
+                       && requestCharge.Length >= 2
+                       && Activity.Current <> null then
                         Activity.Current.SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
                         |> ignore
 
@@ -1291,7 +1357,10 @@ module Services =
                     stringBuilderPool.Return(requestCharge)
             | MongoDB -> ()
 
-            return references.OrderBy(fun reference -> reference.CreatedAt).ToArray()
+            return
+                references
+                    .OrderBy(fun reference -> reference.CreatedAt)
+                    .ToArray()
         }
 
     type DocumentIdentifier() =
@@ -1369,7 +1438,8 @@ module Services =
                 //    $"In Services.deleteAllFromCosmosDBThatMatch(): batch duration (s): {duration_s:F3}; batch requests/second: {rps:F3}; failed.Count: {failed.Count}; totalRequestCharge: {float totalRequestCharge / 1000.0:F2}; totalRecordsDeleted: {totalRecordsDeleted}; overall duration (m): {overall_duration_s / 60.0:F3}; overall requests/second: {overallRps:F3}."
 
                 return failed
-            with ex ->
+            with
+            | ex ->
                 failed.Add((ExceptionResponse.Create ex).``exception``)
                 return failed
 #else
@@ -1439,24 +1509,32 @@ module Services =
                         addTiming TimingFlag.BeforeStorageQuery "getReferencesByType" correlationId
                         let! results = iterator.ReadNextAsync()
                         addTiming TimingFlag.AfterStorageQuery "getReferencesByType" correlationId
-                        indexMetrics.Append($"{results.IndexMetrics}, ") |> ignore
-                        requestCharge.Append($"{results.RequestCharge:F3}, ") |> ignore
+
+                        indexMetrics.Append($"{results.IndexMetrics}, ")
+                        |> ignore
+
+                        requestCharge.Append($"{results.RequestCharge:F3}, ")
+                        |> ignore
+
                         let eventsForAllReferences = results.Resource
 
                         eventsForAllReferences
                         |> Seq.iter (fun eventsForOneReference ->
                             let referenceDto =
                                 eventsForOneReference.State
-                                |> Array.fold (fun referenceDto referenceEvent -> referenceDto |> ReferenceDto.UpdateDto referenceEvent) ReferenceDto.Default
+                                |> Array.fold
+                                    (fun referenceDto referenceEvent ->
+                                        referenceDto
+                                        |> ReferenceDto.UpdateDto referenceEvent)
+                                    ReferenceDto.Default
 
                             references.Add(referenceDto))
 
-                    if
-                        indexMetrics.Length >= 2
-                        && requestCharge.Length >= 2
-                        && Activity.Current <> null
-                    then
-                        Activity.Current
+                    if indexMetrics.Length >= 2
+                       && requestCharge.Length >= 2
+                       && Activity.Current <> null then
+                        Activity
+                            .Current
                             .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
                             .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
                         |> ignore
@@ -1465,7 +1543,10 @@ module Services =
                     stringBuilderPool.Return(requestCharge)
             | MongoDB -> ()
 
-            return references.OrderBy(fun reference -> reference.CreatedAt).ToArray()
+            return
+                references
+                    .OrderBy(fun reference -> reference.CreatedAt)
+                    .ToArray()
         }
 
     let getPromotions = getReferencesByType ReferenceType.Promotion
@@ -1506,24 +1587,32 @@ module Services =
 
                     while iterator.HasMoreResults do
                         let! results = iterator.ReadNextAsync()
-                        indexMetrics.Append($"{results.IndexMetrics}, ") |> ignore
-                        requestCharge.Append($"{results.RequestCharge:F3}, ") |> ignore
+
+                        indexMetrics.Append($"{results.IndexMetrics}, ")
+                        |> ignore
+
+                        requestCharge.Append($"{results.RequestCharge:F3}, ")
+                        |> ignore
+
                         let eventsForAllReferences = results.Resource
 
                         eventsForAllReferences
                         |> Seq.iter (fun eventsForOneReference ->
                             let referenceDto =
                                 eventsForOneReference.State
-                                |> Array.fold (fun referenceDto referenceEvent -> referenceDto |> ReferenceDto.UpdateDto referenceEvent) ReferenceDto.Default
+                                |> Array.fold
+                                    (fun referenceDto referenceEvent ->
+                                        referenceDto
+                                        |> ReferenceDto.UpdateDto referenceEvent)
+                                    ReferenceDto.Default
 
                             references.Add(referenceDto))
 
-                    if
-                        (indexMetrics.Length >= 2)
-                        && (requestCharge.Length >= 2)
-                        && Activity.Current <> null
-                    then
-                        Activity.Current
+                    if (indexMetrics.Length >= 2)
+                       && (requestCharge.Length >= 2)
+                       && Activity.Current <> null then
+                        Activity
+                            .Current
                             .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
                             .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
                         |> ignore
@@ -1589,10 +1678,13 @@ module Services =
                                                 let referenceDto =
                                                     eventsForOneReference.State
                                                     |> Array.fold
-                                                        (fun referenceDto referenceEvent -> referenceDto |> ReferenceDto.UpdateDto referenceEvent)
+                                                        (fun referenceDto referenceEvent ->
+                                                            referenceDto
+                                                            |> ReferenceDto.UpdateDto referenceEvent)
                                                         ReferenceDto.Default
 
-                                                referenceDtos.TryAdd(referenceType, referenceDto) |> ignore)
+                                                referenceDtos.TryAdd(referenceType, referenceDto)
+                                                |> ignore)
                                     }
                                 ))
                         )
@@ -1608,12 +1700,11 @@ module Services =
                         for r in requestChargeBag do
                             requestChargeSb.Append($"{r}, ") |> ignore
 
-                        if
-                            (indexMetricsSb.Length >= 2)
-                            && (requestChargeSb.Length >= 2)
-                            && Activity.Current <> null
-                        then
-                            Activity.Current
+                        if (indexMetricsSb.Length >= 2)
+                           && (requestChargeSb.Length >= 2)
+                           && Activity.Current <> null then
+                            Activity
+                                .Current
                                 .SetTag("indexMetrics", $"{indexMetricsSb.Remove(indexMetricsSb.Length - 2, 2)}")
                                 .SetTag("requestCharge", $"{requestChargeSb.Remove(requestChargeSb.Length - 2, 2)}")
                             |> ignore
@@ -1660,24 +1751,32 @@ module Services =
 
                     while iterator.HasMoreResults do
                         let! results = DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> iterator.ReadNextAsync())
-                        indexMetrics.Append($"{results.IndexMetrics}, ") |> ignore
-                        requestCharge.Append($"{results.RequestCharge:F3}, ") |> ignore
+
+                        indexMetrics.Append($"{results.IndexMetrics}, ")
+                        |> ignore
+
+                        requestCharge.Append($"{results.RequestCharge:F3}, ")
+                        |> ignore
+
                         let eventsForAllReferences = results.Resource
 
                         eventsForAllReferences
                         |> Seq.iter (fun eventsForOneReference ->
                             let referenceDto =
                                 eventsForOneReference.State
-                                |> Array.fold (fun referenceDto referenceEvent -> referenceDto |> ReferenceDto.UpdateDto referenceEvent) ReferenceDto.Default
+                                |> Array.fold
+                                    (fun referenceDto referenceEvent ->
+                                        referenceDto
+                                        |> ReferenceDto.UpdateDto referenceEvent)
+                                    ReferenceDto.Default
 
                             references.Add(referenceDto))
 
-                    if
-                        (indexMetrics.Length >= 2)
-                        && (requestCharge.Length >= 2)
-                        && Activity.Current <> null
-                    then
-                        Activity.Current
+                    if (indexMetrics.Length >= 2)
+                       && (requestCharge.Length >= 2)
+                       && Activity.Current <> null then
+                        Activity
+                            .Current
                             .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
                             .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
                         |> ignore
@@ -1750,8 +1849,12 @@ module Services =
                             addTiming TimingFlag.BeforeStorageQuery "getBranches" correlationId
                             let! results = iterator.ReadNextAsync()
                             addTiming TimingFlag.AfterStorageQuery "getBranches" correlationId
-                            indexMetrics.Append($"{results.IndexMetrics}, ") |> ignore
-                            requestCharge.Append($"{results.RequestCharge:F3}, ") |> ignore
+
+                            indexMetrics.Append($"{results.IndexMetrics}, ")
+                            |> ignore
+
+                            requestCharge.Append($"{results.RequestCharge:F3}, ")
+                            |> ignore
 
                             let branchIdValues = results.Resource
 
@@ -1771,16 +1874,16 @@ module Services =
                                     ))
                             )
 
-                        if
-                            indexMetrics.Length >= 2
-                            && requestCharge.Length >= 2
-                            && Activity.Current <> null
-                        then
-                            Activity.Current
+                        if indexMetrics.Length >= 2
+                           && requestCharge.Length >= 2
+                           && Activity.Current <> null then
+                            Activity
+                                .Current
                                 .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
                                 .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
                             |> ignore
-                    with ex ->
+                    with
+                    | ex ->
                         logToConsole $"Got an exception."
                         logToConsole $"{ExceptionResponse.Create ex}"
                 finally
@@ -1788,7 +1891,11 @@ module Services =
                     stringBuilderPool.Return(requestCharge)
             | MongoDB -> ()
 
-            return branches.Values.OrderBy(fun branchDto -> branchDto.UpdatedAt).ToArray()
+            return
+                branches
+                    .Values
+                    .OrderBy(fun branchDto -> branchDto.UpdatedAt)
+                    .ToArray()
         }
 
     /// Gets a DirectoryVersion by searching using a Sha256Hash value.
@@ -1825,8 +1932,13 @@ module Services =
 
                         while iterator.HasMoreResults do
                             let! results = DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> iterator.ReadNextAsync())
-                            indexMetrics.Append($"{results.IndexMetrics}, ") |> ignore
-                            requestCharge.Append($"{results.RequestCharge:F3}, ") |> ignore
+
+                            indexMetrics.Append($"{results.IndexMetrics}, ")
+                            |> ignore
+
+                            requestCharge.Append($"{results.RequestCharge:F3}, ")
+                            |> ignore
+
                             let eventsForAllDirectories = results.Resource
 
                             eventsForAllDirectories
@@ -1834,7 +1946,9 @@ module Services =
                                 let directoryVersionDto =
                                     eventsForOneDirectory.State
                                     |> Array.fold
-                                        (fun directoryVersionDto directoryEvent -> directoryVersionDto |> DirectoryVersionDto.UpdateDto directoryEvent)
+                                        (fun directoryVersionDto directoryEvent ->
+                                            directoryVersionDto
+                                            |> DirectoryVersionDto.UpdateDto directoryEvent)
                                         DirectoryVersionDto.Default
 
                                 directoryVersionDtos.Add(directoryVersionDto))
@@ -1842,16 +1956,16 @@ module Services =
                             if directoryVersionDtos.Count > 0 then
                                 directoryVersion <- directoryVersionDtos[0].DirectoryVersion
 
-                        if
-                            (indexMetrics.Length >= 2)
-                            && (requestCharge.Length >= 2)
-                            && Activity.Current <> null
-                        then
-                            Activity.Current
+                        if (indexMetrics.Length >= 2)
+                           && (requestCharge.Length >= 2)
+                           && Activity.Current <> null then
+                            Activity
+                                .Current
                                 .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
                                 .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
                             |> ignore
-                    with ex ->
+                    with
+                    | ex ->
                         log.LogError(
                             ex,
                             "{CurrentInstant}: Exception in Services.getDirectoryBySha256Hash(). QueryDefinition: {queryDefinition}",
@@ -1863,10 +1977,8 @@ module Services =
                     stringBuilderPool.Return(requestCharge)
             | MongoDB -> ()
 
-            if
-                directoryVersion.DirectoryVersionId
-                <> DirectoryVersion.Default.DirectoryVersionId
-            then
+            if directoryVersion.DirectoryVersionId
+               <> DirectoryVersion.Default.DirectoryVersionId then
                 return Some directoryVersion
             else
                 return None
@@ -1904,8 +2016,13 @@ module Services =
 
                     while iterator.HasMoreResults do
                         let! results = iterator.ReadNextAsync()
-                        indexMetrics.Append($"{results.IndexMetrics}, ") |> ignore
-                        requestCharge.Append($"{results.RequestCharge:F3}, ") |> ignore
+
+                        indexMetrics.Append($"{results.IndexMetrics}, ")
+                        |> ignore
+
+                        requestCharge.Append($"{results.RequestCharge:F3}, ")
+                        |> ignore
+
                         let eventsForAllDirectories = results.Resource
 
                         eventsForAllDirectories
@@ -1913,17 +2030,18 @@ module Services =
                             let directoryVersionDto =
                                 eventsForOneDirectory.State
                                 |> Array.fold
-                                    (fun directoryVersionDto directoryEvent -> directoryVersionDto |> DirectoryVersionDto.UpdateDto directoryEvent)
+                                    (fun directoryVersionDto directoryEvent ->
+                                        directoryVersionDto
+                                        |> DirectoryVersionDto.UpdateDto directoryEvent)
                                     DirectoryVersionDto.Default
 
                             directoryVersion <- directoryVersionDto.DirectoryVersion)
 
-                    if
-                        (indexMetrics.Length >= 2)
-                        && (requestCharge.Length >= 2)
-                        && Activity.Current <> null
-                    then
-                        Activity.Current
+                    if (indexMetrics.Length >= 2)
+                       && (requestCharge.Length >= 2)
+                       && Activity.Current <> null then
+                        Activity
+                            .Current
                             .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
                             .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
                         |> ignore
@@ -1932,10 +2050,8 @@ module Services =
                     stringBuilderPool.Return(requestCharge)
             | MongoDB -> ()
 
-            if
-                directoryVersion.DirectoryVersionId
-                <> DirectoryVersion.Default.DirectoryVersionId
-            then
+            if directoryVersion.DirectoryVersionId
+               <> DirectoryVersion.Default.DirectoryVersionId then
                 return Some directoryVersion
             else
                 return None
@@ -1976,8 +2092,13 @@ module Services =
 
                         while iterator.HasMoreResults do
                             let! results = iterator.ReadNextAsync()
-                            indexMetrics.Append($"{results.IndexMetrics}, ") |> ignore
-                            requestCharge.Append($"{results.RequestCharge:F3}, ") |> ignore
+
+                            indexMetrics.Append($"{results.IndexMetrics}, ")
+                            |> ignore
+
+                            requestCharge.Append($"{results.RequestCharge:F3}, ")
+                            |> ignore
+
                             let eventsForAllDirectories = results.Resource
 
                             eventsForAllDirectories
@@ -1985,7 +2106,9 @@ module Services =
                                 let directoryVersionDto =
                                     eventsForOneDirectory.State
                                     |> Array.fold
-                                        (fun directoryVersionDto directoryEvent -> directoryVersionDto |> DirectoryVersionDto.UpdateDto directoryEvent)
+                                        (fun directoryVersionDto directoryEvent ->
+                                            directoryVersionDto
+                                            |> DirectoryVersionDto.UpdateDto directoryEvent)
                                         DirectoryVersionDto.Default
 
                                 directoryVersionDtos.Add(directoryVersionDto))
@@ -1993,16 +2116,16 @@ module Services =
                         if directoryVersionDtos.Count > 0 then
                             directoryVersion <- directoryVersionDtos[0].DirectoryVersion
 
-                        if
-                            (indexMetrics.Length >= 2)
-                            && (requestCharge.Length >= 2)
-                            && Activity.Current <> null
-                        then
-                            Activity.Current
+                        if (indexMetrics.Length >= 2)
+                           && (requestCharge.Length >= 2)
+                           && Activity.Current <> null then
+                            Activity
+                                .Current
                                 .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
                                 .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
                             |> ignore
-                    with ex ->
+                    with
+                    | ex ->
                         let parameters =
                             queryDefinition.GetQueryParameters()
                             |> Seq.fold (fun (state: StringBuilder) (struct (k, v)) -> state.Append($"{k} = {v}; ")) (StringBuilder())
@@ -2019,10 +2142,8 @@ module Services =
                     stringBuilderPool.Return(requestCharge)
             | MongoDB -> ()
 
-            if
-                directoryVersion.DirectoryVersionId
-                <> DirectoryVersion.Default.DirectoryVersionId
-            then
+            if directoryVersion.DirectoryVersionId
+               <> DirectoryVersion.Default.DirectoryVersionId then
                 return Some directoryVersion
             else
                 return None
@@ -2073,7 +2194,10 @@ module Services =
 
                         if not <| results.Resource.Any() then allExist <- false
 
-                Activity.Current.SetTag("allExist", $"{allExist}").SetTag("totalRequestCharge", $"{requestCharge}")
+                Activity
+                    .Current
+                    .SetTag("allExist", $"{allExist}")
+                    .SetTag("totalRequestCharge", $"{requestCharge}")
                 |> ignore
 
                 return allExist
@@ -2106,10 +2230,15 @@ module Services =
                         )
                         |> ignore
                         // Then we add a parameter for each referenceId.
-                        referenceIds.Where(fun referenceId -> not <| referenceId.Equals(ReferenceId.Empty)).Distinct()
+                        referenceIds
+                            .Where(fun referenceId -> not <| referenceId.Equals(ReferenceId.Empty))
+                            .Distinct()
                         |> Seq.iteri (fun i referenceId -> queryText.Append($"@referenceId{i},") |> ignore)
                         // Then we remove the last comma and close the parenthesis.
-                        queryText.Remove(queryText.Length - 1, 1).Append(")") |> ignore
+                        queryText
+                            .Remove(queryText.Length - 1, 1)
+                            .Append(")")
+                        |> ignore
 
                         // Create the query definition.
                         let queryDefinition =
@@ -2119,8 +2248,12 @@ module Services =
                                 .WithParameter("@partitionKey", repositoryId)
 
                         // Add a .WithParameter for each referenceId.
-                        referenceIds.Where(fun referenceId -> not <| referenceId.Equals(ReferenceId.Empty)).Distinct()
-                        |> Seq.iteri (fun i referenceId -> queryDefinition.WithParameter($"@referenceId{i}", $"{referenceId}") |> ignore)
+                        referenceIds
+                            .Where(fun referenceId -> not <| referenceId.Equals(ReferenceId.Empty))
+                            .Distinct()
+                        |> Seq.iteri (fun i referenceId ->
+                            queryDefinition.WithParameter($"@referenceId{i}", $"{referenceId}")
+                            |> ignore)
 
                         //logToConsole $"In getReferencesByReferenceId(): QueryText:{Environment.NewLine}{printQueryDefinition queryDefinition}."
 
@@ -2137,7 +2270,11 @@ module Services =
                             let! results = iterator.ReadNextAsync()
                             addTiming TimingFlag.AfterStorageQuery "getReferencesByReferenceId" correlationId
                             requestCharge <- requestCharge + results.RequestCharge
-                            clientElapsedTime <- clientElapsedTime + results.Diagnostics.GetClientElapsedTime()
+
+                            clientElapsedTime <-
+                                clientElapsedTime
+                                + results.Diagnostics.GetClientElapsedTime()
+
                             let eventsForAllReferences = results.Resource
 
                             eventsForAllReferences
@@ -2145,7 +2282,9 @@ module Services =
                                 let referenceDto =
                                     eventsForOneReference.State
                                     |> Array.fold
-                                        (fun referenceDto referenceEvent -> referenceDto |> ReferenceDto.UpdateDto referenceEvent)
+                                        (fun referenceDto referenceEvent ->
+                                            referenceDto
+                                            |> ReferenceDto.UpdateDto referenceEvent)
                                         ReferenceDto.Default
 
                                 queryResults.Add(referenceDto.ReferenceId, referenceDto))
@@ -2160,7 +2299,8 @@ module Services =
                                 // In case the caller supplied an empty referenceId, add a default ReferenceDto.
                                 referenceDtos.Add(ReferenceDto.Default))
 
-                        Activity.Current
+                        Activity
+                            .Current
                             .SetTag("referenceDtos.Count", $"{referenceDtos.Count}")
                             .SetTag("clientElapsedTime", $"{clientElapsedTime}")
                             .SetTag("totalRequestCharge", $"{requestCharge}")
@@ -2219,11 +2359,17 @@ module Services =
                             branchDtos.Add(branchDto))
 
                 if Activity.Current <> null then
-                    Activity.Current.SetTag("referenceDtos.Count", $"{branchDtos.Count}").SetTag("totalRequestCharge", $"{requestCharge}")
+                    Activity
+                        .Current
+                        .SetTag("referenceDtos.Count", $"{branchDtos.Count}")
+                        .SetTag("totalRequestCharge", $"{requestCharge}")
                     |> ignore
             | MongoDB -> ()
 
-            return branchDtos.OrderBy(fun branchDto -> branchDto.BranchName).ToArray()
+            return
+                branchDtos
+                    .OrderBy(fun branchDto -> branchDto.BranchName)
+                    .ToArray()
         }
 
     /// Gets a list of child BranchDtos for a given parent branch.
@@ -2271,9 +2417,13 @@ module Services =
                             childBranches.Add(branchDto))
 
                     if (Activity.Current <> null) then
-                        Activity.Current.SetTag("childBranches.Count", $"{childBranches.Count}").SetTag("totalRequestCharge", $"{requestCharge}")
+                        Activity
+                            .Current
+                            .SetTag("childBranches.Count", $"{childBranches.Count}")
+                            .SetTag("totalRequestCharge", $"{requestCharge}")
                         |> ignore
-                with ex ->
+                with
+                | ex ->
                     log.LogError(
                         ex,
                         "{CurrentInstant}: Error in getChildBranches. CorrelationId: {correlationId}.",
@@ -2282,7 +2432,10 @@ module Services =
                     )
             | MongoDB -> ()
 
-            return childBranches.OrderBy(fun branchDto -> branchDto.BranchName).ToArray()
+            return
+                childBranches
+                    .OrderBy(fun branchDto -> branchDto.BranchName)
+                    .ToArray()
         }
 
     /// Gets a list of reminders for a repository, with optional filtering.
@@ -2330,18 +2483,23 @@ module Services =
                             queryBuilder.Append(" AND STRINGEQUALS(c.State.Reminder.ReminderType, @reminderType, true)")
                             |> ignore
 
-                        if actorNameFilter.IsSome && not (String.IsNullOrEmpty(actorNameFilter.Value)) then
+                        if
+                            actorNameFilter.IsSome
+                            && not (String.IsNullOrEmpty(actorNameFilter.Value))
+                        then
                             queryBuilder.Append(" AND STRINGEQUALS(c.State.Reminder.ActorName, @actorName, true)")
                             |> ignore
 
                         if dueAfter.IsSome then
-                            queryBuilder.Append(" AND c.State.Reminder.ReminderTime >= @dueAfter") |> ignore
+                            queryBuilder.Append(" AND c.State.Reminder.ReminderTime >= @dueAfter")
+                            |> ignore
 
                         if dueBefore.IsSome then
                             queryBuilder.Append(" AND c.State.Reminder.ReminderTime <= @dueBefore")
                             |> ignore
 
-                        queryBuilder.Append(" ORDER BY c.State.Reminder.ReminderTime ASC") |> ignore
+                        queryBuilder.Append(" ORDER BY c.State.Reminder.ReminderTime ASC")
+                        |> ignore
 
                         let queryDefinition =
                             QueryDefinition(queryBuilder.ToString())
@@ -2360,8 +2518,12 @@ module Services =
                             queryDefinition.WithParameter("@reminderType", reminderTypeFilter.Value)
                             |> ignore
 
-                        if actorNameFilter.IsSome && not (String.IsNullOrEmpty(actorNameFilter.Value)) then
-                            queryDefinition.WithParameter("@actorName", actorNameFilter.Value) |> ignore
+                        if
+                            actorNameFilter.IsSome
+                            && not (String.IsNullOrEmpty(actorNameFilter.Value))
+                        then
+                            queryDefinition.WithParameter("@actorName", actorNameFilter.Value)
+                            |> ignore
 
                         if dueAfter.IsSome then
                             queryDefinition.WithParameter("@dueAfter", dueAfter.Value.ToUnixTimeTicks())
@@ -2375,24 +2537,28 @@ module Services =
 
                         while iterator.HasMoreResults do
                             let! results = iterator.ReadNextAsync()
-                            indexMetrics.Append($"{results.IndexMetrics}, ") |> ignore
-                            requestCharge.Append($"{results.RequestCharge:F3}, ") |> ignore
+
+                            indexMetrics.Append($"{results.IndexMetrics}, ")
+                            |> ignore
+
+                            requestCharge.Append($"{results.RequestCharge:F3}, ")
+                            |> ignore
 
                             let reminderValues = results.Resource
 
                             reminderValues
                             |> Seq.iter (fun reminderValue -> reminders.Add(reminderValue.Reminder))
 
-                        if
-                            (indexMetrics.Length >= 2)
-                            && (requestCharge.Length >= 2)
-                            && Activity.Current <> null
-                        then
-                            Activity.Current
+                        if (indexMetrics.Length >= 2)
+                           && (requestCharge.Length >= 2)
+                           && Activity.Current <> null then
+                            Activity
+                                .Current
                                 .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
                                 .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
                             |> ignore
-                    with ex ->
+                    with
+                    | ex ->
                         log.LogError(
                             ex,
                             "{CurrentInstant}: Error in getReminders. CorrelationId: {correlationId}.",

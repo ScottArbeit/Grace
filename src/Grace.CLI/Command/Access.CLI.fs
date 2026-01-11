@@ -95,7 +95,17 @@ module Access =
                 Description = "Scope kind (system, owner, org, repo, branch).",
                 Arity = ArgumentArity.ExactlyOne
             ))
-                .AcceptOnlyFromAmong([| "system"; "owner"; "org"; "organization"; "repo"; "repository"; "branch" |])
+                .AcceptOnlyFromAmong(
+                    [|
+                        "system"
+                        "owner"
+                        "org"
+                        "organization"
+                        "repo"
+                        "repository"
+                        "branch"
+                    |]
+                )
 
         let roleId = new Option<string>(OptionName.RoleId, Required = true, Description = "Role identifier.", Arity = ArgumentArity.ExactlyOne)
 
@@ -115,7 +125,7 @@ module Access =
             new Option<string>(OptionName.Path, Required = false, Description = "Optional repository relative path filter.", Arity = ArgumentArity.ZeroOrOne)
 
         let claim =
-            new Option<string[]>(
+            new Option<string []>(
                 OptionName.Claim,
                 Required = true,
                 Description = "Claim to grant permissions for (repeatable).",
@@ -123,7 +133,7 @@ module Access =
             )
 
         let directoryPermission =
-            new Option<string[]>(
+            new Option<string []>(
                 OptionName.DirectoryPermission,
                 Required = true,
                 Description = "Directory permission to apply (repeatable; match --claim order).",
@@ -142,23 +152,25 @@ module Access =
                 Arity = ArgumentArity.ExactlyOne
             ))
                 .AcceptOnlyFromAmong(
-                    [| "system"
-                       "owner"
-                       "org"
-                       "organization"
-                       "repo"
-                       "repository"
-                       "branch"
-                       "path" |]
+                    [|
+                        "system"
+                        "owner"
+                        "org"
+                        "organization"
+                        "repo"
+                        "repository"
+                        "branch"
+                        "path"
+                    |]
                 )
 
     let private formatScope (scope: Scope) =
         match scope with
         | Scope.System -> "System"
         | Scope.Owner ownerId -> $"Owner:{ownerId}"
-        | Scope.Organization(ownerId, organizationId) -> $"Org:{ownerId}/{organizationId}"
-        | Scope.Repository(ownerId, organizationId, repositoryId) -> $"Repo:{ownerId}/{organizationId}/{repositoryId}"
-        | Scope.Branch(ownerId, organizationId, repositoryId, branchId) -> $"Branch:{ownerId}/{organizationId}/{repositoryId}/{branchId}"
+        | Scope.Organization (ownerId, organizationId) -> $"Org:{ownerId}/{organizationId}"
+        | Scope.Repository (ownerId, organizationId, repositoryId) -> $"Repo:{ownerId}/{organizationId}/{repositoryId}"
+        | Scope.Branch (ownerId, organizationId, repositoryId, branchId) -> $"Branch:{ownerId}/{organizationId}/{repositoryId}/{branchId}"
 
     let private formatClaimPermissions (permissions: IEnumerable<ClaimPermission>) =
         permissions
@@ -173,11 +185,13 @@ module Access =
                 let table = Table(Border = TableBorder.DoubleEdge)
 
                 table.AddColumns(
-                    [| TableColumn($"[{Colors.Important}]Principal[/]")
-                       TableColumn($"[{Colors.Important}]Scope[/]")
-                       TableColumn($"[{Colors.Important}]Role[/]")
-                       TableColumn($"[{Colors.Important}]Source[/]")
-                       TableColumn($"[{Colors.Important}]Created[/]") |]
+                    [|
+                        TableColumn($"[{Colors.Important}]Principal[/]")
+                        TableColumn($"[{Colors.Important}]Scope[/]")
+                        TableColumn($"[{Colors.Important}]Role[/]")
+                        TableColumn($"[{Colors.Important}]Source[/]")
+                        TableColumn($"[{Colors.Important}]Created[/]")
+                    |]
                 )
                 |> ignore
 
@@ -210,15 +224,22 @@ module Access =
                 let table = Table(Border = TableBorder.DoubleEdge)
 
                 table.AddColumns(
-                    [| TableColumn($"[{Colors.Important}]Role[/]")
-                       TableColumn($"[{Colors.Important}]Applies To[/]")
-                       TableColumn($"[{Colors.Important}]Operations[/]") |]
+                    [|
+                        TableColumn($"[{Colors.Important}]Role[/]")
+                        TableColumn($"[{Colors.Important}]Applies To[/]")
+                        TableColumn($"[{Colors.Important}]Operations[/]")
+                    |]
                 )
                 |> ignore
 
                 for role in roles do
                     let appliesTo = role.AppliesTo |> Seq.sort |> String.concat ", "
-                    let operations = role.AllowedOperations |> Seq.map string |> Seq.sort |> String.concat ", "
+
+                    let operations =
+                        role.AllowedOperations
+                        |> Seq.map string
+                        |> Seq.sort
+                        |> String.concat ", "
 
                     table.AddRow($"[{Colors.Deemphasized}]{role.RoleId}[/]", appliesTo, operations)
                     |> ignore
@@ -233,8 +254,10 @@ module Access =
                 let table = Table(Border = TableBorder.DoubleEdge)
 
                 table.AddColumns(
-                    [| TableColumn($"[{Colors.Important}]Path[/]")
-                       TableColumn($"[{Colors.Important}]Claims[/]") |]
+                    [|
+                        TableColumn($"[{Colors.Important}]Path[/]")
+                        TableColumn($"[{Colors.Important}]Claims[/]")
+                    |]
                 )
                 |> ignore
 
@@ -266,7 +289,9 @@ module Access =
         else
             let invalid =
                 permissions
-                |> Array.tryFind (fun value -> discriminatedUnionFromString<DirectoryPermission> value |> Option.isNone)
+                |> Array.tryFind (fun value ->
+                    discriminatedUnionFromString<DirectoryPermission> value
+                    |> Option.isNone)
 
             match invalid with
             | Some value -> Error(GraceError.Create $"Invalid DirectoryPermission '{value}'." correlationId)
@@ -277,15 +302,11 @@ module Access =
         let principalTypeValue = principalType |> Option.defaultValue String.Empty
         let principalIdValue = principalId |> Option.defaultValue String.Empty
 
-        if
-            String.IsNullOrWhiteSpace principalTypeValue
-            && String.IsNullOrWhiteSpace principalIdValue
-        then
+        if String.IsNullOrWhiteSpace principalTypeValue
+           && String.IsNullOrWhiteSpace principalIdValue then
             Ok parseResult
-        elif
-            String.IsNullOrWhiteSpace principalTypeValue
-            || String.IsNullOrWhiteSpace principalIdValue
-        then
+        elif String.IsNullOrWhiteSpace principalTypeValue
+             || String.IsNullOrWhiteSpace principalIdValue then
             Error(GraceError.Create "PrincipalType and PrincipalId must be provided together." correlationId)
         else
             Ok parseResult
@@ -349,7 +370,8 @@ module Access =
                             logToAnsiConsole Colors.Error (Markup.Escape($"{error}"))
                             return result |> renderOutput parseResult
                     | Error error -> return Error error |> renderOutput parseResult
-                with ex ->
+                with
+                | ex ->
                     return
                         renderOutput
                             parseResult
@@ -404,7 +426,8 @@ module Access =
                             logToAnsiConsole Colors.Error (Markup.Escape($"{error}"))
                             return result |> renderOutput parseResult
                     | Error error -> return Error error |> renderOutput parseResult
-                with ex ->
+                with
+                | ex ->
                     return
                         renderOutput
                             parseResult
@@ -420,8 +443,14 @@ module Access =
                     if parseResult |> verbose then printParseResult parseResult
 
                     let graceIds = parseResult |> getNormalizedIdsAndNames
-                    let principalType = parseResult.GetValue(Options.principalTypeOptional) |> Option.ofObj
-                    let principalId = parseResult.GetValue(Options.principalIdOptional) |> Option.ofObj
+
+                    let principalType =
+                        parseResult.GetValue(Options.principalTypeOptional)
+                        |> Option.ofObj
+
+                    let principalId =
+                        parseResult.GetValue(Options.principalIdOptional)
+                        |> Option.ofObj
 
                     let validateIncomingParameters =
                         parseResult
@@ -464,7 +493,8 @@ module Access =
                             logToAnsiConsole Colors.Error (Markup.Escape($"{error}"))
                             return result |> renderOutput parseResult
                     | Error error -> return Error error |> renderOutput parseResult
-                with ex ->
+                with
+                | ex ->
                     return
                         renderOutput
                             parseResult
@@ -480,7 +510,11 @@ module Access =
                     if parseResult |> verbose then printParseResult parseResult
 
                     let graceIds = parseResult |> getNormalizedIdsAndNames
-                    let validateIncomingParameters = parseResult |> CommonValidations >>= validateClaimPermissions
+
+                    let validateIncomingParameters =
+                        parseResult
+                        |> CommonValidations
+                        >>= validateClaimPermissions
 
                     match validateIncomingParameters with
                     | Ok _ ->
@@ -523,7 +557,8 @@ module Access =
                             logToAnsiConsole Colors.Error (Markup.Escape($"{error}"))
                             return result |> renderOutput parseResult
                     | Error error -> return Error error |> renderOutput parseResult
-                with ex ->
+                with
+                | ex ->
                     return
                         renderOutput
                             parseResult
@@ -574,7 +609,8 @@ module Access =
                             logToAnsiConsole Colors.Error (Markup.Escape($"{error}"))
                             return result |> renderOutput parseResult
                     | Error error -> return Error error |> renderOutput parseResult
-                with ex ->
+                with
+                | ex ->
                     return
                         renderOutput
                             parseResult
@@ -628,7 +664,8 @@ module Access =
                             logToAnsiConsole Colors.Error (Markup.Escape($"{error}"))
                             return result |> renderOutput parseResult
                     | Error error -> return Error error |> renderOutput parseResult
-                with ex ->
+                with
+                | ex ->
                     return
                         renderOutput
                             parseResult
@@ -651,8 +688,13 @@ module Access =
                         |> Option.ofObj
                         |> Option.defaultValue ""
 
-                    let principalType = parseResult.GetValue(Options.principalTypeOptional) |> Option.ofObj
-                    let principalId = parseResult.GetValue(Options.principalIdOptional) |> Option.ofObj
+                    let principalType =
+                        parseResult.GetValue(Options.principalTypeOptional)
+                        |> Option.ofObj
+
+                    let principalId =
+                        parseResult.GetValue(Options.principalIdOptional)
+                        |> Option.ofObj
 
                     let validateIncomingParameters =
                         parseResult
@@ -698,7 +740,8 @@ module Access =
                             logToAnsiConsole Colors.Error (Markup.Escape($"{error}"))
                             return result |> renderOutput parseResult
                     | Error error -> return Error error |> renderOutput parseResult
-                with ex ->
+                with
+                | ex ->
                     return
                         renderOutput
                             parseResult
@@ -736,7 +779,8 @@ module Access =
                     | Error error ->
                         logToAnsiConsole Colors.Error (Markup.Escape($"{error}"))
                         return result |> renderOutput parseResult
-                with ex ->
+                with
+                | ex ->
                     return
                         renderOutput
                             parseResult

@@ -150,7 +150,10 @@ module DirectoryVersion =
                 try
                     if parseResult |> verbose then printParseResult parseResult
 
-                    let validateIncomingParameters = parseResult |> CommonValidations >>= DirectoryVersionValidations
+                    let validateIncomingParameters =
+                        parseResult
+                        |> CommonValidations
+                        >>= DirectoryVersionValidations
 
                     match validateIncomingParameters with
                     | Ok _ ->
@@ -194,7 +197,8 @@ module DirectoryVersion =
                             let! result = DirectoryVersion.GetZipFile(sdkParameters)
                             return result |> renderOutput parseResult
                     | Error error -> return Error error |> renderOutput parseResult
-                with ex ->
+                with
+                | ex ->
                     return
                         Error(GraceError.Create $"{ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
                         |> renderOutput parseResult

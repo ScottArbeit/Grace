@@ -8,7 +8,8 @@ open NUnit.Framework
 module CommandParsingTests =
     [<Test>]
     let ``top level command returns none for empty args`` () =
-        GraceCommand.tryGetTopLevelCommandFromArgs Array.empty true |> should equal None
+        GraceCommand.tryGetTopLevelCommandFromArgs Array.empty true
+        |> should equal None
 
     [<Test>]
     let ``top level command detects command token`` () =
@@ -27,5 +28,12 @@ module CommandParsingTests =
 
     [<Test>]
     let ``top level command honors end of options marker`` () =
-        GraceCommand.tryGetTopLevelCommandFromArgs [| "--output"; "Verbose"; "--"; "connect" |] true
+        GraceCommand.tryGetTopLevelCommandFromArgs
+            [|
+                "--output"
+                "Verbose"
+                "--"
+                "connect"
+            |]
+            true
         |> should equal (Some "connect")

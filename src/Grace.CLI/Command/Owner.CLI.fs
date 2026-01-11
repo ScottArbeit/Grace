@@ -85,7 +85,9 @@ module Owner =
                 Arity = ArgumentArity.ZeroOrOne
             )
 
-    let ownerCommonValidations = CommonValidations >=> ``Either OwnerId or OwnerName must be provided``
+    let ownerCommonValidations =
+        CommonValidations
+        >=> ``Either OwnerId or OwnerName must be provided``
 
     // Create subcommand.
     type Create() =
@@ -162,7 +164,8 @@ module Owner =
                             | Error _ -> return result |> renderOutput parseResult
                     | Error error -> return Error error |> renderOutput parseResult
 
-                with ex ->
+                with
+                | ex ->
                     return
                         renderOutput
                             parseResult
@@ -222,7 +225,8 @@ module Owner =
                             | Error graceError -> return Error graceError |> renderOutput parseResult
                     | Error error -> return Error error |> renderOutput parseResult
 
-                with ex ->
+                with
+                | ex ->
                     return
                         renderOutput
                             parseResult
@@ -287,7 +291,8 @@ module Owner =
                             return result |> renderOutput parseResult
                     | Error error -> return Error error |> renderOutput parseResult
 
-                with ex ->
+                with
+                | ex ->
                     return
                         renderOutput
                             parseResult
@@ -334,7 +339,8 @@ module Owner =
                             return result |> renderOutput parseResult
                     | Error error -> return Error error |> renderOutput parseResult
 
-                with ex ->
+                with
+                | ex ->
                     return
                         renderOutput
                             parseResult
@@ -381,7 +387,8 @@ module Owner =
                             return result |> renderOutput parseResult
                     | Error error -> return Error error |> renderOutput parseResult
 
-                with ex ->
+                with
+                | ex ->
                     return
                         renderOutput
                             parseResult
@@ -428,7 +435,8 @@ module Owner =
                             return result |> renderOutput parseResult
                     | Error error -> return Error error |> renderOutput parseResult
 
-                with ex ->
+                with
+                | ex ->
                     return
                         renderOutput
                             parseResult
@@ -476,7 +484,8 @@ module Owner =
                             return result |> renderOutput parseResult
                     | Error error -> return Error error |> renderOutput parseResult
 
-                with ex ->
+                with
+                | ex ->
                     return
                         renderOutput
                             parseResult
@@ -522,7 +531,8 @@ module Owner =
                             return result |> renderOutput parseResult
                     | Error error -> return Error error |> renderOutput parseResult
 
-                with ex ->
+                with
+                | ex ->
                     return
                         renderOutput
                             parseResult
@@ -530,7 +540,10 @@ module Owner =
             }
 
     let Build =
-        let addCommonOptions (command: Command) = command |> addOption Options.ownerName |> addOption Options.ownerId
+        let addCommonOptions (command: Command) =
+            command
+            |> addOption Options.ownerName
+            |> addOption Options.ownerId
 
         // Create main command and aliases, if any.`
         let ownerCommand = new Command("owner", Description = "Create, change, or delete owner-level information.")

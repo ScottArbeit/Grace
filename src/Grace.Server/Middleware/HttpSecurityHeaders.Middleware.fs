@@ -38,7 +38,7 @@ type HttpSecurityHeadersMiddleware(next: RequestDelegate) =
 #if DEBUG
         let middlewareTraceHeader = context.Request.Headers["X-MiddlewareTraceIn"]
 
-        context.Request.Headers["X-MiddlewareTraceIn"] <- $"{middlewareTraceHeader}{nameof HttpSecurityHeadersMiddleware} --> "
+        context.Request.Headers[ "X-MiddlewareTraceIn" ] <- $"{middlewareTraceHeader}{nameof HttpSecurityHeadersMiddleware} --> "
 #endif
 
         let headers = context.Response.Headers
@@ -62,7 +62,7 @@ type HttpSecurityHeadersMiddleware(next: RequestDelegate) =
 #if DEBUG
         let middlewareTraceOutHeader = context.Request.Headers["X-MiddlewareTraceOut"]
 
-        context.Request.Headers["X-MiddlewareTraceOut"] <- $"{middlewareTraceOutHeader}{nameof HttpSecurityHeadersMiddleware} --> "
+        context.Request.Headers[ "X-MiddlewareTraceOut" ] <- $"{middlewareTraceOutHeader}{nameof HttpSecurityHeadersMiddleware} --> "
 #endif
 
         nextTask

@@ -153,10 +153,9 @@ module Diff =
         let graceIds = getNormalizedIdsAndNames parseResult
 
         let ``Sha256Hash1 must be a valid SHA-256 hash value`` (parseResult: ParseResult) =
-            if
-                parseResult.GetResult(Options.sha256Hash1) <> null
-                && not <| Constants.Sha256Regex.IsMatch(parseResult.GetValue(Options.sha256Hash1))
-            then
+            if parseResult.GetResult(Options.sha256Hash1) <> null
+               && not
+                  <| Constants.Sha256Regex.IsMatch(parseResult.GetValue(Options.sha256Hash1)) then
                 let properties = Dictionary<string, obj>()
                 properties.Add("repositoryId", graceIds.RepositoryId)
                 properties.Add("sha256Hash1", parseResult.GetValue(Options.sha256Hash1))
@@ -167,10 +166,9 @@ module Diff =
                 Ok parseResult
 
         let ``Sha256Hash2 must be a valid SHA-256 hash value`` (parseResult: ParseResult) =
-            if
-                parseResult.GetResult(Options.sha256Hash2) <> null
-                && not <| Constants.Sha256Regex.IsMatch(parseResult.GetValue(Options.sha256Hash2))
-            then
+            if parseResult.GetResult(Options.sha256Hash2) <> null
+               && not
+                  <| Constants.Sha256Regex.IsMatch(parseResult.GetValue(Options.sha256Hash2)) then
                 let properties = Dictionary<string, obj>()
                 properties.Add("repositoryId", graceIds.RepositoryId)
                 properties.Add("sha256Hash1", parseResult.GetValue(Options.sha256Hash1))
@@ -202,7 +200,7 @@ module Diff =
     let markupList = List<IRenderable>()
     let addToOutput (markup: IRenderable) = markupList.Add markup
 
-    let renderInlineDiff (inlineDiff: List<DiffPiece[]>) =
+    let renderInlineDiff (inlineDiff: List<DiffPiece []>) =
         for i = 0 to inlineDiff.Count - 1 do
             for diffLine in inlineDiff[i] do
                 addToOutput (getMarkup diffLine)
@@ -287,7 +285,8 @@ module Diff =
 
                                     let t6 =
                                         progressContext.AddTask(
-                                            $"[{Color.DodgerBlue1}]Getting {(getDiscriminatedUnionCaseName referenceType).ToLowerInvariant()}.[/]",
+                                            $"[{Color.DodgerBlue1}]Getting {(getDiscriminatedUnionCaseName referenceType)
+                                                                                .ToLowerInvariant()}.[/]",
                                             autoStart = false
                                         )
 
@@ -363,7 +362,10 @@ module Diff =
                                                 saveParameters.RepositoryName <- graceIds.RepositoryName
                                                 saveParameters.CorrelationId <- getCorrelationId parseResult
 
-                                                saveParameters.DirectoryVersions <- newDirectoryVersions.Select(fun dv -> dv.ToDirectoryVersion).ToList()
+                                                saveParameters.DirectoryVersions <-
+                                                    newDirectoryVersions
+                                                        .Select(fun dv -> dv.ToDirectoryVersion)
+                                                        .ToList()
 
                                                 match! DirectoryVersion.SaveDirectoryVersions saveParameters with
                                                 | Ok returnValue -> ()
@@ -380,9 +382,10 @@ module Diff =
                                                 match!
                                                     createSaveReference
                                                         (getRootDirectoryVersion updatedGraceStatus)
-                                                        $"Created during `grace diff {(getDiscriminatedUnionCaseName referenceType).ToLowerInvariant()}` operation."
+                                                        $"Created during `grace diff {(getDiscriminatedUnionCaseName referenceType)
+                                                                                          .ToLowerInvariant()}` operation."
                                                         (getCorrelationId parseResult)
-                                                with
+                                                    with
                                                 | Ok saveReference -> ()
                                                 | Error error -> logToAnsiConsole Colors.Error $"Failed to create a save reference. {error}"
                                             })
@@ -661,7 +664,11 @@ module Diff =
                                                     saveParameters.RepositoryId <- graceIds.RepositoryIdString
                                                     saveParameters.RepositoryName <- graceIds.RepositoryName
                                                     saveParameters.CorrelationId <- getCorrelationId parseResult
-                                                    saveParameters.DirectoryVersions <- newDirectoryVersions.Select(fun dv -> dv.ToDirectoryVersion).ToList()
+
+                                                    saveParameters.DirectoryVersions <-
+                                                        newDirectoryVersions
+                                                            .Select(fun dv -> dv.ToDirectoryVersion)
+                                                            .ToList()
 
                                                     match! DirectoryVersion.SaveDirectoryVersions saveParameters with
                                                     | Ok returnValue -> ()
@@ -680,7 +687,7 @@ module Diff =
                                                             (getRootDirectoryVersion updatedGraceStatus)
                                                             $"Created during `grace diff sha` operation."
                                                             (getCorrelationId parseResult)
-                                                    with
+                                                        with
                                                     | Ok saveReference -> ()
                                                     | Error error -> logToAnsiConsole Colors.Error $"Failed to create a save reference. {error}"
                                                 })
@@ -737,7 +744,10 @@ module Diff =
             |> addOption Options.repositoryName
             |> addOption Options.repositoryId
 
-        let addBranchOptions (command: Command) = command |> addOption Options.branchName |> addOption Options.branchId
+        let addBranchOptions (command: Command) =
+            command
+            |> addOption Options.branchName
+            |> addOption Options.branchId
 
         let diffCommand = new Command("diff", Description = "Displays the difference between two versions of your repository.")
 

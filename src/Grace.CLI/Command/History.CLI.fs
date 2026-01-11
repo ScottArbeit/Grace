@@ -121,7 +121,7 @@ module History =
             )
 
         let replace =
-            new Option<string[]>(
+            new Option<string []>(
                 OptionName.Replace,
                 Required = false,
                 Description = "Provide replacements for redacted values (name=value or argIndex=value).",
@@ -130,8 +130,7 @@ module History =
 
     let private warnOnCorruptConfig (parseResult: ParseResult) (loadResult: UserConfiguration.UserConfigurationLoadResult) =
         if
-            loadResult.WasCorrupt
-            && not (parseResult |> json)
+            loadResult.WasCorrupt && not (parseResult |> json)
             && not (parseResult |> silent)
         then
             let message =
@@ -157,11 +156,13 @@ module History =
                 try
                     let name = DirectoryInfo(root).Name
                     if String.IsNullOrWhiteSpace(name) then String.Empty else name
-                with _ ->
-                    String.Empty
+                with
+                | _ -> String.Empty
             | None -> String.Empty
 
-    let private formatRepoBranch (entry: HistoryStorage.HistoryEntry) = entry.repoBranch |> Option.defaultValue String.Empty
+    let private formatRepoBranch (entry: HistoryStorage.HistoryEntry) =
+        entry.repoBranch
+        |> Option.defaultValue String.Empty
 
     let private filterEntries
         (entries: HistoryStorage.HistoryEntry list)
@@ -194,7 +195,10 @@ module History =
         match sinceDuration with
         | Some duration ->
             let cutoff = getCurrentInstant().Minus(duration)
-            filtered <- filtered |> List.filter (fun entry -> entry.timestampUtc >= cutoff)
+
+            filtered <-
+                filtered
+                |> List.filter (fun entry -> entry.timestampUtc >= cutoff)
         | None -> ()
 
         match containsText with
@@ -207,14 +211,21 @@ module History =
         | None -> ()
 
         if filterFailed && not filterSuccess then
-            filtered <- filtered |> List.filter (fun entry -> entry.exitCode <> 0)
+            filtered <-
+                filtered
+                |> List.filter (fun entry -> entry.exitCode <> 0)
         elif filterSuccess && not filterFailed then
-            filtered <- filtered |> List.filter (fun entry -> entry.exitCode = 0)
+            filtered <-
+                filtered
+                |> List.filter (fun entry -> entry.exitCode = 0)
 
-        let ordered = filtered |> List.sortByDescending (fun entry -> entry.timestampUtc)
+        let ordered =
+            filtered
+            |> List.sortByDescending (fun entry -> entry.timestampUtc)
 
         if limit > 0 then
-            ordered |> List.truncate (min limit ordered.Length)
+            ordered
+            |> List.truncate (min limit ordered.Length)
         else
             ordered
 
@@ -223,24 +234,28 @@ module History =
 
         let columns =
             if showId then
-                [| TableColumn($"[bold]#[/]")
-                   TableColumn($"[bold]When[/]")
-                   TableColumn($"[bold]Exit[/]")
-                   TableColumn($"[bold]Dur[/]")
-                   TableColumn($"[bold]Cwd[/]")
-                   TableColumn($"[bold]Repo[/]")
-                   TableColumn($"[bold]Branch[/]")
-                   TableColumn($"[bold]Command[/]")
-                   TableColumn($"[bold]Id[/]") |]
+                [|
+                    TableColumn($"[bold]#[/]")
+                    TableColumn($"[bold]When[/]")
+                    TableColumn($"[bold]Exit[/]")
+                    TableColumn($"[bold]Dur[/]")
+                    TableColumn($"[bold]Cwd[/]")
+                    TableColumn($"[bold]Repo[/]")
+                    TableColumn($"[bold]Branch[/]")
+                    TableColumn($"[bold]Command[/]")
+                    TableColumn($"[bold]Id[/]")
+                |]
             else
-                [| TableColumn($"[bold]#[/]")
-                   TableColumn($"[bold]When[/]")
-                   TableColumn($"[bold]Exit[/]")
-                   TableColumn($"[bold]Dur[/]")
-                   TableColumn($"[bold]Cwd[/]")
-                   TableColumn($"[bold]Repo[/]")
-                   TableColumn($"[bold]Branch[/]")
-                   TableColumn($"[bold]Command[/]") |]
+                [|
+                    TableColumn($"[bold]#[/]")
+                    TableColumn($"[bold]When[/]")
+                    TableColumn($"[bold]Exit[/]")
+                    TableColumn($"[bold]Dur[/]")
+                    TableColumn($"[bold]Cwd[/]")
+                    TableColumn($"[bold]Repo[/]")
+                    TableColumn($"[bold]Branch[/]")
+                    TableColumn($"[bold]Command[/]")
+                |]
 
         table.AddColumns(columns) |> ignore
 
@@ -248,24 +263,28 @@ module History =
         |> List.iteri (fun index entry ->
             let row =
                 if showId then
-                    [| $"{index + 1}"
-                       Markup.Escape(ago entry.timestampUtc)
-                       $"{entry.exitCode}"
-                       formatDuration entry.durationMs
-                       Markup.Escape(abbreviatePath entry.cwd)
-                       Markup.Escape(formatRepoName entry)
-                       Markup.Escape(formatRepoBranch entry)
-                       Markup.Escape(entry.commandLine)
-                       $"{entry.id}" |]
+                    [|
+                        $"{index + 1}"
+                        Markup.Escape(ago entry.timestampUtc)
+                        $"{entry.exitCode}"
+                        formatDuration entry.durationMs
+                        Markup.Escape(abbreviatePath entry.cwd)
+                        Markup.Escape(formatRepoName entry)
+                        Markup.Escape(formatRepoBranch entry)
+                        Markup.Escape(entry.commandLine)
+                        $"{entry.id}"
+                    |]
                 else
-                    [| $"{index + 1}"
-                       Markup.Escape(ago entry.timestampUtc)
-                       $"{entry.exitCode}"
-                       formatDuration entry.durationMs
-                       Markup.Escape(abbreviatePath entry.cwd)
-                       Markup.Escape(formatRepoName entry)
-                       Markup.Escape(formatRepoBranch entry)
-                       Markup.Escape(entry.commandLine) |]
+                    [|
+                        $"{index + 1}"
+                        Markup.Escape(ago entry.timestampUtc)
+                        $"{entry.exitCode}"
+                        formatDuration entry.durationMs
+                        Markup.Escape(abbreviatePath entry.cwd)
+                        Markup.Escape(formatRepoName entry)
+                        Markup.Escape(formatRepoBranch entry)
+                        Markup.Escape(entry.commandLine)
+                    |]
 
             table.AddRow(row) |> ignore)
 
@@ -507,7 +526,9 @@ module History =
             let key = $"{redaction.argIndex}"
 
             if not <| replacements.ContainsKey(key) then
-                let prompt = TextPrompt<string>($"Replacement for {redaction.name} (arg #{redaction.argIndex + 1}):").Secret()
+                let prompt =
+                    TextPrompt<string>($"Replacement for {redaction.name} (arg #{redaction.argIndex + 1}):")
+                        .Secret()
 
                 let value = AnsiConsole.Prompt(prompt)
                 replacements[key] <- value
@@ -535,39 +556,46 @@ module History =
         inherit AsynchronousCommandLineAction()
 
         override _.InvokeAsync(parseResult: ParseResult, _: Threading.CancellationToken) : Task<int> =
-            task {
-                let number = parseResult.GetValue(Options.runNumber)
-                let byId = parseResult.GetValue(Options.runId)
-                let yes = parseResult.GetValue(Options.yes)
-                let useCurrentCwd = parseResult.GetValue(Options.useCurrentCwd)
-                let dryRun = parseResult.GetValue(Options.dryRun)
-                let replacementsInput = parseResult.GetValue(Options.replace)
-                let canPrompt = not Console.IsInputRedirected && not Console.IsOutputRedirected
+            let number = parseResult.GetValue(Options.runNumber)
+            let byId = parseResult.GetValue(Options.runId)
+            let yes = parseResult.GetValue(Options.yes)
+            let useCurrentCwd = parseResult.GetValue(Options.useCurrentCwd)
+            let dryRun = parseResult.GetValue(Options.dryRun)
+            let replacementsInput = parseResult.GetValue(Options.replace)
 
-                let loadResult = UserConfiguration.loadUserConfiguration ()
-                warnOnCorruptConfig parseResult loadResult
-                let historyConfig = loadResult.Configuration.History
+            let canPrompt =
+                not Console.IsInputRedirected
+                && not Console.IsOutputRedirected
 
-                let readResult = HistoryStorage.readHistoryEntries ()
-                let ordered = readResult.Entries |> List.sortByDescending (fun entry -> entry.timestampUtc)
+            let loadResult = UserConfiguration.loadUserConfiguration ()
+            warnOnCorruptConfig parseResult loadResult
+            let historyConfig = loadResult.Configuration.History
 
-                let target =
-                    if byId <> Guid.Empty then
-                        ordered |> List.tryFind (fun entry -> entry.id = byId)
-                    else if number <= 0 || number > ordered.Length then
-                        None
-                    else
-                        Some ordered[number - 1]
+            let readResult = HistoryStorage.readHistoryEntries ()
 
+            let ordered =
+                readResult.Entries
+                |> List.sortByDescending (fun entry -> entry.timestampUtc)
+
+            let target =
+                if byId <> Guid.Empty then
+                    ordered
+                    |> List.tryFind (fun entry -> entry.id = byId)
+                else if number <= 0 || number > ordered.Length then
+                    None
+                else
+                    Some ordered[number - 1]
+
+            let exitCode =
                 match target with
                 | None ->
                     AnsiConsole.MarkupLine("[red]History entry not found.[/]")
-                    return -1
+                    -1
                 | Some entry ->
                     match parseReplacements replacementsInput with
                     | Error error ->
                         AnsiConsole.MarkupLine($"[red]{Markup.Escape(error)}[/]")
-                        return -1
+                        -1
                     | Ok replacements ->
                         let mutable argvToRun = entry.argvNormalized
                         let mutable missingRedactions = List.empty
@@ -577,14 +605,18 @@ module History =
                             argvToRun <- updated
                             missingRedactions <- missing
 
-                            if missingRedactions.Length > 0 && canPrompt && not yes then
+                            if missingRedactions.Length > 0
+                               && canPrompt
+                               && not yes then
                                 promptForReplacements missingRedactions replacements
                                 let updatedAfterPrompt, missingAfterPrompt = applyReplacements argvToRun entry.redactions replacements
 
                                 argvToRun <- updatedAfterPrompt
                                 missingRedactions <- missingAfterPrompt
 
-                        let stillRedacted = argvToRun |> Array.exists (fun arg -> arg.Contains(HistoryStorage.Placeholder))
+                        let stillRedacted =
+                            argvToRun
+                            |> Array.exists (fun arg -> arg.Contains(HistoryStorage.Placeholder))
 
                         if missingRedactions.Length > 0 || stillRedacted then
                             let missingKeys =
@@ -594,13 +626,13 @@ module History =
                                 |> String.concat ", "
 
                             AnsiConsole.MarkupLine($"[red]Missing replacements for redacted values: {Markup.Escape(missingKeys)}[/]")
-                            return -1
+                            -1
                         else
                             match resolveWorkingDirectory entry.cwd useCurrentCwd canPrompt yes with
                             | Error message ->
                                 AnsiConsole.MarkupLine($"[red]{Markup.Escape(message)}[/]")
-                                return -1
-                            | Ok(cwd, usedFallback) ->
+                                -1
+                            | Ok (cwd, usedFallback) ->
                                 if usedFallback && not (parseResult |> silent) then
                                     AnsiConsole.MarkupLine($"[yellow]Recorded working directory not found; using current directory: {Markup.Escape(cwd)}[/]")
 
@@ -611,21 +643,22 @@ module History =
                                 AnsiConsole.MarkupLine($"[bold]Working directory:[/] {Markup.Escape(cwd)}")
 
                                 let shouldProceed =
-                                    if HistoryStorage.isDestructive commandLine historyConfig && not yes then
+                                    if HistoryStorage.isDestructive commandLine historyConfig
+                                       && not yes then
                                         AnsiConsole.Confirm("This command looks destructive. Re-run?", defaultValue = false)
                                     else
                                         true
 
                                 if not shouldProceed then
-                                    return 1
+                                    1
                                 else if dryRun then
-                                    return 0
+                                    0
                                 else
                                     let executablePath = Environment.ProcessPath
 
                                     if String.IsNullOrWhiteSpace(executablePath) then
                                         AnsiConsole.MarkupLine("[red]Failed to locate Grace executable.[/]")
-                                        return -1
+                                        -1
                                     else
                                         try
                                             let startInfo = ProcessStartInfo()
@@ -636,22 +669,23 @@ module History =
                                             startInfo.RedirectStandardOutput <- false
                                             startInfo.RedirectStandardError <- false
 
-                                            for arg in argvToRun do
-                                                startInfo.ArgumentList.Add(arg)
+                                            argvToRun |> Array.iter startInfo.ArgumentList.Add
 
                                             use proc = new Process()
                                             proc.StartInfo <- startInfo
 
                                             if proc.Start() then
                                                 proc.WaitForExit()
-                                                return proc.ExitCode
+                                                proc.ExitCode
                                             else
                                                 AnsiConsole.MarkupLine("[red]Failed to start Grace process.[/]")
-                                                return -1
-                                        with ex ->
+                                                -1
+                                        with
+                                        | ex ->
                                             AnsiConsole.MarkupLine($"[red]Failed to start Grace process: {Markup.Escape(ex.Message)}[/]")
-                                            return -1
-            }
+                                            -1
+
+            Task.FromResult(exitCode)
 
     type HistoryDelete() =
         inherit AsynchronousCommandLineAction()

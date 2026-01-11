@@ -113,64 +113,68 @@ module WorkItem =
 
     /// The WorkItemDto is a data transfer object that represents a work item in the system.
     type WorkItemDto =
-        { Class: string
-          WorkItemId: WorkItemId
-          OwnerId: OwnerId
-          OrganizationId: OrganizationId
-          RepositoryId: RepositoryId
-          Title: string
-          Description: string
-          Status: WorkItemStatus
-          Participants: UserId list
-          Tags: string list
-          Constraints: string
-          Notes: string
-          ArchitecturalNotes: string
-          MigrationNotes: string
-          ExternalRefs: string list
-          BranchIds: BranchId list
-          ReferenceIds: ReferenceId list
-          PromotionGroupIds: PromotionGroupId list
-          CandidateIds: CandidateId list
-          ReviewPacketIds: ReviewPacketId list
-          ReviewCheckpointIds: ReviewCheckpointId list
-          GateAttestationIds: GateAttestationId list
-          CreatedBy: UserId
-          CreatedAt: Instant
-          UpdatedAt: Instant option }
+        {
+            Class: string
+            WorkItemId: WorkItemId
+            OwnerId: OwnerId
+            OrganizationId: OrganizationId
+            RepositoryId: RepositoryId
+            Title: string
+            Description: string
+            Status: WorkItemStatus
+            Participants: UserId list
+            Tags: string list
+            Constraints: string
+            Notes: string
+            ArchitecturalNotes: string
+            MigrationNotes: string
+            ExternalRefs: string list
+            BranchIds: BranchId list
+            ReferenceIds: ReferenceId list
+            PromotionGroupIds: PromotionGroupId list
+            CandidateIds: CandidateId list
+            ReviewPacketIds: ReviewPacketId list
+            ReviewCheckpointIds: ReviewCheckpointId list
+            GateAttestationIds: GateAttestationId list
+            CreatedBy: UserId
+            CreatedAt: Instant
+            UpdatedAt: Instant option
+        }
 
         static member Default =
-            { Class = nameof WorkItemDto
-              WorkItemId = WorkItemId.Empty
-              OwnerId = OwnerId.Empty
-              OrganizationId = OrganizationId.Empty
-              RepositoryId = RepositoryId.Empty
-              Title = String.Empty
-              Description = String.Empty
-              Status = WorkItemStatus.Backlog
-              Participants = []
-              Tags = []
-              Constraints = String.Empty
-              Notes = String.Empty
-              ArchitecturalNotes = String.Empty
-              MigrationNotes = String.Empty
-              ExternalRefs = []
-              BranchIds = []
-              ReferenceIds = []
-              PromotionGroupIds = []
-              CandidateIds = []
-              ReviewPacketIds = []
-              ReviewCheckpointIds = []
-              GateAttestationIds = []
-              CreatedBy = UserId String.Empty
-              CreatedAt = Constants.DefaultTimestamp
-              UpdatedAt = None }
+            {
+                Class = nameof WorkItemDto
+                WorkItemId = WorkItemId.Empty
+                OwnerId = OwnerId.Empty
+                OrganizationId = OrganizationId.Empty
+                RepositoryId = RepositoryId.Empty
+                Title = String.Empty
+                Description = String.Empty
+                Status = WorkItemStatus.Backlog
+                Participants = []
+                Tags = []
+                Constraints = String.Empty
+                Notes = String.Empty
+                ArchitecturalNotes = String.Empty
+                MigrationNotes = String.Empty
+                ExternalRefs = []
+                BranchIds = []
+                ReferenceIds = []
+                PromotionGroupIds = []
+                CandidateIds = []
+                ReviewPacketIds = []
+                ReviewCheckpointIds = []
+                GateAttestationIds = []
+                CreatedBy = UserId String.Empty
+                CreatedAt = Constants.DefaultTimestamp
+                UpdatedAt = None
+            }
 
         /// Updates the WorkItemDto based on the WorkItemEvent.
         static member UpdateDto workItemEvent currentWorkItemDto =
             let newWorkItemDto =
                 match workItemEvent.Event with
-                | Created(workItemId, ownerId, organizationId, repositoryId, title, description) ->
+                | Created (workItemId, ownerId, organizationId, repositoryId, title, description) ->
                     { WorkItemDto.Default with
                         WorkItemId = workItemId
                         OwnerId = ownerId
@@ -180,93 +184,144 @@ module WorkItem =
                         Description = description
                         Status = WorkItemStatus.Backlog
                         CreatedBy = UserId workItemEvent.Metadata.Principal
-                        CreatedAt = workItemEvent.Metadata.Timestamp }
+                        CreatedAt = workItemEvent.Metadata.Timestamp
+                    }
                 | TitleSet title -> { currentWorkItemDto with Title = title }
                 | DescriptionSet description -> { currentWorkItemDto with Description = description }
                 | StatusSet status -> { currentWorkItemDto with Status = status }
                 | ParticipantAdded userId ->
-                    { currentWorkItemDto with Participants = currentWorkItemDto.Participants |> List.append [ userId ] |> List.distinct }
+                    { currentWorkItemDto with
+                        Participants =
+                            currentWorkItemDto.Participants
+                            |> List.append [ userId ]
+                            |> List.distinct
+                    }
                 | ParticipantRemoved userId ->
                     { currentWorkItemDto with
                         Participants =
                             currentWorkItemDto.Participants
-                            |> List.filter (fun existing -> existing <> userId) }
-                | TagAdded tag -> { currentWorkItemDto with Tags = currentWorkItemDto.Tags |> List.append [ tag ] |> List.distinct }
-                | TagRemoved tag -> { currentWorkItemDto with Tags = currentWorkItemDto.Tags |> List.filter (fun existing -> existing <> tag) }
+                            |> List.filter (fun existing -> existing <> userId)
+                    }
+                | TagAdded tag ->
+                    { currentWorkItemDto with
+                        Tags =
+                            currentWorkItemDto.Tags
+                            |> List.append [ tag ]
+                            |> List.distinct
+                    }
+                | TagRemoved tag ->
+                    { currentWorkItemDto with
+                        Tags =
+                            currentWorkItemDto.Tags
+                            |> List.filter (fun existing -> existing <> tag)
+                    }
                 | ConstraintsSet constraints -> { currentWorkItemDto with Constraints = constraints }
                 | NotesSet notes -> { currentWorkItemDto with Notes = notes }
                 | ArchitecturalNotesSet notes -> { currentWorkItemDto with ArchitecturalNotes = notes }
                 | MigrationNotesSet notes -> { currentWorkItemDto with MigrationNotes = notes }
                 | ExternalRefAdded reference ->
-                    { currentWorkItemDto with ExternalRefs = currentWorkItemDto.ExternalRefs |> List.append [ reference ] |> List.distinct }
+                    { currentWorkItemDto with
+                        ExternalRefs =
+                            currentWorkItemDto.ExternalRefs
+                            |> List.append [ reference ]
+                            |> List.distinct
+                    }
                 | ExternalRefRemoved reference ->
                     { currentWorkItemDto with
                         ExternalRefs =
                             currentWorkItemDto.ExternalRefs
-                            |> List.filter (fun existing -> existing <> reference) }
-                | BranchLinked branchId -> { currentWorkItemDto with BranchIds = currentWorkItemDto.BranchIds |> List.append [ branchId ] |> List.distinct }
+                            |> List.filter (fun existing -> existing <> reference)
+                    }
+                | BranchLinked branchId ->
+                    { currentWorkItemDto with
+                        BranchIds =
+                            currentWorkItemDto.BranchIds
+                            |> List.append [ branchId ]
+                            |> List.distinct
+                    }
                 | BranchUnlinked branchId ->
                     { currentWorkItemDto with
                         BranchIds =
                             currentWorkItemDto.BranchIds
-                            |> List.filter (fun existing -> existing <> branchId) }
+                            |> List.filter (fun existing -> existing <> branchId)
+                    }
                 | ReferenceLinked referenceId ->
-                    { currentWorkItemDto with ReferenceIds = currentWorkItemDto.ReferenceIds |> List.append [ referenceId ] |> List.distinct }
+                    { currentWorkItemDto with
+                        ReferenceIds =
+                            currentWorkItemDto.ReferenceIds
+                            |> List.append [ referenceId ]
+                            |> List.distinct
+                    }
                 | ReferenceUnlinked referenceId ->
                     { currentWorkItemDto with
                         ReferenceIds =
                             currentWorkItemDto.ReferenceIds
-                            |> List.filter (fun existing -> existing <> referenceId) }
+                            |> List.filter (fun existing -> existing <> referenceId)
+                    }
                 | PromotionGroupLinked promotionGroupId ->
                     { currentWorkItemDto with
                         PromotionGroupIds =
                             currentWorkItemDto.PromotionGroupIds
                             |> List.append [ promotionGroupId ]
-                            |> List.distinct }
+                            |> List.distinct
+                    }
                 | PromotionGroupUnlinked promotionGroupId ->
                     { currentWorkItemDto with
                         PromotionGroupIds =
                             currentWorkItemDto.PromotionGroupIds
-                            |> List.filter (fun existing -> existing <> promotionGroupId) }
+                            |> List.filter (fun existing -> existing <> promotionGroupId)
+                    }
                 | CandidateLinked candidateId ->
-                    { currentWorkItemDto with CandidateIds = currentWorkItemDto.CandidateIds |> List.append [ candidateId ] |> List.distinct }
+                    { currentWorkItemDto with
+                        CandidateIds =
+                            currentWorkItemDto.CandidateIds
+                            |> List.append [ candidateId ]
+                            |> List.distinct
+                    }
                 | CandidateUnlinked candidateId ->
                     { currentWorkItemDto with
                         CandidateIds =
                             currentWorkItemDto.CandidateIds
-                            |> List.filter (fun existing -> existing <> candidateId) }
+                            |> List.filter (fun existing -> existing <> candidateId)
+                    }
                 | ReviewPacketLinked reviewPacketId ->
                     { currentWorkItemDto with
                         ReviewPacketIds =
                             currentWorkItemDto.ReviewPacketIds
                             |> List.append [ reviewPacketId ]
-                            |> List.distinct }
+                            |> List.distinct
+                    }
                 | ReviewPacketUnlinked reviewPacketId ->
                     { currentWorkItemDto with
                         ReviewPacketIds =
                             currentWorkItemDto.ReviewPacketIds
-                            |> List.filter (fun existing -> existing <> reviewPacketId) }
+                            |> List.filter (fun existing -> existing <> reviewPacketId)
+                    }
                 | ReviewCheckpointLinked reviewCheckpointId ->
                     { currentWorkItemDto with
                         ReviewCheckpointIds =
                             currentWorkItemDto.ReviewCheckpointIds
                             |> List.append [ reviewCheckpointId ]
-                            |> List.distinct }
+                            |> List.distinct
+                    }
                 | ReviewCheckpointUnlinked reviewCheckpointId ->
                     { currentWorkItemDto with
                         ReviewCheckpointIds =
                             currentWorkItemDto.ReviewCheckpointIds
-                            |> List.filter (fun existing -> existing <> reviewCheckpointId) }
+                            |> List.filter (fun existing -> existing <> reviewCheckpointId)
+                    }
                 | GateAttestationLinked gateAttestationId ->
                     { currentWorkItemDto with
                         GateAttestationIds =
                             currentWorkItemDto.GateAttestationIds
                             |> List.append [ gateAttestationId ]
-                            |> List.distinct }
+                            |> List.distinct
+                    }
                 | GateAttestationUnlinked gateAttestationId ->
                     { currentWorkItemDto with
                         GateAttestationIds =
                             currentWorkItemDto.GateAttestationIds
-                            |> List.filter (fun existing -> existing <> gateAttestationId) }
+                            |> List.filter (fun existing -> existing <> gateAttestationId)
+                    }
 
             { newWorkItemDto with UpdatedAt = Some workItemEvent.Metadata.Timestamp }

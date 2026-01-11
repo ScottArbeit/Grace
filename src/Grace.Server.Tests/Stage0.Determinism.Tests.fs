@@ -26,7 +26,8 @@ type Stage0Determinism() =
                 ReferenceId = referenceId
                 PolicySnapshotId = PolicySnapshotId "policy"
                 RiskProfile = riskProfile
-                CreatedAt = timestamp }
+                CreatedAt = timestamp
+            }
 
         let stage0Event: Stage0Event = { Event = Stage0EventType.Recorded analysis; Metadata = metadata timestamp }
         let updated = Stage0AnalysisDto.UpdateDto stage0Event Stage0Analysis.Default
@@ -47,7 +48,8 @@ type Stage0Determinism() =
                 ReferenceId = referenceId
                 PolicySnapshotId = PolicySnapshotId "policy"
                 RiskProfile = { DeterministicRiskProfile.Default with ReferenceId = referenceId }
-                CreatedAt = timestamp }
+                CreatedAt = timestamp
+            }
 
         let stage0Event: Stage0Event = { Event = Stage0EventType.Recorded analysis; Metadata = metadata timestamp }
         let first = Stage0AnalysisDto.UpdateDto stage0Event Stage0Analysis.Default

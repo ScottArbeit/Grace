@@ -34,7 +34,10 @@ type AuthorizationUnit() =
 
         let principal = { PrincipalType = PrincipalType.User; PrincipalId = "user-1" }
 
-        let assignments = [ createAssignment principal (Scope.Organization(ownerId, organizationId)) "OrgAdmin" ]
+        let assignments =
+            [
+                createAssignment principal (Scope.Organization(ownerId, organizationId)) "OrgAdmin"
+            ]
 
         let result =
             checkPermission roleCatalog assignments [] [ principal ] Set.empty Operation.RepoWrite (Resource.Repository(ownerId, organizationId, repositoryId))
@@ -49,12 +52,18 @@ type AuthorizationUnit() =
 
         let principal = { PrincipalType = PrincipalType.User; PrincipalId = "user-2" }
 
-        let assignments = [ createAssignment principal (Scope.Organization(ownerId, organizationId)) "OrgAdmin" ]
+        let assignments =
+            [
+                createAssignment principal (Scope.Organization(ownerId, organizationId)) "OrgAdmin"
+            ]
 
         let denyPermissions = List<ClaimPermission>()
         denyPermissions.Add({ Claim = "engineering"; DirectoryPermission = DirectoryPermission.NoAccess })
 
-        let pathPermissions = [ { Path = "/images"; Permissions = denyPermissions } ]
+        let pathPermissions =
+            [
+                { Path = "/images"; Permissions = denyPermissions }
+            ]
 
         let result =
             checkPermission
@@ -76,12 +85,18 @@ type AuthorizationUnit() =
 
         let principal = { PrincipalType = PrincipalType.User; PrincipalId = "user-3" }
 
-        let assignments = [ createAssignment principal (Scope.Organization(ownerId, organizationId)) "OrgReader" ]
+        let assignments =
+            [
+                createAssignment principal (Scope.Organization(ownerId, organizationId)) "OrgReader"
+            ]
 
         let allowPermissions = List<ClaimPermission>()
         allowPermissions.Add({ Claim = "engineering"; DirectoryPermission = DirectoryPermission.Modify })
 
-        let pathPermissions = [ { Path = "/images"; Permissions = allowPermissions } ]
+        let pathPermissions =
+            [
+                { Path = "/images"; Permissions = allowPermissions }
+            ]
 
         let result =
             checkPermission
@@ -116,7 +131,10 @@ type AuthorizationUnit() =
         let userPrincipal = { PrincipalType = PrincipalType.User; PrincipalId = "user-5" }
         let groupPrincipal = { PrincipalType = PrincipalType.Group; PrincipalId = "group-1" }
 
-        let assignments = [ createAssignment groupPrincipal (Scope.Repository(ownerId, organizationId, repositoryId)) "RepoReader" ]
+        let assignments =
+            [
+                createAssignment groupPrincipal (Scope.Repository(ownerId, organizationId, repositoryId)) "RepoReader"
+            ]
 
         let result =
             checkPermission

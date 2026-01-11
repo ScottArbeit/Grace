@@ -61,6 +61,68 @@ Optional: `pwsh ./scripts/install-githooks.ps1` to add a pre-commit
 - Format code with `dotnet tool run fantomas --recurse .` (from `./src`) and
   include comprehensive, copy/paste-ready snippets when sharing examples.
 
+### Avoid FS3511 in resumable computation expressions
+
+These rules apply to `task { }` and `backgroundTask { }`.
+
+1. **Do not define `let rec` inside `task { }`.**
+
+   Bad:
+
+   ```fsharp
+   task {
+       let rec poll () = task { return! poll () }
+       return! poll ()
+   }
+   ```
+
+   Good:
+
+   ```fsharp
+   task {
+       let mutable done_ = false
+       while not done_ do
+           done_ <- true
+   }
+   ```
+
+2. **Avoid `for ... in ... do` loops inside `task { }`.**
+
+   Bad:
+
+   ```fsharp
+   task {
+       for item in items do
+           useItem item
+   }
+   ```
+
+   Good:
+
+   ```fsharp
+   task {
+       items |> Seq.iter useItem
+   }
+   ```
+
+3. **Policy: treat FS3511 warnings as regressions (do not suppress).**
+
+   Bad:
+
+   ```xml
+   <PropertyGroup>
+     <NoWarn>FS3511</NoWarn>
+   </PropertyGroup>
+   ```
+
+   Good:
+
+   ```xml
+   <PropertyGroup>
+     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+   </PropertyGroup>
+   ```
+
 ## Agent-Friendly Context Practices
 
 - Start with the relevant `AGENTS.md` file(s) to load key patterns,

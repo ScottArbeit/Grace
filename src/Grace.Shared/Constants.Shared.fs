@@ -64,18 +64,20 @@ module Constants =
 
     /// The universal MessagePack serialization options for Grace.
     let messagePackSerializerOptions =
-        MessagePackSerializerOptions.Standard
+        MessagePackSerializerOptions
+            .Standard
             .WithResolver(
                 CompositeResolver.Create(
                     [|
-                       // 1) Generated formatters (classes like Grace_Types_Types.DirectoryVersionFormatter1)
-                       //GeneratedResolver.Instance
-                       // 2) F# helpers for records/DUs
-                       FSharpResolver.Instance
-                       // 3) NodaTime formatters (Instant, LocalDate, etc.)
-                       NodatimeResolver.Instance
-                       // 4) Final fallback
-                       StandardResolver.Instance |]
+                        // 1) Generated formatters (classes like Grace_Types_Types.DirectoryVersionFormatter1)
+                        //GeneratedResolver.Instance
+                        // 2) F# helpers for records/DUs
+                        FSharpResolver.Instance
+                        // 3) NodaTime formatters (Instant, LocalDate, etc.)
+                        NodatimeResolver.Instance
+                        // 4) Final fallback
+                        StandardResolver.Instance
+                    |]
                 )
             )
             .WithCompression(MessagePackCompression.Lz4BlockArray)
@@ -434,29 +436,50 @@ module Constants =
     ///
     /// See https://regexper.com for a diagram.
     /// </summary>
-    let GraceNameRegex = new Regex("^[A-Za-z][A-Za-z0-9\-]{1,63}$", RegexOptions.CultureInvariant ||| RegexOptions.Compiled, TimeSpan.FromSeconds(1.0))
+    let GraceNameRegex =
+        new Regex(
+            "^[A-Za-z][A-Za-z0-9\-]{1,63}$",
+            RegexOptions.CultureInvariant
+            ||| RegexOptions.Compiled,
+            TimeSpan.FromSeconds(1.0)
+        )
     // Note: The timeout value of 1s is a crazy big maximum time; matching against this should take less than 1ms.
 
     /// Validates that a string is a full or partial valid SHA-256 hash value, between 2 and 64 hexadecimal characters.
     ///
     /// Regex: ^[0-9a-fA-F]{2,64}$
-    let Sha256Regex = new Regex("^[0-9a-fA-F]{2,64}$", RegexOptions.CultureInvariant ||| RegexOptions.Compiled, TimeSpan.FromSeconds(1.0))
+    let Sha256Regex =
+        new Regex(
+            "^[0-9a-fA-F]{2,64}$",
+            RegexOptions.CultureInvariant
+            ||| RegexOptions.Compiled,
+            TimeSpan.FromSeconds(1.0)
+        )
 
     /// The backoff policy used by Grace for server requests.
     let private backoffWithJitter = Backoff.DecorrelatedJitterBackoffV2(medianFirstRetryDelay = (TimeSpan.FromSeconds(0.25)), retryCount = 7, fastFirst = false)
 
     /// An exponential retry policy, with backoffs starting at 0.25s, and retrying 8 times.
-    let DefaultRetryPolicy = Policy.Handle<Exception>(fun ex -> ex.GetType() <> typeof<KeyNotFoundException>).WaitAndRetry(backoffWithJitter)
+    let DefaultRetryPolicy =
+        Policy
+            .Handle<Exception>(fun ex -> ex.GetType() <> typeof<KeyNotFoundException>)
+            .WaitAndRetry(backoffWithJitter)
 
     /// An exponential retry policy, with backoffs starting at 0.25s, and retrying 8 times.
-    let DefaultAsyncRetryPolicy = Policy.Handle<Exception>(fun ex -> ex.GetType() <> typeof<KeyNotFoundException>).WaitAndRetryAsync(backoffWithJitter)
+    let DefaultAsyncRetryPolicy =
+        Policy
+            .Handle<Exception>(fun ex -> ex.GetType() <> typeof<KeyNotFoundException>)
+            .WaitAndRetryAsync(backoffWithJitter)
 
     let private fileCopyBackoff = Backoff.LinearBackoff(initialDelay = (TimeSpan.FromSeconds(1.0)), retryCount = 16, factor = 1.5, fastFirst = false)
 
     /// A linear retry policy for copying files locally, with backoffs starting at 1s and retrying 16 times.
     // This retry policy helps with large files. `grace watch` will see that the file is arriving, but if that file takes longer to be written than the next tick,
     // we get an IOException when we try to compute the Sha256Hash and copy it to the object directory. This policy allows us to wait until the file is complete.
-    let DefaultFileCopyRetryPolicy = Policy.Handle<IOException>(fun ex -> ex.GetType() <> typeof<KeyNotFoundException>).WaitAndRetry(fileCopyBackoff)
+    let DefaultFileCopyRetryPolicy =
+        Policy
+            .Handle<IOException>(fun ex -> ex.GetType() <> typeof<KeyNotFoundException>)
+            .WaitAndRetry(fileCopyBackoff)
 
     /// Grace's global settings for Parallel.ForEach/ForEachAsync expressions; sets MaxDegreeofParallelism to maximize performance.
     // I'm choosing a higher-than-usual number here because these parallel loops are used in code where most of the time is spent on network

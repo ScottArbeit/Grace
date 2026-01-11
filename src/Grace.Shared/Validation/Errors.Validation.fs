@@ -7,7 +7,9 @@ open System
 module Errors =
 
     // Marker interface + compile-time constraint
-    type IErrorDiscriminatedUnion = interface end
+    type IErrorDiscriminatedUnion =
+        interface
+        end
 
     type BranchError =
         | AssignIsDisabled
