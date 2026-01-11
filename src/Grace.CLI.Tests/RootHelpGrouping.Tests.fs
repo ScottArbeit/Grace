@@ -10,6 +10,61 @@ open System.IO
 
 [<NonParallelizable>]
 module RootHelpGroupingTests =
+    type private GroupedHelpExpectation = { Args: string array; Headings: string list }
+
+    let private groupedHelpExpectations =
+        [
+            {
+                Args = [| "repo"; "-h" |]
+                Headings =
+                    [
+                        "Create and initialize:"
+                        "Inspect:"
+                        "Configuration:"
+                        "Lifecycle:"
+                    ]
+            }
+            {
+                Args = [| "branch"; "-h" |]
+                Headings =
+                    [
+                        "Create and contribute:"
+                        "Promotion workflow:"
+                        "Inspect:"
+                        "Settings:"
+                        "Lifecycle:"
+                    ]
+            }
+            {
+                Args = [| "owner"; "-h" |]
+                Headings =
+                    [
+                        "Create and inspect:"
+                        "Settings:"
+                        "Lifecycle:"
+                    ]
+            }
+            {
+                Args = [| "org"; "-h" |]
+                Headings =
+                    [
+                        "Create and inspect:"
+                        "Settings:"
+                        "Lifecycle:"
+                    ]
+            }
+            {
+                Args = [| "pg"; "-h" |]
+                Headings =
+                    [
+                        "Create and inspect:"
+                        "Manage promotions:"
+                        "Workflow:"
+                        "Lifecycle:"
+                    ]
+            }
+        ]
+
     let private setAnsiConsoleOutput (writer: TextWriter) =
         let settings = AnsiConsoleSettings()
         settings.Out <- AnsiConsoleOutput(writer)
@@ -109,3 +164,13 @@ module RootHelpGroupingTests =
             |> should not' (contain "Administration and access:")
 
             output |> should not' (contain "Local utilities:"))
+
+    [<Test>]
+    let ``selected command helps are grouped`` () =
+        withGraceUserFileBackups (fun () ->
+            for expectation in groupedHelpExpectations do
+                let exitCode, output = runWithCapturedOutput expectation.Args
+                exitCode |> should equal 0
+
+                for heading in expectation.Headings do
+                    output |> should contain heading)

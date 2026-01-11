@@ -30,6 +30,7 @@ More context:
 
 This project uses **bd (beads)** for issue tracking.
 Always use `bd` commands to manage your work.
+When creating beads, include a description.
 Run `bd prime` for workflow context, or install hooks (`bd hooks install`) for auto-injection.
 
 **Quick reference:**
