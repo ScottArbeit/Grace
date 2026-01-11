@@ -134,7 +134,11 @@ module Organization =
                     //   and we need to set OrganizationId to a new Guid.
                     let mutable graceIds = parseResult |> getNormalizedIdsAndNames
 
-                    if parseResult.GetResult(Options.organizationId).Implicit then
+                    if parseResult
+                        .GetResult(
+                            Options.organizationId
+                        )
+                        .Implicit then
                         let organizationId = Guid.NewGuid()
                         graceIds <- { graceIds with OrganizationId = organizationId; OrganizationIdString = $"{organizationId}" }
 
@@ -143,7 +147,11 @@ module Organization =
                     match validateIncomingParameters with
                     | Ok _ ->
                         let organizationId =
-                            if parseResult.GetResult(Options.organizationId).Implicit then
+                            if parseResult
+                                .GetResult(
+                                    Options.organizationId
+                                )
+                                .Implicit then
                                 Guid.NewGuid().ToString()
                             else
                                 graceIds.OrganizationIdString
@@ -195,7 +203,8 @@ module Organization =
                             | Error _ -> return result |> renderOutput parseResult
                     | Error error -> return Error error |> renderOutput parseResult
 
-                with ex ->
+                with
+                | ex ->
                     return
                         renderOutput
                             parseResult
@@ -257,7 +266,8 @@ module Organization =
                             | Error graceError -> return Error graceError |> renderOutput parseResult
                     | Error error -> return Error error |> renderOutput parseResult
 
-                with ex ->
+                with
+                | ex ->
                     return
                         renderOutput
                             parseResult
@@ -306,7 +316,8 @@ module Organization =
                             return result |> renderOutput parseResult
                     | Error error -> return Error error |> renderOutput parseResult
 
-                with ex ->
+                with
+                | ex ->
                     return
                         renderOutput
                             parseResult
@@ -355,7 +366,8 @@ module Organization =
                             return result |> renderOutput parseResult
                     | Error error -> return Error error |> renderOutput parseResult
 
-                with ex ->
+                with
+                | ex ->
                     return
                         renderOutput
                             parseResult
@@ -404,7 +416,8 @@ module Organization =
                             return result |> renderOutput parseResult
                     | Error error -> return Error error |> renderOutput parseResult
 
-                with ex ->
+                with
+                | ex ->
                     return
                         renderOutput
                             parseResult
@@ -453,7 +466,8 @@ module Organization =
                             return result |> renderOutput parseResult
                     | Error error -> return Error error |> renderOutput parseResult
 
-                with ex ->
+                with
+                | ex ->
                     return
                         renderOutput
                             parseResult
@@ -503,7 +517,8 @@ module Organization =
                             return result |> renderOutput parseResult
                     | Error error -> return Error error |> renderOutput parseResult
 
-                with ex ->
+                with
+                | ex ->
                     return
                         renderOutput
                             parseResult
@@ -551,7 +566,8 @@ module Organization =
                             return result |> renderOutput parseResult
                     | Error error -> return Error error |> renderOutput parseResult
 
-                with ex ->
+                with
+                | ex ->
                     return
                         renderOutput
                             parseResult

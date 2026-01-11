@@ -136,11 +136,9 @@ module QueueCommand =
     let private tryParseGuid (value: string) (error: QueueError) (parseResult: ParseResult) =
         let mutable parsed = Guid.Empty
 
-        if
-            String.IsNullOrWhiteSpace(value)
-            || Guid.TryParse(value, &parsed) = false
-            || parsed = Guid.Empty
-        then
+        if String.IsNullOrWhiteSpace(value)
+           || Guid.TryParse(value, &parsed) = false
+           || parsed = Guid.Empty then
             Error(GraceError.Create (QueueError.getErrorMessage error) (getCorrelationId parseResult))
         else
             Ok parsed
@@ -150,7 +148,8 @@ module QueueCommand =
 
         if String.IsNullOrWhiteSpace(value) then
             Ok String.Empty
-        elif Guid.TryParse(value, &parsed) = false || parsed = Guid.Empty then
+        elif Guid.TryParse(value, &parsed) = false
+             || parsed = Guid.Empty then
             Error(GraceError.Create (WorkItemError.getErrorMessage WorkItemError.InvalidWorkItemId) (getCorrelationId parseResult))
         else
             Ok(parsed.ToString())
@@ -184,7 +183,10 @@ module QueueCommand =
             if not (String.IsNullOrWhiteSpace branchRaw) then
                 let mutable parsed = Guid.Empty
 
-                if Guid.TryParse(branchRaw, &parsed) && parsed <> Guid.Empty then
+                if
+                    Guid.TryParse(branchRaw, &parsed)
+                    && parsed <> Guid.Empty
+                then
                     return Ok parsed
                 else
                     return! resolveBranchByName parseResult graceIds branchRaw
@@ -200,7 +202,8 @@ module QueueCommand =
         task {
             let mutable parsed = Guid.Empty
 
-            if Guid.TryParse(promotionGroupIdRaw, &parsed) = false || parsed = Guid.Empty then
+            if Guid.TryParse(promotionGroupIdRaw, &parsed) = false
+               || parsed = Guid.Empty then
                 return Error(GraceError.Create (PromotionGroupError.getErrorMessage PromotionGroupError.InvalidPromotionGroupId) (getCorrelationId parseResult))
             else
                 let parameters =
@@ -251,10 +254,17 @@ module QueueCommand =
         }
 
     let private writeQueueStatus (parseResult: ParseResult) (queue: PromotionQueue) =
-        if not (parseResult |> json) && not (parseResult |> silent) then
+        if
+            not (parseResult |> json)
+            && not (parseResult |> silent)
+        then
             let table = Table(Border = TableBorder.Rounded)
-            table.AddColumn(TableColumn("[bold]Field[/]").LeftAligned()) |> ignore
-            table.AddColumn(TableColumn("[bold]Value[/]").LeftAligned()) |> ignore
+
+            table.AddColumn(TableColumn("[bold]Field[/]").LeftAligned())
+            |> ignore
+
+            table.AddColumn(TableColumn("[bold]Value[/]").LeftAligned())
+            |> ignore
 
             table.AddRow("Target branch", Markup.Escape(queue.TargetBranchId.ToString()))
             |> ignore
@@ -262,7 +272,8 @@ module QueueCommand =
             table.AddRow("State", Markup.Escape(getDiscriminatedUnionCaseName queue.State))
             |> ignore
 
-            table.AddRow("Candidate count", queue.CandidateIds.Length.ToString()) |> ignore
+            table.AddRow("Candidate count", queue.CandidateIds.Length.ToString())
+            |> ignore
 
             match queue.RunningCandidateId with
             | Some candidateId ->
@@ -302,8 +313,8 @@ module QueueCommand =
                         writeQueueStatus parseResult returnValue.ReturnValue
                         return Ok returnValue
                     | Error error -> return Error error
-            with ex ->
-                return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
+            with
+            | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
         }
 
     type Status() =
@@ -340,12 +351,15 @@ module QueueCommand =
 
                     let! result = Queue.Pause(parameters)
 
-                    if not (parseResult |> json) && not (parseResult |> silent) then
+                    if
+                        not (parseResult |> json)
+                        && not (parseResult |> silent)
+                    then
                         AnsiConsole.MarkupLine("[green]Queue paused.[/]")
 
                     return result
-            with ex ->
-                return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
+            with
+            | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
         }
 
     type Pause() =
@@ -382,12 +396,15 @@ module QueueCommand =
 
                     let! result = Queue.Resume(parameters)
 
-                    if not (parseResult |> json) && not (parseResult |> silent) then
+                    if
+                        not (parseResult |> json)
+                        && not (parseResult |> silent)
+                    then
                         AnsiConsole.MarkupLine("[green]Queue resumed.[/]")
 
                     return result
-            with ex ->
-                return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
+            with
+            | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
         }
 
     type Resume() =
@@ -399,71 +416,88 @@ module QueueCommand =
                 return result |> renderOutput parseResult
             }
 
+    let private buildEnqueueParameters
+        (graceIds: GraceIds)
+        (targetBranchId: Guid)
+        (candidateId: Guid)
+        (promotionGroupIdRaw: string)
+        (workItemId: string)
+        (policySnapshotId: string)
+        =
+        Parameters.Queue.EnqueueParameters(
+            TargetBranchId = targetBranchId.ToString(),
+            CandidateId = candidateId.ToString(),
+            PromotionGroupId = promotionGroupIdRaw,
+            WorkItemId = workItemId,
+            PolicySnapshotId = policySnapshotId,
+            OwnerId = graceIds.OwnerIdString,
+            OwnerName = graceIds.OwnerName,
+            OrganizationId = graceIds.OrganizationIdString,
+            OrganizationName = graceIds.OrganizationName,
+            RepositoryId = graceIds.RepositoryIdString,
+            RepositoryName = graceIds.RepositoryName,
+            CorrelationId = graceIds.CorrelationId
+        )
+
+    let private enqueueHandlerImpl (parseResult: ParseResult) =
+        task {
+            if parseResult |> verbose then printParseResult parseResult
+            let graceIds = parseResult |> getNormalizedIdsAndNames
+
+            let candidateIdRaw =
+                parseResult.GetValue(Options.candidateIdOptional)
+                |> Option.ofObj
+                |> Option.defaultValue (Guid.NewGuid().ToString())
+
+            match tryParseGuid candidateIdRaw QueueError.InvalidCandidateId parseResult with
+            | Error error -> return Error error
+            | Ok candidateId ->
+                let promotionGroupIdRaw =
+                    parseResult.GetValue(Options.promotionGroupId)
+                    |> Option.ofObj
+                    |> Option.defaultValue String.Empty
+
+                let! targetBranchIdResult =
+                    if String.IsNullOrWhiteSpace promotionGroupIdRaw then
+                        resolveTargetBranchId parseResult graceIds
+                    else
+                        resolveTargetBranchIdFromPromotionGroup parseResult graceIds promotionGroupIdRaw
+
+                match targetBranchIdResult with
+                | Error error -> return Error error
+                | Ok targetBranchId ->
+                    let! policySnapshotIdResult = resolvePolicySnapshotId parseResult graceIds targetBranchId
+
+                    match policySnapshotIdResult with
+                    | Error error -> return Error error
+                    | Ok policySnapshotId ->
+                        let workItemIdRaw =
+                            parseResult.GetValue(Options.workItemId)
+                            |> Option.ofObj
+                            |> Option.defaultValue String.Empty
+
+                        match tryParseWorkItemId workItemIdRaw parseResult with
+                        | Error error -> return Error error
+                        | Ok workItemId ->
+                            let parameters = buildEnqueueParameters graceIds targetBranchId candidateId promotionGroupIdRaw workItemId policySnapshotId
+
+                            let! result = Queue.Enqueue(parameters)
+
+                            if
+                                not (parseResult |> json)
+                                && not (parseResult |> silent)
+                            then
+                                AnsiConsole.MarkupLine($"[green]Enqueued candidate[/] {Markup.Escape(candidateId.ToString())}")
+
+                            return result
+        }
+
     let private enqueueHandler (parseResult: ParseResult) =
         task {
             try
-                if parseResult |> verbose then printParseResult parseResult
-                let graceIds = parseResult |> getNormalizedIdsAndNames
-
-                let candidateIdRaw =
-                    parseResult.GetValue(Options.candidateIdOptional)
-                    |> Option.ofObj
-                    |> Option.defaultValue (Guid.NewGuid().ToString())
-
-                match tryParseGuid candidateIdRaw QueueError.InvalidCandidateId parseResult with
-                | Error error -> return Error error
-                | Ok candidateId ->
-                    let promotionGroupIdRaw =
-                        parseResult.GetValue(Options.promotionGroupId)
-                        |> Option.ofObj
-                        |> Option.defaultValue String.Empty
-
-                    let! targetBranchIdResult =
-                        if String.IsNullOrWhiteSpace promotionGroupIdRaw then
-                            resolveTargetBranchId parseResult graceIds
-                        else
-                            resolveTargetBranchIdFromPromotionGroup parseResult graceIds promotionGroupIdRaw
-
-                    match targetBranchIdResult with
-                    | Error error -> return Error error
-                    | Ok targetBranchId ->
-                        let! policySnapshotIdResult = resolvePolicySnapshotId parseResult graceIds targetBranchId
-
-                        match policySnapshotIdResult with
-                        | Error error -> return Error error
-                        | Ok policySnapshotId ->
-                            let workItemIdRaw =
-                                parseResult.GetValue(Options.workItemId)
-                                |> Option.ofObj
-                                |> Option.defaultValue String.Empty
-
-                            match tryParseWorkItemId workItemIdRaw parseResult with
-                            | Error error -> return Error error
-                            | Ok workItemId ->
-                                let parameters =
-                                    Parameters.Queue.EnqueueParameters(
-                                        TargetBranchId = targetBranchId.ToString(),
-                                        CandidateId = candidateId.ToString(),
-                                        PromotionGroupId = promotionGroupIdRaw,
-                                        WorkItemId = workItemId,
-                                        PolicySnapshotId = policySnapshotId,
-                                        OwnerId = graceIds.OwnerIdString,
-                                        OwnerName = graceIds.OwnerName,
-                                        OrganizationId = graceIds.OrganizationIdString,
-                                        OrganizationName = graceIds.OrganizationName,
-                                        RepositoryId = graceIds.RepositoryIdString,
-                                        RepositoryName = graceIds.RepositoryName,
-                                        CorrelationId = graceIds.CorrelationId
-                                    )
-
-                                let! result = Queue.Enqueue(parameters)
-
-                                if not (parseResult |> json) && not (parseResult |> silent) then
-                                    AnsiConsole.MarkupLine($"[green]Enqueued candidate[/] {Markup.Escape(candidateId.ToString())}")
-
-                                return result
-            with ex ->
-                return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
+                return! enqueueHandlerImpl parseResult
+            with
+            | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
         }
 
     type Enqueue() =
@@ -506,12 +540,15 @@ module QueueCommand =
 
                         let! result = Queue.Dequeue(parameters)
 
-                        if not (parseResult |> json) && not (parseResult |> silent) then
+                        if
+                            not (parseResult |> json)
+                            && not (parseResult |> silent)
+                        then
                             AnsiConsole.MarkupLine($"[green]Dequeued candidate[/] {Markup.Escape(candidateId.ToString())}")
 
                         return result
-            with ex ->
-                return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
+            with
+            | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
         }
 
     type Dequeue() =
@@ -554,12 +591,15 @@ module QueueCommand =
 
                         let! result = Candidate.Retry(parameters)
 
-                        if not (parseResult |> json) && not (parseResult |> silent) then
+                        if
+                            not (parseResult |> json)
+                            && not (parseResult |> silent)
+                        then
                             AnsiConsole.MarkupLine($"[green]Retry requested for candidate[/] {Markup.Escape(candidateId.ToString())}")
 
                         return result
-            with ex ->
-                return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
+            with
+            | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
         }
 
     type Retry() =

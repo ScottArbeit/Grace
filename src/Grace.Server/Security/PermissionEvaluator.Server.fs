@@ -37,7 +37,7 @@ type GracePermissionEvaluator() =
 
                     let! pathPermissions =
                         match resource with
-                        | Resource.Path(_, _, repositoryId, _) ->
+                        | Resource.Path (_, _, repositoryId, _) ->
                             task {
                                 let actorProxy = Extensions.ActorProxy.RepositoryPermission.CreateActorProxy repositoryId correlationId
                                 return! actorProxy.GetPathPermissions None correlationId
@@ -45,6 +45,6 @@ type GracePermissionEvaluator() =
                         | _ -> Task.FromResult List.empty
 
                     return checkPermission roleCatalog allAssignments pathPermissions principalSet effectiveClaims operation resource
-                with ex ->
-                    return Denied $"Authorization evaluation failed: {ex.Message}"
+                with
+                | ex -> return Denied $"Authorization evaluation failed: {ex.Message}"
             }

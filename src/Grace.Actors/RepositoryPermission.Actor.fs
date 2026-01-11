@@ -24,7 +24,9 @@ module RepositoryPermission =
         let Empty = { PathPermissions = [] }
 
     type RepositoryPermissionActor
-        ([<PersistentState(StateName.RepositoryPermission, Grace.Shared.Constants.GraceActorStorage)>] state: IPersistentState<RepositoryPermissionState>) =
+        (
+            [<PersistentState(StateName.RepositoryPermission, Grace.Shared.Constants.GraceActorStorage)>] state: IPersistentState<RepositoryPermissionState>
+        ) =
         inherit Grain()
 
         let log = loggerFactory.CreateLogger("RepositoryPermission.Actor")

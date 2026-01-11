@@ -27,10 +27,9 @@ type ClaimMappingTests() =
     [<Test>]
     member _.DoesNotOverrideExistingGraceUserId() =
         let principal =
-            createPrincipal
-                [ Claim(PrincipalMapper.GraceUserIdClaim, "existing-user")
-                  Claim("tid", "tenant-2")
-                  Claim("oid", "object-2") ]
+            createPrincipal [ Claim(PrincipalMapper.GraceUserIdClaim, "existing-user")
+                              Claim("tid", "tenant-2")
+                              Claim("oid", "object-2") ]
 
         let mapped = ClaimMapping.mapClaims principal
         let userIds = findValues PrincipalMapper.GraceUserIdClaim mapped
@@ -39,16 +38,27 @@ type ClaimMappingTests() =
     [<Test>]
     member _.MapsRolesScopesPermissionsAndGroups() =
         let principal =
-            createPrincipal
-                [ Claim("roles", "Admin")
-                  Claim("scp", "repo.write repo.read")
-                  Claim("scope", "repo.list")
-                  Claim("permissions", "repo.delete")
-                  Claim("groups", "group-1") ]
+            createPrincipal [ Claim("roles", "Admin")
+                              Claim("scp", "repo.write repo.read")
+                              Claim("scope", "repo.list")
+                              Claim("permissions", "repo.delete")
+                              Claim("groups", "group-1") ]
 
         let mapped = ClaimMapping.mapClaims principal
         let graceClaims = findValues PrincipalMapper.GraceClaim mapped
         let graceGroups = findValues PrincipalMapper.GraceGroupIdClaim mapped
 
-        Assert.That(graceClaims, Is.EquivalentTo([ "Admin"; "repo.write"; "repo.read"; "repo.list"; "repo.delete" ]))
+        Assert.That(
+            graceClaims,
+            Is.EquivalentTo(
+                [
+                    "Admin"
+                    "repo.write"
+                    "repo.read"
+                    "repo.list"
+                    "repo.delete"
+                ]
+            )
+        )
+
         Assert.That(graceGroups, Is.EquivalentTo([ "group-1" ]))

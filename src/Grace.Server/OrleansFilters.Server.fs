@@ -135,7 +135,8 @@ module Orleans =
                     try
                         // Invoke the grain method.
                         do! context.Invoke()
-                    with ex ->
+                    with
+                    | ex ->
                         // Log the exception if it occurs during the grain method invocation.
                         let duration_ms = getDurationRightAligned_ms actorStartTime
 

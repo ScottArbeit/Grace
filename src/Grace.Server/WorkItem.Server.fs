@@ -101,7 +101,8 @@ module WorkItem =
                             .enhance ("Path", context.Request.Path.Value)
 
                     return! context |> result400BadRequest graceError
-            with ex ->
+            with
+            | ex ->
                 log.LogError(
                     ex,
                     "{CurrentInstant}: Exception in WorkItem.Server.processCommand. CorrelationId: {correlationId}.",
@@ -164,7 +165,8 @@ module WorkItem =
                             .enhance ("Path", context.Request.Path.Value)
 
                     return! context |> result400BadRequest graceError
-            with ex ->
+            with
+            | ex ->
                 let graceError =
                     (GraceError.CreateWithException ex String.Empty correlationId)
                         .enhance(parameterDictionary)
@@ -177,35 +179,59 @@ module WorkItem =
         }
 
     let internal buildUpdateCommands (parameters: UpdateWorkItemParameters) =
-        [ if not <| String.IsNullOrEmpty(parameters.Title) then
-              WorkItemCommand.SetTitle parameters.Title
-          if not <| String.IsNullOrEmpty(parameters.Description) then
-              WorkItemCommand.SetDescription parameters.Description
-          if not <| String.IsNullOrEmpty(parameters.Status) then
-              let status = discriminatedUnionFromString<WorkItemStatus> parameters.Status |> Option.get
-              WorkItemCommand.SetStatus status
-          if not <| String.IsNullOrEmpty(parameters.Constraints) then
-              WorkItemCommand.SetConstraints parameters.Constraints
-          if not <| String.IsNullOrEmpty(parameters.Notes) then
-              WorkItemCommand.SetNotes parameters.Notes
-          if not <| String.IsNullOrEmpty(parameters.ArchitecturalNotes) then
-              WorkItemCommand.SetArchitecturalNotes parameters.ArchitecturalNotes
-          if not <| String.IsNullOrEmpty(parameters.MigrationNotes) then
-              WorkItemCommand.SetMigrationNotes parameters.MigrationNotes ]
+        [
+            if not <| String.IsNullOrEmpty(parameters.Title) then
+                WorkItemCommand.SetTitle parameters.Title
+            if
+                not
+                <| String.IsNullOrEmpty(parameters.Description)
+            then
+                WorkItemCommand.SetDescription parameters.Description
+            if not <| String.IsNullOrEmpty(parameters.Status) then
+                let status =
+                    discriminatedUnionFromString<WorkItemStatus> parameters.Status
+                    |> Option.get
+
+                WorkItemCommand.SetStatus status
+            if
+                not
+                <| String.IsNullOrEmpty(parameters.Constraints)
+            then
+                WorkItemCommand.SetConstraints parameters.Constraints
+            if not <| String.IsNullOrEmpty(parameters.Notes) then
+                WorkItemCommand.SetNotes parameters.Notes
+            if
+                not
+                <| String.IsNullOrEmpty(parameters.ArchitecturalNotes)
+            then
+                WorkItemCommand.SetArchitecturalNotes parameters.ArchitecturalNotes
+            if
+                not
+                <| String.IsNullOrEmpty(parameters.MigrationNotes)
+            then
+                WorkItemCommand.SetMigrationNotes parameters.MigrationNotes
+        ]
 
     let internal validateLinkReferenceParameters (parameters: LinkReferenceParameters) =
-        [| Guid.isValidAndNotEmptyGuid parameters.WorkItemId WorkItemError.InvalidWorkItemId
-           Guid.isValidAndNotEmptyGuid parameters.ReferenceId WorkItemError.InvalidReferenceId |]
+        [|
+            Guid.isValidAndNotEmptyGuid parameters.WorkItemId WorkItemError.InvalidWorkItemId
+            Guid.isValidAndNotEmptyGuid parameters.ReferenceId WorkItemError.InvalidReferenceId
+        |]
 
     let internal validateLinkPromotionGroupParameters (parameters: LinkPromotionGroupParameters) =
-        [| Guid.isValidAndNotEmptyGuid parameters.WorkItemId WorkItemError.InvalidWorkItemId
-           Guid.isValidAndNotEmptyGuid parameters.PromotionGroupId WorkItemError.InvalidPromotionGroupId |]
+        [|
+            Guid.isValidAndNotEmptyGuid parameters.WorkItemId WorkItemError.InvalidWorkItemId
+            Guid.isValidAndNotEmptyGuid parameters.PromotionGroupId WorkItemError.InvalidPromotionGroupId
+        |]
 
     /// Creates a new work item.
     let Create: HttpHandler =
         fun (_next: HttpFunc) (context: HttpContext) ->
             task {
-                let validations (parameters: CreateWorkItemParameters) = [| Guid.isValidAndNotEmptyGuid parameters.WorkItemId WorkItemError.InvalidWorkItemId |]
+                let validations (parameters: CreateWorkItemParameters) =
+                    [|
+                        Guid.isValidAndNotEmptyGuid parameters.WorkItemId WorkItemError.InvalidWorkItemId
+                    |]
 
                 let command (parameters: CreateWorkItemParameters) =
                     let workItemId = Guid.Parse(parameters.WorkItemId)
@@ -220,7 +246,7 @@ module WorkItem =
                     )
                     |> returnValueTask
 
-                context.Items["Command"] <- nameof Create
+                context.Items[ "Command" ] <- nameof Create
                 return! processCommand context validations command
             }
 
@@ -230,7 +256,10 @@ module WorkItem =
             task {
                 let graceIds = getGraceIds context
 
-                let validations (parameters: GetWorkItemParameters) = [| Guid.isValidAndNotEmptyGuid parameters.WorkItemId WorkItemError.InvalidWorkItemId |]
+                let validations (parameters: GetWorkItemParameters) =
+                    [|
+                        Guid.isValidAndNotEmptyGuid parameters.WorkItemId WorkItemError.InvalidWorkItemId
+                    |]
 
                 let query (context: HttpContext) _ (actorProxy: IWorkItemActor) = actorProxy.Get(getCorrelationId context)
 
@@ -238,7 +267,7 @@ module WorkItem =
                 parameters.OwnerId <- graceIds.OwnerIdString
                 parameters.OrganizationId <- graceIds.OrganizationIdString
                 parameters.RepositoryId <- graceIds.RepositoryIdString
-                context.Items["Command"] <- "Get"
+                context.Items[ "Command" ] <- "Get"
                 return! processQuery context parameters validations query
             }
 
@@ -250,11 +279,13 @@ module WorkItem =
                 let correlationId = getCorrelationId context
 
                 let validations (parameters: UpdateWorkItemParameters) =
-                    [| Guid.isValidAndNotEmptyGuid parameters.WorkItemId WorkItemError.InvalidWorkItemId
-                       (if String.IsNullOrEmpty(parameters.Status) then
-                            Ok() |> returnValueTask
-                        else
-                            DiscriminatedUnion.isMemberOf<WorkItemStatus, WorkItemError> parameters.Status WorkItemError.InvalidStatus) |]
+                    [|
+                        Guid.isValidAndNotEmptyGuid parameters.WorkItemId WorkItemError.InvalidWorkItemId
+                        (if String.IsNullOrEmpty(parameters.Status) then
+                             Ok() |> returnValueTask
+                         else
+                             DiscriminatedUnion.isMemberOf<WorkItemStatus, WorkItemError> parameters.Status WorkItemError.InvalidStatus)
+                    |]
 
                 let! parameters = context |> parse<UpdateWorkItemParameters>
                 parameters.OwnerId <- graceIds.OwnerIdString
@@ -286,13 +317,13 @@ module WorkItem =
 
                         for cmd in commands do
                             match result with
-                            | Some(Error _) -> ()
+                            | Some (Error _) -> ()
                             | _ ->
                                 let! handleResult = actorProxy.Handle cmd metadata
                                 result <- Some handleResult
 
                         match result with
-                        | Some(Ok graceReturnValue) ->
+                        | Some (Ok graceReturnValue) ->
                             graceReturnValue
                                 .enhance(nameof OwnerId, graceIds.OwnerId)
                                 .enhance(nameof OrganizationId, graceIds.OrganizationId)
@@ -303,7 +334,7 @@ module WorkItem =
                             |> ignore
 
                             return! context |> result200Ok graceReturnValue
-                        | Some(Error graceError) ->
+                        | Some (Error graceError) ->
                             graceError
                                 .enhance(nameof OwnerId, graceIds.OwnerId)
                                 .enhance(nameof OrganizationId, graceIds.OrganizationId)
@@ -342,7 +373,7 @@ module WorkItem =
                     WorkItemCommand.LinkReference(Guid.Parse(parameters.ReferenceId))
                     |> returnValueTask
 
-                context.Items["Command"] <- nameof LinkReference
+                context.Items[ "Command" ] <- nameof LinkReference
                 return! processCommand context validations command
             }
 
@@ -356,6 +387,6 @@ module WorkItem =
                     WorkItemCommand.LinkPromotionGroup(Guid.Parse(parameters.PromotionGroupId))
                     |> returnValueTask
 
-                context.Items["Command"] <- nameof LinkPromotionGroup
+                context.Items[ "Command" ] <- nameof LinkPromotionGroup
                 return! processCommand context validations command
             }

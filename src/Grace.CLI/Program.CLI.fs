@@ -80,8 +80,10 @@ module GraceCommand =
         table
             .LeftAligned()
             .AddColumns(
-                [| TableColumn($"[{Colors.Important}]Alias[/]")
-                   TableColumn($"[{Colors.Important}]Grace command[/]") |]
+                [|
+                    TableColumn($"[{Colors.Important}]Alias[/]")
+                    TableColumn($"[{Colors.Important}]Grace command[/]")
+                |]
             )
         |> ignore
 
@@ -156,7 +158,10 @@ module GraceCommand =
 
         while i < lines.Length do
             let line = lines[i]
-            let matchedAlias = defaultsByAlias.Keys |> Seq.tryFind (fun alias -> line.Contains(alias))
+
+            let matchedAlias =
+                defaultsByAlias.Keys
+                |> Seq.tryFind (fun alias -> line.Contains(alias))
 
             match matchedAlias with
             | Some alias -> pendingAlias <- Some alias
@@ -197,8 +202,14 @@ module GraceCommand =
                         j <- j + 1
 
                     i <- j
-            | Some alias when alias = OptionName.CorrelationId && line.Contains("CorrelationId") ->
-                if not <| line.Contains("[default:", StringComparison.OrdinalIgnoreCase) then
+            | Some alias when
+                alias = OptionName.CorrelationId
+                && line.Contains("CorrelationId")
+                ->
+                if
+                    not
+                    <| line.Contains("[default:", StringComparison.OrdinalIgnoreCase)
+                then
                     output.Add($"{line} [default: {defaultsByAlias[alias]}]")
                 else
                     output.Add(line)
@@ -387,7 +398,7 @@ module GraceCommand =
             if args.Length = 0 then
                 Array.empty<string>
             else
-                let firstToken = if isCaseInsensitive then args[0].ToLowerInvariant() else args[0]
+                let firstToken = if isCaseInsensitive then args[ 0 ].ToLowerInvariant() else args[0]
 
                 let properCasedArgs =
                     args
@@ -400,7 +411,7 @@ module GraceCommand =
                 if aliases.ContainsKey(firstToken) then
                     let newArgs = List<string>()
 
-                    for token in aliases[firstToken].Reverse() do
+                    for token in aliases[ firstToken ].Reverse() do
                         newArgs.Insert(0, token)
 
                     for token in properCasedArgs[1..] do
@@ -430,11 +441,9 @@ module GraceCommand =
 
                     match parseResult.Action with
                     | :? HelpAction ->
-                        if
-                            parseResult.Tokens.Count = 0
-                            || (parseResult.Tokens.Count = 1
-                                && helpOptions.Contains(parseResult.Tokens[0].Value))
-                        then
+                        if parseResult.Tokens.Count = 0
+                           || (parseResult.Tokens.Count = 1
+                               && helpOptions.Contains(parseResult.Tokens[0].Value)) then
                             // This is where we configure how help is displayed by Grace.
                             // We want to show the help text for the command, and then the feedback section at the end.
                             let graceFiglet = FigletText($"Grace")
@@ -468,20 +477,33 @@ module GraceCommand =
                         //   "[default: thing-we-said-in-the-Option-definition] [default:e4def31b-4547-4f6b-9324-56eba666b4b2]"
                         //   i.e. whatever the generated Guid value on create might be.
                         let optionsToUpdate =
-                            [ { optionAlias = OptionName.CorrelationId
-                                display = "new NanoId"
-                                displayOnCreate = "new NanoId"
-                                createParentCommand = String.Empty }
-                              { optionAlias = OptionName.OwnerId; display = "current OwnerId"; displayOnCreate = "new Guid"; createParentCommand = "owner" }
-                              { optionAlias = OptionName.OrganizationId
-                                display = "current OrganizationId"
-                                displayOnCreate = "new Guid"
-                                createParentCommand = "organization" }
-                              { optionAlias = OptionName.RepositoryId
-                                display = "current RepositoryId"
-                                displayOnCreate = "new Guid"
-                                createParentCommand = "repository" }
-                              { optionAlias = OptionName.BranchId; display = "current BranchId"; displayOnCreate = "new Guid"; createParentCommand = "branch" } ]
+                            [
+                                {
+                                    optionAlias = OptionName.CorrelationId
+                                    display = "new NanoId"
+                                    displayOnCreate = "new NanoId"
+                                    createParentCommand = String.Empty
+                                }
+                                { optionAlias = OptionName.OwnerId; display = "current OwnerId"; displayOnCreate = "new Guid"; createParentCommand = "owner" }
+                                {
+                                    optionAlias = OptionName.OrganizationId
+                                    display = "current OrganizationId"
+                                    displayOnCreate = "new Guid"
+                                    createParentCommand = "organization"
+                                }
+                                {
+                                    optionAlias = OptionName.RepositoryId
+                                    display = "current RepositoryId"
+                                    displayOnCreate = "new Guid"
+                                    createParentCommand = "repository"
+                                }
+                                {
+                                    optionAlias = OptionName.BranchId
+                                    display = "current BranchId"
+                                    displayOnCreate = "new Guid"
+                                    createParentCommand = "branch"
+                                }
+                            ]
 
                         let isCreate = parseResult.CommandResult.Command.Name.Equals("create", StringComparison.OrdinalIgnoreCase)
 
@@ -492,8 +514,9 @@ module GraceCommand =
                             |> Seq.map (fun optionToUpdate ->
                                 let useCreateDisplay =
                                     isCreate
-                                    && not <| String.IsNullOrWhiteSpace(optionToUpdate.createParentCommand)
-                                    && parentCommands.Any(fun parent ->
+                                    && not
+                                       <| String.IsNullOrWhiteSpace(optionToUpdate.createParentCommand)
+                                    && parentCommands.Any (fun parent ->
                                         parent.Name.Equals(optionToUpdate.createParentCommand, StringComparison.OrdinalIgnoreCase))
 
                                 let defaultValueText =
@@ -525,7 +548,10 @@ module GraceCommand =
 
                             if parseResult |> hasOutput then
                                 if parseResult |> verbose then
-                                    AnsiConsole.Write((new Rule($"[{Colors.Important}]Started: {formatInstantExtended startTime}.[/]")).RightJustified())
+                                    AnsiConsole.Write(
+                                        (new Rule($"[{Colors.Important}]Started: {formatInstantExtended startTime}.[/]"))
+                                            .RightJustified()
+                                    )
 
                                 //printParseResult parseResult
                                 else
@@ -552,7 +578,10 @@ module GraceCommand =
                             // If we're writing output, write the final Rule() to the console.
                             if parseResult |> hasOutput then
                                 let finishTime = getCurrentInstant ()
-                                let elapsed = (finishTime - startTime).Plus(Duration.FromMilliseconds(110.0)) // Adding 110ms for .NET Runtime startup time.
+
+                                let elapsed =
+                                    (finishTime - startTime)
+                                        .Plus(Duration.FromMilliseconds(110.0)) // Adding 110ms for .NET Runtime startup time.
 
                                 if parseResult |> verbose then
                                     AnsiConsole.Write(
@@ -563,7 +592,8 @@ module GraceCommand =
                                     )
                                 else
                                     AnsiConsole.Write(
-                                        (new Rule($"[{Colors.Important}]Elapsed: {elapsed.TotalSeconds:F3}s. Exit code: {returnValue}.[/]")).RightJustified()
+                                        (new Rule($"[{Colors.Important}]Elapsed: {elapsed.TotalSeconds:F3}s. Exit code: {returnValue}.[/]"))
+                                            .RightJustified()
                                     )
 
                                 AnsiConsole.WriteLine()
@@ -577,7 +607,13 @@ module GraceCommand =
                                 else
                                     StringComparison.InvariantCulture
 
-                            let allowedCommands = [ "config"; "history"; "auth"; "connect" ]
+                            let allowedCommands =
+                                [
+                                    "config"
+                                    "history"
+                                    "auth"
+                                    "connect"
+                                ]
 
                             let isAllowed =
                                 let command = parseResult.CommandResult.Command
@@ -600,14 +636,19 @@ module GraceCommand =
 
                             printParseResult parseResult
                             let finishTime = getCurrentInstant ()
-                            let elapsed = (finishTime - startTime).Plus(Duration.FromMilliseconds(110.0)) // Adding 110ms for .NET Runtime startup time.
+
+                            let elapsed =
+                                (finishTime - startTime)
+                                    .Plus(Duration.FromMilliseconds(110.0)) // Adding 110ms for .NET Runtime startup time.
 
                             AnsiConsole.Write(
-                                (new Rule($"[{Colors.Important}]Elapsed: {elapsed.TotalSeconds:F3}s. Exit code: {returnValue}.[/]")).RightJustified()
+                                (new Rule($"[{Colors.Important}]Elapsed: {elapsed.TotalSeconds:F3}s. Exit code: {returnValue}.[/]"))
+                                    .RightJustified()
                             )
 
                     return returnValue
-                with ex ->
+                with
+                | ex ->
                     AnsiConsole.WriteException ex
                     //logToAnsiConsole Colors.Error $"ex.Message: {ex.Message}"
                     //logToAnsiConsole Colors.Error $"{ex.StackTrace}"
@@ -615,20 +656,26 @@ module GraceCommand =
                     return -1
             finally
                 let finishTime = getCurrentInstant ()
-                let durationMs = (finishTime - startTime).TotalMilliseconds |> int64
+
+                let durationMs =
+                    (finishTime - startTime).TotalMilliseconds
+                    |> int64
 
                 HistoryStorage.tryRecordInvocation
-                    { argvOriginal = argvOriginal
-                      argvNormalized = argvNormalized
-                      cwd = Environment.CurrentDirectory
-                      exitCode = returnValue
-                      durationMs = durationMs
-                      parseSucceeded = parseSucceeded
-                      timestampUtc = startTime
-                      source = None }
+                    {
+                        argvOriginal = argvOriginal
+                        argvNormalized = argvNormalized
+                        cwd = Environment.CurrentDirectory
+                        exitCode = returnValue
+                        durationMs = durationMs
+                        parseSucceeded = parseSucceeded
+                        timestampUtc = startTime
+                        source = None
+                    }
 
                 // If this was grace watch, delete the inter-process communication file.
-                if not <| isNull (parseResult) && parseResult |> isGraceWatch then
+                if not <| isNull (parseResult)
+                   && parseResult |> isGraceWatch then
                     File.Delete(IpcFileName())
         })
             .Result

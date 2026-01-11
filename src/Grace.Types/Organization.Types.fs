@@ -52,46 +52,51 @@ module Organization =
         }
 
     type OrganizationDto =
-        { Class: string
-          OrganizationId: OrganizationId
-          OrganizationName: OrganizationName
-          OwnerId: OwnerId
-          OrganizationType: OrganizationType
-          Description: string
-          SearchVisibility: SearchVisibility
-          CreatedAt: Instant
-          UpdatedAt: Instant option
-          DeletedAt: Instant option
-          DeleteReason: DeleteReason }
+        {
+            Class: string
+            OrganizationId: OrganizationId
+            OrganizationName: OrganizationName
+            OwnerId: OwnerId
+            OrganizationType: OrganizationType
+            Description: string
+            SearchVisibility: SearchVisibility
+            CreatedAt: Instant
+            UpdatedAt: Instant option
+            DeletedAt: Instant option
+            DeleteReason: DeleteReason
+        }
 
         static member Default =
-            { Class = nameof OrganizationDto
-              OrganizationId = OrganizationId.Empty
-              OrganizationName = String.Empty
-              OwnerId = OwnerId.Empty
-              OrganizationType = OrganizationType.Public
-              Description = String.Empty
-              SearchVisibility = Visible
-              CreatedAt = Constants.DefaultTimestamp
-              UpdatedAt = None
-              DeletedAt = None
-              DeleteReason = String.Empty }
+            {
+                Class = nameof OrganizationDto
+                OrganizationId = OrganizationId.Empty
+                OrganizationName = String.Empty
+                OwnerId = OwnerId.Empty
+                OrganizationType = OrganizationType.Public
+                Description = String.Empty
+                SearchVisibility = Visible
+                CreatedAt = Constants.DefaultTimestamp
+                UpdatedAt = None
+                DeletedAt = None
+                DeleteReason = String.Empty
+            }
 
         /// Updates the OrganizationDto based on the OrganizationEvent.
         static member UpdateDto organizationEvent currentOrganizationDto =
             let newOrganizationDto =
                 match organizationEvent.Event with
-                | Created(organizationId, organizationName, ownerId) ->
+                | Created (organizationId, organizationName, ownerId) ->
                     { OrganizationDto.Default with
                         OrganizationId = organizationId
                         OrganizationName = organizationName
                         OwnerId = ownerId
-                        CreatedAt = organizationEvent.Metadata.Timestamp }
-                | NameSet(organizationName) -> { currentOrganizationDto with OrganizationName = organizationName }
-                | TypeSet(organizationType) -> { currentOrganizationDto with OrganizationType = organizationType }
-                | SearchVisibilitySet(searchVisibility) -> { currentOrganizationDto with SearchVisibility = searchVisibility }
-                | DescriptionSet(description) -> { currentOrganizationDto with Description = description }
-                | LogicalDeleted(_, deleteReason) -> { currentOrganizationDto with DeleteReason = deleteReason; DeletedAt = Some(getCurrentInstant ()) }
+                        CreatedAt = organizationEvent.Metadata.Timestamp
+                    }
+                | NameSet (organizationName) -> { currentOrganizationDto with OrganizationName = organizationName }
+                | TypeSet (organizationType) -> { currentOrganizationDto with OrganizationType = organizationType }
+                | SearchVisibilitySet (searchVisibility) -> { currentOrganizationDto with SearchVisibility = searchVisibility }
+                | DescriptionSet (description) -> { currentOrganizationDto with Description = description }
+                | LogicalDeleted (_, deleteReason) -> { currentOrganizationDto with DeleteReason = deleteReason; DeletedAt = Some(getCurrentInstant ()) }
                 | PhysicalDeleted -> currentOrganizationDto // Do nothing because it's about to be deleted anyway.
                 | Undeleted -> { currentOrganizationDto with DeletedAt = None; DeleteReason = String.Empty }
 

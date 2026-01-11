@@ -34,12 +34,14 @@ module Queue =
     let activitySource = new ActivitySource("Queue")
 
     let buildRequiredAction actionType reason targetId =
-        { RequiredActionType = actionType
-          TargetId = targetId
-          Reason = reason
-          Parameters = Dictionary<string, string>()
-          SuggestedCliCommand = None
-          SuggestedApiCall = None }
+        {
+            RequiredActionType = actionType
+            TargetId = targetId
+            Reason = reason
+            Parameters = Dictionary<string, string>()
+            SuggestedCliCommand = None
+            SuggestedApiCall = None
+        }
 
     let computeRequiredActions (candidate: IntegrationCandidate) =
         let actions = ResizeArray<RequiredActionDto>()
@@ -61,7 +63,8 @@ module Queue =
         |> Seq.toList
 
     let internal requiresPolicySnapshotForInitialization (queueExists: bool) (policySnapshotId: string) =
-        not queueExists && String.IsNullOrEmpty(policySnapshotId)
+        not queueExists
+        && String.IsNullOrEmpty(policySnapshotId)
 
     let processCommand<'T when 'T :> QueueParameters> (context: HttpContext) (validations: Validations<'T>) (command: 'T -> ValueTask<PromotionQueueCommand>) =
         task {
@@ -132,7 +135,8 @@ module Queue =
                             .enhance ("Path", context.Request.Path.Value)
 
                     return! context |> result400BadRequest graceError
-            with ex ->
+            with
+            | ex ->
                 log.LogError(
                     ex,
                     "{CurrentInstant}: Exception in Queue.Server.processCommand. CorrelationId: {correlationId}.",
@@ -224,7 +228,8 @@ module Queue =
                             .enhance ("Path", context.Request.Path.Value)
 
                     return! context |> result400BadRequest graceError
-            with ex ->
+            with
+            | ex ->
                 log.LogError(
                     ex,
                     "{CurrentInstant}: Exception in Queue.Server.processCommandWithParameters. CorrelationId: {correlationId}.",
@@ -287,7 +292,8 @@ module Queue =
                             .enhance ("Path", context.Request.Path.Value)
 
                     return! context |> result400BadRequest graceError
-            with ex ->
+            with
+            | ex ->
                 let graceError =
                     (GraceError.CreateWithException ex String.Empty correlationId)
                         .enhance(parameterDictionary)
@@ -306,7 +312,9 @@ module Queue =
                 let graceIds = getGraceIds context
 
                 let validations (parameters: QueueStatusParameters) =
-                    [| Guid.isValidAndNotEmptyGuid parameters.TargetBranchId QueueError.InvalidTargetBranchId |]
+                    [|
+                        Guid.isValidAndNotEmptyGuid parameters.TargetBranchId QueueError.InvalidTargetBranchId
+                    |]
 
                 let query (context: HttpContext) _ (actorProxy: IPromotionQueueActor) = actorProxy.Get(getCorrelationId context)
 
@@ -314,7 +322,7 @@ module Queue =
                 parameters.OwnerId <- graceIds.OwnerIdString
                 parameters.OrganizationId <- graceIds.OrganizationIdString
                 parameters.RepositoryId <- graceIds.RepositoryIdString
-                context.Items["Command"] <- "Status"
+                context.Items[ "Command" ] <- "Status"
                 return! processQuery context parameters validations query
             }
 
@@ -323,10 +331,12 @@ module Queue =
         fun (_next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: QueueActionParameters) =
-                    [| Guid.isValidAndNotEmptyGuid parameters.TargetBranchId QueueError.InvalidTargetBranchId |]
+                    [|
+                        Guid.isValidAndNotEmptyGuid parameters.TargetBranchId QueueError.InvalidTargetBranchId
+                    |]
 
                 let command (_: QueueActionParameters) = PromotionQueueCommand.Pause |> returnValueTask
-                context.Items["Command"] <- nameof Pause
+                context.Items[ "Command" ] <- nameof Pause
                 return! processCommand context validations command
             }
 
@@ -335,10 +345,12 @@ module Queue =
         fun (_next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: QueueActionParameters) =
-                    [| Guid.isValidAndNotEmptyGuid parameters.TargetBranchId QueueError.InvalidTargetBranchId |]
+                    [|
+                        Guid.isValidAndNotEmptyGuid parameters.TargetBranchId QueueError.InvalidTargetBranchId
+                    |]
 
                 let command (_: QueueActionParameters) = PromotionQueueCommand.Resume |> returnValueTask
-                context.Items["Command"] <- nameof Resume
+                context.Items[ "Command" ] <- nameof Resume
                 return! processCommand context validations command
             }
 
@@ -350,12 +362,14 @@ module Queue =
                 let correlationId = getCorrelationId context
 
                 let validations (parameters: EnqueueParameters) =
-                    [| Guid.isValidAndNotEmptyGuid parameters.TargetBranchId QueueError.InvalidTargetBranchId
-                       Guid.isValidAndNotEmptyGuid parameters.CandidateId QueueError.InvalidCandidateId
-                       (if String.IsNullOrEmpty(parameters.PolicySnapshotId) then
-                            Ok() |> returnValueTask
-                        else
-                            String.isNotEmpty parameters.PolicySnapshotId QueueError.InvalidPolicySnapshotId) |]
+                    [|
+                        Guid.isValidAndNotEmptyGuid parameters.TargetBranchId QueueError.InvalidTargetBranchId
+                        Guid.isValidAndNotEmptyGuid parameters.CandidateId QueueError.InvalidCandidateId
+                        (if String.IsNullOrEmpty(parameters.PolicySnapshotId) then
+                             Ok() |> returnValueTask
+                         else
+                             String.isNotEmpty parameters.PolicySnapshotId QueueError.InvalidPolicySnapshotId)
+                    |]
 
                 let! parameters = context |> parse<EnqueueParameters>
                 parameters.OwnerId <- graceIds.OwnerIdString
@@ -374,8 +388,12 @@ module Queue =
 
                     let runEnqueue () =
                         task {
-                            context.Items["Command"] <- nameof Enqueue
-                            let command (_: EnqueueParameters) = PromotionQueueCommand.Enqueue candidateId |> returnValueTask
+                            context.Items[ "Command" ] <- nameof Enqueue
+
+                            let command (_: EnqueueParameters) =
+                                PromotionQueueCommand.Enqueue candidateId
+                                |> returnValueTask
+
                             return! processCommandWithParameters context parameters (fun _ -> [||]) command
                         }
 
@@ -430,7 +448,8 @@ module Queue =
                                 TargetBranchId = targetBranchId
                                 PolicySnapshotId = policySnapshotId
                                 Status = CandidateStatus.Pending
-                                CreatedAt = getCurrentInstant () }
+                                CreatedAt = getCurrentInstant ()
+                            }
 
                         match! candidateActorProxy.Handle (CandidateCommand.Initialize candidate) metadata with
                         | Error error -> return! context |> result400BadRequest error
@@ -449,14 +468,16 @@ module Queue =
         fun (_next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: CandidateActionParameters) =
-                    [| Guid.isValidAndNotEmptyGuid parameters.TargetBranchId QueueError.InvalidTargetBranchId
-                       Guid.isValidAndNotEmptyGuid parameters.CandidateId QueueError.InvalidCandidateId |]
+                    [|
+                        Guid.isValidAndNotEmptyGuid parameters.TargetBranchId QueueError.InvalidTargetBranchId
+                        Guid.isValidAndNotEmptyGuid parameters.CandidateId QueueError.InvalidCandidateId
+                    |]
 
                 let command (parameters: CandidateActionParameters) =
                     PromotionQueueCommand.Dequeue(Guid.Parse(parameters.CandidateId))
                     |> returnValueTask
 
-                context.Items["Command"] <- nameof Dequeue
+                context.Items[ "Command" ] <- nameof Dequeue
                 return! processCommand context validations command
             }
 
@@ -467,7 +488,10 @@ module Queue =
                 let graceIds = getGraceIds context
                 let correlationId = getCorrelationId context
 
-                let validations (parameters: CandidateParameters) = [| Guid.isValidAndNotEmptyGuid parameters.CandidateId QueueError.InvalidCandidateId |]
+                let validations (parameters: CandidateParameters) =
+                    [|
+                        Guid.isValidAndNotEmptyGuid parameters.CandidateId QueueError.InvalidCandidateId
+                    |]
 
                 let! parameters = context |> parse<CandidateParameters>
                 parameters.OwnerId <- graceIds.OwnerIdString
@@ -511,8 +535,10 @@ module Queue =
                 let correlationId = getCorrelationId context
 
                 let validations (parameters: CandidateActionParameters) =
-                    [| Guid.isValidAndNotEmptyGuid parameters.TargetBranchId QueueError.InvalidTargetBranchId
-                       Guid.isValidAndNotEmptyGuid parameters.CandidateId QueueError.InvalidCandidateId |]
+                    [|
+                        Guid.isValidAndNotEmptyGuid parameters.TargetBranchId QueueError.InvalidTargetBranchId
+                        Guid.isValidAndNotEmptyGuid parameters.CandidateId QueueError.InvalidCandidateId
+                    |]
 
                 let! parameters = context |> parse<CandidateActionParameters>
                 parameters.OwnerId <- graceIds.OwnerIdString
@@ -574,8 +600,10 @@ module Queue =
                 let correlationId = getCorrelationId context
 
                 let validations (parameters: CandidateActionParameters) =
-                    [| Guid.isValidAndNotEmptyGuid parameters.TargetBranchId QueueError.InvalidTargetBranchId
-                       Guid.isValidAndNotEmptyGuid parameters.CandidateId QueueError.InvalidCandidateId |]
+                    [|
+                        Guid.isValidAndNotEmptyGuid parameters.TargetBranchId QueueError.InvalidTargetBranchId
+                        Guid.isValidAndNotEmptyGuid parameters.CandidateId QueueError.InvalidCandidateId
+                    |]
 
                 let! parameters = context |> parse<CandidateActionParameters>
                 parameters.OwnerId <- graceIds.OwnerIdString
@@ -639,7 +667,10 @@ module Queue =
                 let graceIds = getGraceIds context
                 let correlationId = getCorrelationId context
 
-                let validations (parameters: CandidateParameters) = [| Guid.isValidAndNotEmptyGuid parameters.CandidateId QueueError.InvalidCandidateId |]
+                let validations (parameters: CandidateParameters) =
+                    [|
+                        Guid.isValidAndNotEmptyGuid parameters.CandidateId QueueError.InvalidCandidateId
+                    |]
 
                 let! parameters = context |> parse<CandidateParameters>
                 parameters.OwnerId <- graceIds.OwnerIdString
@@ -694,7 +725,9 @@ module Queue =
                 let correlationId = getCorrelationId context
 
                 let validations (parameters: CandidateAttestationsParameters) =
-                    [| Guid.isValidAndNotEmptyGuid parameters.CandidateId QueueError.InvalidCandidateId |]
+                    [|
+                        Guid.isValidAndNotEmptyGuid parameters.CandidateId QueueError.InvalidCandidateId
+                    |]
 
                 let! parameters = context |> parse<CandidateAttestationsParameters>
                 parameters.OwnerId <- graceIds.OwnerIdString
@@ -720,7 +753,11 @@ module Queue =
                                 })
 
                         let! attestationResults = Task.WhenAll(attestationTasks)
-                        let attestations = attestationResults |> Array.choose id |> Array.toList
+
+                        let attestations =
+                            attestationResults
+                            |> Array.choose id
+                            |> Array.toList
 
                         let graceReturnValue =
                             (GraceReturnValue.Create attestations correlationId)
@@ -750,7 +787,9 @@ module Queue =
                 let correlationId = getCorrelationId context
 
                 let validations (parameters: CandidateGateRerunParameters) =
-                    [| Guid.isValidAndNotEmptyGuid parameters.CandidateId QueueError.InvalidCandidateId |]
+                    [|
+                        Guid.isValidAndNotEmptyGuid parameters.CandidateId QueueError.InvalidCandidateId
+                    |]
 
                 let! parameters = context |> parse<CandidateGateRerunParameters>
                 parameters.OwnerId <- graceIds.OwnerIdString

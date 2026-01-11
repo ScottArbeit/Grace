@@ -30,16 +30,16 @@ module DerivedComputation =
     let handleReferenceEvent (referenceEvent: ReferenceEvent) =
         task {
             match referenceEvent.Event with
-            | ReferenceEventType.Created(referenceId,
-                                         ownerId,
-                                         organizationId,
-                                         repositoryId,
-                                         branchId,
-                                         directoryId,
-                                         sha256Hash,
-                                         referenceType,
-                                         referenceText,
-                                         links) ->
+            | ReferenceEventType.Created (referenceId,
+                                          ownerId,
+                                          organizationId,
+                                          repositoryId,
+                                          branchId,
+                                          directoryId,
+                                          sha256Hash,
+                                          referenceType,
+                                          referenceText,
+                                          links) ->
                 match referenceType with
                 | _ when shouldRecordStage0 referenceType ->
                     let correlationId = referenceEvent.Metadata.CorrelationId
@@ -65,7 +65,8 @@ module DerivedComputation =
                             ReferenceId = referenceId
                             PolicySnapshotId = policySnapshot
                             RiskProfile = riskProfile
-                            CreatedAt = now }
+                            CreatedAt = now
+                        }
 
                     let stage0ActorProxy = Stage0.CreateActorProxy referenceId repositoryId correlationId
                     let metadata = EventMetadata.New correlationId Constants.GraceSystemUser
@@ -104,7 +105,7 @@ module DerivedComputation =
                     policyEvent.Metadata.CorrelationId,
                     snapshot.PolicySnapshotId
                 )
-            | Acknowledged(policySnapshotId, _, _) ->
+            | Acknowledged (policySnapshotId, _, _) ->
                 log.LogInformation(
                     "{CurrentInstant}: Node: {hostName}; CorrelationId: {correlationId}; Policy snapshot acknowledged: {policySnapshotId}.",
                     getCurrentInstantExtended (),

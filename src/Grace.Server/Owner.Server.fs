@@ -145,7 +145,8 @@ module Owner =
                             .enhance ("Error", errorMessage)
 
                     return! context |> result400BadRequest graceError
-            with ex ->
+            with
+            | ex ->
                 log.LogError(
                     ex,
                     "{CurrentInstant}: Exception in Owner.Server.processCommand. CorrelationId: {correlationId}.",
@@ -205,7 +206,8 @@ module Owner =
                             .enhance ("Path", context.Request.Path.Value)
 
                     return! context |> result400BadRequest graceError
-            with ex ->
+            with
+            | ex ->
                 let graceError =
                     (GraceError.Create $"{ExceptionResponse.Create ex}" correlationId)
                         .enhance(parameterDictionary)
@@ -220,12 +222,16 @@ module Owner =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: CreateOwnerParameters) =
-                    [| Owner.ownerIdDoesNotExist parameters.OwnerId parameters.CorrelationId OwnerIdAlreadyExists
-                       Owner.ownerNameDoesNotExist parameters.OwnerName parameters.CorrelationId OwnerNameAlreadyExists |]
+                    [|
+                        Owner.ownerIdDoesNotExist parameters.OwnerId parameters.CorrelationId OwnerIdAlreadyExists
+                        Owner.ownerNameDoesNotExist parameters.OwnerName parameters.CorrelationId OwnerNameAlreadyExists
+                    |]
 
                 let command (parameters: CreateOwnerParameters) =
                     let ownerIdGuid = Guid.Parse(parameters.OwnerId)
-                    Create(ownerIdGuid, OwnerName parameters.OwnerName) |> returnValueTask
+
+                    Create(ownerIdGuid, OwnerName parameters.OwnerName)
+                    |> returnValueTask
 
                 context.Items.Add("Command", nameof Create)
                 return! processCommand context validations command
@@ -236,12 +242,16 @@ module Owner =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: SetOwnerNameParameters) =
-                    [| String.isNotEmpty parameters.NewName OwnerError.OwnerNameIsRequired
-                       String.isValidGraceName parameters.NewName OwnerError.InvalidOwnerName
-                       Owner.ownerIsNotDeleted context parameters.CorrelationId OwnerError.OwnerIsDeleted
-                       Owner.ownerNameDoesNotExist parameters.NewName parameters.CorrelationId OwnerError.OwnerNameAlreadyExists |]
+                    [|
+                        String.isNotEmpty parameters.NewName OwnerError.OwnerNameIsRequired
+                        String.isValidGraceName parameters.NewName OwnerError.InvalidOwnerName
+                        Owner.ownerIsNotDeleted context parameters.CorrelationId OwnerError.OwnerIsDeleted
+                        Owner.ownerNameDoesNotExist parameters.NewName parameters.CorrelationId OwnerError.OwnerNameAlreadyExists
+                    |]
 
-                let command (parameters: SetOwnerNameParameters) = SetName(OwnerName parameters.NewName) |> returnValueTask
+                let command (parameters: SetOwnerNameParameters) =
+                    SetName(OwnerName parameters.NewName)
+                    |> returnValueTask
 
                 context.Items.Add("Command", nameof SetName)
                 return! processCommand context validations command
@@ -252,12 +262,19 @@ module Owner =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: SetOwnerTypeParameters) =
-                    [| String.isNotEmpty parameters.OwnerType OwnerError.OwnerTypeIsRequired
-                       DiscriminatedUnion.isMemberOf<OwnerType, OwnerError> parameters.OwnerType OwnerError.InvalidOwnerType
-                       Owner.ownerIsNotDeleted context parameters.CorrelationId OwnerError.OwnerIsDeleted |]
+                    [|
+                        String.isNotEmpty parameters.OwnerType OwnerError.OwnerTypeIsRequired
+                        DiscriminatedUnion.isMemberOf<OwnerType, OwnerError> parameters.OwnerType OwnerError.InvalidOwnerType
+                        Owner.ownerIsNotDeleted context parameters.CorrelationId OwnerError.OwnerIsDeleted
+                    |]
 
                 let command (parameters: SetOwnerTypeParameters) =
-                    OwnerCommand.SetType(discriminatedUnionFromString<OwnerType>(parameters.OwnerType).Value)
+                    OwnerCommand.SetType(
+                        discriminatedUnionFromString<OwnerType>(
+                            parameters.OwnerType
+                        )
+                            .Value
+                    )
                     |> returnValueTask
 
                 context.Items.Add("Command", nameof SetType)
@@ -269,12 +286,20 @@ module Owner =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: SetOwnerSearchVisibilityParameters) =
-                    [| String.isNotEmpty parameters.SearchVisibility OwnerError.SearchVisibilityIsRequired
-                       DiscriminatedUnion.isMemberOf<SearchVisibility, OwnerError> parameters.SearchVisibility OwnerError.InvalidSearchVisibility
-                       Owner.ownerIsNotDeleted context parameters.CorrelationId OwnerIsDeleted |]
+                    [|
+                        String.isNotEmpty parameters.SearchVisibility OwnerError.SearchVisibilityIsRequired
+                        DiscriminatedUnion.isMemberOf<SearchVisibility, OwnerError> parameters.SearchVisibility OwnerError.InvalidSearchVisibility
+                        Owner.ownerIsNotDeleted context parameters.CorrelationId OwnerIsDeleted
+                    |]
 
                 let command (parameters: SetOwnerSearchVisibilityParameters) =
-                    OwnerCommand.SetSearchVisibility(Utilities.discriminatedUnionFromString<SearchVisibility>(parameters.SearchVisibility).Value)
+                    OwnerCommand.SetSearchVisibility(
+                        Utilities
+                            .discriminatedUnionFromString<SearchVisibility>(
+                                parameters.SearchVisibility
+                            )
+                            .Value
+                    )
                     |> returnValueTask
 
                 context.Items.Add("Command", nameof SetSearchVisibility)
@@ -286,11 +311,15 @@ module Owner =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: SetOwnerDescriptionParameters) =
-                    [| String.isNotEmpty parameters.Description OwnerError.DescriptionIsRequired
-                       String.maxLength parameters.Description 2048 OwnerError.DescriptionIsTooLong
-                       Owner.ownerIsNotDeleted context parameters.CorrelationId OwnerError.OwnerIsDeleted |]
+                    [|
+                        String.isNotEmpty parameters.Description OwnerError.DescriptionIsRequired
+                        String.maxLength parameters.Description 2048 OwnerError.DescriptionIsTooLong
+                        Owner.ownerIsNotDeleted context parameters.CorrelationId OwnerError.OwnerIsDeleted
+                    |]
 
-                let command (parameters: SetOwnerDescriptionParameters) = OwnerCommand.SetDescription(parameters.Description) |> returnValueTask
+                let command (parameters: SetOwnerDescriptionParameters) =
+                    OwnerCommand.SetDescription(parameters.Description)
+                    |> returnValueTask
 
                 context.Items.Add("Command", nameof SetDescription)
                 return! processCommand context validations command
@@ -301,7 +330,10 @@ module Owner =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 try
-                    let validations (parameters: ListOrganizationsParameters) = [| Guid.isValidAndNotEmptyGuid parameters.OwnerId OwnerError.InvalidOwnerId |]
+                    let validations (parameters: ListOrganizationsParameters) =
+                        [|
+                            Guid.isValidAndNotEmptyGuid parameters.OwnerId OwnerError.InvalidOwnerId
+                        |]
 
                     let query (context: HttpContext) (maxCount: int) (actorProxy: IOwnerActor) =
                         task {
@@ -311,7 +343,8 @@ module Owner =
 
                     let! parameters = context |> parse<ListOrganizationsParameters>
                     return! processQuery context parameters validations 1 query
-                with ex ->
+                with
+                | ex ->
                     return!
                         context
                         |> result500ServerError (GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId context))
@@ -322,8 +355,10 @@ module Owner =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: DeleteOwnerParameters) =
-                    [| String.isNotEmpty parameters.DeleteReason OwnerError.DeleteReasonIsRequired
-                       Owner.ownerIsNotDeleted context parameters.CorrelationId OwnerError.OwnerIsDeleted |]
+                    [|
+                        String.isNotEmpty parameters.DeleteReason OwnerError.DeleteReasonIsRequired
+                        Owner.ownerIsNotDeleted context parameters.CorrelationId OwnerError.OwnerIsDeleted
+                    |]
 
                 let command (parameters: DeleteOwnerParameters) =
                     OwnerCommand.DeleteLogical(parameters.Force, parameters.DeleteReason)
@@ -337,7 +372,10 @@ module Owner =
     let Undelete: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
-                let validations (parameters: OwnerParameters) = [| Owner.ownerIsDeleted context parameters.CorrelationId OwnerError.OwnerIsNotDeleted |]
+                let validations (parameters: OwnerParameters) =
+                    [|
+                        Owner.ownerIsDeleted context parameters.CorrelationId OwnerError.OwnerIsNotDeleted
+                    |]
 
                 let command (parameters: OwnerParameters) = OwnerCommand.Undelete |> returnValueTask
 
@@ -353,7 +391,10 @@ module Owner =
                 let graceIds = getGraceIds context
 
                 try
-                    let validations (parameters: GetOwnerParameters) = [| Owner.ownerIsNotDeleted context parameters.CorrelationId OwnerError.OwnerIsDeleted |]
+                    let validations (parameters: GetOwnerParameters) =
+                        [|
+                            Owner.ownerIsNotDeleted context parameters.CorrelationId OwnerError.OwnerIsDeleted
+                        |]
 
                     let query (context: HttpContext) (maxCount: int) (actorProxy: IOwnerActor) = actorProxy.Get(getCorrelationId context)
 
@@ -374,7 +415,8 @@ module Owner =
                     )
 
                     return result
-                with ex ->
+                with
+                | ex ->
                     let duration_ms = getDurationRightAligned_ms startTime
 
                     log.LogError(

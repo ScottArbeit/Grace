@@ -49,15 +49,20 @@ module Services =
     /// Creates common metadata for Grace events.
     let createMetadata (context: HttpContext) : EventMetadata =
         let metadata =
-            { Timestamp = getCurrentInstant ()
-              CorrelationId = context.Items[Constants.CorrelationId].ToString()
-              Principal = context.User.Identity.Name
-              Properties = new Dictionary<string, string>() }
+            {
+                Timestamp = getCurrentInstant ()
+                CorrelationId =
+                    context
+                        .Items[ Constants.CorrelationId ]
+                        .ToString()
+                Principal = context.User.Identity.Name
+                Properties = new Dictionary<string, string>()
+            }
 
         let graceIds = getGraceIds context
 
         if graceIds.RepositoryId <> RepositoryId.Empty then
-            metadata.Properties[nameof RepositoryId] <- $"{graceIds.RepositoryId}"
+            metadata.Properties[ nameof RepositoryId ] <- $"{graceIds.RepositoryId}"
 
         metadata
 
@@ -79,29 +84,35 @@ module Services =
                 let! parameters = JsonSerializer.DeserializeAsync(context.Request.Body, requestBodyType, Constants.JsonSerializerOptions)
 
                 if not <| isNull parameters then return Some parameters else return None
-            with ex ->
-                return None
+            with
+            | ex -> return None
         }
 
     /// Adds common attributes to the current OpenTelemetry activity, and returns the result.
     let returnResult<'T> (statusCode: int) (result: 'T) (context: HttpContext) =
         task {
             try
-                Activity.Current.AddTag("correlation_id", getCorrelationId context).AddTag("http.status_code", statusCode)
+                Activity
+                    .Current
+                    .AddTag("correlation_id", getCorrelationId context)
+                    .AddTag("http.status_code", statusCode)
                 |> ignore
 
                 context.SetStatusCode(statusCode)
 
                 //log.LogDebug("{CurrentInstant}: In returnResult: StatusCode: {statusCode}; result: {result}", getCurrentInstantExtended(), statusCode, serialize result)
                 return! context.WriteJsonAsync(result) // .WriteJsonAsync() uses Grace's JsonSerializerOptions.
-            with ex ->
-                return! context.WriteJsonAsync(GraceError.CreateWithException ex String.Empty (getCorrelationId context))
+            with
+            | ex -> return! context.WriteJsonAsync(GraceError.CreateWithException ex String.Empty (getCorrelationId context))
         }
 
     /// Adds common attributes to the current OpenTelemetry activity, and returns a 404 Not found status.
     let result404NotFound (context: HttpContext) =
         task {
-            Activity.Current.AddTag("correlation_id", getCorrelationId context).AddTag("http.status_code", StatusCodes.Status404NotFound)
+            Activity
+                .Current
+                .AddTag("correlation_id", getCorrelationId context)
+                .AddTag("http.status_code", StatusCodes.Status404NotFound)
             |> ignore
 
             context.SetStatusCode(StatusCodes.Status404NotFound)

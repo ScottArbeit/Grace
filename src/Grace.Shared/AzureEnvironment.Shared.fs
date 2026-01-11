@@ -49,9 +49,17 @@ module AzureEnvironment =
         | Some value when value.Equals("Local", StringComparison.OrdinalIgnoreCase) -> false
         | _ -> true
 
-    let useManagedIdentityForStorage = useManagedIdentity && storageConnectionStringValue.IsNone
-    let useManagedIdentityForCosmos = useManagedIdentity && cosmosConnectionStringValue.IsNone
-    let useManagedIdentityForServiceBus = useManagedIdentity && serviceBusConnectionStringValue.IsNone
+    let useManagedIdentityForStorage =
+        useManagedIdentity
+        && storageConnectionStringValue.IsNone
+
+    let useManagedIdentityForCosmos =
+        useManagedIdentity
+        && cosmosConnectionStringValue.IsNone
+
+    let useManagedIdentityForServiceBus =
+        useManagedIdentity
+        && serviceBusConnectionStringValue.IsNone
 
     let private getStorageAccountName () =
         tryGetEnv Constants.EnvironmentVariables.AzureStorageAccountName
@@ -80,18 +88,23 @@ module AzureEnvironment =
             ensureUri $"https://{accountName}.{service}.{suffix}"
 
     let storageEndpoints =
-        { BlobEndpoint = buildStorageUri "blob" "BlobEndpoint"
-          QueueEndpoint = buildStorageUri "queue" "QueueEndpoint"
-          TableEndpoint = buildStorageUri "table" "TableEndpoint"
-          AccountName = getStorageAccountName ()
-          ConnectionString = storageConnectionStringValue }
+        {
+            BlobEndpoint = buildStorageUri "blob" "BlobEndpoint"
+            QueueEndpoint = buildStorageUri "queue" "QueueEndpoint"
+            TableEndpoint = buildStorageUri "table" "TableEndpoint"
+            AccountName = getStorageAccountName ()
+            ConnectionString = storageConnectionStringValue
+        }
 
     let cosmosConnectionString = cosmosConnectionStringValue
 
     let tryGetCosmosEndpointUri () =
         tryGetEnv Constants.EnvironmentVariables.AzureCosmosDBEndpoint
         |> Option.map ensureUri
-        |> Option.orElse (tryGetValue "AccountEndpoint" cosmosSegments |> Option.map ensureUri)
+        |> Option.orElse (
+            tryGetValue "AccountEndpoint" cosmosSegments
+            |> Option.map ensureUri
+        )
 
     let tryGetServiceBusConnectionString () = serviceBusConnectionStringValue
 

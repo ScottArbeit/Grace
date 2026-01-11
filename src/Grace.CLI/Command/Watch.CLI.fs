@@ -127,7 +127,7 @@ module Watch =
     type WatchParameters() =
         inherit ParameterBase()
         member val public RepositoryPath: string = String.Empty with get, set
-        member val public NamedSections: string[] = Array.empty with get, set
+        member val public NamedSections: string [] = Array.empty with get, set
 
     let mutable private graceStatus = GraceStatus.Default
     let mutable graceStatusMemoryStream: MemoryStream = null
@@ -141,7 +141,8 @@ module Watch =
 
     let OnCreated (args: FileSystemEventArgs) =
         // Ignore directory creation; need to think about this more... should we capture new empty directories?
-        if updateNotInProgress () && isNotDirectory args.FullPath then
+        if updateNotInProgress ()
+           && isNotDirectory args.FullPath then
             let shouldIgnore = shouldIgnoreFile args.FullPath
             //logToAnsiConsole Colors.Verbose $"Should ignore {args.FullPath}: {shouldIgnore}."
 
@@ -150,7 +151,8 @@ module Watch =
                 filesToProcess.TryAdd(args.FullPath, ()) |> ignore
 
     let OnChanged (args: FileSystemEventArgs) =
-        if updateNotInProgress () && isNotDirectory args.FullPath then
+        if updateNotInProgress ()
+           && isNotDirectory args.FullPath then
             let shouldIgnore = shouldIgnoreFile args.FullPath
             //logToAnsiConsole Colors.Verbose $"Should ignore {args.FullPath}: {shouldIgnore}."
 
@@ -159,13 +161,15 @@ module Watch =
                 filesToProcess.TryAdd(args.FullPath, ()) |> ignore
 
             // Special handling for the Grace status file; if that is the changed file, we'll set this flag so we reload it in OnWatch() in the main loop
-            if (args.FullPath = Current().GraceStatusFile) && (not <| graceStatusHasChanged) then
+            if (args.FullPath = Current().GraceStatusFile)
+               && (not <| graceStatusHasChanged) then
                 //logToAnsiConsole Colors.Important $"Setting graceStatusHasChanged to true in OnChanged(). Current value: {graceStatusHasChanged}."
                 graceStatusHasChanged <- true
                 logToAnsiConsole Colors.Important $"Grace Status file has been updated."
 
     let OnDeleted (args: FileSystemEventArgs) =
-        if updateNotInProgress () && isNotDirectory args.FullPath then
+        if updateNotInProgress ()
+           && isNotDirectory args.FullPath then
             let shouldIgnore = shouldIgnoreFile args.FullPath
             //logToAnsiConsole Colors.Verbose $"Should ignore {args.FullPath}: {shouldIgnore}."
 
@@ -265,7 +269,10 @@ module Watch =
             | Ok returnValue ->
                 do! updateObjectCacheFile newDirectoryVersions
 
-                let fileDifferences = differences.Where(fun diff -> diff.FileSystemEntryType = FileSystemEntryType.File).ToList()
+                let fileDifferences =
+                    differences
+                        .Where(fun diff -> diff.FileSystemEntryType = FileSystemEntryType.File)
+                        .ToList()
 
                 let message =
                     if fileDifferences |> Seq.isEmpty then
@@ -277,9 +284,15 @@ module Watch =
                             for fileDifference in fileDifferences do
                                 //sb.AppendLine($"{(getDiscriminatedUnionCaseNameToString fileDifference.DifferenceType)}: {fileDifference.RelativePath}") |> ignore
                                 match fileDifference.DifferenceType with
-                                | Change -> sb.AppendLine($"{fileDifference.RelativePath}") |> ignore
-                                | Add -> sb.AppendLine($"Add {fileDifference.RelativePath}") |> ignore
-                                | Delete -> sb.AppendLine($"Delete {fileDifference.RelativePath}") |> ignore
+                                | Change ->
+                                    sb.AppendLine($"{fileDifference.RelativePath}")
+                                    |> ignore
+                                | Add ->
+                                    sb.AppendLine($"Add {fileDifference.RelativePath}")
+                                    |> ignore
+                                | Delete ->
+                                    sb.AppendLine($"Delete {fileDifference.RelativePath}")
+                                    |> ignore
 
                             let saveMessage = sb.ToString()
                             saveMessage.Remove(saveMessage.LastIndexOf(Environment.NewLine), Environment.NewLine.Length)
@@ -358,7 +371,13 @@ module Watch =
     let processChangedFiles () =
         task {
             // First, check if there's anything to process.
-            if not (filesToProcess.IsEmpty && directoriesToProcess.IsEmpty) then
+            if
+                not
+                    (
+                        filesToProcess.IsEmpty
+                        && directoriesToProcess.IsEmpty
+                    )
+            then
                 try
                     let correlationId = generateCorrelationId ()
                     let! graceStatusFromDisk = readGraceStatusFile ()
@@ -402,12 +421,16 @@ module Watch =
                     // Reset the in-memory Grace Status to empty to minimize memory usage.
                     graceStatus <- GraceStatus.Default
                     GC.Collect(2, GCCollectionMode.Forced, blocking = true, compacting = true)
-                with ex ->
+                with
+                | ex ->
                     logToAnsiConsole
                         Colors.Error
                         $"Error in processChangedFiles: Message: {ex.Message}{Environment.NewLine}{Environment.NewLine}{ex.StackTrace}"
             // Refresh the file every (just under) 5 minutes to indicate that `grace watch` is still alive.
-            elif graceWatchStatusUpdateTime < getCurrentInstant().Minus(Duration.FromMinutes(4.8)) then
+            elif
+                graceWatchStatusUpdateTime
+                < getCurrentInstant().Minus(Duration.FromMinutes(4.8))
+            then
                 let! graceStatusFromDisk = readGraceStatusFile ()
                 do! updateGraceWatchInterprocessFile graceStatusFromDisk
                 GC.Collect(2, GCCollectionMode.Forced, blocking = true, compacting = true)
@@ -447,7 +470,10 @@ module Watch =
                             .Subscribe(OnRenamed)
 
                     use errored =
-                        Observable.FromEventPattern<ErrorEventArgs>(rootDirectoryFileSystemWatcher, "Error").Select(fun e -> e.EventArgs).Subscribe(OnError) // I want all of the errors.
+                        Observable
+                            .FromEventPattern<ErrorEventArgs>(rootDirectoryFileSystemWatcher, "Error")
+                            .Select(fun e -> e.EventArgs)
+                            .Subscribe(OnError) // I want all of the errors.
 
                     Directory.CreateDirectory(Path.GetDirectoryName(updateInProgressFileName ()))
                     |> ignore
@@ -485,7 +511,11 @@ module Watch =
                     let signalRUrl = Uri($"{Current().ServerUri}/notifications")
                     logToConsole $"signalRUrl: {signalRUrl}."
 
-                    use signalRConnection = HubConnectionBuilder().WithAutomaticReconnect().WithUrl(signalRUrl, HttpTransportType.ServerSentEvents).Build()
+                    use signalRConnection =
+                        HubConnectionBuilder()
+                            .WithAutomaticReconnect()
+                            .WithUrl(signalRUrl, HttpTransportType.ServerSentEvents)
+                            .Build()
 
                     use notifyRepository =
                         signalRConnection.On<RepositoryId, ReferenceId>(
@@ -598,8 +628,12 @@ module Watch =
 
                     for difference in differences do
                         match difference.FileSystemEntryType with
-                        | Directory -> directoriesToProcess.TryAdd(difference.RelativePath, ()) |> ignore
-                        | File -> filesToProcess.TryAdd(difference.RelativePath, ()) |> ignore
+                        | Directory ->
+                            directoriesToProcess.TryAdd(difference.RelativePath, ())
+                            |> ignore
+                        | File ->
+                            filesToProcess.TryAdd(difference.RelativePath, ())
+                            |> ignore
 
                     // Process any changes that occurred while not running.
                     graceStatus <- GraceStatus.Default
@@ -613,7 +647,8 @@ module Watch =
                     let mutable previousGC = getCurrentInstant ()
                     let mutable ticked = true
 
-                    while ticked && not (cancellationToken.IsCancellationRequested) do
+                    while ticked
+                          && not (cancellationToken.IsCancellationRequested) do
                         // Grace Status may have changed from branch switch, or other commands.
                         if graceStatusHasChanged then
                             let! updatedGraceStatus = readGraceStatusFile ()
@@ -637,14 +672,18 @@ module Watch =
                         // Because of DATAS (see https://learn.microsoft.com/en-us/dotnet/standard/garbage-collection/datas), it may take more than one GC.Collect()
                         //   call to fully compact the heap (and that's OK). If we weren't being so aggressive about memory usage, we would just let DATAS compute
                         //   a close-to-optimal heap size on its own over time.
-                        if previousGC < getCurrentInstant().Minus(Duration.FromMinutes(1.0)) then
+                        if
+                            previousGC
+                            < getCurrentInstant().Minus(Duration.FromMinutes(1.0))
+                        then
                             //let memoryBeforeGC = Process.GetCurrentProcess().WorkingSet64
                             GC.Collect(2, GCCollectionMode.Forced, blocking = true, compacting = true)
                             //logToAnsiConsole Colors.Verbose $"Memory before GC: {memoryBeforeGC:N0}; after: {Process.GetCurrentProcess().WorkingSet64:N0}."
                             previousGC <- getCurrentInstant ()
 
                     return 0
-                with ex ->
+                with
+                | ex ->
                     //let exceptionMarkup = Markup.Escape($"{ExceptionResponse.Create ex}").Replace("\\\\", @"\").Replace("\r\n", Environment.NewLine)
                     //logToAnsiConsole Colors.Error $"{exceptionMarkup}"
                     let exceptionSettings = ExceptionSettings()

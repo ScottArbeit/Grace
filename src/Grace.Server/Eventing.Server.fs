@@ -33,17 +33,19 @@ module EventingPublisher =
         promotionGroupId
         payload
         =
-        { EventType = eventType
-          Timestamp = metadata.Timestamp
-          CorrelationId = metadata.CorrelationId
-          OwnerId = ownerId
-          OrganizationId = organizationId
-          RepositoryId = repositoryId
-          TargetBranchId = targetBranchId
-          CandidateId = candidateId
-          WorkItemId = workItemId
-          PromotionGroupId = promotionGroupId
-          Payload = payload }
+        {
+            EventType = eventType
+            Timestamp = metadata.Timestamp
+            CorrelationId = metadata.CorrelationId
+            OwnerId = ownerId
+            OrganizationId = organizationId
+            RepositoryId = repositoryId
+            TargetBranchId = targetBranchId
+            CandidateId = candidateId
+            WorkItemId = workItemId
+            PromotionGroupId = promotionGroupId
+            Payload = payload
+        }
 
     let tryCreateEnvelope (graceEvent: GraceEvent) =
         match graceEvent with
@@ -62,7 +64,7 @@ module EventingPublisher =
                     None
                     (serialize snapshot)
                 |> Some
-            | Acknowledged(policySnapshotId, acknowledgedBy, note) ->
+            | Acknowledged (policySnapshotId, acknowledgedBy, note) ->
                 envelope
                     EventType.PolicyAckRequired
                     policyEvent.Metadata
@@ -78,23 +80,14 @@ module EventingPublisher =
         | WorkItemEvent workItemEvent ->
             let ownerId, organizationId, repositoryId =
                 match workItemEvent.Event with
-                | WorkItemEventType.Created(_, ownerId, organizationId, repositoryId, _, _) -> ownerId, organizationId, repositoryId
+                | WorkItemEventType.Created (_, ownerId, organizationId, repositoryId, _, _) -> ownerId, organizationId, repositoryId
                 | _ ->
                     OwnerId.Empty,
                     OrganizationId.Empty,
-                    (tryGetRepositoryId workItemEvent.Metadata |> Option.defaultValue RepositoryId.Empty)
+                    (tryGetRepositoryId workItemEvent.Metadata
+                     |> Option.defaultValue RepositoryId.Empty)
 
-            envelope
-                EventType.WorkItemUpdated
-                workItemEvent.Metadata
-                ownerId
-                organizationId
-                repositoryId
-                None
-                None
-                None
-                None
-                (serialize workItemEvent)
+            envelope EventType.WorkItemUpdated workItemEvent.Metadata ownerId organizationId repositoryId None None None None (serialize workItemEvent)
             |> Some
         | ReviewEvent reviewEvent ->
             let ownerId, organizationId, repositoryId =
@@ -103,19 +96,10 @@ module EventingPublisher =
                 | _ ->
                     OwnerId.Empty,
                     OrganizationId.Empty,
-                    (tryGetRepositoryId reviewEvent.Metadata |> Option.defaultValue RepositoryId.Empty)
+                    (tryGetRepositoryId reviewEvent.Metadata
+                     |> Option.defaultValue RepositoryId.Empty)
 
-            envelope
-                EventType.ReviewPacketUpdated
-                reviewEvent.Metadata
-                ownerId
-                organizationId
-                repositoryId
-                None
-                None
-                None
-                None
-                (serialize reviewEvent)
+            envelope EventType.ReviewPacketUpdated reviewEvent.Metadata ownerId organizationId repositoryId None None None None (serialize reviewEvent)
             |> Some
         | CandidateEvent candidateEvent ->
             match candidateEvent.Event with
@@ -138,7 +122,8 @@ module EventingPublisher =
                     candidateEvent.Metadata
                     OwnerId.Empty
                     OrganizationId.Empty
-                    (tryGetRepositoryId candidateEvent.Metadata |> Option.defaultValue RepositoryId.Empty)
+                    (tryGetRepositoryId candidateEvent.Metadata
+                     |> Option.defaultValue RepositoryId.Empty)
                     None
                     None
                     None
@@ -151,7 +136,8 @@ module EventingPublisher =
                     candidateEvent.Metadata
                     OwnerId.Empty
                     OrganizationId.Empty
-                    (tryGetRepositoryId candidateEvent.Metadata |> Option.defaultValue RepositoryId.Empty)
+                    (tryGetRepositoryId candidateEvent.Metadata
+                     |> Option.defaultValue RepositoryId.Empty)
                     None
                     None
                     None
@@ -172,7 +158,10 @@ module EventingPublisher =
                 | PromotionQueueEventType.Resumed -> EventType.QueueResumed
                 | _ -> EventType.CandidateStateChanged
 
-            let repositoryId = tryGetRepositoryId queueEvent.Metadata |> Option.defaultValue RepositoryId.Empty
+            let repositoryId =
+                tryGetRepositoryId queueEvent.Metadata
+                |> Option.defaultValue RepositoryId.Empty
+
             envelope eventType queueEvent.Metadata OwnerId.Empty OrganizationId.Empty repositoryId None None None None (serialize queueEvent)
             |> Some
         | ConflictReceiptEvent conflictEvent ->
@@ -180,21 +169,11 @@ module EventingPublisher =
                 match conflictEvent.Event with
                 | ConflictReceiptEventType.Created receipt -> receipt.OwnerId, receipt.OrganizationId, receipt.RepositoryId
 
-            envelope
-                EventType.ConflictResolved
-                conflictEvent.Metadata
-                ownerId
-                organizationId
-                repositoryId
-                None
-                None
-                None
-                None
-                (serialize conflictEvent)
+            envelope EventType.ConflictResolved conflictEvent.Metadata ownerId organizationId repositoryId None None None None (serialize conflictEvent)
             |> Some
         | ReferenceEvent referenceEvent ->
             match referenceEvent.Event with
-            | ReferenceEventType.Created(referenceId, ownerId, organizationId, repositoryId, branchId, _, _, referenceType, _, _) ->
+            | ReferenceEventType.Created (referenceId, ownerId, organizationId, repositoryId, branchId, _, _, referenceType, _, _) ->
                 if referenceType = ReferenceType.Promotion then
                     envelope
                         EventType.PromotionApplied

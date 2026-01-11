@@ -199,10 +199,12 @@ module Types =
     /// EventMetadata is included in the recording of every event that occurs in Grace.
     [<CLIMutable>]
     type EventMetadata =
-        { Timestamp: Instant
-          CorrelationId: CorrelationId
-          Principal: string
-          Properties: Dictionary<string, string> }
+        {
+            Timestamp: Instant
+            CorrelationId: CorrelationId
+            Principal: string
+            Properties: Dictionary<string, string>
+        }
 
         override this.ToString() = serialize this
 
@@ -214,21 +216,23 @@ module Types =
     /// It is the server-side representation of the LocalFileVersion type, used for the local object cache.
     [<CLIMutable; MessagePackObject; GenerateSerializer>]
     type FileVersion =
-        { [<Key(0)>]
-          Class: string
-          //RepositoryId: RepositoryId
-          [<Key(1)>]
-          RelativePath: RelativePath
-          [<Key(2)>]
-          Sha256Hash: Sha256Hash
-          [<Key(3)>]
-          IsBinary: bool
-          [<Key(4)>]
-          Size: int64
-          [<Key(5)>]
-          CreatedAt: Instant
-          [<Key(6)>]
-          BlobUri: string }
+        {
+            [<Key(0)>]
+            Class: string
+            //RepositoryId: RepositoryId
+            [<Key(1)>]
+            RelativePath: RelativePath
+            [<Key(2)>]
+            Sha256Hash: Sha256Hash
+            [<Key(3)>]
+            IsBinary: bool
+            [<Key(4)>]
+            Size: int64
+            [<Key(5)>]
+            CreatedAt: Instant
+            [<Key(6)>]
+            BlobUri: string
+        }
 
         static member Create
             //(repositoryId: RepositoryId)
@@ -238,14 +242,16 @@ module Types =
             (isBinary: bool)
             (size: int64)
             =
-            { Class = "FileVersion"
-              //RepositoryId = repositoryId
-              RelativePath = RelativePath(normalizeFilePath $"{relativePath}")
-              Sha256Hash = sha256Hash
-              BlobUri = blobUri
-              IsBinary = isBinary
-              Size = size
-              CreatedAt = getCurrentInstant () }
+            {
+                Class = "FileVersion"
+                //RepositoryId = repositoryId
+                RelativePath = RelativePath(normalizeFilePath $"{relativePath}")
+                Sha256Hash = sha256Hash
+                BlobUri = blobUri
+                IsBinary = isBinary
+                Size = size
+                CreatedAt = getCurrentInstant ()
+            }
 
         static member Default = FileVersion.Create String.Empty String.Empty String.Empty false 0L
 
@@ -265,24 +271,26 @@ module Types =
     ///
     /// It is the local representation of the FileVersion type, used on the server.
     and [<CLIMutable; MessagePackObject>] LocalFileVersion =
-        { [<Key(0)>]
-          Class: string
-          //[<Key(1)>]
-          //RepositoryId: RepositoryId
-          [<Key(1)>]
-          RelativePath: RelativePath
-          [<Key(2)>]
-          Sha256Hash: Sha256Hash
-          [<Key(3)>]
-          IsBinary: bool
-          [<Key(4)>]
-          Size: int64
-          [<Key(5)>]
-          CreatedAt: Instant
-          [<Key(6)>]
-          UploadedToObjectStorage: bool
-          [<Key(7)>]
-          LastWriteTimeUtc: DateTime }
+        {
+            [<Key(0)>]
+            Class: string
+            //[<Key(1)>]
+            //RepositoryId: RepositoryId
+            [<Key(1)>]
+            RelativePath: RelativePath
+            [<Key(2)>]
+            Sha256Hash: Sha256Hash
+            [<Key(3)>]
+            IsBinary: bool
+            [<Key(4)>]
+            Size: int64
+            [<Key(5)>]
+            CreatedAt: Instant
+            [<Key(6)>]
+            UploadedToObjectStorage: bool
+            [<Key(7)>]
+            LastWriteTimeUtc: DateTime
+        }
 
         static member Create
             //(repositoryId: RepositoryId)
@@ -294,15 +302,17 @@ module Types =
             (uploadedToObjectStorage: bool)
             (lastWriteTimeUtc: DateTime)
             =
-            { Class = "LocalFileVersion"
-              //RepositoryId = repositoryId
-              RelativePath = RelativePath(normalizeFilePath $"{relativePath}")
-              Sha256Hash = sha256Hash
-              IsBinary = isBinary
-              Size = size
-              CreatedAt = createdAt
-              UploadedToObjectStorage = uploadedToObjectStorage
-              LastWriteTimeUtc = lastWriteTimeUtc }
+            {
+                Class = "LocalFileVersion"
+                //RepositoryId = repositoryId
+                RelativePath = RelativePath(normalizeFilePath $"{relativePath}")
+                Sha256Hash = sha256Hash
+                IsBinary = isBinary
+                Size = size
+                CreatedAt = createdAt
+                UploadedToObjectStorage = uploadedToObjectStorage
+                LastWriteTimeUtc = lastWriteTimeUtc
+            }
 
         /// Converts a LocalFileVersion to a FileVersion. NOTE: at this point, we don't know the BlobUri.
         [<IgnoreMember>]
@@ -321,46 +331,50 @@ module Types =
     /// It is the server-side representation of the LocalDirectoryVersion type. LocalDirectoryVersion is used for the local object cache.
     [<CLIMutable; MessagePackObject; GenerateSerializer>]
     type DirectoryVersion =
-        { [<Key(0)>]
-          Class: string
-          [<Key(1)>]
-          DirectoryVersionId: DirectoryVersionId
-          [<Key(2)>]
-          OwnerId: OwnerId
-          [<Key(3)>]
-          OrganizationId: OrganizationId
-          [<Key(4)>]
-          RepositoryId: RepositoryId
-          [<Key(5)>]
-          RelativePath: RelativePath
-          [<Key(6)>]
-          Sha256Hash: Sha256Hash
-          [<Key(7)>]
-          Directories: List<DirectoryVersionId>
-          [<Key(8)>]
-          Files: List<FileVersion>
-          [<Key(9)>]
-          Size: int64
-          [<Key(10)>]
-          CreatedAt: Instant
-          [<Key(11)>]
-          HashesValidated: bool }
+        {
+            [<Key(0)>]
+            Class: string
+            [<Key(1)>]
+            DirectoryVersionId: DirectoryVersionId
+            [<Key(2)>]
+            OwnerId: OwnerId
+            [<Key(3)>]
+            OrganizationId: OrganizationId
+            [<Key(4)>]
+            RepositoryId: RepositoryId
+            [<Key(5)>]
+            RelativePath: RelativePath
+            [<Key(6)>]
+            Sha256Hash: Sha256Hash
+            [<Key(7)>]
+            Directories: List<DirectoryVersionId>
+            [<Key(8)>]
+            Files: List<FileVersion>
+            [<Key(9)>]
+            Size: int64
+            [<Key(10)>]
+            CreatedAt: Instant
+            [<Key(11)>]
+            HashesValidated: bool
+        }
 
         static member GetKnownTypes() = GetKnownTypes<DirectoryVersion>()
 
         static member Default =
-            { Class = nameof DirectoryVersion
-              DirectoryVersionId = DirectoryVersionId.Empty
-              OwnerId = OwnerId.Empty
-              OrganizationId = OrganizationId.Empty
-              RepositoryId = RepositoryId.Empty
-              RelativePath = RelativePath String.Empty
-              Sha256Hash = Sha256Hash String.Empty
-              Directories = List<DirectoryVersionId>()
-              Files = List<FileVersion>()
-              Size = InitialDirectorySize
-              CreatedAt = DefaultTimestamp
-              HashesValidated = false }
+            {
+                Class = nameof DirectoryVersion
+                DirectoryVersionId = DirectoryVersionId.Empty
+                OwnerId = OwnerId.Empty
+                OrganizationId = OrganizationId.Empty
+                RepositoryId = RepositoryId.Empty
+                RelativePath = RelativePath String.Empty
+                Sha256Hash = Sha256Hash String.Empty
+                Directories = List<DirectoryVersionId>()
+                Files = List<FileVersion>()
+                Size = InitialDirectorySize
+                CreatedAt = DefaultTimestamp
+                HashesValidated = false
+            }
 
         static member Create
             (directoryVersionId: DirectoryVersionId)
@@ -373,18 +387,20 @@ module Types =
             (files: List<FileVersion>)
             (size: int64)
             =
-            { Class = nameof DirectoryVersion
-              DirectoryVersionId = directoryVersionId
-              OwnerId = ownerId
-              OrganizationId = organizationId
-              RepositoryId = repositoryId
-              RelativePath = relativePath
-              Sha256Hash = sha256Hash
-              Directories = directories
-              Files = files
-              Size = size
-              CreatedAt = getCurrentInstant ()
-              HashesValidated = false }
+            {
+                Class = nameof DirectoryVersion
+                DirectoryVersionId = directoryVersionId
+                OwnerId = ownerId
+                OrganizationId = organizationId
+                RepositoryId = repositoryId
+                RelativePath = relativePath
+                Sha256Hash = sha256Hash
+                Directories = directories
+                Files = files
+                Size = size
+                CreatedAt = getCurrentInstant ()
+                HashesValidated = false
+            }
 
         member this.ToLocalDirectoryVersion lastWriteTimeUtc =
             LocalDirectoryVersion.Create
@@ -395,7 +411,10 @@ module Types =
                 this.RelativePath
                 this.Sha256Hash
                 this.Directories
-                (this.Files.Select(fun f -> f.ToLocalFileVersion lastWriteTimeUtc).ToList())
+                (this
+                    .Files
+                    .Select(fun f -> f.ToLocalFileVersion lastWriteTimeUtc)
+                    .ToList())
                 this.Size
                 lastWriteTimeUtc
 
@@ -403,44 +422,48 @@ module Types =
     ///
     /// It is the local representation of the DirectoryVersion type. DirectoryVersion is used on the server.
     and [<CLIMutable; MessagePackObject>] LocalDirectoryVersion =
-        { [<Key(0)>]
-          Class: string
-          [<Key(1)>]
-          DirectoryVersionId: DirectoryVersionId
-          [<Key(2)>]
-          OwnerId: OwnerId
-          [<Key(3)>]
-          OrganizationId: OrganizationId
-          [<Key(4)>]
-          RepositoryId: RepositoryId
-          [<Key(5)>]
-          RelativePath: RelativePath
-          [<Key(6)>]
-          Sha256Hash: Sha256Hash
-          [<Key(7)>]
-          Directories: List<DirectoryVersionId>
-          [<Key(8)>]
-          Files: List<LocalFileVersion>
-          [<Key(9)>]
-          Size: int64
-          [<Key(10)>]
-          CreatedAt: Instant
-          [<Key(11)>]
-          LastWriteTimeUtc: DateTime }
+        {
+            [<Key(0)>]
+            Class: string
+            [<Key(1)>]
+            DirectoryVersionId: DirectoryVersionId
+            [<Key(2)>]
+            OwnerId: OwnerId
+            [<Key(3)>]
+            OrganizationId: OrganizationId
+            [<Key(4)>]
+            RepositoryId: RepositoryId
+            [<Key(5)>]
+            RelativePath: RelativePath
+            [<Key(6)>]
+            Sha256Hash: Sha256Hash
+            [<Key(7)>]
+            Directories: List<DirectoryVersionId>
+            [<Key(8)>]
+            Files: List<LocalFileVersion>
+            [<Key(9)>]
+            Size: int64
+            [<Key(10)>]
+            CreatedAt: Instant
+            [<Key(11)>]
+            LastWriteTimeUtc: DateTime
+        }
 
         static member Default =
-            { Class = "LocalDirectoryVersion"
-              OwnerId = OwnerId.Empty
-              OrganizationId = OrganizationId.Empty
-              RepositoryId = RepositoryId.Empty
-              DirectoryVersionId = DirectoryVersionId.Empty
-              RelativePath = RelativePath String.Empty
-              Sha256Hash = Sha256Hash String.Empty
-              Directories = List<DirectoryVersionId>()
-              Files = List<LocalFileVersion>()
-              Size = InitialDirectorySize
-              CreatedAt = DefaultTimestamp
-              LastWriteTimeUtc = DateTime.UtcNow }
+            {
+                Class = "LocalDirectoryVersion"
+                OwnerId = OwnerId.Empty
+                OrganizationId = OrganizationId.Empty
+                RepositoryId = RepositoryId.Empty
+                DirectoryVersionId = DirectoryVersionId.Empty
+                RelativePath = RelativePath String.Empty
+                Sha256Hash = Sha256Hash String.Empty
+                Directories = List<DirectoryVersionId>()
+                Files = List<LocalFileVersion>()
+                Size = InitialDirectorySize
+                CreatedAt = DefaultTimestamp
+                LastWriteTimeUtc = DateTime.UtcNow
+            }
 
         static member Create
             (directoryVersionId: DirectoryVersionId)
@@ -454,18 +477,20 @@ module Types =
             (size: int64)
             (lastWriteTimeUtc: DateTime)
             =
-            { Class = "LocalDirectoryVersion"
-              DirectoryVersionId = directoryVersionId
-              OwnerId = ownerId
-              OrganizationId = organizationId
-              RepositoryId = repositoryId
-              RelativePath = relativePath
-              Sha256Hash = sha256Hash
-              Directories = directories
-              Files = files
-              Size = size
-              CreatedAt = getCurrentInstant ()
-              LastWriteTimeUtc = lastWriteTimeUtc }
+            {
+                Class = "LocalDirectoryVersion"
+                DirectoryVersionId = directoryVersionId
+                OwnerId = ownerId
+                OrganizationId = organizationId
+                RepositoryId = repositoryId
+                RelativePath = relativePath
+                Sha256Hash = sha256Hash
+                Directories = directories
+                Files = files
+                Size = size
+                CreatedAt = getCurrentInstant ()
+                LastWriteTimeUtc = lastWriteTimeUtc
+            }
 
         /// Converts a LocalDirectoryVersion to a DirectoryVersion.
         [<IgnoreMember>]
@@ -478,7 +503,10 @@ module Types =
                 this.RelativePath
                 this.Sha256Hash
                 this.Directories
-                (this.Files.Select(fun f -> f.ToFileVersion).ToList())
+                (this
+                    .Files
+                    .Select(fun f -> f.ToFileVersion)
+                    .ToList())
                 this.Size
 
     /// Specifies whether a specific entry in a directory is a DirectoryVersion or a FileVersion.
@@ -554,29 +582,39 @@ module Types =
     /// This is combined with a RelativePath to define a PathPermission.
     [<GenerateSerializer>]
     type ClaimPermission =
-        { [<Id 0u>]
-          Claim: string
-          [<Id 1u>]
-          DirectoryPermission: DirectoryPermission }
+        {
+            [<Id 0u>]
+            Claim: string
+            [<Id 1u>]
+            DirectoryPermission: DirectoryPermission
+        }
 
     /// Defines a set of claims and their permissions that should be applied to a relative path in the repository.
     ///
     /// NOTE: This type is being used only at the directory level for now, but I intend to implement it at the file level as well.
     [<GenerateSerializer>]
     type PathPermission =
-        { [<Id 0u>]
-          Path: RelativePath
-          [<Id 1u>]
-          Permissions: List<ClaimPermission> }
+        {
+            [<Id 0u>]
+            Path: RelativePath
+            [<Id 1u>]
+            Permissions: List<ClaimPermission>
+        }
 
     /// Cleans up extra backslashes (escape characters) and converts \r\n to Environment.NewLine.
-    let cleanJson (s: string) = s.Replace("\\\\\\\\", @"\").Replace("\\\\", @"\").Replace(@"\r\n", Environment.NewLine)
+    let cleanJson (s: string) =
+        s
+            .Replace("\\\\\\\\", @"\")
+            .Replace("\\\\", @"\")
+            .Replace(@"\r\n", Environment.NewLine)
 
     /// A serializable view of a .NET Exception
     type ExceptionObject =
-        { Message: string
-          StackTrace: string
-          InnerException: ExceptionObject option }
+        {
+            Message: string
+            StackTrace: string
+            InnerException: ExceptionObject option
+        }
 
         /// Checks if the ExceptionObject is set to the default value.
         member this.IsDefault() = this = ExceptionObject.Default
@@ -585,20 +623,24 @@ module Types =
 
         /// Creates an ExceptionObject from a .NET Exception.
         static member Create(ex: Exception) =
-            { Message = ex.Message
-              StackTrace = if String.IsNullOrEmpty ex.StackTrace then String.Empty else ex.StackTrace
-              InnerException =
-                if ex.InnerException <> null then
-                    Some(ExceptionObject.Create(ex.InnerException))
-                else
-                    None }
+            {
+                Message = ex.Message
+                StackTrace = if String.IsNullOrEmpty ex.StackTrace then String.Empty else ex.StackTrace
+                InnerException =
+                    if ex.InnerException <> null then
+                        Some(ExceptionObject.Create(ex.InnerException))
+                    else
+                        None
+            }
 
     /// The primary type used in Grace to represent successful results.
     type GraceReturnValue<'T> =
-        { ReturnValue: 'T
-          EventTime: Instant
-          CorrelationId: string
-          Properties: Dictionary<string, obj> }
+        {
+            ReturnValue: 'T
+            EventTime: Instant
+            CorrelationId: string
+            Properties: Dictionary<string, obj>
+        }
 
         static member CreateWithMetadata<'T> (returnValue: 'T) (correlationId: string) (properties: Dictionary<string, obj>) =
             { ReturnValue = returnValue; EventTime = getCurrentInstant (); CorrelationId = correlationId; Properties = properties }
@@ -611,8 +653,8 @@ module Types =
             //logToConsole $"In GraceReturnValue.enhance: Enhancing GraceReturnValue with key: {key}, value: {value}."
 
             match String.IsNullOrEmpty(key), isNull (value) with
-            | false, false -> this.Properties[key] <- value
-            | false, true -> this.Properties[key] <- null
+            | false, false -> this.Properties[ key ] <- value
+            | false, true -> this.Properties[ key ] <- null
             | true, _ -> ()
 
             this
@@ -622,48 +664,59 @@ module Types =
             // logToConsole $"In GraceReturnValue.enhance: isNull(dict): {isNull (dict)}."
             // logToConsole $"In GraceReturnValue.enhance: Enhancing GraceReturnValue with {dict.Count} properties."
 
-            dict |> Seq.iter (fun kvp -> this.enhance (kvp.Key, kvp.Value) |> ignore)
+            dict
+            |> Seq.iter (fun kvp -> this.enhance (kvp.Key, kvp.Value) |> ignore)
 
             this
 
         override this.ToString() =
             // Breaking out the Properties because Dictionary<> doesn't have a good ToString() method.
             let output =
-                {| ReturnValue = this.ReturnValue
-                   EventTime = this.EventTime
-                   CorrelationId = this.CorrelationId
-                   Properties = this.Properties.Select(fun kvp -> {| Key = kvp.Key; Value = kvp.Value |}) |}
+                {|
+                    ReturnValue = this.ReturnValue
+                    EventTime = this.EventTime
+                    CorrelationId = this.CorrelationId
+                    Properties = this.Properties.Select(fun kvp -> {| Key = kvp.Key; Value = kvp.Value |})
+                |}
             //logToConsole $"GraceReturnValue: {serialize output}"
             serialize output
 
     /// The primary type used in Grace to represent error results.
     type GraceError =
-        { Exception: ExceptionObject
-          Error: string
-          EventTime: Instant
-          CorrelationId: string
-          Properties: Dictionary<string, obj> }
+        {
+            Exception: ExceptionObject
+            Error: string
+            EventTime: Instant
+            CorrelationId: string
+            Properties: Dictionary<string, obj>
+        }
 
         static member Default =
-            { Exception = ExceptionObject.Default
-              Error = "Empty error message"
-              EventTime = getCurrentInstant ()
-              CorrelationId = String.Empty
-              Properties = new Dictionary<string, obj>() }
+            {
+                Exception = ExceptionObject.Default
+                Error = "Empty error message"
+                EventTime = getCurrentInstant ()
+                CorrelationId = String.Empty
+                Properties = new Dictionary<string, obj>()
+            }
 
         static member Create (error: string) (correlationId: string) =
-            { Exception = ExceptionObject.Default
-              Error = error
-              EventTime = getCurrentInstant ()
-              CorrelationId = correlationId
-              Properties = new Dictionary<string, obj>() }
+            {
+                Exception = ExceptionObject.Default
+                Error = error
+                EventTime = getCurrentInstant ()
+                CorrelationId = correlationId
+                Properties = new Dictionary<string, obj>()
+            }
 
         static member CreateWithException (ex: Exception) (error: string) (correlationId: string) =
-            { Exception = ExceptionObject.Create(ex)
-              Error = error
-              EventTime = getCurrentInstant ()
-              CorrelationId = correlationId
-              Properties = new Dictionary<string, obj>() }
+            {
+                Exception = ExceptionObject.Create(ex)
+                Error = error
+                EventTime = getCurrentInstant ()
+                CorrelationId = correlationId
+                Properties = new Dictionary<string, obj>()
+            }
 
         static member CreateWithMetadata (ex: Exception) (error: string) (correlationId: string) (properties: Dictionary<string, obj>) =
             { Exception = ExceptionObject.Create(ex); Error = error; EventTime = getCurrentInstant (); CorrelationId = correlationId; Properties = properties }
@@ -671,15 +724,17 @@ module Types =
         /// Adds a key-value pair to GraceError's Properties dictionary.
         member this.enhance(key: string, value: obj) =
             match String.IsNullOrEmpty(key), isNull (value) with
-            | false, false -> this.Properties[key] <- $"{value}"
-            | false, true -> this.Properties[key] <- null
+            | false, false -> this.Properties[ key ] <- $"{value}"
+            | false, true -> this.Properties[ key ] <- null
             | true, _ -> ()
 
             this
 
         /// Adds a set of key-value pairs from a Dictionary to GraceError's Properties dictionary.
         member this.enhance(dict: IReadOnlyDictionary<string, obj>) =
-            dict |> Seq.iter (fun kvp -> this.Properties[kvp.Key] <- $"{kvp.Value}")
+            dict
+            |> Seq.iter (fun kvp -> this.Properties[ kvp.Key ] <- $"{kvp.Value}")
+
             this
 
         override this.ToString() =
@@ -725,9 +780,11 @@ module Types =
     /// A file system difference is a change detected (at a file level) in a diff. It specifies the type of change (add, change, or delete), the type of file system entry (directory or file), and the relative path of the entry.
     [<GenerateSerializer>]
     type FileSystemDifference =
-        { DifferenceType: DifferenceType
-          FileSystemEntryType: FileSystemEntryType
-          RelativePath: RelativePath }
+        {
+            DifferenceType: DifferenceType
+            FileSystemEntryType: FileSystemEntryType
+            RelativePath: RelativePath
+        }
 
         static member Create differenceType fileSystemEntryType relativePath =
             { DifferenceType = differenceType; FileSystemEntryType = fileSystemEntryType; RelativePath = relativePath }
@@ -747,44 +804,52 @@ module Types =
     /// If the interprocess cache file is missing or corrupt, Grace CLI assumes that `grace watch` is not running, and runs all commands from scratch.
     [<MessagePackObject>]
     type GraceStatus =
-        { [<Key(0)>]
-          Index: GraceIndex
-          [<Key(1)>]
-          RootDirectoryId: DirectoryVersionId
-          [<Key(2)>]
-          RootDirectorySha256Hash: Sha256Hash
-          [<Key(3)>]
-          LastSuccessfulFileUpload: Instant
-          [<Key(4)>]
-          LastSuccessfulDirectoryVersionUpload: Instant }
+        {
+            [<Key(0)>]
+            Index: GraceIndex
+            [<Key(1)>]
+            RootDirectoryId: DirectoryVersionId
+            [<Key(2)>]
+            RootDirectorySha256Hash: Sha256Hash
+            [<Key(3)>]
+            LastSuccessfulFileUpload: Instant
+            [<Key(4)>]
+            LastSuccessfulDirectoryVersionUpload: Instant
+        }
 
         static member Default =
-            { Index = GraceIndex()
-              RootDirectoryId = DirectoryVersionId.Empty
-              RootDirectorySha256Hash = Sha256Hash String.Empty
-              LastSuccessfulFileUpload = getCurrentInstant ()
-              LastSuccessfulDirectoryVersionUpload = getCurrentInstant () }
+            {
+                Index = GraceIndex()
+                RootDirectoryId = DirectoryVersionId.Empty
+                RootDirectorySha256Hash = Sha256Hash String.Empty
+                LastSuccessfulFileUpload = getCurrentInstant ()
+                LastSuccessfulDirectoryVersionUpload = getCurrentInstant ()
+            }
 
     /// GraceObjectCache is a snapshot of the contents of the local object cache.
     [<MessagePackObject>]
     type GraceObjectCache =
-        { [<Key(0)>]
-          Index: GraceIndex }
+        {
+            [<Key(0)>]
+            Index: GraceIndex
+        }
 
         static member Default = { Index = GraceIndex() }
 
     /// Holds the results of a diff between two versions of a file.
     [<GenerateSerializer>]
     type FileDiff =
-        { RelativePath: RelativePath
-          FileSha1: Sha256Hash
-          CreatedAt1: Instant
-          FileSha2: Sha256Hash
-          CreatedAt2: Instant
-          IsBinary: bool
-          InlineDiff: List<DiffPiece[]>
-          SideBySideOld: List<DiffPiece[]>
-          SideBySideNew: List<DiffPiece[]> }
+        {
+            RelativePath: RelativePath
+            FileSha1: Sha256Hash
+            CreatedAt1: Instant
+            FileSha2: Sha256Hash
+            CreatedAt2: Instant
+            IsBinary: bool
+            InlineDiff: List<DiffPiece []>
+            SideBySideOld: List<DiffPiece []>
+            SideBySideNew: List<DiffPiece []>
+        }
 
         static member Create
             (relativePath: RelativePath)
@@ -793,19 +858,21 @@ module Types =
             (fileSha2: Sha256Hash)
             (createdAt2: Instant)
             (isBinary: bool)
-            (inlineDiff: List<DiffPiece[]>)
-            (sideBySideOld: List<DiffPiece[]>)
-            (sideBySideNew: List<DiffPiece[]>)
+            (inlineDiff: List<DiffPiece []>)
+            (sideBySideOld: List<DiffPiece []>)
+            (sideBySideNew: List<DiffPiece []>)
             =
-            { RelativePath = relativePath
-              FileSha1 = fileSha1
-              CreatedAt1 = createdAt1
-              FileSha2 = fileSha2
-              CreatedAt2 = createdAt2
-              IsBinary = isBinary
-              InlineDiff = inlineDiff
-              SideBySideOld = sideBySideOld
-              SideBySideNew = sideBySideNew }
+            {
+                RelativePath = relativePath
+                FileSha1 = fileSha1
+                CreatedAt1 = createdAt1
+                FileSha2 = fileSha2
+                CreatedAt2 = createdAt2
+                IsBinary = isBinary
+                InlineDiff = inlineDiff
+                SideBySideOld = sideBySideOld
+                SideBySideNew = sideBySideNew
+            }
 
     [<KnownType("GetKnownTypes"); GenerateSerializer>]
     type PromotionType =
@@ -839,42 +906,46 @@ module Types =
 
     /// Holds the entity Id's involved in an API call. It's populated in ValidateIds.Middleware.fs.
     type GraceIds =
-        { OwnerId: OwnerId
-          OwnerIdString: string
-          OwnerName: OwnerName
-          OrganizationId: OrganizationId
-          OrganizationIdString: string
-          OrganizationName: OrganizationName
-          RepositoryId: RepositoryId
-          RepositoryIdString: string
-          RepositoryName: RepositoryName
-          BranchId: BranchId
-          BranchIdString: string
-          BranchName: BranchName
-          CorrelationId: string
-          HasOwner: bool
-          HasOrganization: bool
-          HasRepository: bool
-          HasBranch: bool }
+        {
+            OwnerId: OwnerId
+            OwnerIdString: string
+            OwnerName: OwnerName
+            OrganizationId: OrganizationId
+            OrganizationIdString: string
+            OrganizationName: OrganizationName
+            RepositoryId: RepositoryId
+            RepositoryIdString: string
+            RepositoryName: RepositoryName
+            BranchId: BranchId
+            BranchIdString: string
+            BranchName: BranchName
+            CorrelationId: string
+            HasOwner: bool
+            HasOrganization: bool
+            HasRepository: bool
+            HasBranch: bool
+        }
 
         static member Default =
-            { OwnerId = OwnerId.Empty
-              OwnerIdString = String.Empty
-              OwnerName = OwnerName.Empty
-              OrganizationId = OrganizationId.Empty
-              OrganizationIdString = String.Empty
-              OrganizationName = OrganizationName.Empty
-              RepositoryId = RepositoryId.Empty
-              RepositoryIdString = String.Empty
-              RepositoryName = RepositoryName.Empty
-              BranchId = BranchId.Empty
-              BranchIdString = String.Empty
-              BranchName = BranchName.Empty
-              CorrelationId = String.Empty
-              HasOwner = false
-              HasOrganization = false
-              HasRepository = false
-              HasBranch = false }
+            {
+                OwnerId = OwnerId.Empty
+                OwnerIdString = String.Empty
+                OwnerName = OwnerName.Empty
+                OrganizationId = OrganizationId.Empty
+                OrganizationIdString = String.Empty
+                OrganizationName = OrganizationName.Empty
+                RepositoryId = RepositoryId.Empty
+                RepositoryIdString = String.Empty
+                RepositoryName = RepositoryName.Empty
+                BranchId = BranchId.Empty
+                BranchIdString = String.Empty
+                BranchName = BranchName.Empty
+                CorrelationId = String.Empty
+                HasOwner = false
+                HasOrganization = false
+                HasRepository = false
+                HasBranch = false
+            }
 
         override this.ToString() = serialize this
 
@@ -951,12 +1022,20 @@ module Types =
     /// Settings for Azure Service Bus pub-sub integration.
     [<GenerateSerializer>]
     type AzureServiceBusPubSubSettings =
-        { ConnectionString: string; FullyQualifiedNamespace: string; TopicName: string; SubscriptionName: string; UseManagedIdentity: bool }
+        {
+            ConnectionString: string
+            FullyQualifiedNamespace: string
+            TopicName: string
+            SubscriptionName: string
+            UseManagedIdentity: bool
+        }
 
     /// Settings for Grace pub-sub integration.
     [<GenerateSerializer>]
     type GracePubSubSettings =
-        { System: GracePubSubSystem
-          AzureServiceBus: AzureServiceBusPubSubSettings option }
+        {
+            System: GracePubSubSystem
+            AzureServiceBus: AzureServiceBusPubSubSettings option
+        }
 
         static member Empty: GracePubSubSettings = { System = GracePubSubSystem.UnknownPubSubProvider; AzureServiceBus = None }

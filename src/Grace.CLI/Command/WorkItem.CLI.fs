@@ -115,66 +115,68 @@ module WorkItemCommand =
     let private tryParseGuid (value: string) (error: WorkItemError) (parseResult: ParseResult) =
         let mutable parsed = Guid.Empty
 
-        if
-            String.IsNullOrWhiteSpace(value)
-            || Guid.TryParse(value, &parsed) = false
-            || parsed = Guid.Empty
-        then
+        if String.IsNullOrWhiteSpace(value)
+           || Guid.TryParse(value, &parsed) = false
+           || parsed = Guid.Empty then
             Error(GraceError.Create (WorkItemError.getErrorMessage error) (getCorrelationId parseResult))
         else
             Ok parsed
 
+    let private createWorkItemWithProgress (parameters: Parameters.WorkItem.CreateWorkItemParameters) =
+        progress
+            .Columns(progressColumns)
+            .StartAsync(fun progressContext ->
+                task {
+                    let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+                    let! result = WorkItem.Create(parameters)
+                    t0.Increment(100.0)
+                    return result
+                })
+
+    let private createHandlerImpl (parseResult: ParseResult) =
+        if parseResult |> verbose then printParseResult parseResult
+        let graceIds = parseResult |> getNormalizedIdsAndNames
+
+        let title = parseResult.GetValue(Options.title)
+
+        if String.IsNullOrWhiteSpace title then
+            Task.FromResult(Error(GraceError.Create "Title is required." (getCorrelationId parseResult)))
+        else
+            let description =
+                parseResult.GetValue(Options.description)
+                |> Option.ofObj
+                |> Option.defaultValue String.Empty
+
+            let workItemId =
+                parseResult.GetValue(Options.workItemId)
+                |> Option.ofObj
+                |> Option.defaultValue (Guid.NewGuid().ToString())
+
+            let parameters =
+                Parameters.WorkItem.CreateWorkItemParameters(
+                    WorkItemId = workItemId,
+                    Title = title,
+                    Description = description,
+                    OwnerId = graceIds.OwnerIdString,
+                    OwnerName = graceIds.OwnerName,
+                    OrganizationId = graceIds.OrganizationIdString,
+                    OrganizationName = graceIds.OrganizationName,
+                    RepositoryId = graceIds.RepositoryIdString,
+                    RepositoryName = graceIds.RepositoryName,
+                    CorrelationId = graceIds.CorrelationId
+                )
+
+            if parseResult |> hasOutput then
+                createWorkItemWithProgress parameters
+            else
+                WorkItem.Create(parameters)
+
     let private createHandler (parseResult: ParseResult) =
         task {
             try
-                if parseResult |> verbose then printParseResult parseResult
-                let graceIds = parseResult |> getNormalizedIdsAndNames
-
-                let title = parseResult.GetValue(Options.title)
-
-                if String.IsNullOrWhiteSpace title then
-                    return Error(GraceError.Create "Title is required." (getCorrelationId parseResult))
-                else
-                    let description =
-                        parseResult.GetValue(Options.description)
-                        |> Option.ofObj
-                        |> Option.defaultValue String.Empty
-
-                    let workItemId =
-                        parseResult.GetValue(Options.workItemId)
-                        |> Option.ofObj
-                        |> Option.defaultValue (Guid.NewGuid().ToString())
-
-                    let parameters =
-                        Parameters.WorkItem.CreateWorkItemParameters(
-                            WorkItemId = workItemId,
-                            Title = title,
-                            Description = description,
-                            OwnerId = graceIds.OwnerIdString,
-                            OwnerName = graceIds.OwnerName,
-                            OrganizationId = graceIds.OrganizationIdString,
-                            OrganizationName = graceIds.OrganizationName,
-                            RepositoryId = graceIds.RepositoryIdString,
-                            RepositoryName = graceIds.RepositoryName,
-                            CorrelationId = graceIds.CorrelationId
-                        )
-
-                    if parseResult |> hasOutput then
-                        return!
-                            progress
-                                .Columns(progressColumns)
-                                .StartAsync(fun progressContext ->
-                                    task {
-                                        let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
-
-                                        let! result = WorkItem.Create(parameters)
-                                        t0.Increment(100.0)
-                                        return result
-                                    })
-                    else
-                        return! WorkItem.Create(parameters)
-            with ex ->
-                return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
+                return! createHandlerImpl parseResult
+            with
+            | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
         }
 
     type Create() =
@@ -219,8 +221,8 @@ module WorkItemCommand =
 
                         return Ok graceReturnValue
                     | Error error -> return Error error
-            with ex ->
-                return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
+            with
+            | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
         }
 
     type Show() =
@@ -261,8 +263,8 @@ module WorkItemCommand =
                             )
 
                         return! WorkItem.Update(parameters)
-            with ex ->
-                return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
+            with
+            | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
         }
 
     type Status() =
@@ -302,8 +304,8 @@ module WorkItemCommand =
                             )
 
                         return! WorkItem.LinkReference(parameters)
-            with ex ->
-                return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
+            with
+            | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
         }
 
     type LinkReference() =
@@ -343,8 +345,8 @@ module WorkItemCommand =
                             )
 
                         return! WorkItem.LinkPromotionGroup(parameters)
-            with ex ->
-                return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
+            with
+            | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
         }
 
     type LinkPromotionGroup() =
@@ -380,7 +382,9 @@ module WorkItemCommand =
         createCommand.Action <- new Create()
         workCommand.Subcommands.Add(createCommand)
 
-        let showCommand = new Command("show", Description = "Show a work item.") |> addCommonOptions
+        let showCommand =
+            new Command("show", Description = "Show a work item.")
+            |> addCommonOptions
 
         showCommand.Arguments.Add(Arguments.workItemId)
         showCommand.Action <- new Show()

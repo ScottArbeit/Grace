@@ -21,7 +21,10 @@ open System.Net.Http
 [<Parallelizable(ParallelScope.All)>]
 type Owner() =
 
-    let log = LoggerFactory.Create(fun builder -> builder.AddConsole().AddDebug() |> ignore).CreateLogger("Owner.Server.Tests")
+    let log =
+        LoggerFactory
+            .Create(fun builder -> builder.AddConsole().AddDebug() |> ignore)
+            .CreateLogger("Owner.Server.Tests")
 
     member val public TestContext = TestContext.CurrentContext with get, set
 

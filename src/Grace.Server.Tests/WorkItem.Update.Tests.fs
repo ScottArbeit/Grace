@@ -38,13 +38,15 @@ type WorkItemUpdateTests() =
         let commands = WorkItem.buildUpdateCommands parameters
 
         let expected: WorkItemCommand list =
-            [ WorkItemCommand.SetTitle "Title"
-              WorkItemCommand.SetDescription "Description"
-              WorkItemCommand.SetStatus WorkItemStatus.Active
-              WorkItemCommand.SetConstraints "Constraints"
-              WorkItemCommand.SetNotes "Notes"
-              WorkItemCommand.SetArchitecturalNotes "Architecture"
-              WorkItemCommand.SetMigrationNotes "Migration" ]
+            [
+                WorkItemCommand.SetTitle "Title"
+                WorkItemCommand.SetDescription "Description"
+                WorkItemCommand.SetStatus WorkItemStatus.Active
+                WorkItemCommand.SetConstraints "Constraints"
+                WorkItemCommand.SetNotes "Notes"
+                WorkItemCommand.SetArchitecturalNotes "Architecture"
+                WorkItemCommand.SetMigrationNotes "Migration"
+            ]
 
         let matches = commands = expected
         Assert.That(matches, Is.True)
@@ -54,7 +56,12 @@ type WorkItemUpdateTests() =
         let parameters = LinkReferenceParameters(WorkItemId = Guid.NewGuid().ToString(), ReferenceId = "not-a-guid")
 
         let validations = WorkItem.validateLinkReferenceParameters parameters
-        let error = validations |> getFirstError |> Async.AwaitTask |> Async.RunSynchronously
+
+        let error =
+            validations
+            |> getFirstError
+            |> Async.AwaitTask
+            |> Async.RunSynchronously
 
         Assert.That(error, Is.EqualTo(Some WorkItemError.InvalidReferenceId))
 
@@ -63,7 +70,12 @@ type WorkItemUpdateTests() =
         let parameters = LinkPromotionGroupParameters(WorkItemId = Guid.NewGuid().ToString(), PromotionGroupId = "not-a-guid")
 
         let validations = WorkItem.validateLinkPromotionGroupParameters parameters
-        let error = validations |> getFirstError |> Async.AwaitTask |> Async.RunSynchronously
+
+        let error =
+            validations
+            |> getFirstError
+            |> Async.AwaitTask
+            |> Async.RunSynchronously
 
         Assert.That(error, Is.EqualTo(Some WorkItemError.InvalidPromotionGroupId))
 

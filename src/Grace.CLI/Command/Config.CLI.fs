@@ -112,7 +112,10 @@ module Config =
 
                     Directory.Delete(graceDirPath, recursive = true)
 
-                if File.Exists(graceConfigPath) && not parameters.Overwrite then
+                if
+                    File.Exists(graceConfigPath)
+                    && not parameters.Overwrite
+                then
                     if parseResult |> hasOutput then
                         printfn
                             $"Found existing Grace configuration file at {graceConfigPath}. Specify {OptionName.Overwrite} if you'd like to overwrite it.{Environment.NewLine}"
@@ -122,7 +125,8 @@ module Config =
                     if parseResult |> hasOutput then
                         printfn $"Writing new Grace configuration file at {graceConfigPath}.{Environment.NewLine}"
 
-                    GraceConfiguration() |> saveConfigFile graceConfigPath
+                    GraceConfiguration()
+                    |> saveConfigFile graceConfigPath
 
                 return Ok(GraceReturnValue.Create () parameters.CorrelationId)
             | Error error -> return (Error error)
@@ -148,7 +152,10 @@ module Config =
                     let graceDirPath = Path.Combine(directory, ".grace")
                     let graceConfigPath = Path.Combine(graceDirPath, "graceconfig.json")
 
-                    let overwriteExisting = overwrite && Directory.Exists(graceDirPath) && File.Exists(graceConfigPath)
+                    let overwriteExisting =
+                        overwrite
+                        && Directory.Exists(graceDirPath)
+                        && File.Exists(graceConfigPath)
 
                     if overwriteExisting then
                         // Clear out everything in the .grace directory.
@@ -167,7 +174,8 @@ module Config =
                         if parseResult |> hasOutput then
                             printfn $"Writing new Grace configuration file at {graceConfigPath}.{Environment.NewLine}"
 
-                        GraceConfiguration() |> saveConfigFile graceConfigPath
+                        GraceConfiguration()
+                        |> saveConfigFile graceConfigPath
 
                     return
                         Ok(GraceReturnValue.Create () (getCorrelationId parseResult))
@@ -178,7 +186,10 @@ module Config =
             }
 
     let Build =
-        let addCommonOptions (command: Command) = command |> addOption Options.directory |> addOption Options.overwrite
+        let addCommonOptions (command: Command) =
+            command
+            |> addOption Options.directory
+            |> addOption Options.overwrite
 
         let configCommand = new Command("config", Description = "Initializes a repository with the default Grace configuration.")
 

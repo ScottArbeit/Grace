@@ -71,7 +71,8 @@ module Storage =
                     context.SetStatusCode StatusCodes.Status200OK
                     //log.LogTrace("fileVersion: {fileVersion.RelativePath}; downloadUri: {downloadUri}", [| parameters.FileVersion.RelativePath, downloadUri |])
                     return! context.WriteStringAsync $"{downloadUri}"
-                with ex ->
+                with
+                | ex ->
                     context.SetStatusCode StatusCodes.Status500InternalServerError
                     return! context.WriteTextAsync $"Error in {context.Request.Path} at {DateTime.Now.ToLongTimeString()}."
             }
@@ -98,7 +99,8 @@ module Storage =
 
                         try
                             for kvp in uris do
-                                sb.AppendLine($"fileVersion: {kvp.Key}; uploadUri: {kvp.Value}") |> ignore
+                                sb.AppendLine($"fileVersion: {kvp.Key}; uploadUri: {kvp.Value}")
+                                |> ignore
 
                             log.LogDebug("In GetUploadUri(): Created {count} uri's for these files: {uploadUris}", uris.Count, sb.ToString())
                         finally
@@ -107,7 +109,8 @@ module Storage =
                     context.SetStatusCode StatusCodes.Status200OK
                     let jsonContent = JsonContent.Create(uris)
                     return! context.WriteJsonAsync jsonContent
-                with ex ->
+                with
+                | ex ->
                     context.SetStatusCode StatusCodes.Status500InternalServerError
                     logToConsole $"Exception in GetUploadUri: {(ExceptionResponse.Create ex)}"
 
@@ -147,9 +150,11 @@ module Storage =
                                                 getUriWithWriteSharedAccessSignatureForFileVersion repositoryDto fileVersion correlationId
 
                                             uploadMetadata.Enqueue(
-                                                { RelativePath = fileVersion.RelativePath
-                                                  BlobUriWithSasToken = blobUriWithSasToken
-                                                  Sha256Hash = fileVersion.Sha256Hash }
+                                                {
+                                                    RelativePath = fileVersion.RelativePath
+                                                    BlobUriWithSasToken = blobUriWithSasToken
+                                                    Sha256Hash = fileVersion.Sha256Hash
+                                                }
                                             )
                                         }
                                     ))
@@ -171,7 +176,8 @@ module Storage =
                         return!
                             context
                             |> result400BadRequest (GraceError.Create (getErrorMessage StorageError.FilesMustNotBeEmpty) correlationId)
-                with ex ->
+                with
+                | ex ->
                     logToConsole $"Exception in GetUploadMetadataForFiles: {(ExceptionResponse.Create ex)}"
 
                     return!

@@ -9,7 +9,9 @@ module Utilities =
     /// Returns the first validation that matches the predicate, or None if none match.
     let tryFindOld<'T> (predicate: 'T -> bool) (validations: ValueTask<'T> array) =
         task {
-            match validations |> Seq.tryFindIndex (fun validation -> predicate validation.Result) with
+            match validations
+                  |> Seq.tryFindIndex (fun validation -> predicate validation.Result)
+                with
             | Some index -> return Some(validations[index].Result)
             | None -> return None
         }
@@ -32,7 +34,9 @@ module Utilities =
     /// Retrieves the first error from a list of validations.
     let getFirstError (validations: ValueTask<Result<'T, 'TError>> array) =
         task {
-            let! firstError = validations |> tryFind (fun validation -> Result.isError validation)
+            let! firstError =
+                validations
+                |> tryFind (fun validation -> Result.isError validation)
 
             return
                 match firstError with

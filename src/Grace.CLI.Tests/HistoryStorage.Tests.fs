@@ -48,7 +48,10 @@ module HistoryStorageTests =
             let value = randomString random
             let args = [| "--token"; value |]
             let redacted, _ = HistoryStorage.redactArguments args config.History
-            redacted |> Array.exists (fun arg -> arg = value) |> should equal false
+
+            redacted
+            |> Array.exists (fun arg -> arg = value)
+            |> should equal false
 
     [<Test>]
     let ``redacts --token=value values`` () =
@@ -70,7 +73,9 @@ module HistoryStorageTests =
     [<TestCase("7d", 604800.0)>]
     let ``parses valid durations`` (input: string, expectedSeconds: float) =
         match HistoryStorage.tryParseDuration input with
-        | Ok duration -> duration.TotalSeconds |> should equal expectedSeconds
+        | Ok duration ->
+            duration.TotalSeconds
+            |> should equal expectedSeconds
         | Error error -> Assert.Fail($"Expected Ok, got Error: {error}")
 
     [<TestCase("")>]
@@ -92,21 +97,23 @@ module HistoryStorageTests =
         options.WriteIndented <- false
 
         let entry: HistoryStorage.HistoryEntry =
-            { id = Guid.NewGuid()
-              timestampUtc = getCurrentInstant ()
-              argvOriginal = [| "branch"; "status" |]
-              argvNormalized = [| "branch"; "status" |]
-              commandLine = "branch status"
-              cwd = Environment.CurrentDirectory
-              repoRoot = None
-              repoName = None
-              repoBranch = None
-              graceVersion = "0.1"
-              exitCode = 0
-              durationMs = 10L
-              parseSucceeded = true
-              redactions = List.empty
-              source = None }
+            {
+                id = Guid.NewGuid()
+                timestampUtc = getCurrentInstant ()
+                argvOriginal = [| "branch"; "status" |]
+                argvNormalized = [| "branch"; "status" |]
+                commandLine = "branch status"
+                cwd = Environment.CurrentDirectory
+                repoRoot = None
+                repoName = None
+                repoBranch = None
+                graceVersion = "0.1"
+                exitCode = 0
+                durationMs = 10L
+                parseSucceeded = true
+                redactions = List.empty
+                source = None
+            }
 
         let json = JsonSerializer.Serialize(entry, options)
 
@@ -143,14 +150,16 @@ module HistoryStorageTests =
                     let timestamp = start.Plus(Duration.FromMinutes(float offset))
 
                     HistoryStorage.tryRecordInvocation
-                        { argvOriginal = [| "branch"; "status" |]
-                          argvNormalized = [| "branch"; "status" |]
-                          cwd = Environment.CurrentDirectory
-                          exitCode = 0
-                          durationMs = 5L
-                          parseSucceeded = true
-                          timestampUtc = timestamp
-                          source = None }
+                        {
+                            argvOriginal = [| "branch"; "status" |]
+                            argvNormalized = [| "branch"; "status" |]
+                            cwd = Environment.CurrentDirectory
+                            exitCode = 0
+                            durationMs = 5L
+                            parseSucceeded = true
+                            timestampUtc = timestamp
+                            source = None
+                        }
 
                 let result = HistoryStorage.readHistoryEntries ()
                 result.Entries.Length |> should equal 2))

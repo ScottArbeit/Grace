@@ -25,34 +25,48 @@ module ReviewCommandTests =
             OrganizationIdString = organizationId.ToString()
             RepositoryId = repositoryId
             RepositoryIdString = repositoryId.ToString()
-            CorrelationId = "corr-review" }
+            CorrelationId = "corr-review"
+        }
 
     let private withIds (args: string array) =
         Array.append
             args
-            [| "--owner-id"
-               ownerId.ToString()
-               "--organization-id"
-               organizationId.ToString()
-               "--repository-id"
-               repositoryId.ToString() |]
+            [|
+                "--owner-id"
+                ownerId.ToString()
+                "--organization-id"
+                organizationId.ToString()
+                "--repository-id"
+                repositoryId.ToString()
+            |]
 
-    let private withIdsAndSilent (args: string array) = args |> Array.append [| "--output"; "Silent" |] |> withIds
+    let private withIdsAndSilent (args: string array) =
+        args
+        |> Array.append [| "--output"; "Silent" |]
+        |> withIds
 
     let private parseCheckpoint (candidateId: Guid) (extraArgs: string array) =
         let baseArgs =
-            [| "review"
-               "checkpoint"
-               "--candidate"
-               candidateId.ToString()
-               "--reference-id"
-               Guid.NewGuid().ToString() |]
+            [|
+                "review"
+                "checkpoint"
+                "--candidate"
+                candidateId.ToString()
+                "--reference-id"
+                Guid.NewGuid().ToString()
+            |]
 
         GraceCommand.rootCommand.Parse(withIdsAndSilent (Array.append baseArgs extraArgs))
 
     [<Test>]
     let ``review open rejects invalid candidate id`` () =
-        let parseResult = GraceCommand.rootCommand.Parse(withIdsAndSilent [| "review"; "open"; "--candidate"; "not-a-guid" |])
+        let parseResult =
+            GraceCommand.rootCommand.Parse(
+                withIdsAndSilent [| "review"
+                                    "open"
+                                    "--candidate"
+                                    "not-a-guid" |]
+            )
 
         let exitCode = parseResult.Invoke()
         exitCode |> should equal -1
@@ -61,15 +75,14 @@ module ReviewCommandTests =
     let ``review checkpoint rejects invalid reference id`` () =
         let parseResult =
             GraceCommand.rootCommand.Parse(
-                withIdsAndSilent
-                    [| "review"
-                       "checkpoint"
-                       "--candidate"
-                       Guid.NewGuid().ToString()
-                       "--reference-id"
-                       "not-a-guid"
-                       "--policy-snapshot-id"
-                       "snapshot" |]
+                withIdsAndSilent [| "review"
+                                    "checkpoint"
+                                    "--candidate"
+                                    Guid.NewGuid().ToString()
+                                    "--reference-id"
+                                    "not-a-guid"
+                                    "--policy-snapshot-id"
+                                    "snapshot" |]
             )
 
         let exitCode = parseResult.Invoke()
@@ -79,13 +92,12 @@ module ReviewCommandTests =
     let ``review resolve requires resolution state`` () =
         let parseResult =
             GraceCommand.rootCommand.Parse(
-                withIdsAndSilent
-                    [| "review"
-                       "resolve"
-                       "--candidate"
-                       Guid.NewGuid().ToString()
-                       "--finding-id"
-                       Guid.NewGuid().ToString() |]
+                withIdsAndSilent [| "review"
+                                    "resolve"
+                                    "--candidate"
+                                    Guid.NewGuid().ToString()
+                                    "--finding-id"
+                                    Guid.NewGuid().ToString() |]
             )
 
         let exitCode = parseResult.Invoke()
@@ -95,15 +107,14 @@ module ReviewCommandTests =
     let ``review resolve rejects approve and request changes together`` () =
         let parseResult =
             GraceCommand.rootCommand.Parse(
-                withIdsAndSilent
-                    [| "review"
-                       "resolve"
-                       "--candidate"
-                       Guid.NewGuid().ToString()
-                       "--finding-id"
-                       Guid.NewGuid().ToString()
-                       "--approve"
-                       "--request-changes" |]
+                withIdsAndSilent [| "review"
+                                    "resolve"
+                                    "--candidate"
+                                    Guid.NewGuid().ToString()
+                                    "--finding-id"
+                                    Guid.NewGuid().ToString()
+                                    "--approve"
+                                    "--request-changes" |]
             )
 
         let exitCode = parseResult.Invoke()
@@ -118,7 +129,8 @@ module ReviewCommandTests =
             { IntegrationCandidate.Default with
                 CandidateId = candidateId
                 TargetBranchId = Guid.NewGuid()
-                PolicySnapshotId = PolicySnapshotId "snapshot-candidate" }
+                PolicySnapshotId = PolicySnapshotId "snapshot-candidate"
+            }
 
         let mutable policyCalled = false
 

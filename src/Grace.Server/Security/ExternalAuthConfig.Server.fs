@@ -25,19 +25,17 @@ module ExternalAuthConfig =
             $"{trimmed}/"
 
     let tryGetOidcConfig (configuration: IConfiguration) =
-        match
-            tryGetConfigValue configuration EnvironmentVariables.GraceAuthOidcAuthority,
-            tryGetConfigValue configuration EnvironmentVariables.GraceAuthOidcAudience
-        with
+        match tryGetConfigValue configuration EnvironmentVariables.GraceAuthOidcAuthority,
+              tryGetConfigValue configuration EnvironmentVariables.GraceAuthOidcAudience
+            with
         | Some authority, Some audience -> Some { Authority = normalizeAuthority authority; Audience = audience.Trim() }
         | _ -> None
 
     let tryGetOidcClientConfig (configuration: IConfiguration) =
-        match
-            tryGetConfigValue configuration EnvironmentVariables.GraceAuthOidcAuthority,
-            tryGetConfigValue configuration EnvironmentVariables.GraceAuthOidcAudience,
-            tryGetConfigValue configuration EnvironmentVariables.GraceAuthOidcCliClientId
-        with
+        match tryGetConfigValue configuration EnvironmentVariables.GraceAuthOidcAuthority,
+              tryGetConfigValue configuration EnvironmentVariables.GraceAuthOidcAudience,
+              tryGetConfigValue configuration EnvironmentVariables.GraceAuthOidcCliClientId
+            with
         | Some authority, Some audience, Some cliClientId ->
             Some { Authority = normalizeAuthority authority; Audience = audience.Trim(); CliClientId = cliClientId.Trim() }
         | _ -> None
@@ -46,14 +44,18 @@ module ExternalAuthConfig =
 
     let warnIfMicrosoftConfigPresent (configuration: IConfiguration) =
         let deprecated =
-            [ EnvironmentVariables.GraceAuthMicrosoftClientId
-              EnvironmentVariables.GraceAuthMicrosoftClientSecret
-              EnvironmentVariables.GraceAuthMicrosoftTenantId
-              EnvironmentVariables.GraceAuthMicrosoftAuthority
-              EnvironmentVariables.GraceAuthMicrosoftApiScope
-              EnvironmentVariables.GraceAuthMicrosoftCliClientId ]
+            [
+                EnvironmentVariables.GraceAuthMicrosoftClientId
+                EnvironmentVariables.GraceAuthMicrosoftClientSecret
+                EnvironmentVariables.GraceAuthMicrosoftTenantId
+                EnvironmentVariables.GraceAuthMicrosoftAuthority
+                EnvironmentVariables.GraceAuthMicrosoftApiScope
+                EnvironmentVariables.GraceAuthMicrosoftCliClientId
+            ]
 
-        let isSet name = tryGetConfigValue configuration name |> Option.isSome
+        let isSet name =
+            tryGetConfigValue configuration name
+            |> Option.isSome
 
         if deprecated |> List.exists isSet then
             logToConsole "Deprecated Microsoft auth settings are ignored. Configure grace__auth__oidc__authority and grace__auth__oidc__audience instead."

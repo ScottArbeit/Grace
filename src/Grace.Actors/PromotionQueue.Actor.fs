@@ -56,7 +56,9 @@ module PromotionQueue =
                     state.State.Add(queueEvent)
                     do! state.WriteStateAsync()
 
-                    promotionQueue <- promotionQueue |> PromotionQueueDto.UpdateDto queueEvent
+                    promotionQueue <-
+                        promotionQueue
+                        |> PromotionQueueDto.UpdateDto queueEvent
 
                     let graceEvent = GraceEvent.QueueEvent queueEvent
                     do! publishGraceEvent graceEvent queueEvent.Metadata
@@ -67,7 +69,8 @@ module PromotionQueue =
                             .enhance (nameof PromotionQueueEventType, getDiscriminatedUnionFullName queueEvent.Event)
 
                     return Ok returnValue
-                with ex ->
+                with
+                | ex ->
                     log.LogError(
                         ex,
                         "{CurrentInstant}: Node: {hostName}; CorrelationId: {correlationId}; Failed to apply event {eventType} for promotion queue {branchId}.",
@@ -91,7 +94,9 @@ module PromotionQueue =
         interface IPromotionQueueActor with
             member this.Exists correlationId =
                 this.correlationId <- correlationId
-                (promotionQueue.TargetBranchId <> BranchId.Empty) |> returnTask
+
+                (promotionQueue.TargetBranchId <> BranchId.Empty)
+                |> returnTask
 
             member this.Get correlationId =
                 this.correlationId <- correlationId
@@ -99,7 +104,9 @@ module PromotionQueue =
 
             member this.GetEvents correlationId =
                 this.correlationId <- correlationId
-                state.State :> IReadOnlyList<PromotionQueueEvent> |> returnTask
+
+                state.State :> IReadOnlyList<PromotionQueueEvent>
+                |> returnTask
 
             member this.Handle command metadata =
                 let isValid (command: PromotionQueueCommand) (metadata: EventMetadata) =
@@ -128,7 +135,7 @@ module PromotionQueue =
                                                 Ok command
                                             else
                                                 Error(GraceError.Create (QueueError.getErrorMessage QueueError.CandidateNotInQueue) metadata.CorrelationId)
-                                        | SetRunning(Some candidateId) ->
+                                        | SetRunning (Some candidateId) ->
                                             let exists =
                                                 promotionQueue.CandidateIds
                                                 |> List.exists (fun existing -> existing = candidateId)
@@ -147,7 +154,7 @@ module PromotionQueue =
                         let! (queueEventType: PromotionQueueEventType) =
                             task {
                                 match command with
-                                | Initialize(targetBranchId, policySnapshotId) -> return Initialized(targetBranchId, policySnapshotId)
+                                | Initialize (targetBranchId, policySnapshotId) -> return Initialized(targetBranchId, policySnapshotId)
                                 | Enqueue candidateId -> return CandidateEnqueued candidateId
                                 | Dequeue candidateId -> return CandidateDequeued candidateId
                                 | SetRunning candidateId -> return RunningCandidateSet candidateId

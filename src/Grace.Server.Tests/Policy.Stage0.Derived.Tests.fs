@@ -40,7 +40,12 @@ type PolicyStage0DerivedTests() =
         let parameters = AcknowledgePolicyParameters(TargetBranchId = System.Guid.NewGuid().ToString(), PolicySnapshotId = String.Empty)
 
         let validations = Policy.validateAcknowledgeParameters parameters
-        let error = validations |> getFirstError |> Async.AwaitTask |> Async.RunSynchronously
+
+        let error =
+            validations
+            |> getFirstError
+            |> Async.AwaitTask
+            |> Async.RunSynchronously
 
         Assert.That(error, Is.EqualTo(Some PolicyError.InvalidPolicySnapshotId))
 
@@ -49,6 +54,11 @@ type PolicyStage0DerivedTests() =
         let parameters = AcknowledgePolicyParameters(TargetBranchId = "not-a-guid", PolicySnapshotId = "snapshot")
 
         let validations = Policy.validateAcknowledgeParameters parameters
-        let error = validations |> getFirstError |> Async.AwaitTask |> Async.RunSynchronously
+
+        let error =
+            validations
+            |> getFirstError
+            |> Async.AwaitTask
+            |> Async.RunSynchronously
 
         Assert.That(error, Is.EqualTo(Some PolicyError.InvalidTargetBranchId))

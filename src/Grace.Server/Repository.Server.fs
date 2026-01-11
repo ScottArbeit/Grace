@@ -146,7 +146,8 @@ module Repository =
                             .enhance ("Error", errorMessage)
 
                     return! context |> result400BadRequest graceError
-            with ex ->
+            with
+            | ex ->
                 log.LogError(
                     ex,
                     "{CurrentInstant}: Exception in Repository.Server.processCommand; Path: {path}; CorrelationId: {correlationId}.",
@@ -212,7 +213,8 @@ module Repository =
                             .enhance ("Path", context.Request.Path.Value)
 
                     return! context |> result400BadRequest graceError
-            with ex ->
+            with
+            | ex ->
                 log.LogError(
                     ex,
                     "{CurrentInstant}: Exception in Repository.Server.processQuery; Path: {path}; CorrelationId: {correlationId}.",
@@ -241,13 +243,15 @@ module Repository =
 
                 //let! parameters = context |> parse<CreateParameters>
                 let validations (parameters: CreateRepositoryParameters) =
-                    [| Repository.repositoryIdDoesNotExist graceIds.OrganizationId parameters.RepositoryId parameters.CorrelationId RepositoryIdAlreadyExists
-                       Repository.repositoryNameIsUnique
-                           parameters.OwnerId
-                           parameters.OrganizationId
-                           parameters.RepositoryName
-                           parameters.CorrelationId
-                           RepositoryNameAlreadyExists |]
+                    [|
+                        Repository.repositoryIdDoesNotExist graceIds.OrganizationId parameters.RepositoryId parameters.CorrelationId RepositoryIdAlreadyExists
+                        Repository.repositoryNameIsUnique
+                            parameters.OwnerId
+                            parameters.OrganizationId
+                            parameters.RepositoryName
+                            parameters.CorrelationId
+                            RepositoryNameAlreadyExists
+                    |]
 
                 let command (parameters: CreateRepositoryParameters) =
                     task {
@@ -270,11 +274,18 @@ module Repository =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: SetRepositoryVisibilityParameters) =
-                    [| Repository.visibilityIsValid parameters.Visibility InvalidVisibilityValue
-                       Repository.repositoryIsNotDeleted context parameters.CorrelationId RepositoryIsDeleted |]
+                    [|
+                        Repository.visibilityIsValid parameters.Visibility InvalidVisibilityValue
+                        Repository.repositoryIsNotDeleted context parameters.CorrelationId RepositoryIsDeleted
+                    |]
 
                 let command (parameters: SetRepositoryVisibilityParameters) =
-                    SetRepositoryType(discriminatedUnionFromString<RepositoryType>(parameters.Visibility).Value)
+                    SetRepositoryType(
+                        discriminatedUnionFromString<RepositoryType>(
+                            parameters.Visibility
+                        )
+                            .Value
+                    )
                     |> returnValueTask
 
                 context.Items.Add("Command", nameof SetRepositoryType)
@@ -286,10 +297,14 @@ module Repository =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: SetLogicalDeleteDaysParameters) =
-                    [| Repository.daysIsValid parameters.LogicalDeleteDays InvalidLogicalDeleteDaysValue
-                       Repository.repositoryIsNotDeleted context parameters.CorrelationId RepositoryIsDeleted |]
+                    [|
+                        Repository.daysIsValid parameters.LogicalDeleteDays InvalidLogicalDeleteDaysValue
+                        Repository.repositoryIsNotDeleted context parameters.CorrelationId RepositoryIsDeleted
+                    |]
 
-                let command (parameters: SetLogicalDeleteDaysParameters) = SetLogicalDeleteDays(parameters.LogicalDeleteDays) |> returnValueTask
+                let command (parameters: SetLogicalDeleteDaysParameters) =
+                    SetLogicalDeleteDays(parameters.LogicalDeleteDays)
+                    |> returnValueTask
 
                 context.Items.Add("Command", nameof SetLogicalDeleteDays)
                 return! processCommand context validations command
@@ -300,10 +315,14 @@ module Repository =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: SetSaveDaysParameters) =
-                    [| Repository.daysIsValid parameters.SaveDays InvalidSaveDaysValue
-                       Repository.repositoryIsNotDeleted context parameters.CorrelationId RepositoryIsDeleted |]
+                    [|
+                        Repository.daysIsValid parameters.SaveDays InvalidSaveDaysValue
+                        Repository.repositoryIsNotDeleted context parameters.CorrelationId RepositoryIsDeleted
+                    |]
 
-                let command (parameters: SetSaveDaysParameters) = SetSaveDays(parameters.SaveDays) |> returnValueTask
+                let command (parameters: SetSaveDaysParameters) =
+                    SetSaveDays(parameters.SaveDays)
+                    |> returnValueTask
 
                 context.Items.Add("Command", nameof SetSaveDays)
                 return! processCommand context validations command
@@ -314,10 +333,14 @@ module Repository =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: SetCheckpointDaysParameters) =
-                    [| Repository.daysIsValid parameters.CheckpointDays InvalidCheckpointDaysValue
-                       Repository.repositoryIsNotDeleted context parameters.CorrelationId RepositoryIsDeleted |]
+                    [|
+                        Repository.daysIsValid parameters.CheckpointDays InvalidCheckpointDaysValue
+                        Repository.repositoryIsNotDeleted context parameters.CorrelationId RepositoryIsDeleted
+                    |]
 
-                let command (parameters: SetCheckpointDaysParameters) = SetCheckpointDays(parameters.CheckpointDays) |> returnValueTask
+                let command (parameters: SetCheckpointDaysParameters) =
+                    SetCheckpointDays(parameters.CheckpointDays)
+                    |> returnValueTask
 
                 context.Items.Add("Command", nameof SetCheckpointDays)
                 return! processCommand context validations command
@@ -328,10 +351,14 @@ module Repository =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: SetDiffCacheDaysParameters) =
-                    [| Repository.daysIsValid parameters.DiffCacheDays InvalidDiffCacheDaysValue
-                       Repository.repositoryIsNotDeleted context parameters.CorrelationId RepositoryIsDeleted |]
+                    [|
+                        Repository.daysIsValid parameters.DiffCacheDays InvalidDiffCacheDaysValue
+                        Repository.repositoryIsNotDeleted context parameters.CorrelationId RepositoryIsDeleted
+                    |]
 
-                let command (parameters: SetDiffCacheDaysParameters) = SetDiffCacheDays(parameters.DiffCacheDays) |> returnValueTask
+                let command (parameters: SetDiffCacheDaysParameters) =
+                    SetDiffCacheDays(parameters.DiffCacheDays)
+                    |> returnValueTask
 
                 context.Items.Add("Command", nameof SetDiffCacheDays)
                 return! processCommand context validations command
@@ -342,8 +369,10 @@ module Repository =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: SetDirectoryVersionCacheDaysParameters) =
-                    [| Repository.daysIsValid parameters.DirectoryVersionCacheDays InvalidDirectoryVersionCacheDaysValue
-                       Repository.repositoryIsNotDeleted context parameters.CorrelationId RepositoryIsDeleted |]
+                    [|
+                        Repository.daysIsValid parameters.DirectoryVersionCacheDays InvalidDirectoryVersionCacheDaysValue
+                        Repository.repositoryIsNotDeleted context parameters.CorrelationId RepositoryIsDeleted
+                    |]
 
                 let command (parameters: SetDirectoryVersionCacheDaysParameters) =
                     SetDirectoryVersionCacheDays(parameters.DirectoryVersionCacheDays)
@@ -358,12 +387,19 @@ module Repository =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: SetRepositoryStatusParameters) =
-                    [| String.isNotEmpty parameters.Status InvalidRepositoryStatus
-                       DiscriminatedUnion.isMemberOf<RepositoryStatus, RepositoryError> parameters.Status InvalidRepositoryStatus
-                       Repository.repositoryIsNotDeleted context parameters.CorrelationId RepositoryIsDeleted |]
+                    [|
+                        String.isNotEmpty parameters.Status InvalidRepositoryStatus
+                        DiscriminatedUnion.isMemberOf<RepositoryStatus, RepositoryError> parameters.Status InvalidRepositoryStatus
+                        Repository.repositoryIsNotDeleted context parameters.CorrelationId RepositoryIsDeleted
+                    |]
 
                 let command (parameters: SetRepositoryStatusParameters) =
-                    SetRepositoryStatus(discriminatedUnionFromString<RepositoryStatus>(parameters.Status).Value)
+                    SetRepositoryStatus(
+                        discriminatedUnionFromString<RepositoryStatus>(
+                            parameters.Status
+                        )
+                            .Value
+                    )
                     |> returnValueTask
 
                 context.Items.Add("Command", nameof SetRepositoryStatus)
@@ -375,9 +411,13 @@ module Repository =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: SetAllowsLargeFilesParameters) =
-                    [| Repository.repositoryIsNotDeleted context parameters.CorrelationId RepositoryIsDeleted |]
+                    [|
+                        Repository.repositoryIsNotDeleted context parameters.CorrelationId RepositoryIsDeleted
+                    |]
 
-                let command (parameters: SetAllowsLargeFilesParameters) = SetAllowsLargeFiles(parameters.AllowsLargeFiles) |> returnValueTask
+                let command (parameters: SetAllowsLargeFilesParameters) =
+                    SetAllowsLargeFiles(parameters.AllowsLargeFiles)
+                    |> returnValueTask
 
                 context.Items.Add("Command", nameof SetAllowsLargeFiles)
                 return! processCommand context validations command
@@ -388,9 +428,13 @@ module Repository =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: SetAnonymousAccessParameters) =
-                    [| Repository.repositoryIsNotDeleted context parameters.CorrelationId RepositoryIsDeleted |]
+                    [|
+                        Repository.repositoryIsNotDeleted context parameters.CorrelationId RepositoryIsDeleted
+                    |]
 
-                let command (parameters: SetAnonymousAccessParameters) = SetAnonymousAccess(parameters.AnonymousAccess) |> returnValueTask
+                let command (parameters: SetAnonymousAccessParameters) =
+                    SetAnonymousAccess(parameters.AnonymousAccess)
+                    |> returnValueTask
 
                 context.Items.Add("Command", nameof SetAnonymousAccess)
                 return! processCommand context validations command
@@ -401,8 +445,10 @@ module Repository =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: SetDefaultServerApiVersionParameters) =
-                    [| String.isNotEmpty parameters.DefaultServerApiVersion InvalidServerApiVersion
-                       Repository.repositoryIsNotDeleted context parameters.CorrelationId RepositoryIsDeleted |]
+                    [|
+                        String.isNotEmpty parameters.DefaultServerApiVersion InvalidServerApiVersion
+                        Repository.repositoryIsNotDeleted context parameters.CorrelationId RepositoryIsDeleted
+                    |]
 
                 let command (parameters: SetDefaultServerApiVersionParameters) =
                     SetDefaultServerApiVersion(parameters.DefaultServerApiVersion)
@@ -417,13 +463,20 @@ module Repository =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: SetConflictResolutionPolicyParameters) =
-                    [| Repository.repositoryIsNotDeleted context parameters.CorrelationId RepositoryIsDeleted
-                       DiscriminatedUnion.isMemberOf<ConflictResolutionPolicy, RepositoryError>
-                           parameters.ConflictResolutionPolicy
-                           InvalidConflictResolutionPolicy |]
+                    [|
+                        Repository.repositoryIsNotDeleted context parameters.CorrelationId RepositoryIsDeleted
+                        DiscriminatedUnion.isMemberOf<ConflictResolutionPolicy, RepositoryError>
+                            parameters.ConflictResolutionPolicy
+                            InvalidConflictResolutionPolicy
+                    |]
 
                 let command (parameters: SetConflictResolutionPolicyParameters) =
-                    SetConflictResolutionPolicy(discriminatedUnionFromString<ConflictResolutionPolicy>(parameters.ConflictResolutionPolicy).Value)
+                    SetConflictResolutionPolicy(
+                        discriminatedUnionFromString<ConflictResolutionPolicy>(
+                            parameters.ConflictResolutionPolicy
+                        )
+                            .Value
+                    )
                     |> returnValueTask
 
                 context.Items.Add("Command", nameof SetConflictResolutionPolicy)
@@ -435,9 +488,13 @@ module Repository =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: RecordSavesParameters) =
-                    [| Repository.repositoryIsNotDeleted context parameters.CorrelationId RepositoryIsDeleted |]
+                    [|
+                        Repository.repositoryIsNotDeleted context parameters.CorrelationId RepositoryIsDeleted
+                    |]
 
-                let command (parameters: RecordSavesParameters) = SetRecordSaves(parameters.RecordSaves) |> returnValueTask
+                let command (parameters: RecordSavesParameters) =
+                    SetRecordSaves(parameters.RecordSaves)
+                    |> returnValueTask
 
                 context.Items.Add("Command", nameof SetRecordSaves)
                 return! processCommand context validations command
@@ -448,11 +505,15 @@ module Repository =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: SetRepositoryDescriptionParameters) =
-                    [| String.isNotEmpty parameters.Description DescriptionIsRequired
-                       String.maxLength parameters.Description 2048 DescriptionIsTooLong
-                       Repository.repositoryIsNotDeleted context parameters.CorrelationId RepositoryIsDeleted |]
+                    [|
+                        String.isNotEmpty parameters.Description DescriptionIsRequired
+                        String.maxLength parameters.Description 2048 DescriptionIsTooLong
+                        Repository.repositoryIsNotDeleted context parameters.CorrelationId RepositoryIsDeleted
+                    |]
 
-                let command (parameters: SetRepositoryDescriptionParameters) = SetDescription(parameters.Description) |> returnValueTask
+                let command (parameters: SetRepositoryDescriptionParameters) =
+                    SetDescription(parameters.Description)
+                    |> returnValueTask
 
                 context.Items.Add("Command", nameof SetDescription)
                 return! processCommand context validations command
@@ -463,15 +524,17 @@ module Repository =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: SetRepositoryNameParameters) =
-                    [| String.isNotEmpty parameters.NewName RepositoryNameIsRequired
-                       String.isValidGraceName parameters.NewName InvalidRepositoryName
-                       Repository.repositoryIsNotDeleted context parameters.CorrelationId RepositoryIsDeleted
-                       Repository.repositoryNameIsUnique
-                           parameters.OwnerId
-                           parameters.OrganizationId
-                           parameters.NewName
-                           parameters.CorrelationId
-                           RepositoryNameAlreadyExists |]
+                    [|
+                        String.isNotEmpty parameters.NewName RepositoryNameIsRequired
+                        String.isValidGraceName parameters.NewName InvalidRepositoryName
+                        Repository.repositoryIsNotDeleted context parameters.CorrelationId RepositoryIsDeleted
+                        Repository.repositoryNameIsUnique
+                            parameters.OwnerId
+                            parameters.OrganizationId
+                            parameters.NewName
+                            parameters.CorrelationId
+                            RepositoryNameAlreadyExists
+                    |]
 
                 let command (parameters: SetRepositoryNameParameters) = SetName(parameters.NewName) |> returnValueTask
 
@@ -484,10 +547,14 @@ module Repository =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: DeleteRepositoryParameters) =
-                    [| String.isNotEmpty parameters.DeleteReason DeleteReasonIsRequired
-                       Repository.repositoryIsNotDeleted context parameters.CorrelationId RepositoryIsDeleted |]
+                    [|
+                        String.isNotEmpty parameters.DeleteReason DeleteReasonIsRequired
+                        Repository.repositoryIsNotDeleted context parameters.CorrelationId RepositoryIsDeleted
+                    |]
 
-                let command (parameters: DeleteRepositoryParameters) = DeleteLogical(parameters.Force, parameters.DeleteReason) |> returnValueTask
+                let command (parameters: DeleteRepositoryParameters) =
+                    DeleteLogical(parameters.Force, parameters.DeleteReason)
+                    |> returnValueTask
 
                 context.Items.Add("Command", nameof DeleteLogical)
                 return! processCommand context validations command
@@ -498,7 +565,9 @@ module Repository =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let validations (parameters: RepositoryParameters) =
-                    [| Repository.repositoryIsDeleted context parameters.CorrelationId RepositoryIsNotDeleted |]
+                    [|
+                        Repository.repositoryIsDeleted context parameters.CorrelationId RepositoryIsNotDeleted
+                    |]
 
                 let command (parameters: RepositoryParameters) = Undelete |> returnValueTask
 
@@ -535,7 +604,8 @@ module Repository =
                     )
 
                     return result
-                with ex ->
+                with
+                | ex ->
                     let duration_ms = getDurationRightAligned_ms startTime
 
                     log.LogError(
@@ -583,7 +653,8 @@ module Repository =
                     )
 
                     return result
-                with ex ->
+                with
+                | ex ->
                     let duration_ms = getDurationRightAligned_ms startTime
 
                     log.LogError(
@@ -630,7 +701,8 @@ module Repository =
                     )
 
                     return result
-                with ex ->
+                with
+                | ex ->
                     let duration_ms = getDurationRightAligned_ms startTime
 
                     log.LogError(
@@ -657,7 +729,10 @@ module Repository =
                 let graceIds = context.Items[nameof GraceIds] :?> GraceIds
 
                 try
-                    let validations (parameters: GetBranchesParameters) = [| Number.isWithinRange parameters.MaxCount 1 1000 InvalidMaxCountValue |]
+                    let validations (parameters: GetBranchesParameters) =
+                        [|
+                            Number.isWithinRange parameters.MaxCount 1 1000 InvalidMaxCountValue
+                        |]
 
                     let query (context: HttpContext) (maxCount: int) (actorProxy: IRepositoryActor) =
                         task {
@@ -685,7 +760,8 @@ module Repository =
                     )
 
                     return result
-                with ex ->
+                with
+                | ex ->
                     let duration_ms = getDurationRightAligned_ms startTime
 
                     log.LogError(
@@ -713,8 +789,10 @@ module Repository =
 
                 try
                     let validations (parameters: GetReferencesByReferenceIdParameters) =
-                        [| Input.listIsNonEmpty parameters.ReferenceIds ReferenceIdsAreRequired
-                           Number.isWithinRange parameters.MaxCount 1 1000 InvalidMaxCountValue |]
+                        [|
+                            Input.listIsNonEmpty parameters.ReferenceIds ReferenceIdsAreRequired
+                            Number.isWithinRange parameters.MaxCount 1 1000 InvalidMaxCountValue
+                        |]
 
                     let query (context: HttpContext) (maxCount: int) (actorProxy: IRepositoryActor) =
                         task {
@@ -725,7 +803,10 @@ module Repository =
                             return! getReferencesByReferenceId graceIds.RepositoryId referenceIds maxCount (getCorrelationId context)
                         }
 
-                    let! parameters = context |> parse<GetReferencesByReferenceIdParameters>
+                    let! parameters =
+                        context
+                        |> parse<GetReferencesByReferenceIdParameters>
+
                     context.Items.Add("ReferenceIds", parameters.ReferenceIds)
                     let! result = processQuery context parameters validations parameters.MaxCount query
 
@@ -742,7 +823,8 @@ module Repository =
                     )
 
                     return result
-                with ex ->
+                with
+                | ex ->
                     let duration_ms = getDurationRightAligned_ms startTime
 
                     log.LogError(
@@ -770,15 +852,20 @@ module Repository =
 
                 try
                     let validations (parameters: GetBranchesByBranchIdParameters) =
-                        [| Input.listIsNonEmpty parameters.BranchIds BranchIdsAreRequired
-                           Number.isWithinRange parameters.MaxCount 1 1000 InvalidMaxCountValue |]
+                        [|
+                            Input.listIsNonEmpty parameters.BranchIds BranchIdsAreRequired
+                            Number.isWithinRange parameters.MaxCount 1 1000 InvalidMaxCountValue
+                        |]
 
                     let query (context: HttpContext) (maxCount: int) (actorProxy: IRepositoryActor) =
                         task {
                             let repositoryId = Guid.Parse(graceIds.RepositoryIdString)
                             let branchIdsFromContext = (context.Items["BranchIds"] :?> string)
 
-                            let branchIds = branchIdsFromContext.Split(',', StringSplitOptions.TrimEntries).Select(fun branchId -> Guid.Parse(branchId))
+                            let branchIds =
+                                branchIdsFromContext
+                                    .Split(',', StringSplitOptions.TrimEntries)
+                                    .Select(fun branchId -> Guid.Parse(branchId))
 
                             let includeDeleted = context.Items["IncludeDeleted"] :?> bool
                             return! getBranchesByBranchId repositoryId branchIds maxCount includeDeleted
@@ -812,7 +899,8 @@ module Repository =
                         return result
                     finally
                         stringBuilderPool.Return(sb)
-                with ex ->
+                with
+                | ex ->
                     let duration_ms = getDurationRightAligned_ms startTime
 
                     log.LogError(

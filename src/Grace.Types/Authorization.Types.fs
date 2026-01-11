@@ -23,10 +23,12 @@ module Authorization =
     /// Identifies a principal (user, group, or service).
     [<GenerateSerializer>]
     type Principal =
-        { [<Id 0u>]
-          PrincipalType: PrincipalType
-          [<Id 1u>]
-          PrincipalId: PrincipalId }
+        {
+            [<Id 0u>]
+            PrincipalType: PrincipalType
+            [<Id 1u>]
+            PrincipalId: PrincipalId
+        }
 
     /// Scope for role assignments in the resource hierarchy.
     [<KnownType("GetKnownTypes")>]
@@ -76,28 +78,32 @@ module Authorization =
     /// Defines a role's allowed operations and applicable scope kinds.
     [<GenerateSerializer>]
     type RoleDefinition =
-        { [<Id 0u>]
-          RoleId: RoleId
-          [<Id 1u>]
-          AllowedOperations: Set<Operation>
-          [<Id 2u>]
-          AppliesTo: Set<string> }
+        {
+            [<Id 0u>]
+            RoleId: RoleId
+            [<Id 1u>]
+            AllowedOperations: Set<Operation>
+            [<Id 2u>]
+            AppliesTo: Set<string>
+        }
 
     /// Binds a principal to a role at a specific scope.
     [<GenerateSerializer>]
     type RoleAssignment =
-        { [<Id 0u>]
-          Principal: Principal
-          [<Id 1u>]
-          Scope: Scope
-          [<Id 2u>]
-          RoleId: RoleId
-          [<Id 3u>]
-          Source: string
-          [<Id 4u>]
-          SourceDetail: string option
-          [<Id 5u>]
-          CreatedAt: Instant }
+        {
+            [<Id 0u>]
+            Principal: Principal
+            [<Id 1u>]
+            Scope: Scope
+            [<Id 2u>]
+            RoleId: RoleId
+            [<Id 3u>]
+            Source: string
+            [<Id 4u>]
+            SourceDetail: string option
+            [<Id 5u>]
+            CreatedAt: Instant
+        }
 
     /// Result of an authorization check with a human-readable reason.
     [<KnownType("GetKnownTypes")>]

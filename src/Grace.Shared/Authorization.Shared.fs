@@ -15,8 +15,7 @@ module Authorization =
         let private scopeRepository = "repository"
 
         let private systemAdminOperations =
-            set
-                [ SystemAdmin
+            set [ SystemAdmin
                   OwnerAdmin
                   OwnerRead
                   OrgAdmin
@@ -31,8 +30,7 @@ module Authorization =
                   PathWrite ]
 
         let private ownerAdminOperations =
-            set
-                [ OwnerAdmin
+            set [ OwnerAdmin
                   OwnerRead
                   OrgAdmin
                   OrgRead
@@ -45,11 +43,15 @@ module Authorization =
                   PathRead
                   PathWrite ]
 
-        let private ownerReaderOperations = set [ OwnerRead; OrgRead; RepoRead; BranchRead; PathRead ]
+        let private ownerReaderOperations =
+            set [ OwnerRead
+                  OrgRead
+                  RepoRead
+                  BranchRead
+                  PathRead ]
 
         let private orgAdminOperations =
-            set
-                [ OrgAdmin
+            set [ OrgAdmin
                   OrgRead
                   RepoAdmin
                   RepoWrite
@@ -60,23 +62,42 @@ module Authorization =
                   BranchWrite
                   BranchRead ]
 
-        let private orgReaderOperations = set [ OrgRead; RepoRead; PathRead; BranchRead ]
+        let private orgReaderOperations =
+            set [ OrgRead
+                  RepoRead
+                  PathRead
+                  BranchRead ]
 
-        let private repoAdminOperations = set [ RepoAdmin; RepoWrite; RepoRead; PathWrite; PathRead; BranchWrite; BranchRead ]
+        let private repoAdminOperations =
+            set [ RepoAdmin
+                  RepoWrite
+                  RepoRead
+                  PathWrite
+                  PathRead
+                  BranchWrite
+                  BranchRead ]
 
-        let private repoContributorOperations = set [ RepoWrite; RepoRead; PathWrite; PathRead; BranchWrite; BranchRead ]
+        let private repoContributorOperations =
+            set [ RepoWrite
+                  RepoRead
+                  PathWrite
+                  PathRead
+                  BranchWrite
+                  BranchRead ]
 
         let private repoReaderOperations = set [ RepoRead; PathRead; BranchRead ]
 
         let private roles: RoleDefinition list =
-            [ { RoleId = "SystemAdmin"; AllowedOperations = systemAdminOperations; AppliesTo = Set.ofList [ scopeSystem ] }
-              { RoleId = "OwnerAdmin"; AllowedOperations = ownerAdminOperations; AppliesTo = Set.ofList [ scopeOwner ] }
-              { RoleId = "OwnerReader"; AllowedOperations = ownerReaderOperations; AppliesTo = Set.ofList [ scopeOwner ] }
-              { RoleId = "OrgAdmin"; AllowedOperations = orgAdminOperations; AppliesTo = Set.ofList [ scopeOrganization ] }
-              { RoleId = "OrgReader"; AllowedOperations = orgReaderOperations; AppliesTo = Set.ofList [ scopeOrganization ] }
-              { RoleId = "RepoAdmin"; AllowedOperations = repoAdminOperations; AppliesTo = Set.ofList [ scopeRepository ] }
-              { RoleId = "RepoContributor"; AllowedOperations = repoContributorOperations; AppliesTo = Set.ofList [ scopeRepository ] }
-              { RoleId = "RepoReader"; AllowedOperations = repoReaderOperations; AppliesTo = Set.ofList [ scopeRepository ] } ]
+            [
+                { RoleId = "SystemAdmin"; AllowedOperations = systemAdminOperations; AppliesTo = Set.ofList [ scopeSystem ] }
+                { RoleId = "OwnerAdmin"; AllowedOperations = ownerAdminOperations; AppliesTo = Set.ofList [ scopeOwner ] }
+                { RoleId = "OwnerReader"; AllowedOperations = ownerReaderOperations; AppliesTo = Set.ofList [ scopeOwner ] }
+                { RoleId = "OrgAdmin"; AllowedOperations = orgAdminOperations; AppliesTo = Set.ofList [ scopeOrganization ] }
+                { RoleId = "OrgReader"; AllowedOperations = orgReaderOperations; AppliesTo = Set.ofList [ scopeOrganization ] }
+                { RoleId = "RepoAdmin"; AllowedOperations = repoAdminOperations; AppliesTo = Set.ofList [ scopeRepository ] }
+                { RoleId = "RepoContributor"; AllowedOperations = repoContributorOperations; AppliesTo = Set.ofList [ scopeRepository ] }
+                { RoleId = "RepoReader"; AllowedOperations = repoReaderOperations; AppliesTo = Set.ofList [ scopeRepository ] }
+            ]
 
         let getAll () = roles
 
@@ -88,26 +109,34 @@ module Authorization =
         match resource with
         | Resource.System -> [ Scope.System ]
         | Resource.Owner ownerId -> [ Scope.Owner ownerId; Scope.System ]
-        | Resource.Organization(ownerId, organizationId) ->
-            [ Scope.Organization(ownerId, organizationId)
-              Scope.Owner ownerId
-              Scope.System ]
-        | Resource.Repository(ownerId, organizationId, repositoryId) ->
-            [ Scope.Repository(ownerId, organizationId, repositoryId)
-              Scope.Organization(ownerId, organizationId)
-              Scope.Owner ownerId
-              Scope.System ]
-        | Resource.Branch(ownerId, organizationId, repositoryId, branchId) ->
-            [ Scope.Branch(ownerId, organizationId, repositoryId, branchId)
-              Scope.Repository(ownerId, organizationId, repositoryId)
-              Scope.Organization(ownerId, organizationId)
-              Scope.Owner ownerId
-              Scope.System ]
-        | Resource.Path(ownerId, organizationId, repositoryId, _relativePath) ->
-            [ Scope.Repository(ownerId, organizationId, repositoryId)
-              Scope.Organization(ownerId, organizationId)
-              Scope.Owner ownerId
-              Scope.System ]
+        | Resource.Organization (ownerId, organizationId) ->
+            [
+                Scope.Organization(ownerId, organizationId)
+                Scope.Owner ownerId
+                Scope.System
+            ]
+        | Resource.Repository (ownerId, organizationId, repositoryId) ->
+            [
+                Scope.Repository(ownerId, organizationId, repositoryId)
+                Scope.Organization(ownerId, organizationId)
+                Scope.Owner ownerId
+                Scope.System
+            ]
+        | Resource.Branch (ownerId, organizationId, repositoryId, branchId) ->
+            [
+                Scope.Branch(ownerId, organizationId, repositoryId, branchId)
+                Scope.Repository(ownerId, organizationId, repositoryId)
+                Scope.Organization(ownerId, organizationId)
+                Scope.Owner ownerId
+                Scope.System
+            ]
+        | Resource.Path (ownerId, organizationId, repositoryId, _relativePath) ->
+            [
+                Scope.Repository(ownerId, organizationId, repositoryId)
+                Scope.Organization(ownerId, organizationId)
+                Scope.Owner ownerId
+                Scope.System
+            ]
 
     let private scopeKind (scope: Scope) =
         match scope with
@@ -123,10 +152,8 @@ module Authorization =
 
         assignments
         |> List.choose (fun assignment ->
-            if
-                principalLookup.Contains assignment.Principal
-                && scopeSet.Contains assignment.Scope
-            then
+            if principalLookup.Contains assignment.Principal
+               && scopeSet.Contains assignment.Scope then
                 let scopeKind = scopeKind assignment.Scope
 
                 roleCatalog
@@ -187,7 +214,7 @@ module Authorization =
         =
         let pathDecision =
             match resource with
-            | Resource.Path(_, _, _, relativePath) -> checkPathPermission pathPermissions effectiveClaims relativePath operation
+            | Resource.Path (_, _, _, relativePath) -> checkPathPermission pathPermissions effectiveClaims relativePath operation
             | _ -> None
 
         match pathDecision with

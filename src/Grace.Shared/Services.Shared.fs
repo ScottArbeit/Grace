@@ -23,10 +23,10 @@ module Services =
 
             match result with
             | Ok result ->
-                result.Properties[key] <- safeValue
+                result.Properties[ key ] <- safeValue
                 Ok result
             | Error error ->
-                error.Properties[key] <- safeValue
+                error.Properties[ key ] <- safeValue
                 Error error
         else
             result
@@ -44,7 +44,9 @@ module Services =
                 true // Indicates that the object is okay to be returned to the pool
 
     /// An ObjectPool for IncrementalHash instances.
-    let incrementalHashPool = DefaultObjectPoolProvider().Create(IncrementalHashPolicy())
+    let incrementalHashPool =
+        DefaultObjectPoolProvider()
+            .Create(IncrementalHashPolicy())
 
     /// The 0x00 character.
     let nulChar = char (0)
@@ -65,7 +67,7 @@ module Services =
                     int (stream.Length)
 
             // Get a buffer to hold the part of the file we're going to check.
-            let startingBytes = ArrayPool<byte>.Shared.Rent(bytesToCheck)
+            let startingBytes = ArrayPool<byte>.Shared.Rent (bytesToCheck)
             //logToConsole $"In isBinaryFile: stream.Length: {stream.Length}. Rented byte array of length {bytesToCheck}."
 
             try
@@ -77,13 +79,18 @@ module Services =
                     //logToConsole $"In isBinaryFile: stream.Length: {stream.Length}. Finished reading stream."
 
                     // Search for a 0x00 character.
-                    return startingBytes.Take(bytesRead).Any(fun b -> char (b) = nulChar)
-                with ex ->
+                    return
+                        startingBytes
+                            .Take(bytesRead)
+                            .Any(fun b -> char (b) = nulChar)
+                with
+                | ex ->
                     //logToConsole $"In isBinaryFile: stream.Length: {stream.Length}. Caught exception: {ExceptionResponse.Create ex}."
                     return false
             finally
                 // Return the rented buffer to the pool, even if an exception is thrown.
-                if not <| isNull startingBytes then ArrayPool<byte>.Shared.Return(startingBytes)
+                if not <| isNull startingBytes then
+                    ArrayPool<byte>.Shared.Return (startingBytes)
         }
 
     /// Computes the SHA-256 value for a given file, presented as a stream.
@@ -95,7 +102,7 @@ module Services =
             let bufferLength = 64 * 1024
 
             // Using object pooling for both of these.
-            let buffer = ArrayPool<byte>.Shared.Rent(bufferLength)
+            let buffer = ArrayPool<byte>.Shared.Rent (bufferLength)
             let hasher = incrementalHashPool.Get()
 
             try
@@ -122,7 +129,7 @@ module Services =
                 return Sha256Hash sha256Hash
             finally
                 if not <| isNull buffer then
-                    ArrayPool<byte>.Shared.Return(buffer, clearArray = true)
+                    ArrayPool<byte>.Shared.Return (buffer, clearArray = true)
 
                 if not <| isNull hasher then incrementalHashPool.Return(hasher)
         }
@@ -137,13 +144,17 @@ module Services =
             hasher.AppendData(Encoding.UTF8.GetBytes(relativeDirectoryPath))
 
             // We're sorting just to get consistent ordering; inconsistent ordering would produce difference SHA-256 hashes.
-            let sortedDirectories = directories |> Seq.sortBy (fun subdirectory -> subdirectory.RelativePath)
+            let sortedDirectories =
+                directories
+                |> Seq.sortBy (fun subdirectory -> subdirectory.RelativePath)
 
             for subdirectory in sortedDirectories do
                 hasher.AppendData(Encoding.UTF8.GetBytes(subdirectory.Sha256Hash))
 
             // Again, sorting to ensure consistent ordering.
-            let sortedFiles = files |> Seq.sortBy (fun file -> file.RelativePath)
+            let sortedFiles =
+                files
+                |> Seq.sortBy (fun file -> file.RelativePath)
 
             for file in sortedFiles do
                 hasher.AppendData(Encoding.UTF8.GetBytes(file.Sha256Hash))
@@ -159,10 +170,14 @@ module Services =
             if not <| isNull hasher then incrementalHashPool.Return(hasher)
 
     /// Gets the total size of the files contained within this specific directory. This does not include the size of any subdirectories.
-    let getDirectorySize (files: IList<FileVersion>) = files |> Seq.fold (fun (size: int64) file -> size + file.Size) 0L
+    let getDirectorySize (files: IList<FileVersion>) =
+        files
+        |> Seq.fold (fun (size: int64) file -> size + file.Size) 0L
 
     /// Gets the total size of the files contained within this specific directory. This does not include the size of any subdirectories.
-    let getLocalDirectorySize (files: IList<LocalFileVersion>) = files |> Seq.fold (fun (size: int64) file -> size + file.Size) 0L
+    let getLocalDirectorySize (files: IList<LocalFileVersion>) =
+        files
+        |> Seq.fold (fun (size: int64) file -> size + file.Size) 0L
 
     /// Gets the number of path segments for the longest relative path in GraceIndex.
     ///

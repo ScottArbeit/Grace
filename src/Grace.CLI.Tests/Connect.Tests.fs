@@ -19,6 +19,7 @@ module ConnectTests =
         let settings = AnsiConsoleSettings()
         settings.Out <- AnsiConsoleOutput(writer)
         AnsiConsole.Console <- AnsiConsole.Create(settings)
+
     let private runWithCapturedOutput (args: string array) =
         use writer = new StringWriter()
         let originalOut = Console.Out
@@ -46,8 +47,8 @@ module ConnectTests =
             if Directory.Exists(tempDir) then
                 try
                     Directory.Delete(tempDir, true)
-                with _ ->
-                    ()
+                with
+                | _ -> ()
 
     let private getGraceConfigPath root = Path.Combine(root, ".grace", "graceconfig.json")
 
@@ -56,7 +57,9 @@ module ConnectTests =
         withTempDir (fun root ->
             let exitCode, _ = runWithCapturedOutput [| "connect" |]
             exitCode |> should equal -1
-            File.Exists(getGraceConfigPath root) |> should equal true)
+
+            File.Exists(getGraceConfigPath root)
+            |> should equal true)
 
     [<Test>]
     let ``connect retrieve default branch defaults to true`` () =
@@ -67,7 +70,14 @@ module ConnectTests =
 
     [<Test>]
     let ``connect retrieve default branch parses explicit false`` () =
-        let parseResult = GraceCommand.rootCommand.Parse([| "connect"; OptionName.RetrieveDefaultBranch; "false" |])
+        let parseResult =
+            GraceCommand.rootCommand.Parse(
+                [|
+                    "connect"
+                    OptionName.RetrieveDefaultBranch
+                    "false"
+                |]
+            )
 
         parseResult.GetValue<bool>(OptionName.RetrieveDefaultBranch)
         |> should equal false
@@ -79,13 +89,15 @@ module ConnectTests =
 
         let parseResult =
             GraceCommand.rootCommand.Parse(
-                [| "connect"
-                   OptionName.DirectoryVersionId
-                   $"{directoryVersionId}"
-                   OptionName.ReferenceId
-                   $"{referenceId}"
-                   OptionName.ReferenceType
-                   "Commit" |]
+                [|
+                    "connect"
+                    OptionName.DirectoryVersionId
+                    $"{directoryVersionId}"
+                    OptionName.ReferenceId
+                    $"{referenceId}"
+                    OptionName.ReferenceType
+                    "Commit"
+                |]
             )
 
         match Connect.getDirectoryVersionSelection parseResult with
@@ -125,14 +137,26 @@ module ConnectTests =
 
         match Connect.applyRepositoryShortcut parseResult graceIds with
         | Ok _ -> Assert.Fail("Expected error when repository shortcut is missing segments.")
-        | Error error -> error.Error |> should contain "owner/organization/repository"
+        | Error error ->
+            error.Error
+            |> should contain "owner/organization/repository"
 
     [<Test>]
     let ``connect repository shortcut conflicts with explicit options`` () =
-        let parseResult = GraceCommand.rootCommand.Parse([| "connect"; "owner/org/repo"; OptionName.OwnerName; "explicit-owner" |])
+        let parseResult =
+            GraceCommand.rootCommand.Parse(
+                [|
+                    "connect"
+                    "owner/org/repo"
+                    OptionName.OwnerName
+                    "explicit-owner"
+                |]
+            )
 
         let graceIds = GraceIds.Default
 
         match Connect.applyRepositoryShortcut parseResult graceIds with
         | Ok _ -> Assert.Fail("Expected error when shortcut is combined with explicit options.")
-        | Error error -> error.Error |> should contain "Provide either the repository shortcut"
+        | Error error ->
+            error.Error
+            |> should contain "Provide either the repository shortcut"

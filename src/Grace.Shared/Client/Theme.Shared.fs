@@ -22,12 +22,14 @@ module Theme =
     let format (color: Color) = $"#{color.R:X2}{color.G:X2}{color.B:X2}"
 
     type Theme =
-        { Name: string
-          DisplayColorOptions: IReadOnlyDictionary<string, string> }
+        {
+            Name: string
+            DisplayColorOptions: IReadOnlyDictionary<string, string>
+        }
 
         override this.ToString() = $"{this.Name}"
 
-        static member Create (name: string) (colors: Color[]) =
+        static member Create (name: string) (colors: Color []) =
             let displayColorOptions = Dictionary<string, string>()
             displayColorOptions.Add(DisplayColor.Added, format colors[0])
             displayColorOptions.Add(DisplayColor.Changed, format colors[1])
@@ -41,14 +43,16 @@ module Theme =
             { Name = name; DisplayColorOptions = displayColorOptions }
 
     let private defaultColors =
-        [| Color.FromArgb(0x00, 0xaf, 0x5f)
-           Color.Purple
-           Color.Gray
-           Color.DarkRed
-           Color.Red
-           Color.White
-           Color.FromArgb(0xe5, 0xc0, 0x7b)
-           Color.FromArgb(0xff, 0x7e, 0x00) |]
+        [|
+            Color.FromArgb(0x00, 0xaf, 0x5f)
+            Color.Purple
+            Color.Gray
+            Color.DarkRed
+            Color.Red
+            Color.White
+            Color.FromArgb(0xe5, 0xc0, 0x7b)
+            Color.FromArgb(0xff, 0x7e, 0x00)
+        |]
 
     /// Default color theme, with green for adds, red for deletes, etc.
     let DefaultTheme = Theme.Create "Default" defaultColors

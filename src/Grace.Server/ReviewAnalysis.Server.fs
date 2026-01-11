@@ -63,17 +63,19 @@ module ReviewAnalysis =
                 let outputHash = hashString (serialize triageResult)
 
                 let receipt =
-                    { AnalysisReceiptId = Guid.NewGuid()
-                      Stage = EvidenceStage.Triage
-                      PolicySnapshotId = policySnapshot.PolicySnapshotId
-                      EvidenceHash = evidenceHash
-                      EvidenceSummary = evidenceSummary
-                      ModelId = provider.TriageModelId
-                      MaxTokens = evidence.Budget.MaxTokens
-                      OutputHash = outputHash
-                      TriggerReasons = triggerReasons
-                      CreatedAt = getCurrentInstant ()
-                      Principal = principal }
+                    {
+                        AnalysisReceiptId = Guid.NewGuid()
+                        Stage = EvidenceStage.Triage
+                        PolicySnapshotId = policySnapshot.PolicySnapshotId
+                        EvidenceHash = evidenceHash
+                        EvidenceSummary = evidenceSummary
+                        ModelId = provider.TriageModelId
+                        MaxTokens = evidence.Budget.MaxTokens
+                        OutputHash = outputHash
+                        TriggerReasons = triggerReasons
+                        CreatedAt = getCurrentInstant ()
+                        Principal = principal
+                    }
 
                 storeCachedTriage cache cacheKey { Result = triageResult; Receipt = receipt }
 
@@ -114,17 +116,19 @@ module ReviewAnalysis =
                 let outputHash = hashString (serialize deepPacket)
 
                 let receipt =
-                    { AnalysisReceiptId = Guid.NewGuid()
-                      Stage = EvidenceStage.Deep
-                      PolicySnapshotId = policySnapshot.PolicySnapshotId
-                      EvidenceHash = initialEvidenceHash
-                      EvidenceSummary = evidenceSummary
-                      ModelId = provider.DeepModelId
-                      MaxTokens = evidence.Budget.MaxTokens
-                      OutputHash = outputHash
-                      TriggerReasons = triggerReasons
-                      CreatedAt = getCurrentInstant ()
-                      Principal = principal }
+                    {
+                        AnalysisReceiptId = Guid.NewGuid()
+                        Stage = EvidenceStage.Deep
+                        PolicySnapshotId = policySnapshot.PolicySnapshotId
+                        EvidenceHash = initialEvidenceHash
+                        EvidenceSummary = evidenceSummary
+                        ModelId = provider.DeepModelId
+                        MaxTokens = evidence.Budget.MaxTokens
+                        OutputHash = outputHash
+                        TriggerReasons = triggerReasons
+                        CreatedAt = getCurrentInstant ()
+                        Principal = principal
+                    }
 
                 match progressiveEvidence with
                 | Some getMoreEvidence when requiresMoreContext deepPacket ->
@@ -138,24 +142,27 @@ module ReviewAnalysis =
                     let additionalEvidenceHash = computeEvidenceHash riskProfile additionalSummary
 
                     let followupReceipt =
-                        { AnalysisReceiptId = Guid.NewGuid()
-                          Stage = EvidenceStage.Deep
-                          PolicySnapshotId = policySnapshot.PolicySnapshotId
-                          EvidenceHash = additionalEvidenceHash
-                          EvidenceSummary = additionalSummary
-                          ModelId = provider.DeepModelId
-                          MaxTokens = additionalEvidence.Budget.MaxTokens
-                          OutputHash = refinedHash
-                          TriggerReasons = triggerReasons
-                          CreatedAt = getCurrentInstant ()
-                          Principal = principal }
+                        {
+                            AnalysisReceiptId = Guid.NewGuid()
+                            Stage = EvidenceStage.Deep
+                            PolicySnapshotId = policySnapshot.PolicySnapshotId
+                            EvidenceHash = additionalEvidenceHash
+                            EvidenceSummary = additionalSummary
+                            ModelId = provider.DeepModelId
+                            MaxTokens = additionalEvidence.Budget.MaxTokens
+                            OutputHash = refinedHash
+                            TriggerReasons = triggerReasons
+                            CreatedAt = getCurrentInstant ()
+                            Principal = principal
+                        }
 
                     cache.Set(cacheKey, { Packet = refinedPacket; Receipts = [ receipt; followupReceipt ] })
                     |> ignore
 
                     return refinedPacket, [ receipt; followupReceipt ]
                 | _ ->
-                    cache.Set(cacheKey, { Packet = deepPacket; Receipts = [ receipt ] }) |> ignore
+                    cache.Set(cacheKey, { Packet = deepPacket; Receipts = [ receipt ] })
+                    |> ignore
 
                     return deepPacket, [ receipt ]
         }

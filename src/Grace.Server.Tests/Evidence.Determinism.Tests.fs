@@ -14,7 +14,10 @@ open System.Collections.Generic
 type EvidenceDeterminism() =
     let instant = Instant.FromUtc(2025, 1, 1, 0, 0)
 
-    let buildSection (line: string) (position: int) = [| DiffPiece(line, ChangeType.Modified, Nullable<int>(position)) |]
+    let buildSection (line: string) (position: int) =
+        [|
+            DiffPiece(line, ChangeType.Modified, Nullable<int>(position))
+        |]
 
     let buildSectionFromLines (lines: string list) =
         lines
@@ -23,12 +26,12 @@ type EvidenceDeterminism() =
 
 
     let buildFileDiff (relativePath: string) (lines: (string * int) list) =
-        let inlineDiff = List<DiffPiece[]>()
+        let inlineDiff = List<DiffPiece []>()
 
         for (text, position) in lines do
             inlineDiff.Add(buildSection text position)
 
-        FileDiff.Create relativePath (Sha256Hash "sha1") instant (Sha256Hash "sha2") instant false inlineDiff (List<DiffPiece[]>()) (List<DiffPiece[]>())
+        FileDiff.Create relativePath (Sha256Hash "sha1") instant (Sha256Hash "sha2") instant false inlineDiff (List<DiffPiece []>()) (List<DiffPiece []>())
 
     let buildDiff (fileDiffs: FileDiff list) = { DiffDto.Default with HasDifferences = true; FileDiffs = List<FileDiff>(fileDiffs) }
 
@@ -46,14 +49,20 @@ type EvidenceDeterminism() =
 
     [<Test>]
     member _.EvidenceBudgetsRespectHunksAndLines() =
-        let sections = List<DiffPiece[]>()
-        sections.Add(buildSectionFromLines [ "one"; "two"; "three" ])
+        let sections = List<DiffPiece []>()
+
+        sections.Add(
+            buildSectionFromLines [ "one"
+                                    "two"
+                                    "three" ]
+        )
+
         sections.Add(buildSectionFromLines [ "four" ])
 
-        let inlineDiff = List<DiffPiece[]>(sections)
+        let inlineDiff = List<DiffPiece []>(sections)
 
         let fileDiff =
-            FileDiff.Create "multi.txt" (Sha256Hash "sha1") instant (Sha256Hash "sha2") instant false inlineDiff (List<DiffPiece[]>()) (List<DiffPiece[]>())
+            FileDiff.Create "multi.txt" (Sha256Hash "sha1") instant (Sha256Hash "sha2") instant false inlineDiff (List<DiffPiece []>()) (List<DiffPiece []>())
 
         let budget = { MaxFiles = 5; MaxHunksPerFile = 1; MaxLinesPerHunk = 1; MaxTotalBytes = 4096; MaxTokens = 2000 }
         let diff = buildDiff [ fileDiff ]

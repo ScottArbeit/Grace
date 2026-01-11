@@ -22,7 +22,10 @@ open Grace.Shared.Validation
 [<Parallelizable(ParallelScope.All)>]
 type Repository() =
 
-    let log = LoggerFactory.Create(fun builder -> builder.AddConsole().AddDebug() |> ignore).CreateLogger("RepositoryTests")
+    let log =
+        LoggerFactory
+            .Create(fun builder -> builder.AddConsole().AddDebug() |> ignore)
+            .CreateLogger("RepositoryTests")
 
     let grantRepoAdminAsync repositoryId =
         task {

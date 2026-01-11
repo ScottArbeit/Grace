@@ -48,7 +48,7 @@ module Services =
 
     let mutable ownerId = String.Empty
     let mutable organizationId = String.Empty
-    let mutable repositoryIds: string[] = Array.empty
+    let mutable repositoryIds: string [] = Array.empty
 
     let mutable serviceBusConnectionString = String.Empty
     let mutable serviceBusTopic = String.Empty
@@ -122,7 +122,9 @@ type Setup() =
             getOwnerParameters.CorrelationId <- correlationId
 
             let! getOwnerResponse = Client.PostAsync("/owner/get", createJsonContent getOwnerParameters)
-            getOwnerResponse.EnsureSuccessStatusCode() |> ignore
+
+            getOwnerResponse.EnsureSuccessStatusCode()
+            |> ignore
 
             let! getOwnerReturnValue = deserializeContent<GraceReturnValue<Owner.OwnerDto>> getOwnerResponse
             Assert.That(getOwnerReturnValue.ReturnValue.OwnerId, Is.EqualTo(Guid.Parse(ownerId)))
@@ -150,7 +152,8 @@ type Setup() =
                 let error = deserialize<GraceError> content
                 logToTestConsole $"StatusCode: {organizationResponse.StatusCode}; Content: {error}"
 
-            organizationResponse.EnsureSuccessStatusCode() |> ignore
+            organizationResponse.EnsureSuccessStatusCode()
+            |> ignore
 
             do!
                 Parallel.ForEachAsync(
@@ -207,8 +210,8 @@ type Setup() =
                         else
                             let! body = response.Content.ReadAsStringAsync()
                             logCleanupFailure label $"StatusCode: {response.StatusCode}; Content: {body}"
-                    with ex ->
-                        logCleanupFailure label ex.Message
+                    with
+                    | ex -> logCleanupFailure label ex.Message
                 }
 
             if cleanupEnabled then
@@ -245,8 +248,8 @@ type Setup() =
                         ownerDeleteParameters.Force <- true
 
                         do! tryPost $"owner {ownerId}" "/owner/delete" (createJsonContent ownerDeleteParameters)
-                with ex ->
-                    logCleanupFailure "cleanup" ex.Message
+                with
+                | ex -> logCleanupFailure "cleanup" ex.Message
             else
                 logToTestConsole "Skipping server-side cleanup (set GRACE_TEST_CLEANUP=1 to enable)."
 
@@ -254,8 +257,8 @@ type Setup() =
 
             try
                 do! AspireTestHost.stopAsync App
-            with ex ->
-                logCleanupFailure "apphost stop" ex.Message
+            with
+            | ex -> logCleanupFailure "apphost stop" ex.Message
 
         }
 

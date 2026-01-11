@@ -17,20 +17,22 @@ module Gates =
         abstract member Run: GateContext -> Task<GateAttestation>
 
     let private buildAttestation (gate: GateDefinition) (context: GateContext) (result: GateResult) (summary: string) =
-        { GateAttestationId = Guid.NewGuid()
-          OwnerId = context.Candidate.OwnerId
-          OrganizationId = context.Candidate.OrganizationId
-          RepositoryId = context.Candidate.RepositoryId
-          CandidateId = context.Candidate.CandidateId
-          PolicySnapshotId = context.Candidate.PolicySnapshotId
-          BaselineHeadReferenceId = context.Candidate.BaselineHeadReferenceId
-          GateName = gate.Name
-          GateVersion = gate.Version
-          Result = result
-          ArtifactUris = []
-          Summary = summary
-          Timestamp = getCurrentInstant ()
-          Principal = context.Principal }
+        {
+            GateAttestationId = Guid.NewGuid()
+            OwnerId = context.Candidate.OwnerId
+            OrganizationId = context.Candidate.OrganizationId
+            RepositoryId = context.Candidate.RepositoryId
+            CandidateId = context.Candidate.CandidateId
+            PolicySnapshotId = context.Candidate.PolicySnapshotId
+            BaselineHeadReferenceId = context.Candidate.BaselineHeadReferenceId
+            GateName = gate.Name
+            GateVersion = gate.Version
+            Result = result
+            ArtifactUris = []
+            Summary = summary
+            Timestamp = getCurrentInstant ()
+            Principal = context.Principal
+        }
 
     type PolicyGate() =
         let definition = { Name = "policy"; Version = "v1"; ExecutionMode = GateExecutionMode.Synchronous }
@@ -67,7 +69,12 @@ module Gates =
 
             member _.Run context = Task.FromResult(buildAttestation definition context GateResult.Skipped "Build/test gate stub.")
 
-    let private gates: IGate list = [ PolicyGate() :> IGate; ReviewGate() :> IGate; BuildTestGate() :> IGate ]
+    let private gates: IGate list =
+        [
+            PolicyGate() :> IGate
+            ReviewGate() :> IGate
+            BuildTestGate() :> IGate
+        ]
 
     let tryGetGate gateName =
         gates
@@ -92,5 +99,6 @@ module Gates =
                         Result = GateResult.Block
                         Summary = "Gate not registered."
                         Timestamp = getCurrentInstant ()
-                        Principal = context.Principal }
+                        Principal = context.Principal
+                    }
         }

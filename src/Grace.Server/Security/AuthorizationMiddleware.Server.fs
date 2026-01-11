@@ -19,21 +19,25 @@ module AuthorizationMiddleware =
 
     let private forbidden (reason: string) : HttpHandler =
         let message =
-            if includeReason && not (String.IsNullOrWhiteSpace reason) then
+            if
+                includeReason
+                && not (String.IsNullOrWhiteSpace reason)
+            then
                 reason
             else
                 "Forbidden."
 
-        setStatusCode StatusCodes.Status403Forbidden >=> text message
+        setStatusCode StatusCodes.Status403Forbidden
+        >=> text message
 
     let private formatResource (resource: Resource) =
         match resource with
         | Resource.System -> "System"
         | Resource.Owner ownerId -> $"Owner:{ownerId}"
-        | Resource.Organization(ownerId, organizationId) -> $"Organization:{ownerId}/{organizationId}"
-        | Resource.Repository(ownerId, organizationId, repositoryId) -> $"Repository:{ownerId}/{organizationId}/{repositoryId}"
-        | Resource.Branch(ownerId, organizationId, repositoryId, branchId) -> $"Branch:{ownerId}/{organizationId}/{repositoryId}/{branchId}"
-        | Resource.Path(ownerId, organizationId, repositoryId, relativePath) -> $"Path:{ownerId}/{organizationId}/{repositoryId}:{relativePath}"
+        | Resource.Organization (ownerId, organizationId) -> $"Organization:{ownerId}/{organizationId}"
+        | Resource.Repository (ownerId, organizationId, repositoryId) -> $"Repository:{ownerId}/{organizationId}/{repositoryId}"
+        | Resource.Branch (ownerId, organizationId, repositoryId, branchId) -> $"Branch:{ownerId}/{organizationId}/{repositoryId}/{branchId}"
+        | Resource.Path (ownerId, organizationId, repositoryId, relativePath) -> $"Path:{ownerId}/{organizationId}/{repositoryId}:{relativePath}"
 
     let private formatResourceSummary (resources: Resource list) =
         match resources with
@@ -47,12 +51,16 @@ module AuthorizationMiddleware =
     let private formatPrincipals (principals: Principal list) =
         match principals with
         | [] -> "None"
-        | _ -> principals |> List.map formatPrincipal |> String.concat ", "
+        | _ ->
+            principals
+            |> List.map formatPrincipal
+            |> String.concat ", "
 
     let private tryGetIdentityName (context: HttpContext) =
         let identity = context.User.Identity
 
-        if isNull identity || String.IsNullOrWhiteSpace identity.Name then
+        if isNull identity
+           || String.IsNullOrWhiteSpace identity.Name then
             None
         else
             Some identity.Name
@@ -96,7 +104,9 @@ module AuthorizationMiddleware =
             task {
                 match PrincipalMapper.tryGetUserId context.User with
                 | None ->
-                    let principalSummary = PrincipalMapper.getPrincipals context.User |> formatPrincipalSummary context
+                    let principalSummary =
+                        PrincipalMapper.getPrincipals context.User
+                        |> formatPrincipalSummary context
 
                     logMissingAuthentication context operation principalSummary
                     return! RequestErrors.UNAUTHORIZED "Grace" "Access" "Authentication required." next context
@@ -120,7 +130,9 @@ module AuthorizationMiddleware =
             task {
                 match PrincipalMapper.tryGetUserId context.User with
                 | None ->
-                    let principalSummary = PrincipalMapper.getPrincipals context.User |> formatPrincipalSummary context
+                    let principalSummary =
+                        PrincipalMapper.getPrincipals context.User
+                        |> formatPrincipalSummary context
 
                     logMissingAuthentication context operation principalSummary
                     return! RequestErrors.UNAUTHORIZED "Grace" "Access" "Authentication required." next context

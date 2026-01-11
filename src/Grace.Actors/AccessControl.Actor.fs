@@ -27,12 +27,11 @@ module AccessControl =
         match scope with
         | Scope.System -> "system"
         | Scope.Owner ownerId -> $"owner:{ownerId}"
-        | Scope.Organization(ownerId, organizationId) -> $"org:{ownerId}:{organizationId}"
-        | Scope.Repository(ownerId, organizationId, repositoryId) -> $"repo:{ownerId}:{organizationId}:{repositoryId}"
-        | Scope.Branch(ownerId, organizationId, repositoryId, branchId) -> $"branch:{ownerId}:{organizationId}:{repositoryId}:{branchId}"
+        | Scope.Organization (ownerId, organizationId) -> $"org:{ownerId}:{organizationId}"
+        | Scope.Repository (ownerId, organizationId, repositoryId) -> $"repo:{ownerId}:{organizationId}:{repositoryId}"
+        | Scope.Branch (ownerId, organizationId, repositoryId, branchId) -> $"branch:{ownerId}:{organizationId}:{repositoryId}:{branchId}"
 
-    type AccessControlActor([<PersistentState(StateName.AccessControl, Grace.Shared.Constants.GraceActorStorage)>] state: IPersistentState<AccessControlState>)
-        =
+    type AccessControlActor([<PersistentState(StateName.AccessControl, Grace.Shared.Constants.GraceActorStorage)>] state: IPersistentState<AccessControlState>) =
         inherit Grain()
 
         let log = loggerFactory.CreateLogger("AccessControl.Actor")
@@ -124,7 +123,7 @@ module AccessControl =
             member this.Handle command metadata =
                 match command with
                 | AccessControlCommand.GrantRole assignment -> this.GrantRole assignment metadata
-                | AccessControlCommand.RevokeRole(principal, roleId) -> this.RevokeRole principal roleId metadata
+                | AccessControlCommand.RevokeRole (principal, roleId) -> this.RevokeRole principal roleId metadata
                 | AccessControlCommand.ListAssignments principal -> this.ListAssignments principal metadata
 
             member this.GetAssignments principal correlationId =

@@ -246,7 +246,10 @@ module Reference =
                 )
             //logToAnsiConsole Colors.Verbose $"In printContents: directoryVersion.RelativePath: {directoryVersion.RelativePath}"
             let rightAlignedDirectoryVersionId =
-                (String.replicate (longestRelativePath - directoryVersion.RelativePath.Length) " ")
+                (String.replicate
+                    (longestRelativePath
+                     - directoryVersion.RelativePath.Length)
+                    " ")
                 + $"({directoryVersion.DirectoryVersionId})"
 
             AnsiConsole.MarkupLine(
@@ -268,14 +271,23 @@ module Reference =
                 try
                     if parseResult |> verbose then printParseResult parseResult
 
-                    let validateIncomingParameters = parseResult |> CommonValidations >>= ReferenceValidations
+                    let validateIncomingParameters =
+                        parseResult
+                        |> CommonValidations
+                        >>= ReferenceValidations
+
                     let graceIds = parseResult |> getNormalizedIdsAndNames
 
                     match validateIncomingParameters with
                     | Ok _ ->
                         let referenceId =
-                            if not <| isNull (parseResult.GetResult(Options.referenceId)) then
-                                parseResult.GetValue(Options.referenceId).ToString()
+                            if
+                                not
+                                <| isNull (parseResult.GetResult(Options.referenceId))
+                            then
+                                parseResult
+                                    .GetValue(Options.referenceId)
+                                    .ToString()
                             else
                                 String.Empty
 
@@ -320,8 +332,12 @@ module Reference =
                         | Error error -> AnsiConsole.MarkupLine $"[{Colors.Error}]{error}[/]"
 
                         return result |> renderOutput parseResult
-                    | Error error -> return GraceResult.Error error |> renderOutput parseResult
-                with ex ->
+                    | Error error ->
+                        return
+                            GraceResult.Error error
+                            |> renderOutput parseResult
+                with
+                | ex ->
                     let graceError = GraceError.Create $"{ExceptionResponse.Create ex}" (parseResult |> getCorrelationId)
 
                     return renderOutput parseResult (GraceResult.Error graceError)
@@ -341,8 +357,13 @@ module Reference =
                     match validateIncomingParameters with
                     | Ok _ ->
                         let referenceId =
-                            if not <| isNull (parseResult.GetResult(Options.referenceId)) then
-                                parseResult.GetValue(Options.referenceId).ToString()
+                            if
+                                not
+                                <| isNull (parseResult.GetResult(Options.referenceId))
+                            then
+                                parseResult
+                                    .GetValue(Options.referenceId)
+                                    .ToString()
                             else
                                 String.Empty
 
@@ -387,13 +408,17 @@ module Reference =
                             let! graceStatus = readGraceStatusFile ()
 
                             let directoryVersions =
-                                returnValue.ReturnValue
+                                returnValue
+                                    .ReturnValue
                                     .Select(fun directoryVersionDto -> directoryVersionDto.DirectoryVersion)
                                     .OrderBy(fun dv -> dv.RelativePath)
 
                             let directoryCount = directoryVersions.Count()
 
-                            let fileCount = directoryVersions.Select(fun directoryVersion -> directoryVersion.Files.Count).Sum()
+                            let fileCount =
+                                directoryVersions
+                                    .Select(fun directoryVersion -> directoryVersion.Files.Count)
+                                    .Sum()
 
                             let totalFileSize = directoryVersions.Sum(fun directoryVersion -> directoryVersion.Files.Sum(fun f -> f.Size))
 
@@ -407,8 +432,12 @@ module Reference =
                             printContents parseResult directoryVersions
                             return result |> renderOutput parseResult
                         | Error _ -> return result |> renderOutput parseResult
-                    | Error error -> return GraceResult.Error error |> renderOutput parseResult
-                with ex ->
+                    | Error error ->
+                        return
+                            GraceResult.Error error
+                            |> renderOutput parseResult
+                with
+                | ex ->
                     let graceError = GraceError.Create $"{ExceptionResponse.Create ex}" (parseResult |> getCorrelationId)
 
                     return renderOutput parseResult (GraceResult.Error graceError)
@@ -426,7 +455,10 @@ module Reference =
                     let validateIncomingParameters = parseResult |> ReferenceValidations
 
                     let directoryVersionId =
-                        if not <| isNull (parseResult.GetResult(Options.directoryVersionId)) then
+                        if
+                            not
+                            <| isNull (parseResult.GetResult(Options.directoryVersionId))
+                        then
                             parseResult.GetValue(Options.directoryVersionId)
                         else
                             Guid.Empty
@@ -436,7 +468,10 @@ module Reference =
                     match validateIncomingParameters with
                     | Ok _ ->
                         match (directoryVersionId, sha256Hash) with
-                        | (directoryVersionId, sha256Hash) when directoryVersionId = Guid.Empty && sha256Hash = String.Empty ->
+                        | (directoryVersionId, sha256Hash) when
+                            directoryVersionId = Guid.Empty
+                            && sha256Hash = String.Empty
+                            ->
                             let error =
                                 GraceError.Create
                                     (getErrorMessage ReferenceError.EitherDirectoryVersionIdOrSha256HashRequired)
@@ -476,7 +511,8 @@ module Reference =
 
                             return result |> renderOutput parseResult
                     | Error graceError -> return Error graceError |> renderOutput parseResult
-                with ex ->
+                with
+                | ex ->
                     let error = GraceError.Create $"{ExceptionResponse.Create ex}" (parseResult |> getCorrelationId)
 
                     return Error error |> renderOutput parseResult
@@ -552,14 +588,22 @@ module Reference =
                 if parseResult |> verbose then printParseResult parseResult
 
                 let referenceId =
-                    if not <| isNull (parseResult.GetResult(Options.referenceId)) then
-                        parseResult.GetValue(Options.referenceId).ToString()
+                    if
+                        not
+                        <| isNull (parseResult.GetResult(Options.referenceId))
+                    then
+                        parseResult
+                            .GetValue(Options.referenceId)
+                            .ToString()
                     else
                         String.Empty
 
                 let graceIds = parseResult |> getNormalizedIdsAndNames
 
-                let validateIncomingParameters = parseResult |> CommonValidations >>= ReferenceValidations
+                let validateIncomingParameters =
+                    parseResult
+                    |> CommonValidations
+                    >>= ReferenceValidations
 
                 match validateIncomingParameters with
                 | Ok _ ->
@@ -684,7 +728,10 @@ module Reference =
                                                 saveParameters.CorrelationId <- graceIds.CorrelationId
                                                 saveParameters.DirectoryVersionId <- $"{newGraceStatus.RootDirectoryId}"
 
-                                                saveParameters.DirectoryVersions <- newDirectoryVersions.Select(fun dv -> dv.ToDirectoryVersion).ToList()
+                                                saveParameters.DirectoryVersions <-
+                                                    newDirectoryVersions
+                                                        .Select(fun dv -> dv.ToDirectoryVersion)
+                                                        .ToList()
 
                                                 let! uploadDirectoryVersions = DirectoryVersion.SaveDirectoryVersions saveParameters
 
@@ -695,7 +742,8 @@ module Reference =
                                             newGraceStatus <-
                                                 { newGraceStatus with
                                                     LastSuccessfulFileUpload = lastFileUploadInstant
-                                                    LastSuccessfulDirectoryVersionUpload = lastDirectoryVersionUpload }
+                                                    LastSuccessfulDirectoryVersionUpload = lastDirectoryVersionUpload
+                                                }
 
                                             do! writeGraceStatusFile newGraceStatus
 
@@ -747,7 +795,7 @@ module Reference =
                                 .Select(fun relativePath -> relativePath.Value)
 
                         let newFileVersions =
-                            updatedRelativePaths.Select(fun relativePath ->
+                            updatedRelativePaths.Select (fun relativePath ->
                                 newDirectoryVersions
                                     .First(fun dv -> dv.Files.Exists(fun file -> file.RelativePath = relativePath))
                                     .Files.First(fun file -> file.RelativePath = relativePath))
@@ -777,7 +825,10 @@ module Reference =
                         saveParameters.RepositoryName <- graceIds.RepositoryName
                         saveParameters.CorrelationId <- graceIds.CorrelationId
 
-                        saveParameters.DirectoryVersions <- newDirectoryVersions.Select(fun dv -> dv.ToDirectoryVersion).ToList()
+                        saveParameters.DirectoryVersions <-
+                            newDirectoryVersions
+                                .Select(fun dv -> dv.ToDirectoryVersion)
+                                .ToList()
 
                         let! uploadDirectoryVersions = DirectoryVersion.SaveDirectoryVersions saveParameters
                         let rootDirectoryVersion = getRootDirectoryVersion previousGraceStatus
@@ -801,8 +852,8 @@ module Reference =
                         let! result = command sdkParameters
                         return result
                 | Error error -> return Error error
-            with ex ->
-                return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
+            with
+            | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
         }
 
     let promotionHandler (parseResult: ParseResult) (message: string) =
@@ -900,7 +951,9 @@ module Reference =
                                                         let references = returnValue.ReturnValue
 
                                                         let latestPromotableReference =
-                                                            references.OrderByDescending(fun reference -> reference.CreatedAt).First()
+                                                            references
+                                                                .OrderByDescending(fun reference -> reference.CreatedAt)
+                                                                .First()
                                                         // If the current branch's latest reference is not the latest commit - i.e. they've done more work in the branch
                                                         //   after the commit they're expecting to promote - print a warning.
                                                         //match getReferencesByReferenceIdResult with
@@ -990,8 +1043,8 @@ module Reference =
                         // Same result, with no output.
                         return Error(GraceError.Create "Need to implement the else clause." (parseResult |> getCorrelationId))
                 | Error error -> return Error error
-            with ex ->
-                return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
+            with
+            | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
         }
 
     type Promote() =
@@ -1000,7 +1053,10 @@ module Reference =
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 let graceIds = parseResult |> getNormalizedIdsAndNames
-                let message = parseResult.GetValue(Options.message) |> valueOrEmpty
+
+                let message =
+                    parseResult.GetValue(Options.message)
+                    |> valueOrEmpty
 
                 let! result = promotionHandler parseResult message
                 return result |> renderOutput parseResult
@@ -1012,7 +1068,10 @@ module Reference =
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 let graceIds = parseResult |> getNormalizedIdsAndNames
-                let message = parseResult.GetValue(Options.messageRequired) |> valueOrEmpty
+
+                let message =
+                    parseResult.GetValue(Options.messageRequired)
+                    |> valueOrEmpty
 
                 let command (parameters: CreateReferenceParameters) = task { return! Grace.SDK.Branch.Commit(parameters) }
 
@@ -1027,7 +1086,10 @@ module Reference =
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 let graceIds = parseResult |> getNormalizedIdsAndNames
-                let message = parseResult.GetValue(Options.message) |> valueOrEmpty
+
+                let message =
+                    parseResult.GetValue(Options.message)
+                    |> valueOrEmpty
 
                 let command (parameters: CreateReferenceParameters) = task { return! Grace.SDK.Branch.Checkpoint(parameters) }
 
@@ -1042,7 +1104,10 @@ module Reference =
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 let graceIds = parseResult |> getNormalizedIdsAndNames
-                let message = parseResult.GetValue(Options.message) |> valueOrEmpty
+
+                let message =
+                    parseResult.GetValue(Options.message)
+                    |> valueOrEmpty
 
                 let command (parameters: CreateReferenceParameters) = task { return! Grace.SDK.Branch.Save(parameters) }
 
@@ -1057,7 +1122,10 @@ module Reference =
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 let graceIds = parseResult |> getNormalizedIdsAndNames
-                let message = parseResult.GetValue(Options.messageRequired) |> valueOrEmpty
+
+                let message =
+                    parseResult.GetValue(Options.messageRequired)
+                    |> valueOrEmpty
 
                 let command (parameters: CreateReferenceParameters) = task { return! Grace.SDK.Branch.Tag(parameters) }
 
@@ -1072,7 +1140,10 @@ module Reference =
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 let graceIds = parseResult |> getNormalizedIdsAndNames
-                let message = parseResult.GetValue(Options.messageRequired) |> valueOrEmpty
+
+                let message =
+                    parseResult.GetValue(Options.messageRequired)
+                    |> valueOrEmpty
 
                 let command (parameters: CreateReferenceParameters) = task { return! Grace.SDK.Branch.CreateExternal(parameters) }
 
@@ -1167,12 +1238,22 @@ module Reference =
 
                                     AnsiConsole.WriteLine()
                                     return 0
-                                | Error eventError -> return GraceResult.Error eventError |> renderOutput parseResult
+                                | Error eventError ->
+                                    return
+                                        GraceResult.Error eventError
+                                        |> renderOutput parseResult
                             else
                                 return 0
-                        | Error graceError -> return GraceResult.Error graceError |> renderOutput parseResult
-                    | Error graceError -> return GraceResult.Error graceError |> renderOutput parseResult
-                with ex ->
+                        | Error graceError ->
+                            return
+                                GraceResult.Error graceError
+                                |> renderOutput parseResult
+                    | Error graceError ->
+                        return
+                            GraceResult.Error graceError
+                            |> renderOutput parseResult
+                with
+                | ex ->
                     let graceError = GraceError.Create $"{ExceptionResponse.Create ex}" (parseResult |> getCorrelationId)
 
                     return renderOutput parseResult (GraceResult.Error graceError)
@@ -1220,8 +1301,12 @@ module Reference =
                                 Grace.SDK.Branch.Delete(deleteParameters)
 
                         return result |> renderOutput parseResult
-                    | Error graceError -> return GraceResult.Error graceError |> renderOutput parseResult
-                with ex ->
+                    | Error graceError ->
+                        return
+                            GraceResult.Error graceError
+                            |> renderOutput parseResult
+                with
+                | ex ->
                     let graceError = GraceError.Create $"{ExceptionResponse.Create ex}" (parseResult |> getCorrelationId)
 
                     return renderOutput parseResult (GraceResult.Error graceError)
@@ -1301,7 +1386,9 @@ module Reference =
         getCommand.Action <- new Get()
         referenceCommand.Subcommands.Add(getCommand)
 
-        let deleteCommand = new Command("delete", Description = "Delete the branch.") |> addCommonOptions
+        let deleteCommand =
+            new Command("delete", Description = "Delete the branch.")
+            |> addCommonOptions
 
         deleteCommand.Action <- new Delete()
         referenceCommand.Subcommands.Add(deleteCommand)

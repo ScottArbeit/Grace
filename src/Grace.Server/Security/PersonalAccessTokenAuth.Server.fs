@@ -50,7 +50,7 @@ module PersonalAccessTokenAuth =
                     else
                         match tryParseToken token with
                         | None -> return AuthenticateResult.Fail("Invalid token.")
-                        | Some(userId, tokenId, secret) ->
+                        | Some (userId, tokenId, secret) ->
                             let correlationId = tryGetCorrelationId httpContext
                             let actor = PersonalAccessToken.CreateActorProxy userId correlationId
                             let! validation = actor.ValidateToken tokenId secret (getCurrentInstant ()) correlationId

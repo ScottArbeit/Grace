@@ -102,7 +102,11 @@ module Utilities =
     let getCurrentInstantGeneral () = getCurrentInstant () |> formatInstantGeneral
 
     /// Converts an Instant to local time, and produces a string in short date/time format, using the CurrentUICulture.
-    let instantToLocalTime (instant: Instant) = instant.ToDateTimeUtc().ToLocalTime().ToString("g", CultureInfo.CurrentUICulture)
+    let instantToLocalTime (instant: Instant) =
+        instant
+            .ToDateTimeUtc()
+            .ToLocalTime()
+            .ToString("g", CultureInfo.CurrentUICulture)
 
     /// Gets the current instant in local time as a string in short date/time format, using the CurrentUICulture.
     let getCurrentInstantLocal () = getCurrentInstant () |> instantToLocalTime
@@ -131,7 +135,11 @@ module Utilities =
     /// If the duration is more than 7 characters, nothing is truncated.
     let getDurationRightAligned_ms (time: Instant) =
         let milliseconds = $"{getCurrentInstant().Minus(time).TotalMilliseconds:F3}"
-        let result = (String.replicate (Math.Max(7 - milliseconds.Length, 0)) " ") + milliseconds // Right-align, 7 characters.
+
+        let result =
+            (String.replicate (Math.Max(7 - milliseconds.Length, 0)) " ")
+            + milliseconds // Right-align, 7 characters.
+
         result
 
     /// Gets the first eight characters of a SHA256 hash.
@@ -165,10 +173,9 @@ module Utilities =
     ///
     ///   discriminatedUnionFromString<Status> "InProgress" (where InProgress has a PercentDone field) -> Status.InProgress 0
     let discriminatedUnionFromString<'T> (s: string) =
-        match
-            FSharpType.GetUnionCases typeof<'T>
-            |> Array.filter (fun case -> String.Compare(case.Name, s, ignoreCase = true) = 0)
-        with
+        match FSharpType.GetUnionCases typeof<'T>
+              |> Array.filter (fun case -> String.Compare(case.Name, s, ignoreCase = true) = 0)
+            with
         | [| case |] ->
             let fieldCount = case.GetFields().Length
 
@@ -188,11 +195,13 @@ module Utilities =
     /// Gets the cases of a discriminated union as an array of strings.
     ///
     /// Example: listCases<Animal> -> [| "Dog"; "Cat" |]
-    let listCases<'T> () = FSharpType.GetUnionCases typeof<'T> |> Array.map (fun c -> c.Name)
+    let listCases<'T> () =
+        FSharpType.GetUnionCases typeof<'T>
+        |> Array.map (fun c -> c.Name)
 
     /// Gets the cases of discriminated union for serialization.
     let GetKnownTypes<'T> () =
-        typeof<'T>.GetNestedTypes(BindingFlags.Public ||| BindingFlags.NonPublic)
+        typeof<'T>.GetNestedTypes (BindingFlags.Public ||| BindingFlags.NonPublic)
         |> Array.filter FSharpType.IsUnion
 
     /// Serializes an object to JSON, using Grace's custom JsonSerializerOptions.
@@ -253,7 +262,10 @@ module Utilities =
 
         if not <| memoryCache.TryGetValue(filePath, &result) then
             let normalized = filePath.Replace(@"\", "/")
-            memoryCache.Set(filePath, normalized, normalizedTimeSpan) |> ignore
+
+            memoryCache.Set(filePath, normalized, normalizedTimeSpan)
+            |> ignore
+
             normalized
         else
             result
@@ -268,7 +280,9 @@ module Utilities =
             Mode = FileMode.Open,
             Access = FileAccess.Read,
             Share = FileShare.Read,
-            Options = (FileOptions.Asynchronous ||| FileOptions.SequentialScan)
+            Options =
+                (FileOptions.Asynchronous
+                 ||| FileOptions.SequentialScan)
         )
 
     /// File stream options for writing files efficiently in Grace.
@@ -295,7 +309,8 @@ module Utilities =
                     relativePathParts[0..^1]
                     |> Array.fold (fun (sb: StringBuilder) currentPart -> sb.Append($"{currentPart}/")) sb
 
-                relativeDirectoryPath.Remove(relativeDirectoryPath.Length - 1, 1) |> ignore // Remove trailing slash.
+                relativeDirectoryPath.Remove(relativeDirectoryPath.Length - 1, 1)
+                |> ignore // Remove trailing slash.
                 //logToConsole $"relativeDirectoryPath.ToString(): {relativeDirectoryPath.ToString()}"
                 (relativeDirectoryPath.ToString())
             finally
@@ -314,10 +329,8 @@ module Utilities =
         //logToConsole $"In getRelativeDirectory: originalFileRelativePath: {originalFileRelativePath}"
         let relativePathParts = originalFileRelativePath.Split(Path.DirectorySeparatorChar)
         //logToConsole $"In getRelativeDirectory: relativePathParts.Length: {relativePathParts.Length}; relativePathParts[0]: {relativePathParts[0]}"
-        if
-            relativePathParts.Length = 1
-            && relativePathParts[0] = Constants.RootDirectoryPath
-        then
+        if relativePathParts.Length = 1
+           && relativePathParts[0] = Constants.RootDirectoryPath then
             Constants.RootDirectoryPath
         else
             let sb = stringBuilderPool.Get()
@@ -327,7 +340,8 @@ module Utilities =
                     relativePathParts
                     |> Array.fold (fun (sb: StringBuilder) currentPart -> sb.Append($"{currentPart}{Path.DirectorySeparatorChar}")) sb
 
-                relativeDirectoryPath.Remove(relativeDirectoryPath.Length - 1, 1) |> ignore
+                relativeDirectoryPath.Remove(relativeDirectoryPath.Length - 1, 1)
+                |> ignore
                 //logToConsole $"In getRelativeDirectory: relativeDirectoryPath.ToString(): {relativeDirectoryPath.ToString()}"
                 (relativeDirectoryPath.ToString())
             finally
@@ -406,8 +420,10 @@ module Utilities =
 
     /// The universal Grace exception response type
     type ExceptionResponse =
-        { ``exception``: string
-          innerException: string }
+        {
+            ``exception``: string
+            innerException: string
+        }
 
         override this.ToString() =
             match this.innerException with
@@ -483,7 +499,13 @@ module Utilities =
         if path = Constants.RootDirectoryPath then
             None
         else
-            let lastIndex = path.LastIndexOfAny([| Path.DirectorySeparatorChar; Path.AltDirectorySeparatorChar |])
+            let lastIndex =
+                path.LastIndexOfAny(
+                    [|
+                        Path.DirectorySeparatorChar
+                        Path.AltDirectorySeparatorChar
+                    |]
+                )
 
             if lastIndex = -1 then
                 Some Constants.RootDirectoryPath
@@ -505,7 +527,10 @@ module Utilities =
     /// This should be used for smaller allocations, as the stack has ~1MB size.
     // Borrowed with appreciation from https://bartoszsypytkowski.com/writing-high-performance-f-code/.
     let inline stackalloc<'a when 'a: unmanaged> (length: int) : Span<'a> =
-        let p = NativePtr.stackalloc<'a> length |> NativePtr.toVoidPtr
+        let p =
+            NativePtr.stackalloc<'a> length
+            |> NativePtr.toVoidPtr
+
         Span<'a>(p, length)
 
     let propertyLookupByType = ConcurrentDictionary<Type, PropertyInfo array>()
@@ -514,9 +539,14 @@ module Utilities =
     let getParametersAsDictionary<'T> (obj: 'T) =
         let mutable properties = Array.Empty<PropertyInfo>()
 
-        if not <| propertyLookupByType.TryGetValue(typeof<'T>, &properties) then
-            properties <- typeof<'T>.GetProperties(BindingFlags.Instance ||| BindingFlags.Public)
-            propertyLookupByType.TryAdd(typeof<'T>, properties) |> ignore
+        if
+            not
+            <| propertyLookupByType.TryGetValue(typeof<'T>, &properties)
+        then
+            properties <- typeof<'T>.GetProperties (BindingFlags.Instance ||| BindingFlags.Public)
+
+            propertyLookupByType.TryAdd(typeof<'T>, properties)
+            |> ignore
 
         let dictionary = Dictionary<string, obj>()
 

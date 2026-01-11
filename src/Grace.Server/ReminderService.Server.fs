@@ -40,7 +40,10 @@ module ReminderService =
 
         let reminderBatchSize =
             let mutable reminderBatchSize = 0
-            let enviromentValue = Configuration().Item(EnvironmentVariables.GraceReminderBatchSize)
+
+            let enviromentValue =
+                Configuration()
+                    .Item(EnvironmentVariables.GraceReminderBatchSize)
 
             if Int32.TryParse(enviromentValue, &reminderBatchSize) then
                 reminderBatchSize
@@ -123,7 +126,7 @@ module ReminderService =
                                                 let reminderActorProxy = Reminder.CreateActorProxy reminder.ReminderId reminder.CorrelationId
 
                                                 match! reminderActorProxy.Remind reminder.CorrelationId with
-                                                | Ok() ->
+                                                | Ok () ->
                                                     let itemRequestOptions =
                                                         ItemRequestOptions(
                                                             PriorityLevel = PriorityLevel.Low,
@@ -141,7 +144,8 @@ module ReminderService =
                                                         reminder.Id,
                                                         error
                                                     )
-                                            with ex ->
+                                            with
+                                            | ex ->
                                                 log.LogError(
                                                     "{CurrentInstant}: Node: {HostName}; Error processing reminder. Reminder: {Reminder}. Error: {error}.",
                                                     getCurrentInstantExtended (),
@@ -153,7 +157,8 @@ module ReminderService =
                                         :> Task
                                     ))
                             )
-                with ex ->
+                with
+                | ex ->
                     log.LogError(
                         "{CurrentInstant}: Node: {HostName}; Error processing reminder. Error: {error}.",
                         getCurrentInstantExtended (),
@@ -174,7 +179,7 @@ module ReminderService =
                 reminderBatchSize
             )
 
-            base.StartAsync(cancellationToken)
+            ``base``.StartAsync(cancellationToken)
 
         override this.ExecuteAsync(stoppingToken: CancellationToken) =
             task {
@@ -200,14 +205,15 @@ module ReminderService =
                     let mutable ticked = true
                     let globalLockActorProxy = GlobalLock.CreateActorProxy LockName.ReminderLock (generateCorrelationId ())
 
-                    while ticked && not (stoppingToken.IsCancellationRequested) do
+                    while ticked
+                          && not (stoppingToken.IsCancellationRequested) do
                         let! locked = globalLockActorProxy.AcquireLock(getMachineName)
 
                         if locked then
                             do! processReminders (stoppingToken)
 
                             match! globalLockActorProxy.ReleaseLock(getMachineName) with
-                            | Ok() -> ()
+                            | Ok () -> ()
                             | Error error ->
                                 log.LogError(
                                     "{CurrentInstant}: Node: {HostName}; Error releasing reminder lock: {error}.",
@@ -234,4 +240,4 @@ module ReminderService =
 
         override this.StopAsync(cancellationToken: CancellationToken) =
             log.LogInformation("{CurrentInstant}: Node: {HostName}; ReminderService is stopping.", getCurrentInstantExtended (), getMachineName)
-            base.StopAsync(cancellationToken)
+            ``base``.StopAsync(cancellationToken)

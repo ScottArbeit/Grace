@@ -79,7 +79,8 @@ module Common =
             let result = parseResult.GetResult(optionName)
             let value = parseResult.GetValue<string>(optionName)
 
-            if result <> null && not <| Constants.GraceNameRegex.IsMatch(value) then
+            if result <> null
+               && not <| Constants.GraceNameRegex.IsMatch(value) then
                 Error(GraceError.Create (getErrorMessage error) (parseResult |> getCorrelationId))
             else
                 Ok(parseResult)
@@ -137,7 +138,10 @@ module Common =
                 let organizationId = parseResult.GetValue<Guid>(OptionName.OrganizationId)
                 let organizationName = parseResult.GetValue<string>(OptionName.OrganizationName)
 
-                if organizationId = Guid.Empty && String.IsNullOrWhiteSpace(organizationName) then
+                if
+                    organizationId = Guid.Empty
+                    && String.IsNullOrWhiteSpace(organizationName)
+                then
                     Error(
                         GraceError.Create (getErrorMessage OrganizationError.EitherOrganizationIdOrOrganizationNameRequired) (parseResult |> getCorrelationId)
                     )
@@ -155,7 +159,10 @@ module Common =
                 let repositoryId = parseResult.GetValue<Guid>(OptionName.RepositoryId)
                 let repositoryName = parseResult.GetValue<string>(OptionName.RepositoryName)
 
-                if repositoryId = Guid.Empty && String.IsNullOrWhiteSpace(repositoryName) then
+                if
+                    repositoryId = Guid.Empty
+                    && String.IsNullOrWhiteSpace(repositoryName)
+                then
                     Error(GraceError.Create (getErrorMessage RepositoryError.EitherRepositoryIdOrRepositoryNameRequired) (parseResult |> getCorrelationId))
                 else
                     Ok(parseResult)
@@ -170,7 +177,10 @@ module Common =
                 let branchId = parseResult.GetValue<Guid>(OptionName.BranchId)
                 let branchName = parseResult.GetValue<string>(OptionName.BranchName)
 
-                if branchId = Guid.Empty && String.IsNullOrWhiteSpace(branchName) then
+                if
+                    branchId = Guid.Empty
+                    && String.IsNullOrWhiteSpace(branchName)
+                then
                     Error(GraceError.Create (getErrorMessage BranchError.EitherBranchIdOrBranchNameRequired) (parseResult |> getCorrelationId))
                 else
                     Ok(parseResult)
@@ -203,11 +213,15 @@ module Common =
                 // The command had an output option set, so we check if it matches the expected output format.
                 let formatFromCommand = parseResult.GetValue<string>(Options.output)
 
-                if outputFormat = discriminatedUnionFromString<OutputFormat>(formatFromCommand).Value then
+                if outputFormat = discriminatedUnionFromString<OutputFormat>(
+                    formatFromCommand
+                )
+                    .Value then
                     true
                 else
                     false
-        with ex ->
+        with
+        | ex ->
             logToAnsiConsole Colors.Error $"Exception in isOutputFormat: {ExceptionResponse.Create ex}"
             false
 
@@ -241,16 +255,20 @@ module Common =
     let escapeBrackets s = s.ToString().Replace("[", "[[").Replace("]", "]]")
 
     let private resolvedValueOptionNames =
-        [ OptionName.OwnerId
-          OptionName.OwnerName
-          OptionName.OrganizationId
-          OptionName.OrganizationName
-          OptionName.RepositoryId
-          OptionName.RepositoryName
-          OptionName.BranchId
-          OptionName.BranchName ]
+        [
+            OptionName.OwnerId
+            OptionName.OwnerName
+            OptionName.OrganizationId
+            OptionName.OrganizationName
+            OptionName.RepositoryId
+            OptionName.RepositoryName
+            OptionName.BranchId
+            OptionName.BranchName
+        ]
 
-    let private shouldShowResolvedValues (parseResult: ParseResult) = resolvedValueOptionNames |> List.exists (isOptionPresent parseResult)
+    let private shouldShowResolvedValues (parseResult: ParseResult) =
+        resolvedValueOptionNames
+        |> List.exists (isOptionPresent parseResult)
 
     let private tryBuildResolvedValuesText (parseResult: ParseResult) =
         if
@@ -310,14 +328,15 @@ module Common =
                         try
                             let value = parseResult.GetValue(option.Name)
                             if isNull value then None else Some value
-                        with :? InvalidOperationException ->
-                            None
+                        with
+                        | :? InvalidOperationException -> None
 
                 for option in optionList do
                     match tryGetValue option with
                     | Some value ->
                         if option.ValueType.IsArray then
-                            sb.AppendLine($"{option.Name}: {serialize value}") |> ignore
+                            sb.AppendLine($"{option.Name}: {serialize value}")
+                            |> ignore
                         else
                             sb.AppendLine($"{option.Name}: {value}") |> ignore
                     | None -> ()
@@ -344,7 +363,11 @@ module Common =
 
     /// Prints output to the console, depending on the output format.
     let renderOutput (parseResult: ParseResult) (result: GraceResult<'T>) =
-        let outputFormat = discriminatedUnionFromString<OutputFormat>(parseResult.GetValue(Options.output)).Value
+        let outputFormat =
+            discriminatedUnionFromString<OutputFormat>(
+                parseResult.GetValue(Options.output)
+            )
+                .Value
 
         match result with
         | Ok graceReturnValue ->
@@ -377,8 +400,8 @@ module Common =
                     try
                         let exceptionResponse = deserialize<ExceptionResponse> error.Error
                         Uri.UnescapeDataString($"{exceptionResponse}")
-                    with ex ->
-                        Uri.UnescapeDataString(error.Error)
+                    with
+                    | ex -> Uri.UnescapeDataString(error.Error)
                 else
                     Uri.UnescapeDataString(error.Error)
 
@@ -404,10 +427,12 @@ module Common =
 
     let spinnerColumn = new SpinnerColumn(Spinner.Known.Dots)
 
-    let progressColumns: ProgressColumn[] =
-        [| new TaskDescriptionColumn(Alignment = Justify.Right)
-           progressBarColumn
-           percentageColumn
-           spinnerColumn |]
+    let progressColumns: ProgressColumn [] =
+        [|
+            new TaskDescriptionColumn(Alignment = Justify.Right)
+            progressBarColumn
+            percentageColumn
+            spinnerColumn
+        |]
 
     let progress = AnsiConsole.Progress(AutoRefresh = true, AutoClear = false, HideCompleted = false)

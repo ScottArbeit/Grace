@@ -25,7 +25,9 @@ open System.Threading.Tasks
 module IntegrationCandidate =
 
     type IntegrationCandidateActor
-        ([<PersistentState(StateName.IntegrationCandidate, Constants.GraceActorStorage)>] state: IPersistentState<List<CandidateEvent>>) =
+        (
+            [<PersistentState(StateName.IntegrationCandidate, Constants.GraceActorStorage)>] state: IPersistentState<List<CandidateEvent>>
+        ) =
         inherit Grain()
 
         static let actorName = ActorName.IntegrationCandidate
@@ -57,7 +59,9 @@ module IntegrationCandidate =
                     state.State.Add(candidateEvent)
                     do! state.WriteStateAsync()
 
-                    candidate <- candidate |> IntegrationCandidateDto.UpdateDto candidateEvent
+                    candidate <-
+                        candidate
+                        |> IntegrationCandidateDto.UpdateDto candidateEvent
 
                     let graceEvent = GraceEvent.CandidateEvent candidateEvent
                     do! publishGraceEvent graceEvent candidateEvent.Metadata
@@ -68,7 +72,8 @@ module IntegrationCandidate =
                             .enhance (nameof CandidateEventType, getDiscriminatedUnionFullName candidateEvent.Event)
 
                     return Ok returnValue
-                with ex ->
+                with
+                | ex ->
                     log.LogError(
                         ex,
                         "{CurrentInstant}: Node: {hostName}; CorrelationId: {correlationId}; Failed to apply event {eventType} for candidate {candidateId}.",
@@ -92,7 +97,9 @@ module IntegrationCandidate =
         interface IIntegrationCandidateActor with
             member this.Exists correlationId =
                 this.correlationId <- correlationId
-                (candidate.CandidateId <> CandidateId.Empty) |> returnTask
+
+                (candidate.CandidateId <> CandidateId.Empty)
+                |> returnTask
 
             member this.Get correlationId =
                 this.correlationId <- correlationId
@@ -104,7 +111,9 @@ module IntegrationCandidate =
 
             member this.GetEvents correlationId =
                 this.correlationId <- correlationId
-                state.State :> IReadOnlyList<CandidateEvent> |> returnTask
+
+                state.State :> IReadOnlyList<CandidateEvent>
+                |> returnTask
 
             member this.Handle command metadata =
                 let isValid (command: CandidateCommand) (metadata: EventMetadata) =

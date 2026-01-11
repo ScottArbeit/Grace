@@ -619,7 +619,9 @@ module Text =
             elif totalDays < 730.5 then $"1 year apart"
             else $"{Math.Floor(totalDays / 365.25):F0} years apart"
 
-    let listCases<'T> () = FSharpType.GetUnionCases typeof<'T> |> Array.map (fun c -> c.Name)
+    let listCases<'T> () =
+        FSharpType.GetUnionCases typeof<'T>
+        |> Array.map (fun c -> c.Name)
 
     let listCasesAsString<'T> () =
         let cases = listCases<'T> () |> String.concat ", "

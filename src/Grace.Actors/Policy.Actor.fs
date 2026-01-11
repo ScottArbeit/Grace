@@ -55,7 +55,7 @@ module Policy =
                         |> fun list -> list @ [ snapshot ]
 
                     repositoryId <- snapshot.RepositoryId
-                | Acknowledged(policySnapshotId, acknowledgedBy, note) ->
+                | Acknowledged (policySnapshotId, acknowledgedBy, note) ->
                     let acknowledgement =
                         { PolicySnapshotId = policySnapshotId; AcknowledgedBy = acknowledgedBy; AcknowledgedAt = policyEvent.Metadata.Timestamp; Note = note }
 
@@ -65,7 +65,10 @@ module Policy =
 
             Task.CompletedTask
 
-        member private this.GetCurrentSnapshot() = snapshots |> List.sortBy (fun snapshot -> snapshot.CreatedAt) |> List.tryLast
+        member private this.GetCurrentSnapshot() =
+            snapshots
+            |> List.sortBy (fun snapshot -> snapshot.CreatedAt)
+            |> List.tryLast
 
         member private this.ApplyEvent(policyEvent: PolicyEvent) =
             task {
@@ -83,12 +86,14 @@ module Policy =
                             |> fun list -> list @ [ snapshot ]
 
                         repositoryId <- snapshot.RepositoryId
-                    | Acknowledged(policySnapshotId, acknowledgedBy, note) ->
+                    | Acknowledged (policySnapshotId, acknowledgedBy, note) ->
                         let acknowledgement =
-                            { PolicySnapshotId = policySnapshotId
-                              AcknowledgedBy = acknowledgedBy
-                              AcknowledgedAt = policyEvent.Metadata.Timestamp
-                              Note = note }
+                            {
+                                PolicySnapshotId = policySnapshotId
+                                AcknowledgedBy = acknowledgedBy
+                                AcknowledgedAt = policyEvent.Metadata.Timestamp
+                                Note = note
+                            }
 
                         acknowledgements <- acknowledgements @ [ acknowledgement ]
 
@@ -98,7 +103,7 @@ module Policy =
                     let policySnapshotId =
                         match policyEvent.Event with
                         | SnapshotCreated snapshot -> snapshot.PolicySnapshotId
-                        | Acknowledged(policySnapshotId, _, _) -> policySnapshotId
+                        | Acknowledged (policySnapshotId, _, _) -> policySnapshotId
 
                     let returnValue =
                         (GraceReturnValue.Create "Policy command succeeded." correlationId)
@@ -107,7 +112,8 @@ module Policy =
                             .enhance (nameof PolicyEventType, getDiscriminatedUnionFullName policyEvent.Event)
 
                     return Ok returnValue
-                with ex ->
+                with
+                | ex ->
                     log.LogError(
                         ex,
                         "{CurrentInstant}: Node: {hostName}; CorrelationId: {correlationId}; Failed to apply event {eventType} for policy.",
@@ -134,11 +140,15 @@ module Policy =
 
             member this.GetSnapshots correlationId =
                 this.correlationId <- correlationId
-                (snapshots :> IReadOnlyList<PolicySnapshot>) |> returnTask
+
+                (snapshots :> IReadOnlyList<PolicySnapshot>)
+                |> returnTask
 
             member this.GetAcknowledgements correlationId =
                 this.correlationId <- correlationId
-                (acknowledgements :> IReadOnlyList<PolicyAcknowledgement>) |> returnTask
+
+                (acknowledgements :> IReadOnlyList<PolicyAcknowledgement>)
+                |> returnTask
 
             member this.Handle command metadata =
                 let isValid (command: PolicyCommand) (metadata: EventMetadata) =
@@ -156,7 +166,7 @@ module Policy =
                                     return Error(GraceError.Create (PolicyError.getErrorMessage PolicyError.PolicySnapshotAlreadyExists) metadata.CorrelationId)
                                 else
                                     return Ok command
-                            | Acknowledge(policySnapshotId, _, _) ->
+                            | Acknowledge (policySnapshotId, _, _) ->
                                 let exists =
                                     snapshots
                                     |> List.exists (fun existing -> existing.PolicySnapshotId = policySnapshotId)
@@ -173,7 +183,7 @@ module Policy =
                             task {
                                 match command with
                                 | CreateSnapshot snapshot -> return SnapshotCreated snapshot
-                                | Acknowledge(policySnapshotId, acknowledgedBy, note) -> return Acknowledged(policySnapshotId, acknowledgedBy, note)
+                                | Acknowledge (policySnapshotId, acknowledgedBy, note) -> return Acknowledged(policySnapshotId, acknowledgedBy, note)
                             }
 
                         let policyEvent = { Event = policyEventType; Metadata = metadata }

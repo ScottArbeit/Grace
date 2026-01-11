@@ -93,7 +93,11 @@ module Notification =
                     referenceId
                 )
 
-                do! this.Clients.Group($"{repositoryId}").NotifyRepository(repositoryId, referenceId)
+                do!
+                    this
+                        .Clients
+                        .Group($"{repositoryId}")
+                        .NotifyRepository(repositoryId, referenceId)
             }
             :> Task
 
@@ -108,7 +112,11 @@ module Notification =
                     referenceId
                 )
 
-                do! this.Clients.Group($"{branchId}").NotifyOnPromotion(branchId, branchName, referenceId)
+                do!
+                    this
+                        .Clients
+                        .Group($"{branchId}")
+                        .NotifyOnPromotion(branchId, branchName, referenceId)
             }
             :> Task
 
@@ -124,7 +132,11 @@ module Notification =
                     branchName
                 )
 
-                do! this.Clients.Group($"{parentBranchId}").NotifyOnSave(branchName, parentBranchName, parentBranchId, referenceId)
+                do!
+                    this
+                        .Clients
+                        .Group($"{parentBranchId}")
+                        .NotifyOnSave(branchName, parentBranchName, parentBranchId, referenceId)
 
                 ()
             }
@@ -142,7 +154,11 @@ module Notification =
                     branchName
                 )
 
-                do! this.Clients.Group($"{parentBranchId}").NotifyOnCheckpoint(branchName, parentBranchName, parentBranchId, referenceId)
+                do!
+                    this
+                        .Clients
+                        .Group($"{parentBranchId}")
+                        .NotifyOnCheckpoint(branchName, parentBranchName, parentBranchId, referenceId)
             }
             :> Task
 
@@ -158,7 +174,11 @@ module Notification =
                     branchName
                 )
 
-                do! this.Clients.Group($"{parentBranchId}").NotifyOnCommit(branchName, parentBranchName, parentBranchId, referenceId)
+                do!
+                    this
+                        .Clients
+                        .Group($"{parentBranchId}")
+                        .NotifyOnCommit(branchName, parentBranchName, parentBranchId, referenceId)
             }
             :> Task
 
@@ -305,22 +325,26 @@ module Notification =
                     do! DerivedComputation.handleReferenceEvent referenceEvent
 
                     match referenceEvent.Event with
-                    | ReferenceEventType.Created(referenceId,
-                                                 ownerId,
-                                                 organizationId,
-                                                 repositoryId,
-                                                 branchId,
-                                                 directoryId,
-                                                 sha256Hash,
-                                                 referenceType,
-                                                 referenceText,
-                                                 links) ->
+                    | ReferenceEventType.Created (referenceId,
+                                                  ownerId,
+                                                  organizationId,
+                                                  repositoryId,
+                                                  branchId,
+                                                  directoryId,
+                                                  sha256Hash,
+                                                  referenceType,
+                                                  referenceText,
+                                                  links) ->
                         match referenceType with
                         | ReferenceType.Promotion ->
                             let! branchDto = getBranchDto branchId repositoryId correlationId
 
                             if not <| isNull hubContext then
-                                do! hubContext.Clients.Group($"{branchId}").NotifyOnPromotion(branchId, branchDto.BranchName, referenceId)
+                                do!
+                                    hubContext
+                                        .Clients
+                                        .Group($"{branchId}")
+                                        .NotifyOnPromotion(branchId, branchDto.BranchName, referenceId)
 
                             // Create the diff between the new promotion and previous promotion.
                             let! latestTwoPromotions = getPromotions repositoryId branchId 2 correlationId
@@ -341,7 +365,8 @@ module Notification =
 
                             if not <| isNull hubContext then
                                 do!
-                                    hubContext.Clients
+                                    hubContext
+                                        .Clients
                                         .Group($"{branchDto.ParentBranchId}")
                                         .NotifyOnCommit(branchDto.BranchName, parentBranchDto.BranchName, parentBranchDto.ParentBranchId, referenceId)
                             else
@@ -385,7 +410,8 @@ module Notification =
 
                             if not <| isNull hubContext then
                                 do!
-                                    hubContext.Clients
+                                    hubContext
+                                        .Clients
                                         .Group($"{branchDto.ParentBranchId}")
                                         .NotifyOnCheckpoint(branchDto.BranchName, parentBranchDto.BranchName, parentBranchDto.ParentBranchId, referenceId)
 
@@ -421,7 +447,8 @@ module Notification =
 
                             if not <| isNull hubContext then
                                 do!
-                                    hubContext.Clients
+                                    hubContext
+                                        .Clients
                                         .Group($"{branchDto.ParentBranchId}")
                                         .NotifyOnSave(branchDto.BranchName, parentBranchDto.BranchName, parentBranchDto.ParentBranchId, referenceId)
                             else
@@ -476,7 +503,11 @@ module Notification =
                         | ReferenceType.Rebase
                         | ReferenceType.External -> ()
 
-                        do! hubContext.Clients.Group($"{repositoryId}").NotifyRepository(repositoryId, referenceId)
+                        do!
+                            hubContext
+                                .Clients
+                                .Group($"{repositoryId}")
+                                .NotifyRepository(repositoryId, referenceId)
                     | _ -> ()
                 | RepositoryEvent repositoryEvent ->
                     let correlationId = repositoryEvent.Metadata.CorrelationId
@@ -579,7 +610,11 @@ module Notification =
                         if String.IsNullOrWhiteSpace groupKey then
                             do! hubContext.Clients.All.NotifyEvent(envelope)
                         else
-                            do! hubContext.Clients.Group(groupKey).NotifyEvent(envelope)
+                            do!
+                                hubContext
+                                    .Clients
+                                    .Group(groupKey)
+                                    .NotifyEvent(envelope)
                 | None -> ()
 
             //return! setStatusCode StatusCodes.Status204NoContent next context
@@ -613,7 +648,8 @@ module Notification =
 
                         do! handleEvent graceEvent
                         do! args.CompleteMessageAsync(args.Message, args.CancellationToken)
-                    with ex ->
+                    with
+                    | ex ->
                         subscriptionLog.LogError(
                             ex,
                             "Failed to process GraceEvent message {MessageId} (CorrelationId: {CorrelationId}).",
@@ -631,7 +667,8 @@ module Notification =
                     else
                         let mutable ready = false
 
-                        while not ready && not cancellationToken.IsCancellationRequested do
+                        while not ready
+                              && not cancellationToken.IsCancellationRequested do
                             try
                                 let serviceBusClient =
                                     if settings.UseManagedIdentity then
@@ -673,7 +710,8 @@ module Notification =
                                 )
 
                                 ready <- true
-                            with ex ->
+                            with
+                            | ex ->
                                 subscriptionLog.LogWarning(ex, "Azure Service Bus not ready; pausing for five seconds to retry.")
                                 do! Task.Delay(TimeSpan.FromSeconds(5.0), cancellationToken)
                 }
@@ -684,8 +722,8 @@ module Notification =
                     | Some proc ->
                         try
                             do! proc.StopProcessingAsync(cancellationToken)
-                        with ex ->
-                            subscriptionLog.LogWarning(ex, "Grace pub-sub processor stop failed; continuing with Dispose().")
+                        with
+                        | ex -> subscriptionLog.LogWarning(ex, "Grace pub-sub processor stop failed; continuing with Dispose().")
 
                         do! proc.DisposeAsync()
                         processor <- None

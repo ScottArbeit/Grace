@@ -94,8 +94,8 @@ module Configuration =
         try
             let json = serialize graceConfiguration
             File.WriteAllText(graceConfigurationFilePath, json)
-        with ex ->
-            printfn $"Exception: {ex.Message}{Environment.NewLine}Stack trace: {ex.StackTrace}"
+        with
+        | ex -> printfn $"Exception: {ex.Message}{Environment.NewLine}Stack trace: {ex.StackTrace}"
 
     let private findGraceConfigurationFile () =
         try
@@ -109,7 +109,8 @@ module Configuration =
             // let mutable currentDirectory = DirectoryInfo(Process.GetCurrentProcess().StartInfo.WorkingDirectory)
             let mutable graceConfigPath = String.Empty
 
-            while String.IsNullOrEmpty(graceConfigPath) && not (isNull currentDirectory) do
+            while String.IsNullOrEmpty(graceConfigPath)
+                  && not (isNull currentDirectory) do
                 let fullPath = Path.Combine(currentDirectory.FullName, Constants.GraceConfigDirectory, Constants.GraceConfigFileName)
                 //printfn $"Searching for configuration in {currentDirectory}..."
                 if File.Exists(fullPath) then
@@ -147,8 +148,8 @@ module Configuration =
             let graceConfiguration = JsonSerializer.Deserialize<GraceConfiguration>(buffer, Constants.JsonSerializerOptions)
 
             Ok graceConfiguration
-        with ex ->
-            Error $"Exception: {ex.Message}{Environment.NewLine}Stack trace: {ex.StackTrace}"
+        with
+        | ex -> Error $"Exception: {ex.Message}{Environment.NewLine}Stack trace: {ex.StackTrace}"
 
     let private getGraceIgnoreEntries graceIgnorePath =
         if File.Exists(graceIgnorePath) then
@@ -215,7 +216,9 @@ module Configuration =
             false
         else
             let normalize (path: string) =
-                Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                Path
+                    .GetFullPath(path)
+                    .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
                 + string Path.DirectorySeparatorChar
 
             let normalizedRoot = normalize rootDirectory
@@ -224,17 +227,16 @@ module Configuration =
             normalizedCurrent.StartsWith(normalizedRoot, StringComparison.OrdinalIgnoreCase)
 
     let private getGraceConfiguration () =
-        if
-            graceConfiguration.IsPopulated
-            && isCurrentDirectoryWithinRoot graceConfiguration.RootDirectory
-        then
+        if graceConfiguration.IsPopulated
+           && isCurrentDirectoryWithinRoot graceConfiguration.RootDirectory then
             graceConfiguration
         else
             match findGraceConfigurationFile () with
             | Ok graceConfigurationFilePath ->
 #if DEBUG
                 if writeNewConfiguration then
-                    GraceConfiguration() |> saveConfigFile graceConfigurationFilePath
+                    GraceConfiguration()
+                    |> saveConfigFile graceConfigurationFilePath
 #endif
                 match (parseConfigurationFile graceConfigurationFilePath) with
                 | Ok graceConfigurationFromFile ->

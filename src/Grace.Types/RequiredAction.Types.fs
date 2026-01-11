@@ -28,9 +28,11 @@ module RequiredAction =
     /// Machine-readable required action description.
     [<GenerateSerializer>]
     type RequiredActionDto =
-        { RequiredActionType: RequiredActionType
-          TargetId: string option
-          Reason: string
-          Parameters: Dictionary<string, string>
-          SuggestedCliCommand: string option
-          SuggestedApiCall: string option }
+        {
+            RequiredActionType: RequiredActionType
+            TargetId: string option
+            Reason: string
+            Parameters: Dictionary<string, string>
+            SuggestedCliCommand: string option
+            SuggestedApiCall: string option
+        }

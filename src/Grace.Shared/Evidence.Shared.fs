@@ -50,13 +50,16 @@ module Evidence =
 
         match riskProfile with
         | Some profile ->
-            if profile.SensitivePathsTouched |> List.contains relativePath then
+            if profile.SensitivePathsTouched
+               |> List.contains relativePath then
                 reasons.Add({ Feature = "SensitivePath"; Score = 10.0 })
 
-            if profile.DependencyConfigChanges |> List.contains relativePath then
+            if profile.DependencyConfigChanges
+               |> List.contains relativePath then
                 reasons.Add({ Feature = "DependencyConfig"; Score = 5.0 })
 
-            if profile.ApiSurfaceSignals |> List.contains relativePath then
+            if profile.ApiSurfaceSignals
+               |> List.contains relativePath then
                 reasons.Add({ Feature = "ApiSurfaceSignal"; Score = 5.0 })
         | None -> ()
 
@@ -119,11 +122,13 @@ module Evidence =
                         let score, reasons = scoreReasons riskProfile fileDiff.RelativePath limitedLines
 
                         slices.Add(
-                            { RelativePath = fileDiff.RelativePath
-                              StartLine = startLine
-                              EndLine = endLine
-                              Content = redactedContent
-                              IsRedacted = isRedacted }
+                            {
+                                RelativePath = fileDiff.RelativePath
+                                StartLine = startLine
+                                EndLine = endLine
+                                Content = redactedContent
+                                IsRedacted = isRedacted
+                            }
                         )
 
                         sliceSummaries.Add({ RelativePath = fileDiff.RelativePath; StartLine = startLine; EndLine = endLine; Score = score; Reasons = reasons })
@@ -135,12 +140,16 @@ module Evidence =
         let evidenceSet = { Stage = stage; Slices = slices |> Seq.toList; Budget = budget; TotalBytes = totalBytes; EstimatedTokens = estimatedTokens }
 
         let evidenceSummary =
-            { Stage = stage
-              SelectedFiles = fileDiffs |> List.map (fun fileDiff -> fileDiff.RelativePath)
-              SliceSummaries = sliceSummaries |> Seq.toList
-              Budget = budget
-              TotalBytes = totalBytes
-              EstimatedTokens = estimatedTokens
-              TopReasons = topReasons (sliceSummaries |> Seq.toList) }
+            {
+                Stage = stage
+                SelectedFiles =
+                    fileDiffs
+                    |> List.map (fun fileDiff -> fileDiff.RelativePath)
+                SliceSummaries = sliceSummaries |> Seq.toList
+                Budget = budget
+                TotalBytes = totalBytes
+                EstimatedTokens = estimatedTokens
+                TopReasons = topReasons (sliceSummaries |> Seq.toList)
+            }
 
         evidenceSet, evidenceSummary

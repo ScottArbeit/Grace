@@ -62,7 +62,8 @@ module Common =
                     return
                         Error graceError
                         |> enhance "ServerResponseTime" $"{(endTime - startTime).TotalMilliseconds:F3} ms"
-            with ex ->
+            with
+            | ex ->
                 let exceptionResponse = Utilities.ExceptionResponse.Create ex
                 return Error(GraceError.Create (serialize exceptionResponse) parameters.CorrelationId)
         }
@@ -115,12 +116,14 @@ module Common =
                             Error graceError
                             |> enhance "ServerResponseTime" $"{(endTime - startTime).TotalMilliseconds:F3} ms"
                             |> enhance "StatusCode" $"{response.StatusCode}"
-                    with ex ->
+                    with
+                    | ex ->
                         return
                             Error(GraceError.Create $"{responseAsString}" parameters.CorrelationId)
                             |> enhance "ServerResponseTime" $"{(endTime - startTime).TotalMilliseconds:F3} ms"
                             |> enhance "StatusCode" $"{response.StatusCode}"
-            with ex ->
+            with
+            | ex ->
                 let exceptionResponse = Utilities.ExceptionResponse.Create ex
                 return Error(GraceError.Create ($"{exceptionResponse}") parameters.CorrelationId)
         }

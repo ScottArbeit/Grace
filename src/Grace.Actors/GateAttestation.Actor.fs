@@ -56,7 +56,9 @@ module GateAttestation =
                     state.State.Add(attestationEvent)
                     do! state.WriteStateAsync()
 
-                    attestation <- attestation |> GateAttestationDto.UpdateDto attestationEvent
+                    attestation <-
+                        attestation
+                        |> GateAttestationDto.UpdateDto attestationEvent
 
                     let graceEvent = GraceEvent.GateAttestationEvent attestationEvent
                     do! publishGraceEvent graceEvent attestationEvent.Metadata
@@ -68,7 +70,8 @@ module GateAttestation =
                             .enhance (nameof GateAttestationEventType, getDiscriminatedUnionFullName attestationEvent.Event)
 
                     return Ok returnValue
-                with ex ->
+                with
+                | ex ->
                     log.LogError(
                         ex,
                         "{CurrentInstant}: Node: {hostName}; CorrelationId: {correlationId}; Failed to apply event {eventType} for gate attestation {attestationId}.",
@@ -92,7 +95,10 @@ module GateAttestation =
         interface IGateAttestationActor with
             member this.Exists correlationId =
                 this.correlationId <- correlationId
-                (attestation.GateAttestationId <> GateAttestationId.Empty) |> returnTask
+
+                (attestation.GateAttestationId
+                 <> GateAttestationId.Empty)
+                |> returnTask
 
             member this.Get correlationId =
                 this.correlationId <- correlationId
@@ -104,7 +110,9 @@ module GateAttestation =
 
             member this.GetEvents correlationId =
                 this.correlationId <- correlationId
-                state.State :> IReadOnlyList<GateAttestationEvent> |> returnTask
+
+                state.State :> IReadOnlyList<GateAttestationEvent>
+                |> returnTask
 
             member this.Handle command metadata =
                 let isValid (command: GateAttestationCommand) (metadata: EventMetadata) =
@@ -117,7 +125,8 @@ module GateAttestation =
                         else
                             match command with
                             | GateAttestationCommand.Create _ ->
-                                if attestation.GateAttestationId <> GateAttestationId.Empty then
+                                if attestation.GateAttestationId
+                                   <> GateAttestationId.Empty then
                                     return
                                         Error(
                                             GraceError.Create

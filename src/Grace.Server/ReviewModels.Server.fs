@@ -31,12 +31,14 @@ module ReviewModels =
 
             member _.RunTriage _ =
                 Task.FromResult(
-                    { Summary = "Triage provider not configured."
-                      RiskLabel = "Green"
-                      Confidence = 0.0
-                      Categories = []
-                      DeepAnalysisRecommended = false
-                      Reasons = [ "ProviderMissing" ] }
+                    {
+                        Summary = "Triage provider not configured."
+                        RiskLabel = "Green"
+                        Confidence = 0.0
+                        Categories = []
+                        DeepAnalysisRecommended = false
+                        Reasons = [ "ProviderMissing" ]
+                    }
                 )
 
             member _.RunDeepReview _ = Task.FromResult({ ReviewPacket.Default with Summary = "Deep review provider not configured." })
@@ -48,12 +50,14 @@ module ReviewModels =
 
             member _.RunTriage _ =
                 Task.FromResult(
-                    { Summary = $"OpenRouter triage model configured: {settings.TriageModel}."
-                      RiskLabel = "Yellow"
-                      Confidence = 0.0
-                      Categories = []
-                      DeepAnalysisRecommended = false
-                      Reasons = [ "ProviderStub" ] }
+                    {
+                        Summary = $"OpenRouter triage model configured: {settings.TriageModel}."
+                        RiskLabel = "Yellow"
+                        Confidence = 0.0
+                        Categories = []
+                        DeepAnalysisRecommended = false
+                        Reasons = [ "ProviderStub" ]
+                    }
                 )
 
             member _.RunDeepReview _ = Task.FromResult({ ReviewPacket.Default with Summary = $"OpenRouter deep model configured: {settings.DeepModel}." })

@@ -56,7 +56,8 @@ module Reminder =
                         )
 
                         return ()
-                    with ex ->
+                    with
+                    | ex ->
                         log.LogError(
                             ex,
                             "{CurrentInstant}: Node: {HostName}; CorrelationId: {CorrelationId}; Error creating reminder {ReminderId}. Actor {ActorName}||{ActorId}.",
@@ -102,7 +103,8 @@ module Reminder =
                             )
 
                         return ()
-                    with ex ->
+                    with
+                    | ex ->
                         log.LogError(
                             "{CurrentInstant}:  Node: {HostName}; CorrelationId: {CorrelationId}; Error deleting reminder {ReminderId}. Actor {ActorName}||{ActorId}. {ExceptionDetails}",
                             getCurrentInstantExtended (),
@@ -180,7 +182,8 @@ module Reminder =
 
                             return! diffActorProxy.ReceiveReminderAsync reminderDto
                         | _ -> return Ok()
-                    with ex ->
+                    with
+                    | ex ->
                         log.LogError(
                             "{CurrentInstant}:  Node: {HostName}; CorrelationId: {CorrelationId}; Error reminding actor {ActorName}||{ActorId}. {ExceptionDetails}",
                             getCurrentInstantExtended (),

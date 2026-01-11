@@ -164,9 +164,21 @@ type AccessControl() =
 
             do! grantRoleAsync Client ownerId organizationId "" "org" "OrgAdmin"
 
-            do! upsertPathPermissionAsync Client ownerId organizationId repositoryId "/images" [ ("engineering", "NoAccess"); ("writers", "Modify") ]
+            do!
+                upsertPathPermissionAsync
+                    Client
+                    ownerId
+                    organizationId
+                    repositoryId
+                    "/images"
+                    [
+                        ("engineering", "NoAccess")
+                        ("writers", "Modify")
+                    ]
 
-            use claimsClient = createClientWithClaims [ "engineering"; "writers" ]
+            use claimsClient =
+                createClientWithClaims [ "engineering"
+                                         "writers" ]
 
             let! permission = checkPermissionAsync claimsClient ownerId organizationId repositoryId "path" "PathWrite" "/images"
 
@@ -213,9 +225,21 @@ type AccessControl() =
 
             do! grantRoleAsync Client ownerId orgId "" "org" "OrgAdmin"
 
-            do! upsertPathPermissionAsync Client ownerId orgId repoId "/images/foo.png" [ ("engineering", "NoAccess"); ("writers", "Modify") ]
+            do!
+                upsertPathPermissionAsync
+                    Client
+                    ownerId
+                    orgId
+                    repoId
+                    "/images/foo.png"
+                    [
+                        ("engineering", "NoAccess")
+                        ("writers", "Modify")
+                    ]
 
-            use claimsClient = createClientWithClaims [ "engineering"; "writers" ]
+            use claimsClient =
+                createClientWithClaims [ "engineering"
+                                         "writers" ]
 
             let fileVersion = FileVersion.Create "/images/foo.png" "hash" "" false 1L
 

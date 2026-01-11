@@ -152,7 +152,9 @@ module ApplicationContext =
     let private applyLocalEmulatorSettings (config: IConfiguration) =
         let useLocalEmulatorSettings =
             not useManagedIdentity
-            && (isGraceTesting || isLocalDebugEnvironment || isLocalEndpoint config)
+            && (isGraceTesting
+                || isLocalDebugEnvironment
+                || isLocalEndpoint config)
 
         if useLocalEmulatorSettings then
             // The CosmosDB emulator uses a self-signed certificate, and, by default, HttpClient will refuse
@@ -202,7 +204,8 @@ module ApplicationContext =
             if system = GracePubSubSystem.AzureServiceBus then
                 let serviceBusConnectionString = Environment.GetEnvironmentVariable EnvironmentVariables.AzureServiceBusConnectionString
 
-                if not <| AzureEnvironment.useManagedIdentityForServiceBus then
+                if not
+                   <| AzureEnvironment.useManagedIdentityForServiceBus then
                     if String.IsNullOrWhiteSpace(serviceBusConnectionString) then
                         invalidOp
                             $"Environment variable '{EnvironmentVariables.AzureServiceBusConnectionString}' must be set when {EnvironmentVariables.GracePubSubSystem} is {GracePubSubSystem.AzureServiceBus} and you're not using a managed identity."
@@ -234,15 +237,17 @@ module ApplicationContext =
                 let useManagedIdentity = AzureEnvironment.useManagedIdentityForServiceBus
 
                 Some
-                    { ConnectionString =
-                        if String.IsNullOrEmpty(serviceBusConnectionString) then
-                            String.Empty
-                        else
-                            serviceBusConnectionString
-                      FullyQualifiedNamespace = fullyQualifiedNamespace
-                      TopicName = topic
-                      SubscriptionName = subscription
-                      UseManagedIdentity = useManagedIdentity }
+                    {
+                        ConnectionString =
+                            if String.IsNullOrEmpty(serviceBusConnectionString) then
+                                String.Empty
+                            else
+                                serviceBusConnectionString
+                        FullyQualifiedNamespace = fullyQualifiedNamespace
+                        TopicName = topic
+                        SubscriptionName = subscription
+                        UseManagedIdentity = useManagedIdentity
+                    }
             else
                 None
 
@@ -285,7 +290,7 @@ module ApplicationContext =
                 logToConsole $"Grace pub-sub configured as:{Environment.NewLine}{serialize pubSubSettings}"
 
                 logToConsole "Grace Server is ready."
-            with ex ->
-                logToConsole ($"{ex.ToStringDemystified()}")
+            with
+            | ex -> logToConsole ($"{ex.ToStringDemystified()}")
         }
         :> Task
