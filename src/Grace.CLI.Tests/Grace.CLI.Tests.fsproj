@@ -17,6 +17,7 @@
     <Compile Include="Connect.Tests.fs" />
     <Compile Include="CommandParsing.Tests.fs" />
     <Compile Include="HelpDoesNotReadConfig.Tests.fs" />
+    <Compile Include="RootHelpGrouping.Tests.fs" />
     <Compile Include="HistoryStorage.Tests.fs" />
     <Compile Include="WorkItem.Commands.Tests.fs" />
     <Compile Include="Review.Commands.Tests.fs" />
