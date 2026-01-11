@@ -222,6 +222,161 @@ module GraceCommand =
 
         String.Join(Environment.NewLine, output)
 
+    type RootHelpSection = { Heading: string; CommandNames: string list }
+
+    let private rootHelpSections =
+        [
+            { Heading = "Getting started"; CommandNames = [ "auth"; "connect"; "config" ] }
+            {
+                Heading = "Day-to-day development"
+                CommandNames =
+                    [
+                        "branch"
+                        "diff"
+                        "directory-version"
+                        "watch"
+                    ]
+            }
+            {
+                Heading = "Review and promotion"
+                CommandNames =
+                    [
+                        "work"
+                        "review"
+                        "promotion-group"
+                        "queue"
+                    ]
+            }
+            {
+                Heading = "Administration and access"
+                CommandNames =
+                    [
+                        "owner"
+                        "organization"
+                        "repository"
+                        "access"
+                        "admin"
+                    ]
+            }
+            { Heading = "Local utilities"; CommandNames = [ "history"; "maintenance"; "alias" ] }
+        ]
+
+    let private formatDisplayName (command: Command) =
+        let aliases =
+            command.Aliases
+            |> Seq.filter (fun alias ->
+                not
+                <| alias.Equals(command.Name, StringComparison.InvariantCultureIgnoreCase))
+            |> Seq.distinctBy (fun alias -> alias.ToLowerInvariant())
+            |> Seq.toArray
+
+        if aliases.Length = 0 then
+            command.Name
+        else
+            let aliasText = String.Join(", ", aliases)
+            $"{command.Name} ({aliasText})"
+
+    let private getGroupedRootCommands (rootCommand: RootCommand) =
+        let lookup = Dictionary<string, Command>(StringComparer.InvariantCultureIgnoreCase)
+
+        rootCommand.Subcommands
+        |> Seq.cast<Command>
+        |> Seq.iter (fun command -> lookup[command.Name] <- command)
+
+        let mappedNames = HashSet<string>(StringComparer.InvariantCultureIgnoreCase)
+
+        let sections =
+            rootHelpSections
+            |> List.choose (fun section ->
+                let commands =
+                    section.CommandNames
+                    |> List.choose (fun name ->
+                        match lookup.TryGetValue(name) with
+                        | true, command ->
+                            mappedNames.Add(command.Name) |> ignore
+                            Some command
+                        | _ -> None)
+
+                if commands.IsEmpty then None else Some(section.Heading, commands))
+
+        let unmapped =
+            rootCommand.Subcommands
+            |> Seq.cast<Command>
+            |> Seq.filter (fun command -> not <| mappedNames.Contains(command.Name))
+            |> Seq.sortBy (fun command -> command.Name)
+            |> Seq.toList
+
+        sections, unmapped
+
+    let private buildGroupedCommandLines (rootCommand: RootCommand) =
+        let sections, unmapped = getGroupedRootCommands rootCommand
+        let allCommands = (sections |> List.collect snd) @ unmapped
+
+        let maxNameWidth =
+            allCommands
+            |> Seq.map formatDisplayName
+            |> Seq.fold (fun current name -> max current name.Length) 0
+
+        let lines = ResizeArray<string>()
+        lines.Add("Commands:")
+        lines.Add(String.Empty)
+
+        let writeSection heading commands =
+            lines.Add($"  {heading}:")
+
+            for command in commands do
+                let name = formatDisplayName command
+                let description = command.Description
+
+                if String.IsNullOrWhiteSpace(description) then
+                    lines.Add($"    {name}")
+                else
+                    lines.Add($"    {name.PadRight(maxNameWidth)}  {description}")
+
+            lines.Add(String.Empty)
+
+        for (heading, commands) in sections do
+            writeSection heading commands
+
+        if not unmapped.IsEmpty then writeSection "Other" unmapped
+
+        lines.ToArray()
+
+    let private rewriteRootHelpCommands (helpText: string) (rootCommand: RootCommand) =
+        let lines = helpText.Split(Environment.NewLine)
+
+        let commandHeaderIndex =
+            lines
+            |> Array.tryFindIndex (fun line ->
+                line
+                    .Trim()
+                    .Equals("Commands:", StringComparison.Ordinal))
+
+        match commandHeaderIndex with
+        | None -> helpText
+        | Some startIndex ->
+            let mutable endIndex = lines.Length
+            let mutable i = startIndex + 1
+
+            while i < lines.Length && endIndex = lines.Length do
+                let line = lines[i]
+
+                if
+                    (not <| String.IsNullOrWhiteSpace(line))
+                    && not (line.StartsWith(" "))
+                then
+                    endIndex <- i
+                else
+                    i <- i + 1
+
+            let before = if startIndex > 0 then lines[0 .. startIndex - 1] else Array.empty
+
+            let after = if endIndex < lines.Length then lines[endIndex..] else Array.empty
+
+            let grouped = buildGroupedCommandLines rootCommand
+
+            String.Join(Environment.NewLine, Array.concat [ before; grouped; after ])
+
     let rootCommand =
         // Create the root of the command tree.
         let rootCommand = new RootCommand("Grace Version Control System")
@@ -441,9 +596,14 @@ module GraceCommand =
 
                     match parseResult.Action with
                     | :? HelpAction ->
-                        if parseResult.Tokens.Count = 0
-                           || (parseResult.Tokens.Count = 1
-                               && helpOptions.Contains(parseResult.Tokens[0].Value)) then
+                        let isRootHelp =
+                            obj.ReferenceEquals(parseResult.CommandResult.Command, rootCommand)
+                            || parseResult.CommandResult.Command :? RootCommand
+
+                        if isRootHelp
+                           && (parseResult.Tokens.Count = 0
+                               || (parseResult.Tokens.Count = 1
+                                   && helpOptions.Contains(parseResult.Tokens[0].Value))) then
                             // This is where we configure how help is displayed by Grace.
                             // We want to show the help text for the command, and then the feedback section at the end.
                             let graceFiglet = FigletText($"Grace")
@@ -540,7 +700,14 @@ module GraceCommand =
 
                         let helpText = writer.ToString()
                         let rewrittenHelpText = rewriteHelpDefaults helpText defaultsByAlias
-                        Console.Write(rewrittenHelpText)
+
+                        let finalHelpText =
+                            if isRootHelp then
+                                rewriteRootHelpCommands rewrittenHelpText rootCommand
+                            else
+                                rewrittenHelpText
+
+                        Console.Write(finalHelpText)
                         returnValue <- invokeResult
                     | _ ->
                         if configurationFileExists () then
