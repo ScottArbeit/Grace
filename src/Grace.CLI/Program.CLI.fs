@@ -21,10 +21,12 @@ open System.Collections
 open System.Collections.Generic
 open System.CommandLine
 open System.CommandLine.Help
+open System.CommandLine.Parsing
 open System.Diagnostics
 open System.Globalization
 open System.IO
 open System.Linq
+open System.Text.RegularExpressions
 open System.Threading.Tasks
 open Microsoft.Extensions.Caching.Memory
 open System.CommandLine.Help
@@ -222,6 +224,334 @@ module GraceCommand =
 
         String.Join(Environment.NewLine, output)
 
+    type HelpSection = { Heading: string; CommandNames: string list }
+
+    let private rootHelpSections =
+        [
+            { Heading = "Getting started"; CommandNames = [ "auth"; "connect"; "config" ] }
+            {
+                Heading = "Day-to-day development"
+                CommandNames =
+                    [
+                        "branch"
+                        "diff"
+                        "directory-version"
+                        "watch"
+                    ]
+            }
+            {
+                Heading = "Review and promotion"
+                CommandNames =
+                    [
+                        "work"
+                        "review"
+                        "promotion-group"
+                        "queue"
+                    ]
+            }
+            {
+                Heading = "Administration and access"
+                CommandNames =
+                    [
+                        "owner"
+                        "organization"
+                        "repository"
+                        "access"
+                        "admin"
+                    ]
+            }
+            { Heading = "Local utilities"; CommandNames = [ "history"; "maintenance"; "alias" ] }
+        ]
+
+    let private repositoryHelpSections =
+        [
+            { Heading = "Create and initialize"; CommandNames = [ "create"; "init" ] }
+            { Heading = "Inspect"; CommandNames = [ "get"; "get-branches" ] }
+            {
+                Heading = "Configuration"
+                CommandNames =
+                    [
+                        "set-visibility"
+                        "set-status"
+                        "set-anonymous-access"
+                        "set-allows-large-files"
+                        "set-record-saves"
+                        "set-default-server-api-version"
+                        "set-save-days"
+                        "set-checkpoint-days"
+                        "set-diff-cache-days"
+                        "set-directory-version-cache-days"
+                        "set-logical-delete-days"
+                        "set-name"
+                        "set-description"
+                        "set-conflict-resolution-policy"
+                    ]
+            }
+            { Heading = "Lifecycle"; CommandNames = [ "delete"; "undelete" ] }
+        ]
+
+    let private branchHelpSections =
+        [
+            {
+                Heading = "Create and contribute"
+                CommandNames =
+                    [
+                        "create"
+                        "commit"
+                        "checkpoint"
+                        "save"
+                        "tag"
+                        "create-external"
+                    ]
+            }
+            { Heading = "Promotion workflow"; CommandNames = [ "promote"; "assign"; "rebase" ] }
+            {
+                Heading = "Inspect"
+                CommandNames =
+                    [
+                        "status"
+                        "list-contents"
+                        "get-recursive-size"
+                        "get"
+                        "get-references"
+                        "get-promotions"
+                        "get-commits"
+                        "get-checkpoints"
+                        "get-saves"
+                        "get-tags"
+                        "get-externals"
+                    ]
+            }
+            {
+                Heading = "Settings"
+                CommandNames =
+                    [
+                        "enable-assign"
+                        "enable-promotion"
+                        "enable-commit"
+                        "enable-checkpoints"
+                        "enable-save"
+                        "enable-tag"
+                        "enable-external"
+                        "enable-auto-rebase"
+                        "set-promotion-mode"
+                        "set-name"
+                        "update-parent-branch"
+                    ]
+            }
+            { Heading = "Lifecycle"; CommandNames = [ "delete" ] }
+        ]
+
+    let private ownerHelpSections =
+        [
+            { Heading = "Create and inspect"; CommandNames = [ "create"; "get" ] }
+            {
+                Heading = "Settings"
+                CommandNames =
+                    [
+                        "set-name"
+                        "set-type"
+                        "set-search-visibility"
+                        "set-description"
+                    ]
+            }
+            { Heading = "Lifecycle"; CommandNames = [ "delete"; "undelete" ] }
+        ]
+
+    let private organizationHelpSections =
+        [
+            { Heading = "Create and inspect"; CommandNames = [ "create"; "get" ] }
+            {
+                Heading = "Settings"
+                CommandNames =
+                    [
+                        "set-name"
+                        "set-type"
+                        "set-search-visibility"
+                        "set-description"
+                    ]
+            }
+            { Heading = "Lifecycle"; CommandNames = [ "delete"; "undelete" ] }
+        ]
+
+    let private promotionGroupHelpSections =
+        [
+            { Heading = "Create and inspect"; CommandNames = [ "create"; "get"; "list" ] }
+            { Heading = "Manage promotions"; CommandNames = [ "add"; "remove"; "reorder" ] }
+            {
+                Heading = "Workflow"
+                CommandNames =
+                    [
+                        "schedule"
+                        "mark-ready"
+                        "start"
+                        "block"
+                    ]
+            }
+            { Heading = "Lifecycle"; CommandNames = [ "delete" ] }
+        ]
+
+    let private groupedHelpSectionsByCommandName =
+        let lookup = Dictionary<string, HelpSection list>(StringComparer.InvariantCultureIgnoreCase)
+        lookup["repository"] <- repositoryHelpSections
+        lookup["repo"] <- repositoryHelpSections
+        lookup["branch"] <- branchHelpSections
+        lookup["br"] <- branchHelpSections
+        lookup["owner"] <- ownerHelpSections
+        lookup["organization"] <- organizationHelpSections
+        lookup["org"] <- organizationHelpSections
+        lookup["promotion-group"] <- promotionGroupHelpSections
+        lookup["pg"] <- promotionGroupHelpSections
+        lookup
+
+    let private formatDisplayName (command: Command) =
+        let aliases =
+            command.Aliases
+            |> Seq.filter (fun alias ->
+                not
+                <| alias.Equals(command.Name, StringComparison.InvariantCultureIgnoreCase))
+            |> Seq.distinctBy (fun alias -> alias.ToLowerInvariant())
+            |> Seq.toArray
+
+        if aliases.Length = 0 then
+            command.Name
+        else
+            let aliasText = String.Join(", ", aliases)
+            $"{command.Name} ({aliasText})"
+
+    let private getGroupedCommands (command: Command) (sections: HelpSection list) =
+        let lookup = Dictionary<string, Command>(StringComparer.InvariantCultureIgnoreCase)
+
+        command.Subcommands
+        |> Seq.cast<Command>
+        |> Seq.iter (fun command -> lookup[command.Name] <- command)
+
+        let mappedNames = HashSet<string>(StringComparer.InvariantCultureIgnoreCase)
+
+        let sections =
+            sections
+            |> List.choose (fun section ->
+                let commands =
+                    section.CommandNames
+                    |> List.choose (fun name ->
+                        match lookup.TryGetValue(name) with
+                        | true, command ->
+                            mappedNames.Add(command.Name) |> ignore
+                            Some command
+                        | _ -> None)
+
+                if commands.IsEmpty then None else Some(section.Heading, commands))
+
+        let unmapped =
+            command.Subcommands
+            |> Seq.cast<Command>
+            |> Seq.filter (fun command -> not <| mappedNames.Contains(command.Name))
+            |> Seq.sortBy (fun command -> command.Name)
+            |> Seq.toList
+
+        sections, unmapped
+
+    let private buildGroupedCommandLines (command: Command) (sections: HelpSection list) (indent: string) =
+        let sections, unmapped = getGroupedCommands command sections
+        let allCommands = (sections |> List.collect snd) @ unmapped
+
+        let maxNameWidth =
+            allCommands
+            |> Seq.map formatDisplayName
+            |> Seq.fold (fun current name -> max current name.Length) 0
+
+        let lines = ResizeArray<string>()
+        lines.Add($"{indent}Commands:")
+        lines.Add(String.Empty)
+
+        let writeSection heading commands =
+            lines.Add($"{indent}  {heading}:")
+
+            for command in commands do
+                let name = formatDisplayName command
+                let description = command.Description
+
+                if String.IsNullOrWhiteSpace(description) then
+                    lines.Add($"{indent}    {name}")
+                else
+                    lines.Add($"{indent}    {name.PadRight(maxNameWidth)}  {description}")
+
+            lines.Add(String.Empty)
+
+        for (heading, commands) in sections do
+            writeSection heading commands
+
+        if not unmapped.IsEmpty then writeSection "Other" unmapped
+
+        lines.ToArray()
+
+    let private stripAnsi (text: string) =
+        if String.IsNullOrEmpty(text) then
+            text
+        else
+            let withoutCsi = Regex.Replace(text, "\x1B\\[[0-9;?]*[A-Za-z]", String.Empty)
+            Regex.Replace(withoutCsi, "\x1B\\][^\x07]*\x07", String.Empty)
+
+    let private rewriteHelpCommands (helpText: string) (command: Command) (sections: HelpSection list) =
+        if command.Subcommands.Count = 0 then
+            helpText
+        else
+            let normalizedHelpText = helpText.Replace("\r\n", "\n")
+            let lines = normalizedHelpText.Split('\n')
+
+            let commandHeaderIndex =
+                lines
+                |> Array.tryFindIndex (fun line ->
+                    let cleanedLine = stripAnsi line
+
+                    cleanedLine
+                        .Trim()
+                        .Equals("Commands:", StringComparison.Ordinal))
+
+            match commandHeaderIndex with
+            | None -> helpText
+            | Some startIndex ->
+                let mutable endIndex = lines.Length
+                let mutable i = startIndex + 1
+
+                while i < lines.Length && endIndex = lines.Length do
+                    let line = stripAnsi lines[i]
+
+                    if
+                        (not <| String.IsNullOrWhiteSpace(line))
+                        && not (line.StartsWith(" "))
+                    then
+                        endIndex <- i
+                    else
+                        i <- i + 1
+
+                let before = if startIndex > 0 then lines[0 .. startIndex - 1] else Array.empty
+
+                let after = if endIndex < lines.Length then lines[endIndex..] else Array.empty
+
+                let headerLine = stripAnsi lines[startIndex]
+
+                let indentLength = headerLine.IndexOf("Commands:", StringComparison.Ordinal)
+
+                let indent = if indentLength > 0 then headerLine.Substring(0, indentLength) else String.Empty
+
+                let grouped = buildGroupedCommandLines command sections indent
+
+                String.Join(Environment.NewLine, Array.concat [ before; grouped; after ])
+
+    let private findTargetHelpCommandResult (commandResult: CommandResult) =
+        let mutable current = commandResult
+        let mutable searching = true
+
+        while searching do
+            match current.Children.OfType<CommandResult>()
+                  |> Seq.tryLast
+                with
+            | Some childResult -> current <- childResult
+            | None -> searching <- false
+
+        current
+
     let rootCommand =
         // Create the root of the command tree.
         let rootCommand = new RootCommand("Grace Version Control System")
@@ -368,6 +698,8 @@ module GraceCommand =
     type FeedbackSection(action: HelpAction) =
         inherit SynchronousCommandLineAction()
 
+        member _.HelpAction = action
+
         override _.Invoke(parseResult: ParseResult) =
             let result = action.Invoke(parseResult)
             AnsiConsole.WriteLine()
@@ -439,11 +771,70 @@ module GraceCommand =
                     // Write the ParseResult to Services as global context for the CLI.
                     Services.parseResult <- parseResult
 
-                    match parseResult.Action with
-                    | :? HelpAction ->
-                        if parseResult.Tokens.Count = 0
-                           || (parseResult.Tokens.Count = 1
-                               && helpOptions.Contains(parseResult.Tokens[0].Value)) then
+                    let helpAction =
+                        match parseResult.Action with
+                        | :? HelpAction as action -> Some action
+                        | :? FeedbackSection as feedback -> Some feedback.HelpAction
+                        | _ -> None
+
+                    let hasHelpToken =
+                        argvNormalized
+                        |> Array.takeWhile (fun arg -> not <| arg.Equals("--", StringComparison.Ordinal))
+                        |> Array.exists (fun arg -> helpOptions.Contains(arg))
+
+                    let isHelpRequest =
+                        helpAction.IsSome
+                        || args.Length = 0
+                        || hasHelpToken
+
+                    if isHelpRequest then
+                        let helpCommandResult = findTargetHelpCommandResult parseResult.CommandResult
+                        let helpCommand = helpCommandResult.Command
+
+                        let isRootHelp =
+                            obj.ReferenceEquals(helpCommand, rootCommand)
+                            || helpCommand :? RootCommand
+
+                        let groupedHelpSections =
+                            if isRootHelp then
+                                Some rootHelpSections
+                            else
+                                match groupedHelpSectionsByCommandName.TryGetValue(helpCommand.Name) with
+                                | true, sections -> Some sections
+                                | _ -> None
+
+                        let groupedHelpCommand, groupedHelpSections =
+                            match groupedHelpSections with
+                            | Some sections -> helpCommand, Some sections
+                            | None ->
+                                match tryGetTopLevelCommandFromArgs argvNormalized isCaseInsensitive with
+                                | Some commandName ->
+                                    match groupedHelpSectionsByCommandName.TryGetValue(commandName) with
+                                    | true, sections ->
+                                        let comparison =
+                                            if isCaseInsensitive then
+                                                StringComparison.InvariantCultureIgnoreCase
+                                            else
+                                                StringComparison.InvariantCulture
+
+                                        let command =
+                                            rootCommand.Subcommands
+                                            |> Seq.cast<Command>
+                                            |> Seq.tryFind (fun command ->
+                                                command.Name.Equals(commandName, comparison)
+                                                || command.Aliases
+                                                   |> Seq.exists (fun alias -> alias.Equals(commandName, comparison)))
+
+                                        match command with
+                                        | Some command -> command, Some sections
+                                        | None -> helpCommand, None
+                                    | _ -> helpCommand, None
+                                | None -> helpCommand, None
+
+                        if isRootHelp
+                           && (parseResult.Tokens.Count = 0
+                               || (parseResult.Tokens.Count = 1
+                                   && helpOptions.Contains(parseResult.Tokens[0].Value))) then
                             // This is where we configure how help is displayed by Grace.
                             // We want to show the help text for the command, and then the feedback section at the end.
                             let graceFiglet = FigletText($"Grace")
@@ -470,7 +861,7 @@ module GraceCommand =
                         //        .Append(feedbackSection))
 
                         // We're passing a new List<Option> here, because we're going to be adding to it recursively in gatherAllOptions.
-                        let allOptions = gatherAllOptions parseResult.CommandResult.Command (List<Option>())
+                        let allOptions = gatherAllOptions helpCommand (List<Option>())
 
                         // This section sets the display of the default value for these options in all commands in Grace CLI.
                         // Without setting the display values here, by default, we'd get something like
@@ -505,9 +896,9 @@ module GraceCommand =
                                 }
                             ]
 
-                        let isCreate = parseResult.CommandResult.Command.Name.Equals("create", StringComparison.OrdinalIgnoreCase)
+                        let isCreate = helpCommand.Name.Equals("create", StringComparison.OrdinalIgnoreCase)
 
-                        let parentCommands = parseResult.CommandResult.Command.Parents.OfType<Command>()
+                        let parentCommands = helpCommand.Parents.OfType<Command>()
 
                         let defaultsByAlias =
                             optionsToUpdate
@@ -540,111 +931,116 @@ module GraceCommand =
 
                         let helpText = writer.ToString()
                         let rewrittenHelpText = rewriteHelpDefaults helpText defaultsByAlias
-                        Console.Write(rewrittenHelpText)
+
+                        let finalHelpText =
+                            match groupedHelpSections with
+                            | Some sections -> rewriteHelpCommands rewrittenHelpText groupedHelpCommand sections
+                            | None -> rewrittenHelpText
+
+                        Console.Write(finalHelpText)
                         returnValue <- invokeResult
-                    | _ ->
-                        if configurationFileExists () then
-                            //parseResult <- caseInsensitiveMiddleware (rootCommand, parseResult, isCaseInsensitive)
+                    else if configurationFileExists () then
+                        //parseResult <- caseInsensitiveMiddleware (rootCommand, parseResult, isCaseInsensitive)
 
-                            if parseResult |> hasOutput then
-                                if parseResult |> verbose then
-                                    AnsiConsole.Write(
-                                        (new Rule($"[{Colors.Important}]Started: {formatInstantExtended startTime}.[/]"))
-                                            .RightJustified()
-                                    )
+                        if parseResult |> hasOutput then
+                            if parseResult |> verbose then
+                                AnsiConsole.Write(
+                                    (new Rule($"[{Colors.Important}]Started: {formatInstantExtended startTime}.[/]"))
+                                        .RightJustified()
+                                )
 
-                                //printParseResult parseResult
-                                else
-                                    AnsiConsole.Write(new Rule())
-
-                            // If this instance isn't `grace watch`, we want to check if `grace watch` is running by trying to read the IPC file.
-                            if not <| (parseResult |> isGraceWatch) then
-                                let! graceWatchStatus = getGraceWatchStatus ()
-
-                                match graceWatchStatus with
-                                | Some status -> Configuration.updateConfiguration { GraceWatchStatus = status }
-                                | None -> ()
-
-                            // Now we can invoke the command!
-                            let! returnValue = parseResult.InvokeAsync()
-
-                            // Stuff to do after the command has been invoked:
-
-                            // If this instance is `grace watch`, we'll actually delete the IPC file in the finally clause below, but
-                            //   we'll write the "we deleted the file" message to the console here, so it comes before the last Rule() is written.
-                            if parseResult |> isGraceWatch then
-                                logToAnsiConsole Colors.Important (getLocalizedString StringResourceName.InterprocessFileDeleted)
-
-                            // If we're writing output, write the final Rule() to the console.
-                            if parseResult |> hasOutput then
-                                let finishTime = getCurrentInstant ()
-
-                                let elapsed =
-                                    (finishTime - startTime)
-                                        .Plus(Duration.FromMilliseconds(110.0)) // Adding 110ms for .NET Runtime startup time.
-
-                                if parseResult |> verbose then
-                                    AnsiConsole.Write(
-                                        (new Rule(
-                                            $"[{Colors.Important}]Elapsed: {elapsed.TotalSeconds:F3}s. Exit code: {returnValue}. Finished: {formatInstantExtended finishTime}[/]"
-                                        ))
-                                            .RightJustified()
-                                    )
-                                else
-                                    AnsiConsole.Write(
-                                        (new Rule($"[{Colors.Important}]Elapsed: {elapsed.TotalSeconds:F3}s. Exit code: {returnValue}.[/]"))
-                                            .RightJustified()
-                                    )
-
-                                AnsiConsole.WriteLine()
-                        else
-                            // We don't have a config file, so write an error message and exit.
-                            AnsiConsole.Write(new Rule())
-
-                            let comparison =
-                                if isCaseInsensitive then
-                                    StringComparison.InvariantCultureIgnoreCase
-                                else
-                                    StringComparison.InvariantCulture
-
-                            let allowedCommands =
-                                [
-                                    "config"
-                                    "history"
-                                    "auth"
-                                    "connect"
-                                ]
-
-                            let isAllowed =
-                                let command = parseResult.CommandResult.Command
-
-                                Seq.append [ command ] (command.Parents.OfType<Command>())
-                                |> Seq.exists (fun cmd ->
-                                    allowedCommands
-                                    |> List.exists (fun allowed -> cmd.Name.Equals(allowed, comparison)))
-                                || (tryGetTopLevelCommandFromArgs argvNormalized isCaseInsensitive
-                                    |> Option.exists (fun topLevel ->
-                                        allowedCommands
-                                        |> List.exists (fun allowed -> topLevel.Equals(allowed, comparison))))
-
-                            if isAllowed then
-                                let! invokedReturnValue = parseResult.InvokeAsync()
-                                returnValue <- invokedReturnValue
-                                ()
+                            //printParseResult parseResult
                             else
-                                AnsiConsole.MarkupLine($"[{Colors.Important}]{getLocalizedString StringResourceName.GraceConfigFileNotFound}[/]")
+                                AnsiConsole.Write(new Rule())
 
-                            printParseResult parseResult
+                        // If this instance isn't `grace watch`, we want to check if `grace watch` is running by trying to read the IPC file.
+                        if not <| (parseResult |> isGraceWatch) then
+                            let! graceWatchStatus = getGraceWatchStatus ()
+
+                            match graceWatchStatus with
+                            | Some status -> Configuration.updateConfiguration { GraceWatchStatus = status }
+                            | None -> ()
+
+                        // Now we can invoke the command!
+                        let! returnValue = parseResult.InvokeAsync()
+
+                        // Stuff to do after the command has been invoked:
+
+                        // If this instance is `grace watch`, we'll actually delete the IPC file in the finally clause below, but
+                        //   we'll write the "we deleted the file" message to the console here, so it comes before the last Rule() is written.
+                        if parseResult |> isGraceWatch then
+                            logToAnsiConsole Colors.Important (getLocalizedString StringResourceName.InterprocessFileDeleted)
+
+                        // If we're writing output, write the final Rule() to the console.
+                        if parseResult |> hasOutput then
                             let finishTime = getCurrentInstant ()
 
                             let elapsed =
                                 (finishTime - startTime)
                                     .Plus(Duration.FromMilliseconds(110.0)) // Adding 110ms for .NET Runtime startup time.
 
-                            AnsiConsole.Write(
-                                (new Rule($"[{Colors.Important}]Elapsed: {elapsed.TotalSeconds:F3}s. Exit code: {returnValue}.[/]"))
-                                    .RightJustified()
-                            )
+                            if parseResult |> verbose then
+                                AnsiConsole.Write(
+                                    (new Rule(
+                                        $"[{Colors.Important}]Elapsed: {elapsed.TotalSeconds:F3}s. Exit code: {returnValue}. Finished: {formatInstantExtended finishTime}[/]"
+                                    ))
+                                        .RightJustified()
+                                )
+                            else
+                                AnsiConsole.Write(
+                                    (new Rule($"[{Colors.Important}]Elapsed: {elapsed.TotalSeconds:F3}s. Exit code: {returnValue}.[/]"))
+                                        .RightJustified()
+                                )
+
+                            AnsiConsole.WriteLine()
+                    else
+                        // We don't have a config file, so write an error message and exit.
+                        AnsiConsole.Write(new Rule())
+
+                        let comparison =
+                            if isCaseInsensitive then
+                                StringComparison.InvariantCultureIgnoreCase
+                            else
+                                StringComparison.InvariantCulture
+
+                        let allowedCommands =
+                            [
+                                "config"
+                                "history"
+                                "auth"
+                                "connect"
+                            ]
+
+                        let isAllowed =
+                            let command = parseResult.CommandResult.Command
+
+                            Seq.append [ command ] (command.Parents.OfType<Command>())
+                            |> Seq.exists (fun cmd ->
+                                allowedCommands
+                                |> List.exists (fun allowed -> cmd.Name.Equals(allowed, comparison)))
+                            || (tryGetTopLevelCommandFromArgs argvNormalized isCaseInsensitive
+                                |> Option.exists (fun topLevel ->
+                                    allowedCommands
+                                    |> List.exists (fun allowed -> topLevel.Equals(allowed, comparison))))
+
+                        if isAllowed then
+                            let! invokedReturnValue = parseResult.InvokeAsync()
+                            returnValue <- invokedReturnValue
+                            ()
+                        else
+                            AnsiConsole.MarkupLine($"[{Colors.Important}]{getLocalizedString StringResourceName.GraceConfigFileNotFound}[/]")
+
+                        printParseResult parseResult
+                        let finishTime = getCurrentInstant ()
+
+                        let elapsed =
+                            (finishTime - startTime)
+                                .Plus(Duration.FromMilliseconds(110.0)) // Adding 110ms for .NET Runtime startup time.
+
+                        AnsiConsole.Write(
+                            (new Rule($"[{Colors.Important}]Elapsed: {elapsed.TotalSeconds:F3}s. Exit code: {returnValue}.[/]"))
+                                .RightJustified()
+                        )
 
                     return returnValue
                 with
