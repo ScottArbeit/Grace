@@ -779,6 +779,7 @@ module GraceCommand =
 
                     let hasHelpToken =
                         argvNormalized
+                        |> Array.takeWhile (fun arg -> not <| arg.Equals("--", StringComparison.Ordinal))
                         |> Array.exists (fun arg -> helpOptions.Contains(arg))
 
                     let isHelpRequest =
