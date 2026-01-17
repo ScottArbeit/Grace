@@ -32,7 +32,6 @@ open System.Text
 open System.Text.Json
 open System.Threading.Tasks
 open System.Reactive.Linq
-open MessagePack
 open System.Threading
 open Grace.Shared.Parameters
 open Grace.Shared.Parameters.Storage
@@ -168,8 +167,10 @@ module Services =
 
             let shouldIgnoreThisFile =
                 filePath.StartsWith(Current().GraceDirectory, StringComparison.InvariantCultureIgnoreCase) // it's in the /.grace directory
-                || filePath.Equals(Current().GraceStatusFile, StringComparison.InvariantCultureIgnoreCase) // it's the Grace Status file
-                || filePath.Equals(Current().GraceObjectCacheFile, StringComparison.InvariantCultureIgnoreCase) // it's the Grace Object Cache file
+                || filePath.Equals(Current().GraceStatusFile, StringComparison.InvariantCultureIgnoreCase) // it's the Grace local state DB
+                || filePath.Equals(Current().GraceStatusFile + "-wal", StringComparison.InvariantCultureIgnoreCase) // sqlite WAL
+                || filePath.Equals(Current().GraceStatusFile + "-shm", StringComparison.InvariantCultureIgnoreCase) // sqlite SHM
+                || filePath.Equals(Current().GraceStatusFile + "-journal", StringComparison.InvariantCultureIgnoreCase) // sqlite journal
                 || filePath.EndsWith(".gracetmp") // it's a Grace temporary file
                 || Directory.Exists(filePath) // it's a directory
                 //|| fileInfo.Attributes.HasFlag(FileAttributes.Temporary)                                          // it's temporary - why doesn't this work
@@ -289,81 +290,43 @@ module Services =
 
         localWriteTimes
 
-    /// Serializes an object of type 'T to the specified file path using MessagePack.
-    let serializeMessagePack<'T> (filePath: string) (data: 'T) =
+    let private getLocalStateDbPath () = Current().GraceStatusFile
+
+    /// Reads only GraceStatus meta fields (no index).
+    let readGraceStatusMeta () =
         task {
-            if parseResult |> isOutputFormat "Verbose" then
-                logToAnsiConsole Colors.Important $"Serializing file {filePath}."
-
-            let startInstant = getCurrentInstant ()
-            use fileStream = new FileStream(filePath, FileMode.Create, FileAccess.Write, FileShare.None, bufferSize = 65536, useAsync = true)
-            do! MessagePackSerializer.SerializeAsync(fileStream, data, messagePackSerializerOptions)
-            let duration = $"{(getCurrentInstant () - startInstant).TotalSeconds:F3}"
-
-            if parseResult |> isOutputFormat "Verbose" then
-                logToAnsiConsole Colors.Important $"Serialized file {filePath}; compressed length: {fileStream.Length}; time elapsed: {duration}s."
-        }
-        :> Task
-
-    /// Deserializes an object of type 'T from the specified file path using MessagePack.
-    let deserializeMessagePack<'T> (filePath: string) =
-        task {
-            if parseResult |> isOutputFormat "Verbose" then
-                logToAnsiConsole Colors.Important $"Deserializing file {filePath}."
-
-            let startInstant = getCurrentInstant ()
-            use fileStream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize = 65536, useAsync = true)
-            let! returnValue = MessagePackSerializer.DeserializeAsync<'T>(fileStream, messagePackSerializerOptions)
-            let duration = $"{(getCurrentInstant () - startInstant).TotalSeconds:F3}"
-
-            if parseResult |> isOutputFormat "Verbose" then
-                logToAnsiConsole Colors.Important $"Deserialized file {filePath}; compressed length: {fileStream.Length}; time elapsed: {duration}s."
-
-            return returnValue
+            let! meta = LocalStateDb.readStatusMeta (getLocalStateDbPath ())
+            return
+                {
+                    GraceStatus.Default with
+                        RootDirectoryId = meta.RootDirectoryId
+                        RootDirectorySha256Hash = meta.RootDirectorySha256Hash
+                        LastSuccessfulFileUpload = meta.LastSuccessfulFileUpload
+                        LastSuccessfulDirectoryVersionUpload = meta.LastSuccessfulDirectoryVersionUpload
+                }
         }
 
-    /// Retrieves the Grace status file and returns it as a GraceStatus instance.
-    let readGraceStatusFile () =
-        task {
-            if
-                File.Exists(Current().GraceStatusFile)
-                && FileInfo(Current().GraceStatusFile).Length > 0L
-            then
-                return! deserializeMessagePack<GraceStatus> (Current().GraceStatusFile)
-            else
-                return GraceStatus.Default
-        }
+    /// Reads the full GraceStatus snapshot including the index.
+    let readGraceStatusSnapshot () = LocalStateDb.readStatusSnapshot (getLocalStateDbPath ())
 
-    /// Writes the Grace status file to disk.
+    /// Retrieves the Grace status snapshot (compatibility wrapper).
+    let readGraceStatusFile () = readGraceStatusSnapshot ()
+
+    /// Writes the full Grace status snapshot to disk.
     let writeGraceStatusFile (graceStatus: GraceStatus) =
-        task {
-            Directory.CreateDirectory(Path.GetDirectoryName(Current().GraceStatusFile))
-            |> ignore // No-op if the directory already exists
+        LocalStateDb.replaceStatusSnapshot (getLocalStateDbPath ()) graceStatus
 
-            let graceStatusFilePath = Current().GraceStatusFile
-            do! serializeMessagePack graceStatusFilePath graceStatus
-        }
+    /// Applies incremental Grace status updates to the local DB.
+    let applyGraceStatusIncremental
+        (graceStatus: GraceStatus)
+        (newDirectoryVersions: IEnumerable<LocalDirectoryVersion>)
+        (differences: IEnumerable<FileSystemDifference>)
+        =
+        LocalStateDb.applyStatusIncremental (getLocalStateDbPath ()) graceStatus newDirectoryVersions differences
 
-    /// Retrieves the Grace object cache file and returns it as a GraceIndex instance.
-    let readGraceObjectCacheFile () =
-        task {
-            if
-                File.Exists(Current().GraceObjectCacheFile)
-                && FileInfo(Current().GraceObjectCacheFile).Length > 0L
-            then
-                return! deserializeMessagePack<GraceObjectCache> (Current().GraceObjectCacheFile)
-            else
-                return GraceObjectCache.Default
-        }
-
-    /// Writes the Grace object cache file to disk.
-    let writeGraceObjectCacheFile (graceObjectCache: GraceObjectCache) =
-        task {
-            Directory.CreateDirectory(Path.GetDirectoryName(Current().GraceObjectCacheFile))
-            |> ignore // No-op if the directory already exists
-
-            do! serializeMessagePack (Current().GraceObjectCacheFile) graceObjectCache
-        }
+    /// Upserts new directory versions into the object cache tables.
+    let upsertObjectCache (newDirectoryVersions: IEnumerable<LocalDirectoryVersion>) =
+        LocalStateDb.upsertObjectCache (getLocalStateDbPath ()) newDirectoryVersions
 
     /// Compared the repository's working directory against the Grace index file and returns the differences.
     let scanForDifferences (previousGraceStatus: GraceStatus) =
@@ -676,21 +639,18 @@ module Services =
     /// Adds a LocalDirectoryVersion to the local object cache.
     let addDirectoryToObjectCache (localDirectoryVersion: LocalDirectoryVersion) =
         task {
-            let! objectCache = readGraceObjectCacheFile ()
+            let! exists =
+                LocalStateDb.isDirectoryVersionInObjectCache
+                    (getLocalStateDbPath ())
+                    localDirectoryVersion.DirectoryVersionId
 
-            if
-                not
-                <| objectCache.Index.ContainsKey(localDirectoryVersion.DirectoryVersionId)
-            then
+            if not exists then
                 let allFilesExist =
                     localDirectoryVersion.Files
                     |> Seq.forall (fun file -> File.Exists(Path.Combine(Current().ObjectDirectory, file.RelativeDirectory, file.GetObjectFileName)))
 
                 if allFilesExist then
-                    objectCache.Index.TryAdd(localDirectoryVersion.DirectoryVersionId, localDirectoryVersion)
-                    |> ignore
-
-                    do! File.WriteAllTextAsync(Current().GraceObjectCacheFile, serialize objectCache)
+                    do! upsertObjectCache [ localDirectoryVersion ]
                     return Ok()
                 else
                     return Error "Directory could not be added to object cache. All files do not exist in /objects directory."
@@ -701,15 +661,7 @@ module Services =
     /// Removes a directory from the local object cache.
     let removeDirectoryFromObjectCache (directoryId: DirectoryVersionId) =
         task {
-            let! objectCache = readGraceObjectCacheFile ()
-
-            if objectCache.Index.ContainsKey(directoryId) then
-                let mutable ldv = LocalDirectoryVersion.Default
-
-                objectCache.Index.TryRemove(directoryId, &ldv)
-                |> ignore
-
-                do! File.WriteAllTextAsync(Current().GraceObjectCacheFile, serialize objectCache)
+            do! LocalStateDb.removeObjectCacheDirectory (getLocalStateDbPath ()) directoryId
         }
 
     /// Downloads files from object storage that aren't already present in the local object cache.
@@ -1179,9 +1131,17 @@ module Services =
     let IpcFileName () = Path.Combine(Path.GetTempPath(), "Grace", Current().BranchName, Constants.IpcFileName)
 
     /// Updates the contents of the `grace watch` status inter-process communication file.
-    let updateGraceWatchInterprocessFile (graceStatus: GraceStatus) =
+    let updateGraceWatchInterprocessFile
+        (graceStatus: GraceStatus)
+        (directoryIdsOverride: HashSet<DirectoryVersionId> option)
+        =
         task {
             try
+                let directoryIds =
+                    match directoryIdsOverride with
+                    | Some ids -> HashSet<DirectoryVersionId>(ids)
+                    | None -> HashSet<DirectoryVersionId>(graceStatus.Index.Keys)
+
                 let newGraceWatchStatus =
                     {
                         UpdatedAt = getCurrentInstant ()
@@ -1189,7 +1149,7 @@ module Services =
                         RootDirectorySha256Hash = graceStatus.RootDirectorySha256Hash
                         LastFileUploadInstant = graceStatus.LastSuccessfulFileUpload
                         LastDirectoryVersionInstant = graceStatus.LastSuccessfulDirectoryVersionUpload
-                        DirectoryIds = HashSet<DirectoryVersionId>(graceStatus.Index.Keys)
+                        DirectoryIds = directoryIds
                     }
                 //logToAnsiConsole Colors.Important $"In updateGraceWatchStatus. newGraceWatchStatus.UpdatedAt: {newGraceWatchStatus.UpdatedAt.ToString(InstantPattern.ExtendedIso.PatternText, CultureInfo.InvariantCulture)}."
                 //logToAnsiConsole Colors.Highlighted $"{Markup.Escape(EnhancedStackTrace.Current().ToString())}"
@@ -1252,26 +1212,6 @@ module Services =
 
             return File.Exists(objectFilePath)
         }
-
-    /// Checks if a file version is already found in the object cache index.
-    let isFileVersionInObjectCacheIndex (objectCache: GraceObjectCache) (fileVersion: LocalFileVersion) =
-        // Find the DirectoryVersions that match the relative directory.
-        let directoryVersions = objectCache.Index.Values.Where(fun dv -> dv.RelativePath = fileVersion.RelativeDirectory)
-        // Check the ones that match for the same RelativePath and Sha256Hash as the fileVersion.
-        let matchingDirectoryVersions =
-            directoryVersions.Where (fun dv ->
-                dv
-                    .Files
-                    .Where(fun fv ->
-                        fv.RelativePath = fileVersion.RelativePath
-                        && fv.Sha256Hash = fileVersion.Sha256Hash)
-                    .Count() > 0)
-        // If any of the DirectoryVersions in the object cache have the file, return true.
-        if matchingDirectoryVersions.Count() > 0 then true else false
-
-    /// Checks if a directory version is already found in the object cache index.
-    let isDirectoryVersionInObjectCache (objectCache: GraceObjectCache) (directoryVersion: LocalDirectoryVersion) =
-        objectCache.Index.ContainsKey(directoryVersion.DirectoryVersionId)
 
     /// Updates the Grace Status index with new directory versions after getting them from the server.
     let updateGraceStatusWithNewDirectoryVersionsFromServer

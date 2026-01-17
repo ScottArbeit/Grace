@@ -452,34 +452,35 @@ module QueueCommand =
             match tryParseGuid candidateIdRaw QueueError.InvalidCandidateId parseResult with
             | Error error -> return Error error
             | Ok candidateId ->
-                let promotionGroupIdRaw =
-                    parseResult.GetValue(Options.promotionGroupId)
+                let workItemIdRaw =
+                    parseResult.GetValue(Options.workItemId)
                     |> Option.ofObj
                     |> Option.defaultValue String.Empty
 
-                let! targetBranchIdResult =
-                    if String.IsNullOrWhiteSpace promotionGroupIdRaw then
-                        resolveTargetBranchId parseResult graceIds
-                    else
-                        resolveTargetBranchIdFromPromotionGroup parseResult graceIds promotionGroupIdRaw
-
-                match targetBranchIdResult with
+                match tryParseWorkItemId workItemIdRaw parseResult with
                 | Error error -> return Error error
-                | Ok targetBranchId ->
-                    let! policySnapshotIdResult = resolvePolicySnapshotId parseResult graceIds targetBranchId
+                | Ok workItemId ->
+                    let promotionGroupIdRaw =
+                        parseResult.GetValue(Options.promotionGroupId)
+                        |> Option.ofObj
+                        |> Option.defaultValue String.Empty
 
-                    match policySnapshotIdResult with
+                    let! targetBranchIdResult =
+                        if String.IsNullOrWhiteSpace promotionGroupIdRaw then
+                            resolveTargetBranchId parseResult graceIds
+                        else
+                            resolveTargetBranchIdFromPromotionGroup parseResult graceIds promotionGroupIdRaw
+
+                    match targetBranchIdResult with
                     | Error error -> return Error error
-                    | Ok policySnapshotId ->
-                        let workItemIdRaw =
-                            parseResult.GetValue(Options.workItemId)
-                            |> Option.ofObj
-                            |> Option.defaultValue String.Empty
+                    | Ok targetBranchId ->
+                        let! policySnapshotIdResult = resolvePolicySnapshotId parseResult graceIds targetBranchId
 
-                        match tryParseWorkItemId workItemIdRaw parseResult with
+                        match policySnapshotIdResult with
                         | Error error -> return Error error
-                        | Ok workItemId ->
-                            let parameters = buildEnqueueParameters graceIds targetBranchId candidateId promotionGroupIdRaw workItemId policySnapshotId
+                        | Ok policySnapshotId ->
+                            let parameters =
+                                buildEnqueueParameters graceIds targetBranchId candidateId promotionGroupIdRaw workItemId policySnapshotId
 
                             let! result = Queue.Enqueue(parameters)
 

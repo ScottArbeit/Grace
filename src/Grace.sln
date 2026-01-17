@@ -10,6 +10,8 @@ Project("{6EC3EE1D-3C4E-46DD-8F32-0CC8E7565705}") = "Grace.Server", "Grace.Serve
 EndProject
 Project("{6EC3EE1D-3C4E-46DD-8F32-0CC8E7565705}") = "Grace.CLI", "Grace.CLI\Grace.CLI.fsproj", "{9003426D-A5D8-4623-815E-A31C0279DA3A}"
 EndProject
+Project("{6EC3EE1D-3C4E-46DD-8F32-0CC8E7565705}") = "Grace.CLI.LocalStateDb.Worker", "Grace.CLI.LocalStateDb.Worker\Grace.CLI.LocalStateDb.Worker.fsproj", "{D122B2B1-AC11-4739-9421-4514244CE6A1}"
+EndProject
 Project("{6EC3EE1D-3C4E-46DD-8F32-0CC8E7565705}") = "Grace.Actors", "Grace.Actors\Grace.Actors.fsproj", "{C15014E1-123C-4FAB-BBED-9C1627FCE6E0}"
 EndProject
 Project("{6EC3EE1D-3C4E-46DD-8F32-0CC8E7565705}") = "Grace.Shared", "Grace.Shared\Grace.Shared.fsproj", "{0FC7C544-A958-4D86-9586-49C26A3B73EE}"
@@ -70,6 +72,10 @@ Global
 		{9003426D-A5D8-4623-815E-A31C0279DA3A}.Release|x64.Build.0 = Release|Any CPU
 		{9003426D-A5D8-4623-815E-A31C0279DA3A}.Release|x86.ActiveCfg = Release|Any CPU
 		{9003426D-A5D8-4623-815E-A31C0279DA3A}.Release|x86.Build.0 = Release|Any CPU
+		{D122B2B1-AC11-4739-9421-4514244CE6A1}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D122B2B1-AC11-4739-9421-4514244CE6A1}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D122B2B1-AC11-4739-9421-4514244CE6A1}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D122B2B1-AC11-4739-9421-4514244CE6A1}.Release|Any CPU.Build.0 = Release|Any CPU
 		{C15014E1-123C-4FAB-BBED-9C1627FCE6E0}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{C15014E1-123C-4FAB-BBED-9C1627FCE6E0}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{C15014E1-123C-4FAB-BBED-9C1627FCE6E0}.Debug|x64.ActiveCfg = Debug|Any CPU

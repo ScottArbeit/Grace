@@ -24,6 +24,9 @@ Optional: `pwsh ./scripts/install-githooks.ps1` to add a pre-commit
 - Validate changes with `pwsh ./scripts/validate.ps1 -Fast` (use `-Full` for
   Aspire integration coverage). If running commands manually, use
   `dotnet build --configuration Release` and `dotnet test --no-build`.
+- Before completing any turn (even small/non-functional edits), run a build
+  and tests so the code is always buildable with passing tests when handed
+  back.
 - Each task cannot be considered complete until it builds without errors; all
   compilation errors much be resolved.
 - When each task is done, run all tests and ensure they pass; fix any broken

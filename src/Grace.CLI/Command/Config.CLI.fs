@@ -39,7 +39,8 @@ module Config =
                 OptionName.Directory,
                 Required = false,
                 Description = "The root path of the repository to initialize Grace in [default: current directory]",
-                Arity = ArgumentArity.ExactlyOne
+                Arity = ArgumentArity.ExactlyOne,
+                DefaultValueFactory = (fun _ -> ".")
             )
 
         let overwrite =

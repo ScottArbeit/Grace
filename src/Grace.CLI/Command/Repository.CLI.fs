@@ -510,25 +510,7 @@ module Repository =
 
                                                     // Ensure the object cache index is up-to-date.
                                                     t4.StartTask()
-                                                    let! objectCache = readGraceObjectCacheFile ()
-                                                    let incrementAmount = 100.0 / double graceStatus.Index.Count
-
-                                                    let plr =
-                                                        Parallel.ForEach(
-                                                            graceStatus.Index.Values,
-                                                            Constants.ParallelOptions,
-                                                            (fun ldv ->
-                                                                if
-                                                                    not
-                                                                    <| objectCache.Index.ContainsKey(ldv.DirectoryVersionId)
-                                                                then
-                                                                    objectCache.Index.AddOrUpdate(ldv.DirectoryVersionId, (fun _ -> ldv), (fun _ _ -> ldv))
-                                                                    |> ignore
-
-                                                                    t4.Increment(incrementAmount))
-                                                        )
-
-                                                    do! writeGraceObjectCacheFile objectCache
+                                                    do! upsertObjectCache graceStatus.Index.Values
                                                     t4.Value <- 100.0
 
                                                     // Ensure all files are uploaded to object storage.

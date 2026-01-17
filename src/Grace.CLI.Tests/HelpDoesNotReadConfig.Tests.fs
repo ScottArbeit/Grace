@@ -100,6 +100,36 @@ module HelpDoesNotReadConfigTests =
             exitCode |> should equal 0)
 
     [<Test>]
+    let ``config write defaults directory to current directory`` () =
+        withTempDir (fun root ->
+            let exitCode, output =
+                runWithCapturedOutput [| "config"
+                                         "write" |]
+
+            exitCode |> should equal 0
+
+            File.Exists(Path.Combine(root, ".grace", "graceconfig.json"))
+            |> should equal true
+
+            // `printParseResult` should only show up in Verbose output.
+            output
+            |> should not' (contain "Parameter values:")
+
+            output |> should not' (contain "[ Grace.CLI"))
+
+    [<Test>]
+    let ``config write prints parse result in verbose output`` () =
+        withTempDir (fun _ ->
+            let exitCode, output =
+                runWithCapturedOutput [| "--output"
+                                         "Verbose"
+                                         "config"
+                                         "write" |]
+
+            exitCode |> should equal 0
+            output |> should contain "Parameter values:")
+
+    [<Test>]
     let ``help shows symbolic defaults`` () =
         withTempDir (fun _ ->
             let exitCode, output =

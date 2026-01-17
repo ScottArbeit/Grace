@@ -409,18 +409,6 @@ module Branch =
         parameters
 
     let private CommonValidations parseResult =
-        let ``Grace index file must exist`` (parseResult: ParseResult) =
-            if not <| File.Exists(Current().GraceStatusFile) then
-                Error(GraceError.Create (getErrorMessage BranchError.IndexFileNotFound) (getCorrelationId parseResult))
-            else
-                Ok(parseResult)
-
-        let ``Grace object cache file must exist`` (parseResult: ParseResult) =
-            if not <| File.Exists(Current().GraceStatusFile) then
-                Error(GraceError.Create (getErrorMessage BranchError.ObjectCacheFileNotFound) (getCorrelationId parseResult))
-            else
-                Ok(parseResult)
-
         let ``Message must not be empty`` (parseResult: ParseResult) =
             if parseResult.CommandResult.Command.Options.FirstOrDefault(fun option -> option.Name = OptionName.Message)
                <> null then
@@ -452,9 +440,7 @@ module Branch =
                 Ok(parseResult)
 
         (parseResult)
-        |> ``Grace index file must exist``
-        >>= ``Grace object cache file must exist``
-        >>= ``Message must not be empty``
+        |> ``Message must not be empty``
         >>= ``Message must be less than 2048 characters``
 
     let private ``BranchName must not be empty`` (parseResult: ParseResult) =
@@ -1208,7 +1194,7 @@ module Branch =
                                                     LastSuccessfulDirectoryVersionUpload = lastDirectoryVersionUpload
                                                 }
 
-                                            do! writeGraceStatusFile newGraceStatus
+                                            do! applyGraceStatusIncremental newGraceStatus newDirectoryVersions differences
 
                                         t5.StartTask() // Create new reference.
 
@@ -2888,26 +2874,7 @@ module Branch =
                         task {
                             t |> startProgressTask showOutput
                             do! writeGraceStatusFile newGraceStatus
-                            let! objectCache = readGraceObjectCacheFile ()
-
-                            let plr =
-                                Parallel.ForEach(
-                                    newGraceStatus.Index.Values,
-                                    Constants.ParallelOptions,
-                                    (fun localDirectoryVersion ->
-                                        if
-                                            not
-                                            <| objectCache.Index.ContainsKey(localDirectoryVersion.DirectoryVersionId)
-                                        then
-                                            objectCache.Index.AddOrUpdate(
-                                                localDirectoryVersion.DirectoryVersionId,
-                                                (fun _ -> localDirectoryVersion),
-                                                (fun _ _ -> localDirectoryVersion)
-                                            )
-                                            |> ignore)
-                                )
-
-                            do! writeGraceObjectCacheFile objectCache
+                            do! upsertObjectCache newGraceStatus.Index.Values
 
                             t |> setProgressTaskValue showOutput 100.0
                             return Ok(showOutput, parseResult, parameters, currentBranch)
@@ -3387,7 +3354,7 @@ module Branch =
 
                                             let! result = uploadNewDirectoryVersions branchDto newDirectoryVersions
                                             do! writeGraceStatusFile updatedGraceStatus
-                                            do! updateGraceWatchInterprocessFile updatedGraceStatus
+                                            do! updateGraceWatchInterprocessFile updatedGraceStatus None
                                             newGraceStatus <- updatedGraceStatus
 
                                         | Error error -> logToAnsiConsole Colors.Error (Markup.Escape($"{error}"))

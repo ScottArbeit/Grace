@@ -26,7 +26,6 @@ open System.Threading
 open System.Threading.Tasks
 open System.Collections.Generic
 open NodaTime
-open MessagePack
 
 module Maintenance =
 
@@ -197,29 +196,7 @@ module Maintenance =
 
                                     // Ensure the object cache index is up-to-date.
                                     t4.StartTask()
-                                    let! objectCache = readGraceObjectCacheFile ()
-                                    let incrementAmount = 100.0 / double graceStatus.Index.Count
-
-                                    let plr =
-                                        Parallel.ForEach(
-                                            graceStatus.Index.Values,
-                                            Constants.ParallelOptions,
-                                            (fun localDirectoryVersion ->
-                                                if
-                                                    not
-                                                    <| objectCache.Index.ContainsKey(localDirectoryVersion.DirectoryVersionId)
-                                                then
-                                                    objectCache.Index.AddOrUpdate(
-                                                        localDirectoryVersion.DirectoryVersionId,
-                                                        (fun _ -> localDirectoryVersion),
-                                                        (fun _ _ -> localDirectoryVersion)
-                                                    )
-                                                    |> ignore
-
-                                                t4.Increment(incrementAmount))
-                                        )
-
-                                    do! writeGraceObjectCacheFile objectCache
+                                    do! upsertObjectCache graceStatus.Index.Values
                                     t4.Value <- 100.0
 
                                     // Ensure all files are uploaded to object storage.
@@ -719,13 +696,6 @@ module Maintenance =
                 return 0
             }
 
-    let verify<'T> (label: string) =
-        try
-            let _ = messagePackSerializerOptions.Resolver.GetFormatterWithVerify<'T>()
-            printfn "%s: formatter OK" label
-        with
-        | ex -> printfn "%s: formatter MISSING\n%s" label (ex.ToString())
-
     type CheckIgnoreEntries() =
         inherit AsynchronousCommandLineAction()
 
@@ -743,31 +713,6 @@ module Maintenance =
                 for file in Current().GraceFileIgnoreEntries do
                     AnsiConsole.MarkupLine($"[{Colors.Highlighted}]  {file}[/]")
 
-                return 0
-            }
-
-    type Test() =
-        inherit AsynchronousCommandLineAction()
-
-        override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
-            task {
-
-                // Probe the usual suspects
-                verify<Instant> "NodaTime.Instant"
-                verify<Uri> "System.Uri"
-                verify<byte []> "byte[]"
-                verify<ReadOnlyMemory<byte>> "ReadOnlyMemory<byte>"
-                verify<Guid> "Guid"
-
-                // Your concrete types (adjust names if needed)
-                verify<Grace.Types.Types.DirectoryVersion> "DirectoryVersion"
-                verify<Grace.Types.Types.FileVersion> "FileVersion"
-                verify<Grace.Types.Types.LocalDirectoryVersion> "LocalDirectoryVersion"
-                verify<Grace.Types.Types.LocalFileVersion> "LocalFileVersion"
-
-                // Also probe the generic containers which appear in your model
-                verify<List<Grace.Types.Types.DirectoryVersion>> "List<DirectoryVersion>"
-                verify<Grace.Types.Types.DirectoryVersion []> "DirectoryVersion[]"
                 return 0
             }
 
@@ -821,12 +766,5 @@ module Maintenance =
 
         checkIgnoreEntriesCommand.Action <- new CheckIgnoreEntries()
         maintenanceCommand.Subcommands.Add(checkIgnoreEntriesCommand)
-
-        let testCommand =
-            new Command("test", Description = "Just a test.")
-            |> addCommonOptions
-
-        testCommand.Action <- new Test()
-        maintenanceCommand.Subcommands.Add(testCommand)
 
         maintenanceCommand
