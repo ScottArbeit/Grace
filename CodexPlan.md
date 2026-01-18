@@ -6,7 +6,7 @@
 - Step 4: Implement bootstrap SystemAdmin seeding + RoleCatalog BranchAdmin alignment. Status: Done.
 - Step 5: Add/update tests for auth coverage, access rules, bootstrap, and guardrails. Status: Done.
 - Step 6: Run release build/test checkpoints and reconcile failures. Status: Done.
-- Step 7: Final validation, documentation touch-ups, and close out bead/commit. Status: In Progress.
+- Step 7: Final validation, documentation touch-ups, and close out bead/commit. Status: Done.
 
 # Decision Log
 
