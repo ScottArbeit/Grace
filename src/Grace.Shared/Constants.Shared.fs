@@ -308,6 +308,14 @@ module Constants =
         [<Literal>]
         let GraceAuthPatAllowNoExpiry = "grace__auth__pat__allow_no_expiry"
 
+        /// Semicolon-delimited list of user principals that should be bootstrapped as SystemAdmin.
+        [<Literal>]
+        let GraceAuthzBootstrapSystemAdminUsers = "grace__authz__bootstrap__system_admin_users"
+
+        /// Semicolon-delimited list of group principals that should be bootstrapped as SystemAdmin.
+        [<Literal>]
+        let GraceAuthzBootstrapSystemAdminGroups = "grace__authz__bootstrap__system_admin_groups"
+
         /// The name of the container in object storage that holds memoized RecursiveDirectoryVersions.
         [<Literal>]
         let DirectoryVersionContainerName = "grace__azure_storage__directoryversion_container_name"
@@ -343,6 +351,10 @@ module Constants =
         /// The environment variable that selects the pub-sub provider.
         [<Literal>]
         let GracePubSubSystem = "grace__pubsub__system"
+
+        /// Allows anonymous access to the Prometheus scraping endpoint when set to true.
+        [<Literal>]
+        let GraceMetricsAllowAnonymous = "grace__metrics__allow_anonymous"
 
         /// Azure Service Bus connection string
         [<Literal>]

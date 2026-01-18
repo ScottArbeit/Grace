@@ -11,6 +11,7 @@ open Microsoft.Extensions.Logging
 open Orleans
 open Orleans.Runtime
 open System
+open System.Collections.Generic
 open System.Threading.Tasks
 
 module AccessControl =
@@ -40,9 +41,85 @@ module AccessControl =
         let mutable correlationId: CorrelationId = String.Empty
 
         override this.OnActivateAsync(ct) =
-            accessControlState <- if state.RecordExists then state.State else AccessControlState.Empty
+            task {
+                accessControlState <- if state.RecordExists then state.State else AccessControlState.Empty
 
-            Task.CompletedTask
+                let isSystemScope =
+                    this.GetPrimaryKeyString()
+                        .Equals(getScopeKey Scope.System, StringComparison.OrdinalIgnoreCase)
+
+                if isSystemScope && accessControlState.Assignments.IsEmpty then
+                    let parseList (value: string) =
+                        if String.IsNullOrWhiteSpace value then
+                            []
+                        else
+                            value.Split(';', StringSplitOptions.RemoveEmptyEntries ||| StringSplitOptions.TrimEntries)
+                            |> Seq.map (fun item -> item.Trim())
+                            |> Seq.filter (fun item -> not (String.IsNullOrWhiteSpace item))
+                            |> Seq.distinct
+                            |> Seq.toList
+
+                    let bootstrapUsers =
+                        Environment.GetEnvironmentVariable(EnvironmentVariables.GraceAuthzBootstrapSystemAdminUsers)
+                        |> parseList
+
+                    let bootstrapGroups =
+                        Environment.GetEnvironmentVariable(EnvironmentVariables.GraceAuthzBootstrapSystemAdminGroups)
+                        |> parseList
+
+                    if (not bootstrapUsers.IsEmpty) || (not bootstrapGroups.IsEmpty) then
+                        let now = getCurrentInstant ()
+                        let sourceDetailParts = List<string>()
+
+                        if not bootstrapUsers.IsEmpty then
+                            sourceDetailParts.Add($"users={String.Join(';', bootstrapUsers)}")
+
+                        if not bootstrapGroups.IsEmpty then
+                            sourceDetailParts.Add($"groups={String.Join(';', bootstrapGroups)}")
+
+                        let sourceDetail =
+                            if sourceDetailParts.Count = 0 then
+                                None
+                            else
+                                Some(String.Join("; ", sourceDetailParts))
+
+                        let userAssignments =
+                            bootstrapUsers
+                            |> List.map (fun userId ->
+                                {
+                                    Principal = { PrincipalType = PrincipalType.User; PrincipalId = userId }
+                                    Scope = Scope.System
+                                    RoleId = "SystemAdmin"
+                                    Source = "bootstrap"
+                                    SourceDetail = sourceDetail
+                                    CreatedAt = now
+                                })
+
+                        let groupAssignments =
+                            bootstrapGroups
+                            |> List.map (fun groupId ->
+                                {
+                                    Principal = { PrincipalType = PrincipalType.Group; PrincipalId = groupId }
+                                    Scope = Scope.System
+                                    RoleId = "SystemAdmin"
+                                    Source = "bootstrap"
+                                    SourceDetail = sourceDetail
+                                    CreatedAt = now
+                                })
+
+                        accessControlState <- { accessControlState with Assignments = userAssignments @ groupAssignments }
+                        do! this.SaveState()
+
+                        log.LogWarning(
+                            "{CurrentInstant}: Bootstrapped {UserCount} system admin user(s) and {GroupCount} group(s) for system scope.",
+                            getCurrentInstantExtended (),
+                            userAssignments.Length,
+                            groupAssignments.Length
+                        )
+
+                return ()
+            }
+            :> Task
 
         member private this.ValidateScope (scope: Scope) (correlationId: CorrelationId) =
             let expectedKey = getScopeKey scope

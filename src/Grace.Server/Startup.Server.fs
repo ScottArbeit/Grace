@@ -68,6 +68,16 @@ open System.Security.Claims
 
 module Application =
 
+    type AuthResource = Grace.Types.Authorization.Resource
+
+    type SecurityClassification =
+        | AllowAnonymous
+        | Authenticated
+        | Authorized of Operation * (HttpContext -> Task<AuthResource>)
+        | AuthorizedMany of Operation * (HttpContext -> Task<AuthResource list>)
+        | AuthorizedResolved of (HttpContext -> Task<Result<Operation * AuthResource, GraceError>>)
+        | AuthorizedResolvedOptional of (HttpContext -> Task<Result<(Operation * AuthResource) option, GraceError>>)
+
     type CosmosWarmup(cosmosClient: CosmosClient, log: ILogger<CosmosWarmup>) =
         interface IHostedService with
             member _.StartAsync(ct: CancellationToken) : Task =
@@ -118,7 +128,7 @@ module Application =
         let repositoryResourceFromContext (context: HttpContext) =
             task {
                 let graceIds = Services.getGraceIds context
-                return Resource.Repository(graceIds.OwnerId, graceIds.OrganizationId, graceIds.RepositoryId)
+                return AuthResource.Repository(graceIds.OwnerId, graceIds.OrganizationId, graceIds.RepositoryId)
             }
 
         let uploadPathResourcesFromContext (context: HttpContext) =
@@ -133,498 +143,777 @@ module Application =
 
                 let resources =
                     parameters.FileVersions
-                    |> Seq.map (fun fileVersion -> Resource.Path(graceIds.OwnerId, graceIds.OrganizationId, graceIds.RepositoryId, fileVersion.RelativePath))
+                    |> Seq.map (fun fileVersion ->
+                        AuthResource.Path(graceIds.OwnerId, graceIds.OrganizationId, graceIds.RepositoryId, fileVersion.RelativePath))
                     |> Seq.toList
 
                 return resources
             }
 
-        let composeHandlers (first: HttpHandler) (second: HttpHandler) : HttpHandler = fun next context -> first (second next) context
+        let downloadPathResourceFromContext (context: HttpContext) =
+            task {
+                context.Request.EnableBuffering()
+                let! parameters = context.BindJsonAsync<Storage.GetDownloadUriParameters>()
 
-        let requireRepoAdmin: HttpHandler = AuthorizationMiddleware.requiresPermission Operation.RepoAdmin repositoryResourceFromContext
+                context.Request.Body.Seek(0L, IO.SeekOrigin.Begin)
+                |> ignore
 
-        let requirePathWrite: HttpHandler = AuthorizationMiddleware.requiresPermissions Operation.PathWrite uploadPathResourcesFromContext
+                let graceIds = Services.getGraceIds context
+                return AuthResource.Path(graceIds.OwnerId, graceIds.OrganizationId, graceIds.RepositoryId, parameters.FileVersion.RelativePath)
+            }
+
+        let branchResourceFromContext (context: HttpContext) =
+            task {
+                let graceIds = Services.getGraceIds context
+                return AuthResource.Branch(graceIds.OwnerId, graceIds.OrganizationId, graceIds.RepositoryId, graceIds.BranchId)
+            }
+
+        let organizationResourceFromContext (context: HttpContext) =
+            task {
+                let graceIds = Services.getGraceIds context
+                return AuthResource.Organization(graceIds.OwnerId, graceIds.OrganizationId)
+            }
+
+        let ownerResourceFromContext (context: HttpContext) =
+            task {
+                let graceIds = Services.getGraceIds context
+                return AuthResource.Owner(graceIds.OwnerId)
+            }
+
+        let systemResourceFromContext (_context: HttpContext) = Task.FromResult AuthResource.System
+
+        let makeSecurityKey (methodName: string) (path: string) =
+            $"{methodName.ToUpperInvariant()} {path}"
+
+        let securityEntries =
+            [
+                makeSecurityKey "GET" "/", AllowAnonymous
+                makeSecurityKey "GET" "/healthz", AllowAnonymous
+                makeSecurityKey "GET" "/auth/oidc/config", AllowAnonymous
+                makeSecurityKey "GET" "/auth/login", AllowAnonymous
+                makeSecurityKey "GET" "/auth/login/%s", AllowAnonymous
+
+                makeSecurityKey "GET" "/notifications", Authenticated
+                makeSecurityKey "GET" "/metrics", Authenticated
+
+                makeSecurityKey "GET" "/auth/me", Authenticated
+                makeSecurityKey "GET" "/auth/logout", Authenticated
+                makeSecurityKey "POST" "/auth/token/create", Authenticated
+                makeSecurityKey "POST" "/auth/token/list", Authenticated
+                makeSecurityKey "POST" "/auth/token/revoke", Authenticated
+
+                makeSecurityKey "GET" "/access/listRoles", Authenticated
+                makeSecurityKey "POST" "/access/grantRole",
+                AuthorizedResolved(Grace.Server.Access.resolveAdminRequirementFromAccessParameters (fun (p: Access.GrantRoleParameters) -> p.ScopeKind))
+                makeSecurityKey "POST" "/access/revokeRole",
+                AuthorizedResolved(Grace.Server.Access.resolveAdminRequirementFromAccessParameters (fun (p: Access.RevokeRoleParameters) -> p.ScopeKind))
+                makeSecurityKey "POST" "/access/listRoleAssignments",
+                AuthorizedResolved(
+                    Grace.Server.Access.resolveAdminRequirementFromAccessParameters (fun (p: Access.ListRoleAssignmentsParameters) -> p.ScopeKind)
+                )
+                makeSecurityKey "POST" "/access/upsertPathPermission",
+                AuthorizedResolved(Grace.Server.Access.resolveRepoAdminRequirementFromAccessParameters<Access.UpsertPathPermissionParameters>)
+                makeSecurityKey "POST" "/access/removePathPermission",
+                AuthorizedResolved(Grace.Server.Access.resolveRepoAdminRequirementFromAccessParameters<Access.RemovePathPermissionParameters>)
+                makeSecurityKey "POST" "/access/listPathPermissions",
+                AuthorizedResolved(Grace.Server.Access.resolveRepoAdminRequirementFromAccessParameters<Access.ListPathPermissionsParameters>)
+                makeSecurityKey "POST" "/access/checkPermission",
+                AuthorizedResolvedOptional(Grace.Server.Access.resolveCheckPermissionAdminRequirement)
+
+                makeSecurityKey "POST" "/branch/get", Authorized(Operation.BranchRead, branchResourceFromContext)
+                makeSecurityKey "POST" "/branch/getEvents", Authorized(Operation.BranchRead, branchResourceFromContext)
+                makeSecurityKey "POST" "/branch/getExternals", Authorized(Operation.BranchRead, branchResourceFromContext)
+                makeSecurityKey "POST" "/branch/getCheckpoints", Authorized(Operation.BranchRead, branchResourceFromContext)
+                makeSecurityKey "POST" "/branch/getCommits", Authorized(Operation.BranchRead, branchResourceFromContext)
+                makeSecurityKey "POST" "/branch/getDiffsForReferenceType", Authorized(Operation.BranchRead, branchResourceFromContext)
+                makeSecurityKey "POST" "/branch/getParentBranch", Authorized(Operation.BranchRead, branchResourceFromContext)
+                makeSecurityKey "POST" "/branch/getPromotions", Authorized(Operation.BranchRead, branchResourceFromContext)
+                makeSecurityKey "POST" "/branch/getRecursiveSize", Authorized(Operation.BranchRead, branchResourceFromContext)
+                makeSecurityKey "POST" "/branch/getReference", Authorized(Operation.BranchRead, branchResourceFromContext)
+                makeSecurityKey "POST" "/branch/getReferences", Authorized(Operation.BranchRead, branchResourceFromContext)
+                makeSecurityKey "POST" "/branch/getSaves", Authorized(Operation.BranchRead, branchResourceFromContext)
+                makeSecurityKey "POST" "/branch/getTags", Authorized(Operation.BranchRead, branchResourceFromContext)
+                makeSecurityKey "POST" "/branch/getVersion", Authorized(Operation.BranchRead, branchResourceFromContext)
+                makeSecurityKey "POST" "/branch/listContents", Authorized(Operation.BranchRead, branchResourceFromContext)
+
+                makeSecurityKey "POST" "/branch/create", Authorized(Operation.BranchWrite, branchResourceFromContext)
+                makeSecurityKey "POST" "/branch/assign", Authorized(Operation.BranchWrite, branchResourceFromContext)
+                makeSecurityKey "POST" "/branch/checkpoint", Authorized(Operation.BranchWrite, branchResourceFromContext)
+                makeSecurityKey "POST" "/branch/commit", Authorized(Operation.BranchWrite, branchResourceFromContext)
+                makeSecurityKey "POST" "/branch/createExternal", Authorized(Operation.BranchWrite, branchResourceFromContext)
+                makeSecurityKey "POST" "/branch/promote", Authorized(Operation.BranchWrite, branchResourceFromContext)
+                makeSecurityKey "POST" "/branch/rebase", Authorized(Operation.BranchWrite, branchResourceFromContext)
+                makeSecurityKey "POST" "/branch/save", Authorized(Operation.BranchWrite, branchResourceFromContext)
+                makeSecurityKey "POST" "/branch/tag", Authorized(Operation.BranchWrite, branchResourceFromContext)
+
+                makeSecurityKey "POST" "/branch/delete", Authorized(Operation.BranchAdmin, branchResourceFromContext)
+                makeSecurityKey "POST" "/branch/enableAssign", Authorized(Operation.BranchAdmin, branchResourceFromContext)
+                makeSecurityKey "POST" "/branch/enableAutoRebase", Authorized(Operation.BranchAdmin, branchResourceFromContext)
+                makeSecurityKey "POST" "/branch/enableCheckpoint", Authorized(Operation.BranchAdmin, branchResourceFromContext)
+                makeSecurityKey "POST" "/branch/enableCommit", Authorized(Operation.BranchAdmin, branchResourceFromContext)
+                makeSecurityKey "POST" "/branch/enableExternal", Authorized(Operation.BranchAdmin, branchResourceFromContext)
+                makeSecurityKey "POST" "/branch/enablePromotion", Authorized(Operation.BranchAdmin, branchResourceFromContext)
+                makeSecurityKey "POST" "/branch/enableSave", Authorized(Operation.BranchAdmin, branchResourceFromContext)
+                makeSecurityKey "POST" "/branch/enableTag", Authorized(Operation.BranchAdmin, branchResourceFromContext)
+                makeSecurityKey "POST" "/branch/setPromotionMode", Authorized(Operation.BranchAdmin, branchResourceFromContext)
+                makeSecurityKey "POST" "/branch/updateParentBranch", Authorized(Operation.BranchAdmin, branchResourceFromContext)
+
+                makeSecurityKey "POST" "/diff/getDiff", Authorized(Operation.RepoRead, repositoryResourceFromContext)
+                makeSecurityKey "POST" "/diff/getDiffBySha256Hash", Authorized(Operation.RepoRead, repositoryResourceFromContext)
+                makeSecurityKey "POST" "/diff/populate", Authorized(Operation.RepoRead, repositoryResourceFromContext)
+
+                makeSecurityKey "POST" "/directory/get", Authorized(Operation.RepoRead, repositoryResourceFromContext)
+                makeSecurityKey "POST" "/directory/getByDirectoryIds", Authorized(Operation.RepoRead, repositoryResourceFromContext)
+                makeSecurityKey "POST" "/directory/getBySha256Hash", Authorized(Operation.RepoRead, repositoryResourceFromContext)
+                makeSecurityKey "POST" "/directory/getDirectoryVersionsRecursive", Authorized(Operation.RepoRead, repositoryResourceFromContext)
+                makeSecurityKey "POST" "/directory/getZipFile", Authorized(Operation.RepoRead, repositoryResourceFromContext)
+
+                makeSecurityKey "POST" "/directory/create", Authorized(Operation.RepoWrite, repositoryResourceFromContext)
+                makeSecurityKey "POST" "/directory/saveDirectoryVersions", Authorized(Operation.RepoWrite, repositoryResourceFromContext)
+
+                makeSecurityKey "POST" "/owner/create", Authorized(Operation.SystemAdmin, systemResourceFromContext)
+                makeSecurityKey "POST" "/owner/get", Authorized(Operation.OwnerRead, ownerResourceFromContext)
+                makeSecurityKey "POST" "/owner/listOrganizations", Authorized(Operation.OwnerRead, ownerResourceFromContext)
+                makeSecurityKey "POST" "/owner/delete", Authorized(Operation.OwnerAdmin, ownerResourceFromContext)
+                makeSecurityKey "POST" "/owner/setDescription", Authorized(Operation.OwnerAdmin, ownerResourceFromContext)
+                makeSecurityKey "POST" "/owner/setName", Authorized(Operation.OwnerAdmin, ownerResourceFromContext)
+                makeSecurityKey "POST" "/owner/setSearchVisibility", Authorized(Operation.OwnerAdmin, ownerResourceFromContext)
+                makeSecurityKey "POST" "/owner/setType", Authorized(Operation.OwnerAdmin, ownerResourceFromContext)
+                makeSecurityKey "POST" "/owner/undelete", Authorized(Operation.OwnerAdmin, ownerResourceFromContext)
+
+                makeSecurityKey "POST" "/organization/create", Authorized(Operation.OwnerAdmin, ownerResourceFromContext)
+                makeSecurityKey "POST" "/organization/get", Authorized(Operation.OrgRead, organizationResourceFromContext)
+                makeSecurityKey "POST" "/organization/listRepositories", Authorized(Operation.OrgRead, organizationResourceFromContext)
+                makeSecurityKey "POST" "/organization/delete", Authorized(Operation.OrgAdmin, organizationResourceFromContext)
+                makeSecurityKey "POST" "/organization/setDescription", Authorized(Operation.OrgAdmin, organizationResourceFromContext)
+                makeSecurityKey "POST" "/organization/setName", Authorized(Operation.OrgAdmin, organizationResourceFromContext)
+                makeSecurityKey "POST" "/organization/setSearchVisibility", Authorized(Operation.OrgAdmin, organizationResourceFromContext)
+                makeSecurityKey "POST" "/organization/setType", Authorized(Operation.OrgAdmin, organizationResourceFromContext)
+                makeSecurityKey "POST" "/organization/undelete", Authorized(Operation.OrgAdmin, organizationResourceFromContext)
+
+                makeSecurityKey "POST" "/repository/create", Authorized(Operation.OrgAdmin, organizationResourceFromContext)
+                makeSecurityKey "POST" "/repository/exists", Authorized(Operation.RepoRead, repositoryResourceFromContext)
+                makeSecurityKey "POST" "/repository/get", Authorized(Operation.RepoRead, repositoryResourceFromContext)
+                makeSecurityKey "POST" "/repository/getBranches", Authorized(Operation.RepoRead, repositoryResourceFromContext)
+                makeSecurityKey "POST" "/repository/getBranchesByBranchId", Authorized(Operation.RepoRead, repositoryResourceFromContext)
+                makeSecurityKey "POST" "/repository/getReferencesByReferenceId", Authorized(Operation.RepoRead, repositoryResourceFromContext)
+                makeSecurityKey "POST" "/repository/isEmpty", Authorized(Operation.RepoRead, repositoryResourceFromContext)
+
+                makeSecurityKey "POST" "/repository/delete", Authorized(Operation.RepoAdmin, repositoryResourceFromContext)
+                makeSecurityKey "POST" "/repository/undelete", Authorized(Operation.RepoAdmin, repositoryResourceFromContext)
+                makeSecurityKey "POST" "/repository/setAllowsLargeFiles", Authorized(Operation.RepoAdmin, repositoryResourceFromContext)
+                makeSecurityKey "POST" "/repository/setAnonymousAccess", Authorized(Operation.RepoAdmin, repositoryResourceFromContext)
+                makeSecurityKey "POST" "/repository/setCheckpointDays", Authorized(Operation.RepoAdmin, repositoryResourceFromContext)
+                makeSecurityKey "POST" "/repository/setDiffCacheDays", Authorized(Operation.RepoAdmin, repositoryResourceFromContext)
+                makeSecurityKey "POST" "/repository/setDirectoryVersionCacheDays", Authorized(Operation.RepoAdmin, repositoryResourceFromContext)
+                makeSecurityKey "POST" "/repository/setDefaultServerApiVersion", Authorized(Operation.RepoAdmin, repositoryResourceFromContext)
+                makeSecurityKey "POST" "/repository/setConflictResolutionPolicy", Authorized(Operation.RepoAdmin, repositoryResourceFromContext)
+                makeSecurityKey "POST" "/repository/setDescription", Authorized(Operation.RepoAdmin, repositoryResourceFromContext)
+                makeSecurityKey "POST" "/repository/setLogicalDeleteDays", Authorized(Operation.RepoAdmin, repositoryResourceFromContext)
+                makeSecurityKey "POST" "/repository/setName", Authorized(Operation.RepoAdmin, repositoryResourceFromContext)
+                makeSecurityKey "POST" "/repository/setRecordSaves", Authorized(Operation.RepoAdmin, repositoryResourceFromContext)
+                makeSecurityKey "POST" "/repository/setSaveDays", Authorized(Operation.RepoAdmin, repositoryResourceFromContext)
+                makeSecurityKey "POST" "/repository/setStatus", Authorized(Operation.RepoAdmin, repositoryResourceFromContext)
+                makeSecurityKey "POST" "/repository/setVisibility", Authorized(Operation.RepoAdmin, repositoryResourceFromContext)
+
+                makeSecurityKey "POST" "/storage/getUploadMetadataForFiles", AuthorizedMany(Operation.PathWrite, uploadPathResourcesFromContext)
+                makeSecurityKey "POST" "/storage/getUploadUri", AuthorizedMany(Operation.PathWrite, uploadPathResourcesFromContext)
+                makeSecurityKey "POST" "/storage/getDownloadUri", Authorized(Operation.PathRead, downloadPathResourceFromContext)
+
+                makeSecurityKey "POST" "/promotionGroup/get", Authorized(Operation.RepoRead, repositoryResourceFromContext)
+                makeSecurityKey "POST" "/promotionGroup/getEvents", Authorized(Operation.RepoRead, repositoryResourceFromContext)
+                makeSecurityKey "POST" "/promotionGroup/create", Authorized(Operation.RepoWrite, repositoryResourceFromContext)
+                makeSecurityKey "POST" "/promotionGroup/addPromotion", Authorized(Operation.RepoWrite, repositoryResourceFromContext)
+                makeSecurityKey "POST" "/promotionGroup/removePromotion", Authorized(Operation.RepoWrite, repositoryResourceFromContext)
+                makeSecurityKey "POST" "/promotionGroup/reorderPromotions", Authorized(Operation.RepoWrite, repositoryResourceFromContext)
+                makeSecurityKey "POST" "/promotionGroup/schedule", Authorized(Operation.RepoWrite, repositoryResourceFromContext)
+                makeSecurityKey "POST" "/promotionGroup/markReady", Authorized(Operation.RepoWrite, repositoryResourceFromContext)
+                makeSecurityKey "POST" "/promotionGroup/start", Authorized(Operation.RepoWrite, repositoryResourceFromContext)
+                makeSecurityKey "POST" "/promotionGroup/complete", Authorized(Operation.RepoWrite, repositoryResourceFromContext)
+                makeSecurityKey "POST" "/promotionGroup/block", Authorized(Operation.RepoWrite, repositoryResourceFromContext)
+                makeSecurityKey "POST" "/promotionGroup/delete", Authorized(Operation.RepoWrite, repositoryResourceFromContext)
+
+                makeSecurityKey "POST" "/work/get", Authorized(Operation.RepoRead, repositoryResourceFromContext)
+                makeSecurityKey "POST" "/work/create", Authorized(Operation.RepoWrite, repositoryResourceFromContext)
+                makeSecurityKey "POST" "/work/update", Authorized(Operation.RepoWrite, repositoryResourceFromContext)
+                makeSecurityKey "POST" "/work/link/reference", Authorized(Operation.RepoWrite, repositoryResourceFromContext)
+                makeSecurityKey "POST" "/work/link/promotion-group", Authorized(Operation.RepoWrite, repositoryResourceFromContext)
+
+                makeSecurityKey "POST" "/policy/current", Authorized(Operation.RepoRead, repositoryResourceFromContext)
+                makeSecurityKey "POST" "/policy/acknowledge", Authorized(Operation.RepoWrite, repositoryResourceFromContext)
+
+                makeSecurityKey "POST" "/review/packet", Authorized(Operation.RepoRead, repositoryResourceFromContext)
+                makeSecurityKey "POST" "/review/checkpoint", Authorized(Operation.RepoWrite, repositoryResourceFromContext)
+                makeSecurityKey "POST" "/review/resolve", Authorized(Operation.RepoWrite, repositoryResourceFromContext)
+                makeSecurityKey "POST" "/review/deepen", Authorized(Operation.RepoWrite, repositoryResourceFromContext)
+
+                makeSecurityKey "POST" "/queue/status", Authorized(Operation.RepoRead, repositoryResourceFromContext)
+                makeSecurityKey "POST" "/queue/enqueue", Authorized(Operation.RepoWrite, repositoryResourceFromContext)
+                makeSecurityKey "POST" "/queue/pause", Authorized(Operation.RepoWrite, repositoryResourceFromContext)
+                makeSecurityKey "POST" "/queue/resume", Authorized(Operation.RepoWrite, repositoryResourceFromContext)
+                makeSecurityKey "POST" "/queue/dequeue", Authorized(Operation.RepoWrite, repositoryResourceFromContext)
+
+                makeSecurityKey "POST" "/candidate/get", Authorized(Operation.RepoRead, repositoryResourceFromContext)
+                makeSecurityKey "POST" "/candidate/required-actions", Authorized(Operation.RepoRead, repositoryResourceFromContext)
+                makeSecurityKey "POST" "/candidate/attestations", Authorized(Operation.RepoRead, repositoryResourceFromContext)
+                makeSecurityKey "POST" "/candidate/cancel", Authorized(Operation.RepoWrite, repositoryResourceFromContext)
+                makeSecurityKey "POST" "/candidate/retry", Authorized(Operation.RepoWrite, repositoryResourceFromContext)
+                makeSecurityKey "POST" "/candidate/gate/rerun", Authorized(Operation.RepoWrite, repositoryResourceFromContext)
+
+                makeSecurityKey "POST" "/reminder/list", Authorized(Operation.RepoAdmin, repositoryResourceFromContext)
+                makeSecurityKey "POST" "/reminder/get", Authorized(Operation.RepoAdmin, repositoryResourceFromContext)
+                makeSecurityKey "POST" "/reminder/create", Authorized(Operation.RepoAdmin, repositoryResourceFromContext)
+                makeSecurityKey "POST" "/reminder/delete", Authorized(Operation.RepoAdmin, repositoryResourceFromContext)
+                makeSecurityKey "POST" "/reminder/updateTime", Authorized(Operation.RepoAdmin, repositoryResourceFromContext)
+                makeSecurityKey "POST" "/reminder/reschedule", Authorized(Operation.RepoAdmin, repositoryResourceFromContext)
+
+                makeSecurityKey "POST" "/admin/deleteAllFromCosmosDB", Authorized(Operation.SystemAdmin, systemResourceFromContext)
+                makeSecurityKey "POST" "/admin/deleteAllRemindersFromCosmosDB", Authorized(Operation.SystemAdmin, systemResourceFromContext)
+            ]
+
+        let securityMap =
+            let map = Dictionary<string, SecurityClassification>(StringComparer.OrdinalIgnoreCase)
+
+            for (key, classification) in securityEntries do
+                if map.ContainsKey key then
+                    invalidOp $"Duplicate security mapping for {key}."
+                else
+                    map.Add(key, classification)
+
+            map
+
+        let composeHandlers (first: HttpHandler) (second: HttpHandler) : HttpHandler =
+            fun next context -> first (second next) context
+
+        let applySecurity (security: SecurityClassification) (handler: HttpHandler) =
+            match security with
+            | AllowAnonymous -> handler
+            | Authenticated -> composeHandlers mustBeLoggedIn handler
+            | Authorized (operation, resourceFromContext) ->
+                composeHandlers (AuthorizationMiddleware.requiresPermission operation resourceFromContext) handler
+            | AuthorizedMany (operation, resourcesFromContext) ->
+                composeHandlers (AuthorizationMiddleware.requiresPermissions operation resourcesFromContext) handler
+            | AuthorizedResolved resolver ->
+                composeHandlers (AuthorizationMiddleware.requiresPermissionResolved resolver) handler
+            | AuthorizedResolvedOptional resolver ->
+                composeHandlers (AuthorizationMiddleware.requiresPermissionResolvedOptional resolver) handler
+
+        let resolveSecurity (methodName: string) (path: string) =
+            let key = makeSecurityKey methodName path
+
+            match securityMap.TryGetValue key with
+            | true, classification -> classification
+            | false, _ -> invalidOp $"Missing security classification for {key}."
+
+        let secureHandler (methodName: string) (path: string) (handler: HttpHandler) =
+            handler |> applySecurity (resolveSecurity methodName path)
 
         let endpoints =
             [
                 GET [ route
                           "/"
-                          (warbler (fun _ ->
-                              htmlString
-                                  $"<h1>Hello From Grace Server {graceServerVersion}!</h1><br/><p>The current server time is: {getCurrentInstantExtended ()}.</p>"))
+                          (secureHandler
+                              "GET"
+                              "/"
+                              (warbler (fun _ ->
+                                  htmlString
+                                      $"<h1>Hello From Grace Server {graceServerVersion}!</h1><br/><p>The current server time is: {getCurrentInstantExtended ()}.</p>")))
                       route
                           "/healthz"
-                          (warbler (fun _ ->
-                              htmlString $"<h1>Grace server seems healthy!</h1><br/><p>The current server time is: {getCurrentInstantExtended ()}.</p>")) ]
+                          (secureHandler
+                              "GET"
+                              "/healthz"
+                              (warbler (fun _ ->
+                                  htmlString $"<h1>Grace server seems healthy!</h1><br/><p>The current server time is: {getCurrentInstantExtended ()}.</p>"))) ]
                 PUT []
                 subRoute
                     "/branch"
                     [
-                        POST [ route "/assign" Branch.Assign
+                        POST [ route "/assign" (secureHandler "POST" "/branch/assign" Branch.Assign)
                                |> addMetadata typeof<Branch.AssignParameters>
 
-                               route "/checkpoint" Branch.Checkpoint
+                               route "/checkpoint" (secureHandler "POST" "/branch/checkpoint" Branch.Checkpoint)
                                |> addMetadata typeof<Branch.CreateReferenceParameters>
 
-                               route "/commit" Branch.Commit
+                               route "/commit" (secureHandler "POST" "/branch/commit" Branch.Commit)
                                |> addMetadata typeof<Branch.CreateReferenceParameters>
 
-                               route "/create" Branch.Create
+                               route "/create" (secureHandler "POST" "/branch/create" Branch.Create)
                                |> addMetadata typeof<Branch.CreateBranchParameters>
 
-                               route "/createExternal" Branch.CreateExternal
+                               route "/createExternal" (secureHandler "POST" "/branch/createExternal" Branch.CreateExternal)
                                |> addMetadata typeof<Branch.CreateReferenceParameters>
 
-                               route "/delete" Branch.Delete
+                               route "/delete" (secureHandler "POST" "/branch/delete" Branch.Delete)
                                |> addMetadata typeof<Branch.DeleteBranchParameters>
 
-                               route "/enableAssign" Branch.EnableAssign
+                               route "/enableAssign" (secureHandler "POST" "/branch/enableAssign" Branch.EnableAssign)
                                |> addMetadata typeof<Branch.EnableFeatureParameters>
 
-                               route "/enableAutoRebase" Branch.EnableAutoRebase
+                               route "/enableAutoRebase" (secureHandler "POST" "/branch/enableAutoRebase" Branch.EnableAutoRebase)
                                |> addMetadata typeof<Branch.EnableFeatureParameters>
 
-                               route "/enableCheckpoint" Branch.EnableCheckpoint
+                               route "/enableCheckpoint" (secureHandler "POST" "/branch/enableCheckpoint" Branch.EnableCheckpoint)
                                |> addMetadata typeof<Branch.EnableFeatureParameters>
 
-                               route "/enableCommit" Branch.EnableCommit
+                               route "/enableCommit" (secureHandler "POST" "/branch/enableCommit" Branch.EnableCommit)
                                |> addMetadata typeof<Branch.EnableFeatureParameters>
 
-                               route "/enableExternal" Branch.EnableExternal
+                               route "/enableExternal" (secureHandler "POST" "/branch/enableExternal" Branch.EnableExternal)
                                |> addMetadata typeof<Branch.EnableFeatureParameters>
 
-                               route "/enablePromotion" Branch.EnablePromotion
+                               route "/enablePromotion" (secureHandler "POST" "/branch/enablePromotion" Branch.EnablePromotion)
                                |> addMetadata typeof<Branch.EnableFeatureParameters>
 
-                               route "/enableSave" Branch.EnableSave
+                               route "/enableSave" (secureHandler "POST" "/branch/enableSave" Branch.EnableSave)
                                |> addMetadata typeof<Branch.EnableFeatureParameters>
 
-                               route "/enableTag" Branch.EnableTag
+                               route "/enableTag" (secureHandler "POST" "/branch/enableTag" Branch.EnableTag)
                                |> addMetadata typeof<Branch.EnableFeatureParameters>
 
-                               route "/setPromotionMode" Branch.SetPromotionMode
+                               route "/setPromotionMode" (secureHandler "POST" "/branch/setPromotionMode" Branch.SetPromotionMode)
                                |> addMetadata typeof<Branch.SetPromotionModeParameters>
 
-                               route "/get" Branch.Get
+                               route "/get" (secureHandler "POST" "/branch/get" Branch.Get)
                                |> addMetadata typeof<Branch.GetBranchParameters>
 
-                               route "/getEvents" Branch.GetEvents
+                               route "/getEvents" (secureHandler "POST" "/branch/getEvents" Branch.GetEvents)
                                |> addMetadata typeof<Branch.GetBranchParameters>
 
-                               route "/getExternals" Branch.GetExternals
+                               route "/getExternals" (secureHandler "POST" "/branch/getExternals" Branch.GetExternals)
                                |> addMetadata typeof<Branch.GetReferenceParameters>
 
-                               route "/getCheckpoints" Branch.GetCheckpoints
+                               route "/getCheckpoints" (secureHandler "POST" "/branch/getCheckpoints" Branch.GetCheckpoints)
                                |> addMetadata typeof<Branch.GetBranchParameters>
 
-                               route "/getCommits" Branch.GetCommits
+                               route "/getCommits" (secureHandler "POST" "/branch/getCommits" Branch.GetCommits)
                                |> addMetadata typeof<Branch.GetBranchParameters>
 
-                               route "/getDiffsForReferenceType" Branch.GetDiffsForReferenceType
+                               route "/getDiffsForReferenceType"
+                                   (secureHandler "POST" "/branch/getDiffsForReferenceType" Branch.GetDiffsForReferenceType)
                                |> addMetadata typeof<Branch.GetDiffsForReferenceTypeParameters>
 
-                               route "/getParentBranch" Branch.GetParentBranch
+                               route "/getParentBranch" (secureHandler "POST" "/branch/getParentBranch" Branch.GetParentBranch)
                                |> addMetadata typeof<Branch.GetBranchParameters>
 
-                               route "/getPromotions" Branch.GetPromotions
+                               route "/getPromotions" (secureHandler "POST" "/branch/getPromotions" Branch.GetPromotions)
                                |> addMetadata typeof<Branch.GetReferenceParameters>
 
-                               route "/getRecursiveSize" Branch.GetRecursiveSize
+                               route "/getRecursiveSize" (secureHandler "POST" "/branch/getRecursiveSize" Branch.GetRecursiveSize)
                                |> addMetadata typeof<Branch.ListContentsParameters>
 
-                               route "/getReference" Branch.GetReference
+                               route "/getReference" (secureHandler "POST" "/branch/getReference" Branch.GetReference)
                                |> addMetadata typeof<Branch.GetReferenceParameters>
 
-                               route "/getReferences" Branch.GetReferences
+                               route "/getReferences" (secureHandler "POST" "/branch/getReferences" Branch.GetReferences)
                                |> addMetadata typeof<Branch.GetReferencesParameters>
 
-                               route "/getSaves" Branch.GetSaves
+                               route "/getSaves" (secureHandler "POST" "/branch/getSaves" Branch.GetSaves)
                                |> addMetadata typeof<Branch.GetReferenceParameters>
 
-                               route "/getTags" Branch.GetTags
+                               route "/getTags" (secureHandler "POST" "/branch/getTags" Branch.GetTags)
                                |> addMetadata typeof<Branch.GetReferenceParameters>
 
-                               route "/getVersion" Branch.GetVersion
+                               route "/getVersion" (secureHandler "POST" "/branch/getVersion" Branch.GetVersion)
                                |> addMetadata typeof<Branch.GetBranchVersionParameters>
 
-                               route "/listContents" Branch.ListContents
+                               route "/listContents" (secureHandler "POST" "/branch/listContents" Branch.ListContents)
                                |> addMetadata typeof<Branch.ListContentsParameters>
 
-                               route "/promote" Branch.Promote
+                               route "/promote" (secureHandler "POST" "/branch/promote" Branch.Promote)
                                |> addMetadata typeof<Branch.CreateReferenceParameters>
 
-                               route "/rebase" Branch.Rebase
+                               route "/rebase" (secureHandler "POST" "/branch/rebase" Branch.Rebase)
                                |> addMetadata typeof<Branch.RebaseParameters>
 
-                               route "/save" Branch.Save
+                               route "/save" (secureHandler "POST" "/branch/save" Branch.Save)
                                |> addMetadata typeof<Branch.CreateReferenceParameters>
 
-                               route "/tag" Branch.Tag
+                               route "/tag" (secureHandler "POST" "/branch/tag" Branch.Tag)
                                |> addMetadata typeof<Branch.CreateReferenceParameters>
 
-                               route "/updateParentBranch" Branch.UpdateParentBranch
+                               route "/updateParentBranch" (secureHandler "POST" "/branch/updateParentBranch" Branch.UpdateParentBranch)
                                |> addMetadata typeof<Branch.UpdateParentBranchParameters> ]
                     ]
                 subRoute
                     "/diff"
                     [
-                        POST [ route "/getDiff" Diff.GetDiff
+                        POST [ route "/getDiff" (secureHandler "POST" "/diff/getDiff" Diff.GetDiff)
                                |> addMetadata typeof<Diff.GetDiffParameters>
 
-                               route "/getDiffBySha256Hash" Diff.GetDiffBySha256Hash
+                               route "/getDiffBySha256Hash" (secureHandler "POST" "/diff/getDiffBySha256Hash" Diff.GetDiffBySha256Hash)
                                |> addMetadata typeof<Diff.GetDiffBySha256HashParameters>
 
-                               route "/populate" Diff.Populate
+                               route "/populate" (secureHandler "POST" "/diff/populate" Diff.Populate)
                                |> addMetadata typeof<Diff.PopulateParameters> ]
                     ]
                 subRoute
                     "/directory"
                     [
-                        POST [ route "/create" DirectoryVersion.Create
+                        POST [ route "/create" (secureHandler "POST" "/directory/create" DirectoryVersion.Create)
                                |> addMetadata typeof<DirectoryVersion.CreateParameters>
 
-                               route "/get" DirectoryVersion.Get
+                               route "/get" (secureHandler "POST" "/directory/get" DirectoryVersion.Get)
                                |> addMetadata typeof<DirectoryVersion.GetParameters>
 
-                               route "/getByDirectoryIds" DirectoryVersion.GetByDirectoryIds
+                               route "/getByDirectoryIds" (secureHandler "POST" "/directory/getByDirectoryIds" DirectoryVersion.GetByDirectoryIds)
                                |> addMetadata typeof<DirectoryVersion.GetByDirectoryIdsParameters>
 
-                               route "/getBySha256Hash" DirectoryVersion.GetBySha256Hash
+                               route "/getBySha256Hash" (secureHandler "POST" "/directory/getBySha256Hash" DirectoryVersion.GetBySha256Hash)
                                |> addMetadata typeof<DirectoryVersion.GetBySha256HashParameters>
 
-                               route "/getDirectoryVersionsRecursive" DirectoryVersion.GetDirectoryVersionsRecursive
+                               route "/getDirectoryVersionsRecursive"
+                                   (secureHandler "POST" "/directory/getDirectoryVersionsRecursive" DirectoryVersion.GetDirectoryVersionsRecursive)
                                |> addMetadata typeof<DirectoryVersion.GetParameters>
 
-                               route "/getZipFile" DirectoryVersion.GetZipFile
+                               route "/getZipFile" (secureHandler "POST" "/directory/getZipFile" DirectoryVersion.GetZipFile)
                                |> addMetadata typeof<DirectoryVersion.GetZipFileParameters>
 
-                               route "/saveDirectoryVersions" DirectoryVersion.SaveDirectoryVersions
+                               route "/saveDirectoryVersions" (secureHandler "POST" "/directory/saveDirectoryVersions" DirectoryVersion.SaveDirectoryVersions)
                                |> addMetadata typeof<DirectoryVersion.SaveDirectoryVersionsParameters> ]
                     ]
                 subRoute "/notifications" [ GET [] ]
                 subRoute
                     "/organization"
                     [
-                        POST [ route "/create" Organization.Create
+                        POST [ route "/create" (secureHandler "POST" "/organization/create" Organization.Create)
                                |> addMetadata typeof<Organization.CreateOrganizationParameters>
 
-                               route "/delete" Organization.Delete
+                               route "/delete" (secureHandler "POST" "/organization/delete" Organization.Delete)
                                |> addMetadata typeof<Organization.DeleteOrganizationParameters>
 
-                               route "/get" Organization.Get
+                               route "/get" (secureHandler "POST" "/organization/get" Organization.Get)
                                |> addMetadata typeof<Organization.GetOrganizationParameters>
 
-                               route "/listRepositories" Organization.ListRepositories
+                               route "/listRepositories" (secureHandler "POST" "/organization/listRepositories" Organization.ListRepositories)
                                |> addMetadata typeof<Organization.GetOrganizationParameters>
 
-                               route "/setDescription" Organization.SetDescription
+                               route "/setDescription" (secureHandler "POST" "/organization/setDescription" Organization.SetDescription)
                                |> addMetadata typeof<Organization.SetOrganizationDescriptionParameters>
 
-                               route "/setName" Organization.SetName
+                               route "/setName" (secureHandler "POST" "/organization/setName" Organization.SetName)
                                |> addMetadata typeof<Organization.SetOrganizationNameParameters>
 
-                               route "/setSearchVisibility" Organization.SetSearchVisibility
+                               route "/setSearchVisibility"
+                                   (secureHandler "POST" "/organization/setSearchVisibility" Organization.SetSearchVisibility)
                                |> addMetadata typeof<Organization.SetOrganizationSearchVisibilityParameters>
 
-                               route "/setType" Organization.SetType
+                               route "/setType" (secureHandler "POST" "/organization/setType" Organization.SetType)
                                |> addMetadata typeof<Organization.SetOrganizationTypeParameters>
 
-                               route "/undelete" Organization.Undelete
+                               route "/undelete" (secureHandler "POST" "/organization/undelete" Organization.Undelete)
                                |> addMetadata typeof<Organization.UndeleteOrganizationParameters> ]
                     ]
                 subRoute
                     "/owner"
                     [
-                        POST [ route "/create" Owner.Create
+                        POST [ route "/create" (secureHandler "POST" "/owner/create" Owner.Create)
                                |> addMetadata typeof<Owner.CreateOwnerParameters>
 
-                               route "/delete" Owner.Delete
+                               route "/delete" (secureHandler "POST" "/owner/delete" Owner.Delete)
                                |> addMetadata typeof<Owner.DeleteOwnerParameters>
 
-                               route "/get" Owner.Get
+                               route "/get" (secureHandler "POST" "/owner/get" Owner.Get)
                                |> addMetadata typeof<Owner.GetOwnerParameters>
 
-                               route "/listOrganizations" Owner.ListOrganizations
+                               route "/listOrganizations" (secureHandler "POST" "/owner/listOrganizations" Owner.ListOrganizations)
                                |> addMetadata typeof<Owner.GetOwnerParameters>
 
-                               route "/setDescription" Owner.SetDescription
+                               route "/setDescription" (secureHandler "POST" "/owner/setDescription" Owner.SetDescription)
                                |> addMetadata typeof<Owner.SetOwnerDescriptionParameters>
 
-                               route "/setName" Owner.SetName
+                               route "/setName" (secureHandler "POST" "/owner/setName" Owner.SetName)
                                |> addMetadata typeof<Owner.SetOwnerNameParameters>
 
-                               route "/setSearchVisibility" Owner.SetSearchVisibility
+                               route "/setSearchVisibility" (secureHandler "POST" "/owner/setSearchVisibility" Owner.SetSearchVisibility)
                                |> addMetadata typeof<Owner.SetOwnerSearchVisibilityParameters>
 
-                               route "/setType" Owner.SetType
+                               route "/setType" (secureHandler "POST" "/owner/setType" Owner.SetType)
                                |> addMetadata typeof<Owner.SetOwnerTypeParameters>
 
-                               route "/undelete" Owner.Undelete
+                               route "/undelete" (secureHandler "POST" "/owner/undelete" Owner.Undelete)
                                |> addMetadata typeof<Owner.UndeleteOwnerParameters> ]
                     ]
                 subRoute
                     "/promotionGroup"
                     [
-                        POST [ route "/create" PromotionGroup.Create
+                        POST [ route "/create" (secureHandler "POST" "/promotionGroup/create" PromotionGroup.Create)
                                |> addMetadata typeof<PromotionGroup.CreatePromotionGroupParameters>
 
-                               route "/get" PromotionGroup.Get
+                               route "/get" (secureHandler "POST" "/promotionGroup/get" PromotionGroup.Get)
                                |> addMetadata typeof<PromotionGroup.GetPromotionGroupParameters>
 
-                               route "/getEvents" PromotionGroup.GetEvents
+                               route "/getEvents" (secureHandler "POST" "/promotionGroup/getEvents" PromotionGroup.GetEvents)
                                |> addMetadata typeof<PromotionGroup.GetPromotionGroupParameters>
 
-                               route "/addPromotion" PromotionGroup.AddPromotion
+                               route "/addPromotion" (secureHandler "POST" "/promotionGroup/addPromotion" PromotionGroup.AddPromotion)
                                |> addMetadata typeof<PromotionGroup.AddPromotionParameters>
 
-                               route "/removePromotion" PromotionGroup.RemovePromotion
+                               route "/removePromotion" (secureHandler "POST" "/promotionGroup/removePromotion" PromotionGroup.RemovePromotion)
                                |> addMetadata typeof<PromotionGroup.RemovePromotionParameters>
 
-                               route "/reorderPromotions" PromotionGroup.ReorderPromotions
+                               route "/reorderPromotions"
+                                   (secureHandler "POST" "/promotionGroup/reorderPromotions" PromotionGroup.ReorderPromotions)
                                |> addMetadata typeof<PromotionGroup.ReorderPromotionsParameters>
 
-                               route "/schedule" PromotionGroup.Schedule
+                               route "/schedule" (secureHandler "POST" "/promotionGroup/schedule" PromotionGroup.Schedule)
                                |> addMetadata typeof<PromotionGroup.ScheduleParameters>
 
-                               route "/markReady" PromotionGroup.MarkReady
+                               route "/markReady" (secureHandler "POST" "/promotionGroup/markReady" PromotionGroup.MarkReady)
                                |> addMetadata typeof<PromotionGroup.MarkReadyParameters>
 
-                               route "/start" PromotionGroup.Start
+                               route "/start" (secureHandler "POST" "/promotionGroup/start" PromotionGroup.Start)
                                |> addMetadata typeof<PromotionGroup.StartParameters>
 
-                               route "/complete" PromotionGroup.Complete
+                               route "/complete" (secureHandler "POST" "/promotionGroup/complete" PromotionGroup.Complete)
                                |> addMetadata typeof<PromotionGroup.CompleteParameters>
 
-                               route "/block" PromotionGroup.Block
+                               route "/block" (secureHandler "POST" "/promotionGroup/block" PromotionGroup.Block)
                                |> addMetadata typeof<PromotionGroup.BlockParameters>
 
-                               route "/delete" PromotionGroup.Delete
+                               route "/delete" (secureHandler "POST" "/promotionGroup/delete" PromotionGroup.Delete)
                                |> addMetadata typeof<PromotionGroup.DeletePromotionGroupParameters> ]
                     ]
                 subRoute
                     "/work"
                     [
-                        POST [ route "/create" WorkItem.Create
+                        POST [ route "/create" (secureHandler "POST" "/work/create" WorkItem.Create)
                                |> addMetadata typeof<WorkItem.CreateWorkItemParameters>
 
-                               route "/get" WorkItem.Get
+                               route "/get" (secureHandler "POST" "/work/get" WorkItem.Get)
                                |> addMetadata typeof<WorkItem.GetWorkItemParameters>
 
-                               route "/update" WorkItem.Update
+                               route "/update" (secureHandler "POST" "/work/update" WorkItem.Update)
                                |> addMetadata typeof<WorkItem.UpdateWorkItemParameters>
 
-                               route "/link/reference" WorkItem.LinkReference
+                               route "/link/reference" (secureHandler "POST" "/work/link/reference" WorkItem.LinkReference)
                                |> addMetadata typeof<WorkItem.LinkReferenceParameters>
 
-                               route "/link/promotion-group" WorkItem.LinkPromotionGroup
+                               route "/link/promotion-group"
+                                   (secureHandler "POST" "/work/link/promotion-group" WorkItem.LinkPromotionGroup)
                                |> addMetadata typeof<WorkItem.LinkPromotionGroupParameters> ]
                     ]
                 subRoute
                     "/policy"
                     [
-                        POST [ route "/current" Policy.GetCurrent
+                        POST [ route "/current" (secureHandler "POST" "/policy/current" Policy.GetCurrent)
                                |> addMetadata typeof<Policy.GetPolicyParameters>
 
-                               route "/acknowledge" Policy.Acknowledge
+                               route "/acknowledge" (secureHandler "POST" "/policy/acknowledge" Policy.Acknowledge)
                                |> addMetadata typeof<Policy.AcknowledgePolicyParameters> ]
                     ]
                 subRoute
                     "/review"
                     [
-                        POST [ route "/packet" Review.GetPacket
+                        POST [ route "/packet" (secureHandler "POST" "/review/packet" Review.GetPacket)
                                |> addMetadata typeof<Review.GetReviewPacketParameters>
 
-                               route "/checkpoint" Review.Checkpoint
+                               route "/checkpoint" (secureHandler "POST" "/review/checkpoint" Review.Checkpoint)
                                |> addMetadata typeof<Review.ReviewCheckpointParameters>
 
-                               route "/resolve" Review.ResolveFinding
+                               route "/resolve" (secureHandler "POST" "/review/resolve" Review.ResolveFinding)
                                |> addMetadata typeof<Review.ResolveFindingParameters>
 
-                               route "/deepen" Review.Deepen
+                               route "/deepen" (secureHandler "POST" "/review/deepen" Review.Deepen)
                                |> addMetadata typeof<Review.DeepenReviewParameters> ]
                     ]
                 subRoute
                     "/queue"
                     [
-                        POST [ route "/status" Queue.Status
+                        POST [ route "/status" (secureHandler "POST" "/queue/status" Queue.Status)
                                |> addMetadata typeof<Queue.QueueStatusParameters>
 
-                               route "/enqueue" Queue.Enqueue
+                               route "/enqueue" (secureHandler "POST" "/queue/enqueue" Queue.Enqueue)
                                |> addMetadata typeof<Queue.EnqueueParameters>
 
-                               route "/pause" Queue.Pause
+                               route "/pause" (secureHandler "POST" "/queue/pause" Queue.Pause)
                                |> addMetadata typeof<Queue.QueueActionParameters>
 
-                               route "/resume" Queue.Resume
+                               route "/resume" (secureHandler "POST" "/queue/resume" Queue.Resume)
                                |> addMetadata typeof<Queue.QueueActionParameters>
 
-                               route "/dequeue" Queue.Dequeue
+                               route "/dequeue" (secureHandler "POST" "/queue/dequeue" Queue.Dequeue)
                                |> addMetadata typeof<Queue.CandidateActionParameters> ]
                     ]
                 subRoute
                     "/candidate"
                     [
-                        POST [ route "/get" Queue.GetCandidate
+                        POST [ route "/get" (secureHandler "POST" "/candidate/get" Queue.GetCandidate)
                                |> addMetadata typeof<Queue.CandidateParameters>
 
-                               route "/cancel" Queue.CancelCandidate
+                               route "/cancel" (secureHandler "POST" "/candidate/cancel" Queue.CancelCandidate)
                                |> addMetadata typeof<Queue.CandidateActionParameters>
 
-                               route "/retry" Queue.RetryCandidate
+                               route "/retry" (secureHandler "POST" "/candidate/retry" Queue.RetryCandidate)
                                |> addMetadata typeof<Queue.CandidateActionParameters>
 
-                               route "/required-actions" Queue.RequiredActions
+                               route "/required-actions" (secureHandler "POST" "/candidate/required-actions" Queue.RequiredActions)
                                |> addMetadata typeof<Queue.CandidateParameters>
 
-                               route "/attestations" Queue.Attestations
+                               route "/attestations" (secureHandler "POST" "/candidate/attestations" Queue.Attestations)
                                |> addMetadata typeof<Queue.CandidateAttestationsParameters>
 
-                               route "/gate/rerun" Queue.RerunGate
+                               route "/gate/rerun" (secureHandler "POST" "/candidate/gate/rerun" Queue.RerunGate)
                                |> addMetadata typeof<Queue.CandidateGateRerunParameters> ]
                     ]
                 subRoute
                     "/repository"
                     [
-                        POST [ route "/create" Repository.Create
+                        POST [ route "/create" (secureHandler "POST" "/repository/create" Repository.Create)
                                |> addMetadata typeof<Repository.CreateRepositoryParameters>
 
-                               route "/delete" Repository.Delete
+                               route "/delete" (secureHandler "POST" "/repository/delete" Repository.Delete)
                                |> addMetadata typeof<Repository.DeleteRepositoryParameters>
 
-                               route "/exists" Repository.Exists
+                               route "/exists" (secureHandler "POST" "/repository/exists" Repository.Exists)
                                |> addMetadata typeof<Repository.RepositoryParameters>
 
-                               route "/get" Repository.Get
+                               route "/get" (secureHandler "POST" "/repository/get" Repository.Get)
                                |> addMetadata typeof<Repository.RepositoryParameters>
 
-                               route "/getBranches" Repository.GetBranches
+                               route "/getBranches" (secureHandler "POST" "/repository/getBranches" Repository.GetBranches)
                                |> addMetadata typeof<Repository.GetBranchesParameters>
 
-                               route "/getBranchesByBranchId" Repository.GetBranchesByBranchId
+                               route "/getBranchesByBranchId"
+                                   (secureHandler "POST" "/repository/getBranchesByBranchId" Repository.GetBranchesByBranchId)
                                |> addMetadata typeof<Repository.GetBranchesByBranchIdParameters>
 
-                               route "/getReferencesByReferenceId" Repository.GetReferencesByReferenceId
+                               route "/getReferencesByReferenceId"
+                                   (secureHandler "POST" "/repository/getReferencesByReferenceId" Repository.GetReferencesByReferenceId)
                                |> addMetadata typeof<Repository.GetReferencesByReferenceIdParameters>
 
-                               route "/isEmpty" Repository.IsEmpty
+                               route "/isEmpty" (secureHandler "POST" "/repository/isEmpty" Repository.IsEmpty)
                                |> addMetadata typeof<Repository.IsEmptyParameters>
 
-                               route "/setAllowsLargeFiles" Repository.SetAllowsLargeFiles
+                               route "/setAllowsLargeFiles"
+                                   (secureHandler "POST" "/repository/setAllowsLargeFiles" Repository.SetAllowsLargeFiles)
                                |> addMetadata typeof<Repository.SetAllowsLargeFilesParameters>
 
-                               route "/setAnonymousAccess" Repository.SetAnonymousAccess
+                               route "/setAnonymousAccess"
+                                   (secureHandler "POST" "/repository/setAnonymousAccess" Repository.SetAnonymousAccess)
                                |> addMetadata typeof<Repository.SetAnonymousAccessParameters>
 
-                               route "/setCheckpointDays" Repository.SetCheckpointDays
+                               route "/setCheckpointDays"
+                                   (secureHandler "POST" "/repository/setCheckpointDays" Repository.SetCheckpointDays)
                                |> addMetadata typeof<Repository.SetCheckpointDaysParameters>
 
-                               route "/setDiffCacheDays" Repository.SetDiffCacheDays
+                               route "/setDiffCacheDays" (secureHandler "POST" "/repository/setDiffCacheDays" Repository.SetDiffCacheDays)
                                |> addMetadata typeof<Repository.SetDiffCacheDaysParameters>
 
-                               route "/setDirectoryVersionCacheDays" Repository.SetDirectoryVersionCacheDays
+                               route "/setDirectoryVersionCacheDays"
+                                   (secureHandler "POST" "/repository/setDirectoryVersionCacheDays" Repository.SetDirectoryVersionCacheDays)
                                |> addMetadata typeof<Repository.SetDirectoryVersionCacheDaysParameters>
 
-                               route "/setDefaultServerApiVersion" Repository.SetDefaultServerApiVersion
+                               route "/setDefaultServerApiVersion"
+                                   (secureHandler "POST" "/repository/setDefaultServerApiVersion" Repository.SetDefaultServerApiVersion)
                                |> addMetadata typeof<Repository.SetDefaultServerApiVersionParameters>
 
-                               route "/setConflictResolutionPolicy" Repository.SetConflictResolutionPolicy
+                               route "/setConflictResolutionPolicy"
+                                   (secureHandler "POST" "/repository/setConflictResolutionPolicy" Repository.SetConflictResolutionPolicy)
                                |> addMetadata typeof<Repository.SetConflictResolutionPolicyParameters>
 
-                               route "/setDescription" (composeHandlers requireRepoAdmin Repository.SetDescription)
+                               route "/setDescription" (secureHandler "POST" "/repository/setDescription" Repository.SetDescription)
                                |> addMetadata typeof<Repository.SetRepositoryDescriptionParameters>
 
-                               route "/setLogicalDeleteDays" Repository.SetLogicalDeleteDays
+                               route "/setLogicalDeleteDays"
+                                   (secureHandler "POST" "/repository/setLogicalDeleteDays" Repository.SetLogicalDeleteDays)
                                |> addMetadata typeof<Repository.SetLogicalDeleteDaysParameters>
 
-                               route "/setName" Repository.SetName
+                               route "/setName" (secureHandler "POST" "/repository/setName" Repository.SetName)
                                |> addMetadata typeof<Repository.SetRepositoryNameParameters>
 
-                               route "/setRecordSaves" Repository.SetRecordSaves
+                               route "/setRecordSaves" (secureHandler "POST" "/repository/setRecordSaves" Repository.SetRecordSaves)
                                |> addMetadata typeof<Repository.RecordSavesParameters>
 
-                               route "/setSaveDays" Repository.SetSaveDays
+                               route "/setSaveDays" (secureHandler "POST" "/repository/setSaveDays" Repository.SetSaveDays)
                                |> addMetadata typeof<Repository.SetSaveDaysParameters>
 
-                               route "/setStatus" Repository.SetStatus
+                               route "/setStatus" (secureHandler "POST" "/repository/setStatus" Repository.SetStatus)
                                |> addMetadata typeof<Repository.SetRepositoryStatusParameters>
 
-                               route "/setVisibility" Repository.SetVisibility
+                               route "/setVisibility" (secureHandler "POST" "/repository/setVisibility" Repository.SetVisibility)
                                |> addMetadata typeof<Repository.SetRepositoryVisibilityParameters>
 
-                               route "/undelete" Repository.Undelete
+                               route "/undelete" (secureHandler "POST" "/repository/undelete" Repository.Undelete)
                                |> addMetadata typeof<Repository.UndeleteRepositoryParameters> ]
                     ]
                 subRoute
                     "/storage"
                     [
-                        POST [ route "/getUploadMetadataForFiles" (composeHandlers requirePathWrite Storage.GetUploadMetadataForFiles)
+                        POST [ route "/getUploadMetadataForFiles"
+                                   (secureHandler "POST" "/storage/getUploadMetadataForFiles" Storage.GetUploadMetadataForFiles)
                                |> addMetadata typeof<Storage.GetUploadMetadataForFilesParameters>
 
-                               route "/getDownloadUri" Storage.GetDownloadUri
+                               route "/getDownloadUri" (secureHandler "POST" "/storage/getDownloadUri" Storage.GetDownloadUri)
                                |> addMetadata typeof<Storage.GetDownloadUriParameters>
 
-                               route "/getUploadUri" Storage.GetUploadUris
+                               route "/getUploadUri" (secureHandler "POST" "/storage/getUploadUri" Storage.GetUploadUris)
                                |> addMetadata typeof<Storage.GetUploadUriParameters> ]
                     ]
                 subRoute
                     "/access"
                     [
-                        POST [ route "/grantRole" Access.GrantRole
+                        POST [ route "/grantRole" (secureHandler "POST" "/access/grantRole" Access.GrantRole)
                                |> addMetadata typeof<Access.GrantRoleParameters>
 
-                               route "/revokeRole" Access.RevokeRole
+                               route "/revokeRole" (secureHandler "POST" "/access/revokeRole" Access.RevokeRole)
                                |> addMetadata typeof<Access.RevokeRoleParameters>
 
-                               route "/listRoleAssignments" Access.ListRoleAssignments
+                               route "/listRoleAssignments"
+                                   (secureHandler "POST" "/access/listRoleAssignments" Access.ListRoleAssignments)
                                |> addMetadata typeof<Access.ListRoleAssignmentsParameters>
 
-                               route "/upsertPathPermission" Access.UpsertPathPermission
+                               route "/upsertPathPermission"
+                                   (secureHandler "POST" "/access/upsertPathPermission" Access.UpsertPathPermission)
                                |> addMetadata typeof<Access.UpsertPathPermissionParameters>
 
-                               route "/removePathPermission" Access.RemovePathPermission
+                               route "/removePathPermission"
+                                   (secureHandler "POST" "/access/removePathPermission" Access.RemovePathPermission)
                                |> addMetadata typeof<Access.RemovePathPermissionParameters>
 
-                               route "/listPathPermissions" Access.ListPathPermissions
+                               route "/listPathPermissions"
+                                   (secureHandler "POST" "/access/listPathPermissions" Access.ListPathPermissions)
                                |> addMetadata typeof<Access.ListPathPermissionsParameters>
 
-                               route "/checkPermission" Access.CheckPermission
+                               route "/checkPermission" (secureHandler "POST" "/access/checkPermission" Access.CheckPermission)
                                |> addMetadata typeof<Access.CheckPermissionParameters> ]
-                        GET [ route "/listRoles" Access.ListRoles ]
+                        GET [ route "/listRoles" (secureHandler "GET" "/access/listRoles" Access.ListRoles) ]
                     ]
                 subRoute
                     "/auth"
                     [
-                        GET [ route "/me" Auth.Me
-                              route "/oidc/config" (Auth.OidcConfig configuration)
-                              route "/login" Auth.Login
-                              routef "/login/%s" (fun providerId -> Auth.LoginProvider providerId)
-                              route "/logout" Auth.Logout ]
-                        POST [ route "/token/create" (Auth.TokenCreate configuration)
+                        GET [ route "/me" (secureHandler "GET" "/auth/me" Auth.Me)
+                              route "/oidc/config" (secureHandler "GET" "/auth/oidc/config" (Auth.OidcConfig configuration))
+                              route "/login" (secureHandler "GET" "/auth/login" Auth.Login)
+                              routef "/login/%s" (fun providerId ->
+                                  Auth.LoginProvider providerId |> secureHandler "GET" "/auth/login/%s")
+                              route "/logout" (secureHandler "GET" "/auth/logout" Auth.Logout) ]
+                        POST [ route "/token/create" (secureHandler "POST" "/auth/token/create" (Auth.TokenCreate configuration))
                                |> addMetadata typeof<Auth.CreatePersonalAccessTokenParameters>
-                               route "/token/list" (Auth.TokenList configuration)
+                               route "/token/list" (secureHandler "POST" "/auth/token/list" (Auth.TokenList configuration))
                                |> addMetadata typeof<Auth.ListPersonalAccessTokensParameters>
-                               route "/token/revoke" (Auth.TokenRevoke configuration)
+                               route "/token/revoke" (secureHandler "POST" "/auth/token/revoke" (Auth.TokenRevoke configuration))
                                |> addMetadata typeof<Auth.RevokePersonalAccessTokenParameters> ]
                     ]
                 subRoute
                     "/reminder"
                     [
-                        POST [ route "/list" Reminder.List
+                        POST [ route "/list" (secureHandler "POST" "/reminder/list" Reminder.List)
                                |> addMetadata typeof<Reminder.ListRemindersParameters>
 
-                               route "/get" Reminder.Get
+                               route "/get" (secureHandler "POST" "/reminder/get" Reminder.Get)
                                |> addMetadata typeof<Reminder.GetReminderParameters>
 
-                               route "/delete" Reminder.Delete
+                               route "/delete" (secureHandler "POST" "/reminder/delete" Reminder.Delete)
                                |> addMetadata typeof<Reminder.DeleteReminderParameters>
 
-                               route "/updateTime" Reminder.UpdateTime
+                               route "/updateTime" (secureHandler "POST" "/reminder/updateTime" Reminder.UpdateTime)
                                |> addMetadata typeof<Reminder.UpdateReminderTimeParameters>
 
-                               route "/reschedule" Reminder.Reschedule
+                               route "/reschedule" (secureHandler "POST" "/reminder/reschedule" Reminder.Reschedule)
                                |> addMetadata typeof<Reminder.RescheduleReminderParameters>
 
-                               route "/create" Reminder.Create
+                               route "/create" (secureHandler "POST" "/reminder/create" Reminder.Create)
                                |> addMetadata typeof<Reminder.CreateReminderParameters> ]
                     ]
                 subRoute
@@ -632,8 +921,10 @@ module Application =
                     [
                         POST [
 #if DEBUG
-                               route "/deleteAllFromCosmosDB" Storage.DeleteAllFromCosmosDB
-                               route "/deleteAllRemindersFromCosmosDB" Storage.DeleteAllRemindersFromCosmosDB
+                               route "/deleteAllFromCosmosDB"
+                                   (secureHandler "POST" "/admin/deleteAllFromCosmosDB" Storage.DeleteAllFromCosmosDB)
+                               route "/deleteAllRemindersFromCosmosDB"
+                                   (secureHandler "POST" "/admin/deleteAllRemindersFromCosmosDB" Storage.DeleteAllRemindersFromCosmosDB)
 #endif
                                 ]
                     ]
@@ -893,6 +1184,8 @@ module Application =
                     |> ignore
                 | None -> ()
 
+            services.AddAuthorization() |> ignore
+
             services.AddTransient<IClaimsTransformation, GraceClaimsTransformation>()
             |> ignore
 
@@ -1037,16 +1330,46 @@ module Application =
                 .UseStatusCodePages()
                 //.UseMiddleware<TimingMiddleware>()
                 .UseMiddleware<ValidateIdsMiddleware>()
+            |> ignore
+
+            let allowAnonymousMetrics =
+                let envValue = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.GraceMetricsAllowAnonymous)
+
+                let configValue =
+                    if String.IsNullOrWhiteSpace envValue then
+                        configuration[ getConfigKey Constants.EnvironmentVariables.GraceMetricsAllowAnonymous ]
+                    else
+                        envValue
+
+                match Boolean.TryParse configValue with
+                | true, parsed -> parsed
+                | _ -> false
+
+            app
                 .UseEndpoints(fun endpointBuilder ->
                     // Add Giraffe (Web API) endpoints
                     endpointBuilder.MapGiraffeEndpoints(endpoints)
 
                     // Add Prometheus scraping endpoint
-                    endpointBuilder.MapPrometheusScrapingEndpoint()
-                    |> ignore
+                    let metricsEndpoint = endpointBuilder.MapPrometheusScrapingEndpoint()
+
+                    match resolveSecurity "GET" "/metrics" with
+                    | Authenticated ->
+                        if allowAnonymousMetrics then
+                            logToConsole "Warning: /metrics is configured for anonymous access."
+                        else
+                            metricsEndpoint.RequireAuthorization() |> ignore
+                    | AllowAnonymous -> ()
+                    | _ -> invalidOp "Unsupported security classification for /metrics."
 
                     // Add SignalR hub endpoints
-                    endpointBuilder.MapHub<Notification.NotificationHub>("/notifications")
+                    let notificationsEndpoint =
+                        endpointBuilder.MapHub<Notification.NotificationHub>("/notifications")
+
+                    match resolveSecurity "GET" "/notifications" with
+                    | Authenticated -> notificationsEndpoint.RequireAuthorization() |> ignore
+                    | AllowAnonymous -> ()
+                    | _ -> invalidOp "Unsupported security classification for /notifications."
                     |> ignore)
 
                 // If we get here, we didn't find a route.

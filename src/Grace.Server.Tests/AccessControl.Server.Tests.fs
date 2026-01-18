@@ -48,14 +48,14 @@ type AccessControl() =
             return repositoryId
         }
 
-    let grantRoleAsync (client: HttpClient) ownerId organizationId repositoryId scopeKind roleId =
+    let grantRoleAsync (client: HttpClient) ownerId organizationId repositoryId scopeKind roleId principalId =
         task {
             let parameters = Parameters.Access.GrantRoleParameters()
             parameters.OwnerId <- ownerId
             parameters.OrganizationId <- organizationId
             parameters.RepositoryId <- repositoryId
             parameters.PrincipalType <- "User"
-            parameters.PrincipalId <- testUserId
+            parameters.PrincipalId <- principalId
             parameters.ScopeKind <- scopeKind
             parameters.RoleId <- roleId
             parameters.Source <- "test"
@@ -111,6 +111,12 @@ type AccessControl() =
 
         client
 
+    let createClientWithUserId (userId: string) =
+        let client = new HttpClient()
+        client.BaseAddress <- Client.BaseAddress
+        client.DefaultRequestHeaders.Add("x-grace-user-id", userId)
+        client
+
     [<Test>]
     member _.ProtectedEndpointsRequireAuthentication() =
         task {
@@ -136,12 +142,15 @@ type AccessControl() =
             let! repoA = createRepositoryAsync Client orgA
             let! repoB = createRepositoryAsync Client orgB
 
-            do! grantRoleAsync Client ownerId orgA "" "org" "OrgAdmin"
-            do! grantRoleAsync Client ownerId orgB "" "org" "OrgReader"
+            let nonAdminUserId = $"{Guid.NewGuid()}"
+            use nonAdminClient = createClientWithUserId nonAdminUserId
 
-            let! repoAWrite = checkPermissionAsync Client ownerId orgA repoA "repo" "RepoWrite" ""
-            let! repoBWrite = checkPermissionAsync Client ownerId orgB repoB "repo" "RepoWrite" ""
-            let! repoBRead = checkPermissionAsync Client ownerId orgB repoB "repo" "RepoRead" ""
+            do! grantRoleAsync Client ownerId orgA "" "org" "OrgAdmin" nonAdminUserId
+            do! grantRoleAsync Client ownerId orgB "" "org" "OrgReader" nonAdminUserId
+
+            let! repoAWrite = checkPermissionAsync nonAdminClient ownerId orgA repoA "repo" "RepoWrite" ""
+            let! repoBWrite = checkPermissionAsync nonAdminClient ownerId orgB repoB "repo" "RepoWrite" ""
+            let! repoBRead = checkPermissionAsync nonAdminClient ownerId orgB repoB "repo" "RepoRead" ""
 
             match repoAWrite with
             | Allowed _ -> ()
@@ -162,7 +171,7 @@ type AccessControl() =
             let! organizationId = createOrganizationAsync Client
             let! repositoryId = createRepositoryAsync Client organizationId
 
-            do! grantRoleAsync Client ownerId organizationId "" "org" "OrgAdmin"
+            do! grantRoleAsync Client ownerId organizationId "" "org" "OrgAdmin" testUserId
 
             do!
                 upsertPathPermissionAsync
@@ -208,12 +217,15 @@ type AccessControl() =
             parameters.Description <- "Repo description update"
             parameters.CorrelationId <- generateCorrelationId ()
 
-            let! deniedResponse = Client.PostAsync("/repository/setDescription", createJsonContent parameters)
+            let nonAdminUserId = $"{Guid.NewGuid()}"
+            use nonAdminClient = createClientWithUserId nonAdminUserId
+
+            let! deniedResponse = nonAdminClient.PostAsync("/repository/setDescription", createJsonContent parameters)
             Assert.That(deniedResponse.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden))
 
-            do! grantRoleAsync Client ownerId orgId "" "org" "OrgAdmin"
+            do! grantRoleAsync Client ownerId orgId "" "org" "OrgAdmin" nonAdminUserId
 
-            let! allowedResponse = Client.PostAsync("/repository/setDescription", createJsonContent parameters)
+            let! allowedResponse = nonAdminClient.PostAsync("/repository/setDescription", createJsonContent parameters)
             Assert.That(allowedResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK))
         }
 
@@ -223,7 +235,7 @@ type AccessControl() =
             let! orgId = createOrganizationAsync Client
             let! repoId = createRepositoryAsync Client orgId
 
-            do! grantRoleAsync Client ownerId orgId "" "org" "OrgAdmin"
+            do! grantRoleAsync Client ownerId orgId "" "org" "OrgAdmin" testUserId
 
             do!
                 upsertPathPermissionAsync
@@ -257,4 +269,127 @@ type AccessControl() =
 
             let! allowedResponse = claimsClient.PostAsync("/storage/getUploadMetadataForFiles", createJsonContent uploadParameters)
             Assert.That(allowedResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+        }
+
+    [<Test>]
+    member _.AccessGrantRoleRequiresAdminScope() =
+        task {
+            let nonAdminUserId = $"{Guid.NewGuid()}"
+            use nonAdminClient = createClientWithUserId nonAdminUserId
+
+            let parameters = Parameters.Access.GrantRoleParameters()
+            parameters.ScopeKind <- "system"
+            parameters.PrincipalType <- "User"
+            parameters.PrincipalId <- nonAdminUserId
+            parameters.RoleId <- "SystemAdmin"
+            parameters.CorrelationId <- generateCorrelationId ()
+
+            let! response = nonAdminClient.PostAsync("/access/grantRole", createJsonContent parameters)
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden))
+        }
+
+    [<Test>]
+    member _.AccessGrantRoleValidatesRoleId() =
+        task {
+            let parameters = Parameters.Access.GrantRoleParameters()
+            parameters.ScopeKind <- "system"
+            parameters.PrincipalType <- "User"
+            parameters.PrincipalId <- testUserId
+            parameters.RoleId <- "NotARealRole"
+            parameters.CorrelationId <- generateCorrelationId ()
+
+            let! response = Client.PostAsync("/access/grantRole", createJsonContent parameters)
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
+        }
+
+    [<Test>]
+    member _.AccessGrantRoleValidatesScopeApplicability() =
+        task {
+            let parameters = Parameters.Access.GrantRoleParameters()
+            parameters.OwnerId <- ownerId
+            parameters.ScopeKind <- "owner"
+            parameters.PrincipalType <- "User"
+            parameters.PrincipalId <- testUserId
+            parameters.RoleId <- "RepoAdmin"
+            parameters.CorrelationId <- generateCorrelationId ()
+
+            let! response = Client.PostAsync("/access/grantRole", createJsonContent parameters)
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
+        }
+
+    [<Test>]
+    member _.BootstrapSeedsSystemAdmin() =
+        task {
+            let parameters = Parameters.Access.ListRoleAssignmentsParameters()
+            parameters.ScopeKind <- "system"
+            parameters.CorrelationId <- generateCorrelationId ()
+
+            let! response = Client.PostAsync("/access/listRoleAssignments", createJsonContent parameters)
+            response.EnsureSuccessStatusCode() |> ignore
+
+            let! returnValue = deserializeContent<GraceReturnValue<RoleAssignment list>> response
+
+            let seeded =
+                returnValue.ReturnValue
+                |> List.exists (fun assignment ->
+                    assignment.RoleId.Equals("SystemAdmin", StringComparison.OrdinalIgnoreCase)
+                    && assignment.Principal.PrincipalId = testUserId
+                    && assignment.Source = "bootstrap")
+
+            Assert.That(seeded, Is.True)
+        }
+
+    [<Test>]
+    member _.AccessListRoleAssignmentsRequiresAdminScope() =
+        task {
+            let nonAdminUserId = $"{Guid.NewGuid()}"
+            use nonAdminClient = createClientWithUserId nonAdminUserId
+
+            let parameters = Parameters.Access.ListRoleAssignmentsParameters()
+            parameters.OwnerId <- ownerId
+            parameters.ScopeKind <- "owner"
+            parameters.CorrelationId <- generateCorrelationId ()
+
+            let! response = nonAdminClient.PostAsync("/access/listRoleAssignments", createJsonContent parameters)
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden))
+        }
+
+    [<Test>]
+    member _.AccessCheckPermissionRestrictsOtherPrincipals() =
+        task {
+            let nonAdminUserId = $"{Guid.NewGuid()}"
+            use nonAdminClient = createClientWithUserId nonAdminUserId
+
+            let parameters = Parameters.Access.CheckPermissionParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryIds[0]
+            parameters.ResourceKind <- "repo"
+            parameters.Operation <- "RepoRead"
+            parameters.PrincipalType <- "User"
+            parameters.PrincipalId <- "other-user"
+            parameters.CorrelationId <- generateCorrelationId ()
+
+            let! response = nonAdminClient.PostAsync("/access/checkPermission", createJsonContent parameters)
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden))
+        }
+
+    [<Test>]
+    member _.AccessCheckPermissionAllowsSelfPrincipal() =
+        task {
+            let nonAdminUserId = $"{Guid.NewGuid()}"
+            use nonAdminClient = createClientWithUserId nonAdminUserId
+
+            let parameters = Parameters.Access.CheckPermissionParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryIds[0]
+            parameters.ResourceKind <- "repo"
+            parameters.Operation <- "RepoRead"
+            parameters.PrincipalType <- "User"
+            parameters.PrincipalId <- nonAdminUserId
+            parameters.CorrelationId <- generateCorrelationId ()
+
+            let! response = nonAdminClient.PostAsync("/access/checkPermission", createJsonContent parameters)
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK))
         }

@@ -110,6 +110,18 @@ overridden.
 - `grace__auth__pat__max_lifetime_days`
 - `grace__auth__pat__allow_no_expiry`
 
+### Authorization (Bootstrap)
+
+- `grace__authz__bootstrap__system_admin_users`: Semicolon-delimited user IDs to
+  seed SystemAdmin at system scope when no assignments exist.
+- `grace__authz__bootstrap__system_admin_groups`: Semicolon-delimited group IDs
+  to seed SystemAdmin at system scope when no assignments exist.
+
+### Metrics
+
+- `grace__metrics__allow_anonymous`: When `true`, allows anonymous access to the
+  Prometheus `/metrics` endpoint (default `false`).
+
 ### CLI / Client
 
 - `GRACE_SERVER_URI`: Grace server base URL (must include port, no trailing

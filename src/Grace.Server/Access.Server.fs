@@ -16,6 +16,7 @@ open Microsoft.Extensions.Logging
 open NodaTime
 open System
 open System.Collections.Generic
+open System.IO
 open System.Threading.Tasks
 
 module Access =
@@ -88,6 +89,105 @@ module Access =
                         parseGuid parameters.BranchId (nameof parameters.BranchId) correlationId
                         |> Result.map (fun branchId -> Scope.Branch(ownerId, organizationId, repositoryId, branchId))
         | other -> Error(GraceError.Create $"Invalid ScopeKind '{other}'." correlationId)
+
+    let private scopeKindFromScope (scope: Scope) =
+        match scope with
+        | Scope.System -> "system"
+        | Scope.Owner _ -> "owner"
+        | Scope.Organization _ -> "organization"
+        | Scope.Repository _ -> "repository"
+        | Scope.Branch _ -> "branch"
+
+    let private adminOperationForScope (scope: Scope) =
+        match scope with
+        | Scope.System -> Operation.SystemAdmin
+        | Scope.Owner _ -> Operation.OwnerAdmin
+        | Scope.Organization _ -> Operation.OrgAdmin
+        | Scope.Repository _ -> Operation.RepoAdmin
+        | Scope.Branch _ -> Operation.BranchAdmin
+
+    let private resourceForScope (scope: Scope) =
+        match scope with
+        | Scope.System -> Resource.System
+        | Scope.Owner ownerId -> Resource.Owner ownerId
+        | Scope.Organization (ownerId, organizationId) -> Resource.Organization(ownerId, organizationId)
+        | Scope.Repository (ownerId, organizationId, repositoryId) -> Resource.Repository(ownerId, organizationId, repositoryId)
+        | Scope.Branch (ownerId, organizationId, repositoryId, branchId) ->
+            Resource.Branch(ownerId, organizationId, repositoryId, branchId)
+
+    let tryGetAdminRequirementForScope (scopeKind: string) (parameters: AccessParameters) (correlationId: CorrelationId) =
+        parseScope scopeKind parameters correlationId
+        |> Result.map (fun scope -> adminOperationForScope scope, resourceForScope scope)
+
+    let private tryGetAdminRequirementForResource (resource: Resource) =
+        match resource with
+        | Resource.System -> Operation.SystemAdmin, Resource.System
+        | Resource.Owner ownerId -> Operation.OwnerAdmin, Resource.Owner ownerId
+        | Resource.Organization (ownerId, organizationId) -> Operation.OrgAdmin, Resource.Organization(ownerId, organizationId)
+        | Resource.Repository (ownerId, organizationId, repositoryId) ->
+            Operation.RepoAdmin, Resource.Repository(ownerId, organizationId, repositoryId)
+        | Resource.Branch (ownerId, organizationId, repositoryId, branchId) ->
+            Operation.BranchAdmin, Resource.Branch(ownerId, organizationId, repositoryId, branchId)
+        | Resource.Path (ownerId, organizationId, repositoryId, _relativePath) ->
+            Operation.RepoAdmin, Resource.Repository(ownerId, organizationId, repositoryId)
+
+    let private tryGetRepositoryResource (parameters: AccessParameters) (correlationId: CorrelationId) =
+        match parseGuid parameters.OwnerId (nameof parameters.OwnerId) correlationId with
+        | Error error -> Error error
+        | Ok ownerId ->
+            match parseGuid parameters.OrganizationId (nameof parameters.OrganizationId) correlationId with
+            | Error error -> Error error
+            | Ok organizationId ->
+                parseGuid parameters.RepositoryId (nameof parameters.RepositoryId) correlationId
+                |> Result.map (fun repositoryId -> Resource.Repository(ownerId, organizationId, repositoryId))
+
+    let resolveAdminRequirementFromAccessParameters<'T when 'T :> AccessParameters>
+        (scopeKindSelector: 'T -> string)
+        (context: HttpContext)
+        =
+        task {
+            try
+                context.Request.EnableBuffering()
+                let! parameters = context.BindJsonAsync<'T>()
+
+                if String.IsNullOrWhiteSpace parameters.CorrelationId then
+                    parameters.CorrelationId <- getCorrelationId context
+
+                let correlationId = parameters.CorrelationId
+                let result = tryGetAdminRequirementForScope (scopeKindSelector parameters) parameters correlationId
+
+                context.Request.Body.Seek(0L, SeekOrigin.Begin) |> ignore
+                return result
+            with
+            | ex ->
+                context.Request.Body.Seek(0L, SeekOrigin.Begin) |> ignore
+                let error = GraceError.Create $"Invalid request body: {ex.Message}" (getCorrelationId context)
+                return Error error
+        }
+
+    let resolveRepoAdminRequirementFromAccessParameters<'T when 'T :> AccessParameters> (context: HttpContext) =
+        task {
+            try
+                context.Request.EnableBuffering()
+                let! parameters = context.BindJsonAsync<'T>()
+
+                if String.IsNullOrWhiteSpace parameters.CorrelationId then
+                    parameters.CorrelationId <- getCorrelationId context
+
+                let correlationId = parameters.CorrelationId
+
+                let result =
+                    tryGetRepositoryResource parameters correlationId
+                    |> Result.map (fun resource -> Operation.RepoAdmin, resource)
+
+                context.Request.Body.Seek(0L, SeekOrigin.Begin) |> ignore
+                return result
+            with
+            | ex ->
+                context.Request.Body.Seek(0L, SeekOrigin.Begin) |> ignore
+                let error = GraceError.Create $"Invalid request body: {ex.Message}" (getCorrelationId context)
+                return Error error
+        }
 
     let private parseResource (resourceKind: string) (parameters: CheckPermissionParameters) (correlationId: CorrelationId) =
         let normalized =
@@ -164,6 +264,64 @@ module Access =
             parsePrincipal principalType principalId correlationId
             |> Result.map Some
 
+    let resolveCheckPermissionAdminRequirement (context: HttpContext) =
+        task {
+            try
+                context.Request.EnableBuffering()
+                let! parameters = context.BindJsonAsync<CheckPermissionParameters>()
+
+                if String.IsNullOrWhiteSpace parameters.CorrelationId then
+                    parameters.CorrelationId <- getCorrelationId context
+
+                let correlationId = parameters.CorrelationId
+                let principalFilter = tryParsePrincipalFilter parameters.PrincipalType parameters.PrincipalId correlationId
+
+                match principalFilter with
+                | Error error ->
+                    context.Request.Body.Seek(0L, SeekOrigin.Begin) |> ignore
+                    return Error error
+                | Ok principalOption ->
+                    let callerPrincipals = PrincipalMapper.getPrincipals context.User
+
+                    let isSelfOrGroup =
+                        match principalOption with
+                        | None -> true
+                        | Some principal -> callerPrincipals |> List.contains principal
+
+                    if isSelfOrGroup then
+                        context.Request.Body.Seek(0L, SeekOrigin.Begin) |> ignore
+                        return Ok None
+                    else
+                        match parseResource parameters.ResourceKind parameters correlationId with
+                        | Error error ->
+                            context.Request.Body.Seek(0L, SeekOrigin.Begin) |> ignore
+                            return Error error
+                        | Ok resource ->
+                            let adminOperation, adminResource = tryGetAdminRequirementForResource resource
+                            context.Request.Body.Seek(0L, SeekOrigin.Begin) |> ignore
+                            return Ok(Some(adminOperation, adminResource))
+            with
+            | ex ->
+                context.Request.Body.Seek(0L, SeekOrigin.Begin) |> ignore
+                let error = GraceError.Create $"Invalid request body: {ex.Message}" (getCorrelationId context)
+                return Error error
+        }
+
+    let private validateRoleForScope (roleId: string) (scope: Scope) (correlationId: CorrelationId) =
+        if String.IsNullOrWhiteSpace roleId then
+            Error(GraceError.Create "RoleId is required." correlationId)
+        else
+            match Authorization.RoleCatalog.tryGet roleId with
+            | None -> Error(GraceError.Create $"RoleId '{roleId}' does not exist." correlationId)
+            | Some role ->
+                let scopeKind = scopeKindFromScope scope
+
+                if role.AppliesTo.Contains scopeKind then
+                    Ok role
+                else
+                    Error(GraceError.Create $"RoleId '{role.RoleId}' does not apply to scope kind '{scopeKind}'." correlationId)
+
+
     let GrantRole: HttpHandler =
         requireGraceUser (fun next context ->
             task {
@@ -173,14 +331,12 @@ module Access =
                 match parseScope parameters.ScopeKind parameters correlationId with
                 | Error error -> return! context |> result400BadRequest error
                 | Ok scope ->
-                    match parsePrincipal parameters.PrincipalType parameters.PrincipalId correlationId with
+                    match validateRoleForScope parameters.RoleId scope correlationId with
                     | Error error -> return! context |> result400BadRequest error
-                    | Ok principal ->
-                        if String.IsNullOrWhiteSpace parameters.RoleId then
-                            return!
-                                context
-                                |> result400BadRequest (GraceError.Create "RoleId is required." correlationId)
-                        else
+                    | Ok _ ->
+                        match parsePrincipal parameters.PrincipalType parameters.PrincipalId correlationId with
+                        | Error error -> return! context |> result400BadRequest error
+                        | Ok principal ->
                             let assignment =
                                 {
                                     Principal = principal
@@ -216,14 +372,12 @@ module Access =
                 match parseScope parameters.ScopeKind parameters correlationId with
                 | Error error -> return! context |> result400BadRequest error
                 | Ok scope ->
-                    match parsePrincipal parameters.PrincipalType parameters.PrincipalId correlationId with
+                    match validateRoleForScope parameters.RoleId scope correlationId with
                     | Error error -> return! context |> result400BadRequest error
-                    | Ok principal ->
-                        if String.IsNullOrWhiteSpace parameters.RoleId then
-                            return!
-                                context
-                                |> result400BadRequest (GraceError.Create "RoleId is required." correlationId)
-                        else
+                    | Ok _ ->
+                        match parsePrincipal parameters.PrincipalType parameters.PrincipalId correlationId with
+                        | Error error -> return! context |> result400BadRequest error
+                        | Ok principal ->
                             let scopeKey = AccessControl.getScopeKey scope
                             let actorProxy = ActorProxy.AccessControl.CreateActorProxy scopeKey correlationId
 
