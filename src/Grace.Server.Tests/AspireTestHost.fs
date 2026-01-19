@@ -36,6 +36,8 @@ type TestHostState =
 module AspireTestHost =
 
     let private graceServerResourceName = "grace-server"
+    let private azuriteResourceName = "azurite"
+    let private serviceBusSqlResourceName = "servicebus-sql"
     let private serviceBusEmulatorResourceName = "servicebus-emulator"
     let private isCi =
         match Environment.GetEnvironmentVariable("GITHUB_ACTIONS"), Environment.GetEnvironmentVariable("CI") with
@@ -60,6 +62,12 @@ module AspireTestHost =
         model.Resources
         |> Seq.tryFind (fun resource -> resource :? 'T)
         |> Option.map (fun resource -> resource.Name)
+
+    let private tryFindResourceByName (app: DistributedApplication) (resourceName: string) =
+        let model = app.Services.GetRequiredService<DistributedApplicationModel>()
+
+        model.Resources
+        |> Seq.tryFind (fun resource -> resource.Name = resourceName)
 
     let private getEndpointName (app: DistributedApplication) (resourceName: string) =
         let resource = getResource app resourceName
@@ -375,8 +383,46 @@ module AspireTestHost =
                         ready <- true
                     with
                     | ex ->
+                    lastError <- ex.Message
+                    do! Task.Delay(TimeSpan.FromSeconds(1.0))
+        }
+
+    let private waitForGraceServerHttpReadyAsync (client: HttpClient) (ct: CancellationToken) =
+        task {
+            let perRequestTimeout = getTimeout (TimeSpan.FromSeconds(10.0)) (TimeSpan.FromSeconds(20.0))
+            let sw = Stopwatch.StartNew()
+            let mutable attempt = 0
+            let mutable lastError = String.Empty
+
+            Console.WriteLine($"Waiting for Grace.Server HTTP readiness at {client.BaseAddress}...")
+
+            let rec loop () =
+                task {
+                    if ct.IsCancellationRequested then
+                        raise (TimeoutException($"Timed out waiting for Grace.Server HTTP readiness. Last error: {lastError}"))
+
+                    attempt <- attempt + 1
+
+                    try
+                        use linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct)
+                        linkedCts.CancelAfter(perRequestTimeout)
+
+                        use! response = client.GetAsync("/healthz", linkedCts.Token)
+
+                        if response.IsSuccessStatusCode then
+                            Console.WriteLine($"Grace.Server HTTP readiness confirmed after {sw.Elapsed.TotalSeconds:n1}s (attempt {attempt}).")
+                        else
+                            lastError <- $"Status {(int response.StatusCode)} {response.StatusCode}"
+                            do! Task.Delay(TimeSpan.FromSeconds(1.0), ct)
+                            return! loop ()
+                    with
+                    | ex ->
                         lastError <- ex.Message
-                        do! Task.Delay(TimeSpan.FromSeconds(1.0))
+                        do! Task.Delay(TimeSpan.FromSeconds(1.0), ct)
+                        return! loop ()
+                }
+
+            do! loop ()
         }
 
     let startAsync () =
@@ -406,6 +452,18 @@ module AspireTestHost =
                 | _ -> ()
 
             use cts = new CancellationTokenSource(defaultWaitTimeout)
+
+            match tryFindResourceByName app azuriteResourceName with
+            | Some _ ->
+                Console.WriteLine($"Azurite resource detected: {azuriteResourceName}")
+                do! waitForResourceHealthyAsync notificationService app azuriteResourceName cts.Token
+            | None -> Console.WriteLine("Azurite resource not found in model.")
+
+            match tryFindResourceByName app serviceBusSqlResourceName with
+            | Some _ ->
+                Console.WriteLine($"Service Bus SQL resource detected: {serviceBusSqlResourceName}")
+                do! waitForResourceHealthyAsync notificationService app serviceBusSqlResourceName cts.Token
+            | None -> Console.WriteLine("Service Bus SQL resource not found in model.")
 
             match tryFindResourceName<AzureCosmosDBEmulatorResource> app with
             | Some name ->
@@ -501,6 +559,9 @@ module AspireTestHost =
             let endpointName = getEndpointName app graceServerResourceName
             let endpointUri = app.GetEndpoint(graceServerResourceName, endpointName)
             let client = app.CreateHttpClient(graceServerResourceName, endpointName)
+            client.Timeout <- getTimeout (TimeSpan.FromSeconds(100.0)) (TimeSpan.FromMinutes(5.0))
+
+            do! waitForGraceServerHttpReadyAsync client cts.Token
 
             let diagnosticsPath = Path.Combine(Path.GetTempPath(), "grace-server-tests.host.log")
 
