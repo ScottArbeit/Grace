@@ -1,68 +1,57 @@
 {
-  "$schema": "http://json.schemastore.org/launchsettings.json",
   "profiles": {
     "http": {
       "commandName": "Project",
-      "dotnetRunMessages": true,
       "launchBrowser": true,
-      "applicationUrl": "http://localhost:15009",
       "environmentVariables": {
         "ASPNETCORE_ENVIRONMENT": "Development",
         "DOTNET_ENVIRONMENT": "Development",
         "DOTNET_DASHBOARD_OTLP_ENDPOINT_URL": "http://localhost:16196",
         "ASPIRE_ALLOW_UNSECURED_TRANSPORT": "true"
-      }
+      },
+      "dotnetRunMessages": true,
+      "applicationUrl": "http://localhost:15009"
     },
-
     "https": {
       "commandName": "Project",
-      "dotnetRunMessages": true,
       "launchBrowser": true,
-      "applicationUrl": "https://localhost:15010",
       "environmentVariables": {
         "ASPNETCORE_ENVIRONMENT": "Development",
         "DOTNET_ENVIRONMENT": "Development",
         "DOTNET_DASHBOARD_OTLP_ENDPOINT_URL": "http://localhost:16196",
         "ASPIRE_ALLOW_UNSECURED_TRANSPORT": "true"
-      }
+      },
+      "dotnetRunMessages": true,
+      "applicationUrl": "https://localhost:15010"
     },
-
-    // -------------------------------------------------
-    // NEW: DebugLocal (containers / emulators)
-    // -------------------------------------------------
     "DebugLocal": {
       "commandName": "Project",
-      "dotnetRunMessages": true,
       "launchBrowser": true,
-      "applicationUrl": "https://localhost:15010",
       "environmentVariables": {
         "ASPNETCORE_ENVIRONMENT": "Development",
         "DOTNET_ENVIRONMENT": "Development",
-
         "ASPIRE_RESOURCE_MODE": "Local",
-
         "DOTNET_DASHBOARD_OTLP_ENDPOINT_URL": "http://localhost:16196",
-        "ASPIRE_ALLOW_UNSECURED_TRANSPORT": "true"
-      }
+        "ASPIRE_ALLOW_UNSECURED_TRANSPORT": "true",
+        "GRACE_TESTING": "1",
+        "grace__authz__bootstrap__system_admin_users": "test-admin"
+      },
+      "dotnetRunMessages": true,
+      "applicationUrl": "https://localhost:15010"
     },
-
-    // -------------------------------------------------
-    // NEW: DebugAzure (real Azure resources)
-    // -------------------------------------------------
     "DebugAzure": {
       "commandName": "Project",
-      "dotnetRunMessages": true,
       "launchBrowser": true,
-      "applicationUrl": "https://localhost:15010",
       "environmentVariables": {
         "ASPNETCORE_ENVIRONMENT": "Development",
         "DOTNET_ENVIRONMENT": "Development",
-
         "ASPIRE_RESOURCE_MODE": "Azure",
-
         "DOTNET_DASHBOARD_OTLP_ENDPOINT_URL": "http://localhost:16196",
         "ASPIRE_ALLOW_UNSECURED_TRANSPORT": "true"
-      }
+      },
+      "dotnetRunMessages": true,
+      "applicationUrl": "https://localhost:15010"
     }
-  }
+  },
+  "$schema": "http://json.schemastore.org/launchsettings.json"
 }
