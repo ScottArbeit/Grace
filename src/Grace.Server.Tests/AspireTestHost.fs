@@ -393,36 +393,53 @@ module AspireTestHost =
             let sw = Stopwatch.StartNew()
             let mutable attempt = 0
             let mutable lastError = String.Empty
+            let delayAsync () =
+                task {
+                    try
+                        do! Task.Delay(TimeSpan.FromSeconds(1.0), ct)
+                    with
+                    | :? OperationCanceledException when ct.IsCancellationRequested ->
+                        raise (
+                            TimeoutException(
+                                $"Timed out waiting for Grace.Server HTTP readiness. Last error: {lastError}"
+                            )
+                        )
+                }
 
             Console.WriteLine($"Waiting for Grace.Server HTTP readiness at {client.BaseAddress}...")
 
-            let rec loop () =
-                task {
-                    if ct.IsCancellationRequested then
-                        raise (TimeoutException($"Timed out waiting for Grace.Server HTTP readiness. Last error: {lastError}"))
+            let mutable ready = false
 
-                    attempt <- attempt + 1
+            while not ready do
+                if ct.IsCancellationRequested then
+                    raise (
+                        TimeoutException($"Timed out waiting for Grace.Server HTTP readiness. Last error: {lastError}")
+                    )
 
-                    try
-                        use linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct)
-                        linkedCts.CancelAfter(perRequestTimeout)
+                attempt <- attempt + 1
 
-                        use! response = client.GetAsync("/healthz", linkedCts.Token)
+                try
+                    use linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct)
+                    linkedCts.CancelAfter(perRequestTimeout)
 
-                        if response.IsSuccessStatusCode then
-                            Console.WriteLine($"Grace.Server HTTP readiness confirmed after {sw.Elapsed.TotalSeconds:n1}s (attempt {attempt}).")
-                        else
-                            lastError <- $"Status {(int response.StatusCode)} {response.StatusCode}"
-                            do! Task.Delay(TimeSpan.FromSeconds(1.0), ct)
-                            return! loop ()
-                    with
-                    | ex ->
-                        lastError <- ex.Message
-                        do! Task.Delay(TimeSpan.FromSeconds(1.0), ct)
-                        return! loop ()
-                }
+                    use! response = client.GetAsync("/healthz", linkedCts.Token)
 
-            do! loop ()
+                    if response.IsSuccessStatusCode then
+                        Console.WriteLine(
+                            $"Grace.Server HTTP readiness confirmed after {sw.Elapsed.TotalSeconds:n1}s (attempt {attempt})."
+                        )
+                        ready <- true
+                    else
+                        lastError <- $"Status {(int response.StatusCode)} {response.StatusCode}"
+                        do! delayAsync ()
+                with
+                | :? OperationCanceledException when ct.IsCancellationRequested ->
+                    raise (
+                        TimeoutException($"Timed out waiting for Grace.Server HTTP readiness. Last error: {lastError}")
+                    )
+                | ex ->
+                    lastError <- ex.Message
+                    do! delayAsync ()
         }
 
     let startAsync () =
