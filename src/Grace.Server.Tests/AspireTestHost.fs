@@ -598,7 +598,7 @@ module AspireTestHost =
                     do! delayAsync ()
         }
 
-    let startAsync () =
+    let startAsync (bootstrapUserId: string) =
         task {
             Environment.SetEnvironmentVariable("GRACE_TESTING", "1")
             Environment.SetEnvironmentVariable("GRACE_TEST_CLEANUP", "1")
@@ -606,6 +606,10 @@ module AspireTestHost =
             Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.GraceAuthOidcAuthority, "https://auth.grace.test")
             Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.GraceAuthOidcAudience, "https://api.grace.test")
             Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.GraceAuthOidcCliClientId, "grace-cli-test-client")
+
+            if not <| String.IsNullOrWhiteSpace bootstrapUserId then
+                Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.GraceAuthzBootstrapSystemAdminUsers, bootstrapUserId)
+
             let! builder = DistributedApplicationTestingBuilder.CreateAsync<Projects.Grace_Aspire_AppHost>()
             let! app = builder.BuildAsync()
             do! app.StartAsync()

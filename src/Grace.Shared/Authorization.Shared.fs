@@ -74,6 +74,7 @@ module Authorization =
                   RepoRead
                   PathWrite
                   PathRead
+                  BranchAdmin
                   BranchWrite
                   BranchRead ]
 

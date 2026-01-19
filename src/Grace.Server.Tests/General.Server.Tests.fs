@@ -4,6 +4,7 @@ open Grace.Shared
 open Grace.Shared.Utilities
 open NUnit.Framework
 open System
+open System.Net
 open System.Net.Http
 open System.Net.Http.Json
 open System.Text.Json
@@ -71,7 +72,9 @@ type Setup() =
         task {
             logToTestConsole "Starting Aspire test host..."
 
-            let! hostState = AspireTestHost.startAsync ()
+            testUserId <- $"{Guid.NewGuid()}"
+
+            let! hostState = AspireTestHost.startAsync testUserId
 
             App <- Some hostState.App
             Client <- hostState.Client
@@ -80,7 +83,6 @@ type Setup() =
             serviceBusTopic <- hostState.ServiceBusTopic
             serviceBusServerSubscription <- hostState.ServiceBusServerSubscription
             serviceBusTestSubscription <- hostState.ServiceBusTestSubscription
-            testUserId <- $"{Guid.NewGuid()}"
             testUserClaims <- [ "engineering"; "contributors" ]
 
             Client.DefaultRequestHeaders.Add("x-grace-user-id", testUserId)
@@ -272,4 +274,14 @@ type General() =
             let! content = response.Content.ReadAsStringAsync()
             Console.WriteLine($"{content}")
             Assert.That(content, Does.Contain("Grace"))
+        }
+
+    [<Test>]
+    member public _.MetricsRequiresAuthentication() =
+        task {
+            use client = new HttpClient()
+            client.BaseAddress <- Services.Client.BaseAddress
+
+            let! response = client.GetAsync("/metrics")
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized))
         }

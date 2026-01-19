@@ -147,3 +147,11 @@ type AuthorizationUnit() =
                 (Resource.Repository(ownerId, organizationId, repositoryId))
 
         assertAllowed result
+
+    [<Test>]
+    member _.RepoAdminIncludesBranchAdmin() =
+        let repoAdmin =
+            roleCatalog
+            |> List.find (fun role -> role.RoleId.Equals("RepoAdmin", StringComparison.OrdinalIgnoreCase))
+
+        Assert.That(repoAdmin.AllowedOperations.Contains Operation.BranchAdmin, Is.True)

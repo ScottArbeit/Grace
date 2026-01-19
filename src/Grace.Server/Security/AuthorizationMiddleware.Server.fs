@@ -5,6 +5,7 @@ open Grace.Server.ApplicationContext
 open Grace.Server.Services
 open Grace.Shared.Utilities
 open Grace.Types.Authorization
+open Grace.Types.Types
 open Microsoft.AspNetCore.Http
 open Microsoft.Extensions.DependencyInjection
 open Microsoft.Extensions.Logging
@@ -158,4 +159,65 @@ module AuthorizationMiddleware =
                     | Some reason ->
                         logDenied context operation principalSummary (formatResourceSummary resources) reason
                         return! forbidden reason next context
+            }
+
+    let requiresPermissionResolved (resolve: HttpContext -> Task<Result<Operation * Resource, GraceError>>) : HttpHandler =
+        fun next context ->
+            task {
+                match PrincipalMapper.tryGetUserId context.User with
+                | None ->
+                    let principalSummary =
+                        PrincipalMapper.getPrincipals context.User
+                        |> formatPrincipalSummary context
+
+                    logMissingAuthentication context Operation.SystemAdmin principalSummary
+                    return! RequestErrors.UNAUTHORIZED "Grace" "Access" "Authentication required." next context
+                | Some _ ->
+                    let! resolved = resolve context
+
+                    match resolved with
+                    | Error error -> return! context |> result400BadRequest error
+                    | Ok (operation, resource) ->
+                        let principals = PrincipalMapper.getPrincipals context.User
+                        let principalSummary = formatPrincipals principals
+                        let claims = PrincipalMapper.getEffectiveClaims context.User
+                        let evaluator = context.RequestServices.GetRequiredService<IGracePermissionEvaluator>()
+                        let! decision = evaluator.CheckAsync(principals, claims, operation, resource)
+
+                        match decision with
+                        | Allowed _ -> return! next context
+                        | Denied reason ->
+                            logDenied context operation principalSummary (formatResource resource) reason
+                            return! forbidden reason next context
+            }
+
+    let requiresPermissionResolvedOptional (resolve: HttpContext -> Task<Result<(Operation * Resource) option, GraceError>>) : HttpHandler =
+        fun next context ->
+            task {
+                match PrincipalMapper.tryGetUserId context.User with
+                | None ->
+                    let principalSummary =
+                        PrincipalMapper.getPrincipals context.User
+                        |> formatPrincipalSummary context
+
+                    logMissingAuthentication context Operation.SystemAdmin principalSummary
+                    return! RequestErrors.UNAUTHORIZED "Grace" "Access" "Authentication required." next context
+                | Some _ ->
+                    let! resolved = resolve context
+
+                    match resolved with
+                    | Error error -> return! context |> result400BadRequest error
+                    | Ok None -> return! next context
+                    | Ok (Some (operation, resource)) ->
+                        let principals = PrincipalMapper.getPrincipals context.User
+                        let principalSummary = formatPrincipals principals
+                        let claims = PrincipalMapper.getEffectiveClaims context.User
+                        let evaluator = context.RequestServices.GetRequiredService<IGracePermissionEvaluator>()
+                        let! decision = evaluator.CheckAsync(principals, claims, operation, resource)
+
+                        match decision with
+                        | Allowed _ -> return! next context
+                        | Denied reason ->
+                            logDenied context operation principalSummary (formatResource resource) reason
+                            return! forbidden reason next context
             }

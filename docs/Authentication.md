@@ -1,38 +1,133 @@
 # Authentication
 
+<!-- markdownlint-configure-file {"MD013": {"line_length": 120}} -->
+
 This document describes how to configure and use authentication for Grace during development.
 
 Grace supports two authentication mechanisms:
 
-1. **Auth0 (OIDC/JWT bearer tokens)** for interactive developer login (PKCE or Device Code) and machine-to-machine (client credentials).
-2. **Grace Personal Access Tokens (PATs)** for automation and non-interactive usage.
+1. **Auth0 (OIDC/JWT bearer tokens)** for interactive developer login (PKCE or Device Code) and
+   machine-to-machine (client credentials).
+1. **Grace Personal Access Tokens (PATs)** for automation and non-interactive usage.
 
-> Important: Authentication proves “who you are.” Authorization (RBAC and path permissions) determines “what you can do.” PATs do **not** introduce a separate permission model; they authenticate a principal that is then authorized via Grace’s normal authorization system.
+> Important: Authentication proves “who you are.” Authorization (RBAC and path permissions) determines
+> “what you can do.” PATs do **not** introduce a separate permission model; they authenticate a principal
+> that is then authorized via Grace’s normal authorization system.
 
 ---
 
 ## Quickstart for contributors (recommended path)
 
 1. **Set up Auth0** (one-time) using the instructions in **Auth0 tenant setup** below.
-2. **Run Grace.Server** (typically via Aspire) with OIDC env vars configured.
-3. **Point the Grace CLI at your server** by setting `GRACE_SERVER_URI`.
+1. **Run Grace.Server** (typically via Aspire) with OIDC env vars configured.
+1. **Point the Grace CLI at your server** by setting `GRACE_SERVER_URI`.
 
-PowerShell example:
+PowerShell:
 
 ```powershell
 $env:GRACE_SERVER_URI="http://localhost:5000"
 ```
 
-Bash / zsh example:
+bash / zsh:
 
 ```bash
 export GRACE_SERVER_URI="http://localhost:5000"
 ```
 
-4. **Login via the CLI**:
+1. **Login via the CLI**:
 
    * `grace auth login` — Interactive login (tries PKCE first, then falls back to Device Code).
    * `grace auth whoami` — Verifies your identity against the running server.
+
+---
+
+## Authorization bootstrap (SystemAdmin seeding)
+
+Grace supports a one-time bootstrap mechanism to seed the first SystemAdmin role assignment in a fresh environment.
+This is required when you are standing up a new deployment that has no RBAC assignments yet.
+
+### How it works
+
+* Bootstrap runs **only** when the system-scope AccessControl actor first activates and has **no** existing assignments.
+* It reads configured bootstrap principals and creates `SystemAdmin` role assignments at `Scope.System`.
+* Bootstrap is **one-time** and will **never** overwrite or re-seed once any system-scope assignments exist.
+
+### Configuration
+
+Set one or both of these environment variables (semicolon-delimited list):
+
+* `grace__authz__bootstrap__system_admin_users`
+* `grace__authz__bootstrap__system_admin_groups`
+
+### Important
+
+* The values must be **principal IDs**, not emails or display names.
+* For Auth0/OIDC, the user principal ID is taken from the `sub` claim (exposed as `grace_user_id`).
+* You can confirm the user ID with `GET /auth/me` (`GraceUserId` in the response).
+
+PowerShell:
+
+```powershell
+$env:grace__authz__bootstrap__system_admin_users="auth0|abc123"
+```
+
+bash / zsh:
+
+```bash
+export grace__authz__bootstrap__system_admin_users="auth0|abc123"
+```
+
+---
+
+## Development without Auth0 (TestAuth)
+
+For local development, you can skip Auth0 entirely by enabling the built-in TestAuth handler.
+This is intended for **dev/test only**.
+
+### Enable TestAuth
+
+Set:
+
+* `GRACE_TESTING=1` (also accepts `true` or `yes`)
+
+When enabled, Grace authenticates requests using headers:
+
+* `x-grace-user-id` — required; becomes the user principal ID (`grace_user_id`).
+* `x-grace-claims` — optional; semicolon-delimited values mapped to `grace_claim`.
+
+### Bootstrap as SystemAdmin without Auth0
+
+1. Choose a local user ID (e.g., `dev-scott`).
+1. Set bootstrap to that user ID:
+
+   PowerShell:
+
+   ```powershell
+   $env:grace__authz__bootstrap__system_admin_users="dev-scott"
+   ```
+
+   bash / zsh:
+
+   ```bash
+   export grace__authz__bootstrap__system_admin_users="dev-scott"
+   ```
+
+1. Send requests with the `x-grace-user-id` header.
+
+   PowerShell:
+
+   ```powershell
+   Invoke-RestMethod "http://localhost:5000/auth/me" -Headers @{ "x-grace-user-id" = "dev-scott" }
+   ```
+
+   bash / zsh:
+
+   ```bash
+   curl -H "x-grace-user-id: dev-scott" "http://localhost:5000/auth/me"
+   ```
+
+On first activation (with no existing assignments), Grace will seed `SystemAdmin` for `dev-scott`.
+After that, bootstrap is a no-op.
 
 ---
 
@@ -45,10 +140,10 @@ Grace needs these Auth0 resources:
 1. **An Auth0 API (Resource Server)** for the Grace Server API
 
    * This provides the **Audience** value (the API Identifier).
-2. **A Native Auth0 Application** for the Grace CLI (interactive login)
+1. **A Native Auth0 Application** for the Grace CLI (interactive login)
 
    * This provides the **CLI client ID**.
-3. *(Optional)* **A Machine-to-Machine Auth0 Application** for CI/automation
+1. *(Optional)* **A Machine-to-Machine Auth0 Application** for CI/automation
 
    * This provides an **M2M client ID** and **M2M client secret**.
 
@@ -70,14 +165,14 @@ Grace needs these Auth0 resources:
 Auth0 Dashboard steps:
 
 1. Go to **Applications → APIs → Create API**.
-2. Set:
+1. Set:
 
    * **Name**: `Grace (Dev)` (or similar)
    * **Identifier** (this becomes the **Audience**): choose a stable string, e.g. `https://grace.local/api`
-3. Enable **Allow Offline Access** on the API.
+1. Enable **Allow Offline Access** on the API.
 
    * This is required so the CLI can receive refresh tokens (when requesting `offline_access`).
-4. Save.
+1. Save.
 
 Record:
 
@@ -92,25 +187,27 @@ Auth0 Dashboard steps:
 
 1. Go to **Applications → Applications → Create Application**.
 
-2. Choose application type: **Native**.
+1. Choose application type: **Native**.
 
-3. In the application settings:
+1. In the application settings:
 
    * Ensure **Authorization Code** (PKCE) is enabled.
    * Ensure **Refresh Token** grant is enabled.
    * Ensure **Device Code** grant is enabled (so the CLI can use device flow on headless systems).
 
-4. Configure **Allowed Callback URLs** to include the CLI callback URL:
+1. Configure **Allowed Callback URLs** to include the CLI callback URL:
 
    * Default Grace CLI callback URL:
 
      * `http://127.0.0.1:8391/callback`
 
-   If you override the CLI redirect port (via `grace__auth__oidc__cli_redirect_port`), you must also update this callback URL accordingly.
+   If you override the CLI redirect port (via `grace__auth__oidc__cli_redirect_port`), you must also
+   update this callback URL accordingly.
 
-5. Configure refresh token behavior (recommended for development):
+1. Configure refresh token behavior (recommended for development):
 
-   * Enable refresh token rotation (or equivalent Auth0 setting) and ensure refresh tokens are issued to the application.
+   * Enable refresh token rotation (or equivalent Auth0 setting) and ensure refresh tokens are issued to
+     the application.
 
 Record:
 
@@ -123,9 +220,10 @@ Record:
 Auth0 Dashboard steps:
 
 1. Create a new application of type **Machine to Machine**.
-2. Authorize it to call your **Grace API (Resource Server)**.
-3. Choose scopes if you’ve defined API scopes (Grace does not currently require Auth0 API scopes for authorization decisions, but your tenant policies may).
-4. Record:
+1. Authorize it to call your **Grace API (Resource Server)**.
+1. Choose scopes if you’ve defined API scopes (Grace does not currently require Auth0 API scopes for
+   authorization decisions, but your tenant policies may).
+1. Record:
 
    * **Client ID** (`grace__auth__oidc__m2m_client_id`)
    * **Client Secret** (`grace__auth__oidc__m2m_client_secret`)
@@ -137,14 +235,15 @@ Auth0 Dashboard steps:
 The CLI can authenticate in multiple ways. The first matching mode “wins”:
 
 1. **PAT mode** if `GRACE_TOKEN` is set (must be a Grace PAT, prefix `grace_pat_v1_`).
-2. **Error** if `GRACE_TOKEN_FILE` is set (local token storage is intentionally disabled).
-3. **M2M mode** if M2M env vars are set.
-4. **Interactive mode** if you have logged in previously (token stored in OS secure store).
+1. **Error** if `GRACE_TOKEN_FILE` is set (local token storage is intentionally disabled).
+1. **M2M mode** if M2M env vars are set.
+1. **Interactive mode** if you have logged in previously (token stored in OS secure store).
 
 ### Primary CLI commands
 
 * `grace auth login [--auth pkce|device]`
-  Interactive login to Auth0; stores access/refresh tokens in the OS secure store. If `--auth` is not specified, the CLI attempts PKCE and falls back to Device Code.
+  Interactive login to Auth0; stores access/refresh tokens in the OS secure store. If `--auth` is not
+  specified, the CLI attempts PKCE and falls back to Device Code.
 
 * `grace auth status`
   Shows whether the CLI currently has usable credentials (PAT, M2M, or interactive).
@@ -173,7 +272,7 @@ A PAT string looks like:
 
 You must already be authenticated (interactive Auth0 login, or an existing PAT, or M2M) to create a PAT.
 
-**CLI (recommended)**
+#### CLI (recommended)
 
 * `grace auth token create --name "<token-name>"`
   Creates a PAT with the server-default lifetime.
@@ -184,7 +283,7 @@ You must already be authenticated (interactive Auth0 login, or an existing PAT, 
 * `grace auth token create --name "<token-name>" --no-expiry`
   Creates a non-expiring PAT **only if** the server allows it.
 
-**Notes**
+#### Notes
 
 * The PAT value is a secret. Store it in a secret manager.
 * Treat PATs like passwords; do not commit them into git.
@@ -193,13 +292,13 @@ You must already be authenticated (interactive Auth0 login, or an existing PAT, 
 
 Set the token in your environment:
 
-PowerShell example:
+PowerShell:
 
 ```powershell
 $env:GRACE_TOKEN="grace_pat_v1_..."
 ```
 
-Bash / zsh example:
+bash / zsh:
 
 ```bash
 export GRACE_TOKEN="grace_pat_v1_..."
@@ -237,12 +336,15 @@ PATs do **not** have an independent “permission set” like some systems (GitH
 
 Important implementation detail:
 
-* When a PAT is created, Grace snapshots the current principal’s `grace_claim` values and `grace_group_id` values into the token record on the server.
-* If your group membership or claim set changes later, existing PATs will **not** automatically pick up those changes. Create a new PAT if you need a token that reflects updated claims/groups.
+* When a PAT is created, Grace snapshots the current principal’s `grace_claim` values and `grace_group_id`
+  values into the token record on the server.
+* If your group membership or claim set changes later, existing PATs will **not** automatically pick up
+  those changes. Create a new PAT if you need a token that reflects updated claims/groups.
 
 ### Setting permissions for a PAT
 
-Because a PAT’s authorization comes from the principal it authenticates, you “set PAT permissions” by granting/revoking roles and path permissions for that principal.
+Because a PAT’s authorization comes from the principal it authenticates, you “set PAT permissions” by
+granting/revoking roles and path permissions for that principal.
 
 Primary CLI commands for authorization management:
 
@@ -267,7 +369,8 @@ Primary CLI commands for authorization management:
 * `grace access check ...`
   Asks the server “would this principal be allowed to do operation X on resource Y?”
 
-> For detailed role IDs and operations, use `grace access list-roles` and consult the authorization types in `Grace.Types.Authorization`.
+> For detailed role IDs and operations, use `grace access list-roles` and consult the authorization types
+> in `Grace.Types.Authorization`.
 
 ---
 
@@ -285,13 +388,13 @@ Example value:
 
 * `http://localhost:5000`
 
-PowerShell example:
+PowerShell:
 
 ```powershell
 $env:GRACE_SERVER_URI="http://localhost:5000"
 ```
 
-Bash / zsh example:
+bash / zsh:
 
 ```bash
 export GRACE_SERVER_URI="http://localhost:5000"
@@ -317,16 +420,18 @@ Recommended (for CLI auto-config):
   **No default.**
   Source: Auth0 Native app Client ID.
 
-> If `grace__auth__oidc__authority` and `grace__auth__oidc__audience` are not set, the server will fall back to PAT-only authentication.
+> If `grace__auth__oidc__authority` and `grace__auth__oidc__audience` are not set, the server will fall
+> back to PAT-only authentication.
 
 ---
 
 ### Grace CLI interactive OIDC configuration (Auth0 login)
 
-The Grace CLI can authenticate interactively using Auth0 (OIDC). There are two ways to supply the required OIDC settings:
+The Grace CLI can authenticate interactively using Auth0 (OIDC). There are two ways to supply the required
+OIDC settings:
 
 1. **Recommended:** have the CLI fetch OIDC settings from the Grace Server.
-2. **Advanced:** configure OIDC settings directly on the CLI via environment variables.
+1. **Advanced:** configure OIDC settings directly on the CLI via environment variables.
 
 ---
 
@@ -340,35 +445,36 @@ If you set only:
 
 * `GET /auth/oidc/config` — Returns the server’s OIDC settings needed for interactive login.
 
-This works **only if** the server is configured with OIDC and has the values needed to publish them (see server env vars below).
+This works **only if** the server is configured with OIDC and has the values needed to publish them (see
+server env vars below).
 
-**How to use**
+##### How to use (server auto-configuration)
 
 1. Start the server with OIDC enabled (Authority + Audience, and preferably the CLI client ID).
 
-2. Set the server URI:
+1. Set the server URI:
 
-   PowerShell example:
+   PowerShell:
 
    ```powershell
    $env:GRACE_SERVER_URI="http://localhost:5000"
    ```
 
-   Bash / zsh example:
+   bash / zsh:
 
    ```bash
    export GRACE_SERVER_URI="http://localhost:5000"
    ```
 
-3. Login:
+1. Login:
 
    * `grace auth login` — Interactive Auth0 login (tries PKCE, then device flow).
 
-4. Verify:
+1. Verify:
 
    * `grace auth whoami` — Calls the server and prints the authenticated identity.
 
-**Server-side requirements for auto-configuration**
+##### Server-side requirements for auto-configuration
 
 For `GET /auth/oidc/config` to return useful values, the server must be configured with:
 
@@ -376,15 +482,17 @@ For `GET /auth/oidc/config` to return useful values, the server must be configur
 * `grace__auth__oidc__audience` — Auth0 API Identifier
 * `grace__auth__oidc__cli_client_id` — Auth0 Native app Client ID (recommended)
 
-If the server is missing `grace__auth__oidc__cli_client_id`, the CLI may still be able to login if you supply the client ID locally (see Advanced).
+If the server is missing `grace__auth__oidc__cli_client_id`, the CLI may still be able to login if you
+supply the client ID locally (see Advanced).
 
 ---
 
 #### Advanced: set OIDC settings on the client
 
-If you cannot use server auto-configuration (for example, you are testing against an endpoint that does not expose `/auth/oidc/config`), you can configure the CLI directly via environment variables.
+If you cannot use server auto-configuration (for example, you are testing against an endpoint that does
+not expose `/auth/oidc/config`), you can configure the CLI directly via environment variables.
 
-**Required**
+##### Required
 
 * `grace__auth__oidc__authority`
   No default. Source: Auth0 tenant domain.
@@ -396,7 +504,7 @@ If you cannot use server auto-configuration (for example, you are testing agains
 * `grace__auth__oidc__cli_client_id`
   No default. Source: Auth0 Native app Client ID.
 
-**Optional (recommended defaults)**
+##### Optional (recommended defaults)
 
 * `grace__auth__oidc__cli_redirect_port`
   Default: `8391`
@@ -407,11 +515,11 @@ If you cannot use server auto-configuration (for example, you are testing agains
   Default: `openid profile email offline_access`
   `offline_access` is required to receive refresh tokens.
 
-**How to use**
+##### How to use (client configuration)
 
 1. Set environment variables.
 
-   PowerShell example:
+   PowerShell:
 
    ```powershell
    $env:GRACE_SERVER_URI="http://localhost:5000"
@@ -420,7 +528,7 @@ If you cannot use server auto-configuration (for example, you are testing agains
    $env:grace__auth__oidc__cli_client_id="<native-client-id>"
    ```
 
-   Bash / zsh example:
+   bash / zsh:
 
    ```bash
    export GRACE_SERVER_URI="http://localhost:5000"
@@ -429,11 +537,11 @@ If you cannot use server auto-configuration (for example, you are testing agains
    export grace__auth__oidc__cli_client_id="<native-client-id>"
    ```
 
-2. Login:
+1. Login:
 
    * `grace auth login` — Interactive Auth0 login (tries PKCE, then device flow).
 
-3. Verify:
+1. Verify:
 
    * `grace auth whoami` — Calls the server and prints the authenticated identity.
 
@@ -461,7 +569,7 @@ Optional:
   Default: empty
   Space-separated list of scopes to request (if your tenant requires/uses them).
 
-PowerShell example:
+PowerShell:
 
 ```powershell
 $env:grace__auth__oidc__authority="https://<tenant-domain>/"
@@ -472,7 +580,7 @@ $env:grace__auth__oidc__m2m_client_secret="<m2m-client-secret>"
 $env:grace__auth__oidc__m2m_scopes="read:foo write:bar"
 ```
 
-Bash / zsh example:
+bash / zsh:
 
 ```bash
 export grace__auth__oidc__authority="https://<tenant-domain>/"
@@ -514,7 +622,8 @@ These affect how the server handles PAT creation requests:
 
 ## Getting Auth0 values automatically (CLI + APIs)
 
-If you already have an Auth0 tenant configured, the **Auth0 CLI** can be used to find the exact values needed for Grace without clicking through the dashboard.
+If you already have an Auth0 tenant configured, the **Auth0 CLI** can be used to find the exact values
+needed for Grace without clicking through the dashboard.
 
 ### Auth0 CLI login
 
@@ -593,6 +702,3 @@ Use:
 * M2M auth (client credentials env vars), or
 * PATs (`GRACE_TOKEN`), or
 * `grace auth login --auth device` if interactive login is still acceptable.
-
-```
-```
