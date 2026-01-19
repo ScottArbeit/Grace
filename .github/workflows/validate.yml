@@ -36,5 +36,12 @@ jobs:
         run: dotnet workload install aspire
       - name: Docker info
         run: docker info
+      - name: Pre-pull Aspire images
+        run: |
+          docker pull redis:latest
+          docker pull mcr.microsoft.com/azure-storage/azurite:latest
+          docker pull mcr.microsoft.com/mssql/server:2022-latest
+          docker pull mcr.microsoft.com/azure-messaging/servicebus-emulator:latest
+          docker pull mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator:latest
       - name: Validate (Full)
         run: pwsh ./scripts/validate.ps1 -Full

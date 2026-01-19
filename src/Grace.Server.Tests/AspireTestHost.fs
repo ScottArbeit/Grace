@@ -37,7 +37,15 @@ module AspireTestHost =
 
     let private graceServerResourceName = "grace-server"
     let private serviceBusEmulatorResourceName = "servicebus-emulator"
-    let private defaultWaitTimeout = TimeSpan.FromMinutes(5.0)
+    let private isCi =
+        match Environment.GetEnvironmentVariable("GITHUB_ACTIONS"), Environment.GetEnvironmentVariable("CI") with
+        | value, _ when not (String.IsNullOrWhiteSpace value) -> true
+        | _, value when not (String.IsNullOrWhiteSpace value) -> true
+        | _ -> false
+
+    let private getTimeout (local: TimeSpan) (ci: TimeSpan) = if isCi then ci else local
+
+    let private defaultWaitTimeout = getTimeout (TimeSpan.FromMinutes(5.0)) (TimeSpan.FromMinutes(10.0))
 
     let private getResource (app: DistributedApplication) (resourceName: string) =
         let model = app.Services.GetRequiredService<DistributedApplicationModel>()
@@ -294,7 +302,7 @@ module AspireTestHost =
     let private waitForServiceBusReadyAsync (state: TestHostState) =
         task {
             let sw = Stopwatch.StartNew()
-            let timeout = TimeSpan.FromSeconds(60.0)
+            let timeout = getTimeout (TimeSpan.FromSeconds(60.0)) (TimeSpan.FromMinutes(3.0))
             let mutable lastError = String.Empty
             let mutable ready = false
 
@@ -343,7 +351,7 @@ module AspireTestHost =
 
                 use client = new CosmosClient(connectionString, options)
                 let sw = Stopwatch.StartNew()
-                let timeout = TimeSpan.FromMinutes(3.0)
+                let timeout = getTimeout (TimeSpan.FromMinutes(3.0)) (TimeSpan.FromMinutes(6.0))
                 let perCallTimeout = TimeSpan.FromSeconds(10.0)
                 let mutable lastError = String.Empty
                 let mutable attempt = 0
