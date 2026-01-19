@@ -396,6 +396,15 @@ module AspireTestHost =
                     part)
             |> String.concat ";"
 
+    let private tryGetConnValue (prefix: string) (value: string) =
+        value.Split(';', StringSplitOptions.RemoveEmptyEntries)
+        |> Array.tryPick (fun segment ->
+            if segment.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) then
+                Some(segment.Substring(prefix.Length))
+            else
+                None)
+        |> Option.defaultValue "<missing>"
+
     let private formatEnvDiagnostics (env: Map<string, string>) =
         let get key =
             match env |> Map.tryFind key with
@@ -468,11 +477,48 @@ module AspireTestHost =
             let sw = Stopwatch.StartNew()
             let timeout = getTimeout (TimeSpan.FromSeconds(60.0)) (TimeSpan.FromMinutes(3.0))
             let mutable lastError = String.Empty
+            let mutable attempt = 0
             let mutable ready = false
+            let redactedConnectionString = redactServiceBusConnectionString state.ServiceBusConnectionString
+            let endpoint = tryGetConnValue "Endpoint=" state.ServiceBusConnectionString
+
+            Console.WriteLine(
+                $"Service Bus readiness probe: Endpoint={endpoint}; Topic={state.ServiceBusTopic}; Subscription={state.ServiceBusTestSubscription}; Connection={redactedConnectionString}"
+            )
+
+            let getResourceDiagnosticsAsync (resourceName: string) =
+                task {
+                    let notificationService =
+                        state.App.Services.GetRequiredService<ResourceNotificationService>()
+
+                    let details = describeResourceState notificationService resourceName
+
+                    let! logDetails =
+                        task {
+                            try
+                                let! logLines = getResourceLogsAsync state.App resourceName
+                                return formatLogTail $"{resourceName} logs" logLines 50
+                            with
+                            | ex ->
+                                return $"{resourceName} logs: <failed to capture ({ex.Message})>"
+                        }
+
+                    return $"{resourceName}: {details}{Environment.NewLine}{logDetails}"
+                }
 
             while not ready do
                 if sw.Elapsed >= timeout then
-                    raise (TimeoutException($"Timed out waiting for Service Bus emulator. Last error: {lastError}"))
+                    let! emulatorDetails = getResourceDiagnosticsAsync serviceBusEmulatorResourceName
+                    let! sqlDetails = getResourceDiagnosticsAsync serviceBusSqlResourceName
+                    let! dockerDetails = tryGetDockerDiagnosticsAsync ()
+
+                    raise (
+                        TimeoutException(
+                            $"Timed out waiting for Service Bus emulator. Attempts={attempt}; Elapsed={sw.Elapsed.TotalSeconds:n1}s; Last error: {lastError}{Environment.NewLine}{emulatorDetails}{Environment.NewLine}{sqlDetails}{Environment.NewLine}{dockerDetails}"
+                        )
+                    )
+
+                attempt <- attempt + 1
 
                 try
                     let client = ServiceBusClient(state.ServiceBusConnectionString)
@@ -492,6 +538,7 @@ module AspireTestHost =
                 with
                 | ex ->
                     lastError <- ex.Message
+                    Console.WriteLine($"Service Bus readiness attempt {attempt} failed: {lastError}")
                     do! Task.Delay(TimeSpan.FromSeconds(1.0))
         }
 
