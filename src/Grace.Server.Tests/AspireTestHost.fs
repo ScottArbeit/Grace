@@ -47,7 +47,7 @@ module AspireTestHost =
 
     let private getTimeout (local: TimeSpan) (ci: TimeSpan) = if isCi then ci else local
 
-    let private defaultWaitTimeout = getTimeout (TimeSpan.FromMinutes(5.0)) (TimeSpan.FromMinutes(10.0))
+    let private defaultWaitTimeout = getTimeout (TimeSpan.FromMinutes(5.0)) (TimeSpan.FromMinutes(3.0))
 
     let private getResource (app: DistributedApplication) (resourceName: string) =
         let model = app.Services.GetRequiredService<DistributedApplicationModel>()
@@ -166,6 +166,162 @@ module AspireTestHost =
                     .GetResult()
 
             return lines |> Seq.toList
+        }
+
+    type private ProcessResult =
+        {
+            ExitCode: int option
+            StdOut: string
+            StdErr: string
+            TimedOut: bool
+            Error: string option
+        }
+
+    let private runProcessAsync (fileName: string) (arguments: string) (timeout: TimeSpan) =
+        task {
+            try
+                let startInfo = ProcessStartInfo(fileName, arguments)
+                startInfo.RedirectStandardOutput <- true
+                startInfo.RedirectStandardError <- true
+                startInfo.UseShellExecute <- false
+                startInfo.CreateNoWindow <- true
+
+                use proc = new Process()
+                proc.StartInfo <- startInfo
+
+                if not (proc.Start()) then
+                    return { ExitCode = None; StdOut = ""; StdErr = ""; TimedOut = false; Error = Some "Failed to start process." }
+                else
+                    let waitTask = proc.WaitForExitAsync()
+                    let! completed = Task.WhenAny(waitTask, Task.Delay(timeout))
+
+                    if completed <> waitTask then
+                        try
+                            proc.Kill(true)
+                        with
+                        | _ -> ()
+
+                        return { ExitCode = None; StdOut = ""; StdErr = ""; TimedOut = true; Error = None }
+                    else
+                        let! stdOut = proc.StandardOutput.ReadToEndAsync()
+                        let! stdErr = proc.StandardError.ReadToEndAsync()
+
+                        return
+                            {
+                                ExitCode = Some proc.ExitCode
+                                StdOut = stdOut
+                                StdErr = stdErr
+                                TimedOut = false
+                                Error = None
+                            }
+            with
+            | ex ->
+                return { ExitCode = None; StdOut = ""; StdErr = ""; TimedOut = false; Error = Some ex.Message }
+        }
+
+    let private formatLogTail (label: string) (lines: string list) (maxLines: int) =
+        let tail =
+            lines
+            |> List.rev
+            |> List.truncate maxLines
+            |> List.rev
+            |> String.concat Environment.NewLine
+
+        if String.IsNullOrWhiteSpace tail then
+            $"{label}: <no logs captured>"
+        else
+            $"{label}:{Environment.NewLine}{tail}"
+
+    let private getResourceLogSnapshotAsync (app: DistributedApplication) =
+        task {
+            let model = app.Services.GetRequiredService<DistributedApplicationModel>()
+            let tasks =
+                model.Resources
+                |> Seq.map (fun resource ->
+                    task {
+                        let name = resource.Name
+
+                        try
+                            let! logLines = getResourceLogsAsync app name
+                            return formatLogTail $"[{name}]" logLines 50
+                        with
+                        | ex ->
+                            return $"[{name}]: failed to capture logs ({ex.Message})"
+                    })
+                |> Seq.toArray
+
+            let! snapshots = Task.WhenAll(tasks)
+            return snapshots |> String.concat Environment.NewLine
+        }
+
+    let private formatProcessFailure (label: string) (result: ProcessResult) =
+        if result.TimedOut then
+            $"{label} timed out."
+        else
+            let exitCode =
+                result.ExitCode
+                |> Option.map string
+                |> Option.defaultValue "<unknown>"
+
+            let details =
+                [
+                    if not (String.IsNullOrWhiteSpace result.StdOut) then
+                        $"stdout:{Environment.NewLine}{result.StdOut.TrimEnd()}"
+                    if not (String.IsNullOrWhiteSpace result.StdErr) then
+                        $"stderr:{Environment.NewLine}{result.StdErr.TrimEnd()}"
+                ]
+                |> String.concat Environment.NewLine
+
+            match result.Error with
+            | Some errorMessage -> $"{label} failed: {errorMessage}"
+            | None when not (String.IsNullOrWhiteSpace details) -> $"{label} exited with {exitCode}.{Environment.NewLine}{details}"
+            | None -> $"{label} exited with {exitCode}."
+
+    let private tryGetDockerDiagnosticsAsync () =
+        task {
+            let! psResult = runProcessAsync "docker" "ps -a --format \"{{.ID}} {{.Names}}\"" (TimeSpan.FromSeconds(10.0))
+
+            if psResult.TimedOut || psResult.ExitCode <> Some 0 || psResult.Error.IsSome then
+                return formatProcessFailure "Docker ps" psResult
+            else
+                let lines =
+                    psResult.StdOut.Split([| '\r'; '\n' |], StringSplitOptions.RemoveEmptyEntries)
+
+                if lines.Length = 0 then
+                    return "Docker ps: no containers."
+                else
+                    let containers =
+                        lines
+                        |> Seq.map (fun line ->
+                            let parts = line.Split([| ' ' |], 2, StringSplitOptions.RemoveEmptyEntries)
+                            if parts.Length = 0 then
+                                None
+                            else
+                                let id = parts[0]
+                                let name = if parts.Length > 1 then parts[1] else "<unknown>"
+                                Some(id, name))
+                        |> Seq.choose id
+                        |> Seq.truncate 10
+                        |> Seq.toArray
+
+                    let tasks =
+                        containers
+                        |> Array.map (fun (id, name) ->
+                            task {
+                                let! logResult = runProcessAsync "docker" $"logs --tail 200 {id}" (TimeSpan.FromSeconds(15.0))
+
+                                if logResult.TimedOut || logResult.ExitCode <> Some 0 || logResult.Error.IsSome then
+                                    return formatProcessFailure $"Docker logs ({name})" logResult
+                                else if String.IsNullOrWhiteSpace logResult.StdOut then
+                                    return $"Docker logs ({name}): <empty>"
+                                else
+                                    return $"Docker logs ({name}):{Environment.NewLine}{logResult.StdOut.TrimEnd()}"
+                            })
+
+                    let! logBlocks = Task.WhenAll(tasks)
+
+                    let containersSummary = String.Join(Environment.NewLine, lines)
+                    return $"Docker containers:{Environment.NewLine}{containersSummary}{Environment.NewLine}{String.Join(Environment.NewLine, logBlocks)}"
         }
 
     let private waitForResourceHealthyAsync
@@ -359,7 +515,7 @@ module AspireTestHost =
 
                 use client = new CosmosClient(connectionString, options)
                 let sw = Stopwatch.StartNew()
-                let timeout = getTimeout (TimeSpan.FromMinutes(3.0)) (TimeSpan.FromMinutes(6.0))
+                let timeout = getTimeout (TimeSpan.FromMinutes(3.0)) (TimeSpan.FromMinutes(3.0))
                 let perCallTimeout = TimeSpan.FromSeconds(10.0)
                 let mutable lastError = String.Empty
                 let mutable attempt = 0
@@ -578,7 +734,30 @@ module AspireTestHost =
             let client = app.CreateHttpClient(graceServerResourceName, endpointName)
             client.Timeout <- getTimeout (TimeSpan.FromSeconds(100.0)) (TimeSpan.FromMinutes(5.0))
 
-            do! waitForGraceServerHttpReadyAsync client cts.Token
+            try
+                do! waitForGraceServerHttpReadyAsync client cts.Token
+            with
+            | ex ->
+                let details = describeResourceState notificationService graceServerResourceName
+                let! graceResourceLogs = getResourceLogsAsync app graceServerResourceName
+                let graceResourceLogDetails = formatLogTail "Grace.Server resource logs" graceResourceLogs 50
+                let envDetails = formatEnvDiagnostics env
+
+                let graceFileLog =
+                    env
+                    |> Map.tryFind Constants.EnvironmentVariables.GraceLogDirectory
+                    |> Option.bind tryGetLatestLogTail
+                    |> Option.defaultValue "No Grace.Server log file captured."
+
+                let! aspireLogSnapshot = getResourceLogSnapshotAsync app
+                let! dockerDiagnostics = tryGetDockerDiagnosticsAsync ()
+
+                raise (
+                    Exception(
+                        $"Grace-server HTTP readiness failed. {details}{Environment.NewLine}Error: {ex.Message}{Environment.NewLine}Env: {envDetails}{Environment.NewLine}{graceResourceLogDetails}{Environment.NewLine}{graceFileLog}{Environment.NewLine}{aspireLogSnapshot}{Environment.NewLine}{dockerDiagnostics}",
+                        ex
+                    )
+                )
 
             let diagnosticsPath = Path.Combine(Path.GetTempPath(), "grace-server-tests.host.log")
 
