@@ -161,6 +161,29 @@ module Program =
             | Some value -> value
             | None -> Environment.GetEnvironmentVariable EnvironmentVariables.AzureCosmosDBConnectionString
 
+        let hasAzureStorageConnectionString =
+            not
+            <| String.IsNullOrWhiteSpace azureStorageConnectionString
+
+        let debugEnvironment = configuration[getConfigKey EnvironmentVariables.DebugEnvironment]
+        let isLocalDebug = String.Equals(debugEnvironment, "Local", StringComparison.OrdinalIgnoreCase)
+        let isAzureDebug = String.Equals(debugEnvironment, "Azure", StringComparison.OrdinalIgnoreCase)
+
+        let orleansClusterId = configuration[getConfigKey EnvironmentVariables.OrleansClusterId]
+        let orleansServiceId = configuration[getConfigKey EnvironmentVariables.OrleansServiceId]
+
+        let createTableClientOptions () =
+            let options = TableClientOptions()
+
+            if isLocalDebug || isAzureDebug then
+                options.Retry.Mode <- RetryMode.Fixed
+                options.Retry.Delay <- TimeSpan.FromMilliseconds(200.0)
+                options.Retry.MaxDelay <- TimeSpan.FromSeconds(1.0)
+                options.Retry.MaxRetries <- 1
+                options.Retry.NetworkTimeout <- TimeSpan.FromSeconds(5.0)
+
+            options
+
         let waitForAzureTableReady (client: TableServiceClient) =
             match AzureEnvironment.debugEnvironment with
             | Some value when value.Equals("Local", StringComparison.OrdinalIgnoreCase) ->
@@ -210,14 +233,21 @@ module Program =
             .UseContentRoot(Directory.GetCurrentDirectory())
             .UseOrleans(fun siloBuilder ->
                 siloBuilder
-                    .Configure<Orleans.Configuration.ClusterMembershipOptions>(fun (options: Orleans.Configuration.ClusterMembershipOptions) ->
+                    .Configure<ClusterMembershipOptions>(fun (options: ClusterMembershipOptions) ->
                         options.DefunctSiloExpiration <- TimeSpan.FromMinutes(5.0)
-                        options.DefunctSiloCleanupPeriod <- TimeSpan.FromMinutes(1.0))
+                        options.DefunctSiloCleanupPeriod <- TimeSpan.FromMinutes(1.0)
+
+                        if isLocalDebug || isAzureDebug then
+                            options.IAmAliveTablePublishTimeout <- TimeSpan.FromSeconds(5.0)
+                            options.NumMissedTableIAmAliveLimit <- 1
+                            options.TableRefreshTimeout <- TimeSpan.FromSeconds(5.0)
+                            options.DeathVoteExpirationTimeout <- TimeSpan.FromSeconds(15.0)
+                            options.DefunctSiloExpiration <- TimeSpan.FromSeconds(15.0)
+                            options.DefunctSiloCleanupPeriod <- TimeSpan.FromSeconds(5.0))
                     .Configure<ClusterOptions>(fun (options: ClusterOptions) ->
-                        options.ClusterId <- configuration[getConfigKey EnvironmentVariables.OrleansClusterId]
-                        options.ServiceId <- configuration[getConfigKey EnvironmentVariables.OrleansServiceId])
-                    .Configure<SiloOptions>(fun (options: SiloOptions) ->
-                        options.SiloName <- $"Silo-{Environment.GetEnvironmentVariable EnvironmentVariables.OrleansServiceId}")
+                        options.ClusterId <- orleansClusterId
+                        options.ServiceId <- orleansServiceId)
+                    .Configure<SiloOptions>(fun (options: SiloOptions) -> options.SiloName <- $"Silo-{orleansServiceId}")
                     .Configure<SiloMessagingOptions>(fun (options: SiloMessagingOptions) -> options.ResponseTimeout <- TimeSpan.FromSeconds(60.0))
                     .Configure<ClientMessagingOptions>(fun (options: ClientMessagingOptions) -> options.ResponseTimeout <- TimeSpan.FromSeconds(60.0))
                     .Configure<GrainCollectionOptions>(fun (options: GrainCollectionOptions) ->
@@ -228,13 +258,18 @@ module Program =
                                    .FullName}"
                         ] <- TimeSpan.FromMinutes(5.0))
                     .UseAzureStorageClustering(fun (options: AzureStorageClusteringOptions) ->
+                        logToConsole
+                            $"Orleans clustering using Azure Tables at {storageEndpoints.TableEndpoint}; account {storageEndpoints.AccountName}; debug env {debugEnvironment}; storage connection string present {hasAzureStorageConnectionString}; managed identity {AzureEnvironment.useManagedIdentity}; managed identity for storage {AzureEnvironment.useManagedIdentityForStorage}."
+
+                        let tableClientOptions = createTableClientOptions ()
+
                         let tableServiceClient =
-                            if AzureEnvironment.useManagedIdentity then
-                                TableServiceClient(storageEndpoints.TableEndpoint, defaultAzureCredential.Value)
+                            if AzureEnvironment.useManagedIdentityForStorage then
+                                TableServiceClient(storageEndpoints.TableEndpoint, defaultAzureCredential.Value, tableClientOptions)
                             else if String.IsNullOrWhiteSpace azureStorageConnectionString then
                                 invalidOp "Azure Storage connection string must be configured for clustering when managed identity is disabled."
                             else
-                                TableServiceClient(azureStorageConnectionString)
+                                TableServiceClient(azureStorageConnectionString, tableClientOptions)
 
                         waitForAzureTableReady tableServiceClient
 
@@ -259,7 +294,7 @@ module Program =
                                 // If we're doing local debugging, and not using managed identity, we assume we're using the Cosmos DB emulator.
                                 // The emulator uses a self-signed certificate, so we need to bypass certificate validation.
 
-                                if configuration[getConfigKey EnvironmentVariables.DebugEnvironment] = "Local"
+                                if isLocalDebug
                                    && not
                                       <| AzureEnvironment.useManagedIdentityForCosmos then
                                     cosmosClientOptions.LimitToEndpoint <- true

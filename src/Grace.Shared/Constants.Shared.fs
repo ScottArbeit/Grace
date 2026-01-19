@@ -326,11 +326,11 @@ module Constants =
 
         /// The environment variable that contains the name of the Orleans cluster to use.
         [<Literal>]
-        let OrleansClusterId = "orleans_cluster_id"
+        let OrleansClusterId = "grace__orleans__clusterid"
 
         /// The environment variable that contains the name of the Orleans service to use.
         [<Literal>]
-        let OrleansServiceId = "orleans_service_id"
+        let OrleansServiceId = "grace__orleans__serviceid"
 
         /// The environment variable that contains the Redis host name.
         [<Literal>]

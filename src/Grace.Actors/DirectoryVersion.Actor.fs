@@ -548,6 +548,31 @@ module DirectoryVersion =
                             let blockBlobOpenWriteOptions =
                                 BlockBlobOpenWriteOptions(Tags = tags, HttpHeaders = BlobHttpHeaders(ContentType = "application/msgpack"))
 
+                            let conditionsSummary =
+                                let conditionsProperty = typeof<BlockBlobOpenWriteOptions>.GetProperty("Conditions")
+
+                                if isNull conditionsProperty then
+                                    "not supported"
+                                else
+                                    let conditionsValue = conditionsProperty.GetValue(blockBlobOpenWriteOptions)
+
+                                    if isNull conditionsValue then
+                                        "null"
+                                    else
+                                        let conditionProperties = conditionsValue.GetType().GetProperties()
+
+                                        conditionProperties
+                                        |> Seq.map (fun propertyInfo ->
+                                            let value = propertyInfo.GetValue(conditionsValue)
+                                            $"{propertyInfo.Name}={value}")
+                                        |> String.concat "; "
+
+                            log.LogDebug(
+                                "In DirectoryVersionActor.GetRecursiveDirectoryVersions({id}); Blob write conditions: {conditionsSummary}.",
+                                this.GetPrimaryKey(),
+                                conditionsSummary
+                            )
+
                             use! blobStream = directoryVersionBlobClient.OpenWriteAsync(overwrite = true, options = blockBlobOpenWriteOptions)
                             do! MessagePackSerializer.SerializeAsync(blobStream, subdirectoryVersionsList, messagePackSerializerOptions)
                             do! blobStream.DisposeAsync()

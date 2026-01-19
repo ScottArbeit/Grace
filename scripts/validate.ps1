@@ -135,6 +135,40 @@ function Invoke-External([string]$Label, [scriptblock]$Command) {
     }
 }
 
+function Invoke-ParallelTests([array]$TestRuns, [string]$Configuration, [string]$RepoRoot) {
+    if (-not $TestRuns -or $TestRuns.Count -eq 0) {
+        return
+    }
+
+    $jobs = foreach ($testRun in $TestRuns) {
+        Start-Job -Name $testRun.Label -ArgumentList $testRun.Project, $Configuration, $RepoRoot, $testRun.Label -ScriptBlock {
+            param($project, $configuration, $repoRoot, $label)
+            Set-Location $repoRoot
+            dotnet test $project -c $configuration
+            $exitCode = $LASTEXITCODE
+            [pscustomobject]@{ Label = $label; ExitCode = $exitCode }
+        }
+    }
+
+    $results = @()
+    foreach ($job in $jobs) {
+        $jobOutput = Receive-Job -Job $job -Wait -AutoRemoveJob
+        foreach ($item in $jobOutput) {
+            if ($item -is [pscustomobject] -and $item.PSObject.Properties.Name -contains "ExitCode") {
+                $results += $item
+            } else {
+                Write-Host $item
+            }
+        }
+    }
+
+    $failed = $results | Where-Object { $_.ExitCode -ne 0 }
+    if ($failed) {
+        $failedLabels = ($failed | Select-Object -ExpandProperty Label) -join ", "
+        throw "Tests failed: $failedLabels."
+    }
+}
+
 try {
     if (-not $Fast -and -not $Full) {
         $Fast = $true
@@ -192,10 +226,22 @@ try {
 
     if (-not $SkipTests) {
         Write-Section "Test"
-        Invoke-External "Grace.CLI.Tests" { dotnet test "src/Grace.CLI.Tests/Grace.CLI.Tests.fsproj" -c $Configuration --no-build }
-
         if ($Full) {
-            Invoke-External "Grace.Server.Tests" { dotnet test "src/Grace.Server.Tests/Grace.Server.Tests.fsproj" -c $Configuration --no-build }
+            $repoRoot = (Get-Location).Path
+            $testRuns = @(
+                [pscustomobject]@{
+                    Label = "Grace.CLI.Tests"
+                    Project = "src/Grace.CLI.Tests/Grace.CLI.Tests.fsproj"
+                },
+                [pscustomobject]@{
+                    Label = "Grace.Server.Tests"
+                    Project = "src/Grace.Server.Tests/Grace.Server.Tests.fsproj"
+                }
+            )
+
+            Invoke-ParallelTests -TestRuns $testRuns -Configuration $Configuration -RepoRoot $repoRoot
+        } else {
+            Invoke-External "Grace.CLI.Tests" { dotnet test "src/Grace.CLI.Tests/Grace.CLI.Tests.fsproj" -c $Configuration }
         }
     } else {
         Write-Section "Test"

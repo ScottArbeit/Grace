@@ -1,4 +1,3 @@
-// FILE: Program.Aspire.AppHost.cs
 extern alias Shared;
 
 using Aspire.Hosting;
@@ -6,6 +5,7 @@ using Aspire.Hosting.ApplicationModel;
 using Aspire.Hosting.Azure;
 using Aspire.Hosting.Redis;
 using Grace.Shared;
+using static Grace.Shared.Utilities;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using System;
@@ -44,7 +44,7 @@ public partial class Program
             //   - Azure: debug locally, but use real Azure resources (connection strings from config/env/user-secrets)
             var resourceMode =
                 Environment.GetEnvironmentVariable(AspireResourceModeEnvVar)
-                ?? configuration[$"Grace:{AspireResourceModeEnvVar}"]
+                ?? configuration[$"grace:{AspireResourceModeEnvVar}"]
                 ?? AspireResourceModeLocal;
 
             var isRunMode = builder.ExecutionContext.IsRunMode;
@@ -72,7 +72,7 @@ public partial class Program
                 // =========================
 
                 // Common settings for local debugging
-                var otlpEndpoint = configuration["Grace:OtlpEndpoint"] ?? "http://localhost:18889";
+                var otlpEndpoint = configuration["grace:otlp_endpoint"] ?? "http://localhost:18889";
                 var stateRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".grace", "aspire");
                 var logDirectory = Path.Combine(stateRoot, "logs");
 
@@ -80,8 +80,8 @@ public partial class Program
                 Directory.CreateDirectory(logDirectory);
 
                 // These get set in both Local and Azure-debug runs.
-                var orleansClusterId = configuration["Grace:Orleans:ClusterId"] ?? "local";
-                var orleansServiceId = configuration["Grace:Orleans:ServiceId"] ?? "gracevcs-dev";
+                var orleansClusterId = configuration[getConfigKey(EnvironmentVariables.OrleansClusterId)] ?? "local";
+                var orleansServiceId = configuration[getConfigKey(EnvironmentVariables.OrleansServiceId)] ?? "gracevcs-dev";
 
                 if (isTestRun)
                 {
@@ -90,12 +90,14 @@ public partial class Program
                     orleansServiceId = $"{orleansServiceId}-test-{runSuffix}";
                 }
 
+                Console.WriteLine($"Using Orleans ClusterId='{orleansClusterId}' and ServiceId='{orleansServiceId}'.");
+
                 var graceServer = builder.AddProject("grace-server", "..\\Grace.Server\\Grace.Server.fsproj")
                     .WithParentRelationship(redis)
                     .WithEnvironment("ASPNETCORE_ENVIRONMENT", "Development")
                     .WithEnvironment("DOTNET_ENVIRONMENT", "Development")
                     .WithEnvironment("OTLP_ENDPOINT_URL", otlpEndpoint)
-                    .WithEnvironment(EnvironmentVariables.ApplicationInsightsConnectionString, configuration["Grace:ApplicationInsightsConnectionString"] ?? string.Empty)
+                    .WithEnvironment(EnvironmentVariables.ApplicationInsightsConnectionString, configuration[getConfigKey(EnvironmentVariables.ApplicationInsightsConnectionString)] ?? string.Empty)
                     .WithEnvironment(EnvironmentVariables.DirectoryVersionContainerName, "directoryversions")
                     .WithEnvironment(EnvironmentVariables.DiffContainerName, "diffs")
                     .WithEnvironment(EnvironmentVariables.ZipFileContainerName, "zipfiles")
@@ -166,8 +168,8 @@ public partial class Program
 
                     // Cosmos emulator (your existing approach)
                     const string cosmosKey = "C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw==";
-                    var cosmosDatabaseName = configuration["Grace:Cosmos:DatabaseName"] ?? "grace-dev";
-                    var cosmosContainerName = configuration["Grace:Cosmos:ContainerName"] ?? "grace-events";
+                    var cosmosDatabaseName = configuration[getConfigKey(EnvironmentVariables.AzureCosmosDBDatabaseName)] ?? "grace-dev";
+                    var cosmosContainerName = configuration[getConfigKey(EnvironmentVariables.AzureCosmosDBContainerName)] ?? "grace-events";
                     const int cosmosGatewayHostPort = 8081;
 
 #pragma warning disable ASPIRECOSMOSDB001
@@ -193,7 +195,7 @@ public partial class Program
                     var cosmosConnStr = BuildCosmosEmulatorConnectionString(cosmos, cosmosKey);
 
                     // Service Bus emulator
-                    var serviceBusSqlPassword = configuration["Grace:ServiceBus:SqlPassword"] ?? "SqlIsAwesome1!";
+                    var serviceBusSqlPassword = configuration["grace:azure_service_bus:sqlpassword"] ?? "SqlIsAwesome1!";
 
                     var serviceBusSql = builder.AddContainer("servicebus-sql", "mcr.microsoft.com/mssql/server", "2022-latest")
                         .WithContainerName("servicebus-sql")
@@ -260,20 +262,21 @@ public partial class Program
                     // -------------------------
 
                     Console.WriteLine("Configuring Grace.Server for DebugAzure with real Azure resources.");
-                    var azureStorageAccountName = GetRequired(configuration, "Grace:AzureStorage:AccountName");
+                    var azureStorageAccountName = GetRequired(configuration, getConfigKey(EnvironmentVariables.AzureStorageAccountName));
                     Console.WriteLine($"Using Azure Storage account: {azureStorageAccountName}.");
 
-                    var cosmosdbEndpoint = GetRequired(configuration, "Grace:AzureCosmosDB:AccountEndpoint");
+                    var cosmosdbEndpoint = GetRequired(configuration, getConfigKey(EnvironmentVariables.AzureCosmosDBEndpoint));
                     Console.WriteLine($"Using Cosmos DB endpoint: {cosmosdbEndpoint}.");
 
                     graceServer
                         .WithEnvironment(EnvironmentVariables.AzureStorageAccountName, azureStorageAccountName)
+                        .WithEnvironment(EnvironmentVariables.AzureStorageConnectionString, configuration[getConfigKey(EnvironmentVariables.AzureStorageConnectionString)])
                         .WithEnvironment(EnvironmentVariables.AzureCosmosDBEndpoint, cosmosdbEndpoint)
-                        .WithEnvironment(EnvironmentVariables.AzureCosmosDBDatabaseName, configuration["Grace:AzureCosmosDB:DatabaseName"])
-                        .WithEnvironment(EnvironmentVariables.AzureCosmosDBContainerName, configuration["Grace:AzureCosmosDB:ContainerName"])
-                        .WithEnvironment(EnvironmentVariables.AzureServiceBusNamespace, configuration["Grace:ServiceBus:Namespace"])
-                        .WithEnvironment(EnvironmentVariables.AzureServiceBusTopic, configuration["Grace:ServiceBus:TopicName"])
-                        .WithEnvironment(EnvironmentVariables.AzureServiceBusSubscription, configuration["Grace:ServiceBus:SubscriptionName"])
+                        .WithEnvironment(EnvironmentVariables.AzureCosmosDBDatabaseName, configuration[getConfigKey(EnvironmentVariables.AzureCosmosDBDatabaseName)])
+                        .WithEnvironment(EnvironmentVariables.AzureCosmosDBContainerName, configuration[getConfigKey(EnvironmentVariables.AzureCosmosDBContainerName)])
+                        .WithEnvironment(EnvironmentVariables.AzureServiceBusNamespace, configuration[getConfigKey(EnvironmentVariables.AzureServiceBusNamespace)])
+                        .WithEnvironment(EnvironmentVariables.AzureServiceBusTopic, configuration[getConfigKey(EnvironmentVariables.AzureServiceBusTopic)])
+                        .WithEnvironment(EnvironmentVariables.AzureServiceBusSubscription, configuration[getConfigKey(EnvironmentVariables.AzureServiceBusSubscription)])
                         .WithEnvironment(EnvironmentVariables.GraceLogDirectory, logDirectory)
                         .WithEnvironment(EnvironmentVariables.DebugEnvironment, "Azure");
 
@@ -292,8 +295,8 @@ public partial class Program
                 // =========================
 
                 var cosmos = builder.AddAzureCosmosDB("cosmos");
-                var cosmosDatabase = cosmos.AddCosmosDatabase(configuration["Grace:Cosmos:DatabaseName"] ?? "grace-dev");
-                _ = cosmosDatabase.AddContainer(configuration["Grace:Cosmos:ContainerName"] ?? "grace-events", "/PartitionKey");
+                var cosmosDatabase = cosmos.AddCosmosDatabase(configuration[getConfigKey(EnvironmentVariables.AzureCosmosDBDatabaseName)] ?? "grace-dev");
+                _ = cosmosDatabase.AddContainer(configuration[getConfigKey(EnvironmentVariables.AzureCosmosDBContainerName)] ?? "grace-events", "/PartitionKey");
 
                 var storage = builder.AddAzureStorage("storage");
                 var blobStorage = storage.AddBlobContainer("directoryversions");
@@ -301,11 +304,11 @@ public partial class Program
                 var zipStorage = storage.AddBlobContainer("zipfiles");
 
                 var serviceBus = builder.AddAzureServiceBus("servicebus");
-                _ = serviceBus.AddServiceBusTopic(configuration["Grace:ServiceBus:TopicName"] ?? "graceeventstream")
-                    .AddServiceBusSubscription(configuration["Grace:ServiceBus:SubscriptionName"] ?? "grace-server");
+                _ = serviceBus.AddServiceBusTopic(configuration[getConfigKey(EnvironmentVariables.AzureServiceBusTopic)] ?? "graceeventstream")
+                    .AddServiceBusSubscription(configuration[getConfigKey(EnvironmentVariables.AzureServiceBusSubscription)] ?? "grace-server");
 
-                var otlpEndpoint = configuration["Grace:OtlpEndpoint"] ?? "http://localhost:18889";
-                var publishLogDirectory = configuration["Grace:LogDirectory"] ?? "/tmp/grace-logs";
+                var otlpEndpoint = configuration["grace:otlp_endpoint"] ?? "http://localhost:18889";
+                var publishLogDirectory = configuration["grace:log_directory"] ?? "/tmp/grace-logs";
 
                 var graceServer = builder.AddProject("grace-server", "..\\Grace.Server\\Grace.Server.fsproj")
                     .WithReference(cosmosDatabase)
@@ -317,20 +320,20 @@ public partial class Program
                     .WithEnvironment("ASPNETCORE_ENVIRONMENT", "Production")
                     .WithEnvironment("DOTNET_ENVIRONMENT", "Production")
                     .WithEnvironment("OTLP_ENDPOINT_URL", otlpEndpoint)
-                    .WithEnvironment(EnvironmentVariables.ApplicationInsightsConnectionString, configuration["Grace:ApplicationInsightsConnectionString"] ?? string.Empty)
-                    .WithEnvironment(EnvironmentVariables.GraceServerUri, configuration["Grace:ServerUri"] ?? "https://localhost:5001")
-                    .WithEnvironment(EnvironmentVariables.AzureCosmosDBDatabaseName, configuration["Grace:Cosmos:DatabaseName"] ?? "grace-dev")
-                    .WithEnvironment(EnvironmentVariables.AzureCosmosDBContainerName, configuration["Grace:Cosmos:ContainerName"] ?? "grace-events")
+                    .WithEnvironment(EnvironmentVariables.ApplicationInsightsConnectionString, configuration[getConfigKey(EnvironmentVariables.ApplicationInsightsConnectionString)] ?? string.Empty)
+                    .WithEnvironment(EnvironmentVariables.GraceServerUri, configuration[getConfigKey(EnvironmentVariables.GraceServerUri)] ?? "https://localhost:5001")
+                    .WithEnvironment(EnvironmentVariables.AzureCosmosDBDatabaseName, configuration[getConfigKey(EnvironmentVariables.AzureCosmosDBDatabaseName)] ?? "grace-dev")
+                    .WithEnvironment(EnvironmentVariables.AzureCosmosDBContainerName, configuration[getConfigKey(EnvironmentVariables.AzureCosmosDBContainerName)] ?? "grace-events")
                     .WithEnvironment(EnvironmentVariables.DirectoryVersionContainerName, "directoryversions")
                     .WithEnvironment(EnvironmentVariables.DiffContainerName, "diffs")
                     .WithEnvironment(EnvironmentVariables.ZipFileContainerName, "zipfiles")
                     .WithEnvironment(EnvironmentVariables.RedisHost, "localhost")
                     .WithEnvironment(EnvironmentVariables.RedisPort, "6379")
-                    .WithEnvironment(EnvironmentVariables.OrleansClusterId, configuration["Grace:Orleans:ClusterId"] ?? "production")
-                    .WithEnvironment(EnvironmentVariables.OrleansServiceId, configuration["Grace:Orleans:ServiceId"] ?? "grace-prod")
+                    .WithEnvironment(EnvironmentVariables.OrleansClusterId, configuration[getConfigKey(EnvironmentVariables.OrleansClusterId)] ?? "production")
+                    .WithEnvironment(EnvironmentVariables.OrleansServiceId, configuration[getConfigKey(EnvironmentVariables.OrleansServiceId)] ?? "grace-prod")
                     .WithEnvironment(EnvironmentVariables.GracePubSubSystem, "AzureServiceBus")
-                    .WithEnvironment(EnvironmentVariables.AzureServiceBusTopic, configuration["Grace:ServiceBus:TopicName"] ?? "graceeventstream")
-                    .WithEnvironment(EnvironmentVariables.AzureServiceBusSubscription, configuration["Grace:ServiceBus:SubscriptionName"] ?? "grace-server")
+                    .WithEnvironment(EnvironmentVariables.AzureServiceBusTopic, configuration[getConfigKey(EnvironmentVariables.AzureServiceBusTopic)] ?? "graceeventstream")
+                    .WithEnvironment(EnvironmentVariables.AzureServiceBusSubscription, configuration[getConfigKey(EnvironmentVariables.AzureServiceBusSubscription)] ?? "grace-server")
                     .WithEnvironment(EnvironmentVariables.GraceLogDirectory, publishLogDirectory)
                     .WithEnvironment(EnvironmentVariables.GraceAuthOidcAuthority, configuration[EnvironmentVariables.GraceAuthOidcAuthority])
                     .WithEnvironment(EnvironmentVariables.GraceAuthOidcAudience, configuration[EnvironmentVariables.GraceAuthOidcAudience])

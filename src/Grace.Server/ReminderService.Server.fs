@@ -34,7 +34,7 @@ module ReminderService =
     type ReminderService() =
         inherit BackgroundService()
 
-        let defaultReminderBatchSize = 5000
+        let defaultReminderBatchSize = 1000
         let timer = TimeSpan.FromSeconds(60.0)
         let log = loggerFactory.CreateLogger("ReminderService.Server")
 
