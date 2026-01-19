@@ -192,10 +192,12 @@ try {
 
     if (-not $SkipTests) {
         Write-Section "Test"
-        Invoke-External "Grace.CLI.Tests" { dotnet test "src/Grace.CLI.Tests/Grace.CLI.Tests.fsproj" -c $Configuration }
+        Invoke-External "Grace.Authorization.Tests" { dotnet test "src/Grace.Authorization.Tests/Grace.Authorization.Tests.fsproj" -c $Configuration --no-build }
+        Invoke-External "Grace.CLI.Tests" { dotnet test "src/Grace.CLI.Tests/Grace.CLI.Tests.fsproj" -c $Configuration --no-build }
 
         if ($Full) {
-            Invoke-External "Grace.Server.Tests" { dotnet test "src/Grace.Server.Tests/Grace.Server.Tests.fsproj" -c $Configuration }
+            Invoke-External "Grace.Server.Tests" { dotnet test "src/Grace.Server.Tests/Grace.Server.Tests.fsproj" -c $Configuration --no-build }
+            Invoke-External "Grace.Server.Bootstrap.Tests" { dotnet test "src/Grace.Server.Bootstrap.Tests/Grace.Server.Bootstrap.Tests.fsproj" -c $Configuration --no-build }
         }
     } else {
         Write-Section "Test"

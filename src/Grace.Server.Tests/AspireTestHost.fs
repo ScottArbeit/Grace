@@ -656,7 +656,6 @@ module AspireTestHost =
 
             if not <| String.IsNullOrWhiteSpace bootstrapUserId then
                 Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.GraceAuthzBootstrapSystemAdminUsers, bootstrapUserId)
-
             let! builder = DistributedApplicationTestingBuilder.CreateAsync<Projects.Grace_Aspire_AppHost>()
             let! app = builder.BuildAsync()
             do! app.StartAsync()

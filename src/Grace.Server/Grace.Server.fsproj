@@ -62,9 +62,10 @@
                 <Compile Include="Security\ClaimMapping.Server.fs" />
                 <Compile Include="Security\ClaimsTransformation.Server.fs" />
                 <Compile Include="Security\TestAuth.Server.fs" />
-                <Compile Include="Security\PersonalAccessTokenAuth.Server.fs" />
-                <Compile Include="Security\PermissionEvaluator.Server.fs" />
+		<Compile Include="Security\PersonalAccessTokenAuth.Server.fs" />
+		<Compile Include="Security\PermissionEvaluator.Server.fs" />
 		<Compile Include="Security\AuthorizationMiddleware.Server.fs" />
+		<Compile Include="Security\EndpointAuthorizationManifest.Server.fs" />
         <Compile Include="OrleansFilters.Server.fs" />
 		<Compile Include="Middleware\Fake.Middleware.fs" />
 		<Compile Include="Middleware\HttpSecurityHeaders.Middleware.fs" />
