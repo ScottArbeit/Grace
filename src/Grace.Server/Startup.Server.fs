@@ -902,7 +902,14 @@ module Application =
             services.AddW3CLogging (fun options ->
                 options.FileName <- "Grace.Server.log-"
 
-                options.LogDirectory <- Path.Combine(Environment.GetEnvironmentVariable("TEMP"), "Grace.Server.Logs"))
+                let tempRoot =
+                    let value = Environment.GetEnvironmentVariable("TEMP")
+                    if String.IsNullOrWhiteSpace value then
+                        Path.GetTempPath()
+                    else
+                        value
+
+                options.LogDirectory <- Path.Combine(tempRoot, "Grace.Server.Logs"))
             |> ignore
 
             services
