@@ -57,13 +57,32 @@ public partial class Program
                 Environment.GetEnvironmentVariable("GRACE_TESTING") is string testValue
                 && (testValue.Equals("1", StringComparison.OrdinalIgnoreCase)
                     || testValue.Equals("true", StringComparison.OrdinalIgnoreCase));
+            var runSuffix = isTestRun
+                ? (Environment.GetEnvironmentVariable("GRACE_TEST_RUN_ID") ?? Guid.NewGuid().ToString("N"))
+                : null;
+            static bool IsTruthy(string? value) =>
+                !string.IsNullOrWhiteSpace(value)
+                && (value.Equals("1", StringComparison.OrdinalIgnoreCase)
+                    || value.Equals("true", StringComparison.OrdinalIgnoreCase)
+                    || value.Equals("yes", StringComparison.OrdinalIgnoreCase));
+            var skipServiceBus = isTestRun && IsTruthy(Environment.GetEnvironmentVariable("GRACE_TEST_SKIP_SERVICEBUS"));
+            var pubSubSystem = skipServiceBus ? "UnknownPubSubProvider" : "AzureServiceBus";
+            if (isTestRun)
+            {
+                CleanupDockerContainers(new[] { "servicebus-sql", "servicebus-emulator" });
+            }
 
             // Redis: keep local container for both run modes (Local + Azure debug), and even in publish mode if you like.
+            var redisContainerName = runSuffix is null ? "redis" : $"redis-{runSuffix}";
             var redis = builder.AddContainer("redis", "redis", "latest")
-                .WithContainerName("redis")
+                .WithContainerName(redisContainerName)
                 //.WithLifetime(ContainerLifetime.Session)
                 .WithEnvironment("ACCEPT_EULA", "Y")
                 .WithEndpoint(targetPort: 6379, port: 6379);
+            if (isTestRun)
+            {
+                redis.WithLifetime(ContainerLifetime.Session);
+            }
 
             if (!isPublishMode)
             {
@@ -83,9 +102,8 @@ public partial class Program
                 var orleansClusterId = configuration[getConfigKey(EnvironmentVariables.OrleansClusterId)] ?? "local";
                 var orleansServiceId = configuration[getConfigKey(EnvironmentVariables.OrleansServiceId)] ?? "gracevcs-dev";
 
-                if (isTestRun)
+                if (isTestRun && runSuffix is not null)
                 {
-                    var runSuffix = Guid.NewGuid().ToString("N");
                     orleansClusterId = $"{orleansClusterId}-test-{runSuffix}";
                     orleansServiceId = $"{orleansServiceId}-test-{runSuffix}";
                 }
@@ -105,7 +123,7 @@ public partial class Program
                     .WithEnvironment(EnvironmentVariables.RedisPort, "6379")
                     .WithEnvironment(EnvironmentVariables.OrleansClusterId, orleansClusterId)
                     .WithEnvironment(EnvironmentVariables.OrleansServiceId, orleansServiceId)
-                    .WithEnvironment(EnvironmentVariables.GracePubSubSystem, "AzureServiceBus")
+                    .WithEnvironment(EnvironmentVariables.GracePubSubSystem, pubSubSystem)
                     .AsHttp2Service()
                     .WithOtlpExporter();
 
@@ -141,24 +159,33 @@ public partial class Program
                     var cosmosCertPath = Path.Combine(stateRoot, "cosmos-cert");
                     var serviceBusConfigPath = Path.Combine(stateRoot, "servicebus");
 
-                    Directory.CreateDirectory(azuriteDataPath);
-                    Directory.CreateDirectory(cosmosCertPath);
-                    Directory.CreateDirectory(serviceBusConfigPath);
+                Directory.CreateDirectory(azuriteDataPath);
+                Directory.CreateDirectory(cosmosCertPath);
+                Directory.CreateDirectory(serviceBusConfigPath);
 
-                    // Create Service Bus emulator config
-                    var serviceBusConfigFile = Path.Combine(
+                // Create Service Bus emulator config (when enabled for tests)
+                string? serviceBusConfigFile = null;
+                if (!skipServiceBus)
+                {
+                    serviceBusConfigFile = Path.Combine(
                         serviceBusConfigPath,
                         $"config_{Process.GetCurrentProcess().Id}_{Guid.NewGuid():N}.json");
                     CreateServiceBusConfiguration(serviceBusConfigFile, configuration);
+                }
 
+                    var azuriteContainerName = runSuffix is null ? "azurite" : $"azurite-{runSuffix}";
                     var azurite = builder.AddContainer("azurite", "mcr.microsoft.com/azure-storage/azurite", "latest")
-                        .WithContainerName("azurite")
+                        .WithContainerName(azuriteContainerName)
                         .WithBindMount(azuriteDataPath, "/data")
                         //.WithLifetime(ContainerLifetime.Session)
                         .WithEnvironment("AZURITE_ACCOUNTS", "gracevcsdevelopment:Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==")
                         .WithEndpoint(targetPort: 10000, port: 10000, name: "blob", scheme: "http")
                         .WithEndpoint(targetPort: 10001, port: 10001, name: "queue", scheme: "http")
                         .WithEndpoint(targetPort: 10002, port: 10002, name: "table", scheme: "http");
+                    if (isTestRun)
+                    {
+                        azurite.WithLifetime(ContainerLifetime.Session);
+                    }
                     var azuriteBlobEndpoint = azurite.GetEndpoint("blob");
                     var azuriteQueueEndpoint = azurite.GetEndpoint("queue");
                     var azuriteTableEndpoint = azurite.GetEndpoint("table");
@@ -169,15 +196,16 @@ public partial class Program
                     // Cosmos emulator (your existing approach)
                     const string cosmosKey = "C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw==";
                     var cosmosDatabaseName = configuration[getConfigKey(EnvironmentVariables.AzureCosmosDBDatabaseName)] ?? "grace-dev";
-                    var cosmosContainerName = configuration[getConfigKey(EnvironmentVariables.AzureCosmosDBContainerName)] ?? "grace-events";
+                    var cosmosDbContainerName = configuration[getConfigKey(EnvironmentVariables.AzureCosmosDBContainerName)] ?? "grace-events";
                     const int cosmosGatewayHostPort = 8081;
 
 #pragma warning disable ASPIRECOSMOSDB001
+                    var cosmosEmulatorContainerName = runSuffix is null ? "cosmosdb-emulator" : $"cosmosdb-emulator-{runSuffix}";
                     var cosmos = builder.AddAzureCosmosDB("cosmos")
                         .RunAsPreviewEmulator(emulator =>
                         {
                             emulator
-                                .WithContainerName("cosmosdb-emulator")
+                                .WithContainerName(cosmosEmulatorContainerName)
                                 //.WithLifetime(ContainerLifetime.Session)
                                 .WithEnvironment("ACCEPT_EULA", "Y")
                                 .WithEnvironment("AZURE_COSMOS_EMULATOR_PARTITION_COUNT", "10")
@@ -187,43 +215,21 @@ public partial class Program
                                 .WithEnvironment("LOG_LEVEL", "info")
                                 .WithDataExplorer(1234)
                                 .WithGatewayPort(cosmosGatewayHostPort);
+
+                            if (isTestRun)
+                            {
+                                emulator.WithLifetime(ContainerLifetime.Session);
+                            }
                         });
 #pragma warning restore ASPIRECOSMOSDB001
 
                     _ = cosmos.AddCosmosDatabase(cosmosDatabaseName)
-                        .AddContainer(cosmosContainerName, "/PartitionKey");
+                        .AddContainer(cosmosDbContainerName, "/PartitionKey");
                     var cosmosConnStr = BuildCosmosEmulatorConnectionString(cosmos, cosmosKey);
 
-                    // Service Bus emulator
-                    var serviceBusSqlPassword = configuration["grace:azure_service_bus:sqlpassword"] ?? "SqlIsAwesome1!";
-
-                    var serviceBusSql = builder.AddContainer("servicebus-sql", "mcr.microsoft.com/mssql/server", "2022-latest")
-                        .WithContainerName("servicebus-sql")
-                        .WithEnvironment("ACCEPT_EULA", "Y")
-                        .WithEnvironment("MSSQL_SA_PASSWORD", serviceBusSqlPassword)
-                        //.WithLifetime(ContainerLifetime.Session)
-                        .WithEndpoint(targetPort: 1433, port: 21433, name: "sql", scheme: "tcp");
-
-                    var serviceBusEmulator = builder.AddContainer("servicebus-emulator", "mcr.microsoft.com/azure-messaging/servicebus-emulator", "latest")
-                        .WithContainerName("servicebus-emulator")
-                        .WithParentRelationship(serviceBusSql)
-                        .WithEnvironment("ACCEPT_EULA", "Y")
-                        .WithEnvironment("MSSQL_SA_PASSWORD", serviceBusSqlPassword)
-                        .WithEnvironment("SQL_SERVER", "servicebus-sql")
-                        .WithEnvironment("SQL_WAIT_INTERVAL", "10")
-                        //.WithLifetime(ContainerLifetime.Session)
-                        .WithBindMount(serviceBusConfigFile, "/ServiceBus_Emulator/ConfigFiles/Config.json")
-                        .WithEndpoint(targetPort: 5672, port: 5672, name: "amqp", scheme: "amqp")
-                        .WithEndpoint(targetPort: 5300, port: 5300, name: "management", scheme: "http");
-
-                    var serviceBusAmqpEndpoint = serviceBusEmulator.GetEndpoint("amqp");
-                    var serviceBusHostAndPort = serviceBusAmqpEndpoint.Property(EndpointProperty.HostAndPort);
-
-                    // Wire up Grace.Server with emulator endpoints
                     graceServer
                         .WithParentRelationship(azurite)
                         .WithParentRelationship(cosmos)
-                        .WithParentRelationship(serviceBusEmulator)
                         .WithEnvironment(
                             EnvironmentVariables.AzureStorageConnectionString,
                             ReferenceExpression.Create(
@@ -233,25 +239,87 @@ public partial class Program
                             "Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==")
                         .WithEnvironment(EnvironmentVariables.AzureCosmosDBConnectionString, cosmosConnStr)
                         .WithEnvironment(EnvironmentVariables.AzureCosmosDBDatabaseName, cosmosDatabaseName)
-                        .WithEnvironment(EnvironmentVariables.AzureCosmosDBContainerName, cosmosContainerName)
-                        .WithEnvironment(
-                            EnvironmentVariables.AzureServiceBusConnectionString,
-                            ReferenceExpression.Create(
-                                $"Endpoint=sb://{serviceBusHostAndPort};SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=SAS_KEY_VALUE;UseDevelopmentEmulator=true;"
-                            )
-                        )
-                        .WithEnvironment(EnvironmentVariables.AzureServiceBusNamespace, "sbemulatorns")
-                        .WithEnvironment(EnvironmentVariables.AzureServiceBusTopic, "graceeventstream")
-                        .WithEnvironment(EnvironmentVariables.AzureServiceBusSubscription, "grace-server")
+                        .WithEnvironment(EnvironmentVariables.AzureCosmosDBContainerName, cosmosDbContainerName)
                         .WithEnvironment(EnvironmentVariables.GraceLogDirectory, logDirectory)
                         .WithEnvironment(EnvironmentVariables.DebugEnvironment, "Local");
+
+                    if (!skipServiceBus)
+                    {
+                        // Service Bus emulator
+                        var serviceBusSqlPassword = configuration["grace:azure_service_bus:sqlpassword"] ?? "SqlIsAwesome1!";
+                        var serviceBusConfigFilePath =
+                            serviceBusConfigFile ?? throw new InvalidOperationException("Service Bus config file was not created.");
+
+                        var serviceBusSqlResourceName = runSuffix is null ? "servicebus-sql" : $"servicebus-sql-{runSuffix}";
+                        var serviceBusSql = builder.AddContainer(serviceBusSqlResourceName, "mcr.microsoft.com/mssql/server", "2022-latest")
+                            .WithContainerName(serviceBusSqlResourceName)
+                            .WithEnvironment("ACCEPT_EULA", "Y")
+                            .WithEnvironment("MSSQL_SA_PASSWORD", serviceBusSqlPassword)
+                            //.WithLifetime(ContainerLifetime.Session)
+                            .WithEndpoint(targetPort: 1433, port: 21433, name: "sql", scheme: "tcp");
+                        if (isTestRun)
+                        {
+                            serviceBusSql.WithEnvironment("MSSQL_MEMORY_LIMIT_MB", "1024");
+                        }
+                        else
+                        {
+                            var memoryLimit = configuration["grace:azure_service_bus:sqlmemory"];
+                            if (!string.IsNullOrWhiteSpace(memoryLimit))
+                            {
+                                serviceBusSql.WithEnvironment("MSSQL_MEMORY_LIMIT_MB", memoryLimit);
+                            }
+                        }
+                        if (isTestRun)
+                        {
+                            serviceBusSql.WithLifetime(ContainerLifetime.Session);
+                        }
+
+                        var serviceBusEmulatorResourceName = runSuffix is null ? "servicebus-emulator" : $"servicebus-emulator-{runSuffix}";
+                        var serviceBusEmulator = builder.AddContainer(serviceBusEmulatorResourceName, "mcr.microsoft.com/azure-messaging/servicebus-emulator", "latest")
+                            .WithContainerName(serviceBusEmulatorResourceName)
+                            .WithParentRelationship(serviceBusSql)
+                            .WithEnvironment("ACCEPT_EULA", "Y")
+                            .WithEnvironment("MSSQL_SA_PASSWORD", serviceBusSqlPassword)
+                            .WithEnvironment("SQL_SERVER", serviceBusSqlResourceName)
+                            .WithEnvironment("SQL_WAIT_INTERVAL", "10")
+                            //.WithLifetime(ContainerLifetime.Session)
+                            .WithBindMount(serviceBusConfigFilePath, "/ServiceBus_Emulator/ConfigFiles/Config.json")
+                            .WithEndpoint(targetPort: 5672, port: 5672, name: "amqp", scheme: "amqp")
+                            .WithEndpoint(targetPort: 5300, port: 5300, name: "management", scheme: "http");
+                        if (isTestRun)
+                        {
+                            serviceBusEmulator.WithLifetime(ContainerLifetime.Session);
+                        }
+
+                        var serviceBusAmqpEndpoint = serviceBusEmulator.GetEndpoint("amqp");
+                        var serviceBusHostAndPort = serviceBusAmqpEndpoint.Property(EndpointProperty.HostAndPort);
+
+                        graceServer
+                            .WithParentRelationship(serviceBusEmulator)
+                            .WithEnvironment(
+                                EnvironmentVariables.AzureServiceBusConnectionString,
+                                ReferenceExpression.Create(
+                                    $"Endpoint=sb://{serviceBusHostAndPort};SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=SAS_KEY_VALUE;UseDevelopmentEmulator=true;"
+                                )
+                            )
+                            .WithEnvironment(EnvironmentVariables.AzureServiceBusNamespace, "sbemulatorns")
+                            .WithEnvironment(EnvironmentVariables.AzureServiceBusTopic, "graceeventstream")
+                            .WithEnvironment(EnvironmentVariables.AzureServiceBusSubscription, "grace-server");
+                    }
+                    else
+                    {
+                        Console.WriteLine("Skipping Service Bus emulator for this test run (GRACE_TEST_SKIP_SERVICEBUS=1).");
+                    }
 
                     Console.WriteLine("Grace.Server DebugLocal environment configured:");
                     Console.WriteLine("  - Azurite at http://localhost:10000-10002");
                     Console.WriteLine($"  - Azurite data at {azuriteDataPath}");
                     Console.WriteLine("  - Cosmos emulator at http://localhost:8081");
-                    Console.WriteLine("  - Service Bus emulator at amqp://localhost:5672");
-                    Console.WriteLine($"  - Service Bus config at {serviceBusConfigFile}");
+                    if (!skipServiceBus)
+                    {
+                        Console.WriteLine("  - Service Bus emulator at amqp://localhost:5672");
+                        Console.WriteLine($"  - Service Bus config at {serviceBusConfigFile}");
+                    }
                     Console.WriteLine("  - Aspire dashboard at http://localhost:18888");
                     Console.WriteLine($"  - OTLP endpoint {otlpEndpoint}");
                 }
@@ -331,7 +399,7 @@ public partial class Program
                     .WithEnvironment(EnvironmentVariables.RedisPort, "6379")
                     .WithEnvironment(EnvironmentVariables.OrleansClusterId, configuration[getConfigKey(EnvironmentVariables.OrleansClusterId)] ?? "production")
                     .WithEnvironment(EnvironmentVariables.OrleansServiceId, configuration[getConfigKey(EnvironmentVariables.OrleansServiceId)] ?? "grace-prod")
-                    .WithEnvironment(EnvironmentVariables.GracePubSubSystem, "AzureServiceBus")
+                        .WithEnvironment(EnvironmentVariables.GracePubSubSystem, pubSubSystem)
                     .WithEnvironment(EnvironmentVariables.AzureServiceBusTopic, configuration[getConfigKey(EnvironmentVariables.AzureServiceBusTopic)] ?? "graceeventstream")
                     .WithEnvironment(EnvironmentVariables.AzureServiceBusSubscription, configuration[getConfigKey(EnvironmentVariables.AzureServiceBusSubscription)] ?? "grace-server")
                     .WithEnvironment(EnvironmentVariables.GraceLogDirectory, publishLogDirectory)
@@ -433,6 +501,45 @@ public partial class Program
         }
     }
 
+    private static void CleanupDockerContainers(IEnumerable<string> containerNames)
+    {
+        foreach (var name in containerNames)
+        {
+            try
+            {
+                var startInfo = new ProcessStartInfo("docker", $"rm -f {name}")
+                {
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                };
+
+                using var proc = Process.Start(startInfo);
+                if (proc is null)
+                {
+                    continue;
+                }
+
+                if (!proc.WaitForExit(5000))
+                {
+                    try
+                    {
+                        proc.Kill(true);
+                    }
+                    catch
+                    {
+                        // Ignore cleanup errors to avoid failing test runs.
+                    }
+                }
+            }
+            catch
+            {
+                // Ignore cleanup errors to avoid failing test runs.
+            }
+        }
+    }
+
     private static int GetAvailableTcpPort()
     {
         var listener = new TcpListener(IPAddress.Loopback, 0);
@@ -446,9 +553,9 @@ public partial class Program
         IResourceBuilder<AzureCosmosDBResource> cosmos,
         string accountKey)
     {
-        if (cosmos.Resource is IResourceWithEndpoints cosmosWithEndpoints)
-        {
-            EndpointReference? selected = null;
+            if (cosmos.Resource is IResourceWithEndpoints cosmosWithEndpoints)
+            {
+                EndpointReference? selected = null;
 
             foreach (var endpoint in cosmosWithEndpoints.GetEndpoints())
             {
@@ -467,13 +574,13 @@ public partial class Program
                 selected ??= endpoint;
             }
 
-            if (selected is not null)
-            {
-                var scheme = selected.EndpointAnnotation.UriScheme;
-                if (string.IsNullOrWhiteSpace(scheme))
+                if (selected is not null)
                 {
-                    scheme = "http";
-                }
+                    var scheme = selected.EndpointAnnotation.UriScheme;
+                    if (string.IsNullOrWhiteSpace(scheme))
+                    {
+                        scheme = selected.IsHttps ? "https" : "http";
+                    }
 
                 var hostAndPort = selected.Property(EndpointProperty.HostAndPort);
                 return ReferenceExpression.Create($"AccountEndpoint={scheme}://{hostAndPort}/;AccountKey={accountKey};");

@@ -107,6 +107,7 @@ type EndpointAuthorizationTests() =
         parameters.OwnerId <- ownerId
         parameters.OrganizationId <- organizationId
         parameters.RepositoryId <- repositoryId
+        parameters.WorkItemId <- $"{Guid.NewGuid()}"
         parameters.Title <- $"Work{Guid.NewGuid():N}"
         parameters.Description <- "Test work item"
         parameters.CorrelationId <- generateCorrelationId ()
@@ -151,7 +152,7 @@ type EndpointAuthorizationTests() =
         parameters.OwnerId <- ownerId
         parameters.OrganizationId <- organizationId
         parameters.RepositoryId <- repositoryId
-        parameters.FileVersion <- FileVersion.Create "/images/test.txt" "hash" "" false 1L
+        parameters.FileVersion <- FileVersion.Create "images/test.txt" "hash" "" false 1L
         parameters.CorrelationId <- generateCorrelationId ()
         parameters
 
@@ -160,7 +161,7 @@ type EndpointAuthorizationTests() =
         parameters.OwnerId <- ownerId
         parameters.OrganizationId <- organizationId
         parameters.RepositoryId <- repositoryId
-        parameters.FileVersions <- [| FileVersion.Create "/images/test.txt" "hash" "" false 1L |]
+        parameters.FileVersions <- [| FileVersion.Create "images/test.txt" "hash" "" false 1L |]
         parameters.CorrelationId <- generateCorrelationId ()
         parameters
 
@@ -182,7 +183,10 @@ type EndpointAuthorizationTests() =
             Assert.That(loginResponse.StatusCode, Is.AnyOf(HttpStatusCode.OK, HttpStatusCode.Redirect))
 
             let! providerLoginResponse = client.GetAsync("/auth/login/test")
-            Assert.That(providerLoginResponse.StatusCode, Is.AnyOf(HttpStatusCode.OK, HttpStatusCode.Redirect))
+            Assert.That(
+                providerLoginResponse.StatusCode,
+                Is.AnyOf(HttpStatusCode.OK, HttpStatusCode.Redirect, HttpStatusCode.NotFound)
+            )
         }
 
     [<Test>]

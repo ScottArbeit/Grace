@@ -107,8 +107,7 @@ module Storage =
                             stringBuilderPool.Return(sb)
 
                     context.SetStatusCode StatusCodes.Status200OK
-                    let jsonContent = JsonContent.Create(uris)
-                    return! context.WriteJsonAsync jsonContent
+                    return! context.WriteJsonAsync uris
                 with
                 | ex ->
                     context.SetStatusCode StatusCodes.Status500InternalServerError

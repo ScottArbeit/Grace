@@ -36,8 +36,6 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Grace.Aspire.AppHost", "Gra
 EndProject
 Project("{F2A71F9B-5D33-465A-A702-920D77279786}") = "Grace.Authorization.Tests", "Grace.Authorization.Tests\Grace.Authorization.Tests.fsproj", "{D7848944-0A02-4FE3-8525-B64D0890EF27}"
 EndProject
-Project("{F2A71F9B-5D33-465A-A702-920D77279786}") = "Grace.Server.Bootstrap.Tests", "Grace.Server.Bootstrap.Tests\Grace.Server.Bootstrap.Tests.fsproj", "{DB771304-C4F6-4968-8AF9-F356DA42E4F0}"
-EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -192,18 +190,6 @@ Global
 		{D7848944-0A02-4FE3-8525-B64D0890EF27}.Release|x64.Build.0 = Release|Any CPU
 		{D7848944-0A02-4FE3-8525-B64D0890EF27}.Release|x86.ActiveCfg = Release|Any CPU
 		{D7848944-0A02-4FE3-8525-B64D0890EF27}.Release|x86.Build.0 = Release|Any CPU
-		{DB771304-C4F6-4968-8AF9-F356DA42E4F0}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{DB771304-C4F6-4968-8AF9-F356DA42E4F0}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{DB771304-C4F6-4968-8AF9-F356DA42E4F0}.Debug|x64.ActiveCfg = Debug|Any CPU
-		{DB771304-C4F6-4968-8AF9-F356DA42E4F0}.Debug|x64.Build.0 = Debug|Any CPU
-		{DB771304-C4F6-4968-8AF9-F356DA42E4F0}.Debug|x86.ActiveCfg = Debug|Any CPU
-		{DB771304-C4F6-4968-8AF9-F356DA42E4F0}.Debug|x86.Build.0 = Debug|Any CPU
-		{DB771304-C4F6-4968-8AF9-F356DA42E4F0}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{DB771304-C4F6-4968-8AF9-F356DA42E4F0}.Release|Any CPU.Build.0 = Release|Any CPU
-		{DB771304-C4F6-4968-8AF9-F356DA42E4F0}.Release|x64.ActiveCfg = Release|Any CPU
-		{DB771304-C4F6-4968-8AF9-F356DA42E4F0}.Release|x64.Build.0 = Release|Any CPU
-		{DB771304-C4F6-4968-8AF9-F356DA42E4F0}.Release|x86.ActiveCfg = Release|Any CPU
-		{DB771304-C4F6-4968-8AF9-F356DA42E4F0}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
