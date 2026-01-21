@@ -571,7 +571,7 @@ module Application =
                         POST [ route "/create" Repository.Create
                                |> addMetadata typeof<Repository.CreateRepositoryParameters>
 
-                               route "/delete" Repository.Delete
+                               route "/delete" (composeHandlers requireRepoAdmin Repository.Delete)
                                |> addMetadata typeof<Repository.DeleteRepositoryParameters>
 
                                route "/exists" Repository.Exists
@@ -993,7 +993,12 @@ module Application =
             services.AddW3CLogging (fun options ->
                 options.FileName <- "Grace.Server.log-"
 
-                options.LogDirectory <- Path.Combine(Environment.GetEnvironmentVariable("TEMP"), "Grace.Server.Logs"))
+                let tempPath =
+                    match Environment.GetEnvironmentVariable("TEMP") with
+                    | value when not (String.IsNullOrWhiteSpace value) -> value
+                    | _ -> Path.GetTempPath()
+
+                options.LogDirectory <- Path.Combine(tempPath, "Grace.Server.Logs"))
             |> ignore
 
             services
