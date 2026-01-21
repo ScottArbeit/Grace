@@ -13,6 +13,7 @@ module Authorization =
         let private scopeOwner = "owner"
         let private scopeOrganization = "organization"
         let private scopeRepository = "repository"
+        let private scopeBranch = "branch"
 
         let private systemAdminOperations =
             set [ SystemAdmin
@@ -88,6 +89,18 @@ module Authorization =
 
         let private repoReaderOperations = set [ RepoRead; PathRead; BranchRead ]
 
+        let private branchAdminOperations =
+            set [ BranchAdmin
+                  BranchWrite
+                  BranchRead ]
+
+        let private branchWriterOperations =
+            set [ BranchWrite
+                  BranchRead ]
+
+        let private branchReaderOperations =
+            set [ BranchRead ]
+
         let private roles: RoleDefinition list =
             [
                 { RoleId = "SystemAdmin"; AllowedOperations = systemAdminOperations; AppliesTo = Set.ofList [ scopeSystem ] }
@@ -98,6 +111,9 @@ module Authorization =
                 { RoleId = "RepoAdmin"; AllowedOperations = repoAdminOperations; AppliesTo = Set.ofList [ scopeRepository ] }
                 { RoleId = "RepoContributor"; AllowedOperations = repoContributorOperations; AppliesTo = Set.ofList [ scopeRepository ] }
                 { RoleId = "RepoReader"; AllowedOperations = repoReaderOperations; AppliesTo = Set.ofList [ scopeRepository ] }
+                { RoleId = "BranchAdmin"; AllowedOperations = branchAdminOperations; AppliesTo = Set.ofList [ scopeBranch ] }
+                { RoleId = "BranchWriter"; AllowedOperations = branchWriterOperations; AppliesTo = Set.ofList [ scopeBranch ] }
+                { RoleId = "BranchReader"; AllowedOperations = branchReaderOperations; AppliesTo = Set.ofList [ scopeBranch ] }
             ]
 
         let getAll () = roles

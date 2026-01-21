@@ -73,7 +73,6 @@ type Setup() =
             logToTestConsole "Starting Aspire test host..."
 
             testUserId <- $"{Guid.NewGuid()}"
-
             let! hostState = AspireTestHost.startAsync testUserId
 
             App <- Some hostState.App

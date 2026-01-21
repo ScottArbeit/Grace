@@ -23,6 +23,11 @@
     <Compile Include="Repository.Server.Tests.fs" />
     <Compile Include="AuthMapping.Unit.Tests.fs" />
     <Compile Include="Authorization.Unit.Tests.fs" />
+    <Compile Include="AccessControl.Security.Server.Tests.fs" />
+    <Compile Include="AccessCheckPermission.Server.Tests.fs" />
+    <Compile Include="AccessBootstrap.Server.Tests.fs" />
+    <Compile Include="AccessBootstrap.Enabled.Server.Tests.fs" />
+    <Compile Include="EndpointAuthorization.Server.Tests.fs" />
     <Compile Include="Policy.Determinism.Tests.fs" />
     <Compile Include="Policy.Stage0.Derived.Tests.fs" />
     <Compile Include="Stage0.Determinism.Tests.fs" />
@@ -30,8 +35,8 @@
     <Compile Include="ReviewPacket.Determinism.Tests.fs" />
     <Compile Include="Queue.Gates.Conflict.Tests.fs" />
     <Compile Include="WorkItem.Update.Tests.fs" />
-                <Compile Include="Auth.Server.Tests.fs" />
-                <Compile Include="AccessControl.Server.Tests.fs" />
+    <Compile Include="Auth.Server.Tests.fs" />
+    <Compile Include="AccessControl.Server.Tests.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
 

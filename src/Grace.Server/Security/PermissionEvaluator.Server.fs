@@ -13,7 +13,32 @@ type IGracePermissionEvaluator =
     abstract member CheckAsync:
         principalSet: Principal list * effectiveClaims: Set<string> * operation: Operation * resource: Resource -> Task<PermissionCheckResult>
 
-type GracePermissionEvaluator() =
+module PermissionEvaluatorDefaults =
+
+    let getAssignmentsForScope (scope: Scope, correlationId: CorrelationId) =
+        task {
+            let scopeKey = AccessControl.getScopeKey scope
+            let actorProxy = Extensions.ActorProxy.AccessControl.CreateActorProxy scopeKey correlationId
+            return! actorProxy.GetAssignments None correlationId
+        }
+
+    let getPathPermissionsForRepository (repositoryId: RepositoryId, correlationId: CorrelationId) =
+        task {
+            let actorProxy = Extensions.ActorProxy.RepositoryPermission.CreateActorProxy repositoryId correlationId
+            return! actorProxy.GetPathPermissions None correlationId
+        }
+
+type GracePermissionEvaluator
+    (
+        getAssignmentsForScope: Scope * CorrelationId -> Task<RoleAssignment list>,
+        getPathPermissionsForRepository: RepositoryId * CorrelationId -> Task<PathPermission list>
+    ) =
+
+    new () =
+        GracePermissionEvaluator(
+            PermissionEvaluatorDefaults.getAssignmentsForScope,
+            PermissionEvaluatorDefaults.getPathPermissionsForRepository
+        )
 
     interface IGracePermissionEvaluator with
         member _.CheckAsync(principalSet, effectiveClaims, operation, resource) =
@@ -25,12 +50,7 @@ type GracePermissionEvaluator() =
 
                     let! assignments =
                         scopes
-                        |> List.map (fun scope ->
-                            task {
-                                let scopeKey = AccessControl.getScopeKey scope
-                                let actorProxy = Extensions.ActorProxy.AccessControl.CreateActorProxy scopeKey correlationId
-                                return! actorProxy.GetAssignments None correlationId
-                            })
+                        |> List.map (fun scope -> getAssignmentsForScope (scope, correlationId))
                         |> Task.WhenAll
 
                     let allAssignments = assignments |> Seq.collect id |> Seq.toList
@@ -38,10 +58,7 @@ type GracePermissionEvaluator() =
                     let! pathPermissions =
                         match resource with
                         | Resource.Path (_, _, repositoryId, _) ->
-                            task {
-                                let actorProxy = Extensions.ActorProxy.RepositoryPermission.CreateActorProxy repositoryId correlationId
-                                return! actorProxy.GetPathPermissions None correlationId
-                            }
+                            getPathPermissionsForRepository (repositoryId, correlationId)
                         | _ -> Task.FromResult List.empty
 
                     return checkPermission roleCatalog allAssignments pathPermissions principalSet effectiveClaims operation resource

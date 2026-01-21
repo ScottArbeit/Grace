@@ -243,7 +243,7 @@ type AccessControl() =
                     ownerId
                     orgId
                     repoId
-                    "/images/foo.png"
+                    "images/foo.png"
                     [
                         ("engineering", "NoAccess")
                         ("writers", "Modify")
@@ -253,7 +253,7 @@ type AccessControl() =
                 createClientWithClaims [ "engineering"
                                          "writers" ]
 
-            let fileVersion = FileVersion.Create "/images/foo.png" "hash" "" false 1L
+            let fileVersion = FileVersion.Create "images/foo.png" "hash" "" false 1L
 
             let uploadParameters = Parameters.Storage.GetUploadMetadataForFilesParameters()
             uploadParameters.OwnerId <- ownerId
@@ -265,7 +265,7 @@ type AccessControl() =
             let! deniedResponse = claimsClient.PostAsync("/storage/getUploadMetadataForFiles", createJsonContent uploadParameters)
             Assert.That(deniedResponse.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden))
 
-            do! upsertPathPermissionAsync Client ownerId orgId repoId "/images/foo.png" [ ("engineering", "Modify") ]
+            do! upsertPathPermissionAsync Client ownerId orgId repoId "images/foo.png" [ ("engineering", "Modify") ]
 
             let! allowedResponse = claimsClient.PostAsync("/storage/getUploadMetadataForFiles", createJsonContent uploadParameters)
             Assert.That(allowedResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK))

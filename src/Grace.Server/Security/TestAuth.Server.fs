@@ -19,6 +19,9 @@ module TestAuth =
     [<Literal>]
     let ClaimsHeader = "x-grace-claims"
 
+    [<Literal>]
+    let GroupsHeader = "x-grace-groups"
+
     type GraceTestAuthHandler(options: IOptionsMonitor<AuthenticationSchemeOptions>, loggerFactory: ILoggerFactory, encoder: UrlEncoder) =
         inherit AuthenticationHandler<AuthenticationSchemeOptions>(options, loggerFactory, encoder)
 
@@ -43,6 +46,15 @@ module TestAuth =
                     |> Array.map (fun claimValue -> claimValue.Trim())
                     |> Array.filter (fun claimValue -> not (String.IsNullOrWhiteSpace claimValue))
                     |> Array.iter (fun claimValue -> claims.Add(Claim(PrincipalMapper.GraceClaim, claimValue)))
+                | _ -> ()
+
+                match tryGetHeader GroupsHeader with
+                | None -> ()
+                | Some groupHeader when not (String.IsNullOrWhiteSpace groupHeader) ->
+                    groupHeader.Split(';', StringSplitOptions.RemoveEmptyEntries)
+                    |> Array.map (fun groupValue -> groupValue.Trim())
+                    |> Array.filter (fun groupValue -> not (String.IsNullOrWhiteSpace groupValue))
+                    |> Array.iter (fun groupValue -> claims.Add(Claim(PrincipalMapper.GraceGroupIdClaim, groupValue)))
                 | _ -> ()
 
                 let identity = ClaimsIdentity(claims, SchemeName)

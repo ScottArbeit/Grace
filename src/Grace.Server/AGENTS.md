@@ -18,6 +18,8 @@ code.
   guard handler bodies with defensive `try/with` blocks when needed.
 - Preserve structured logging (including correlation IDs) and ensure middleware
   ordering remains stable.
+- Test bootstrap: set `grace__auth__bootstrap__system_admin_user_id` to seed a
+  SystemAdmin assignment at system scope for integration tests.
 - Keep configuration loading and Orleans startup sequencing intact. Changes
   should be intentional and well documented here.
 - Coordinate contracts and message flows with `Grace.Actors`, `Grace.SDK`, and
