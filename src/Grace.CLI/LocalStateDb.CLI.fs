@@ -16,7 +16,7 @@ open SQLitePCL
 
 module LocalStateDb =
     [<Literal>]
-    let private SchemaVersion = "1"
+    let private SchemaVersion = "2"
 
     [<Literal>]
     let private BusyTimeoutMs = 30000
@@ -146,9 +146,10 @@ module LocalStateDb =
             "CREATE TABLE IF NOT EXISTS status_meta (id INTEGER PRIMARY KEY CHECK (id = 1), root_directory_version_id TEXT NOT NULL, root_directory_sha256_hash TEXT NOT NULL, last_successful_file_upload_unix_ticks INTEGER NOT NULL, last_successful_directory_version_upload_unix_ticks INTEGER NOT NULL);"
             "CREATE TABLE IF NOT EXISTS status_directories (relative_path TEXT PRIMARY KEY, parent_path TEXT NOT NULL, directory_version_id TEXT NOT NULL, sha256_hash TEXT NOT NULL, size_bytes INTEGER NOT NULL, created_at_unix_ticks INTEGER NOT NULL, last_write_time_utc_ticks INTEGER NOT NULL);"
             "CREATE INDEX IF NOT EXISTS ix_status_directories_parent ON status_directories(parent_path);"
-            "CREATE INDEX IF NOT EXISTS ix_status_directories_directory_version_id ON status_directories(directory_version_id);"
-            "CREATE TABLE IF NOT EXISTS status_files (relative_path TEXT PRIMARY KEY, directory_path TEXT NOT NULL, sha256_hash TEXT NOT NULL, is_binary INTEGER NOT NULL, size_bytes INTEGER NOT NULL, created_at_unix_ticks INTEGER NOT NULL, uploaded_to_object_storage INTEGER NOT NULL, last_write_time_utc_ticks INTEGER NOT NULL);"
+            "CREATE UNIQUE INDEX IF NOT EXISTS ix_status_directories_directory_version_id ON status_directories(directory_version_id);"
+            "CREATE TABLE IF NOT EXISTS status_files (relative_path TEXT PRIMARY KEY, directory_path TEXT NOT NULL, directory_version_id TEXT NOT NULL, sha256_hash TEXT NOT NULL, is_binary INTEGER NOT NULL, size_bytes INTEGER NOT NULL, created_at_unix_ticks INTEGER NOT NULL, uploaded_to_object_storage INTEGER NOT NULL, last_write_time_utc_ticks INTEGER NOT NULL, FOREIGN KEY (directory_version_id) REFERENCES status_directories(directory_version_id) ON DELETE CASCADE);"
             "CREATE INDEX IF NOT EXISTS ix_status_files_directory_path ON status_files(directory_path);"
+            "CREATE INDEX IF NOT EXISTS ix_status_files_directory_version_id ON status_files(directory_version_id);"
             "CREATE INDEX IF NOT EXISTS ix_status_files_sha256 ON status_files(sha256_hash);"
             "CREATE TABLE IF NOT EXISTS object_cache_directories (directory_version_id TEXT PRIMARY KEY, relative_path TEXT NOT NULL, sha256_hash TEXT NOT NULL, size_bytes INTEGER NOT NULL, created_at_unix_ticks INTEGER NOT NULL, last_write_time_utc_ticks INTEGER NOT NULL);"
             "CREATE INDEX IF NOT EXISTS ix_object_cache_directories_relative_path ON object_cache_directories(relative_path);"
@@ -417,12 +418,15 @@ module LocalStateDb =
                                 use fileCommand = connection.CreateCommand()
 
                                 fileCommand.CommandText <-
-                                    "INSERT OR REPLACE INTO status_files (relative_path, directory_path, sha256_hash, is_binary, size_bytes, created_at_unix_ticks, uploaded_to_object_storage, last_write_time_utc_ticks) VALUES ($relative_path, $directory_path, $sha256_hash, $is_binary, $size_bytes, $created_at, $uploaded, $last_write);"
+                                    "INSERT OR REPLACE INTO status_files (relative_path, directory_path, directory_version_id, sha256_hash, is_binary, size_bytes, created_at_unix_ticks, uploaded_to_object_storage, last_write_time_utc_ticks) VALUES ($relative_path, $directory_path, $directory_version_id, $sha256_hash, $is_binary, $size_bytes, $created_at, $uploaded, $last_write);"
 
                                 fileCommand.Parameters.Add("$relative_path", SqliteType.Text)
                                 |> ignore
 
                                 fileCommand.Parameters.Add("$directory_path", SqliteType.Text)
+                                |> ignore
+
+                                fileCommand.Parameters.Add("$directory_version_id", SqliteType.Text)
                                 |> ignore
 
                                 fileCommand.Parameters.Add("$sha256_hash", SqliteType.Text)
@@ -462,7 +466,8 @@ module LocalStateDb =
                                     directory.Files
                                     |> Seq.iter (fun file ->
                                         fileCommand.Parameters["$relative_path"].Value <- file.RelativePath
-                                        fileCommand.Parameters["$directory_path"].Value <- file.RelativeDirectory
+                                        fileCommand.Parameters["$directory_path"].Value <- directory.RelativePath
+                                        fileCommand.Parameters["$directory_version_id"].Value <- directory.DirectoryVersionId.ToString()
                                         fileCommand.Parameters["$sha256_hash"].Value <- file.Sha256Hash
                                         fileCommand.Parameters["$is_binary"].Value <- if file.IsBinary then 1 else 0
                                         fileCommand.Parameters["$size_bytes"].Value <- file.Size
@@ -753,12 +758,15 @@ module LocalStateDb =
                                 use fileUpsertCommand = connection.CreateCommand()
 
                                 fileUpsertCommand.CommandText <-
-                                    "INSERT OR REPLACE INTO status_files (relative_path, directory_path, sha256_hash, is_binary, size_bytes, created_at_unix_ticks, uploaded_to_object_storage, last_write_time_utc_ticks) VALUES ($relative_path, $directory_path, $sha256_hash, $is_binary, $size_bytes, $created_at, $uploaded, $last_write);"
+                                    "INSERT OR REPLACE INTO status_files (relative_path, directory_path, directory_version_id, sha256_hash, is_binary, size_bytes, created_at_unix_ticks, uploaded_to_object_storage, last_write_time_utc_ticks) VALUES ($relative_path, $directory_path, $directory_version_id, $sha256_hash, $is_binary, $size_bytes, $created_at, $uploaded, $last_write);"
 
                                 fileUpsertCommand.Parameters.Add("$relative_path", SqliteType.Text)
                                 |> ignore
 
                                 fileUpsertCommand.Parameters.Add("$directory_path", SqliteType.Text)
+                                |> ignore
+
+                                fileUpsertCommand.Parameters.Add("$directory_version_id", SqliteType.Text)
                                 |> ignore
 
                                 fileUpsertCommand.Parameters.Add("$sha256_hash", SqliteType.Text)
@@ -793,8 +801,9 @@ module LocalStateDb =
 
                                 let fileLookup =
                                     newDirectoryVersions
-                                    |> Seq.collect (fun dv -> dv.Files)
-                                    |> Seq.map (fun file -> (file.RelativePath, file))
+                                    |> Seq.collect (fun dv ->
+                                        dv.Files
+                                        |> Seq.map (fun file -> (file.RelativePath, (file, dv.DirectoryVersionId, dv.RelativePath))))
                                     |> dict
 
                                 differences
@@ -803,11 +812,13 @@ module LocalStateDb =
                                     | Add
                                     | Change ->
                                         if difference.FileSystemEntryType.IsFile then
-                                            let mutable file = Unchecked.defaultof<LocalFileVersion>
+                                            let mutable payload = Unchecked.defaultof<LocalFileVersion * DirectoryVersionId * string>
 
-                                            if fileLookup.TryGetValue(difference.RelativePath, &file) then
+                                            if fileLookup.TryGetValue(difference.RelativePath, &payload) then
+                                                let file, directoryVersionId, directoryPath = payload
                                                 fileUpsertCommand.Parameters["$relative_path"].Value <- file.RelativePath
-                                                fileUpsertCommand.Parameters["$directory_path"].Value <- file.RelativeDirectory
+                                                fileUpsertCommand.Parameters["$directory_path"].Value <- directoryPath
+                                                fileUpsertCommand.Parameters["$directory_version_id"].Value <- directoryVersionId.ToString()
                                                 fileUpsertCommand.Parameters["$sha256_hash"].Value <- file.Sha256Hash
                                                 fileUpsertCommand.Parameters["$is_binary"].Value <- if file.IsBinary then 1 else 0
                                                 fileUpsertCommand.Parameters["$size_bytes"].Value <- file.Size
@@ -847,7 +858,7 @@ module LocalStateDb =
     type private StatusFileRow =
         {
             RelativePath: string
-            DirectoryPath: string
+            DirectoryVersionId: DirectoryVersionId
             Sha256Hash: Sha256Hash
             IsBinary: bool
             SizeBytes: int64
@@ -909,13 +920,13 @@ module LocalStateDb =
                 use fileCommand = connection.CreateCommand()
 
                 fileCommand.CommandText <-
-                    "SELECT relative_path, directory_path, sha256_hash, is_binary, size_bytes, created_at_unix_ticks, uploaded_to_object_storage, last_write_time_utc_ticks FROM status_files;"
+                    "SELECT relative_path, directory_version_id, sha256_hash, is_binary, size_bytes, created_at_unix_ticks, uploaded_to_object_storage, last_write_time_utc_ticks FROM status_files;"
 
                 use fileReader = fileCommand.ExecuteReader()
 
                 while fileReader.Read() do
                     let relativePath = fileReader.GetString(0)
-                    let directoryPath = fileReader.GetString(1)
+                    let directoryVersionId = Guid.Parse(fileReader.GetString(1))
                     let sha256Hash = fileReader.GetString(2)
                     let isBinary = fileReader.GetInt64(3) = 1L
                     let sizeBytes = fileReader.GetInt64(4)
@@ -926,7 +937,7 @@ module LocalStateDb =
                     files.Add(
                         {
                             RelativePath = relativePath
-                            DirectoryPath = directoryPath
+                            DirectoryVersionId = directoryVersionId
                             Sha256Hash = sha256Hash
                             IsBinary = isBinary
                             SizeBytes = sizeBytes
@@ -937,7 +948,7 @@ module LocalStateDb =
                     )
 
                 let directoriesByParent = Dictionary<string, List<DirectoryVersionId>>()
-                let filesByDirectory = Dictionary<string, List<LocalFileVersion>>()
+                let filesByDirectory = Dictionary<DirectoryVersionId, List<LocalFileVersion>>()
 
                 directories
                 |> Seq.iter (fun directory ->
@@ -963,10 +974,10 @@ module LocalStateDb =
 
                     let mutable existing = Unchecked.defaultof<List<LocalFileVersion>>
 
-                    if filesByDirectory.TryGetValue(file.DirectoryPath, &existing) then
+                    if filesByDirectory.TryGetValue(file.DirectoryVersionId, &existing) then
                         existing.Add(localFile)
                     else
-                        filesByDirectory.Add(file.DirectoryPath, List<LocalFileVersion>([ localFile ])))
+                        filesByDirectory.Add(file.DirectoryVersionId, List<LocalFileVersion>([ localFile ])))
 
                 let index = GraceIndex()
 
@@ -983,7 +994,7 @@ module LocalStateDb =
                     let filesForPath =
                         let mutable list = Unchecked.defaultof<List<LocalFileVersion>>
 
-                        if filesByDirectory.TryGetValue(directory.RelativePath, &list) then
+                        if filesByDirectory.TryGetValue(directory.DirectoryVersionId, &list) then
                             list
                         else
                             List<LocalFileVersion>()

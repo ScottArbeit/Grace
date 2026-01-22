@@ -46,21 +46,39 @@ module LocalStateDbTests =
         updateConfiguration configuration
         configuration
 
+    let private ensureGraceConfig (root: string) =
+        let graceDir = Path.Combine(root, Constants.GraceConfigDirectory)
+        let configPath = Path.Combine(graceDir, Constants.GraceConfigFileName)
+
+        if not (Directory.Exists(graceDir)) then
+            Directory.CreateDirectory(graceDir) |> ignore
+
+        if not (File.Exists(configPath)) then
+            File.WriteAllText(configPath, "{}")
+
     let private withTempDir (action: string -> GraceConfiguration -> Task<'T>) =
         task {
             let root = Path.Combine(Path.GetTempPath(), $"grace-tests-{Guid.NewGuid()}")
             Directory.CreateDirectory(root) |> ignore
             let previousDirectory = Environment.CurrentDirectory
-            let previousConfiguration = Current()
+            let previousConfiguration =
+                if configurationFileExists () then
+                    Some(Current())
+                else
+                    None
 
             try
                 Environment.CurrentDirectory <- root
                 configureVerboseLogging ()
+                ensureGraceConfig root
                 let configuration = configureForRoot root
                 return! action root configuration
             finally
                 Environment.CurrentDirectory <- previousDirectory
-                updateConfiguration previousConfiguration
+
+                match previousConfiguration with
+                | Some configuration -> updateConfiguration configuration
+                | None -> resetConfiguration ()
 
                 if Directory.Exists(root) then
                     try
@@ -192,7 +210,7 @@ module LocalStateDbTests =
                 use cmd = connection.CreateCommand()
                 cmd.CommandText <- "SELECT value FROM meta WHERE key = 'schema_version';"
                 let schemaVersion = cmd.ExecuteScalar() :?> string
-                schemaVersion |> should equal "1"
+                schemaVersion |> should equal "2"
 
                 cmd.CommandText <- "SELECT COUNT(*) FROM status_meta;"
                 let statusMetaCount = Convert.ToInt32(cmd.ExecuteScalar())
@@ -441,7 +459,7 @@ module LocalStateDbTests =
 
                 use connection = openRawConnection configuration.GraceStatusFile
                 let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
-                schemaVersion |> should equal "1"
+                schemaVersion |> should equal "2"
 
                 let corruptAfter =
                     getCorruptBackups configuration.GraceStatusFile
@@ -468,7 +486,7 @@ module LocalStateDbTests =
 
                 use connection = openRawConnection configuration.GraceStatusFile
                 let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
-                schemaVersion |> should equal "1"
+                schemaVersion |> should equal "2"
 
                 let corruptAfter =
                     getCorruptBackups configuration.GraceStatusFile
@@ -535,6 +553,7 @@ module LocalStateDbTests =
                         "index:ix_status_directories_directory_version_id"
                         "table:status_files"
                         "index:ix_status_files_directory_path"
+                        "index:ix_status_files_directory_version_id"
                         "index:ix_status_files_sha256"
                         "table:object_cache_directories"
                         "index:ix_object_cache_directories_relative_path"
@@ -588,7 +607,7 @@ module LocalStateDbTests =
                     connection
                     "CREATE TABLE IF NOT EXISTS status_meta (id INTEGER PRIMARY KEY CHECK (id = 1), root_directory_version_id TEXT NOT NULL, root_directory_sha256_hash TEXT NOT NULL, last_successful_file_upload_unix_ticks INTEGER NOT NULL, last_successful_directory_version_upload_unix_ticks INTEGER NOT NULL);"
 
-                executeNonQuery connection "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '1');"
+                executeNonQuery connection "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '2');"
 
                 executeNonQuery
                     connection
@@ -806,7 +825,7 @@ module LocalStateDbTests =
 
                 use connection = openRawConnection configuration.GraceStatusFile
                 let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
-                schemaVersion |> should equal "1"
+                schemaVersion |> should equal "2"
 
                 let statusMetaCount = executeScalarInt connection "SELECT COUNT(*) FROM status_meta;"
                 statusMetaCount |> should equal 1
@@ -832,7 +851,7 @@ module LocalStateDbTests =
 
                 use connection = openRawConnection configuration.GraceStatusFile
                 let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
-                schemaVersion |> should equal "1"
+                schemaVersion |> should equal "2"
             })
 
     [<Test>]
@@ -1075,26 +1094,27 @@ module LocalStateDbTests =
             })
 
     [<Test>]
-    let ``readStatusSnapshot tolerates orphaned file rows`` () =
+    let ``status_files enforces directory_version_id`` () =
         withTempDir (fun _ configuration ->
             task {
                 do! LocalStateDb.ensureDbInitialized configuration.GraceStatusFile
 
                 use connection = openRawConnection configuration.GraceStatusFile
+                executeNonQuery connection "PRAGMA foreign_keys = ON;"
 
                 executeNonQuery
                     connection
                     "INSERT OR REPLACE INTO status_directories (relative_path, parent_path, directory_version_id, sha256_hash, size_bytes, created_at_unix_ticks, last_write_time_utc_ticks) VALUES ('.', '', '00000000-0000-0000-0000-000000000001', 'root', 0, 0, 0);"
 
-                executeNonQuery
-                    connection
-                    "INSERT OR REPLACE INTO status_files (relative_path, directory_path, sha256_hash, is_binary, size_bytes, created_at_unix_ticks, uploaded_to_object_storage, last_write_time_utc_ticks) VALUES ('orphan.txt', 'missing', 'hash', 0, 1, 0, 0, 0);"
+                let orphanId = Guid.NewGuid()
 
-                let! readBack = LocalStateDb.readStatusSnapshot configuration.GraceStatusFile
-                readBack.Index.Count |> should equal 1
-
-                let rootRead = readBack.Index.Values.First()
-                rootRead.Files.Count |> should equal 0
+                Assert.Throws<SqliteException>(
+                    TestDelegate(fun () ->
+                        executeNonQuery
+                            connection
+                            $"INSERT OR REPLACE INTO status_files (relative_path, directory_path, directory_version_id, sha256_hash, is_binary, size_bytes, created_at_unix_ticks, uploaded_to_object_storage, last_write_time_utc_ticks) VALUES ('orphan.txt', 'missing', '{orphanId}', 'hash', 0, 1, 0, 0, 0);")
+                )
+                |> ignore
             })
 
     [<Test>]
@@ -1432,7 +1452,7 @@ module LocalStateDbTests =
                     integrity.ToLowerInvariant() |> should equal "ok"
 
                     let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
-                    schemaVersion |> should equal "1"
+                    schemaVersion |> should equal "2"
 
                     let statusMetaCount = executeScalarInt connection "SELECT COUNT(*) FROM status_meta;"
                     statusMetaCount |> should equal 1
