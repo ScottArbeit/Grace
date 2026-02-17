@@ -25,6 +25,7 @@
     <Compile Include="WorkItem.Commands.Tests.fs" />
     <Compile Include="Review.Commands.Tests.fs" />
     <Compile Include="Queue.Commands.Tests.fs" />
+    <Compile Include="Watch.Tests.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
 

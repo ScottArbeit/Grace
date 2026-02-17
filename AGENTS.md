@@ -28,19 +28,9 @@ More context:
 
 ## Issue Tracking
 
-This project uses **bd (beads)** for issue tracking.
-Always use `bd` commands to manage your work.
-When creating beads, include a description.
-Run `bd prime` for workflow context, or install hooks (`bd hooks install`) for auto-injection.
-
-**Quick reference:**
-
-- `bd ready` - Find unblocked work
-- `bd create "Title" --type task --priority 2` - Create issue
-- `bd close <id>` - Complete work
-- `bd sync` - Sync with git (run at session end)
-
-For full workflow details: `bd prime`
+- Use the repository’s issue tracker (or the ticket/work item provided in the prompt) to scope and reference work, or follow other explicit work-tracking instructions provided in the prompt.
+- Keep work items small and independently verifiable.
+- Reference the relevant issue/ticket/work item ID in PR descriptions and (when applicable) commit messages.
 
 ## Markdown guidelines
 
@@ -61,10 +51,13 @@ When updating documentation files, follow these guidelines:
 - Show all scripting examples in both (first) PowerShell and (then, second) bash/zsh, where applicable. bash and zsh are always spelled in lowercase. Good example:
 
   PowerShell:
+  
   ```powershell
   $env:GRACE_SERVER_URI="http://localhost:5000"
   ```
+
   bash / zsh:
+
   ```bash
   export GRACE_SERVER_URI="http://localhost:5000"
   ```

@@ -16,12 +16,18 @@ module PromotionGroup =
     /// Defines the status of a promotion group.
     [<KnownType("GetKnownTypes"); GenerateSerializer>]
     type PromotionGroupStatus =
-        | Draft // Being edited: promotions can be added/removed/reordered.
-        | Ready // Marked ready for execution (subject to schedule).
-        | Running // Currently being applied atomically to the parent branch.
-        | Succeeded // Fully applied, final promotion recorded.
-        | Failed // Failed due to conflicts/tests/other conditions; branch rolled back.
-        | Blocked // Waiting on human review (e.g. policy requires review).
+        /// The promotion group is being drafted and edited. No execution has been scheduled.
+        | Draft
+        /// The promotion group has been marked ready and can be scheduled for execution.
+        | Ready
+        /// The promotion group is currently executing, with promotions being applied atomically to the parent branch.
+        | Running
+        /// The promotion group has completed execution successfully, with all promotions applied.
+        | Succeeded
+        /// The promotion group has completed execution with failures, due to conflicts, failed tests, or other conditions. The target branch has been rolled back to its pre-promotion state.
+        | Failed
+        /// The promotion group is blocked from execution due to an external condition, such as a policy violation or pending manual review. The target branch has not been modified.
+        | Blocked
 
         static member GetKnownTypes() = GetKnownTypes<PromotionGroupStatus>()
 

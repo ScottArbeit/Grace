@@ -1209,6 +1209,93 @@ module LocalStateDbTests =
             })
 
     [<Test>]
+    let ``applyStatusIncremental keeps unchanged files when directory version id changes`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                let now = Instant.FromUnixTimeTicks(5500L)
+                let lastWrite1 = DateTime(2022, 3, 4, 5, 6, 7, DateTimeKind.Utc)
+                let lastWrite2 = DateTime(2022, 4, 5, 6, 7, 8, DateTimeKind.Utc)
+                let rootId1 = Guid.NewGuid()
+                let rootId2 = Guid.NewGuid()
+
+                let originalLicense = createFileVersion "LICENSE.md" "license-hash-1" false 10L now lastWrite1
+                let originalReadme = createFileVersion "README.md" "readme-hash-1" false 20L now lastWrite1
+
+                let rootDir1 =
+                    createDirectoryVersion
+                        configuration
+                        rootId1
+                        Constants.RootDirectoryPath
+                        "root-hash-1"
+                        [||]
+                        [| originalLicense; originalReadme |]
+                        (originalLicense.Size + originalReadme.Size)
+                        lastWrite1
+
+                let index1 = GraceIndex()
+                index1.TryAdd(rootId1, rootDir1) |> ignore
+
+                let status1 =
+                    { GraceStatus.Default with
+                        Index = index1
+                        RootDirectoryId = rootId1
+                        RootDirectorySha256Hash = rootDir1.Sha256Hash
+                        LastSuccessfulFileUpload = now
+                        LastSuccessfulDirectoryVersionUpload = now
+                    }
+
+                do! LocalStateDb.replaceStatusSnapshot configuration.GraceStatusFile status1
+
+                let changedLicense = createFileVersion "LICENSE.md" "license-hash-2" false 15L now lastWrite2
+                let unchangedReadme = createFileVersion "README.md" "readme-hash-1" false 20L now lastWrite1
+
+                let rootDir2 =
+                    createDirectoryVersion
+                        configuration
+                        rootId2
+                        Constants.RootDirectoryPath
+                        "root-hash-2"
+                        [||]
+                        [| changedLicense; unchangedReadme |]
+                        (changedLicense.Size + unchangedReadme.Size)
+                        lastWrite2
+
+                let status2 =
+                    { GraceStatus.Default with
+                        RootDirectoryId = rootId2
+                        RootDirectorySha256Hash = rootDir2.Sha256Hash
+                        LastSuccessfulFileUpload = Instant.FromUnixTimeTicks(5600L)
+                        LastSuccessfulDirectoryVersionUpload = Instant.FromUnixTimeTicks(5600L)
+                    }
+
+                do!
+                    LocalStateDb.applyStatusIncremental
+                        configuration.GraceStatusFile
+                        status2
+                        [ rootDir2 ]
+                        [
+                            FileSystemDifference.Create Change FileSystemEntryType.File "LICENSE.md"
+                        ]
+
+                let! readBack = LocalStateDb.readStatusSnapshot configuration.GraceStatusFile
+                readBack.RootDirectoryId |> should equal rootId2
+
+                let rootRead =
+                    readBack.Index.Values
+                    |> Seq.find (fun dv -> dv.RelativePath = Constants.RootDirectoryPath)
+
+                rootRead.Files.Count |> should equal 2
+
+                rootRead.Files
+                |> Seq.exists (fun file -> file.RelativePath = "LICENSE.md" && file.Sha256Hash = "license-hash-2")
+                |> should equal true
+
+                rootRead.Files
+                |> Seq.exists (fun file -> file.RelativePath = "README.md" && file.Sha256Hash = "readme-hash-1")
+                |> should equal true
+            })
+
+    [<Test>]
     let ``applyStatusIncremental delete file removes the row`` () =
         withTempDir (fun _ configuration ->
             task {
@@ -1311,12 +1398,102 @@ module LocalStateDbTests =
 
                 let operation = fun () -> task { do! LocalStateDb.upsertObjectCache configuration.GraceStatusFile [ parentDir ] } :> Task
 
-                Assert.ThrowsAsync<SqliteException>(operation)
+                Assert.ThrowsAsync<InvalidOperationException>(operation)
                 |> ignore
 
                 let! exists = LocalStateDb.isDirectoryVersionInObjectCache configuration.GraceStatusFile parentId
-
                 exists |> should equal false
+            })
+
+    [<Test>]
+    let ``upsertObjectCache supports parent before child order`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                let now = Instant.FromUnixTimeTicks(9000L)
+                let lastWrite = DateTime(2022, 1, 2, 3, 4, 5, DateTimeKind.Utc)
+                let parentId = Guid.NewGuid()
+                let childId = Guid.NewGuid()
+
+                let file = createFileVersion "src/parent.txt" "hash-parent" false 1L now lastWrite
+                let childDir = createDirectoryVersion configuration childId "src/child" "child-hash" [||] [||] 0L lastWrite
+                let parentDir = createDirectoryVersion configuration parentId "src" "parent-hash" [| childId |] [| file |] file.Size lastWrite
+
+                do! LocalStateDb.upsertObjectCache configuration.GraceStatusFile [ parentDir; childDir ]
+
+                let! parentExists = LocalStateDb.isDirectoryVersionInObjectCache configuration.GraceStatusFile parentId
+                parentExists |> should equal true
+
+                let! childExists = LocalStateDb.isDirectoryVersionInObjectCache configuration.GraceStatusFile childId
+                childExists |> should equal true
+
+                use connection = openRawConnection configuration.GraceStatusFile
+
+                let childLinkCount =
+                    executeScalarInt
+                        connection
+                        $"SELECT COUNT(*) FROM object_cache_directory_children WHERE parent_directory_version_id = '{parentId}' AND child_directory_version_id = '{childId}';"
+
+                childLinkCount |> should equal 1
+
+                let fileCount =
+                    executeScalarInt
+                        connection
+                        $"SELECT COUNT(*) FROM object_cache_directory_files WHERE directory_version_id = '{parentId}' AND relative_path = 'src/parent.txt';"
+
+                fileCount |> should equal 1
+            })
+
+    [<Test>]
+    let ``upsertObjectCache updates referenced child without FK violation`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                let now = Instant.FromUnixTimeTicks(9100L)
+                let lastWrite = DateTime(2022, 1, 3, 4, 5, 6, DateTimeKind.Utc)
+                let parentId = Guid.NewGuid()
+                let childId = Guid.NewGuid()
+
+                let childDirV1 = createDirectoryVersion configuration childId "src/child" "child-hash-v1" [||] [||] 0L lastWrite
+                let parentDir = createDirectoryVersion configuration parentId "src" "parent-hash" [| childId |] [||] 0L lastWrite
+
+                do! LocalStateDb.upsertObjectCache configuration.GraceStatusFile [ parentDir; childDirV1 ]
+
+                let childFile = createFileVersion "src/child/file.txt" "child-file-hash-v2" false 2L now lastWrite
+
+                let childDirV2 =
+                    createDirectoryVersion
+                        configuration
+                        childId
+                        "src/child"
+                        "child-hash-v2"
+                        [||]
+                        [| childFile |]
+                        childFile.Size
+                        lastWrite
+
+                do! LocalStateDb.upsertObjectCache configuration.GraceStatusFile [ childDirV2 ]
+
+                use connection = openRawConnection configuration.GraceStatusFile
+
+                let childLinkCount =
+                    executeScalarInt
+                        connection
+                        $"SELECT COUNT(*) FROM object_cache_directory_children WHERE parent_directory_version_id = '{parentId}' AND child_directory_version_id = '{childId}';"
+
+                childLinkCount |> should equal 1
+
+                let childHash =
+                    executeScalarString
+                        connection
+                        $"SELECT sha256_hash FROM object_cache_directories WHERE directory_version_id = '{childId}';"
+
+                childHash |> should equal "child-hash-v2"
+
+                let childFileCount =
+                    executeScalarInt
+                        connection
+                        $"SELECT COUNT(*) FROM object_cache_directory_files WHERE directory_version_id = '{childId}' AND relative_path = 'src/child/file.txt';"
+
+                childFileCount |> should equal 1
             })
 
     [<Test>]

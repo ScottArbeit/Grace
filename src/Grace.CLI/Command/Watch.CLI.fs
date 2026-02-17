@@ -27,6 +27,7 @@ open System.IO
 open System.IO.Compression
 open System.IO.Enumeration
 open System.Linq
+open System.Net
 open System.Net.Http
 open System.Reactive.Linq
 open System.Security.Cryptography
@@ -139,6 +140,40 @@ module Watch =
     let isNotDirectory path = not <| Directory.Exists(path)
     let updateInProgress () = File.Exists(updateInProgressFileName ())
     let updateNotInProgress () = not <| updateInProgress ()
+
+    let resolveSignalRAccessTokenResult (tokenResult: Result<string option, string>) =
+        match tokenResult with
+        | Ok(Some token) when not (String.IsNullOrWhiteSpace token) -> Ok token
+        | Ok _ ->
+            Error
+                $"No access token is available. Run `grace auth login` or set {Constants.EnvironmentVariables.GraceToken} before starting watch."
+        | Error message -> Error $"Unable to acquire an access token for SignalR notifications: {message}"
+
+    let private getSignalRAccessToken () =
+        task {
+            let! tokenResult = Grace.CLI.Command.Auth.tryGetAccessToken ()
+            return resolveSignalRAccessTokenResult tokenResult
+        }
+
+    let private createSignalRConnection (signalRUrl: Uri) =
+        HubConnectionBuilder()
+            .WithAutomaticReconnect()
+            .WithUrl(
+                signalRUrl,
+                fun options ->
+                    options.Transports <- HttpTransportType.ServerSentEvents
+
+                    options.AccessTokenProvider <-
+                        Func<Task<string>>(fun () ->
+                            task {
+                                let! accessTokenResult = getSignalRAccessToken ()
+
+                                match accessTokenResult with
+                                | Ok accessToken -> return accessToken
+                                | Error message -> return raise (InvalidOperationException(message))
+                            })
+            )
+            .Build()
 
     let private isGraceStatusArtifact (fullPath: string) =
         let statusFile = Current().GraceStatusFile
@@ -531,11 +566,11 @@ module Watch =
                     let signalRUrl = Uri($"{Current().ServerUri}/notifications")
                     logToConsole $"signalRUrl: {signalRUrl}."
 
-                    use signalRConnection =
-                        HubConnectionBuilder()
-                            .WithAutomaticReconnect()
-                            .WithUrl(signalRUrl, HttpTransportType.ServerSentEvents)
-                            .Build()
+                    match! getSignalRAccessToken () with
+                    | Error message -> raise (InvalidOperationException(message))
+                    | Ok _ -> ()
+
+                    use signalRConnection = createSignalRConnection signalRUrl
 
                     use notifyRepository =
                         signalRConnection.On<RepositoryId, ReferenceId>(
@@ -704,6 +739,17 @@ module Watch =
 
                     return 0
                 with
+                | :? HttpRequestException as httpEx when
+                    httpEx.StatusCode.HasValue
+                    && httpEx.StatusCode.Value = HttpStatusCode.Unauthorized ->
+                    logToAnsiConsole
+                        Colors.Error
+                        $"SignalR negotiation failed with 401 Unauthorized. Run `grace auth login` or set {Constants.EnvironmentVariables.GraceToken}, then retry `grace watch`."
+                    return -1
+                | :? InvalidOperationException as invalidOperationException
+                    when invalidOperationException.Message.Contains("access token", StringComparison.OrdinalIgnoreCase) ->
+                    logToAnsiConsole Colors.Error $"{Markup.Escape(invalidOperationException.Message)}"
+                    return -1
                 | ex ->
                     //let exceptionMarkup = Markup.Escape($"{ExceptionResponse.Create ex}").Replace("\\\\", @"\").Replace("\r\n", Environment.NewLine)
                     //logToAnsiConsole Colors.Error $"{exceptionMarkup}"

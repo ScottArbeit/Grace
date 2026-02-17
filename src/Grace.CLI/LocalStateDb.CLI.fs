@@ -489,6 +489,7 @@ module LocalStateDb =
     let upsertObjectCache (dbPath: string) (newDirectoryVersions: IEnumerable<LocalDirectoryVersion>) =
         task {
             do! ensureDbInitialized dbPath
+            let directoriesToUpsert = newDirectoryVersions |> Seq.toArray
 
             return!
                 executeWithRetry (fun () ->
@@ -499,10 +500,21 @@ module LocalStateDb =
                             executeNonQuery connection "BEGIN IMMEDIATE;"
 
                             try
+                                let knownDirectoryIds = HashSet<string>(StringComparer.OrdinalIgnoreCase)
+
+                                use knownDirectoryIdsCommand = connection.CreateCommand()
+                                knownDirectoryIdsCommand.CommandText <- "SELECT directory_version_id FROM object_cache_directories;"
+
+                                use knownDirectoryIdsReader = knownDirectoryIdsCommand.ExecuteReader()
+
+                                while knownDirectoryIdsReader.Read() do
+                                    knownDirectoryIds.Add(knownDirectoryIdsReader.GetString(0))
+                                    |> ignore
+
                                 use directoryCommand = connection.CreateCommand()
 
                                 directoryCommand.CommandText <-
-                                    "INSERT OR REPLACE INTO object_cache_directories (directory_version_id, relative_path, sha256_hash, size_bytes, created_at_unix_ticks, last_write_time_utc_ticks) VALUES ($directory_version_id, $relative_path, $sha256_hash, $size_bytes, $created_at, $last_write);"
+                                    "INSERT INTO object_cache_directories (directory_version_id, relative_path, sha256_hash, size_bytes, created_at_unix_ticks, last_write_time_utc_ticks) VALUES ($directory_version_id, $relative_path, $sha256_hash, $size_bytes, $created_at, $last_write) ON CONFLICT(directory_version_id) DO UPDATE SET relative_path = excluded.relative_path, sha256_hash = excluded.sha256_hash, size_bytes = excluded.size_bytes, created_at_unix_ticks = excluded.created_at_unix_ticks, last_write_time_utc_ticks = excluded.last_write_time_utc_ticks;"
 
                                 directoryCommand.Parameters.Add("$directory_version_id", SqliteType.Text)
                                 |> ignore
@@ -533,7 +545,7 @@ module LocalStateDb =
                                 use insertChildCommand = connection.CreateCommand()
 
                                 insertChildCommand.CommandText <-
-                                    "INSERT OR REPLACE INTO object_cache_directory_children (parent_directory_version_id, child_directory_version_id, ordinal) VALUES ($parent_directory_version_id, $child_directory_version_id, $ordinal);"
+                                    "INSERT INTO object_cache_directory_children (parent_directory_version_id, child_directory_version_id, ordinal) VALUES ($parent_directory_version_id, $child_directory_version_id, $ordinal) ON CONFLICT(parent_directory_version_id, child_directory_version_id) DO UPDATE SET ordinal = excluded.ordinal;"
 
                                 insertChildCommand.Parameters.Add("$parent_directory_version_id", SqliteType.Text)
                                 |> ignore
@@ -553,7 +565,7 @@ module LocalStateDb =
                                 use insertFileCommand = connection.CreateCommand()
 
                                 insertFileCommand.CommandText <-
-                                    "INSERT OR REPLACE INTO object_cache_directory_files (directory_version_id, relative_path, sha256_hash, is_binary, size_bytes, created_at_unix_ticks, uploaded_to_object_storage, last_write_time_utc_ticks) VALUES ($directory_version_id, $relative_path, $sha256_hash, $is_binary, $size_bytes, $created_at, $uploaded, $last_write);"
+                                    "INSERT INTO object_cache_directory_files (directory_version_id, relative_path, sha256_hash, is_binary, size_bytes, created_at_unix_ticks, uploaded_to_object_storage, last_write_time_utc_ticks) VALUES ($directory_version_id, $relative_path, $sha256_hash, $is_binary, $size_bytes, $created_at, $uploaded, $last_write) ON CONFLICT(directory_version_id, relative_path) DO UPDATE SET sha256_hash = excluded.sha256_hash, is_binary = excluded.is_binary, size_bytes = excluded.size_bytes, created_at_unix_ticks = excluded.created_at_unix_ticks, uploaded_to_object_storage = excluded.uploaded_to_object_storage, last_write_time_utc_ticks = excluded.last_write_time_utc_ticks;"
 
                                 insertFileCommand.Parameters.Add("$directory_version_id", SqliteType.Text)
                                 |> ignore
@@ -579,16 +591,22 @@ module LocalStateDb =
                                 insertFileCommand.Parameters.Add("$last_write", SqliteType.Integer)
                                 |> ignore
 
-                                newDirectoryVersions
+                                // Pass 1: Ensure all directory rows exist before adding any FK-dependent rows.
+                                directoriesToUpsert
                                 |> Seq.iter (fun directory ->
-                                    directoryCommand.Parameters["$directory_version_id"].Value <- directory.DirectoryVersionId.ToString()
+                                    let directoryVersionId = directory.DirectoryVersionId.ToString()
+                                    directoryCommand.Parameters["$directory_version_id"].Value <- directoryVersionId
                                     directoryCommand.Parameters["$relative_path"].Value <- directory.RelativePath
                                     directoryCommand.Parameters["$sha256_hash"].Value <- directory.Sha256Hash
                                     directoryCommand.Parameters["$size_bytes"].Value <- directory.Size
                                     directoryCommand.Parameters["$created_at"].Value <- directory.CreatedAt.ToUnixTimeTicks()
                                     directoryCommand.Parameters["$last_write"].Value <- directory.LastWriteTimeUtc.Ticks
                                     directoryCommand.ExecuteNonQuery() |> ignore
+                                    knownDirectoryIds.Add(directoryVersionId) |> ignore)
 
+                                // Pass 2: Refresh child and file links for each upserted directory.
+                                directoriesToUpsert
+                                |> Seq.iter (fun directory ->
                                     deleteChildrenCommand.Parameters["$parent_directory_version_id"].Value <- directory.DirectoryVersionId.ToString()
                                     deleteChildrenCommand.ExecuteNonQuery() |> ignore
 
@@ -597,10 +615,17 @@ module LocalStateDb =
 
                                     directory.Directories
                                     |> Seq.iteri (fun index childId ->
-                                        insertChildCommand.Parameters["$parent_directory_version_id"].Value <- directory.DirectoryVersionId.ToString()
-                                        insertChildCommand.Parameters["$child_directory_version_id"].Value <- childId.ToString()
-                                        insertChildCommand.Parameters["$ordinal"].Value <- index
-                                        insertChildCommand.ExecuteNonQuery() |> ignore)
+                                        let childDirectoryVersionId = childId.ToString()
+
+                                        if knownDirectoryIds.Contains(childDirectoryVersionId) then
+                                            insertChildCommand.Parameters["$parent_directory_version_id"].Value <- directory.DirectoryVersionId.ToString()
+                                            insertChildCommand.Parameters["$child_directory_version_id"].Value <- childDirectoryVersionId
+                                            insertChildCommand.Parameters["$ordinal"].Value <- index
+                                            insertChildCommand.ExecuteNonQuery() |> ignore
+                                        else
+                                            invalidOp
+                                                $"Cannot upsert object cache because child DirectoryVersionId {childDirectoryVersionId} is missing. Parent DirectoryVersionId: {directory.DirectoryVersionId}."
+                                    )
 
                                     directory.Files
                                     |> Seq.iter (fun file ->
@@ -799,34 +824,25 @@ module LocalStateDb =
                                 directoryDeleteCommand.Parameters.Add("$relative_path", SqliteType.Text)
                                 |> ignore
 
-                                let fileLookup =
-                                    newDirectoryVersions
-                                    |> Seq.collect (fun dv ->
-                                        dv.Files
-                                        |> Seq.map (fun file -> (file.RelativePath, (file, dv.DirectoryVersionId, dv.RelativePath))))
-                                    |> dict
+                                // Upsert every file in each changed/new directory version. This keeps unchanged sibling files
+                                // attached to the new directory_version_id when a directory row is replaced.
+                                newDirectoryVersions
+                                |> Seq.collect (fun directory -> directory.Files |> Seq.map (fun file -> (file, directory)))
+                                |> Seq.iter (fun (file, directory) ->
+                                    fileUpsertCommand.Parameters["$relative_path"].Value <- file.RelativePath
+                                    fileUpsertCommand.Parameters["$directory_path"].Value <- directory.RelativePath
+                                    fileUpsertCommand.Parameters["$directory_version_id"].Value <- directory.DirectoryVersionId.ToString()
+                                    fileUpsertCommand.Parameters["$sha256_hash"].Value <- file.Sha256Hash
+                                    fileUpsertCommand.Parameters["$is_binary"].Value <- if file.IsBinary then 1 else 0
+                                    fileUpsertCommand.Parameters["$size_bytes"].Value <- file.Size
+                                    fileUpsertCommand.Parameters["$created_at"].Value <- file.CreatedAt.ToUnixTimeTicks()
+                                    fileUpsertCommand.Parameters["$uploaded"].Value <- if file.UploadedToObjectStorage then 1 else 0
+                                    fileUpsertCommand.Parameters["$last_write"].Value <- file.LastWriteTimeUtc.Ticks
+                                    fileUpsertCommand.ExecuteNonQuery() |> ignore)
 
                                 differences
                                 |> Seq.iter (fun difference ->
-                                    match difference.DifferenceType with
-                                    | Add
-                                    | Change ->
-                                        if difference.FileSystemEntryType.IsFile then
-                                            let mutable payload = Unchecked.defaultof<LocalFileVersion * DirectoryVersionId * string>
-
-                                            if fileLookup.TryGetValue(difference.RelativePath, &payload) then
-                                                let file, directoryVersionId, directoryPath = payload
-                                                fileUpsertCommand.Parameters["$relative_path"].Value <- file.RelativePath
-                                                fileUpsertCommand.Parameters["$directory_path"].Value <- directoryPath
-                                                fileUpsertCommand.Parameters["$directory_version_id"].Value <- directoryVersionId.ToString()
-                                                fileUpsertCommand.Parameters["$sha256_hash"].Value <- file.Sha256Hash
-                                                fileUpsertCommand.Parameters["$is_binary"].Value <- if file.IsBinary then 1 else 0
-                                                fileUpsertCommand.Parameters["$size_bytes"].Value <- file.Size
-                                                fileUpsertCommand.Parameters["$created_at"].Value <- file.CreatedAt.ToUnixTimeTicks()
-                                                fileUpsertCommand.Parameters["$uploaded"].Value <- if file.UploadedToObjectStorage then 1 else 0
-                                                fileUpsertCommand.Parameters["$last_write"].Value <- file.LastWriteTimeUtc.Ticks
-                                                fileUpsertCommand.ExecuteNonQuery() |> ignore
-                                    | Delete ->
+                                    if difference.DifferenceType = Delete then
                                         if difference.FileSystemEntryType.IsFile then
                                             fileDeleteCommand.Parameters["$relative_path"].Value <- difference.RelativePath
                                             fileDeleteCommand.ExecuteNonQuery() |> ignore

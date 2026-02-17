@@ -101,11 +101,11 @@ module Services =
     /// Dictionary for caching blob container clients
     let containerClients = new ConcurrentDictionary<string, BlobContainerClient>()
 
-    /// Azure Storage key retrieved from environment variables
-    let private azureStorageKey = Environment.GetEnvironmentVariable(EnvironmentVariables.AzureStorageKey)
-
-    /// Shared key credential for Azure Storage
-    let private sharedKeyCredential = lazy (StorageSharedKeyCredential(DefaultObjectStorageAccount, azureStorageKey))
+    /// Shared key credential for Azure Storage when available.
+    let private sharedKeyCredential =
+        lazy
+            AzureEnvironment.storageAccountKey
+            |> Option.map (fun accountKey -> StorageSharedKeyCredential(AzureEnvironment.storageEndpoints.AccountName, accountKey))
 
     /// Logger instance for the Services.Actor module.
     let private log = loggerFactory.CreateLogger("Services.Actor")
@@ -293,8 +293,8 @@ module Services =
                     BlobName = blobName
                 )
 
-            let! sasUriParameters =
-                if AzureEnvironment.useManagedIdentity then
+            let! sasUri =
+                if AzureEnvironment.useManagedIdentityForStorage then
                     task {
                         // For managed identity, we need to get a user delegation key first
                         let blobServiceClient = blobContainerClient.GetParentBlobServiceClient()
@@ -306,13 +306,26 @@ module Services =
                             )
 
                         let sasQueryParameters = blobSasBuilder.ToSasQueryParameters(userDelegationKey.Value, blobServiceClient.AccountName)
-
-                        return sasQueryParameters
+                        return Uri($"{blobContainerClient.Uri}/{blobName}?{sasQueryParameters}")
                     }
                 else
-                    task { return blobSasBuilder.ToSasQueryParameters(sharedKeyCredential.Value) }
+                    task {
+                        match sharedKeyCredential.Value with
+                        | Some credential ->
+                            let sasQueryParameters = blobSasBuilder.ToSasQueryParameters(credential)
+                            return Uri($"{blobContainerClient.Uri}/{blobName}?{sasQueryParameters}")
+                        | None when blobContainerClient.CanGenerateSasUri ->
+                            return blobContainerClient.GenerateSasUri(blobSasBuilder)
+                        | None ->
+                            return
+                                raise (
+                                    InvalidOperationException(
+                                        "Azure Blob shared key is not configured and the current blob client cannot generate SAS. Configure grace__azure_storage__key, include AccountKey in grace__azure_storage__connectionstring, or enable managed identity for storage."
+                                    )
+                                )
+                    }
 
-            return UriWithSharedAccessSignature($"{blobContainerClient.Uri}/{blobName}?{sasUriParameters}")
+            return UriWithSharedAccessSignature($"{sasUri}")
         }
 
     let azureBlobReadPermissions =

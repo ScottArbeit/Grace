@@ -72,6 +72,7 @@
 		<Compile Include="Middleware\CorrelationId.Middleware.fs" />
 		<Compile Include="Middleware\ValidateIds.Middleware.fs" />
 		<Compile Include="Middleware\LogRequestHeaders.Middleware.fs" />
+		<Compile Include="Middleware\LogAuthorizationFailure.Middleware.fs" />
 		<Compile Include="Middleware\Timing.Middleware.fs" />
 		<Compile Include="Owner.Server.fs" />
 		<Compile Include="Organization.Server.fs" />

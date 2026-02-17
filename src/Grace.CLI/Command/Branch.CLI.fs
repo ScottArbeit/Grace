@@ -698,47 +698,60 @@ module Branch =
                     return renderOutput parseResult (GraceResult.Error graceError)
             }
 
-    let printContents (parseResult: ParseResult) (directoryVersions: IEnumerable<DirectoryVersion>) =
-        let longestRelativePath =
-            getLongestRelativePath (
-                directoryVersions
-                |> Seq.map (fun directoryVersion -> directoryVersion.ToLocalDirectoryVersion(DateTime.UtcNow))
-            )
-        //logToAnsiConsole Colors.Verbose $"In printContents: getLongestRelativePath: {longestRelativePath}"
-        let additionalSpaces = String.replicate (longestRelativePath - 2) " "
-        let additionalImportantDashes = String.replicate (longestRelativePath + 3) "-"
-        let additionalDeemphasizedDashes = String.replicate (38) "-"
+    let private getShortHash (sha256Hash: Sha256Hash) =
+        if String.IsNullOrWhiteSpace(sha256Hash) then String.Empty
+        elif sha256Hash.Length <= 8 then sha256Hash
+        else sha256Hash.Substring(0, 8)
 
+    let private tryGetRootSha256Hash (directoryVersions: IEnumerable<DirectoryVersion>) =
         directoryVersions
-        |> Seq.iteri (fun i directoryVersion ->
-            AnsiConsole.WriteLine()
+        |> Seq.tryFind (fun directoryVersion -> directoryVersion.RelativePath = Constants.RootDirectoryPath)
+        |> Option.map (fun directoryVersion -> directoryVersion.Sha256Hash)
 
-            if i = 0 then
-                AnsiConsole.MarkupLine(
-                    $"[{Colors.Important}]Created At                   SHA-256            Size  Path{additionalSpaces}[/][{Colors.Deemphasized}] (DirectoryVersionId)[/]"
+    let printContents (parseResult: ParseResult) (directoryVersions: IEnumerable<DirectoryVersion>) =
+        let directoryVersionArray = directoryVersions |> Seq.toArray
+
+        if directoryVersionArray.Length > 0 then
+            let longestRelativePath =
+                getLongestRelativePath (
+                    directoryVersionArray
+                    |> Seq.map (fun directoryVersion -> directoryVersion.ToLocalDirectoryVersion(DateTime.UtcNow))
                 )
+            //logToAnsiConsole Colors.Verbose $"In printContents: getLongestRelativePath: {longestRelativePath}"
+            let additionalSpaces = String.replicate (longestRelativePath - 2) " "
+            let additionalImportantDashes = String.replicate (longestRelativePath + 3) "-"
+            let additionalDeemphasizedDashes = String.replicate (38) "-"
+
+            directoryVersionArray
+            |> Seq.iteri (fun i directoryVersion ->
+                AnsiConsole.WriteLine()
+
+                if i = 0 then
+                    AnsiConsole.MarkupLine(
+                        $"[{Colors.Important}]Created At                   SHA-256            Size  Path{additionalSpaces}[/][{Colors.Deemphasized}] (DirectoryVersionId)[/]"
+                    )
+
+                    AnsiConsole.MarkupLine(
+                        $"[{Colors.Important}]-----------------------------------------------------{additionalImportantDashes}[/][{Colors.Deemphasized}] {additionalDeemphasizedDashes}[/]"
+                    )
+                //logToAnsiConsole Colors.Verbose $"In printContents: directoryVersion.RelativePath: {directoryVersion.RelativePath}"
+                let rightAlignedDirectoryVersionId =
+                    (String.replicate
+                        (longestRelativePath
+                         - directoryVersion.RelativePath.Length)
+                        " ")
+                    + $"({directoryVersion.DirectoryVersionId})"
 
                 AnsiConsole.MarkupLine(
-                    $"[{Colors.Important}]-----------------------------------------------------{additionalImportantDashes}[/][{Colors.Deemphasized}] {additionalDeemphasizedDashes}[/]"
+                    $"[{Colors.Highlighted}]{formatInstantAligned directoryVersion.CreatedAt}   {getShortSha256Hash directoryVersion.Sha256Hash}  {directoryVersion.Size, 13:N0}  /{directoryVersion.RelativePath}[/] [{Colors.Deemphasized}] {rightAlignedDirectoryVersionId}[/]"
                 )
-            //logToAnsiConsole Colors.Verbose $"In printContents: directoryVersion.RelativePath: {directoryVersion.RelativePath}"
-            let rightAlignedDirectoryVersionId =
-                (String.replicate
-                    (longestRelativePath
-                     - directoryVersion.RelativePath.Length)
-                    " ")
-                + $"({directoryVersion.DirectoryVersionId})"
+                //if parseResult.CommandResult.Command.Options.Contains(Options.listFiles) then
+                let sortedFiles = directoryVersion.Files.OrderBy(fun f -> f.RelativePath)
 
-            AnsiConsole.MarkupLine(
-                $"[{Colors.Highlighted}]{formatInstantAligned directoryVersion.CreatedAt}   {getShortSha256Hash directoryVersion.Sha256Hash}  {directoryVersion.Size, 13:N0}  /{directoryVersion.RelativePath}[/] [{Colors.Deemphasized}] {rightAlignedDirectoryVersionId}[/]"
-            )
-            //if parseResult.CommandResult.Command.Options.Contains(Options.listFiles) then
-            let sortedFiles = directoryVersion.Files.OrderBy(fun f -> f.RelativePath)
-
-            for file in sortedFiles do
-                AnsiConsole.MarkupLine(
-                    $"[{Colors.Verbose}]{formatInstantAligned file.CreatedAt}   {getShortSha256Hash file.Sha256Hash}  {file.Size, 13:N0}  |- {file.RelativePath.Split('/').LastOrDefault()}[/]"
-                ))
+                for file in sortedFiles do
+                    AnsiConsole.MarkupLine(
+                        $"[{Colors.Verbose}]{formatInstantAligned file.CreatedAt}   {getShortSha256Hash file.Sha256Hash}  {file.Size, 13:N0}  |- {file.RelativePath.Split('/').LastOrDefault()}[/]"
+                    ))
 
     let private listContentsImpl (parseResult: ParseResult) : Tasks.Task<int> =
         if parseResult |> verbose then printParseResult parseResult
@@ -811,21 +824,26 @@ module Branch =
                             .ReturnValue
                             .Select(fun directoryVersionDto -> directoryVersionDto.DirectoryVersion)
                             .OrderBy(fun dv -> dv.RelativePath)
+                            .ToArray()
 
-                    let directoryCount = directoryVersions.Count()
+                    let directoryCount = directoryVersions.Length
 
                     let fileCount = directoryVersions.Sum(fun directoryVersion -> directoryVersion.Files.Count)
 
                     let totalFileSize = directoryVersions.Sum(fun directoryVersion -> directoryVersion.Files.Sum(fun f -> f.Size))
 
-                    let rootDirectoryVersion = directoryVersions.First(fun d -> d.RelativePath = Constants.RootDirectoryPath)
-
                     AnsiConsole.MarkupLine($"[{Colors.Important}]All values taken from the selected version of this branch from the server.[/]")
                     AnsiConsole.MarkupLine($"[{Colors.Highlighted}]Number of directories: {directoryCount}.[/]")
                     AnsiConsole.MarkupLine($"[{Colors.Highlighted}]Number of files: {fileCount}; total file size: {totalFileSize:N0}.[/]")
-                    AnsiConsole.MarkupLine($"[{Colors.Highlighted}]Root SHA-256 hash: {rootDirectoryVersion.Sha256Hash.Substring(0, 8)}[/]")
 
-                    printContents parseResult directoryVersions
+                    match tryGetRootSha256Hash directoryVersions with
+                    | Some rootSha256Hash -> AnsiConsole.MarkupLine($"[{Colors.Highlighted}]Root SHA-256 hash: {getShortHash rootSha256Hash}[/]")
+                    | None -> AnsiConsole.MarkupLine($"[{Colors.Error}]Root SHA-256 hash: unavailable (root directory entry missing from server response).[/]")
+
+                    if directoryCount > 0 then
+                        printContents parseResult directoryVersions
+                    else
+                        AnsiConsole.MarkupLine($"[{Colors.Verbose}]No directory entries were returned.[/]")
                 | Error _ -> ()
 
                 return result |> renderOutput parseResult
@@ -2545,29 +2563,30 @@ module Branch =
                         task {
                             t |> startProgressTask showOutput
 
-                            if branchDto.SaveEnabled then
-                                logToAnsiConsole Colors.Verbose $"In createSaveReference: BranchName: {branchDto.BranchName}; SaveEnabled; message: {message}"
+                            if parseResult |> verbose then
+                                logToAnsiConsole
+                                    Colors.Verbose
+                                    $"In createSaveReference: BranchName: {branchDto.BranchName}; message: {message}; SaveEnabled = {branchDto.SaveEnabled}."
 
+                            if branchDto.SaveEnabled then
                                 match! createSaveReference newGraceStatus.Index[rootDirectoryId] message (getCorrelationId parseResult) with
                                 | Ok returnValue ->
-                                    logToAnsiConsole
-                                        Colors.Verbose
-                                        $"In createSaveReference: BranchName: {branchDto.BranchName}; SaveEnabled; message: {message}; returnValue: {returnValue}."
+                                    if parseResult |> verbose then
+                                        logToAnsiConsole
+                                            Colors.Verbose
+                                            $"In createSaveReference: BranchName: {branchDto.BranchName}; message: {message}; Succeeded."
 
                                     t |> setProgressTaskValue showOutput 100.0
                                     return Ok(showOutput, parseResult, parameters, branchDto)
                                 | Error error ->
-                                    logToAnsiConsole
-                                        Colors.Verbose
-                                        $"In createSaveReference: BranchName: {branchDto.BranchName}; SaveEnabled; message: {message}; error: {error}."
+                                    if parseResult |> verbose then
+                                        logToAnsiConsole
+                                            Colors.Verbose
+                                            $"In createSaveReference: BranchName: {branchDto.BranchName}; message: {message}; Error: {error}."
 
                                     t |> setProgressTaskValue showOutput 50.0
                                     return Error error
                             else
-                                logToAnsiConsole
-                                    Colors.Verbose
-                                    $"In createSaveReference: BranchName: {branchDto.BranchName}; Save not enabled; message: {message}"
-
                                 t |> setProgressTaskValue showOutput 100.0
                                 return Ok(showOutput, parseResult, parameters, branchDto)
                         }
@@ -2759,6 +2778,97 @@ module Branch =
                                 )
                             )
 
+                    let getMissingDirectoryVersionsWithClosure (missingDirectoryIds: IEnumerable<DirectoryVersionId>) =
+                        task {
+                            let knownDirectoryIds = HashSet<DirectoryVersionId>(directoryIdsInNewGraceStatus)
+                            let fetchedDirectoryVersions = Dictionary<DirectoryVersionId, DirectoryVersionDto>()
+                            let pendingDirectoryIds = Queue<DirectoryVersionId>()
+
+                            missingDirectoryIds
+                            |> Seq.distinct
+                            |> Seq.iter (fun directoryId -> pendingDirectoryIds.Enqueue(directoryId))
+
+                            let mutable resultError: GraceError option = None
+
+                            while pendingDirectoryIds.Count > 0
+                                  && resultError.IsNone do
+                                let batch = List<DirectoryVersionId>()
+
+                                while pendingDirectoryIds.Count > 0 do
+                                    let directoryId = pendingDirectoryIds.Dequeue()
+
+                                    if
+                                        not (knownDirectoryIds.Contains(directoryId))
+                                        && not (fetchedDirectoryVersions.ContainsKey(directoryId))
+                                    then
+                                        batch.Add(directoryId)
+
+                                if batch.Count > 0 then
+                                    let getByDirectoryIdParameters =
+                                        GetByDirectoryIdsParameters(
+                                            OwnerId = graceIds.OwnerIdString,
+                                            OwnerName = graceIds.OwnerName,
+                                            OrganizationId = graceIds.OrganizationIdString,
+                                            OrganizationName = graceIds.OrganizationName,
+                                            RepositoryId = graceIds.RepositoryIdString,
+                                            RepositoryName = graceIds.RepositoryName,
+                                            DirectoryVersionId = $"{rootDirectoryId}",
+                                            DirectoryIds = batch,
+                                            CorrelationId = graceIds.CorrelationId
+                                        )
+
+                                    match! DirectoryVersion.GetByDirectoryIds getByDirectoryIdParameters with
+                                    | Ok returnValue ->
+                                        let fetchedBatch = returnValue.ReturnValue |> Seq.toArray
+                                        let fetchedBatchIds = HashSet<DirectoryVersionId>()
+
+                                        fetchedBatch
+                                        |> Seq.iter (fun directoryVersionDto ->
+                                            let directoryVersion = directoryVersionDto.DirectoryVersion
+
+                                            fetchedBatchIds.Add(directoryVersion.DirectoryVersionId)
+                                            |> ignore
+
+                                            knownDirectoryIds.Add(directoryVersion.DirectoryVersionId)
+                                            |> ignore
+
+                                            fetchedDirectoryVersions[directoryVersion.DirectoryVersionId] <- directoryVersionDto)
+
+                                        let unresolvedRequestedIds =
+                                            batch
+                                                .Where(fun requestedId ->
+                                                    not (fetchedBatchIds.Contains(requestedId))
+                                                    && not (knownDirectoryIds.Contains(requestedId)))
+                                                .ToArray()
+
+                                        if unresolvedRequestedIds.Length > 0 then
+                                            let unresolvedRequestedIdsText =
+                                                unresolvedRequestedIds
+                                                |> Seq.map (fun directoryId -> $"{directoryId}")
+                                                |> String.concat ", "
+
+                                            resultError <-
+                                                Some(
+                                                    GraceError.Create
+                                                        $"Failed switching branches because the server did not return required DirectoryVersionId values: {unresolvedRequestedIdsText}."
+                                                        (parseResult |> getCorrelationId)
+                                                )
+                                        else
+                                            fetchedBatch
+                                            |> Seq.collect (fun directoryVersionDto -> directoryVersionDto.DirectoryVersion.Directories)
+                                            |> Seq.iter (fun childDirectoryId ->
+                                                if
+                                                    not (knownDirectoryIds.Contains(childDirectoryId))
+                                                    && not (fetchedDirectoryVersions.ContainsKey(childDirectoryId))
+                                                then
+                                                    pendingDirectoryIds.Enqueue(childDirectoryId))
+                                    | Error error -> resultError <- Some error
+
+                            match resultError with
+                            | Some error -> return Error error
+                            | None -> return Ok(fetchedDirectoryVersions.Values |> Seq.toArray :> IEnumerable<DirectoryVersionDto>)
+                        }
+
                     /// 8. Update object cache and working directory.
                     let updateWorkingDirectory
                         (t: ProgressTask)
@@ -2782,25 +2892,9 @@ module Branch =
                             if parseResult |> verbose then
                                 logToAnsiConsole Colors.Verbose $"In updateWorkingDirectory: missingDirectoryIds.Count: {missingDirectoryIds.Count()}."
 
-                            // Get missing directory versions from server.
-                            let getByDirectoryIdParameters =
-                                GetByDirectoryIdsParameters(
-                                    OwnerId = graceIds.OwnerIdString,
-                                    OwnerName = graceIds.OwnerName,
-                                    OrganizationId = graceIds.OrganizationIdString,
-                                    OrganizationName = graceIds.OrganizationName,
-                                    RepositoryId = graceIds.RepositoryIdString,
-                                    RepositoryName = graceIds.RepositoryName,
-                                    DirectoryVersionId = $"{rootDirectoryId}",
-                                    DirectoryIds = missingDirectoryIds,
-                                    CorrelationId = graceIds.CorrelationId
-                                )
-
-                            match! DirectoryVersion.GetByDirectoryIds getByDirectoryIdParameters with
-                            | Ok returnValue ->
+                            match! getMissingDirectoryVersionsWithClosure missingDirectoryIds with
+                            | Ok newDirectoryVersionDtos ->
                                 // Create a new version of GraceStatus that includes the new DirectoryVersions.
-                                let newDirectoryVersionDtos = returnValue.ReturnValue
-
                                 if parseResult |> verbose then
                                     logToAnsiConsole Colors.Verbose $"In updateWorkingDirectory: newDirectoryVersions.Count: {newDirectoryVersionDtos.Count()}."
 
@@ -2854,18 +2948,28 @@ module Branch =
                                             File.Delete(updateInProgressFileName ())
 
                                     | Error error ->
-                                        logToAnsiConsole Colors.Verbose $"Failed downloading files from object storage for {directoryVersion.RelativePath}."
+                                        if parseResult |> verbose then
+                                            logToAnsiConsole Colors.Verbose $"Failed downloading files from object storage for {directoryVersion.RelativePath}."
 
                                         logToAnsiConsole Colors.Error $"{error}"
                                         isError <- true
 
                                 if not <| isError then
-                                    logToAnsiConsole Colors.Verbose $"About to exit updateWorkingDirectory."
+                                    newGraceStatus <- graceStatusWithNewDirectoryVersionsFromServer
+                                    rootDirectoryId <- newGraceStatus.RootDirectoryId
+                                    rootDirectorySha256Hash <- newGraceStatus.RootDirectorySha256Hash
+                                    directoryIdsInNewGraceStatus <- newGraceStatus.Index.Keys.ToHashSet()
+
+                                    if parseResult |> verbose then
+                                        logToAnsiConsole Colors.Verbose $"About to exit updateWorkingDirectory."
+
                                     return Ok(showOutput, parseResult, parameters, newBranch, $"Save created after branch switch.")
                                 else
                                     return Error(GraceError.Create $"Failed downloading files from object storage." (parseResult |> getCorrelationId))
                             | Error error ->
-                                logToAnsiConsole Colors.Verbose $"Failed calling Directory.GetByDirectoryIds."
+                                if parseResult |> verbose then
+                                    logToAnsiConsole Colors.Verbose $"Failed retrieving directory versions for switch."
+
                                 logToAnsiConsole Colors.Error $"{error}"
                                 return Error(GraceError.Create $"{error}" (parseResult |> getCorrelationId))
                         }
@@ -3476,7 +3580,8 @@ module Branch =
         (mostRecentReferences: ReferenceDto array)
         (parentBranchReferencesState: ParentBranchReferencesState)
         =
-        let horizontalLineChar = "ΓöÇ"
+        let horizontalLineChar = "-"
+        let separator = "-"
 
         // Now that I have the current and parent branch, I can get the details for the latest
         // promotion, latest commit, latest checkpoint, and latest save.
@@ -3545,21 +3650,21 @@ module Branch =
 
         let ownerOrgRepoHeader =
             if parseResult |> verbose then
-                $"[{Colors.Important}]{ownerLabel}:[/] {Current().OwnerName} [{Colors.Deemphasized}]Γöé {Current().OwnerId}[/] Γöé [{Colors.Important}]{organizationLabel}:[/] {Current().OrganizationName} [{Colors.Deemphasized}]Γöé {Current().OrganizationId}[/] Γöé [{Colors.Important}]{repositoryLabel}:[/] {Current().RepositoryName} [{Colors.Deemphasized}]Γöé {Current().RepositoryId}[/]"
+                $"[{Colors.Important}]{ownerLabel}:[/] {Current().OwnerName} [{Colors.Deemphasized}]{separator} {Current().OwnerId}[/] {separator} [{Colors.Important}]{organizationLabel}:[/] {Current().OrganizationName} [{Colors.Deemphasized}]{separator} {Current().OrganizationId}[/] {separator} [{Colors.Important}]{repositoryLabel}:[/] {Current().RepositoryName} [{Colors.Deemphasized}]{separator} {Current().RepositoryId}[/]"
             else
-                $"[{Colors.Important}]{ownerLabel}:[/] {Current().OwnerName} Γöé [{Colors.Important}]{organizationLabel}:[/] {Current().OrganizationName} Γöé [{Colors.Important}]{repositoryLabel}:[/] {Current().RepositoryName}"
+                $"[{Colors.Important}]{ownerLabel}:[/] {Current().OwnerName} {separator} [{Colors.Important}]{organizationLabel}:[/] {Current().OrganizationName} {separator} [{Colors.Important}]{repositoryLabel}:[/] {Current().RepositoryName}"
 
         let branchHeader =
             if parseResult |> verbose then
-                $"[{Colors.Important}] {branchLabel}:[/] {branchDto.BranchName} [{Colors.Deemphasized}]ΓöÇ[/] {basedOnMessage} [{Colors.Deemphasized}]ΓöÇ Allows {permissions branchDto} ΓöÇ {branchDto.BranchId} [/]"
+                $"[{Colors.Important}] {branchLabel}:[/] {branchDto.BranchName} [{Colors.Deemphasized}]{separator}[/] {basedOnMessage} [{Colors.Deemphasized}]{separator} Allows {permissions branchDto} {separator} {branchDto.BranchId} [/]"
             else
-                $"[{Colors.Important}] {branchLabel}:[/] {branchDto.BranchName} [{Colors.Deemphasized}]ΓöÇ[/] {basedOnMessage} [{Colors.Deemphasized}]ΓöÇ Allows {permissions branchDto} [/]"
+                $"[{Colors.Important}] {branchLabel}:[/] {branchDto.BranchName} [{Colors.Deemphasized}]{separator}[/] {basedOnMessage} [{Colors.Deemphasized}]{separator} Allows {permissions branchDto} [/]"
 
         let parentBranchHeader =
             if parseResult |> verbose then
-                $"[{Colors.Important}] Parent branch:[/] {parentBranchDto.BranchName} [{Colors.Deemphasized}]ΓöÇ Allows {permissions parentBranchDto} ΓöÇ {parentBranchDto.BranchId} [/]"
+                $"[{Colors.Important}] Parent branch:[/] {parentBranchDto.BranchName} [{Colors.Deemphasized}]{separator} Allows {permissions parentBranchDto} {separator} {parentBranchDto.BranchId} [/]"
             else
-                $"[{Colors.Important}] Parent branch:[/] {parentBranchDto.BranchName} [{Colors.Deemphasized}]ΓöÇ Allows {permissions parentBranchDto} [/]"
+                $"[{Colors.Important}] Parent branch:[/] {parentBranchDto.BranchName} [{Colors.Deemphasized}]{separator} Allows {permissions parentBranchDto} [/]"
 
         let commitReferenceTable =
             let sortedReferences =
@@ -3629,6 +3734,7 @@ module Branch =
     let private statusHandlerImpl (parseResult: ParseResult) =
         task {
             if parseResult |> verbose then printParseResult parseResult
+            do! Auth.ensureAccessToken parseResult
             let graceIds = parseResult |> getNormalizedIdsAndNames
 
             // Show repo and branch names.
@@ -3688,6 +3794,7 @@ module Branch =
             try
                 return! statusHandlerImpl parseResult
             with
+            | :? OperationCanceledException -> return 1
             | ex ->
                 logToAnsiConsole Colors.Error (Markup.Escape($"{ExceptionResponse.Create ex}"))
                 return -1

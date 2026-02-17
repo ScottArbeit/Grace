@@ -66,6 +66,7 @@ public partial class Program
                     || value.Equals("true", StringComparison.OrdinalIgnoreCase)
                     || value.Equals("yes", StringComparison.OrdinalIgnoreCase));
             var skipServiceBus = isTestRun && IsTruthy(Environment.GetEnvironmentVariable("GRACE_TEST_SKIP_SERVICEBUS"));
+            var useFixedTestPorts = isTestRun && IsTruthy(Environment.GetEnvironmentVariable("GRACE_TEST_FIXED_PORTS"));
             var pubSubSystem = skipServiceBus ? "UnknownPubSubProvider" : "AzureServiceBus";
             if (isTestRun)
             {
@@ -100,7 +101,7 @@ public partial class Program
 
                 // These get set in both Local and Azure-debug runs.
                 var orleansClusterId = configuration[getConfigKey(EnvironmentVariables.OrleansClusterId)] ?? "local";
-                var orleansServiceId = configuration[getConfigKey(EnvironmentVariables.OrleansServiceId)] ?? "gracevcs-dev";
+                var orleansServiceId = configuration[getConfigKey(EnvironmentVariables.OrleansServiceId)] ?? "grace-dev";
 
                 if (isTestRun && runSuffix is not null)
                 {
@@ -132,7 +133,7 @@ public partial class Program
                 AddOptionalEnvironment(graceServer, configuration, EnvironmentVariables.GraceAuthOidcAudience, forwardedAuthKeys);
                 LogForwardedSettings("Grace.Server auth settings", forwardedAuthKeys);
 
-                if (isTestRun)
+                if (isTestRun && !useFixedTestPorts)
                 {
                     var graceTargetPort = GetAvailableTcpPort();
 
@@ -330,21 +331,37 @@ public partial class Program
                     // -------------------------
 
                     Console.WriteLine("Configuring Grace.Server for DebugAzure with real Azure resources.");
-                    var azureStorageAccountName = GetRequired(configuration, getConfigKey(EnvironmentVariables.AzureStorageAccountName));
-                    Console.WriteLine($"Using Azure Storage account: {azureStorageAccountName}.");
+                    var azureStorageConnectionString = ResolveSetting(configuration, EnvironmentVariables.AzureStorageConnectionString);
+                    var azureStorageAccountName = ResolveSetting(configuration, EnvironmentVariables.AzureStorageAccountName);
 
-                    var cosmosdbEndpoint = GetRequired(configuration, getConfigKey(EnvironmentVariables.AzureCosmosDBEndpoint));
+                    if (string.IsNullOrWhiteSpace(azureStorageConnectionString))
+                    {
+                        azureStorageAccountName = GetRequiredSetting(configuration, EnvironmentVariables.AzureStorageAccountName);
+                        Console.WriteLine($"Using Azure Storage account: {azureStorageAccountName}.");
+                    }
+                    else
+                    {
+                        Console.WriteLine("Using Azure Storage connection string from configuration.");
+                    }
+
+                    var cosmosdbEndpoint = GetRequiredSetting(configuration, EnvironmentVariables.AzureCosmosDBEndpoint);
                     Console.WriteLine($"Using Cosmos DB endpoint: {cosmosdbEndpoint}.");
+
+                    var cosmosDatabaseName = GetRequiredSetting(configuration, EnvironmentVariables.AzureCosmosDBDatabaseName);
+                    var cosmosContainerName = GetRequiredSetting(configuration, EnvironmentVariables.AzureCosmosDBContainerName);
+                    var serviceBusNamespace = ResolveSetting(configuration, EnvironmentVariables.AzureServiceBusNamespace);
+                    var serviceBusTopic = ResolveSetting(configuration, EnvironmentVariables.AzureServiceBusTopic);
+                    var serviceBusSubscription = ResolveSetting(configuration, EnvironmentVariables.AzureServiceBusSubscription);
 
                     graceServer
                         .WithEnvironment(EnvironmentVariables.AzureStorageAccountName, azureStorageAccountName)
-                        .WithEnvironment(EnvironmentVariables.AzureStorageConnectionString, configuration[getConfigKey(EnvironmentVariables.AzureStorageConnectionString)])
+                        .WithEnvironment(EnvironmentVariables.AzureStorageConnectionString, azureStorageConnectionString)
                         .WithEnvironment(EnvironmentVariables.AzureCosmosDBEndpoint, cosmosdbEndpoint)
-                        .WithEnvironment(EnvironmentVariables.AzureCosmosDBDatabaseName, configuration[getConfigKey(EnvironmentVariables.AzureCosmosDBDatabaseName)])
-                        .WithEnvironment(EnvironmentVariables.AzureCosmosDBContainerName, configuration[getConfigKey(EnvironmentVariables.AzureCosmosDBContainerName)])
-                        .WithEnvironment(EnvironmentVariables.AzureServiceBusNamespace, configuration[getConfigKey(EnvironmentVariables.AzureServiceBusNamespace)])
-                        .WithEnvironment(EnvironmentVariables.AzureServiceBusTopic, configuration[getConfigKey(EnvironmentVariables.AzureServiceBusTopic)])
-                        .WithEnvironment(EnvironmentVariables.AzureServiceBusSubscription, configuration[getConfigKey(EnvironmentVariables.AzureServiceBusSubscription)])
+                        .WithEnvironment(EnvironmentVariables.AzureCosmosDBDatabaseName, cosmosDatabaseName)
+                        .WithEnvironment(EnvironmentVariables.AzureCosmosDBContainerName, cosmosContainerName)
+                        .WithEnvironment(EnvironmentVariables.AzureServiceBusNamespace, serviceBusNamespace)
+                        .WithEnvironment(EnvironmentVariables.AzureServiceBusTopic, serviceBusTopic)
+                        .WithEnvironment(EnvironmentVariables.AzureServiceBusSubscription, serviceBusSubscription)
                         .WithEnvironment(EnvironmentVariables.GraceLogDirectory, logDirectory)
                         .WithEnvironment(EnvironmentVariables.DebugEnvironment, "Azure");
 
@@ -449,17 +466,7 @@ public partial class Program
         }
     }
 
-    private static string? GetRequired(IConfiguration configuration, string key)
-    {
-        var v = configuration[key];
-        return string.IsNullOrWhiteSpace(v) ? null : v;
-    }
-
-    private static void AddOptionalEnvironment(
-        IResourceBuilder<ProjectResource> resource,
-        IConfiguration configuration,
-        string name,
-        IList<string> forwardedKeys)
+    private static string? ResolveSetting(IConfiguration configuration, string name)
     {
         var value = Environment.GetEnvironmentVariable(name);
         if (string.IsNullOrWhiteSpace(value))
@@ -471,6 +478,7 @@ public partial class Program
         {
             value = Environment.GetEnvironmentVariable(name, EnvironmentVariableTarget.Machine);
         }
+
         if (string.IsNullOrWhiteSpace(value))
         {
             value = configuration[name];
@@ -482,6 +490,29 @@ public partial class Program
             value = configuration[key];
         }
 
+        return string.IsNullOrWhiteSpace(value) ? null : value;
+    }
+
+    private static string GetRequiredSetting(IConfiguration configuration, string name)
+    {
+        var value = ResolveSetting(configuration, name);
+        if (!string.IsNullOrWhiteSpace(value))
+        {
+            return value;
+        }
+
+        var key = Shared::Grace.Shared.Utilities.getConfigKey(name);
+        throw new InvalidOperationException(
+            $"Missing required setting '{name}' (or '{key}') for DebugAzure.");
+    }
+
+    private static void AddOptionalEnvironment(
+        IResourceBuilder<ProjectResource> resource,
+        IConfiguration configuration,
+        string name,
+        IList<string> forwardedKeys)
+    {
+        var value = ResolveSetting(configuration, name);
         if (!string.IsNullOrWhiteSpace(value))
         {
             resource.WithEnvironment(name, value);
