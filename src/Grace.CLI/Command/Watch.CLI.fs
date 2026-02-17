@@ -27,6 +27,7 @@ open System.IO
 open System.IO.Compression
 open System.IO.Enumeration
 open System.Linq
+open System.Net
 open System.Net.Http
 open System.Reactive.Linq
 open System.Security.Cryptography
@@ -130,14 +131,56 @@ module Watch =
         member val public NamedSections: string [] = Array.empty with get, set
 
     let mutable private graceStatus = GraceStatus.Default
+    let mutable private graceStatusDirectoryIds = HashSet<DirectoryVersionId>()
     let mutable graceStatusMemoryStream: MemoryStream = null
     let mutable graceStatusHasChanged = false
 
-    let fileDeleted filePath = logToConsole $"In Delete: filePath: {filePath}"
+    let fileDeleted filePath = logToConsole $"In Delete: filePath: {filePath}"   
 
     let isNotDirectory path = not <| Directory.Exists(path)
     let updateInProgress () = File.Exists(updateInProgressFileName ())
     let updateNotInProgress () = not <| updateInProgress ()
+
+    let resolveSignalRAccessTokenResult (tokenResult: Result<string option, string>) =
+        match tokenResult with
+        | Ok(Some token) when not (String.IsNullOrWhiteSpace token) -> Ok token
+        | Ok _ ->
+            Error
+                $"No access token is available. Run `grace auth login` or set {Constants.EnvironmentVariables.GraceToken} before starting watch."
+        | Error message -> Error $"Unable to acquire an access token for SignalR notifications: {message}"
+
+    let private getSignalRAccessToken () =
+        task {
+            let! tokenResult = Grace.CLI.Command.Auth.tryGetAccessToken ()
+            return resolveSignalRAccessTokenResult tokenResult
+        }
+
+    let private createSignalRConnection (signalRUrl: Uri) =
+        HubConnectionBuilder()
+            .WithAutomaticReconnect()
+            .WithUrl(
+                signalRUrl,
+                fun options ->
+                    options.Transports <- HttpTransportType.ServerSentEvents
+
+                    options.AccessTokenProvider <-
+                        Func<Task<string>>(fun () ->
+                            task {
+                                let! accessTokenResult = getSignalRAccessToken ()
+
+                                match accessTokenResult with
+                                | Ok accessToken -> return accessToken
+                                | Error message -> return raise (InvalidOperationException(message))
+                            })
+            )
+            .Build()
+
+    let private isGraceStatusArtifact (fullPath: string) =
+        let statusFile = Current().GraceStatusFile
+        fullPath.Equals(statusFile, StringComparison.InvariantCultureIgnoreCase)
+        || fullPath.Equals(statusFile + "-wal", StringComparison.InvariantCultureIgnoreCase)
+        || fullPath.Equals(statusFile + "-shm", StringComparison.InvariantCultureIgnoreCase)
+        || fullPath.Equals(statusFile + "-journal", StringComparison.InvariantCultureIgnoreCase)
 
     let OnCreated (args: FileSystemEventArgs) =
         // Ignore directory creation; need to think about this more... should we capture new empty directories?
@@ -150,6 +193,10 @@ module Watch =
                 logToAnsiConsole Colors.Added $"I saw that {args.FullPath} was created."
                 filesToProcess.TryAdd(args.FullPath, ()) |> ignore
 
+            if (isGraceStatusArtifact args.FullPath)
+               && (not <| graceStatusHasChanged) then
+                graceStatusHasChanged <- true
+
     let OnChanged (args: FileSystemEventArgs) =
         if updateNotInProgress ()
            && isNotDirectory args.FullPath then
@@ -161,7 +208,7 @@ module Watch =
                 filesToProcess.TryAdd(args.FullPath, ()) |> ignore
 
             // Special handling for the Grace status file; if that is the changed file, we'll set this flag so we reload it in OnWatch() in the main loop
-            if (args.FullPath = Current().GraceStatusFile)
+            if (isGraceStatusArtifact args.FullPath)
                && (not <| graceStatusHasChanged) then
                 //logToAnsiConsole Colors.Important $"Setting graceStatusHasChanged to true in OnChanged(). Current value: {graceStatusHasChanged}."
                 graceStatusHasChanged <- true
@@ -176,6 +223,10 @@ module Watch =
             if not <| shouldIgnore then
                 logToAnsiConsole Colors.Deleted $"I saw that {args.FullPath} was deleted."
                 logToAnsiConsole Colors.Deleted $"Delete processing is not yet implemented."
+
+            if (isGraceStatusArtifact args.FullPath)
+               && (not <| graceStatusHasChanged) then
+                graceStatusHasChanged <- true
 
     let OnRenamed (args: RenamedEventArgs) =
         if updateNotInProgress () then
@@ -236,15 +287,7 @@ module Watch =
 
     /// Update the Grace Object Cache file with the new DirectoryVersions.
     let updateObjectCacheFile (newDirectoryVersions: List<LocalDirectoryVersion>) =
-        task {
-            let! objectCache = readGraceObjectCacheFile ()
-
-            for directoryVersion in newDirectoryVersions.OrderByDescending(fun dv -> countSegments dv.RelativePath) do
-                objectCache.Index.AddOrUpdate(directoryVersion.DirectoryVersionId, (fun _ -> directoryVersion), (fun _ _ -> directoryVersion))
-                |> ignore
-
-            do! writeGraceObjectCacheFile objectCache
-        }
+        task { do! upsertObjectCache newDirectoryVersions }
 
     /// Updates the Grace Status file's Index with updates detected from the file system.
     let updateGraceStatus graceStatus correlationId =
@@ -303,9 +346,10 @@ module Watch =
                 if (differences.Count > 0) then
                     match! createSaveReference (getRootDirectoryVersion newGraceStatus) message correlationId with
                     | Ok returnValue ->
-                        let newGraceStatusWithUpdatedTime = { newGraceStatus with LastSuccessfulDirectoryVersionUpload = getCurrentInstant () }
-                        // Write the new Grace Status file to disk.
-                        do! writeGraceStatusFile newGraceStatusWithUpdatedTime
+                        let newGraceStatusWithUpdatedTime =
+                            { newGraceStatus with LastSuccessfulDirectoryVersionUpload = getCurrentInstant () }
+                        // Apply incremental changes to the Grace Status DB.
+                        do! applyGraceStatusIncremental newGraceStatusWithUpdatedTime newDirectoryVersions differences
                         //logToAnsiConsole Colors.Important $"Setting graceStatusHasChanged to false in updateGraceStatus(). Current value: {graceStatusHasChanged}."
                         graceStatusHasChanged <- false // We *just* changed it ourselves, so we don't have to re-process it in the timer loop.
                         return Some newGraceStatusWithUpdatedTime
@@ -367,6 +411,9 @@ module Watch =
             graceStatus <- GraceStatus.Default
         }
 
+    let updateGraceStatusDirectoryIds (status: GraceStatus) =
+        graceStatusDirectoryIds <- status.Index.Keys.ToHashSet()
+
     /// Processes any changed files since the last timer tick.
     let processChangedFiles () =
         task {
@@ -380,10 +427,11 @@ module Watch =
             then
                 try
                     let correlationId = generateCorrelationId ()
-                    let! graceStatusFromDisk = readGraceStatusFile ()
+                    let! graceStatusFromDisk = readGraceStatusMeta ()
                     graceStatus <- graceStatusFromDisk
 
                     let mutable lastFileUploadInstant = graceStatus.LastSuccessfulFileUpload
+                    let mutable processedAnyFile = false
 
                     /// This is just a way to throw away the unit value from the ConcurrentDictionary.
                     let mutable unitValue = ()
@@ -403,20 +451,26 @@ module Watch =
                         if filesToProcess.TryRemove(fileName, &unitValue) then
                             logToAnsiConsole Colors.Verbose $"Processing {fileName}. filesToProcess.Count: {filesToProcess.Count}."
                             do! copyFileToObjectDirectoryAndUploadToStorage getUploadMetadataForFilesParameters (FilePath fileName)
+                            processedAnyFile <- true
                             lastFileUploadInstant <- getCurrentInstant ()
 
-                    graceStatus <- { graceStatus with LastSuccessfulFileUpload = lastFileUploadInstant }
+                    if processedAnyFile then
+                        graceStatus <- { graceStatus with LastSuccessfulFileUpload = lastFileUploadInstant }
+                        do! applyGraceStatusIncremental graceStatus Seq.empty Seq.empty
 
                     // If we've drained all of the files that changed (and we'll almost always have done so), update all the things:
                     //   GraceStatus, directory versions, etc.
                     if filesToProcess.IsEmpty then
+                        let! graceStatusSnapshot = readGraceStatusFile ()
+                        graceStatus <- graceStatusSnapshot
                         match! (updateGraceStatus graceStatus correlationId) with
                         | Some newGraceStatus -> graceStatus <- newGraceStatus
                         | None ->
                             logToAnsiConsole Colors.Important $"Grace Status file was not updated."
                             () // Something went wrong, don't update the in-memory Grace Status.
 
-                    do! updateGraceWatchInterprocessFile graceStatus
+                    updateGraceStatusDirectoryIds graceStatus
+                    do! updateGraceWatchInterprocessFile graceStatus (Some graceStatusDirectoryIds)
 
                     // Reset the in-memory Grace Status to empty to minimize memory usage.
                     graceStatus <- GraceStatus.Default
@@ -431,8 +485,8 @@ module Watch =
                 graceWatchStatusUpdateTime
                 < getCurrentInstant().Minus(Duration.FromMinutes(4.8))
             then
-                let! graceStatusFromDisk = readGraceStatusFile ()
-                do! updateGraceWatchInterprocessFile graceStatusFromDisk
+                let! graceStatusFromDisk = readGraceStatusMeta ()
+                do! updateGraceWatchInterprocessFile graceStatusFromDisk (Some graceStatusDirectoryIds)
                 GC.Collect(2, GCCollectionMode.Forced, blocking = true, compacting = true)
         }
 
@@ -495,9 +549,10 @@ module Watch =
                     // Load the Grace Index file.
                     let! status = readGraceStatusFile ()
                     graceStatus <- status
+                    updateGraceStatusDirectoryIds graceStatus
 
                     // Create the inter-process communication file.
-                    do! updateGraceWatchInterprocessFile graceStatus
+                    do! updateGraceWatchInterprocessFile graceStatus (Some graceStatusDirectoryIds)
 
                     // Enable the FileSystemWatcher.
                     rootDirectoryFileSystemWatcher.EnableRaisingEvents <- true
@@ -511,11 +566,11 @@ module Watch =
                     let signalRUrl = Uri($"{Current().ServerUri}/notifications")
                     logToConsole $"signalRUrl: {signalRUrl}."
 
-                    use signalRConnection =
-                        HubConnectionBuilder()
-                            .WithAutomaticReconnect()
-                            .WithUrl(signalRUrl, HttpTransportType.ServerSentEvents)
-                            .Build()
+                    match! getSignalRAccessToken () with
+                    | Error message -> raise (InvalidOperationException(message))
+                    | Ok _ -> ()
+
+                    use signalRConnection = createSignalRConnection signalRUrl
 
                     use notifyRepository =
                         signalRConnection.On<RepositoryId, ReferenceId>(
@@ -651,9 +706,10 @@ module Watch =
                           && not (cancellationToken.IsCancellationRequested) do
                         // Grace Status may have changed from branch switch, or other commands.
                         if graceStatusHasChanged then
-                            let! updatedGraceStatus = readGraceStatusFile ()
+                            let! updatedGraceStatus = readGraceStatusFile ()    
                             graceStatus <- updatedGraceStatus
-                            do! updateGraceWatchInterprocessFile graceStatus
+                            updateGraceStatusDirectoryIds graceStatus
+                            do! updateGraceWatchInterprocessFile graceStatus (Some graceStatusDirectoryIds)
                             //logToAnsiConsole Colors.Important $"Setting graceStatusHasChanged to false in OnWatch(). Current value: {graceStatusHasChanged}."
                             graceStatusHasChanged <- false
 
@@ -683,6 +739,17 @@ module Watch =
 
                     return 0
                 with
+                | :? HttpRequestException as httpEx when
+                    httpEx.StatusCode.HasValue
+                    && httpEx.StatusCode.Value = HttpStatusCode.Unauthorized ->
+                    logToAnsiConsole
+                        Colors.Error
+                        $"SignalR negotiation failed with 401 Unauthorized. Run `grace auth login` or set {Constants.EnvironmentVariables.GraceToken}, then retry `grace watch`."
+                    return -1
+                | :? InvalidOperationException as invalidOperationException
+                    when invalidOperationException.Message.Contains("access token", StringComparison.OrdinalIgnoreCase) ->
+                    logToAnsiConsole Colors.Error $"{Markup.Escape(invalidOperationException.Message)}"
+                    return -1
                 | ex ->
                     //let exceptionMarkup = Markup.Escape($"{ExceptionResponse.Create ex}").Replace("\\\\", @"\").Replace("\r\n", Environment.NewLine)
                     //logToAnsiConsole Colors.Error $"{exceptionMarkup}"

@@ -38,6 +38,30 @@ overridden.
 - `grace__auth__oidc__audience`
 - `grace__auth__oidc__cli_client_id` (publish mode)
 
+## Using `dotnet user-secrets`
+
+If you are new to .NET, `dotnet user-secrets` is a local development secret
+store. It keeps sensitive values out of source control and associates them with
+the project `UserSecretsId`. Grace reads these values when running in
+Development mode via configuration.
+
+Microsoft documentation:
+<https://learn.microsoft.com/aspnet/core/security/app-secrets>
+
+PowerShell:
+
+```powershell
+dotnet user-secrets --project src/Grace.Server/Grace.Server.fsproj set "grace__azure_storage__account_name" "yourstorageaccount"
+dotnet user-secrets --project src/Grace.Server/Grace.Server.fsproj list
+```
+
+bash / zsh:
+
+```bash
+dotnet user-secrets --project src/Grace.Server/Grace.Server.fsproj set "grace__azure_storage__account_name" "yourstorageaccount"
+dotnet user-secrets --project src/Grace.Server/Grace.Server.fsproj list
+```
+
 ## Environment Variables (Canonical List)
 
 ### Telemetry
@@ -95,15 +119,6 @@ overridden.
 - `grace__auth__oidc__m2m_client_secret`
 - `grace__auth__oidc__m2m_scopes`
 
-### Auth (Microsoft, Deprecated)
-
-- `grace__auth__microsoft__client_id`
-- `grace__auth__microsoft__client_secret`
-- `grace__auth__microsoft__tenant_id`
-- `grace__auth__microsoft__authority`
-- `grace__auth__microsoft__api_scope`
-- `grace__auth__microsoft__cli_client_id`
-
 ### Auth (PAT Defaults)
 
 - `grace__auth__pat__default_lifetime_days`
@@ -145,3 +160,39 @@ overridden.
 - `grace__gcp__projectid`
 - `grace__gcp__topic`
 - `grace__gcp__subscription`
+
+## Debug Profile Settings
+
+### DebugLocal (`ASPIRE_RESOURCE_MODE=Local`)
+
+`DebugLocal` uses local containers and emulators for Azure dependencies.
+`Grace.Aspire.AppHost` injects the connection settings for Azurite, Cosmos DB
+emulator, and Service Bus emulator into `Grace.Server` at runtime.
+
+What this means in practice:
+
+- You usually do not need to define Azure account names or cloud endpoints for
+  local startup.
+- Storage and Cosmos DB are configured with local connection strings.
+- Service Bus uses the emulator connection string (when Service Bus is enabled
+  for the run).
+- `grace__debug_environment` is set to `Local`.
+
+### DebugAzure (`ASPIRE_RESOURCE_MODE=Azure`)
+
+`DebugAzure` still runs `Grace.Server` locally, but uses real Azure resources.
+Managed identity (`DefaultAzureCredential`) is the default path.
+
+Required or conditionally required settings:
+
+- Storage: set either `grace__azure_storage__connectionstring` or
+  `grace__azure_storage__account_name`.
+- Cosmos DB: set `grace__azurecosmosdb__endpoint`.
+- Cosmos DB metadata: set `grace__azurecosmosdb__database_name` and
+  `grace__azurecosmosdb__container_name`.
+- Service Bus (when `grace__pubsub__system=AzureServiceBus`): set
+  `grace__azure_service_bus__namespace`,
+  `grace__azure_service_bus__topic`, and
+  `grace__azure_service_bus__subscription`.
+
+`grace__debug_environment` is set to `Azure` for this profile.

@@ -320,7 +320,7 @@ module Diff =
 
                                         let! (updatedGraceStatus, newDirectoryVersions) = getNewGraceStatusAndDirectoryVersions previousGraceStatus differences
 
-                                        do! writeGraceStatusFile updatedGraceStatus
+                                        do! applyGraceStatusIncremental updatedGraceStatus newDirectoryVersions differences
                                         rootDirectoryId <- updatedGraceStatus.RootDirectoryId
                                         rootDirectorySha256Hash <- updatedGraceStatus.RootDirectorySha256Hash
                                         previousDirectoryIds <- updatedGraceStatus.Index.Keys.ToHashSet()
@@ -623,7 +623,7 @@ module Diff =
                                             let! (updatedGraceStatus, newDirectoryVersions) =
                                                 getNewGraceStatusAndDirectoryVersions previousGraceStatus differences
 
-                                            do! writeGraceStatusFile updatedGraceStatus
+                                            do! applyGraceStatusIncremental updatedGraceStatus newDirectoryVersions differences
                                             rootDirectoryId <- updatedGraceStatus.RootDirectoryId
                                             rootDirectorySha256Hash <- updatedGraceStatus.RootDirectorySha256Hash
                                             previousDirectoryIds <- updatedGraceStatus.Index.Keys.ToHashSet()

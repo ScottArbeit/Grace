@@ -1,13 +1,16 @@
 # Grace Repository Agents Guide
 
 Agents operating under `D:\Source\Grace\src` should follow this playbook
-alongside the existing `AGENTS.md` in the repo root. This project uses **bd
-(beads)** for issue tracking.
-Run `bd prime` for workflow context, or install hooks (`bd hooks install`) for
-auto-injection.
+alongside the existing `AGENTS.md` in the repo root.
 
 Treat this file as the canonical high-level brief; each project folder contains
 an `AGENTS.md` with deeper context.
+
+## Issue Tracking
+
+- Use the repository’s issue tracker (or the ticket/work item provided in the prompt) to scope and reference work, or follow other explicit work-tracking instructions provided in the prompt.
+- Keep tasks small and independently verifiable.
+- Include the issue/ticket/work item ID in PR descriptions and commit messages when one exists.
 
 ## Local Commands
 
@@ -76,15 +79,15 @@ These rules apply to `task { }` and `backgroundTask { }`.
    }
    ```
 
-   Good:
+  Good:
 
-   ```fsharp
-   task {
-       let mutable done_ = false
-       while not done_ do
-           done_ <- true
-   }
-   ```
+  ```fsharp
+  task {
+      let mutable done_ = false
+      while not done_ do
+          done_ <- true
+  }
+  ```
 
 2. **Avoid `for ... in ... do` loops inside `task { }`.**
 
@@ -125,21 +128,21 @@ These rules apply to `task { }` and `backgroundTask { }`.
 
 ## Agent-Friendly Context Practices
 
-- Start with the relevant `AGENTS.md` file(s) to load key patterns,
+* Start with the relevant `AGENTS.md` file(s) to load key patterns,
   dependencies, and test strategy before exploring the codebase. These files
   replace the old `instructions.md`.
-- Use these summaries to decide which source files actually need inspection;
+* Use these summaries to decide which source files actually need inspection;
   open code only when context is missing or implementation verification is
   required.
-- When documenting new behavior, update the closest `AGENTS.md` to keep future
+* When documenting new behavior, update the closest `AGENTS.md` to keep future
   agents informed—living documentation reduces the need for broad code scans.
 
 ## Collaboration & Communication
 
-- Summarize modifications clearly, cite file paths with 1-based line numbers,
+* Summarize modifications clearly, cite file paths with 1-based line numbers,
   and call out follow-up actions or tests that remain.
-- Coordinate cross-project changes across `Grace.Types`, `Grace.Shared`,
+* Coordinate cross-project changes across `Grace.Types`, `Grace.Shared`,
   `Grace.Server`, `Grace.Actors`, `Grace.CLI` and `Grace.SDK` to keep contracts
   aligned.
-- When adding new capabilities, ensure matching tests exist and note any
+* When adding new capabilities, ensure matching tests exist and note any
   coverage gaps or risks in the final hand-off.
