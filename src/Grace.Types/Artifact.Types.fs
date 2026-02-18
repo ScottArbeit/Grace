@@ -67,3 +67,8 @@ module Artifact =
         static member GetKnownTypes() = GetKnownTypes<ArtifactEventType>()
 
     type ArtifactEvent = { Event: ArtifactEventType; Metadata: EventMetadata }
+
+    module ArtifactMetadata =
+        let UpdateDto (artifactEvent: ArtifactEvent) (_current: ArtifactMetadata) =
+            match artifactEvent.Event with
+            | ArtifactEventType.Created artifact -> artifact

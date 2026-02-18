@@ -77,6 +77,9 @@ module Constants =
         let PromotionGroup = "PromotionGroupActor"
 
         [<Literal>]
+        let PromotionSet = "PromotionSetActor"
+
+        [<Literal>]
         let PromotionQueue = "PromotionQueueActor"
 
         [<Literal>]
@@ -87,6 +90,15 @@ module Constants =
 
         [<Literal>]
         let Stage0 = "Stage0Actor"
+
+        [<Literal>]
+        let ValidationSet = "ValidationSetActor"
+
+        [<Literal>]
+        let ValidationResult = "ValidationResultActor"
+
+        [<Literal>]
+        let Artifact = "ArtifactActor"
 
         [<Literal>]
         let Reference = "ReferenceActor"
@@ -153,6 +165,9 @@ module Constants =
         let PromotionGroup = "PromotionGroup"
 
         [<Literal>]
+        let PromotionSet = "PromotionSet"
+
+        [<Literal>]
         let PromotionQueue = "PromotionQueue"
 
         [<Literal>]
@@ -163,6 +178,15 @@ module Constants =
 
         [<Literal>]
         let Stage0 = "Stage0"
+
+        [<Literal>]
+        let ValidationSet = "ValidationSet"
+
+        [<Literal>]
+        let ValidationResult = "ValidationResult"
+
+        [<Literal>]
+        let Artifact = "Artifact"
 
         [<Literal>]
         let Reference = "Ref"

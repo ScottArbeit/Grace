@@ -144,3 +144,30 @@ module Validation =
         static member GetKnownTypes() = GetKnownTypes<ValidationResultEventType>()
 
     type ValidationResultEvent = { Event: ValidationResultEventType; Metadata: EventMetadata }
+
+    module ValidationSetDto =
+        let UpdateDto (validationSetEvent: ValidationSetEvent) (current: ValidationSetDto) =
+            let updated =
+                match validationSetEvent.Event with
+                | ValidationSetEventType.Created validationSet -> validationSet
+                | ValidationSetEventType.Updated validationSet -> validationSet
+                | ValidationSetEventType.LogicalDeleted (_, deleteReason) ->
+                    { current with DeletedAt = Some(getCurrentInstant ()); DeleteReason = deleteReason }
+
+            let onBehalfOf =
+                updated.OnBehalfOf
+                |> List.append [ UserId validationSetEvent.Metadata.Principal ]
+                |> List.distinct
+
+            { updated with OnBehalfOf = onBehalfOf; UpdatedAt = Some validationSetEvent.Metadata.Timestamp }
+
+    module ValidationResultDto =
+        let UpdateDto (validationResultEvent: ValidationResultEvent) (_current: ValidationResultDto) =
+            match validationResultEvent.Event with
+            | ValidationResultEventType.Recorded validationResult ->
+                let onBehalfOf =
+                    validationResult.OnBehalfOf
+                    |> List.append [ UserId validationResultEvent.Metadata.Principal ]
+                    |> List.distinct
+
+                { validationResult with OnBehalfOf = onBehalfOf; UpdatedAt = Some validationResultEvent.Metadata.Timestamp }
