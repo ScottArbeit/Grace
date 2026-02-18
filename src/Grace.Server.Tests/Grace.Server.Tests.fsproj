@@ -29,6 +29,7 @@
     <Compile Include="AccessBootstrap.Enabled.Server.Tests.fs" />
     <Compile Include="EndpointAuthorization.Server.Tests.fs" />
     <Compile Include="Automation.Eventing.Tests.fs" />
+    <Compile Include="PromotionSet.Determinism.Tests.fs" />
     <Compile Include="Policy.Determinism.Tests.fs" />
     <Compile Include="Policy.Stage0.Derived.Tests.fs" />
     <Compile Include="Stage0.Determinism.Tests.fs" />

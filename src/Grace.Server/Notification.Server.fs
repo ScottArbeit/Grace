@@ -270,6 +270,77 @@ module Notification =
                     return ()
             }
 
+        let tryGetRepositoryIdFromMetadata (metadata: EventMetadata) =
+            match metadata.Properties.TryGetValue(nameof RepositoryId) with
+            | true, value ->
+                match Guid.TryParse(value) with
+                | true, repositoryId -> Some repositoryId
+                | _ -> None
+            | _ -> None
+
+        let triggerPromotionSetRecompute (repositoryId: RepositoryId) (promotionSetId: PromotionSetId) (reason: string) (correlationId: CorrelationId) =
+            task {
+                try
+                    let promotionSetActorProxy = PromotionSet.CreateActorProxy promotionSetId repositoryId correlationId
+                    let! exists = promotionSetActorProxy.Exists correlationId
+
+                    if exists then
+                        let recomputeCorrelationId = $"{correlationId}-recompute-{promotionSetId:N}"
+                        let metadata = EventMetadata.New recomputeCorrelationId GraceSystemUser
+                        metadata.Properties[ nameof RepositoryId ] <- $"{repositoryId}"
+                        metadata.Properties[ "ActorId" ] <- $"{promotionSetId}"
+
+                        match! promotionSetActorProxy.Handle (Grace.Types.PromotionSet.PromotionSetCommand.RecomputeStepsIfStale(Some reason)) metadata with
+                        | Ok _ -> ()
+                        | Error graceError ->
+                            log.LogWarning(
+                                "{CurrentInstant}: Node: {HostName}; CorrelationId: {CorrelationId}; Failed to recompute PromotionSetId {PromotionSetId}: {GraceError}",
+                                getCurrentInstantExtended (),
+                                getMachineName,
+                                recomputeCorrelationId,
+                                promotionSetId,
+                                graceError
+                            )
+                with
+                | ex ->
+                    log.LogError(
+                        ex,
+                        "{CurrentInstant}: Node: {HostName}; CorrelationId: {CorrelationId}; Exception while triggering recompute for PromotionSetId {PromotionSetId}.",
+                        getCurrentInstantExtended (),
+                        getMachineName,
+                        correlationId,
+                        promotionSetId
+                    )
+            }
+
+        let triggerQueuedPromotionSetRecompute (repositoryId: RepositoryId) (targetBranchId: BranchId) (reason: string) (correlationId: CorrelationId) =
+            task {
+                try
+                    let queueActorProxy = PromotionQueue.CreateActorProxy targetBranchId repositoryId correlationId
+                    let! queueExists = queueActorProxy.Exists correlationId
+
+                    if queueExists then
+                        let! queue = queueActorProxy.Get correlationId
+
+                        let queuedPromotionSetIds = queue.CandidateIds |> Seq.distinct |> Seq.toArray
+
+                        let mutable index = 0
+
+                        while index < queuedPromotionSetIds.Length do
+                            do! triggerPromotionSetRecompute repositoryId queuedPromotionSetIds[index] reason correlationId
+                            index <- index + 1
+                with
+                | ex ->
+                    log.LogError(
+                        ex,
+                        "{CurrentInstant}: Node: {HostName}; CorrelationId: {CorrelationId}; Exception while scheduling queue recompute for target branch {BranchId}.",
+                        getCurrentInstantExtended (),
+                        getMachineName,
+                        correlationId,
+                        targetBranchId
+                    )
+            }
+
         let hubContext = lazy (serviceProvider.GetService<IHubContext<NotificationHub, IGraceClientConnection>>())
 
         //let private getHubContextOld () =
@@ -377,6 +448,14 @@ module Notification =
                                         .Clients
                                         .Group($"{branchId}")
                                         .NotifyOnPromotion(branchId, branchDto.BranchName, referenceId)
+
+                            if isTerminalPromotion then
+                                do!
+                                    triggerQueuedPromotionSetRecompute
+                                        repositoryId
+                                        branchId
+                                        $"Target branch advanced to terminal promotion {referenceId}."
+                                        correlationId
 
                             // Create the diff between the new promotion and previous promotion.
                             let! latestTwoPromotions = getPromotions repositoryId branchId 2 correlationId
@@ -629,6 +708,16 @@ module Notification =
                         getMachineName,
                         correlationId
                     )
+
+                    match queueEvent.Event with
+                    | Grace.Types.Queue.PromotionQueueEventType.CandidateEnqueued candidateId ->
+                        match tryGetRepositoryIdFromMetadata queueEvent.Metadata with
+                        | Some repositoryId ->
+                            let promotionSetId: PromotionSetId = candidateId
+
+                            do! triggerPromotionSetRecompute repositoryId promotionSetId "PromotionSet enqueued." correlationId
+                        | None -> ()
+                    | _ -> ()
                 | PromotionSetEvent promotionSetEvent ->
                     let correlationId = promotionSetEvent.Metadata.CorrelationId
 

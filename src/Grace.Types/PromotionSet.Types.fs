@@ -163,7 +163,7 @@ module PromotionSet =
 
     module PromotionSetDto =
         let UpdateDto (promotionSetEvent: PromotionSetEvent) (currentDto: PromotionSetDto) =
-            let updatedDto =
+            let updatedDto, shouldUpdateComputationTimestamp =
                 match promotionSetEvent.Event with
                 | Created (promotionSetId, ownerId, organizationId, repositoryId, targetBranchId) ->
                     { PromotionSetDto.Default with
@@ -174,7 +174,8 @@ module PromotionSet =
                         TargetBranchId = targetBranchId
                         CreatedBy = UserId promotionSetEvent.Metadata.Principal
                         CreatedAt = promotionSetEvent.Metadata.Timestamp
-                    }
+                    },
+                    false
                 | InputPromotionsUpdated promotionPointers ->
                     let steps =
                         promotionPointers
@@ -191,45 +192,61 @@ module PromotionSet =
                                 ConflictStatus = StepConflictStatus.NoConflicts
                             })
 
-                    { currentDto with Steps = steps }
+                    { currentDto with
+                        Steps = steps
+                        Status = PromotionSetStatus.Ready
+                        StepsComputationStatus = StepsComputationStatus.NotComputed
+                        ComputedAgainstParentTerminalPromotionReferenceId = Option.None
+                        StepsComputationError = Option.None
+                    },
+                    true
                 | RecomputeStarted computedAgainstTerminal ->
                     { currentDto with
+                        Status = PromotionSetStatus.Running
                         StepsComputationStatus = StepsComputationStatus.Computing
                         ComputedAgainstParentTerminalPromotionReferenceId = Some computedAgainstTerminal
                         StepsComputationError = Option.None
-                    }
+                    },
+                    true
                 | StepsUpdated (steps, computedAgainstTerminal) ->
                     { currentDto with
                         Steps = steps
+                        Status = PromotionSetStatus.Ready
                         StepsComputationStatus = StepsComputationStatus.Computed
                         ComputedAgainstParentTerminalPromotionReferenceId = Some computedAgainstTerminal
                         StepsComputationAttempt = currentDto.StepsComputationAttempt + 1
                         StepsComputationError = Option.None
-                    }
+                    },
+                    true
                 | RecomputeFailed (reason, computedAgainstTerminal) ->
                     { currentDto with
+                        Status = PromotionSetStatus.Failed
                         StepsComputationStatus = StepsComputationStatus.ComputeFailed
                         ComputedAgainstParentTerminalPromotionReferenceId = Some computedAgainstTerminal
                         StepsComputationError = Some reason
-                    }
+                    },
+                    true
                 | Blocked (reason, _) ->
                     { currentDto with
                         Status = PromotionSetStatus.Blocked
                         StepsComputationStatus = StepsComputationStatus.ComputeFailed
                         StepsComputationError = Some reason
-                    }
-                | ApplyStarted -> { currentDto with Status = PromotionSetStatus.Running }
-                | Applied _ -> { currentDto with Status = PromotionSetStatus.Succeeded }
-                | ApplyFailed reason -> { currentDto with Status = PromotionSetStatus.Failed; StepsComputationError = Some reason }
-                | LogicalDeleted (_, deleteReason) -> { currentDto with DeletedAt = Some(getCurrentInstant ()); DeleteReason = deleteReason }
+                    },
+                    true
+                | ApplyStarted -> { currentDto with Status = PromotionSetStatus.Running }, false
+                | Applied _ -> { currentDto with Status = PromotionSetStatus.Succeeded }, false
+                | ApplyFailed reason -> { currentDto with Status = PromotionSetStatus.Failed; StepsComputationError = Some reason }, false
+                | LogicalDeleted (_, deleteReason) -> { currentDto with DeletedAt = Some(getCurrentInstant ()); DeleteReason = deleteReason }, false
 
             let onBehalfOf =
                 updatedDto.OnBehalfOf
                 |> List.append [ UserId promotionSetEvent.Metadata.Principal ]
                 |> List.distinct
 
-            { updatedDto with
-                OnBehalfOf = onBehalfOf
-                UpdatedAt = Some promotionSetEvent.Metadata.Timestamp
-                StepsComputationUpdatedAt = Some promotionSetEvent.Metadata.Timestamp
-            }
+            let computationUpdatedAt =
+                if shouldUpdateComputationTimestamp then
+                    Some promotionSetEvent.Metadata.Timestamp
+                else
+                    updatedDto.StepsComputationUpdatedAt
+
+            { updatedDto with OnBehalfOf = onBehalfOf; UpdatedAt = Some promotionSetEvent.Metadata.Timestamp; StepsComputationUpdatedAt = computationUpdatedAt }
