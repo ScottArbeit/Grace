@@ -695,6 +695,136 @@ Ensure:
 * the Auth0 Native app allows refresh tokens and is configured to issue them
 * `grace__auth__oidc__cli_scopes` includes `offline_access`
 
+### `grace status` returns `Unauthorized` and Grace.Server logs look empty
+
+This usually means the CLI sent branch status requests without a usable token.
+
+Common causes:
+
+* No interactive token is cached yet.
+* `GRACE_TOKEN` is not set (or is invalid).
+* You are expecting endpoint handler logs, but the request is rejected by authentication middleware first.
+
+Quick checks:
+
+PowerShell:
+
+```powershell
+grace auth status --output Verbose
+grace auth token status --output Verbose
+grace status --output Verbose
+```
+
+bash / zsh:
+
+```bash
+grace auth status --output Verbose
+grace auth token status --output Verbose
+grace status --output Verbose
+```
+
+If `GRACE_TOKEN` is false and interactive token is false, authenticate first:
+
+PowerShell:
+
+```powershell
+grace auth login --auth device
+# or
+grace auth login --auth pkce
+```
+
+bash / zsh:
+
+```bash
+grace auth login --auth device
+# or
+grace auth login --auth pkce
+```
+
+If you are using a PAT:
+
+PowerShell:
+
+```powershell
+$env:GRACE_TOKEN="grace_pat_v1_..."
+grace auth token status --output Verbose
+```
+
+bash / zsh:
+
+```bash
+export GRACE_TOKEN="grace_pat_v1_..."
+grace auth token status --output Verbose
+```
+
+Why logs may look empty:
+
+* `grace status` maps to `branch status`, which calls `/branch/Get` and `/branch/GetParentBranch`.
+* Those routes require authentication and are rejected with `401` before business handlers run.
+* You might see little or no endpoint-level logging for these failures.
+
+Where to look for proof of `401`:
+
+* W3C request logs under `%TEMP%\Grace.Server.Logs` (Windows) show request-level status codes.
+* Look for entries like `POST /branch/Get` and `POST /branch/GetParentBranch` with `401`.
+
+Also note:
+
+* `--output` values are case-sensitive in current CLI behavior. Use `Verbose`, not `verbose`.
+* During development, TestAuth may be available. See this file for setup details:
+  `docs/Authentication.md` -> **Development without Auth0 (TestAuth)**.
+
+### You can see `SystemAdmin` in Cosmos, but `grace access check` says denied
+
+If `grace auth whoami` shows your expected `GraceUserId`, but:
+
+* `grace access check --operation SystemAdmin --resource system --output Json`
+  returns `Denied: missing permission SystemAdmin.`,
+
+and you can also see a `SystemAdmin` assignment document in Cosmos, the most common cause is a **runtime context mismatch**.
+
+Typical mismatch causes:
+
+* The running server is using a different Orleans `serviceid` than the one that wrote the document.
+* You inspected a different Cosmos database or container than the running server is using.
+* The AccessControl grain loaded state before manual Cosmos edits (stale in-memory state until restart).
+
+Why this happens:
+
+* System-scope role assignments are read from the AccessControl actor state keyed by scope and Orleans identity.
+* A document such as `grace-dev__accesscontrolactor_system` applies only to the matching Orleans service context.
+* If the active server context differs, authorization reads a different actor record.
+
+What to verify first:
+
+PowerShell:
+
+```powershell
+grace auth whoami --output Json
+grace access check --operation SystemAdmin --resource system --output Json
+```
+
+bash / zsh:
+
+```bash
+grace auth whoami --output Json
+grace access check --operation SystemAdmin --resource system --output Json
+```
+
+Then verify server configuration:
+
+* `GRACE_SERVER_URI` points to the server you think you are testing.
+* The running server's Orleans `serviceid` matches the service prefix of the AccessControl actor document.
+* The running server's Cosmos database/container match the place where you inspected the document.
+
+Recommended recovery steps:
+
+1. Restart `Grace.Server` (or your Aspire app host) to clear any stale grain state.
+2. Re-run the two checks above.
+3. Re-open Cosmos and confirm the `system` AccessControl actor document for the active service context
+   contains your user principal.
+4. If needed, use a current `SystemAdmin` principal to grant your role again via `grace access grant-role`.
+
 ### Headless environments / CI
 
 Use:

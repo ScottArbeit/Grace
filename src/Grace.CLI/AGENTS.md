@@ -21,6 +21,7 @@ Read `../AGENTS.md` for global expectations before updating CLI code.
 - Auth commands support PATs via `GRACE_TOKEN` (PAT-only), Auth0 M2M, and
   Auth0 interactive login with secure token storage. Local token files are
   disabled. Keep token values out of output except on creation.
+- Avoid positional parameters; prefer named options for clarity.
 
 ## Project Rules
 

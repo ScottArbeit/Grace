@@ -33,6 +33,7 @@
 - Follow existing patterns in `cmd/bd/` for new commands
 - Add `--json` flag to all commands for programmatic use
 - Update docs when changing behavior
+- Grace contributors should run `dotnet tool run fantomas --recurse .` from `./src` before finishing a task; CI should enforce formatting.
 
 ### Git Workflow
 - Always commit `.beads/issues.jsonl` with code changes

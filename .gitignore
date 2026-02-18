@@ -14,6 +14,7 @@
 **/dapr
 **/*[Aa]zurite*
 **/.env
+CodexPlan.md
 
 # Secrets file to configure Orleans persistence
 Orleans.secrets.fs
