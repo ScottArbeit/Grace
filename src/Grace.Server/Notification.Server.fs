@@ -13,6 +13,7 @@ open Grace.Shared.AzureEnvironment
 open Grace.Shared.Constants
 open Grace.Shared.Utilities
 open Grace.Types
+open Grace.Types.Automation
 open Grace.Types.Events
 open Grace.Types.Reference
 open Grace.Types.Types
@@ -41,6 +42,7 @@ module Notification =
         abstract member NotifyOnCommit: BranchName * BranchName * BranchId * ReferenceId -> Task
         abstract member NotifyOnCheckpoint: BranchName * BranchName * BranchId * ReferenceId -> Task
         abstract member NotifyOnSave: BranchName * BranchName * BranchId * ReferenceId -> Task
+        abstract member NotifyAutomationEvent: AutomationEventEnvelope -> Task
         abstract member NotifyEvent: Eventing.EventEnvelope -> Task
         abstract member ServerToClientMessage: string -> Task
 
@@ -209,6 +211,28 @@ module Notification =
             }
             :> Task
 
+        member this.NotifyAutomationEvent(envelope: AutomationEventEnvelope) =
+            task {
+                if not <| isNull (this.Clients) then
+                    let groupKey =
+                        if envelope.RepositoryId = RepositoryId.Empty then
+                            String.Empty
+                        else
+                            $"{envelope.RepositoryId}"
+
+                    if String.IsNullOrWhiteSpace groupKey then
+                        do! this.Clients.All.NotifyAutomationEvent(envelope)
+                    else
+                        do!
+                            this
+                                .Clients
+                                .Group(groupKey)
+                                .NotifyAutomationEvent(envelope)
+                else
+                    logToConsole $"No SignalR clients connected."
+            }
+            :> Task
+
     module Subscriber =
         /// Gets the ReferenceDto for the given ReferenceId.
         let getReferenceDto referenceId repositoryId correlationId =
@@ -339,7 +363,15 @@ module Notification =
                         | ReferenceType.Promotion ->
                             let! branchDto = getBranchDto branchId repositoryId correlationId
 
-                            if not <| isNull hubContext then
+                            let isTerminalPromotion =
+                                links
+                                |> Seq.exists (fun link ->
+                                    match link with
+                                    | ReferenceLinkType.PromotionSetTerminal _
+                                    | ReferenceLinkType.PromotionGroupTerminal _ -> true
+                                    | _ -> false)
+
+                            if (not <| isNull hubContext) && isTerminalPromotion then
                                 do!
                                     hubContext
                                         .Clients
@@ -597,6 +629,42 @@ module Notification =
                         getMachineName,
                         correlationId
                     )
+                | PromotionSetEvent promotionSetEvent ->
+                    let correlationId = promotionSetEvent.Metadata.CorrelationId
+
+                    log.LogInformation(
+                        "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Received PromotionSetEvent notification.",
+                        getCurrentInstantExtended (),
+                        getMachineName,
+                        correlationId
+                    )
+                | ValidationSetEvent validationSetEvent ->
+                    let correlationId = validationSetEvent.Metadata.CorrelationId
+
+                    log.LogInformation(
+                        "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Received ValidationSetEvent notification.",
+                        getCurrentInstantExtended (),
+                        getMachineName,
+                        correlationId
+                    )
+                | ValidationResultEvent validationResultEvent ->
+                    let correlationId = validationResultEvent.Metadata.CorrelationId
+
+                    log.LogInformation(
+                        "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Received ValidationResultEvent notification.",
+                        getCurrentInstantExtended (),
+                        getMachineName,
+                        correlationId
+                    )
+                | ArtifactEvent artifactEvent ->
+                    let correlationId = artifactEvent.Metadata.CorrelationId
+
+                    log.LogInformation(
+                        "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Received ArtifactEvent notification.",
+                        getCurrentInstantExtended (),
+                        getMachineName,
+                        correlationId
+                    )
 
                 match EventingPublisher.tryCreateEnvelope graceEvent with
                 | Some envelope ->
@@ -608,13 +676,13 @@ module Notification =
                                 $"{envelope.RepositoryId}"
 
                         if String.IsNullOrWhiteSpace groupKey then
-                            do! hubContext.Clients.All.NotifyEvent(envelope)
+                            do! hubContext.Clients.All.NotifyAutomationEvent(envelope)
                         else
                             do!
                                 hubContext
                                     .Clients
                                     .Group(groupKey)
-                                    .NotifyEvent(envelope)
+                                    .NotifyAutomationEvent(envelope)
                 | None -> ()
 
             //return! setStatusCode StatusCodes.Status204NoContent next context

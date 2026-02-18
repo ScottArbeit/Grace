@@ -2,13 +2,17 @@ namespace Grace.Server
 
 open Grace.Shared
 open Grace.Shared.Utilities
-open Grace.Types.Eventing
+open Grace.Types.Artifact
+open Grace.Types.Automation
 open Grace.Types.Events
 open Grace.Types.Policy
+open Grace.Types.PromotionGroup
+open Grace.Types.PromotionSet
 open Grace.Types.Queue
 open Grace.Types.Reference
 open Grace.Types.Review
 open Grace.Types.Types
+open Grace.Types.Validation
 open Grace.Types.WorkItem
 open System
 
@@ -18,176 +22,241 @@ module EventingPublisher =
         | true, repositoryId ->
             match Guid.TryParse(repositoryId) with
             | true, value -> Some value
-            | _ -> None
-        | _ -> None
+            | _ -> Option.None
+        | _ -> Option.None
+
+    let private tryGetActorId (metadata: EventMetadata) (defaultActorId: string) =
+        match metadata.Properties.TryGetValue("ActorId") with
+        | true, actorId when String.IsNullOrWhiteSpace actorId |> not -> actorId
+        | _ -> defaultActorId
 
     let private envelope
-        eventType
+        (eventType: AutomationEventType)
         (metadata: EventMetadata)
-        ownerId
-        organizationId
-        repositoryId
-        targetBranchId
-        candidateId
-        workItemId
-        promotionGroupId
-        payload
+        (ownerId: OwnerId)
+        (organizationId: OrganizationId)
+        (repositoryId: RepositoryId)
+        (actorId: string)
+        (dataJson: string)
         =
-        {
-            EventType = eventType
-            Timestamp = metadata.Timestamp
-            CorrelationId = metadata.CorrelationId
-            OwnerId = ownerId
-            OrganizationId = organizationId
-            RepositoryId = repositoryId
-            TargetBranchId = targetBranchId
-            CandidateId = candidateId
-            WorkItemId = workItemId
-            PromotionGroupId = promotionGroupId
-            Payload = payload
-        }
+        AutomationEventEnvelope.Create eventType metadata.Timestamp metadata.CorrelationId ownerId organizationId repositoryId actorId dataJson
+
+    let private tryGetTerminalPromotionSetId (links: ReferenceLinkType seq) =
+        links
+        |> Seq.tryPick (fun link ->
+            match link with
+            | ReferenceLinkType.PromotionSetTerminal promotionSetId -> Some promotionSetId
+            | ReferenceLinkType.PromotionGroupTerminal promotionSetId -> Some promotionSetId
+            | _ -> Option.None)
+
+    let private mapPromotionSetEventType (eventType: PromotionSetEventType) =
+        match eventType with
+        | PromotionSetEventType.Created _ -> AutomationEventType.PromotionSetCreated
+        | PromotionSetEventType.InputPromotionsUpdated _ -> AutomationEventType.PromotionSetUpdated
+        | PromotionSetEventType.RecomputeStarted _ -> AutomationEventType.PromotionSetRecomputeStarted
+        | PromotionSetEventType.StepsUpdated _ -> AutomationEventType.PromotionSetStepsUpdated
+        | PromotionSetEventType.RecomputeFailed _ -> AutomationEventType.PromotionSetRecomputeFailed
+        | PromotionSetEventType.Blocked _ -> AutomationEventType.PromotionSetBlocked
+        | PromotionSetEventType.ApplyStarted -> AutomationEventType.PromotionSetApplyStarted
+        | PromotionSetEventType.Applied _ -> AutomationEventType.PromotionSetApplied
+        | PromotionSetEventType.ApplyFailed _ -> AutomationEventType.PromotionSetApplyFailed
+        | PromotionSetEventType.LogicalDeleted _ -> AutomationEventType.PromotionSetUpdated
 
     let tryCreateEnvelope (graceEvent: GraceEvent) =
         match graceEvent with
-        | PolicyEvent policyEvent ->
-            match policyEvent.Event with
-            | SnapshotCreated snapshot ->
-                envelope
-                    EventType.PolicySnapshotCreated
-                    policyEvent.Metadata
-                    snapshot.OwnerId
-                    snapshot.OrganizationId
-                    snapshot.RepositoryId
-                    (Some snapshot.TargetBranchId)
-                    None
-                    None
-                    None
-                    (serialize snapshot)
-                |> Some
-            | Acknowledged (policySnapshotId, acknowledgedBy, note) ->
-                envelope
-                    EventType.PolicyAckRequired
-                    policyEvent.Metadata
-                    OwnerId.Empty
-                    OrganizationId.Empty
-                    RepositoryId.Empty
-                    None
-                    None
-                    None
-                    None
-                    (serialize {| PolicySnapshotId = policySnapshotId; AcknowledgedBy = acknowledgedBy; Note = note |})
-                |> Some
-        | WorkItemEvent workItemEvent ->
-            let ownerId, organizationId, repositoryId =
-                match workItemEvent.Event with
-                | WorkItemEventType.Created (_, ownerId, organizationId, repositoryId, _, _) -> ownerId, organizationId, repositoryId
-                | _ ->
-                    OwnerId.Empty,
-                    OrganizationId.Empty,
-                    (tryGetRepositoryId workItemEvent.Metadata
-                     |> Option.defaultValue RepositoryId.Empty)
+        | PromotionSetEvent promotionSetEvent ->
+            let eventType = mapPromotionSetEventType promotionSetEvent.Event
 
-            envelope EventType.WorkItemUpdated workItemEvent.Metadata ownerId organizationId repositoryId None None None None (serialize workItemEvent)
+            envelope
+                eventType
+                promotionSetEvent.Metadata
+                OwnerId.Empty
+                OrganizationId.Empty
+                (tryGetRepositoryId promotionSetEvent.Metadata
+                 |> Option.defaultValue RepositoryId.Empty)
+                (tryGetActorId promotionSetEvent.Metadata "PromotionSet")
+                (serialize promotionSetEvent)
             |> Some
-        | ReviewEvent reviewEvent ->
-            let ownerId, organizationId, repositoryId =
-                match reviewEvent.Event with
-                | ReviewEventType.PacketUpserted packet -> packet.OwnerId, packet.OrganizationId, packet.RepositoryId
-                | _ ->
-                    OwnerId.Empty,
-                    OrganizationId.Empty,
-                    (tryGetRepositoryId reviewEvent.Metadata
-                     |> Option.defaultValue RepositoryId.Empty)
+        | ValidationSetEvent validationSetEvent ->
+            let eventType =
+                match validationSetEvent.Event with
+                | ValidationSetEventType.Created _ -> AutomationEventType.ValidationSetCreated
+                | ValidationSetEventType.Updated _
+                | ValidationSetEventType.LogicalDeleted _ -> AutomationEventType.ValidationSetUpdated
 
-            envelope EventType.ReviewPacketUpdated reviewEvent.Metadata ownerId organizationId repositoryId None None None None (serialize reviewEvent)
+            envelope
+                eventType
+                validationSetEvent.Metadata
+                OwnerId.Empty
+                OrganizationId.Empty
+                (tryGetRepositoryId validationSetEvent.Metadata
+                 |> Option.defaultValue RepositoryId.Empty)
+                (tryGetActorId validationSetEvent.Metadata "ValidationSet")
+                (serialize validationSetEvent)
             |> Some
-        | CandidateEvent candidateEvent ->
-            match candidateEvent.Event with
-            | CandidateEventType.Initialized candidate ->
-                envelope
-                    EventType.CandidateEnqueued
-                    candidateEvent.Metadata
-                    candidate.OwnerId
-                    candidate.OrganizationId
-                    candidate.RepositoryId
-                    (Some candidate.TargetBranchId)
-                    (Some candidate.CandidateId)
-                    (Some candidate.WorkItemId)
-                    candidate.PromotionGroupId
-                    (serialize candidate)
-                |> Some
-            | CandidateEventType.StatusSet _ ->
-                envelope
-                    EventType.CandidateStateChanged
-                    candidateEvent.Metadata
-                    OwnerId.Empty
-                    OrganizationId.Empty
-                    (tryGetRepositoryId candidateEvent.Metadata
-                     |> Option.defaultValue RepositoryId.Empty)
-                    None
-                    None
-                    None
-                    None
-                    (serialize candidateEvent)
-                |> Some
-            | _ ->
-                envelope
-                    EventType.CandidateStateChanged
-                    candidateEvent.Metadata
-                    OwnerId.Empty
-                    OrganizationId.Empty
-                    (tryGetRepositoryId candidateEvent.Metadata
-                     |> Option.defaultValue RepositoryId.Empty)
-                    None
-                    None
-                    None
-                    None
-                    (serialize candidateEvent)
-                |> Some
-        | GateAttestationEvent gateEvent ->
-            let ownerId, organizationId, repositoryId =
-                match gateEvent.Event with
-                | GateAttestationEventType.Created attestation -> attestation.OwnerId, attestation.OrganizationId, attestation.RepositoryId
-
-            envelope EventType.GateCompleted gateEvent.Metadata ownerId organizationId repositoryId None None None None (serialize gateEvent)
+        | ValidationResultEvent validationResultEvent ->
+            envelope
+                AutomationEventType.ValidationResultRecorded
+                validationResultEvent.Metadata
+                OwnerId.Empty
+                OrganizationId.Empty
+                (tryGetRepositoryId validationResultEvent.Metadata
+                 |> Option.defaultValue RepositoryId.Empty)
+                (tryGetActorId validationResultEvent.Metadata "ValidationResult")
+                (serialize validationResultEvent)
+            |> Some
+        | ArtifactEvent artifactEvent ->
+            envelope
+                AutomationEventType.ArtifactCreated
+                artifactEvent.Metadata
+                OwnerId.Empty
+                OrganizationId.Empty
+                (tryGetRepositoryId artifactEvent.Metadata
+                 |> Option.defaultValue RepositoryId.Empty)
+                (tryGetActorId artifactEvent.Metadata "Artifact")
+                (serialize artifactEvent)
             |> Some
         | QueueEvent queueEvent ->
             let eventType =
                 match queueEvent.Event with
-                | PromotionQueueEventType.Paused -> EventType.QueuePaused
-                | PromotionQueueEventType.Resumed -> EventType.QueueResumed
-                | _ -> EventType.CandidateStateChanged
+                | PromotionQueueEventType.CandidateEnqueued _ -> Some AutomationEventType.PromotionSetEnqueued
+                | PromotionQueueEventType.CandidateDequeued _ -> Some AutomationEventType.PromotionSetDequeued
+                | _ -> Option.None
 
-            let repositoryId =
-                tryGetRepositoryId queueEvent.Metadata
-                |> Option.defaultValue RepositoryId.Empty
+            eventType
+            |> Option.map (fun mappedType ->
+                envelope
+                    mappedType
+                    queueEvent.Metadata
+                    OwnerId.Empty
+                    OrganizationId.Empty
+                    (tryGetRepositoryId queueEvent.Metadata
+                     |> Option.defaultValue RepositoryId.Empty)
+                    (tryGetActorId queueEvent.Metadata "PromotionQueue")
+                    (serialize queueEvent))
+        | CandidateEvent candidateEvent ->
+            let eventType =
+                match candidateEvent.Event with
+                | CandidateEventType.Initialized _ -> AutomationEventType.PromotionSetCreated
+                | CandidateEventType.StatusSet _
+                | CandidateEventType.RequiredActionsSet _
+                | CandidateEventType.RequiredActionAdded _
+                | CandidateEventType.RequiredActionsCleared
+                | CandidateEventType.GateAttestationAdded _
+                | CandidateEventType.ConflictAdded _
+                | CandidateEventType.ConflictReceiptAdded _ -> AutomationEventType.PromotionSetUpdated
 
-            envelope eventType queueEvent.Metadata OwnerId.Empty OrganizationId.Empty repositoryId None None None None (serialize queueEvent)
+            envelope
+                eventType
+                candidateEvent.Metadata
+                OwnerId.Empty
+                OrganizationId.Empty
+                (tryGetRepositoryId candidateEvent.Metadata
+                 |> Option.defaultValue RepositoryId.Empty)
+                (tryGetActorId candidateEvent.Metadata "IntegrationCandidate")
+                (serialize candidateEvent)
             |> Some
-        | ConflictReceiptEvent conflictEvent ->
-            let ownerId, organizationId, repositoryId =
-                match conflictEvent.Event with
-                | ConflictReceiptEventType.Created receipt -> receipt.OwnerId, receipt.OrganizationId, receipt.RepositoryId
+        | PromotionGroupEvent promotionGroupEvent ->
+            let eventType =
+                match promotionGroupEvent.Event with
+                | PromotionGroupEventType.Created _ -> AutomationEventType.PromotionSetCreated
+                | PromotionGroupEventType.Started -> AutomationEventType.PromotionSetApplyStarted
+                | PromotionGroupEventType.Completed success ->
+                    if success then
+                        AutomationEventType.PromotionSetApplied
+                    else
+                        AutomationEventType.PromotionSetApplyFailed
+                | PromotionGroupEventType.Blocked _ -> AutomationEventType.PromotionSetBlocked
+                | PromotionGroupEventType.ConflictAnalyzed _ -> AutomationEventType.PromotionSetBlocked
+                | _ -> AutomationEventType.PromotionSetUpdated
 
-            envelope EventType.ConflictResolved conflictEvent.Metadata ownerId organizationId repositoryId None None None None (serialize conflictEvent)
+            envelope
+                eventType
+                promotionGroupEvent.Metadata
+                OwnerId.Empty
+                OrganizationId.Empty
+                (tryGetRepositoryId promotionGroupEvent.Metadata
+                 |> Option.defaultValue RepositoryId.Empty)
+                (tryGetActorId promotionGroupEvent.Metadata "PromotionGroup")
+                (serialize promotionGroupEvent)
+            |> Some
+        | ReviewEvent reviewEvent ->
+            let ownerId, organizationId, repositoryId, eventType =
+                match reviewEvent.Event with
+                | ReviewEventType.PacketUpserted packet -> packet.OwnerId, packet.OrganizationId, packet.RepositoryId, AutomationEventType.ReviewNotesUpdated
+                | ReviewEventType.CheckpointAdded _ ->
+                    OwnerId.Empty,
+                    OrganizationId.Empty,
+                    (tryGetRepositoryId reviewEvent.Metadata
+                     |> Option.defaultValue RepositoryId.Empty),
+                    AutomationEventType.ReviewCheckpointRecorded
+                | ReviewEventType.FindingResolved _ ->
+                    OwnerId.Empty,
+                    OrganizationId.Empty,
+                    (tryGetRepositoryId reviewEvent.Metadata
+                     |> Option.defaultValue RepositoryId.Empty),
+                    AutomationEventType.ReviewNotesUpdated
+
+            envelope eventType reviewEvent.Metadata ownerId organizationId repositoryId (tryGetActorId reviewEvent.Metadata "Review") (serialize reviewEvent)
+            |> Some
+        | Stage0Event stage0Event ->
+            envelope
+                AutomationEventType.ValidationResultRecorded
+                stage0Event.Metadata
+                OwnerId.Empty
+                OrganizationId.Empty
+                (tryGetRepositoryId stage0Event.Metadata
+                 |> Option.defaultValue RepositoryId.Empty)
+                (tryGetActorId stage0Event.Metadata "Stage0")
+                (serialize stage0Event)
+            |> Some
+        | GateAttestationEvent gateEvent ->
+            envelope
+                AutomationEventType.ValidationResultRecorded
+                gateEvent.Metadata
+                OwnerId.Empty
+                OrganizationId.Empty
+                (tryGetRepositoryId gateEvent.Metadata
+                 |> Option.defaultValue RepositoryId.Empty)
+                (tryGetActorId gateEvent.Metadata "GateAttestation")
+                (serialize gateEvent)
             |> Some
         | ReferenceEvent referenceEvent ->
             match referenceEvent.Event with
-            | ReferenceEventType.Created (referenceId, ownerId, organizationId, repositoryId, branchId, _, _, referenceType, _, _) ->
+            | ReferenceEventType.Created (referenceId, ownerId, organizationId, repositoryId, branchId, _, _, referenceType, _, links) ->
                 if referenceType = ReferenceType.Promotion then
-                    envelope
-                        EventType.PromotionApplied
-                        referenceEvent.Metadata
-                        ownerId
-                        organizationId
-                        repositoryId
-                        (Some branchId)
-                        None
-                        None
-                        None
-                        (serialize referenceEvent)
-                    |> Some
+                    match tryGetTerminalPromotionSetId links with
+                    | Some promotionSetId ->
+                        let payload = {| promotionSetId = promotionSetId; targetBranchId = branchId; terminalPromotionReferenceId = referenceId |}
+
+                        envelope
+                            AutomationEventType.PromotionSetApplied
+                            referenceEvent.Metadata
+                            ownerId
+                            organizationId
+                            repositoryId
+                            (tryGetActorId referenceEvent.Metadata "Reference")
+                            (serialize payload)
+                        |> Some
+                    | Option.None -> Option.None
                 else
-                    None
-            | _ -> None
-        | _ -> None
+                    Option.None
+            | _ -> Option.None
+        | WorkItemEvent workItemEvent ->
+            envelope
+                AutomationEventType.ReviewNotesUpdated
+                workItemEvent.Metadata
+                OwnerId.Empty
+                OrganizationId.Empty
+                (tryGetRepositoryId workItemEvent.Metadata
+                 |> Option.defaultValue RepositoryId.Empty)
+                (tryGetActorId workItemEvent.Metadata "WorkItem")
+                (serialize workItemEvent)
+            |> Some
+        | PolicyEvent _
+        | OwnerEvent _
+        | BranchEvent _
+        | DirectoryVersionEvent _
+        | OrganizationEvent _
+        | RepositoryEvent _
+        | ConflictReceiptEvent _ -> Option.None

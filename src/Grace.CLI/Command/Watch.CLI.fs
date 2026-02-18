@@ -38,6 +38,7 @@ open Spectre.Console
 open System.Text
 open Grace.Shared.Parameters.Storage
 open Grace.CLI.Text
+open Grace.Types.Automation
 
 module Watch =
 
@@ -517,6 +518,8 @@ module Watch =
                             .WithUrl(signalRUrl, HttpTransportType.ServerSentEvents)
                             .Build()
 
+                    let mutable watchedParentBranchId = BranchId.Empty
+
                     use notifyRepository =
                         signalRConnection.On<RepositoryId, ReferenceId>(
                             "NotifyRepository",
@@ -536,10 +539,59 @@ module Watch =
                             fun parentBranchId parentBranchName referenceId ->
                                 (task {
                                     logToAnsiConsole Colors.Highlighted $"Parent branch {parentBranchName} has a new promotion; referenceId: {referenceId}."
+                                })
+                                :> Task
+                        )
 
-                                    let! graceStatus = readGraceStatusFile ()
-                                    let! x = Branch.rebaseHandler (parseResult |> getNormalizedIdsAndNames) graceStatus
-                                    ()
+                    use notifyAutomationEvent =
+                        signalRConnection.On<AutomationEventEnvelope>(
+                            "NotifyAutomationEvent",
+                            fun envelope ->
+                                (task {
+                                    if envelope.EventType = AutomationEventType.PromotionSetApplied then
+                                        try
+                                            use document = JsonDocument.Parse(envelope.DataJson)
+                                            let root = document.RootElement
+
+                                            let tryParseGuidProperty (propertyName: string) : Guid option =
+                                                let mutable propertyValue = Unchecked.defaultof<JsonElement>
+
+                                                if root.TryGetProperty(propertyName, &propertyValue) then
+                                                    let propertyText = propertyValue.GetString()
+                                                    let mutable parsedGuid = Guid.Empty
+
+                                                    if
+                                                        String.IsNullOrWhiteSpace propertyText |> not
+                                                        && Guid.TryParse(propertyText, &parsedGuid)
+                                                    then
+                                                        Some parsedGuid
+                                                    else
+                                                        Option.None
+                                                else
+                                                    Option.None
+
+                                            let targetBranchId =
+                                                tryParseGuidProperty "targetBranchId"
+                                                |> Option.defaultValue BranchId.Empty
+
+                                            let terminalReferenceId =
+                                                tryParseGuidProperty "terminalPromotionReferenceId"
+                                                |> Option.defaultValue ReferenceId.Empty
+
+                                            if watchedParentBranchId = targetBranchId
+                                               && watchedParentBranchId <> BranchId.Empty then
+                                                logToAnsiConsole
+                                                    Colors.Highlighted
+                                                    $"Parent branch {watchedParentBranchId} received terminal promotion {terminalReferenceId}; starting auto-rebase."
+
+                                                let! currentStatus = readGraceStatusFile ()
+                                                let! _ = Branch.rebaseHandler (parseResult |> getNormalizedIdsAndNames) currentStatus
+                                                ()
+                                        with
+                                        | ex ->
+                                            logToAnsiConsole
+                                                Colors.Error
+                                                $"Failed to process automation event payload for {envelope.EventType}: {Markup.Escape(ex.Message)}."
                                 })
                                 :> Task
                         )
@@ -606,6 +658,7 @@ module Watch =
                     match! Branch.GetParentBranch branchGetParameters with
                     | Ok returnValue ->
                         let parentBranchDto = returnValue.ReturnValue
+                        watchedParentBranchId <- parentBranchDto.BranchId
 
                         do! signalRConnection.InvokeAsync("RegisterParentBranch", Current().BranchId, parentBranchDto.BranchId, cancellationToken)
 

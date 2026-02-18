@@ -70,8 +70,17 @@ module Types =
     /// The Id of the integration candidate.
     type CandidateId = Guid
 
+    /// The Id of the promotion set.
+    type PromotionSetId = Guid
+
+    /// The Id of a promotion set step.
+    type PromotionSetStepId = Guid
+
     /// The Id of the review packet.
     type ReviewPacketId = Guid
+
+    /// The Id of the review notes payload.
+    type ReviewNotesId = Guid
 
     /// The Id of the review checkpoint.
     type ReviewCheckpointId = Guid
@@ -87,6 +96,15 @@ module Types =
 
     /// The Id of a conflict resolution receipt.
     type ConflictReceiptId = Guid
+
+    /// The Id of a validation set.
+    type ValidationSetId = Guid
+
+    /// The Id of a validation result.
+    type ValidationResultId = Guid
+
+    /// The Id of an artifact.
+    type ArtifactId = Guid
 
     /// The text of the reference, generally submitted as the -m parameter in `grace save/checkpoint/commit/etc.`.
     type ReferenceText = string
@@ -572,6 +590,9 @@ module Types =
     [<KnownType("GetKnownTypes"); GenerateSerializer>]
     type ReferenceLinkType =
         | BasedOn of ReferenceId
+        | IncludedInPromotionSet of PromotionSetId
+        | PromotionSetTerminal of PromotionSetId // Marks the final promotion in a promotion set.
+        // Deprecated names retained temporarily for compatibility with in-flight dev data.
         | IncludedInPromotionGroup of Guid
         | PromotionGroupTerminal of Guid // Marks the final promotion in a promotion group.
 
@@ -897,7 +918,7 @@ module Types =
     /// Defines the conflict resolution policy for a repository.
     [<KnownType("GetKnownTypes"); GenerateSerializer>]
     type ConflictResolutionPolicy =
-        | NoConflicts of unit // Any conflict blocks the promotion group.
+        | NoConflicts of unit // Any conflict blocks recomputation/apply.
         | ConflictsAllowed of float32 // Conflicts allowed if model confidence >= threshold (0.0 to 1.0).
 
         static member GetKnownTypes() = GetKnownTypes<ConflictResolutionPolicy>()

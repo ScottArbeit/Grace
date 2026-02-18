@@ -10,6 +10,9 @@ open Grace.Types.WorkItem
 open Grace.Types.Policy
 open Grace.Types.Review
 open Grace.Types.Queue
+open Grace.Types.PromotionSet
+open Grace.Types.Validation
+open Grace.Types.Artifact
 
 module Events =
 
@@ -31,6 +34,10 @@ module Events =
         | GateAttestationEvent of Queue.GateAttestationEvent
         | ConflictReceiptEvent of Queue.ConflictReceiptEvent
         | QueueEvent of Queue.PromotionQueueEvent
+        | PromotionSetEvent of PromotionSet.PromotionSetEvent
+        | ValidationSetEvent of Validation.ValidationSetEvent
+        | ValidationResultEvent of Validation.ValidationResultEvent
+        | ArtifactEvent of Artifact.ArtifactEvent
 
         static member GetKnownTypes() = GetKnownTypes<GraceEvent>()
 
@@ -51,3 +58,7 @@ module Events =
             | GateAttestationEvent e -> serialize e
             | ConflictReceiptEvent e -> serialize e
             | QueueEvent e -> serialize e
+            | PromotionSetEvent e -> serialize e
+            | ValidationSetEvent e -> serialize e
+            | ValidationResultEvent e -> serialize e
+            | ArtifactEvent e -> serialize e

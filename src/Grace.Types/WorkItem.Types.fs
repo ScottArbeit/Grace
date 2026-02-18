@@ -136,6 +136,7 @@ module WorkItem =
             ReviewPacketIds: ReviewPacketId list
             ReviewCheckpointIds: ReviewCheckpointId list
             GateAttestationIds: GateAttestationId list
+            OnBehalfOf: UserId list
             CreatedBy: UserId
             CreatedAt: Instant
             UpdatedAt: Instant option
@@ -165,6 +166,7 @@ module WorkItem =
                 ReviewPacketIds = []
                 ReviewCheckpointIds = []
                 GateAttestationIds = []
+                OnBehalfOf = []
                 CreatedBy = UserId String.Empty
                 CreatedAt = Constants.DefaultTimestamp
                 UpdatedAt = None
@@ -324,4 +326,9 @@ module WorkItem =
                             |> List.filter (fun existing -> existing <> gateAttestationId)
                     }
 
-            { newWorkItemDto with UpdatedAt = Some workItemEvent.Metadata.Timestamp }
+            let onBehalfOf =
+                newWorkItemDto.OnBehalfOf
+                |> List.append [ UserId workItemEvent.Metadata.Principal ]
+                |> List.distinct
+
+            { newWorkItemDto with OnBehalfOf = onBehalfOf; UpdatedAt = Some workItemEvent.Metadata.Timestamp }

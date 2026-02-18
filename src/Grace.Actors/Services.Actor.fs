@@ -1206,6 +1206,16 @@ module Services =
                     .ToArray()
         }
 
+    let private isNotDeletedReference (referenceDto: ReferenceDto) = referenceDto.DeletedAt.IsNone
+
+    let private hasPromotionSetTerminalLink (referenceDto: ReferenceDto) =
+        referenceDto.Links
+        |> Seq.exists (fun link ->
+            match link with
+            | ReferenceLinkType.PromotionSetTerminal _
+            | ReferenceLinkType.PromotionGroupTerminal _ -> true
+            | _ -> false)
+
     /// Gets a list of references that match a provided SHA-256 hash.
     let getReferencesBySha256Hash (repositoryId: RepositoryId) (branchId: BranchId) (sha256Hash: Sha256Hash) (maxCount: int) =
         task {
@@ -1259,7 +1269,7 @@ module Services =
                                         |> ReferenceDto.UpdateDto referenceEvent)
                                     ReferenceDto.Default
 
-                            references.Add(referenceDto))
+                            if isNotDeletedReference referenceDto then references.Add(referenceDto))
 
                     if (indexMetrics.Length >= 2)
                        && (requestCharge.Length >= 2)
@@ -1566,12 +1576,12 @@ module Services =
                 let requestCharge = stringBuilderPool.Get()
 
                 try
-                    let references = List<ReferenceDto>()
+                    let mutable latestReference: ReferenceDto option = None
 
                     let queryDefinition =
                         QueryDefinition(
                             """
-                            SELECT TOP 1 c.State
+                            SELECT c.State
                             FROM c
                             WHERE STRINGEQUALS(c.State[0].Event.created.BranchId, @branchId, true)
                                 AND c.GrainType = @grainType
@@ -1585,7 +1595,7 @@ module Services =
 
                     let iterator = cosmosContainer.GetItemQueryIterator<ReferenceEventValue>(queryDefinition, requestOptions = queryRequestOptions)
 
-                    while iterator.HasMoreResults do
+                    while iterator.HasMoreResults && latestReference.IsNone do
                         let! results = iterator.ReadNextAsync()
 
                         indexMetrics.Append($"{results.IndexMetrics}, ")
@@ -1594,19 +1604,19 @@ module Services =
                         requestCharge.Append($"{results.RequestCharge:F3}, ")
                         |> ignore
 
-                        let eventsForAllReferences = results.Resource
+                        let eventsForAllReferences = results.Resource |> Seq.toArray
 
-                        eventsForAllReferences
-                        |> Seq.iter (fun eventsForOneReference ->
+                        let mutable index = 0
+
+                        while index < eventsForAllReferences.Length
+                              && latestReference.IsNone do
                             let referenceDto =
-                                eventsForOneReference.State
-                                |> Array.fold
-                                    (fun referenceDto referenceEvent ->
-                                        referenceDto
-                                        |> ReferenceDto.UpdateDto referenceEvent)
-                                    ReferenceDto.Default
+                                eventsForAllReferences[index].State
+                                |> Array.fold (fun current referenceEvent -> current |> ReferenceDto.UpdateDto referenceEvent) ReferenceDto.Default
 
-                            references.Add(referenceDto))
+                            if isNotDeletedReference referenceDto then latestReference <- Some referenceDto
+
+                            index <- index + 1
 
                     if (indexMetrics.Length >= 2)
                        && (requestCharge.Length >= 2)
@@ -1617,7 +1627,7 @@ module Services =
                             .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
                         |> ignore
 
-                    if references.Count > 0 then return Some references[0] else return None
+                    return latestReference
                 finally
                     stringBuilderPool.Return(indexMetrics)
                     stringBuilderPool.Return(requestCharge)
@@ -1648,7 +1658,7 @@ module Services =
                                         let queryDefinition =
                                             QueryDefinition(
                                                 """
-                                                SELECT TOP 1 c.State
+                                                SELECT c.State
                                                 FROM c
                                                 WHERE STRINGEQUALS(c.State[0].Event.created.BranchId, @branchId, true)
                                                     AND STRINGEQUALS(c.State[0].Event.created.ReferenceType, @referenceType, true)
@@ -1665,26 +1675,33 @@ module Services =
                                         let iterator =
                                             cosmosContainer.GetItemQueryIterator<ReferenceEventValue>(queryDefinition, requestOptions = queryRequestOptions)
 
-                                        while iterator.HasMoreResults do
+                                        let mutable foundForType = false
+
+                                        while iterator.HasMoreResults && not foundForType do
                                             let! results = iterator.ReadNextAsync()
                                             // Save metrics into concurrent bags (thread-safe).
                                             indexMetricsBag.Add(results.IndexMetrics)
                                             requestChargeBag.Add($"{results.RequestCharge:F3}")
 
-                                            let eventsForAllReferences = results.Resource
+                                            let eventsForAllReferences = results.Resource |> Seq.toArray
 
-                                            eventsForAllReferences
-                                            |> Seq.iter (fun eventsForOneReference ->
+                                            let mutable index = 0
+
+                                            while index < eventsForAllReferences.Length
+                                                  && not foundForType do
                                                 let referenceDto =
-                                                    eventsForOneReference.State
+                                                    eventsForAllReferences[index].State
                                                     |> Array.fold
-                                                        (fun referenceDto referenceEvent ->
-                                                            referenceDto
-                                                            |> ReferenceDto.UpdateDto referenceEvent)
+                                                        (fun current referenceEvent -> current |> ReferenceDto.UpdateDto referenceEvent)
                                                         ReferenceDto.Default
 
-                                                referenceDtos.TryAdd(referenceType, referenceDto)
-                                                |> ignore)
+                                                if isNotDeletedReference referenceDto then
+                                                    referenceDtos.TryAdd(referenceType, referenceDto)
+                                                    |> ignore
+
+                                                    foundForType <- true
+
+                                                index <- index + 1
                                     }
                                 ))
                         )
@@ -1728,10 +1745,12 @@ module Services =
                 let requestCharge = stringBuilderPool.Get()
 
                 try
+                    let mutable latestReference: ReferenceDto option = None
+
                     let queryDefinition =
                         QueryDefinition(
                             """
-                            SELECT TOP 1 c.State
+                            SELECT c.State
                             FROM c
                             WHERE STRINGEQUALS(c.State[0].Event.created.BranchId, @branchId, true)
                                 AND STRINGEQUALS(c.State[0].Event.created.ReferenceType, @referenceType, true)
@@ -1747,9 +1766,7 @@ module Services =
 
                     let iterator = cosmosContainer.GetItemQueryIterator<ReferenceEventValue>(queryDefinition, requestOptions = queryRequestOptions)
 
-                    let references = List<ReferenceDto>()
-
-                    while iterator.HasMoreResults do
+                    while iterator.HasMoreResults && latestReference.IsNone do
                         let! results = DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> iterator.ReadNextAsync())
 
                         indexMetrics.Append($"{results.IndexMetrics}, ")
@@ -1758,19 +1775,19 @@ module Services =
                         requestCharge.Append($"{results.RequestCharge:F3}, ")
                         |> ignore
 
-                        let eventsForAllReferences = results.Resource
+                        let eventsForAllReferences = results.Resource |> Seq.toArray
 
-                        eventsForAllReferences
-                        |> Seq.iter (fun eventsForOneReference ->
+                        let mutable index = 0
+
+                        while index < eventsForAllReferences.Length
+                              && latestReference.IsNone do
                             let referenceDto =
-                                eventsForOneReference.State
-                                |> Array.fold
-                                    (fun referenceDto referenceEvent ->
-                                        referenceDto
-                                        |> ReferenceDto.UpdateDto referenceEvent)
-                                    ReferenceDto.Default
+                                eventsForAllReferences[index].State
+                                |> Array.fold (fun current referenceEvent -> current |> ReferenceDto.UpdateDto referenceEvent) ReferenceDto.Default
 
-                            references.Add(referenceDto))
+                            if isNotDeletedReference referenceDto then latestReference <- Some referenceDto
+
+                            index <- index + 1
 
                     if (indexMetrics.Length >= 2)
                        && (requestCharge.Length >= 2)
@@ -1781,7 +1798,7 @@ module Services =
                             .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
                         |> ignore
 
-                    if references.Count > 0 then return Some references[0] else return None
+                    return latestReference
                 finally
                     stringBuilderPool.Return(indexMetrics)
                     stringBuilderPool.Return(requestCharge)
@@ -1789,7 +1806,76 @@ module Services =
         }
 
     /// Gets the latest promotion from a branch.
-    let getLatestPromotion = getLatestReferenceByType ReferenceType.Promotion
+    let getLatestPromotion (repositoryId: RepositoryId) (branchId: BranchId) =
+        task {
+            match actorStateStorageProvider with
+            | Unknown -> return None
+            | AzureCosmosDb ->
+                let indexMetrics = stringBuilderPool.Get()
+                let requestCharge = stringBuilderPool.Get()
+
+                try
+                    let mutable latestPromotion: ReferenceDto option = None
+
+                    let queryDefinition =
+                        QueryDefinition(
+                            """
+                            SELECT c.State
+                            FROM c
+                            WHERE STRINGEQUALS(c.State[0].Event.created.BranchId, @branchId, true)
+                                AND STRINGEQUALS(c.State[0].Event.created.ReferenceType, @referenceType, true)
+                                AND c.GrainType = @grainType
+                                AND c.PartitionKey = @partitionKey
+                            ORDER BY c.State[0].Event.created.CreatedAt DESC
+                            """
+                        )
+                            .WithParameter("@branchId", branchId)
+                            .WithParameter("@referenceType", getDiscriminatedUnionCaseName ReferenceType.Promotion)
+                            .WithParameter("@grainType", StateName.Reference)
+                            .WithParameter("@partitionKey", repositoryId)
+
+                    let iterator = cosmosContainer.GetItemQueryIterator<ReferenceEventValue>(queryDefinition, requestOptions = queryRequestOptions)
+
+                    while iterator.HasMoreResults && latestPromotion.IsNone do
+                        let! results = DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> iterator.ReadNextAsync())
+
+                        indexMetrics.Append($"{results.IndexMetrics}, ")
+                        |> ignore
+
+                        requestCharge.Append($"{results.RequestCharge:F3}, ")
+                        |> ignore
+
+                        let eventsForAllReferences = results.Resource |> Seq.toArray
+
+                        let mutable index = 0
+
+                        while index < eventsForAllReferences.Length
+                              && latestPromotion.IsNone do
+                            let referenceDto =
+                                eventsForAllReferences[index].State
+                                |> Array.fold (fun current referenceEvent -> current |> ReferenceDto.UpdateDto referenceEvent) ReferenceDto.Default
+
+                            if isNotDeletedReference referenceDto
+                               && hasPromotionSetTerminalLink referenceDto then
+                                latestPromotion <- Some referenceDto
+
+                            index <- index + 1
+
+                    if (indexMetrics.Length >= 2)
+                       && (requestCharge.Length >= 2)
+                       && Activity.Current <> null then
+                        Activity
+                            .Current
+                            .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
+                            .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
+                        |> ignore
+
+                    return latestPromotion
+                finally
+                    stringBuilderPool.Return(indexMetrics)
+                    stringBuilderPool.Return(requestCharge)
+            | MongoDB -> return None
+        }
 
     /// Gets the latest commit from a branch.
     let getLatestCommit = getLatestReferenceByType ReferenceType.Commit
