@@ -19,6 +19,9 @@ open System.Collections.Generic
 open System.Threading.Tasks
 
 module ValidationResult =
+    let internal hasDuplicateCorrelationId (events: seq<ValidationResultEvent>) (metadata: EventMetadata) =
+        events
+        |> Seq.exists (fun ev -> ev.Metadata.CorrelationId = metadata.CorrelationId)
 
     type ValidationResultActor
         (
@@ -114,7 +117,7 @@ module ValidationResult =
             member this.Handle command metadata =
                 let isValid (validationResultCommand: ValidationResultCommand) (eventMetadata: EventMetadata) =
                     task {
-                        if state.State.Exists(fun ev -> ev.Metadata.CorrelationId = eventMetadata.CorrelationId) then
+                        if hasDuplicateCorrelationId state.State eventMetadata then
                             return Error(GraceError.Create "Duplicate correlation ID for ValidationResult command." eventMetadata.CorrelationId)
                         else
                             match validationResultCommand with

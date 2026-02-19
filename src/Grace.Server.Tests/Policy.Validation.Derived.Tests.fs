@@ -4,40 +4,42 @@ open Grace.Server
 open Grace.Shared.Parameters.Policy
 open Grace.Shared.Validation.Errors
 open Grace.Shared.Validation.Utilities
-open Grace.Types.Review
 open Grace.Types.Types
+open Grace.Types.Validation
 open NUnit.Framework
 open NodaTime
 open System
 open System.Collections.Generic
 
 [<Parallelizable(ParallelScope.All)>]
-type PolicyStage0DerivedTests() =
+type PolicyValidationDerivedTests() =
     let metadata correlationId timestamp =
         { Timestamp = timestamp; CorrelationId = correlationId; Principal = "tester"; Properties = Dictionary<string, string>() }
 
     [<Test>]
-    member _.Stage0RejectsDuplicateCorrelationIds() =
+    member _.ValidationResultRejectsDuplicateCorrelationIds() =
         let timestamp = Instant.FromUtc(2025, 3, 1, 0, 0)
-        let eventMetadata = metadata "corr-stage0" timestamp
-        let stage0Event: Stage0Event = { Event = Stage0EventType.Recorded Stage0Analysis.Default; Metadata = eventMetadata }
+        let eventMetadata = metadata "corr-validation" timestamp
 
-        let duplicate = Grace.Actors.Stage0.hasDuplicateCorrelationId [ stage0Event ] eventMetadata
-        let different = Grace.Actors.Stage0.hasDuplicateCorrelationId [ stage0Event ] { eventMetadata with CorrelationId = "corr-other" }
+        let validationResultEvent: ValidationResultEvent = { Event = ValidationResultEventType.Recorded ValidationResultDto.Default; Metadata = eventMetadata }
+
+        let duplicate = Grace.Actors.ValidationResult.hasDuplicateCorrelationId [ validationResultEvent ] eventMetadata
+
+        let different = Grace.Actors.ValidationResult.hasDuplicateCorrelationId [ validationResultEvent ] { eventMetadata with CorrelationId = "corr-other" }
 
         Assert.That(duplicate, Is.True)
         Assert.That(different, Is.False)
 
     [<Test>]
-    member _.DerivedComputationStage0PredicateMatchesReferenceTypes() =
-        Assert.That(DerivedComputation.shouldRecordStage0 ReferenceType.Commit, Is.True)
-        Assert.That(DerivedComputation.shouldRecordStage0 ReferenceType.Checkpoint, Is.True)
-        Assert.That(DerivedComputation.shouldRecordStage0 ReferenceType.Promotion, Is.True)
-        Assert.That(DerivedComputation.shouldRecordStage0 ReferenceType.Save, Is.False)
+    member _.DerivedComputationQuickScanPredicateMatchesReferenceTypes() =
+        Assert.That(DerivedComputation.shouldRecordQuickScan ReferenceType.Commit, Is.True)
+        Assert.That(DerivedComputation.shouldRecordQuickScan ReferenceType.Checkpoint, Is.True)
+        Assert.That(DerivedComputation.shouldRecordQuickScan ReferenceType.Promotion, Is.True)
+        Assert.That(DerivedComputation.shouldRecordQuickScan ReferenceType.Save, Is.False)
 
     [<Test>]
     member _.PolicyAcknowledgeRejectsMissingSnapshotId() =
-        let parameters = AcknowledgePolicyParameters(TargetBranchId = System.Guid.NewGuid().ToString(), PolicySnapshotId = String.Empty)
+        let parameters = AcknowledgePolicyParameters(TargetBranchId = Guid.NewGuid().ToString(), PolicySnapshotId = String.Empty)
 
         let validations = Policy.validateAcknowledgeParameters parameters
 
