@@ -4,6 +4,7 @@ open Grace.Server
 open Grace.Shared.Utilities
 open Grace.Types.Automation
 open Grace.Types.Events
+open Grace.Types.PromotionSet
 open Grace.Types.Queue
 open Grace.Types.Reference
 open Grace.Types.Types
@@ -130,4 +131,43 @@ type AutomationEventingTests() =
         let envelope = EventingPublisher.tryCreateEnvelope (GraceEvent.QueueEvent queueEvent)
         Assert.That(envelope.IsSome, Is.True)
         Assert.That(envelope.Value.EventType, Is.EqualTo(AutomationEventType.PromotionSetDequeued))
+        Assert.That(envelope.Value.RepositoryId, Is.EqualTo(repositoryId))
+
+    [<Test>]
+    member _.PromotionSetRecomputeStartedMapsToAutomationEvent() =
+        let repositoryId = Guid.NewGuid()
+        let metadata = metadata "corr-ps-recompute-started" repositoryId
+        metadata.Properties[ "ActorId" ] <- $"{Guid.NewGuid()}"
+
+        let promotionSetEvent: PromotionSetEvent = { Event = PromotionSetEventType.RecomputeStarted(Guid.NewGuid()); Metadata = metadata }
+
+        let envelope = EventingPublisher.tryCreateEnvelope (GraceEvent.PromotionSetEvent promotionSetEvent)
+        Assert.That(envelope.IsSome, Is.True)
+        Assert.That(envelope.Value.EventType, Is.EqualTo(AutomationEventType.PromotionSetRecomputeStarted))
+        Assert.That(envelope.Value.RepositoryId, Is.EqualTo(repositoryId))
+
+    [<Test>]
+    member _.PromotionSetStepsUpdatedMapsToAutomationEvent() =
+        let repositoryId = Guid.NewGuid()
+        let metadata = metadata "corr-ps-steps-updated" repositoryId
+        metadata.Properties[ "ActorId" ] <- $"{Guid.NewGuid()}"
+
+        let step: PromotionSetStep =
+            {
+                StepId = Guid.NewGuid()
+                Order = 0
+                OriginalPromotion = { BranchId = Guid.NewGuid(); ReferenceId = Guid.NewGuid(); DirectoryVersionId = Guid.NewGuid() }
+                OriginalBasePromotionReferenceId = Guid.NewGuid()
+                OriginalBaseDirectoryVersionId = Guid.NewGuid()
+                ComputedAgainstBaseDirectoryVersionId = Guid.NewGuid()
+                AppliedDirectoryVersionId = Guid.NewGuid()
+                ConflictSummaryArtifactId = Option.None
+                ConflictStatus = StepConflictStatus.NoConflicts
+            }
+
+        let promotionSetEvent: PromotionSetEvent = { Event = PromotionSetEventType.StepsUpdated([ step ], Guid.NewGuid()); Metadata = metadata }
+
+        let envelope = EventingPublisher.tryCreateEnvelope (GraceEvent.PromotionSetEvent promotionSetEvent)
+        Assert.That(envelope.IsSome, Is.True)
+        Assert.That(envelope.Value.EventType, Is.EqualTo(AutomationEventType.PromotionSetStepsUpdated))
         Assert.That(envelope.Value.RepositoryId, Is.EqualTo(repositoryId))

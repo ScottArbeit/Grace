@@ -1,5 +1,7 @@
 namespace Grace.Actors
 
+open Azure.Storage.Blobs
+open Azure.Storage.Blobs.Specialized
 open Grace.Actors.Constants
 open Grace.Actors.Context
 open Grace.Actors.Extensions.ActorProxy
@@ -22,7 +24,10 @@ open Orleans
 open Orleans.Runtime
 open System
 open System.Collections.Generic
+open System.Diagnostics
 open System.Globalization
+open System.IO
+open System.Text
 open System.Threading.Tasks
 
 module PromotionSet =
@@ -39,6 +44,28 @@ module PromotionSet =
 
         let mutable currentCommand = String.Empty
         let mutable promotionSetDto = PromotionSetDto.Default
+
+        let getIntEnvironmentSetting (name: string) (defaultValue: int) =
+            let rawValue = Environment.GetEnvironmentVariable(name)
+            let mutable parsedValue = 0
+
+            if
+                String.IsNullOrWhiteSpace rawValue |> not
+                && Int32.TryParse(rawValue, NumberStyles.Integer, CultureInfo.InvariantCulture, &parsedValue)
+                && parsedValue > 0
+            then
+                parsedValue
+            else
+                defaultValue
+
+        let maxStepsPerRecompute =
+            getIntEnvironmentSetting "grace__promotionset__recompute__max_steps" 1000
+
+        let maxStepTimeMilliseconds =
+            getIntEnvironmentSetting "grace__promotionset__recompute__max_step_time_ms" 30000
+
+        let maxTotalTimeMilliseconds =
+            getIntEnvironmentSetting "grace__promotionset__recompute__max_total_time_ms" 300000
 
         member val private correlationId: CorrelationId = String.Empty with get, set
 
@@ -116,6 +143,107 @@ module PromotionSet =
                 return repositoryDto.ConflictResolutionPolicy
             }
 
+        member private this.GetRepositoryDto() =
+            task {
+                let repositoryActorProxy = Repository.CreateActorProxy promotionSetDto.OrganizationId promotionSetDto.RepositoryId this.correlationId
+                return! repositoryActorProxy.Get this.correlationId
+            }
+
+        member private this.UploadArtifactPayload(blobPath: string, payloadJson: string, metadata: EventMetadata) =
+            task {
+                try
+                    let! repositoryDto = this.GetRepositoryDto()
+                    let! uploadUri = getUriWithWriteSharedAccessSignature repositoryDto blobPath metadata.CorrelationId
+                    let blockBlobClient = BlockBlobClient(uploadUri)
+                    let payloadBytes = Encoding.UTF8.GetBytes(payloadJson)
+                    use payloadStream = new MemoryStream(payloadBytes)
+                    do! blockBlobClient.UploadAsync(payloadStream) :> Task
+                    return Ok()
+                with
+                | ex ->
+                    let graceError = GraceError.CreateWithException ex "Failed while uploading Artifact payload." metadata.CorrelationId
+
+                    graceError.enhance (nameof PromotionSetId, promotionSetDto.PromotionSetId)
+                    |> ignore
+
+                    graceError.enhance (nameof RepositoryId, promotionSetDto.RepositoryId)
+                    |> ignore
+
+                    return Error(graceError)
+            }
+
+        member private this.GetArtifactText(artifactId: ArtifactId, metadata: EventMetadata) =
+            task {
+                let artifactActorProxy = Artifact.CreateActorProxy artifactId promotionSetDto.RepositoryId this.correlationId
+                let! artifact = artifactActorProxy.Get this.correlationId
+
+                match artifact with
+                | Option.None ->
+                    let graceError = GraceError.Create "Manual override artifact was not found." metadata.CorrelationId
+
+                    graceError.enhance (nameof ArtifactId, artifactId)
+                    |> ignore
+
+                    graceError.enhance (nameof PromotionSetId, promotionSetDto.PromotionSetId)
+                    |> ignore
+
+                    return Error(graceError)
+                | Option.Some artifactMetadata ->
+                    try
+                        let! repositoryDto = this.GetRepositoryDto()
+                        let! downloadUri = getUriWithReadSharedAccessSignature repositoryDto artifactMetadata.BlobPath metadata.CorrelationId
+                        let blobClient = BlobClient(downloadUri)
+                        let! downloadResult = blobClient.DownloadContentAsync()
+                        return Ok(downloadResult.Value.Content.ToString())
+                    with
+                    | ex ->
+                        let graceError = GraceError.CreateWithException ex "Failed while downloading manual override artifact payload." metadata.CorrelationId
+
+                        graceError.enhance (nameof ArtifactId, artifactId)
+                        |> ignore
+
+                        graceError.enhance (nameof PromotionSetId, promotionSetDto.PromotionSetId)
+                        |> ignore
+
+                        return Error(graceError)
+            }
+
+        member private this.ValidateManualOverrideArtifacts(decisions: ConflictResolutionDecision list, metadata: EventMetadata) =
+            task {
+                let overrideArtifactIds =
+                    decisions
+                    |> List.choose (fun decision -> if decision.Accepted then decision.OverrideContentArtifactId else Option.None)
+                    |> List.distinct
+
+                let mutable validationError: GraceError option = Option.None
+                let mutable index = 0
+
+                while index < overrideArtifactIds.Length
+                      && validationError.IsNone do
+                    let artifactId = overrideArtifactIds[index]
+                    let! artifactTextResult = this.GetArtifactText(artifactId, metadata)
+
+                    match artifactTextResult with
+                    | Error graceError -> validationError <- Some graceError
+                    | Ok artifactText ->
+                        if String.IsNullOrWhiteSpace artifactText then
+                            let graceError = GraceError.Create "Manual override artifact content is empty." metadata.CorrelationId
+
+                            graceError.enhance (nameof ArtifactId, artifactId)
+                            |> ignore
+
+                            graceError.enhance (nameof PromotionSetId, promotionSetDto.PromotionSetId)
+                            |> ignore
+
+                            validationError <- Some graceError
+
+                    index <- index + 1
+
+                match validationError with
+                | Some graceError -> return Error graceError
+                | Option.None -> return Ok()
+            }
+
         member private this.HydrateStepProvenance(step: PromotionSetStep) =
             task {
                 let referenceActorProxy = Reference.CreateActorProxy step.OriginalPromotion.ReferenceId promotionSetDto.RepositoryId this.correlationId
@@ -191,10 +319,45 @@ module PromotionSet =
                 reason: string,
                 confidence: float option,
                 computedAgainstBaseDirectoryVersionId: DirectoryVersionId,
-                metadata: EventMetadata
+                metadata: EventMetadata,
+                manualDecisions: ConflictResolutionDecision list option
             ) =
             task {
                 try
+                    let resolutionMethod =
+                        if manualDecisions.IsSome then ConflictResolutionMethod.ManualOverride
+                        elif confidence.IsSome then ConflictResolutionMethod.ModelSuggested
+                        else ConflictResolutionMethod.None
+
+                    let proposedResolution =
+                        confidence
+                        |> Option.map (fun score ->
+                            {
+                                ModelResolution =
+                                    if manualDecisions.IsSome then
+                                        "Manual resolution accepted via review workflow."
+                                    else
+                                        "Model-suggested merge proposal."
+                                Confidence = score
+                                Accepted = if manualDecisions.IsSome then Option.Some true else Option.None
+                            })
+
+                    let conflictAnalysis: ConflictAnalysis =
+                        {
+                            FilePath = "__step__"
+                            OriginalHunks =
+                                [
+                                    {
+                                        StartLine = 1
+                                        EndLine = 1
+                                        OursContent = $"{computedAgainstBaseDirectoryVersionId}"
+                                        TheirsContent = $"{step.OriginalPromotion.DirectoryVersionId}"
+                                    }
+                                ]
+                            ProposedResolution = proposedResolution
+                            ResolutionMethod = resolutionMethod
+                        }
+
                     let report =
                         {|
                             promotionSetId = promotionSetDto.PromotionSetId
@@ -206,21 +369,16 @@ module PromotionSet =
                             computedAgainstBaseDirectoryVersionId = computedAgainstBaseDirectoryVersionId
                             originalBaseDirectoryVersionId = step.OriginalBaseDirectoryVersionId
                             originalPromotionDirectoryVersionId = step.OriginalPromotion.DirectoryVersionId
-                            conflicts =
-                                [
-                                    {|
-                                        filePath = "__step__"
-                                        hunks =
-                                            [
-                                                {|
-                                                    startLine = 1
-                                                    endLine = 1
-                                                    oursContent = $"{computedAgainstBaseDirectoryVersionId}"
-                                                    theirsContent = $"{step.OriginalPromotion.DirectoryVersionId}"
-                                                |}
-                                            ]
-                                    |}
-                                ]
+                            conflicts = [ conflictAnalysis ]
+                            manualDecisions =
+                                (manualDecisions
+                                 |> Option.defaultValue []
+                                 |> List.map (fun decision ->
+                                     {|
+                                         filePath = decision.FilePath
+                                         accepted = decision.Accepted
+                                         overrideContentArtifactId = decision.OverrideContentArtifactId
+                                     |}))
                         |}
 
                     let reportJson = serialize report
@@ -246,7 +404,21 @@ module PromotionSet =
                     let artifactActorProxy = Artifact.CreateActorProxy artifactId promotionSetDto.RepositoryId this.correlationId
 
                     match! artifactActorProxy.Handle (ArtifactCommand.Create artifactMetadata) (this.WithActorMetadata metadata) with
-                    | Ok _ -> return Option.Some artifactId
+                    | Ok _ ->
+                        match! this.UploadArtifactPayload(blobPath, reportJson, metadata) with
+                        | Ok () -> return Option.Some artifactId
+                        | Error uploadError ->
+                            log.LogWarning(
+                                "{CurrentInstant}: Node: {HostName}; CorrelationId: {CorrelationId}; Conflict artifact metadata was created but payload upload failed for PromotionSetId {PromotionSetId}; ArtifactId {ArtifactId}. Error: {GraceError}.",
+                                getCurrentInstantExtended (),
+                                getMachineName,
+                                metadata.CorrelationId,
+                                promotionSetDto.PromotionSetId,
+                                artifactId,
+                                uploadError
+                            )
+
+                            return Option.Some artifactId
                     | Error graceError ->
                         log.LogWarning(
                             "{CurrentInstant}: Node: {HostName}; CorrelationId: {CorrelationId}; Failed to persist conflict artifact metadata for PromotionSetId {PromotionSetId}. Error: {GraceError}.",
@@ -381,10 +553,28 @@ module PromotionSet =
                             let mutable recomputeFailure: RecomputeFailure option = Option.None
                             let mutable currentHeadDirectoryVersionId = targetBaseDirectoryVersionId
                             let mutable index = 0
+                            let recomputeStopwatch = Stopwatch.StartNew()
+
+                            if orderedSteps.Length > maxStepsPerRecompute then
+                                recomputeFailure <-
+                                    Option.Some(
+                                        Failed(
+                                            $"Recompute exceeded configured step budget ({orderedSteps.Length} > {maxStepsPerRecompute})."
+                                        )
+                                    )
 
                             while index < orderedSteps.Length
                                   && recomputeFailure.IsNone do
+                                if recomputeStopwatch.ElapsedMilliseconds > int64 maxTotalTimeMilliseconds then
+                                    recomputeFailure <-
+                                        Option.Some(
+                                            Failed(
+                                                $"Recompute exceeded total time budget ({recomputeStopwatch.ElapsedMilliseconds} ms > {maxTotalTimeMilliseconds} ms)."
+                                            )
+                                        )
+
                                 let currentStep = orderedSteps[index]
+                                let stepStopwatch = Stopwatch.StartNew()
                                 let! hydratedStepResult = this.HydrateStepProvenance currentStep
 
                                 match hydratedStepResult with
@@ -412,7 +602,7 @@ module PromotionSet =
                                         computedSteps.Add(computedStep)
                                         currentHeadDirectoryVersionId <- computedStep.AppliedDirectoryVersionId
                                     else
-                                        let manualAccepted, hasManualOverride =
+                                        let manualAccepted, hasManualOverride, manualDecisions =
                                             match manualResolution with
                                             | Option.Some (resolvedStepId, decisions) when resolvedStepId = hydratedStep.StepId ->
                                                 let accepted =
@@ -425,20 +615,39 @@ module PromotionSet =
                                                         decision.Accepted
                                                         && decision.OverrideContentArtifactId.IsSome)
 
-                                                accepted, overrideProvided
-                                            | _ -> false, false
+                                                accepted, overrideProvided, decisions
+                                            | _ -> false, false, []
 
                                         if manualAccepted then
-                                            let computedStep =
-                                                { hydratedStep with
-                                                    ComputedAgainstBaseDirectoryVersionId = computedAgainstBaseDirectoryVersionId
-                                                    AppliedDirectoryVersionId = hydratedStep.OriginalPromotion.DirectoryVersionId
-                                                    ConflictSummaryArtifactId = Option.None
-                                                    ConflictStatus = StepConflictStatus.AutoResolved
-                                                }
+                                            let! manualOverrideValidation =
+                                                if hasManualOverride then
+                                                    this.ValidateManualOverrideArtifacts(manualDecisions, metadata)
+                                                else
+                                                    Task.FromResult(Ok())
 
-                                            computedSteps.Add(computedStep)
-                                            currentHeadDirectoryVersionId <- computedStep.AppliedDirectoryVersionId
+                                            match manualOverrideValidation with
+                                            | Error graceError -> recomputeFailure <- Option.Some(Failed graceError.Error)
+                                            | Ok () ->
+                                                let! manualConflictArtifactId =
+                                                    this.CreateConflictArtifact(
+                                                        hydratedStep,
+                                                        "Manual conflict resolution accepted.",
+                                                        Option.None,
+                                                        computedAgainstBaseDirectoryVersionId,
+                                                        metadata,
+                                                        Option.Some manualDecisions
+                                                    )
+
+                                                let computedStep =
+                                                    { hydratedStep with
+                                                        ComputedAgainstBaseDirectoryVersionId = computedAgainstBaseDirectoryVersionId
+                                                        AppliedDirectoryVersionId = hydratedStep.OriginalPromotion.DirectoryVersionId
+                                                        ConflictSummaryArtifactId = manualConflictArtifactId
+                                                        ConflictStatus = StepConflictStatus.AutoResolved
+                                                    }
+
+                                                computedSteps.Add(computedStep)
+                                                currentHeadDirectoryVersionId <- computedStep.AppliedDirectoryVersionId
                                         else
                                             match conflictResolutionPolicy with
                                             | ConflictResolutionPolicy.NoConflicts _ ->
@@ -450,7 +659,8 @@ module PromotionSet =
                                                         reasonText,
                                                         Option.None,
                                                         computedAgainstBaseDirectoryVersionId,
-                                                        metadata
+                                                        metadata,
+                                                        Option.None
                                                     )
 
                                                 recomputeFailure <- Option.Some(Blocked(reasonText, artifactId))
@@ -462,11 +672,24 @@ module PromotionSet =
                                                         this.GetModelConfidence(hydratedStep, computedAgainstBaseDirectoryVersionId)
 
                                                 if confidence >= float threshold then
+                                                    let! autoResolvedArtifactId =
+                                                        this.CreateConflictArtifact(
+                                                            hydratedStep,
+                                                            sprintf
+                                                                "Conflict auto-resolved by policy at confidence %.2f (threshold %.2f)."
+                                                                confidence
+                                                                (float threshold),
+                                                            Option.Some confidence,
+                                                            computedAgainstBaseDirectoryVersionId,
+                                                            metadata,
+                                                            Option.None
+                                                        )
+
                                                     let computedStep =
                                                         { hydratedStep with
                                                             ComputedAgainstBaseDirectoryVersionId = computedAgainstBaseDirectoryVersionId
                                                             AppliedDirectoryVersionId = hydratedStep.OriginalPromotion.DirectoryVersionId
-                                                            ConflictSummaryArtifactId = Option.None
+                                                            ConflictSummaryArtifactId = autoResolvedArtifactId
                                                             ConflictStatus = StepConflictStatus.AutoResolved
                                                         }
 
@@ -486,10 +709,23 @@ module PromotionSet =
                                                             reasonText,
                                                             Option.Some confidence,
                                                             computedAgainstBaseDirectoryVersionId,
-                                                            metadata
+                                                            metadata,
+                                                            Option.None
                                                         )
 
                                                     recomputeFailure <- Option.Some(Blocked(reasonText, artifactId))
+
+                                if
+                                    recomputeFailure.IsNone
+                                    && stepStopwatch.ElapsedMilliseconds
+                                       > int64 maxStepTimeMilliseconds
+                                then
+                                    recomputeFailure <-
+                                        Option.Some(
+                                            Failed(
+                                                $"Step {currentStep.StepId} exceeded step time budget ({stepStopwatch.ElapsedMilliseconds} ms > {maxStepTimeMilliseconds} ms)."
+                                            )
+                                        )
 
                                 index <- index + 1
 
