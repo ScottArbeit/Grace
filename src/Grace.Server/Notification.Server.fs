@@ -15,8 +15,10 @@ open Grace.Shared.Utilities
 open Grace.Types
 open Grace.Types.Automation
 open Grace.Types.Events
+open Grace.Types.Queue
 open Grace.Types.Reference
 open Grace.Types.Types
+open Grace.Types.Validation
 open Microsoft.AspNetCore.Builder
 open Microsoft.AspNetCore.SignalR
 open Microsoft.Extensions.Configuration
@@ -26,6 +28,7 @@ open Microsoft.Extensions.Logging
 open System
 open System.Linq
 open System.Text.Json
+open System.Text.RegularExpressions
 open System.Threading
 open System.Threading.Tasks
 
@@ -38,12 +41,10 @@ module Notification =
         abstract member RegisterRepository: RepositoryId -> Task
         abstract member RegisterParentBranch: BranchId -> BranchId -> Task
         abstract member NotifyRepository: RepositoryId * ReferenceId -> Task
-        abstract member NotifyOnPromotion: BranchId * BranchName * ReferenceId -> Task
         abstract member NotifyOnCommit: BranchName * BranchName * BranchId * ReferenceId -> Task
         abstract member NotifyOnCheckpoint: BranchName * BranchName * BranchId * ReferenceId -> Task
         abstract member NotifyOnSave: BranchName * BranchName * BranchId * ReferenceId -> Task
         abstract member NotifyAutomationEvent: AutomationEventEnvelope -> Task
-        abstract member NotifyEvent: Eventing.EventEnvelope -> Task
         abstract member ServerToClientMessage: string -> Task
 
     type NotificationHub() =
@@ -100,25 +101,6 @@ module Notification =
                         .Clients
                         .Group($"{repositoryId}")
                         .NotifyRepository(repositoryId, referenceId)
-            }
-            :> Task
-
-        member this.NotifyOnPromotion((branchId: BranchId), (branchName: BranchName), (referenceId: ReferenceId)) =
-            task {
-                log.LogInformation(
-                    "{CurrentInstant}: Node: {HostName}; Notifying clients in Branch: '{BranchName}' ({BranchId}) of promotion ReferenceId: {ReferenceId}.",
-                    getCurrentInstantExtended (),
-                    getMachineName,
-                    branchName,
-                    branchId,
-                    referenceId
-                )
-
-                do!
-                    this
-                        .Clients
-                        .Group($"{branchId}")
-                        .NotifyOnPromotion(branchId, branchName, referenceId)
             }
             :> Task
 
@@ -188,24 +170,6 @@ module Notification =
             task {
                 if not <| isNull (this.Clients) then
                     do! this.Clients.All.ServerToClientMessage(message)
-                else
-                    logToConsole $"No SignalR clients connected."
-            }
-            :> Task
-
-        member this.NotifyEvent(envelope: Eventing.EventEnvelope) =
-            task {
-                if not <| isNull (this.Clients) then
-                    let groupKey =
-                        if envelope.RepositoryId = RepositoryId.Empty then
-                            String.Empty
-                        else
-                            $"{envelope.RepositoryId}"
-
-                    if String.IsNullOrWhiteSpace groupKey then
-                        do! this.Clients.All.NotifyEvent(envelope)
-                    else
-                        do! this.Clients.Group(groupKey).NotifyEvent(envelope)
                 else
                     logToConsole $"No SignalR clients connected."
             }
@@ -344,6 +308,240 @@ module Notification =
                     )
             }
 
+        let private parseGuid (value: string) =
+            let mutable parsed = Guid.Empty
+
+            if String.IsNullOrWhiteSpace value |> not
+               && Guid.TryParse(value, &parsed)
+               && parsed <> Guid.Empty then
+                Some parsed
+            else
+                None
+
+        let private matchesBranchGlob (branchName: BranchName) (branchNameGlob: string) =
+            let normalizedPattern = if String.IsNullOrWhiteSpace branchNameGlob then "*" else branchNameGlob.Trim()
+
+            let regexPattern =
+                "^"
+                + Regex
+                    .Escape(normalizedPattern)
+                    .Replace("\\*", ".*")
+                + "$"
+
+            Regex.IsMatch(
+                $"{branchName}",
+                regexPattern,
+                RegexOptions.IgnoreCase
+                ||| RegexOptions.CultureInvariant
+            )
+
+        let private tryGetPromotionSetIdFromMetadata (metadata: EventMetadata) =
+            match metadata.Properties.TryGetValue("ActorId") with
+            | true, actorId -> parseGuid actorId
+            | _ -> None
+
+        let private tryGetTerminalPromotionSetId (links: ReferenceLinkType seq) =
+            links
+            |> Seq.tryPick (fun link ->
+                match link with
+                | ReferenceLinkType.PromotionSetTerminal promotionSetId -> Some promotionSetId
+                | _ -> None)
+
+        let private emitAutomationEvent (hubContext: IHubContext<NotificationHub, IGraceClientConnection>) (envelope: AutomationEventEnvelope) =
+            task {
+                if not <| isNull hubContext then
+                    let groupKey =
+                        if envelope.RepositoryId = RepositoryId.Empty then
+                            String.Empty
+                        else
+                            $"{envelope.RepositoryId}"
+
+                    if String.IsNullOrWhiteSpace groupKey then
+                        do! hubContext.Clients.All.NotifyAutomationEvent(envelope)
+                    else
+                        do!
+                            hubContext
+                                .Clients
+                                .Group(groupKey)
+                                .NotifyAutomationEvent(envelope)
+            }
+
+        let private getPromotionSetContext (repositoryId: RepositoryId) (promotionSetId: PromotionSetId) (correlationId: CorrelationId) =
+            task {
+                let promotionSetActorProxy = PromotionSet.CreateActorProxy promotionSetId repositoryId correlationId
+                let! exists = promotionSetActorProxy.Exists correlationId
+
+                if exists then
+                    let! promotionSet = promotionSetActorProxy.Get correlationId
+                    let! branch = getBranchDto promotionSet.TargetBranchId repositoryId correlationId
+                    return Some(promotionSet, branch)
+                else
+                    return None
+            }
+
+        let private tryResolveAutomationBranchContext (graceEvent: GraceEvent) (correlationId: CorrelationId) =
+            task {
+                match graceEvent with
+                | QueueEvent queueEvent ->
+                    match queueEvent.Event with
+                    | PromotionQueueEventType.PromotionSetEnqueued promotionSetId
+                    | PromotionQueueEventType.PromotionSetDequeued promotionSetId ->
+                        match tryGetRepositoryIdFromMetadata queueEvent.Metadata with
+                        | Some repositoryId ->
+                            let! promotionSetContext = getPromotionSetContext repositoryId promotionSetId correlationId
+
+                            match promotionSetContext with
+                            | Some (promotionSet, branch) ->
+                                return
+                                    Some(
+                                        repositoryId,
+                                        branch.BranchId,
+                                        branch.BranchName,
+                                        Some promotionSet.PromotionSetId,
+                                        Some promotionSet.StepsComputationAttempt
+                                    )
+                            | None -> return None
+                        | None -> return None
+                    | _ -> return None
+                | PromotionSetEvent promotionSetEvent ->
+                    match tryGetPromotionSetIdFromMetadata promotionSetEvent.Metadata, tryGetRepositoryIdFromMetadata promotionSetEvent.Metadata with
+                    | Some promotionSetId, Some repositoryId ->
+                        let! promotionSetContext = getPromotionSetContext repositoryId promotionSetId correlationId
+
+                        match promotionSetContext with
+                        | Some (promotionSet, branch) ->
+                            return
+                                Some(
+                                    repositoryId,
+                                    branch.BranchId,
+                                    branch.BranchName,
+                                    Some promotionSet.PromotionSetId,
+                                    Some promotionSet.StepsComputationAttempt
+                                )
+                        | None -> return None
+                    | _ -> return None
+                | ReferenceEvent referenceEvent ->
+                    match referenceEvent.Event with
+                    | ReferenceEventType.Created (_, _, _, repositoryId, branchId, _, _, referenceType, _, links) when referenceType = ReferenceType.Promotion ->
+                        match tryGetTerminalPromotionSetId links with
+                        | Some promotionSetId ->
+                            let! branchDto = getBranchDto branchId repositoryId correlationId
+                            let! promotionSetContext = getPromotionSetContext repositoryId promotionSetId correlationId
+
+                            let stepsComputationAttempt =
+                                promotionSetContext
+                                |> Option.map (fun (promotionSet, _) -> promotionSet.StepsComputationAttempt)
+
+                            return Some(repositoryId, branchId, branchDto.BranchName, Some promotionSetId, stepsComputationAttempt)
+                        | None -> return None
+                    | _ -> return None
+                | _ -> return None
+            }
+
+        let private emitValidationRequestedEvents
+            (hubContext: IHubContext<NotificationHub, IGraceClientConnection>)
+            (sourceEnvelope: AutomationEventEnvelope)
+            (graceEvent: GraceEvent)
+            =
+            task {
+                let correlationId = sourceEnvelope.CorrelationId
+
+                let! context = tryResolveAutomationBranchContext graceEvent correlationId
+
+                match context with
+                | None -> ()
+                | Some (repositoryId, branchId, branchName, promotionSetId, stepsComputationAttempt) ->
+                    let! validationSets = getValidationSets repositoryId 500 false correlationId
+
+                    let matchingValidationSets =
+                        validationSets
+                        |> List.filter (fun validationSet ->
+                            validationSet.Rules
+                            |> List.exists (fun rule ->
+                                rule.EventTypes
+                                |> List.contains sourceEnvelope.EventType
+                                && matchesBranchGlob branchName rule.BranchNameGlob))
+
+                    let mutable index = 0
+
+                    while index < matchingValidationSets.Length do
+                        let validationSet = matchingValidationSets[index]
+                        let mutable validationIndex = 0
+
+                        while validationIndex < validationSet.Validations.Length do
+                            let validation = validationSet.Validations[validationIndex]
+
+                            match validation.ExecutionMode with
+                            | ValidationExecutionMode.AsyncCallback ->
+                                let payload =
+                                    {|
+                                        validationSetId = validationSet.ValidationSetId
+                                        promotionSetId = promotionSetId
+                                        stepsComputationAttempt = stepsComputationAttempt
+                                        targetBranchId = branchId
+                                        targetBranchName = branchName
+                                        validationName = validation.Name
+                                        validationVersion = validation.Version
+                                        sourceEventType = sourceEnvelope.EventType
+                                    |}
+
+                                let validationRequestedEnvelope =
+                                    AutomationEventEnvelope.Create
+                                        AutomationEventType.ValidationRequested
+                                        (getCurrentInstant ())
+                                        correlationId
+                                        validationSet.OwnerId
+                                        validationSet.OrganizationId
+                                        validationSet.RepositoryId
+                                        $"{validationSet.ValidationSetId}"
+                                        (serialize payload)
+
+                                do! emitAutomationEvent hubContext validationRequestedEnvelope
+                            | ValidationExecutionMode.Synchronous ->
+                                let validationResultId = Guid.NewGuid()
+                                let validationResultActorProxy = ValidationResult.CreateActorProxy validationResultId repositoryId correlationId
+                                let metadata = EventMetadata.New correlationId GraceSystemUser
+                                metadata.Properties[ nameof RepositoryId ] <- $"{repositoryId}"
+                                metadata.Properties[ "ActorId" ] <- $"{validationResultId}"
+
+                                let validationResultDto =
+                                    { ValidationResultDto.Default with
+                                        ValidationResultId = validationResultId
+                                        OwnerId = validationSet.OwnerId
+                                        OrganizationId = validationSet.OrganizationId
+                                        RepositoryId = repositoryId
+                                        ValidationSetId = Some validationSet.ValidationSetId
+                                        PromotionSetId = promotionSetId
+                                        StepsComputationAttempt = stepsComputationAttempt
+                                        ValidationName = validation.Name
+                                        ValidationVersion = validation.Version
+                                        Output =
+                                            {
+                                                Status = ValidationStatus.Pass
+                                                Summary = $"Synchronous validation '{validation.Name}' recorded automatically from {sourceEnvelope.EventType}."
+                                                ArtifactIds = []
+                                            }
+                                        OnBehalfOf = [ UserId GraceSystemUser ]
+                                        CreatedAt = getCurrentInstant ()
+                                    }
+
+                                match! validationResultActorProxy.Handle (ValidationResultCommand.Record validationResultDto) metadata with
+                                | Ok _ -> ()
+                                | Error graceError ->
+                                    log.LogWarning(
+                                        "{CurrentInstant}: Node: {HostName}; CorrelationId: {CorrelationId}; Failed recording synchronous validation result for ValidationSetId {ValidationSetId}. Error: {GraceError}",
+                                        getCurrentInstantExtended (),
+                                        getMachineName,
+                                        correlationId,
+                                        validationSet.ValidationSetId,
+                                        graceError
+                                    )
+
+                            validationIndex <- validationIndex + 1
+
+                        index <- index + 1
+            }
+
         let hubContext = lazy (serviceProvider.GetService<IHubContext<NotificationHub, IGraceClientConnection>>())
 
         //let private getHubContextOld () =
@@ -443,13 +641,6 @@ module Notification =
                                     match link with
                                     | ReferenceLinkType.PromotionSetTerminal _ -> true
                                     | _ -> false)
-
-                            if (not <| isNull hubContext) && isTerminalPromotion then
-                                do!
-                                    hubContext
-                                        .Clients
-                                        .Group($"{branchId}")
-                                        .NotifyOnPromotion(branchId, branchDto.BranchName, referenceId)
 
                             if isTerminalPromotion then
                                 do!
@@ -711,21 +902,19 @@ module Notification =
 
                 match EventingPublisher.tryCreateEnvelope graceEvent with
                 | Some envelope ->
-                    if not <| isNull hubContext then
-                        let groupKey =
-                            if envelope.RepositoryId = RepositoryId.Empty then
-                                String.Empty
-                            else
-                                $"{envelope.RepositoryId}"
+                    do! emitAutomationEvent hubContext envelope
 
-                        if String.IsNullOrWhiteSpace groupKey then
-                            do! hubContext.Clients.All.NotifyAutomationEvent(envelope)
-                        else
-                            do!
-                                hubContext
-                                    .Clients
-                                    .Group(groupKey)
-                                    .NotifyAutomationEvent(envelope)
+                    if envelope.EventType = AutomationEventType.PromotionSetStepsUpdated then
+                        let recomputeSucceededEnvelope =
+                            { envelope with
+                                EventId = Guid.NewGuid()
+                                EventType = AutomationEventType.PromotionSetRecomputeSucceeded
+                                EventTime = getCurrentInstant ()
+                            }
+
+                        do! emitAutomationEvent hubContext recomputeSucceededEnvelope
+
+                    do! emitValidationRequestedEvents hubContext envelope graceEvent
                 | None -> ()
 
             //return! setStatusCode StatusCodes.Status204NoContent next context

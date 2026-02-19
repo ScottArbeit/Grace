@@ -522,7 +522,7 @@ module Application =
                                route "/apply" PromotionSet.Apply
                                |> addMetadata typeof<Grace.Shared.Parameters.PromotionSet.ApplyPromotionSetParameters>
 
-                               route "/resolve-conflicts" PromotionSet.ResolveConflicts
+                               routef "/%O/resolve-conflicts" PromotionSet.ResolveConflicts
                                |> addMetadata typeof<Grace.Shared.Parameters.PromotionSet.ResolvePromotionSetConflictsParameters>
 
                                route "/delete" PromotionSet.Delete

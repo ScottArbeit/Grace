@@ -33,7 +33,10 @@ type PromotionSet() =
 
     /// Resolves blocked promotion set conflicts.
     static member public ResolveConflicts(parameters: ResolvePromotionSetConflictsParameters) =
-        postServer<ResolvePromotionSetConflictsParameters, string> (parameters |> ensureCorrelationIdIsSet, "promotion-set/resolve-conflicts")
+        postServer<ResolvePromotionSetConflictsParameters, string> (
+            parameters |> ensureCorrelationIdIsSet,
+            $"promotion-set/{parameters.PromotionSetId}/resolve-conflicts"
+        )
 
     /// Logically deletes a promotion set.
     static member public Delete(parameters: DeletePromotionSetParameters) =

@@ -533,16 +533,6 @@ module Watch =
                             (fun message -> logToAnsiConsole Colors.Important $"From Grace Server: {message}")
                         )
 
-                    use notifyOnPromotion =
-                        signalRConnection.On<BranchId, BranchName, ReferenceId>(
-                            "NotifyOnPromotion",
-                            fun parentBranchId parentBranchName referenceId ->
-                                (task {
-                                    logToAnsiConsole Colors.Highlighted $"Parent branch {parentBranchName} has a new promotion; referenceId: {referenceId}."
-                                })
-                                :> Task
-                        )
-
                     use notifyAutomationEvent =
                         signalRConnection.On<AutomationEventEnvelope>(
                             "NotifyAutomationEvent",

@@ -309,7 +309,7 @@ module PromotionSet =
             }
 
     /// Resolves blocked conflicts for a promotion set.
-    let ResolveConflicts: HttpHandler =
+    let ResolveConflicts (routePromotionSetId: PromotionSetId) : HttpHandler =
         fun (_next: HttpFunc) (context: HttpContext) ->
             task {
                 let graceIds = getGraceIds context
@@ -322,6 +322,7 @@ module PromotionSet =
                 parameters.OwnerId <- graceIds.OwnerIdString
                 parameters.OrganizationId <- graceIds.OrganizationIdString
                 parameters.RepositoryId <- graceIds.RepositoryIdString
+                parameters.PromotionSetId <- $"{routePromotionSetId}"
 
                 let validations (_: ResolvePromotionSetConflictsParameters) =
                     [|
@@ -348,7 +349,7 @@ module PromotionSet =
                                 GraceError.Create (ValidationResultError.getErrorMessage ValidationResultError.InvalidPromotionSetStepId) correlationId
                             )
                     else
-                        let promotionSetId = Guid.Parse(parameters.PromotionSetId)
+                        let promotionSetId = routePromotionSetId
                         let actorProxy = PromotionSet.CreateActorProxy promotionSetId graceIds.RepositoryId correlationId
                         let! currentPromotionSet = actorProxy.Get correlationId
 

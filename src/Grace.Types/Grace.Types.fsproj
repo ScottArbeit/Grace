@@ -38,7 +38,6 @@
         <Compile Include="Artifact.Types.fs" />
         <Compile Include="Automation.Types.fs" />
         <Compile Include="Validation.Types.fs" />
-        <Compile Include="Eventing.Types.fs" />
         <Compile Include="Diff.Types.fs" />
         <Compile Include="DirectoryVersion.Types.fs" />
         <Compile Include="Reminder.Types.fs" />

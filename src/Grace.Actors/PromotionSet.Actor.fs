@@ -16,6 +16,7 @@ open Grace.Types.Queue
 open Grace.Types.Reference
 open Grace.Types.Reminder
 open Grace.Types.Types
+open Grace.Types.Validation
 open Microsoft.Extensions.Logging
 open Orleans
 open Orleans.Runtime
@@ -592,6 +593,62 @@ module PromotionSet =
                     | Error graceError -> return Error graceError
             }
 
+        member private this.GetRequiredValidationsForApply() =
+            task {
+                let! validationSets = getValidationSets promotionSetDto.RepositoryId 500 false this.correlationId
+
+                return
+                    validationSets
+                    |> List.filter (fun validationSet -> validationSet.TargetBranchId = promotionSetDto.TargetBranchId)
+                    |> List.collect (fun validationSet -> validationSet.Validations)
+                    |> List.filter (fun validation -> validation.RequiredForApply)
+                    |> List.distinctBy (fun validation -> $"{validation.Name.Trim().ToLowerInvariant()}::{validation.Version.Trim().ToLowerInvariant()}")
+            }
+
+        member private this.EnsureRequiredValidationsPass(metadata: EventMetadata) =
+            task {
+                let! requiredValidations = this.GetRequiredValidationsForApply()
+
+                if requiredValidations.IsEmpty then
+                    return Ok()
+                else
+                    let! scopedValidationResults =
+                        getValidationResultsForPromotionSetAttempt
+                            promotionSetDto.RepositoryId
+                            promotionSetDto.PromotionSetId
+                            promotionSetDto.StepsComputationAttempt
+                            5000
+                            this.correlationId
+
+                    let hasPass (validationName: string) (validationVersion: string) =
+                        scopedValidationResults
+                        |> List.exists (fun validationResult ->
+                            String.Equals(validationResult.ValidationName, validationName, StringComparison.OrdinalIgnoreCase)
+                            && String.Equals(validationResult.ValidationVersion, validationVersion, StringComparison.OrdinalIgnoreCase)
+                            && validationResult.Output.Status = ValidationStatus.Pass)
+
+                    let missingOrFailing =
+                        requiredValidations
+                        |> List.filter (fun validation -> not <| hasPass validation.Name validation.Version)
+
+                    if missingOrFailing.IsEmpty then
+                        return Ok()
+                    else
+                        let details =
+                            missingOrFailing
+                            |> List.map (fun validation -> $"{validation.Name}:{validation.Version}")
+                            |> String.concat ", "
+
+                        return
+                            Error(
+                                (GraceError.Create
+                                    $"Required validations have not passed for StepsComputationAttempt {promotionSetDto.StepsComputationAttempt}: {details}."
+                                    metadata.CorrelationId)
+                                    .enhance(nameof PromotionSetId, promotionSetDto.PromotionSetId)
+                                    .enhance ("StepsComputationAttempt", promotionSetDto.StepsComputationAttempt)
+                            )
+            }
+
         member private this.ApplyPromotionSet(metadata: EventMetadata) =
             task {
                 if promotionSetDto.Status = PromotionSetStatus.Succeeded then
@@ -626,6 +683,11 @@ module PromotionSet =
                     if preconditionError.IsNone
                        && promotionSetDto.Steps.IsEmpty then
                         preconditionError <- Option.Some(GraceError.Create "PromotionSet does not have any steps to apply." metadata.CorrelationId)
+
+                    if preconditionError.IsNone then
+                        match! this.EnsureRequiredValidationsPass metadata with
+                        | Ok _ -> ()
+                        | Error graceError -> preconditionError <- Option.Some graceError
 
                     if preconditionError.IsSome then
                         return Error preconditionError.Value

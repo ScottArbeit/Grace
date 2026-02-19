@@ -26,6 +26,7 @@ open Grace.Types.Repository
 open Grace.Types.Organization
 open Grace.Types.Owner
 open Grace.Types.Types
+open Grace.Types.Validation
 open Grace.Shared.Utilities
 open Microsoft.Azure.Cosmos
 open Microsoft.Azure.Cosmos.Linq
@@ -73,6 +74,9 @@ module Services =
 
     type BranchIdValue() =
         member val public branchId = BranchId.Empty with get, set
+
+    type ActorIdValue() =
+        member val public id = String.Empty with get, set
 
     type OwnerEventValue() =
         member val public State: OwnerEvent array = Array.Empty<OwnerEvent>() with get, set
@@ -2521,6 +2525,155 @@ module Services =
                 childBranches
                     .OrderBy(fun branchDto -> branchDto.BranchName)
                     .ToArray()
+        }
+
+    /// Gets validation sets for a repository.
+    let getValidationSets (repositoryId: RepositoryId) (maxCount: int) includeDeleted correlationId =
+        task {
+            let validationSets = ConcurrentBag<ValidationSetDto>()
+            let validationSetIds = List<ValidationSetId>()
+
+            match actorStateStorageProvider with
+            | Unknown -> ()
+            | AzureCosmosDb ->
+                try
+                    let queryDefinition =
+                        QueryDefinition(
+                            """
+                            SELECT TOP @maxCount c.id
+                            FROM c
+                            WHERE c.GrainType = @grainType
+                                AND c.PartitionKey = @partitionKey
+                            """
+                        )
+                            .WithParameter("@maxCount", maxCount)
+                            .WithParameter("@grainType", StateName.ValidationSet)
+                            .WithParameter("@partitionKey", repositoryId)
+
+                    let iterator = cosmosContainer.GetItemQueryIterator<ActorIdValue>(queryDefinition, requestOptions = queryRequestOptions)
+
+                    while iterator.HasMoreResults do
+                        let! results = iterator.ReadNextAsync()
+
+                        results.Resource
+                        |> Seq.iter (fun value ->
+                            let mutable parsed = Guid.Empty
+
+                            if String.IsNullOrWhiteSpace value.id |> not
+                               && Guid.TryParse(value.id, &parsed)
+                               && parsed <> Guid.Empty then
+                                validationSetIds.Add(parsed))
+                with
+                | ex ->
+                    log.LogError(
+                        ex,
+                        "{CurrentInstant}: Error in getValidationSets. CorrelationId: {correlationId}; RepositoryId: {repositoryId}.",
+                        getCurrentInstantExtended (),
+                        correlationId,
+                        repositoryId
+                    )
+            | MongoDB -> ()
+
+            do!
+                Parallel.ForEachAsync(
+                    validationSetIds,
+                    (fun validationSetId ct ->
+                        ValueTask(
+                            task {
+                                let actorProxy = ValidationSet.CreateActorProxy validationSetId repositoryId correlationId
+                                let! validationSet = actorProxy.Get correlationId
+
+                                match validationSet with
+                                | Some dto when includeDeleted || dto.DeletedAt.IsNone -> validationSets.Add(dto)
+                                | _ -> ()
+                            }
+                        ))
+                )
+
+            return
+                validationSets
+                |> Seq.sortByDescending (fun dto -> dto.CreatedAt)
+                |> Seq.toList
+        }
+
+    /// Gets validation results for a PromotionSet and computation attempt.
+    let getValidationResultsForPromotionSetAttempt
+        (repositoryId: RepositoryId)
+        (promotionSetId: PromotionSetId)
+        (stepsComputationAttempt: int)
+        (maxCount: int)
+        correlationId
+        =
+        task {
+            let validationResults = ConcurrentBag<ValidationResultDto>()
+            let validationResultIds = List<ValidationResultId>()
+
+            match actorStateStorageProvider with
+            | Unknown -> ()
+            | AzureCosmosDb ->
+                try
+                    let queryDefinition =
+                        QueryDefinition(
+                            """
+                            SELECT TOP @maxCount c.id
+                            FROM c
+                            WHERE c.GrainType = @grainType
+                                AND c.PartitionKey = @partitionKey
+                            """
+                        )
+                            .WithParameter("@maxCount", maxCount)
+                            .WithParameter("@grainType", StateName.ValidationResult)
+                            .WithParameter("@partitionKey", repositoryId)
+
+                    let iterator = cosmosContainer.GetItemQueryIterator<ActorIdValue>(queryDefinition, requestOptions = queryRequestOptions)
+
+                    while iterator.HasMoreResults do
+                        let! results = iterator.ReadNextAsync()
+
+                        results.Resource
+                        |> Seq.iter (fun value ->
+                            let mutable parsed = Guid.Empty
+
+                            if String.IsNullOrWhiteSpace value.id |> not
+                               && Guid.TryParse(value.id, &parsed)
+                               && parsed <> Guid.Empty then
+                                validationResultIds.Add(parsed))
+                with
+                | ex ->
+                    log.LogError(
+                        ex,
+                        "{CurrentInstant}: Error in getValidationResultsForPromotionSetAttempt. CorrelationId: {correlationId}; RepositoryId: {repositoryId}; PromotionSetId: {promotionSetId}.",
+                        getCurrentInstantExtended (),
+                        correlationId,
+                        repositoryId,
+                        promotionSetId
+                    )
+            | MongoDB -> ()
+
+            do!
+                Parallel.ForEachAsync(
+                    validationResultIds,
+                    (fun validationResultId ct ->
+                        ValueTask(
+                            task {
+                                let actorProxy = ValidationResult.CreateActorProxy validationResultId repositoryId correlationId
+                                let! validationResult = actorProxy.Get correlationId
+
+                                match validationResult with
+                                | Some dto when
+                                    dto.PromotionSetId = Some promotionSetId
+                                    && dto.StepsComputationAttempt = Some stepsComputationAttempt
+                                    ->
+                                    validationResults.Add(dto)
+                                | _ -> ()
+                            }
+                        ))
+                )
+
+            return
+                validationResults
+                |> Seq.sortByDescending (fun dto -> dto.CreatedAt)
+                |> Seq.toList
         }
 
     /// Gets a list of reminders for a repository, with optional filtering.

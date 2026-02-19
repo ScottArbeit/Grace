@@ -43,7 +43,7 @@ module PromotionSet =
     type ApplyPromotionSetParameters() =
         inherit PromotionSetParameters()
 
-    /// Parameters for /promotion-set/resolve-conflicts.
+    /// Parameters for /promotion-set/{promotionSetId}/resolve-conflicts.
     type ResolvePromotionSetConflictsParameters() =
         inherit PromotionSetParameters()
         member val public StepId = String.Empty with get, set
