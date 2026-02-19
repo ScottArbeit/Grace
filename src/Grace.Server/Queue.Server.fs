@@ -354,7 +354,7 @@ module Queue =
                 return! processCommand context validations command
             }
 
-    /// Enqueues a candidate in the promotion queue.
+    /// Enqueues a promotion set in the promotion queue.
     let Enqueue: HttpHandler =
         fun (_next: HttpFunc) (context: HttpContext) ->
             task {
@@ -364,7 +364,7 @@ module Queue =
                 let validations (parameters: EnqueueParameters) =
                     [|
                         Guid.isValidAndNotEmptyGuid parameters.TargetBranchId QueueError.InvalidTargetBranchId
-                        Guid.isValidAndNotEmptyGuid parameters.CandidateId QueueError.InvalidCandidateId
+                        Guid.isValidAndNotEmptyGuid parameters.PromotionSetId QueueError.InvalidPromotionSetId
                         (if String.IsNullOrEmpty(parameters.PolicySnapshotId) then
                              Ok() |> returnValueTask
                          else
@@ -381,17 +381,17 @@ module Queue =
 
                 if validationsPassed then
                     let targetBranchId = Guid.Parse(parameters.TargetBranchId)
-                    let candidateId = Guid.Parse(parameters.CandidateId)
+                    let promotionSetId = Guid.Parse(parameters.PromotionSetId)
                     let actorProxy = PromotionQueue.CreateActorProxy targetBranchId graceIds.RepositoryId correlationId
+                    let promotionSetActorProxy = PromotionSet.CreateActorProxy promotionSetId graceIds.RepositoryId correlationId
                     let metadata = createMetadata context
-                    let candidateActorProxy = IntegrationCandidate.CreateActorProxy candidateId graceIds.RepositoryId correlationId
 
                     let runEnqueue () =
                         task {
                             context.Items[ "Command" ] <- nameof Enqueue
 
                             let command (_: EnqueueParameters) =
-                                PromotionQueueCommand.Enqueue candidateId
+                                PromotionQueueCommand.Enqueue promotionSetId
                                 |> returnValueTask
 
                             return! processCommandWithParameters context parameters (fun _ -> [||]) command
@@ -416,44 +416,11 @@ module Queue =
                                 return! runEnqueue ()
                         }
 
-                    let! candidateExists = candidateActorProxy.Exists correlationId
+                    let! promotionSetExists = promotionSetActorProxy.Exists correlationId
 
-                    if not candidateExists then
-                        let workItemId =
-                            if String.IsNullOrEmpty(parameters.WorkItemId) then
-                                WorkItemId.Empty
-                            else
-                                Guid.Parse(parameters.WorkItemId)
-
-                        let promotionGroupId =
-                            if String.IsNullOrEmpty(parameters.PromotionGroupId) then
-                                None
-                            else
-                                Some(Guid.Parse(parameters.PromotionGroupId))
-
-                        let policySnapshotId =
-                            if String.IsNullOrEmpty(parameters.PolicySnapshotId) then
-                                PolicySnapshotId String.Empty
-                            else
-                                PolicySnapshotId parameters.PolicySnapshotId
-
-                        let candidate =
-                            { IntegrationCandidate.Default with
-                                CandidateId = candidateId
-                                OwnerId = graceIds.OwnerId
-                                OrganizationId = graceIds.OrganizationId
-                                RepositoryId = graceIds.RepositoryId
-                                WorkItemId = workItemId
-                                PromotionGroupId = promotionGroupId
-                                TargetBranchId = targetBranchId
-                                PolicySnapshotId = policySnapshotId
-                                Status = CandidateStatus.Pending
-                                CreatedAt = getCurrentInstant ()
-                            }
-
-                        match! candidateActorProxy.Handle (CandidateCommand.Initialize candidate) metadata with
-                        | Error error -> return! context |> result400BadRequest error
-                        | Ok _ -> return! continueEnqueue ()
+                    if not promotionSetExists then
+                        let graceError = GraceError.Create "The specified promotion set does not exist." correlationId
+                        return! context |> result400BadRequest graceError
                     else
                         return! continueEnqueue ()
                 else
@@ -463,18 +430,18 @@ module Queue =
                     return! context |> result400BadRequest graceError
             }
 
-    /// Dequeues a candidate from the promotion queue.
+    /// Dequeues a promotion set from the promotion queue.
     let Dequeue: HttpHandler =
         fun (_next: HttpFunc) (context: HttpContext) ->
             task {
-                let validations (parameters: CandidateActionParameters) =
+                let validations (parameters: PromotionSetActionParameters) =
                     [|
                         Guid.isValidAndNotEmptyGuid parameters.TargetBranchId QueueError.InvalidTargetBranchId
-                        Guid.isValidAndNotEmptyGuid parameters.CandidateId QueueError.InvalidCandidateId
+                        Guid.isValidAndNotEmptyGuid parameters.PromotionSetId QueueError.InvalidPromotionSetId
                     |]
 
-                let command (parameters: CandidateActionParameters) =
-                    PromotionQueueCommand.Dequeue(Guid.Parse(parameters.CandidateId))
+                let command (parameters: PromotionSetActionParameters) =
+                    PromotionQueueCommand.Dequeue(Guid.Parse(parameters.PromotionSetId))
                     |> returnValueTask
 
                 context.Items[ "Command" ] <- nameof Dequeue

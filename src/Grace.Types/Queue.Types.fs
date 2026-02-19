@@ -309,8 +309,8 @@ module Queue =
         {
             Class: string
             TargetBranchId: BranchId
-            CandidateIds: CandidateId list
-            RunningCandidateId: CandidateId option
+            PromotionSetIds: PromotionSetId list
+            RunningPromotionSetId: PromotionSetId option
             State: QueueState
             PolicySnapshotId: PolicySnapshotId
             UpdatedAt: Instant option
@@ -320,8 +320,8 @@ module Queue =
             {
                 Class = nameof PromotionQueue
                 TargetBranchId = BranchId.Empty
-                CandidateIds = []
-                RunningCandidateId = None
+                PromotionSetIds = []
+                RunningPromotionSetId = None
                 State = QueueState.Idle
                 PolicySnapshotId = PolicySnapshotId String.Empty
                 UpdatedAt = None
@@ -331,9 +331,9 @@ module Queue =
     [<KnownType("GetKnownTypes")>]
     type PromotionQueueCommand =
         | Initialize of targetBranchId: BranchId * policySnapshotId: PolicySnapshotId
-        | Enqueue of candidateId: CandidateId
-        | Dequeue of candidateId: CandidateId
-        | SetRunning of candidateId: CandidateId option
+        | Enqueue of promotionSetId: PromotionSetId
+        | Dequeue of promotionSetId: PromotionSetId
+        | SetRunning of promotionSetId: PromotionSetId option
         | Pause
         | Resume
         | SetDegraded
@@ -345,9 +345,9 @@ module Queue =
     [<KnownType("GetKnownTypes")>]
     type PromotionQueueEventType =
         | Initialized of targetBranchId: BranchId * policySnapshotId: PolicySnapshotId
-        | CandidateEnqueued of candidateId: CandidateId
-        | CandidateDequeued of candidateId: CandidateId
-        | RunningCandidateSet of candidateId: CandidateId option
+        | PromotionSetEnqueued of promotionSetId: PromotionSetId
+        | PromotionSetDequeued of promotionSetId: PromotionSetId
+        | RunningPromotionSetSet of promotionSetId: PromotionSetId option
         | Paused
         | Resumed
         | Degraded
@@ -371,18 +371,18 @@ module Queue =
                 match promotionQueueEvent.Event with
                 | Initialized (targetBranchId, policySnapshotId) ->
                     { PromotionQueue.Default with TargetBranchId = targetBranchId; PolicySnapshotId = policySnapshotId }
-                | CandidateEnqueued candidateId -> { currentQueue with CandidateIds = currentQueue.CandidateIds @ [ candidateId ] }
-                | CandidateDequeued candidateId ->
+                | PromotionSetEnqueued promotionSetId -> { currentQueue with PromotionSetIds = currentQueue.PromotionSetIds @ [ promotionSetId ] }
+                | PromotionSetDequeued promotionSetId ->
                     { currentQueue with
-                        CandidateIds =
-                            currentQueue.CandidateIds
-                            |> List.filter (fun existing -> existing <> candidateId)
+                        PromotionSetIds =
+                            currentQueue.PromotionSetIds
+                            |> List.filter (fun existing -> existing <> promotionSetId)
                     }
-                | RunningCandidateSet candidateId -> { currentQueue with RunningCandidateId = candidateId; State = QueueState.Running }
+                | RunningPromotionSetSet promotionSetId -> { currentQueue with RunningPromotionSetId = promotionSetId; State = QueueState.Running }
                 | Paused -> { currentQueue with State = QueueState.Paused }
                 | Resumed ->
                     let newState =
-                        match currentQueue.RunningCandidateId with
+                        match currentQueue.RunningPromotionSetId with
                         | Some _ -> QueueState.Running
                         | None -> QueueState.Idle
 

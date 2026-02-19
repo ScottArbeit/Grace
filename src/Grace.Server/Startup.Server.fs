@@ -542,7 +542,7 @@ module Application =
                                |> addMetadata typeof<Queue.QueueActionParameters>
 
                                route "/dequeue" Queue.Dequeue
-                               |> addMetadata typeof<Queue.CandidateActionParameters> ]
+                               |> addMetadata typeof<Queue.PromotionSetActionParameters> ]
                     ]
                 subRoute
                     "/candidate"

@@ -30,14 +30,14 @@ module QueueCommandTests =
         |> withIds
 
     [<Test>]
-    let ``queue enqueue rejects invalid candidate id`` () =
+    let ``queue enqueue rejects invalid promotion set id`` () =
         let parseResult =
             GraceCommand.rootCommand.Parse(
                 withIdsAndSilent [| "queue"
                                     "enqueue"
                                     "--branch-id"
                                     branchId.ToString()
-                                    "--candidate"
+                                    "--promotion-set"
                                     "not-a-guid" |]
             )
 
@@ -60,14 +60,14 @@ module QueueCommandTests =
         exitCode |> should equal -1
 
     [<Test>]
-    let ``queue dequeue rejects invalid candidate id`` () =
+    let ``queue dequeue rejects invalid promotion set id`` () =
         let parseResult =
             GraceCommand.rootCommand.Parse(
                 withIdsAndSilent [| "queue"
                                     "dequeue"
                                     "--branch-id"
                                     branchId.ToString()
-                                    "--candidate"
+                                    "--promotion-set"
                                     "not-a-guid" |]
             )
 
@@ -75,16 +75,14 @@ module QueueCommandTests =
         exitCode |> should equal -1
 
     [<Test>]
-    let ``queue retry rejects invalid candidate id`` () =
+    let ``queue retry command is unavailable`` () =
         let parseResult =
             GraceCommand.rootCommand.Parse(
                 withIdsAndSilent [| "queue"
                                     "retry"
                                     "--branch-id"
-                                    branchId.ToString()
-                                    "--candidate"
-                                    "not-a-guid" |]
+                                    branchId.ToString() |]
             )
 
         let exitCode = parseResult.Invoke()
-        exitCode |> should equal -1
+        exitCode |> should equal 1

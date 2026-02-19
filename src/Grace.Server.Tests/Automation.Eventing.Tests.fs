@@ -109,11 +109,11 @@ type AutomationEventingTests() =
         Assert.That(envelope.IsNone, Is.True)
 
     [<Test>]
-    member _.QueueCandidateEnqueuedMapsToPromotionSetEnqueued() =
+    member _.QueuePromotionSetEnqueuedMapsToPromotionSetEnqueued() =
         let repositoryId = Guid.NewGuid()
 
         let queueEvent: PromotionQueueEvent =
-            { Event = PromotionQueueEventType.CandidateEnqueued(Guid.NewGuid()); Metadata = metadata "corr-queue" repositoryId }
+            { Event = PromotionQueueEventType.PromotionSetEnqueued(Guid.NewGuid()); Metadata = metadata "corr-queue" repositoryId }
 
         let envelope = EventingPublisher.tryCreateEnvelope (GraceEvent.QueueEvent queueEvent)
         Assert.That(envelope.IsSome, Is.True)
@@ -121,11 +121,11 @@ type AutomationEventingTests() =
         Assert.That(envelope.Value.RepositoryId, Is.EqualTo(repositoryId))
 
     [<Test>]
-    member _.QueueCandidateDequeuedMapsToPromotionSetDequeued() =
+    member _.QueuePromotionSetDequeuedMapsToPromotionSetDequeued() =
         let repositoryId = Guid.NewGuid()
 
         let queueEvent: PromotionQueueEvent =
-            { Event = PromotionQueueEventType.CandidateDequeued(Guid.NewGuid()); Metadata = metadata "corr-queue-dequeued" repositoryId }
+            { Event = PromotionQueueEventType.PromotionSetDequeued(Guid.NewGuid()); Metadata = metadata "corr-queue-dequeued" repositoryId }
 
         let envelope = EventingPublisher.tryCreateEnvelope (GraceEvent.QueueEvent queueEvent)
         Assert.That(envelope.IsSome, Is.True)

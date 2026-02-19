@@ -322,7 +322,10 @@ module Notification =
                     if queueExists then
                         let! queue = queueActorProxy.Get correlationId
 
-                        let queuedPromotionSetIds = queue.CandidateIds |> Seq.distinct |> Seq.toArray
+                        let queuedPromotionSetIds =
+                            queue.PromotionSetIds
+                            |> Seq.distinct
+                            |> Seq.toArray
 
                         let mutable index = 0
 
@@ -710,12 +713,9 @@ module Notification =
                     )
 
                     match queueEvent.Event with
-                    | Grace.Types.Queue.PromotionQueueEventType.CandidateEnqueued candidateId ->
+                    | Grace.Types.Queue.PromotionQueueEventType.PromotionSetEnqueued promotionSetId ->
                         match tryGetRepositoryIdFromMetadata queueEvent.Metadata with
-                        | Some repositoryId ->
-                            let promotionSetId: PromotionSetId = candidateId
-
-                            do! triggerPromotionSetRecompute repositoryId promotionSetId "PromotionSet enqueued." correlationId
+                        | Some repositoryId -> do! triggerPromotionSetRecompute repositoryId promotionSetId "PromotionSet enqueued." correlationId
                         | None -> ()
                     | _ -> ()
                 | PromotionSetEvent promotionSetEvent ->

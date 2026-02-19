@@ -119,8 +119,8 @@ module EventingPublisher =
         | QueueEvent queueEvent ->
             let eventType =
                 match queueEvent.Event with
-                | PromotionQueueEventType.CandidateEnqueued _ -> Some AutomationEventType.PromotionSetEnqueued
-                | PromotionQueueEventType.CandidateDequeued _ -> Some AutomationEventType.PromotionSetDequeued
+                | PromotionQueueEventType.PromotionSetEnqueued _ -> Some AutomationEventType.PromotionSetEnqueued
+                | PromotionQueueEventType.PromotionSetDequeued _ -> Some AutomationEventType.PromotionSetDequeued
                 | _ -> Option.None
 
             eventType

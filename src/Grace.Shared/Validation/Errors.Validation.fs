@@ -752,8 +752,10 @@ module Errors =
         | FailedWhileApplyingEvent
         | QueueAlreadyInitialized
         | QueueNotInitialized
+        | PromotionSetNotInQueue
         | CandidateNotInQueue
         | InvalidTargetBranchId
+        | InvalidPromotionSetId
         | InvalidCandidateId
         | InvalidPolicySnapshotId
 
@@ -765,8 +767,10 @@ module Errors =
             | FailedWhileApplyingEvent -> "An error occurred while processing the queue event."
             | QueueAlreadyInitialized -> "The promotion queue is already initialized."
             | QueueNotInitialized -> "The promotion queue has not been initialized."
+            | PromotionSetNotInQueue -> "The specified promotion set is not in the queue."
             | CandidateNotInQueue -> "The specified candidate is not in the queue."
             | InvalidTargetBranchId -> "The target branch ID is invalid."
+            | InvalidPromotionSetId -> "The promotion set ID is invalid."
             | InvalidCandidateId -> "The candidate ID is invalid."
             | InvalidPolicySnapshotId -> "The policy snapshot ID is invalid."
 

@@ -126,24 +126,24 @@ module PromotionQueue =
                                         Error(GraceError.Create (QueueError.getErrorMessage QueueError.QueueNotInitialized) metadata.CorrelationId)
                                     else
                                         match command with
-                                        | Dequeue candidateId ->
+                                        | Dequeue promotionSetId ->
                                             let exists =
-                                                promotionQueue.CandidateIds
-                                                |> List.exists (fun existing -> existing = candidateId)
+                                                promotionQueue.PromotionSetIds
+                                                |> List.exists (fun existing -> existing = promotionSetId)
 
                                             if exists then
                                                 Ok command
                                             else
-                                                Error(GraceError.Create (QueueError.getErrorMessage QueueError.CandidateNotInQueue) metadata.CorrelationId)
-                                        | SetRunning (Some candidateId) ->
+                                                Error(GraceError.Create (QueueError.getErrorMessage QueueError.PromotionSetNotInQueue) metadata.CorrelationId)
+                                        | SetRunning (Some promotionSetId) ->
                                             let exists =
-                                                promotionQueue.CandidateIds
-                                                |> List.exists (fun existing -> existing = candidateId)
+                                                promotionQueue.PromotionSetIds
+                                                |> List.exists (fun existing -> existing = promotionSetId)
 
                                             if exists then
                                                 Ok command
                                             else
-                                                Error(GraceError.Create (QueueError.getErrorMessage QueueError.CandidateNotInQueue) metadata.CorrelationId)
+                                                Error(GraceError.Create (QueueError.getErrorMessage QueueError.PromotionSetNotInQueue) metadata.CorrelationId)
                                         | _ -> Ok command
 
                             return result
@@ -155,9 +155,9 @@ module PromotionQueue =
                             task {
                                 match command with
                                 | Initialize (targetBranchId, policySnapshotId) -> return Initialized(targetBranchId, policySnapshotId)
-                                | Enqueue candidateId -> return CandidateEnqueued candidateId
-                                | Dequeue candidateId -> return CandidateDequeued candidateId
-                                | SetRunning candidateId -> return RunningCandidateSet candidateId
+                                | Enqueue promotionSetId -> return PromotionSetEnqueued promotionSetId
+                                | Dequeue promotionSetId -> return PromotionSetDequeued promotionSetId
+                                | SetRunning promotionSetId -> return RunningPromotionSetSet promotionSetId
                                 | Pause -> return Paused
                                 | Resume -> return Resumed
                                 | SetDegraded -> return Degraded
