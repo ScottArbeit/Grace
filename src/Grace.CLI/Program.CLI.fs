@@ -239,7 +239,16 @@ module GraceCommand =
                         "watch"
                     ]
             }
-            { Heading = "Review and promotion"; CommandNames = [ "work"; "review"; "queue" ] }
+            {
+                Heading = "Review and promotion"
+                CommandNames =
+                    [
+                        "work"
+                        "review"
+                        "queue"
+                        "promotion-set"
+                    ]
+            }
             {
                 Heading = "Administration and access"
                 CommandNames =
@@ -551,6 +560,7 @@ module GraceCommand =
         rootCommand.Subcommands.Add(WorkItemCommand.Build)
         rootCommand.Subcommands.Add(ReviewCommand.Build)
         rootCommand.Subcommands.Add(QueueCommand.Build)
+        rootCommand.Subcommands.Add(PromotionSetCommand.Build)
         rootCommand.Subcommands.Add(Admin.Build)
         rootCommand.Subcommands.Add(Access.Build)
 

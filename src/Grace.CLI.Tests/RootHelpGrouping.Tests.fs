@@ -132,7 +132,16 @@ module RootHelpGroupingTests =
             dayToDay |> should contain "diff"
             dayToDay |> should contain "directory-version"
             dayToDay |> should contain "watch"
-            dayToDay |> should not' (contain "work"))
+            dayToDay |> should not' (contain "work")
+
+            let reviewAndPromotion = sliceBetween output "Review and promotion:" "Administration and access:"
+
+            reviewAndPromotion |> should contain "work"
+            reviewAndPromotion |> should contain "review"
+            reviewAndPromotion |> should contain "queue"
+
+            reviewAndPromotion
+            |> should contain "promotion-set")
 
     [<Test>]
     let ``subcommand help is not grouped`` () =
