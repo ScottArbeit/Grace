@@ -77,7 +77,14 @@ module EndpointAuthorizationManifest =
             endpoint "POST" "/branch/setPromotionMode" Authenticated
             endpoint "POST" "/branch/tag" Authenticated
             endpoint "POST" "/branch/updateParentBranch" Authenticated
+            endpoint "POST" "/promotion-set/create" Authenticated
             endpoint "POST" "/promotion-set/get" Authenticated
+            endpoint "POST" "/promotion-set/get-events" Authenticated
+            endpoint "POST" "/promotion-set/update-input-promotions" Authenticated
+            endpoint "POST" "/promotion-set/recompute" Authenticated
+            endpoint "POST" "/promotion-set/apply" Authenticated
+            endpoint "POST" "/promotion-set/resolve-conflicts" Authenticated
+            endpoint "POST" "/promotion-set/delete" Authenticated
             endpoint "POST" "/validation-set/create" Authenticated
             endpoint "POST" "/validation-set/get" Authenticated
             endpoint "POST" "/validation-set/update" Authenticated

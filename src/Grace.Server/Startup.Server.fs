@@ -501,8 +501,29 @@ module Application =
                 subRoute
                     "/promotion-set"
                     [
-                        POST [ route "/get" PromotionSet.Get
-                               |> addMetadata typeof<Grace.Shared.Parameters.PromotionSet.GetPromotionSetParameters> ]
+                        POST [ route "/create" PromotionSet.Create
+                               |> addMetadata typeof<Grace.Shared.Parameters.PromotionSet.CreatePromotionSetParameters>
+
+                               route "/get" PromotionSet.Get
+                               |> addMetadata typeof<Grace.Shared.Parameters.PromotionSet.GetPromotionSetParameters>
+
+                               route "/get-events" PromotionSet.GetEvents
+                               |> addMetadata typeof<Grace.Shared.Parameters.PromotionSet.GetPromotionSetEventsParameters>
+
+                               route "/update-input-promotions" PromotionSet.UpdateInputPromotions
+                               |> addMetadata typeof<Grace.Shared.Parameters.PromotionSet.UpdatePromotionSetInputPromotionsParameters>
+
+                               route "/recompute" PromotionSet.Recompute
+                               |> addMetadata typeof<Grace.Shared.Parameters.PromotionSet.RecomputePromotionSetParameters>
+
+                               route "/apply" PromotionSet.Apply
+                               |> addMetadata typeof<Grace.Shared.Parameters.PromotionSet.ApplyPromotionSetParameters>
+
+                               route "/resolve-conflicts" PromotionSet.ResolveConflicts
+                               |> addMetadata typeof<Grace.Shared.Parameters.PromotionSet.ResolvePromotionSetConflictsParameters>
+
+                               route "/delete" PromotionSet.Delete
+                               |> addMetadata typeof<Grace.Shared.Parameters.PromotionSet.DeletePromotionSetParameters> ]
                     ]
                 subRoute
                     "/validation-set"
