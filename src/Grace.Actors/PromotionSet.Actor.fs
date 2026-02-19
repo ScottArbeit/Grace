@@ -49,23 +49,18 @@ module PromotionSet =
             let rawValue = Environment.GetEnvironmentVariable(name)
             let mutable parsedValue = 0
 
-            if
-                String.IsNullOrWhiteSpace rawValue |> not
-                && Int32.TryParse(rawValue, NumberStyles.Integer, CultureInfo.InvariantCulture, &parsedValue)
-                && parsedValue > 0
-            then
+            if String.IsNullOrWhiteSpace rawValue |> not
+               && Int32.TryParse(rawValue, NumberStyles.Integer, CultureInfo.InvariantCulture, &parsedValue)
+               && parsedValue > 0 then
                 parsedValue
             else
                 defaultValue
 
-        let maxStepsPerRecompute =
-            getIntEnvironmentSetting "grace__promotionset__recompute__max_steps" 1000
+        let maxStepsPerRecompute = getIntEnvironmentSetting "grace__promotionset__recompute__max_steps" 1000
 
-        let maxStepTimeMilliseconds =
-            getIntEnvironmentSetting "grace__promotionset__recompute__max_step_time_ms" 30000
+        let maxStepTimeMilliseconds = getIntEnvironmentSetting "grace__promotionset__recompute__max_step_time_ms" 30000
 
-        let maxTotalTimeMilliseconds =
-            getIntEnvironmentSetting "grace__promotionset__recompute__max_total_time_ms" 300000
+        let maxTotalTimeMilliseconds = getIntEnvironmentSetting "grace__promotionset__recompute__max_total_time_ms" 300000
 
         member val private correlationId: CorrelationId = String.Empty with get, set
 
@@ -557,11 +552,7 @@ module PromotionSet =
 
                             if orderedSteps.Length > maxStepsPerRecompute then
                                 recomputeFailure <-
-                                    Option.Some(
-                                        Failed(
-                                            $"Recompute exceeded configured step budget ({orderedSteps.Length} > {maxStepsPerRecompute})."
-                                        )
-                                    )
+                                    Option.Some(Failed($"Recompute exceeded configured step budget ({orderedSteps.Length} > {maxStepsPerRecompute})."))
 
                             while index < orderedSteps.Length
                                   && recomputeFailure.IsNone do
@@ -715,11 +706,8 @@ module PromotionSet =
 
                                                     recomputeFailure <- Option.Some(Blocked(reasonText, artifactId))
 
-                                if
-                                    recomputeFailure.IsNone
-                                    && stepStopwatch.ElapsedMilliseconds
-                                       > int64 maxStepTimeMilliseconds
-                                then
+                                if recomputeFailure.IsNone
+                                   && stepStopwatch.ElapsedMilliseconds > int64 maxStepTimeMilliseconds then
                                     recomputeFailure <-
                                         Option.Some(
                                             Failed(

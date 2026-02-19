@@ -318,7 +318,7 @@ module Notification =
             else
                 None
 
-        let private matchesBranchGlob (branchName: BranchName) (branchNameGlob: string) =
+        let internal matchesBranchGlob (branchName: BranchName) (branchNameGlob: string) =
             let normalizedPattern = if String.IsNullOrWhiteSpace branchNameGlob then "*" else branchNameGlob.Trim()
 
             let regexPattern =
