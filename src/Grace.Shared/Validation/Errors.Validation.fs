@@ -612,6 +612,7 @@ module Errors =
         | WorkItemDoesNotExist
         | InvalidWorkItemId
         | InvalidReferenceId
+        | InvalidArtifactId
         | InvalidPromotionSetId
         | InvalidStatus
 
@@ -625,6 +626,7 @@ module Errors =
             | WorkItemDoesNotExist -> "The specified work item does not exist."
             | InvalidWorkItemId -> "The work item ID is invalid."
             | InvalidReferenceId -> "The reference ID is invalid."
+            | InvalidArtifactId -> "The artifact ID is invalid."
             | InvalidPromotionSetId -> "The promotion set ID is invalid."
             | InvalidStatus -> "The work item status is invalid."
 

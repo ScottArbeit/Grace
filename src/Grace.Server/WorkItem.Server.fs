@@ -218,6 +218,12 @@ module WorkItem =
             Guid.isValidAndNotEmptyGuid parameters.ReferenceId WorkItemError.InvalidReferenceId
         |]
 
+    let internal validateLinkArtifactParameters (parameters: LinkArtifactParameters) =
+        [|
+            Guid.isValidAndNotEmptyGuid parameters.WorkItemId WorkItemError.InvalidWorkItemId
+            Guid.isValidAndNotEmptyGuid parameters.ArtifactId WorkItemError.InvalidArtifactId
+        |]
+
     let internal validateLinkPromotionSetParameters (parameters: LinkPromotionSetParameters) =
         [|
             Guid.isValidAndNotEmptyGuid parameters.WorkItemId WorkItemError.InvalidWorkItemId
@@ -388,5 +394,19 @@ module WorkItem =
                     |> returnValueTask
 
                 context.Items[ "Command" ] <- nameof LinkPromotionSet
+                return! processCommand context validations command
+            }
+
+    /// Links an artifact to a work item.
+    let LinkArtifact: HttpHandler =
+        fun (_next: HttpFunc) (context: HttpContext) ->
+            task {
+                let validations (parameters: LinkArtifactParameters) = validateLinkArtifactParameters parameters
+
+                let command (parameters: LinkArtifactParameters) =
+                    WorkItemCommand.LinkArtifact(Guid.Parse(parameters.ArtifactId))
+                    |> returnValueTask
+
+                context.Items[ "Command" ] <- nameof LinkArtifact
                 return! processCommand context validations command
             }

@@ -166,6 +166,7 @@ module EndpointAuthorizationManifest =
             endpoint "POST" "/storage/getUploadUri" (Authorized(PathWrite, Path))
             endpoint "POST" "/work/create" (Authorized(RepoWrite, Repository))
             endpoint "POST" "/work/get" Authenticated
+            endpoint "POST" "/work/link/artifact" Authenticated
             endpoint "POST" "/work/link/promotion-set" Authenticated
             endpoint "POST" "/work/link/reference" Authenticated
             endpoint "POST" "/work/update" Authenticated

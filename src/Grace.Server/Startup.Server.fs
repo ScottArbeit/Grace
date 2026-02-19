@@ -453,6 +453,9 @@ module Application =
                                route "/link/reference" WorkItem.LinkReference
                                |> addMetadata typeof<WorkItem.LinkReferenceParameters>
 
+                               route "/link/artifact" WorkItem.LinkArtifact
+                               |> addMetadata typeof<WorkItem.LinkArtifactParameters>
+
                                route "/link/promotion-set" WorkItem.LinkPromotionSet
                                |> addMetadata typeof<WorkItem.LinkPromotionSetParameters> ]
                     ]

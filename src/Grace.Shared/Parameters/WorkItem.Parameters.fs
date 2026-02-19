@@ -41,6 +41,11 @@ module WorkItem =
         inherit WorkItemParameters()
         member val public ReferenceId = String.Empty with get, set
 
+    /// Parameters for /work/{id}/link/artifact.
+    type LinkArtifactParameters() =
+        inherit WorkItemParameters()
+        member val public ArtifactId = String.Empty with get, set
+
     /// Parameters for /work/{id}/link/promotion-set.
     type LinkPromotionSetParameters() =
         inherit WorkItemParameters()

@@ -139,6 +139,7 @@ module RootHelpGroupingTests =
             reviewAndPromotion |> should contain "work"
             reviewAndPromotion |> should contain "review"
             reviewAndPromotion |> should contain "queue"
+            reviewAndPromotion |> should contain "agent"
 
             reviewAndPromotion
             |> should contain "promotion-set")

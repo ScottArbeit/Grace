@@ -66,3 +66,17 @@ module WorkItemCommandTests =
         let exitCode = parseResult.Invoke()
 
         exitCode |> should equal -1
+
+    [<Test>]
+    let ``work link artifact rejects invalid artifact id`` () =
+        let parseResult =
+            GraceCommand.rootCommand.Parse(
+                withIdsAndSilent [| "work"
+                                    "link"
+                                    "artifact"
+                                    Guid.NewGuid().ToString()
+                                    "not-a-guid" |]
+            )
+
+        let exitCode = parseResult.Invoke()
+        exitCode |> should equal -1

@@ -247,6 +247,7 @@ module GraceCommand =
                         "review"
                         "queue"
                         "promotion-set"
+                        "agent"
                     ]
             }
             {
@@ -561,6 +562,7 @@ module GraceCommand =
         rootCommand.Subcommands.Add(ReviewCommand.Build)
         rootCommand.Subcommands.Add(QueueCommand.Build)
         rootCommand.Subcommands.Add(PromotionSetCommand.Build)
+        rootCommand.Subcommands.Add(AgentCommand.Build)
         rootCommand.Subcommands.Add(Admin.Build)
         rootCommand.Subcommands.Add(Access.Build)
 

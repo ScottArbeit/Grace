@@ -23,6 +23,10 @@ type WorkItem() =
     static member public LinkReference(parameters: LinkReferenceParameters) =
         postServer<LinkReferenceParameters, string> (parameters |> ensureCorrelationIdIsSet, "work/link/reference")
 
+    /// Links an artifact to a work item.
+    static member public LinkArtifact(parameters: LinkArtifactParameters) =
+        postServer<LinkArtifactParameters, string> (parameters |> ensureCorrelationIdIsSet, "work/link/artifact")
+
     /// Links a promotion set to a work item.
     static member public LinkPromotionSet(parameters: LinkPromotionSetParameters) =
         postServer<LinkPromotionSetParameters, string> (parameters |> ensureCorrelationIdIsSet, "work/link/promotion-set")

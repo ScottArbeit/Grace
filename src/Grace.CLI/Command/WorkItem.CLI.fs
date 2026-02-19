@@ -110,6 +110,8 @@ module WorkItemCommand =
 
         let referenceId = new Argument<string>("reference-id", Description = "Reference ID <Guid>.")
 
+        let artifactId = new Argument<string>("artifact-id", Description = "Artifact ID <Guid>.")
+
         let promotionSetId = new Argument<string>("promotion-set-id", Description = "Promotion set ID <Guid>.")
 
     let private tryParseGuid (value: string) (error: WorkItemError) (parseResult: ParseResult) =
@@ -349,12 +351,53 @@ module WorkItemCommand =
             | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
         }
 
+    let private linkArtifactHandler (parseResult: ParseResult) =
+        task {
+            try
+                if parseResult |> verbose then printParseResult parseResult
+                let graceIds = parseResult |> getNormalizedIdsAndNames
+                let workItemIdRaw = parseResult.GetValue(Arguments.workItemId)
+                let artifactIdRaw = parseResult.GetValue(Arguments.artifactId)
+
+                match tryParseGuid workItemIdRaw WorkItemError.InvalidWorkItemId parseResult with
+                | Error error -> return Error error
+                | Ok workItemId ->
+                    match tryParseGuid artifactIdRaw WorkItemError.InvalidArtifactId parseResult with
+                    | Error error -> return Error error
+                    | Ok artifactId ->
+                        let parameters =
+                            Parameters.WorkItem.LinkArtifactParameters(
+                                WorkItemId = workItemId.ToString(),
+                                ArtifactId = artifactId.ToString(),
+                                OwnerId = graceIds.OwnerIdString,
+                                OwnerName = graceIds.OwnerName,
+                                OrganizationId = graceIds.OrganizationIdString,
+                                OrganizationName = graceIds.OrganizationName,
+                                RepositoryId = graceIds.RepositoryIdString,
+                                RepositoryName = graceIds.RepositoryName,
+                                CorrelationId = graceIds.CorrelationId
+                            )
+
+                        return! WorkItem.LinkArtifact(parameters)
+            with
+            | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
+        }
+
     type LinkPromotionSet() =
         inherit AsynchronousCommandLineAction()
 
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Task<int> =
             task {
                 let! result = linkPromotionSetHandler parseResult
+                return result |> renderOutput parseResult
+            }
+
+    type LinkArtifact() =
+        inherit AsynchronousCommandLineAction()
+
+        override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Task<int> =
+            task {
+                let! result = linkArtifactHandler parseResult
                 return result |> renderOutput parseResult
             }
 
@@ -418,6 +461,15 @@ module WorkItemCommand =
         linkSetCommand.Arguments.Add(Arguments.promotionSetId)
         linkSetCommand.Action <- new LinkPromotionSet()
         linkCommand.Subcommands.Add(linkSetCommand)
+
+        let linkArtifactCommand =
+            new Command("artifact", Description = "Link an artifact to a work item.")
+            |> addCommonOptions
+
+        linkArtifactCommand.Arguments.Add(Arguments.workItemId)
+        linkArtifactCommand.Arguments.Add(Arguments.artifactId)
+        linkArtifactCommand.Action <- new LinkArtifact()
+        linkCommand.Subcommands.Add(linkArtifactCommand)
 
         workCommand.Subcommands.Add(linkCommand)
         workCommand

@@ -80,6 +80,20 @@ type WorkItemUpdateTests() =
         Assert.That(error, Is.EqualTo(Some WorkItemError.InvalidPromotionSetId))
 
     [<Test>]
+    member _.LinkArtifactValidationRejectsInvalidArtifactId() =
+        let parameters = LinkArtifactParameters(WorkItemId = Guid.NewGuid().ToString(), ArtifactId = "not-a-guid")
+
+        let validations = WorkItem.validateLinkArtifactParameters parameters
+
+        let error =
+            validations
+            |> getFirstError
+            |> Async.AwaitTask
+            |> Async.RunSynchronously
+
+        Assert.That(error, Is.EqualTo(Some WorkItemError.InvalidArtifactId))
+
+    [<Test>]
     member _.UpdateDtoPreservesCreatedFields() =
         let createdAt = Instant.FromUtc(2025, 1, 1, 0, 0)
         let updatedAt = Instant.FromUtc(2025, 1, 2, 0, 0)

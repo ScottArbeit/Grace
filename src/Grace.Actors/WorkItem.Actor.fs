@@ -156,6 +156,8 @@ module WorkItem =
                                 | UnlinkBranch branchId -> return BranchUnlinked branchId
                                 | LinkReference referenceId -> return ReferenceLinked referenceId
                                 | UnlinkReference referenceId -> return ReferenceUnlinked referenceId
+                                | LinkArtifact artifactId -> return ArtifactLinked artifactId
+                                | UnlinkArtifact artifactId -> return ArtifactUnlinked artifactId
                                 | LinkPromotionSet promotionSetId -> return PromotionSetLinked promotionSetId
                                 | UnlinkPromotionSet promotionSetId -> return PromotionSetUnlinked promotionSetId
                                 | LinkReviewNotes reviewNotesId -> return ReviewNotesLinked reviewNotesId

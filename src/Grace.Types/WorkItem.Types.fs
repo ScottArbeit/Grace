@@ -48,6 +48,8 @@ module WorkItem =
         | UnlinkBranch of branchId: BranchId
         | LinkReference of referenceId: ReferenceId
         | UnlinkReference of referenceId: ReferenceId
+        | LinkArtifact of artifactId: ArtifactId
+        | UnlinkArtifact of artifactId: ArtifactId
         | LinkPromotionSet of promotionSetId: PromotionSetId
         | UnlinkPromotionSet of promotionSetId: PromotionSetId
         | LinkReviewNotes of reviewNotesId: ReviewNotesId
@@ -86,6 +88,8 @@ module WorkItem =
         | BranchUnlinked of branchId: BranchId
         | ReferenceLinked of referenceId: ReferenceId
         | ReferenceUnlinked of referenceId: ReferenceId
+        | ArtifactLinked of artifactId: ArtifactId
+        | ArtifactUnlinked of artifactId: ArtifactId
         | PromotionSetLinked of promotionSetId: PromotionSetId
         | PromotionSetUnlinked of promotionSetId: PromotionSetId
         | ReviewNotesLinked of reviewNotesId: ReviewNotesId
@@ -126,6 +130,7 @@ module WorkItem =
             ExternalRefs: string list
             BranchIds: BranchId list
             ReferenceIds: ReferenceId list
+            ArtifactIds: ArtifactId list
             PromotionSetIds: PromotionSetId list
             ReviewNotesIds: ReviewNotesId list
             ReviewCheckpointIds: ReviewCheckpointId list
@@ -155,6 +160,7 @@ module WorkItem =
                 ExternalRefs = []
                 BranchIds = []
                 ReferenceIds = []
+                ArtifactIds = []
                 PromotionSetIds = []
                 ReviewNotesIds = []
                 ReviewCheckpointIds = []
@@ -252,6 +258,19 @@ module WorkItem =
                         ReferenceIds =
                             currentWorkItemDto.ReferenceIds
                             |> List.filter (fun existing -> existing <> referenceId)
+                    }
+                | ArtifactLinked artifactId ->
+                    { currentWorkItemDto with
+                        ArtifactIds =
+                            currentWorkItemDto.ArtifactIds
+                            |> List.append [ artifactId ]
+                            |> List.distinct
+                    }
+                | ArtifactUnlinked artifactId ->
+                    { currentWorkItemDto with
+                        ArtifactIds =
+                            currentWorkItemDto.ArtifactIds
+                            |> List.filter (fun existing -> existing <> artifactId)
                     }
                 | PromotionSetLinked promotionSetId ->
                     { currentWorkItemDto with
