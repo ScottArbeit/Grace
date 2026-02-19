@@ -52,6 +52,8 @@
         <Compile Include="Parameters\Policy.Parameters.fs" />
         <Compile Include="Parameters\Review.Parameters.fs" />
         <Compile Include="Parameters\Queue.Parameters.fs" />
+        <Compile Include="Parameters\Validation.Parameters.fs" />
+        <Compile Include="Parameters\Artifact.Parameters.fs" />
         <Compile Include="Validation\Errors.Validation.fs" />
         <Compile Include="Validation\Common.Validation.fs" />
         <Compile Include="Validation\Utilities.Validation.fs" />

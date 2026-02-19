@@ -54,6 +54,12 @@ module Artifact =
                 CreatedBy = UserId String.Empty
             }
 
+    [<GenerateSerializer>]
+    type ArtifactCreateResult = { ArtifactId: ArtifactId; UploadUri: UriWithSharedAccessSignature; BlobPath: string }
+
+    [<GenerateSerializer>]
+    type ArtifactDownloadUriResult = { ArtifactId: ArtifactId; DownloadUri: UriWithSharedAccessSignature }
+
     [<KnownType("GetKnownTypes")>]
     type ArtifactCommand =
         | Create of artifact: ArtifactMetadata

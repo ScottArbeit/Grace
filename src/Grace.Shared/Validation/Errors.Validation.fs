@@ -779,6 +779,98 @@ module Errors =
             | Some error -> QueueError.getErrorMessage error
             | None -> String.Empty
 
+    type ValidationSetError =
+        | DuplicateCorrelationId
+        | FailedWhileApplyingEvent
+        | ValidationSetAlreadyExists
+        | ValidationSetDoesNotExist
+        | InvalidValidationSetId
+        | InvalidTargetBranchId
+        | ValidationSetRulesRequired
+        | ValidationDefinitionsRequired
+
+        interface IErrorDiscriminatedUnion
+
+        static member getErrorMessage(validationSetError: ValidationSetError) : string =
+            match validationSetError with
+            | DuplicateCorrelationId -> "A command with this correlation ID has already been processed."
+            | FailedWhileApplyingEvent -> "An error occurred while processing the validation set event."
+            | ValidationSetAlreadyExists -> "A validation set with this ID already exists."
+            | ValidationSetDoesNotExist -> "The validation set does not exist."
+            | InvalidValidationSetId -> "The validation set ID is invalid."
+            | InvalidTargetBranchId -> "The target branch ID is invalid."
+            | ValidationSetRulesRequired -> "A validation set must include at least one rule."
+            | ValidationDefinitionsRequired -> "A validation set must include at least one validation definition."
+
+        static member getErrorMessage(validationSetError: ValidationSetError option) : string =
+            match validationSetError with
+            | Some error -> ValidationSetError.getErrorMessage error
+            | None -> String.Empty
+
+    type ValidationResultError =
+        | DuplicateCorrelationId
+        | FailedWhileApplyingEvent
+        | InvalidValidationResultId
+        | InvalidValidationSetId
+        | InvalidPromotionSetId
+        | InvalidPromotionSetStepId
+        | InvalidValidationStatus
+        | ValidationNameRequired
+        | ValidationVersionRequired
+        | InvalidArtifactId
+        | StepsComputationAttemptRequired
+        | InvalidStepsComputationAttempt
+
+        interface IErrorDiscriminatedUnion
+
+        static member getErrorMessage(validationResultError: ValidationResultError) : string =
+            match validationResultError with
+            | DuplicateCorrelationId -> "A command with this correlation ID has already been processed."
+            | FailedWhileApplyingEvent -> "An error occurred while processing the validation result event."
+            | InvalidValidationResultId -> "The validation result ID is invalid."
+            | InvalidValidationSetId -> "The validation set ID is invalid."
+            | InvalidPromotionSetId -> "The promotion set ID is invalid."
+            | InvalidPromotionSetStepId -> "The promotion set step ID is invalid."
+            | InvalidValidationStatus -> "The validation status is invalid."
+            | ValidationNameRequired -> "ValidationName is required."
+            | ValidationVersionRequired -> "ValidationVersion is required."
+            | InvalidArtifactId -> "One or more artifact IDs are invalid."
+            | StepsComputationAttemptRequired -> "StepsComputationAttempt is required when PromotionSetId is provided."
+            | InvalidStepsComputationAttempt -> "StepsComputationAttempt must be greater than zero."
+
+        static member getErrorMessage(validationResultError: ValidationResultError option) : string =
+            match validationResultError with
+            | Some error -> ValidationResultError.getErrorMessage error
+            | None -> String.Empty
+
+    type ArtifactError =
+        | DuplicateCorrelationId
+        | FailedWhileApplyingEvent
+        | ArtifactAlreadyExists
+        | ArtifactDoesNotExist
+        | InvalidArtifactId
+        | InvalidArtifactType
+        | InvalidMimeType
+        | InvalidSize
+
+        interface IErrorDiscriminatedUnion
+
+        static member getErrorMessage(artifactError: ArtifactError) : string =
+            match artifactError with
+            | DuplicateCorrelationId -> "A command with this correlation ID has already been processed."
+            | FailedWhileApplyingEvent -> "An error occurred while processing the artifact event."
+            | ArtifactAlreadyExists -> "The artifact already exists."
+            | ArtifactDoesNotExist -> "The artifact does not exist."
+            | InvalidArtifactId -> "The artifact ID is invalid."
+            | InvalidArtifactType -> "The artifact type is invalid."
+            | InvalidMimeType -> "The mime type is invalid."
+            | InvalidSize -> "Artifact size must be zero or greater."
+
+        static member getErrorMessage(artifactError: ArtifactError option) : string =
+            match artifactError with
+            | Some error -> ArtifactError.getErrorMessage error
+            | None -> String.Empty
+
     type CandidateError =
         | DuplicateCorrelationId
         | FailedWhileApplyingEvent
@@ -899,6 +991,9 @@ module Errors =
         | :? ReviewError as reviewError -> ReviewError.getErrorMessage reviewError
         | :? Stage0Error as stage0Error -> Stage0Error.getErrorMessage stage0Error
         | :? QueueError as queueError -> QueueError.getErrorMessage queueError
+        | :? ValidationSetError as validationSetError -> ValidationSetError.getErrorMessage validationSetError
+        | :? ValidationResultError as validationResultError -> ValidationResultError.getErrorMessage validationResultError
+        | :? ArtifactError as artifactError -> ArtifactError.getErrorMessage artifactError
         | :? CandidateError as candidateError -> CandidateError.getErrorMessage candidateError
         | :? GateAttestationError as attestationError -> GateAttestationError.getErrorMessage attestationError
         | :? ConflictReceiptError as receiptError -> ConflictReceiptError.getErrorMessage receiptError

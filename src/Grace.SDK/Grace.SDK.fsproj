@@ -33,6 +33,9 @@
                 <Compile Include="Review.SDK.fs" />
                 <Compile Include="Queue.SDK.fs" />
                 <Compile Include="Candidate.SDK.fs" />
+                <Compile Include="ValidationSet.SDK.fs" />
+                <Compile Include="ValidationResult.SDK.fs" />
+                <Compile Include="Artifact.SDK.fs" />
                 <Compile Include="Admin.SDK.fs" />
                 <Compile Include="Access.SDK.fs" />
         </ItemGroup>

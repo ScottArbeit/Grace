@@ -186,13 +186,7 @@ module Application =
 
                 let graceIds = Services.getGraceIds context
 
-                return
-                    Resource.Path(
-                        graceIds.OwnerId,
-                        graceIds.OrganizationId,
-                        graceIds.RepositoryId,
-                        parameters.FileVersion.RelativePath
-                    )
+                return Resource.Path(graceIds.OwnerId, graceIds.OrganizationId, graceIds.RepositoryId, parameters.FileVersion.RelativePath)
             }
 
         let composeHandlers (first: HttpHandler) (second: HttpHandler) : HttpHandler = fun next context -> first (second next) context
@@ -221,8 +215,7 @@ module Application =
 
         let requirePathWrite: HttpHandler = AuthorizationMiddleware.requiresPermissions Operation.PathWrite uploadPathResourcesFromContext
 
-        let requirePathWriteForUploadUri: HttpHandler =
-            AuthorizationMiddleware.requiresPermissions Operation.PathWrite uploadUriResourcesFromContext
+        let requirePathWriteForUploadUri: HttpHandler = AuthorizationMiddleware.requiresPermissions Operation.PathWrite uploadUriResourcesFromContext
 
         let requirePathRead: HttpHandler = AuthorizationMiddleware.requiresPermission Operation.PathRead downloadPathResourceFromContext
 
@@ -564,6 +557,35 @@ module Application =
 
                                route "/gate/rerun" Queue.RerunGate
                                |> addMetadata typeof<Queue.CandidateGateRerunParameters> ]
+                    ]
+                subRoute
+                    "/validation-set"
+                    [
+                        POST [ route "/create" ValidationSet.Create
+                               |> addMetadata typeof<Grace.Shared.Parameters.Validation.CreateValidationSetParameters>
+
+                               route "/get" ValidationSet.Get
+                               |> addMetadata typeof<Grace.Shared.Parameters.Validation.GetValidationSetParameters>
+
+                               route "/update" ValidationSet.Update
+                               |> addMetadata typeof<Grace.Shared.Parameters.Validation.UpdateValidationSetParameters>
+
+                               route "/delete" ValidationSet.Delete
+                               |> addMetadata typeof<Grace.Shared.Parameters.Validation.DeleteValidationSetParameters> ]
+                    ]
+                subRoute
+                    "/validation-result"
+                    [
+                        POST [ route "/record" ValidationResult.Record
+                               |> addMetadata typeof<Grace.Shared.Parameters.Validation.RecordValidationResultParameters> ]
+                    ]
+                subRoute
+                    "/artifact"
+                    [
+                        POST [ route "/create" Artifact.Create
+                               |> addMetadata typeof<Grace.Shared.Parameters.Artifact.CreateArtifactParameters> ]
+
+                        GET [ routef "/%O/download-uri" Artifact.GetDownloadUri ]
                     ]
                 subRoute
                     "/repository"
@@ -979,9 +1001,11 @@ module Application =
                     |> ignore
                 | None -> ()
 
-            services
-                .AddAuthorization(fun options ->
-                    options.FallbackPolicy <- AuthorizationPolicyBuilder().RequireAuthenticatedUser().Build())
+            services.AddAuthorization (fun options ->
+                options.FallbackPolicy <-
+                    AuthorizationPolicyBuilder()
+                        .RequireAuthenticatedUser()
+                        .Build())
             |> ignore
 
             services.AddTransient<IClaimsTransformation, GraceClaimsTransformation>()
@@ -1123,38 +1147,42 @@ module Application =
                 .UseRouting()
                 .UseAuthentication()
                 .UseAuthorization()
-                .Use(Func<HttpContext, RequestDelegate, Task>(fun (context: HttpContext) (next: RequestDelegate) ->
-                    task {
-                        if context.Request.Path.StartsWithSegments(PathString("/metrics")) then
-                            let includeReason = Environment.GetEnvironmentVariable("GRACE_TESTING") = "1"
+                .Use(
+                    Func<HttpContext, RequestDelegate, Task> (fun (context: HttpContext) (next: RequestDelegate) ->
+                        task {
+                            if context.Request.Path.StartsWithSegments(PathString("/metrics")) then
+                                let includeReason = Environment.GetEnvironmentVariable("GRACE_TESTING") = "1"
 
-                            match PrincipalMapper.tryGetUserId context.User with
-                            | None ->
-                                context.Response.StatusCode <- StatusCodes.Status401Unauthorized
-                                do! context.Response.WriteAsync("Authentication required.")
-                            | Some _ ->
-                                let principals = PrincipalMapper.getPrincipals context.User
-                                let claims = PrincipalMapper.getEffectiveClaims context.User
-                                let evaluator = context.RequestServices.GetRequiredService<IGracePermissionEvaluator>()
-                                let! decision = evaluator.CheckAsync(principals, claims, Operation.SystemAdmin, Resource.System)
+                                match PrincipalMapper.tryGetUserId context.User with
+                                | None ->
+                                    context.Response.StatusCode <- StatusCodes.Status401Unauthorized
+                                    do! context.Response.WriteAsync("Authentication required.")
+                                | Some _ ->
+                                    let principals = PrincipalMapper.getPrincipals context.User
+                                    let claims = PrincipalMapper.getEffectiveClaims context.User
+                                    let evaluator = context.RequestServices.GetRequiredService<IGracePermissionEvaluator>()
+                                    let! decision = evaluator.CheckAsync(principals, claims, Operation.SystemAdmin, Resource.System)
 
-                                match decision with
-                                | Allowed _ -> return! next.Invoke(context)
-                                | Denied reason ->
-                                    context.Response.StatusCode <- StatusCodes.Status403Forbidden
-                                    let message =
-                                        if includeReason
-                                           && not (String.IsNullOrWhiteSpace reason)
-                                        then
-                                            reason
-                                        else
-                                            "Forbidden."
+                                    match decision with
+                                    | Allowed _ -> return! next.Invoke(context)
+                                    | Denied reason ->
+                                        context.Response.StatusCode <- StatusCodes.Status403Forbidden
 
-                                    do! context.Response.WriteAsync(message)
-                        else
-                            return! next.Invoke(context)
-                    }
-                    :> Task))
+                                        let message =
+                                            if
+                                                includeReason
+                                                && not (String.IsNullOrWhiteSpace reason)
+                                            then
+                                                reason
+                                            else
+                                                "Forbidden."
+
+                                        do! context.Response.WriteAsync(message)
+                            else
+                                return! next.Invoke(context)
+                        }
+                        :> Task)
+                )
                 .UseStatusCodePages()
                 //.UseMiddleware<TimingMiddleware>()
                 .UseMiddleware<ValidateIdsMiddleware>()

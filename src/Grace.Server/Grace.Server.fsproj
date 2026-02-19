@@ -83,6 +83,9 @@
                 <Compile Include="Review.Server.fs" />
                 <Compile Include="Gates.Server.fs" />
                 <Compile Include="Queue.Server.fs" />
+                <Compile Include="ValidationSet.Server.fs" />
+                <Compile Include="ValidationResult.Server.fs" />
+                <Compile Include="Artifact.Server.fs" />
                 <Compile Include="ReviewModels.Server.fs" />
                 <Compile Include="ReviewAnalysis.Server.fs" />
                 <Compile Include="ConflictPipeline.Server.fs" />
