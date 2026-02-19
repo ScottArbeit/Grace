@@ -30,9 +30,9 @@
                 <Compile Include="PromotionGroup.SDK.fs" />
                 <Compile Include="WorkItem.SDK.fs" />
                 <Compile Include="Policy.SDK.fs" />
+                <Compile Include="PromotionSet.SDK.fs" />
                 <Compile Include="Review.SDK.fs" />
                 <Compile Include="Queue.SDK.fs" />
-                <Compile Include="Candidate.SDK.fs" />
                 <Compile Include="ValidationSet.SDK.fs" />
                 <Compile Include="ValidationResult.SDK.fs" />
                 <Compile Include="Artifact.SDK.fs" />

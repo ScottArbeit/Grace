@@ -8,7 +8,6 @@ open Grace.Shared
 open Grace.Shared.Utilities
 open Grace.Shared.Validation.Errors
 open Grace.Types.Policy
-open Grace.Types.Queue
 open Grace.Types.Review
 open Grace.Types.Types
 open Spectre.Console
@@ -21,12 +20,12 @@ open System.Threading.Tasks
 
 module ReviewCommand =
     module private Options =
-        let candidateId =
+        let promotionSetId =
             new Option<string>(
-                "--candidate",
-                [| "--candidate-id" |],
+                "--promotion-set",
+                [| "--promotion-set-id" |],
                 Required = false,
-                Description = "The candidate ID <Guid>.",
+                Description = "The promotion set ID <Guid>.",
                 Arity = ArgumentArity.ExactlyOne
             )
 
@@ -150,11 +149,11 @@ module ReviewCommand =
             Ok parsed
 
     let internal resolvePolicySnapshotIdWith
-        (getCandidate: Parameters.Queue.CandidateParameters -> Task<GraceResult<IntegrationCandidate>>)
+        (getPromotionSet: Parameters.PromotionSet.GetPromotionSetParameters -> Task<GraceResult<Grace.Types.PromotionSet.PromotionSetDto>>)
         (getPolicy: Parameters.Policy.GetPolicyParameters -> Task<GraceResult<PolicySnapshot option>>)
         (parseResult: ParseResult)
         (graceIds: GraceIds)
-        (candidateId: Guid)
+        (promotionSetId: Guid)
         =
         task {
             let rawPolicySnapshotId =
@@ -165,9 +164,9 @@ module ReviewCommand =
             if not (String.IsNullOrWhiteSpace rawPolicySnapshotId) then
                 return Ok rawPolicySnapshotId
             else
-                let candidateParameters =
-                    Parameters.Queue.CandidateParameters(
-                        CandidateId = candidateId.ToString(),
+                let promotionSetParameters =
+                    Parameters.PromotionSet.GetPromotionSetParameters(
+                        PromotionSetId = promotionSetId.ToString(),
                         OwnerId = graceIds.OwnerIdString,
                         OwnerName = graceIds.OwnerName,
                         OrganizationId = graceIds.OrganizationIdString,
@@ -177,37 +176,33 @@ module ReviewCommand =
                         CorrelationId = graceIds.CorrelationId
                     )
 
-                match! getCandidate candidateParameters with
+                match! getPromotionSet promotionSetParameters with
                 | Error error -> return Error error
-                | Ok candidateReturnValue ->
-                    let candidate = candidateReturnValue.ReturnValue
+                | Ok promotionSetReturnValue ->
+                    let promotionSet = promotionSetReturnValue.ReturnValue
 
-                    if not (String.IsNullOrWhiteSpace candidate.PolicySnapshotId) then
-                        return Ok candidate.PolicySnapshotId
-                    else
-                        let policyParameters =
-                            Parameters.Policy.GetPolicyParameters(
-                                TargetBranchId = candidate.TargetBranchId.ToString(),
-                                OwnerId = graceIds.OwnerIdString,
-                                OwnerName = graceIds.OwnerName,
-                                OrganizationId = graceIds.OrganizationIdString,
-                                OrganizationName = graceIds.OrganizationName,
-                                RepositoryId = graceIds.RepositoryIdString,
-                                RepositoryName = graceIds.RepositoryName,
-                                CorrelationId = graceIds.CorrelationId
-                            )
+                    let policyParameters =
+                        Parameters.Policy.GetPolicyParameters(
+                            TargetBranchId = promotionSet.TargetBranchId.ToString(),
+                            OwnerId = graceIds.OwnerIdString,
+                            OwnerName = graceIds.OwnerName,
+                            OrganizationId = graceIds.OrganizationIdString,
+                            OrganizationName = graceIds.OrganizationName,
+                            RepositoryId = graceIds.RepositoryIdString,
+                            RepositoryName = graceIds.RepositoryName,
+                            CorrelationId = graceIds.CorrelationId
+                        )
 
-                        match! getPolicy policyParameters with
-                        | Error error -> return Error error
-                        | Ok policyReturnValue ->
-                            match policyReturnValue.ReturnValue with
-                            | Some snapshot when not (String.IsNullOrWhiteSpace snapshot.PolicySnapshotId) -> return Ok snapshot.PolicySnapshotId
-                            | _ ->
-                                return Error(GraceError.Create (ReviewError.getErrorMessage ReviewError.InvalidPolicySnapshotId) (getCorrelationId parseResult))
+                    match! getPolicy policyParameters with
+                    | Error error -> return Error error
+                    | Ok policyReturnValue ->
+                        match policyReturnValue.ReturnValue with
+                        | Some snapshot when not (String.IsNullOrWhiteSpace snapshot.PolicySnapshotId) -> return Ok snapshot.PolicySnapshotId
+                        | _ -> return Error(GraceError.Create (ReviewError.getErrorMessage ReviewError.InvalidPolicySnapshotId) (getCorrelationId parseResult))
         }
 
-    let private resolvePolicySnapshotId (parseResult: ParseResult) (graceIds: GraceIds) (candidateId: Guid) =
-        resolvePolicySnapshotIdWith Candidate.Get Policy.GetCurrent parseResult graceIds candidateId
+    let private resolvePolicySnapshotId (parseResult: ParseResult) (graceIds: GraceIds) (promotionSetId: Guid) =
+        resolvePolicySnapshotIdWith PromotionSet.Get Policy.GetCurrent parseResult graceIds promotionSetId
 
     let private writePacketSummary (parseResult: ParseResult) (packet: ReviewPacket) =
         if
@@ -243,8 +238,8 @@ module ReviewCommand =
                 if parseResult |> verbose then printParseResult parseResult
                 let graceIds = parseResult |> getNormalizedIdsAndNames
 
-                let candidateIdRaw =
-                    parseResult.GetValue(Options.candidateId)
+                let promotionSetIdRaw =
+                    parseResult.GetValue(Options.promotionSetId)
                     |> Option.ofObj
                     |> Option.defaultValue String.Empty
 
@@ -253,23 +248,23 @@ module ReviewCommand =
                     |> Option.ofObj
                     |> Option.defaultValue String.Empty
 
-                if String.IsNullOrWhiteSpace candidateIdRaw then
+                if String.IsNullOrWhiteSpace promotionSetIdRaw then
                     if String.IsNullOrWhiteSpace promotionGroupRaw then
-                        return Error(GraceError.Create (ReviewError.getErrorMessage ReviewError.InvalidCandidateId) (getCorrelationId parseResult))
+                        return Error(GraceError.Create (ReviewError.getErrorMessage ReviewError.InvalidPromotionSetId) (getCorrelationId parseResult))
                     else
                         return
                             Error(
                                 GraceError.Create
-                                    "Review packets by promotion group are not supported yet. Provide --candidate instead."
+                                    "Review packets by promotion group are not supported yet. Provide --promotion-set instead."
                                     (getCorrelationId parseResult)
                             )
                 else
-                    match tryParseGuid candidateIdRaw ReviewError.InvalidCandidateId parseResult with
+                    match tryParseGuid promotionSetIdRaw ReviewError.InvalidPromotionSetId parseResult with
                     | Error error -> return Error error
-                    | Ok candidateId ->
+                    | Ok promotionSetId ->
                         let parameters =
                             Parameters.Review.GetReviewPacketParameters(
-                                CandidateId = candidateId.ToString(),
+                                PromotionSetId = promotionSetId.ToString(),
                                 OwnerId = graceIds.OwnerIdString,
                                 OwnerName = graceIds.OwnerName,
                                 OrganizationId = graceIds.OrganizationIdString,
@@ -313,20 +308,20 @@ module ReviewCommand =
                 if parseResult |> verbose then printParseResult parseResult
                 let graceIds = parseResult |> getNormalizedIdsAndNames
 
-                let candidateIdRaw =
-                    parseResult.GetValue(Options.candidateId)
+                let promotionSetIdRaw =
+                    parseResult.GetValue(Options.promotionSetId)
                     |> Option.ofObj
                     |> Option.defaultValue String.Empty
 
-                match tryParseGuid candidateIdRaw ReviewError.InvalidCandidateId parseResult with
+                match tryParseGuid promotionSetIdRaw ReviewError.InvalidPromotionSetId parseResult with
                 | Error error -> return Error error
-                | Ok candidateId ->
+                | Ok promotionSetId ->
                     let referenceIdRaw = parseResult.GetValue(Options.referenceId)
 
                     match tryParseGuid referenceIdRaw ReviewError.InvalidReferenceId parseResult with
                     | Error error -> return Error error
                     | Ok referenceId ->
-                        let! policySnapshotIdResult = resolvePolicySnapshotId parseResult graceIds candidateId
+                        let! policySnapshotIdResult = resolvePolicySnapshotId parseResult graceIds promotionSetId
 
                         match policySnapshotIdResult with
                         | Error error -> return Error error
@@ -338,7 +333,7 @@ module ReviewCommand =
 
                             let parameters =
                                 Parameters.Review.ReviewCheckpointParameters(
-                                    CandidateId = candidateId.ToString(),
+                                    PromotionSetId = promotionSetId.ToString(),
                                     PromotionGroupId = promotionGroupIdRaw,
                                     ReviewedUpToReferenceId = referenceId.ToString(),
                                     PolicySnapshotId = policySnapshotId,
@@ -385,14 +380,14 @@ module ReviewCommand =
         if parseResult |> verbose then printParseResult parseResult
         let graceIds = parseResult |> getNormalizedIdsAndNames
 
-        let candidateIdRaw =
-            parseResult.GetValue(Options.candidateId)
+        let promotionSetIdRaw =
+            parseResult.GetValue(Options.promotionSetId)
             |> Option.ofObj
             |> Option.defaultValue String.Empty
 
-        match tryParseGuid candidateIdRaw ReviewError.InvalidCandidateId parseResult with
+        match tryParseGuid promotionSetIdRaw ReviewError.InvalidPromotionSetId parseResult with
         | Error error -> Task.FromResult(Error error)
-        | Ok candidateId ->
+        | Ok promotionSetId ->
             let findingIdRaw = parseResult.GetValue(Options.findingId)
 
             match tryParseGuid findingIdRaw ReviewError.InvalidFindingId parseResult with
@@ -417,7 +412,7 @@ module ReviewCommand =
 
                     let parameters =
                         Parameters.Review.ResolveFindingParameters(
-                            CandidateId = candidateId.ToString(),
+                            PromotionSetId = promotionSetId.ToString(),
                             FindingId = findingId.ToString(),
                             ResolutionState = getDiscriminatedUnionCaseName resolutionState,
                             Note = note,
@@ -455,14 +450,14 @@ module ReviewCommand =
                 if parseResult |> verbose then printParseResult parseResult
                 let graceIds = parseResult |> getNormalizedIdsAndNames
 
-                let candidateIdRaw =
-                    parseResult.GetValue(Options.candidateId)
+                let promotionSetIdRaw =
+                    parseResult.GetValue(Options.promotionSetId)
                     |> Option.ofObj
                     |> Option.defaultValue String.Empty
 
-                match tryParseGuid candidateIdRaw ReviewError.InvalidCandidateId parseResult with
+                match tryParseGuid promotionSetIdRaw ReviewError.InvalidPromotionSetId parseResult with
                 | Error error -> return Error error
-                | Ok candidateId ->
+                | Ok promotionSetId ->
                     let chapterId =
                         parseResult.GetValue(Options.chapterId)
                         |> Option.ofObj
@@ -470,7 +465,7 @@ module ReviewCommand =
 
                     let parameters =
                         Parameters.Review.DeepenReviewParameters(
-                            CandidateId = candidateId.ToString(),
+                            PromotionSetId = promotionSetId.ToString(),
                             ChapterId = chapterId,
                             OwnerId = graceIds.OwnerIdString,
                             OwnerName = graceIds.OwnerName,
@@ -520,7 +515,7 @@ module ReviewCommand =
         let openCommand = new Command("open", Description = "Open a review packet.")
 
         openCommand
-        |> addOption Options.candidateId
+        |> addOption Options.promotionSetId
         |> addOption Options.promotionGroupId
         |> addCommonOptions
         |> ignore
@@ -530,7 +525,7 @@ module ReviewCommand =
 
         let checkpointCommand =
             new Command("checkpoint", Description = "Record a review checkpoint.")
-            |> addOption Options.candidateId
+            |> addOption Options.promotionSetId
             |> addOption Options.referenceId
             |> addOption Options.policySnapshotId
             |> addOption Options.promotionGroupId
@@ -541,7 +536,7 @@ module ReviewCommand =
 
         let deltaCommand =
             new Command("delta", Description = "Show changes since last checkpoint (stub).")
-            |> addOption Options.candidateId
+            |> addOption Options.promotionSetId
             |> addCommonOptions
 
         deltaCommand.Action <- new Delta()
@@ -549,7 +544,7 @@ module ReviewCommand =
 
         let resolveCommand =
             new Command("resolve", Description = "Resolve a review finding.")
-            |> addOption Options.candidateId
+            |> addOption Options.promotionSetId
             |> addOption Options.findingId
             |> addOption Options.approve
             |> addOption Options.requestChanges
@@ -561,7 +556,7 @@ module ReviewCommand =
 
         let deepenCommand =
             new Command("deepen", Description = "Request deeper analysis (stub).")
-            |> addOption Options.candidateId
+            |> addOption Options.promotionSetId
             |> addOption Options.chapterId
             |> addCommonOptions
 

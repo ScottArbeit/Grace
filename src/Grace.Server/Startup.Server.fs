@@ -538,19 +538,10 @@ module Application =
                                |> addMetadata typeof<Queue.PromotionSetActionParameters> ]
                     ]
                 subRoute
-                    "/candidate"
+                    "/promotion-set"
                     [
-                        POST [ route "/get" Queue.GetCandidate
-                               |> addMetadata typeof<Queue.CandidateParameters>
-
-                               route "/cancel" Queue.CancelCandidate
-                               |> addMetadata typeof<Queue.CandidateActionParameters>
-
-                               route "/retry" Queue.RetryCandidate
-                               |> addMetadata typeof<Queue.CandidateActionParameters>
-
-                               route "/required-actions" Queue.RequiredActions
-                               |> addMetadata typeof<Queue.CandidateParameters> ]
+                        POST [ route "/get" PromotionSet.Get
+                               |> addMetadata typeof<Grace.Shared.Parameters.PromotionSet.GetPromotionSetParameters> ]
                     ]
                 subRoute
                     "/validation-set"

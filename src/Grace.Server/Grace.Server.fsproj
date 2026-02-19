@@ -78,6 +78,7 @@
 		<Compile Include="Repository.Server.fs" />
 		<Compile Include="Branch.Server.fs" />
                 <Compile Include="PromotionGroup.Server.fs" />
+                <Compile Include="PromotionSet.Server.fs" />
                 <Compile Include="WorkItem.Server.fs" />
                 <Compile Include="Policy.Server.fs" />
                 <Compile Include="Review.Server.fs" />

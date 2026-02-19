@@ -50,6 +50,7 @@
         <Compile Include="Parameters\Reminder.Parameters.fs" />
         <Compile Include="Parameters\WorkItem.Parameters.fs" />
         <Compile Include="Parameters\Policy.Parameters.fs" />
+        <Compile Include="Parameters\PromotionSet.Parameters.fs" />
         <Compile Include="Parameters\Review.Parameters.fs" />
         <Compile Include="Parameters\Queue.Parameters.fs" />
         <Compile Include="Parameters\Validation.Parameters.fs" />

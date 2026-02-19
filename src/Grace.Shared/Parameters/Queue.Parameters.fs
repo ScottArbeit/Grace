@@ -34,13 +34,3 @@ module Queue =
     type PromotionSetActionParameters() =
         inherit QueueParameters()
         member val public PromotionSetId = String.Empty with get, set
-
-    /// Parameters for /candidate/get.
-    type CandidateParameters() =
-        inherit QueueParameters()
-        member val public CandidateId = String.Empty with get, set
-
-    /// Parameters for /candidate/action.
-    type CandidateActionParameters() =
-        inherit QueueParameters()
-        member val public CandidateId = String.Empty with get, set

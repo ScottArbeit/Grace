@@ -13,7 +13,7 @@ module Review =
         member val public OrganizationName = String.Empty with get, set
         member val public RepositoryId = String.Empty with get, set
         member val public RepositoryName = String.Empty with get, set
-        member val public CandidateId = String.Empty with get, set
+        member val public PromotionSetId = String.Empty with get, set
         member val public PromotionGroupId = String.Empty with get, set
 
     /// Parameters for /review/packet.

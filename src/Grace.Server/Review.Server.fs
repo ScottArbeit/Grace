@@ -48,9 +48,9 @@ module Review =
                 parameters.OrganizationId <- graceIds.OrganizationIdString
                 parameters.RepositoryId <- graceIds.RepositoryIdString
 
-                let handleCommand candidateId cmd =
+                let handleCommand promotionSetId cmd =
                     task {
-                        let actorProxy = Review.CreateActorProxy candidateId graceIds.RepositoryId correlationId
+                        let actorProxy = Review.CreateActorProxy promotionSetId graceIds.RepositoryId correlationId
                         let metadata = createMetadata context
 
                         match! actorProxy.Handle cmd metadata with
@@ -60,7 +60,7 @@ module Review =
                                 .enhance(nameof OwnerId, graceIds.OwnerId)
                                 .enhance(nameof OrganizationId, graceIds.OrganizationId)
                                 .enhance(nameof RepositoryId, graceIds.RepositoryId)
-                                .enhance(nameof CandidateId, candidateId)
+                                .enhance(nameof PromotionSetId, promotionSetId)
                                 .enhance("Command", commandName)
                                 .enhance ("Path", context.Request.Path.Value)
                             |> ignore
@@ -72,7 +72,7 @@ module Review =
                                 .enhance(nameof OwnerId, graceIds.OwnerId)
                                 .enhance(nameof OrganizationId, graceIds.OrganizationId)
                                 .enhance(nameof RepositoryId, graceIds.RepositoryId)
-                                .enhance(nameof CandidateId, candidateId)
+                                .enhance(nameof PromotionSetId, promotionSetId)
                                 .enhance("Command", commandName)
                                 .enhance ("Path", context.Request.Path.Value)
                             |> ignore
@@ -85,8 +85,8 @@ module Review =
 
                 if validationsPassed then
                     let! cmd = command parameters
-                    let candidateId = Guid.Parse(parameters.CandidateId)
-                    return! handleCommand candidateId cmd
+                    let promotionSetId = Guid.Parse(parameters.PromotionSetId)
+                    return! handleCommand promotionSetId cmd
                 else
                     let! error = validationResults |> getFirstError
                     let errorMessage = ReviewError.getErrorMessage error
@@ -138,8 +138,8 @@ module Review =
                 let! validationsPassed = validationResults |> allPass
 
                 if validationsPassed then
-                    let candidateId = Guid.Parse(parameters.CandidateId)
-                    let actorProxy = Review.CreateActorProxy candidateId graceIds.RepositoryId correlationId
+                    let promotionSetId = Guid.Parse(parameters.PromotionSetId)
+                    let actorProxy = Review.CreateActorProxy promotionSetId graceIds.RepositoryId correlationId
                     let! queryResult = query context 0 actorProxy
 
                     let graceReturnValue =
@@ -148,7 +148,7 @@ module Review =
                             .enhance(nameof OwnerId, graceIds.OwnerId)
                             .enhance(nameof OrganizationId, graceIds.OrganizationId)
                             .enhance(nameof RepositoryId, graceIds.RepositoryId)
-                            .enhance(nameof CandidateId, candidateId)
+                            .enhance(nameof PromotionSetId, promotionSetId)
                             .enhance ("Path", context.Request.Path.Value)
 
                     return! context |> result200Ok graceReturnValue
@@ -186,7 +186,7 @@ module Review =
 
                 let validations (parameters: GetReviewPacketParameters) =
                     [|
-                        Guid.isValidAndNotEmptyGuid parameters.CandidateId ReviewError.InvalidCandidateId
+                        Guid.isValidAndNotEmptyGuid parameters.PromotionSetId ReviewError.InvalidPromotionSetId
                     |]
 
                 let query (context: HttpContext) _ (actorProxy: IReviewActor) = actorProxy.GetPacket(getCorrelationId context)
@@ -208,13 +208,13 @@ module Review =
 
                 let validations (parameters: ReviewCheckpointParameters) =
                     [|
-                        Guid.isValidAndNotEmptyGuid parameters.CandidateId ReviewError.InvalidCandidateId
+                        Guid.isValidAndNotEmptyGuid parameters.PromotionSetId ReviewError.InvalidPromotionSetId
                         Guid.isValidAndNotEmptyGuid parameters.ReviewedUpToReferenceId ReviewError.InvalidReferenceId
                         String.isNotEmpty parameters.PolicySnapshotId ReviewError.InvalidPolicySnapshotId
                     |]
 
                 let command (parameters: ReviewCheckpointParameters) =
-                    let candidateId = Guid.Parse(parameters.CandidateId)
+                    let promotionSetId = Guid.Parse(parameters.PromotionSetId)
 
                     let promotionGroupId =
                         if String.IsNullOrEmpty(parameters.PromotionGroupId) then
@@ -235,7 +235,7 @@ module Review =
                     let checkpoint =
                         {
                             ReviewCheckpointId = Guid.NewGuid()
-                            CandidateId = Some candidateId
+                            PromotionSetId = Some promotionSetId
                             PromotionGroupId = promotionGroupId
                             ReviewedUpToReferenceId = Guid.Parse(parameters.ReviewedUpToReferenceId)
                             PolicySnapshotId = PolicySnapshotId parameters.PolicySnapshotId
@@ -258,7 +258,7 @@ module Review =
 
                 let validations (parameters: ResolveFindingParameters) =
                     [|
-                        Guid.isValidAndNotEmptyGuid parameters.CandidateId ReviewError.InvalidCandidateId
+                        Guid.isValidAndNotEmptyGuid parameters.PromotionSetId ReviewError.InvalidPromotionSetId
                         Guid.isValidAndNotEmptyGuid parameters.FindingId ReviewError.InvalidFindingId
                         DiscriminatedUnion.isMemberOf<FindingResolutionState, ReviewError> parameters.ResolutionState ReviewError.InvalidResolutionState
                     |]

@@ -50,7 +50,7 @@ module ReviewPacket =
         (ownerId: OwnerId)
         (organizationId: OrganizationId)
         (repositoryId: RepositoryId)
-        (candidateId: CandidateId option)
+        (promotionSetId: PromotionSetId option)
         (promotionGroupId: PromotionGroupId option)
         (policySnapshotId: PolicySnapshotId)
         (riskProfile: DeterministicRiskProfile option)
@@ -74,7 +74,7 @@ module ReviewPacket =
             OwnerId = ownerId
             OrganizationId = organizationId
             RepositoryId = repositoryId
-            CandidateId = candidateId
+            PromotionSetId = promotionSetId
             PromotionGroupId = promotionGroupId
             PolicySnapshotId = policySnapshotId
             Chapters = buildChapters paths evidence

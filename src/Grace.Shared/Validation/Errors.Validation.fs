@@ -704,7 +704,7 @@ module Errors =
         | FailedWhileApplyingEvent
         | ReviewPacketDoesNotExist
         | FindingDoesNotExist
-        | InvalidCandidateId
+        | InvalidPromotionSetId
         | InvalidFindingId
         | InvalidReferenceId
         | InvalidPolicySnapshotId
@@ -719,7 +719,7 @@ module Errors =
             | FailedWhileApplyingEvent -> "An error occurred while processing the review event."
             | ReviewPacketDoesNotExist -> "The review packet does not exist."
             | FindingDoesNotExist -> "The specified finding does not exist."
-            | InvalidCandidateId -> "The candidate ID is invalid."
+            | InvalidPromotionSetId -> "The promotion set ID is invalid."
             | InvalidFindingId -> "The finding ID is invalid."
             | InvalidReferenceId -> "The reference ID is invalid."
             | InvalidPolicySnapshotId -> "The policy snapshot ID is invalid."

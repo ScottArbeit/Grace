@@ -107,7 +107,7 @@ module Review =
             RepositoryId: RepositoryId
             ReferenceId: ReferenceId
             WorkItemId: WorkItemId option
-            CandidateId: CandidateId option
+            PromotionSetId: PromotionSetId option
             PolicySnapshotId: PolicySnapshotId
             RiskProfile: DeterministicRiskProfile
             CreatedAt: Instant
@@ -123,7 +123,7 @@ module Review =
                 RepositoryId = RepositoryId.Empty
                 ReferenceId = ReferenceId.Empty
                 WorkItemId = None
-                CandidateId = None
+                PromotionSetId = None
                 PolicySnapshotId = PolicySnapshotId String.Empty
                 RiskProfile = DeterministicRiskProfile.Default
                 CreatedAt = Constants.DefaultTimestamp
@@ -326,7 +326,7 @@ module Review =
     type ReviewCheckpoint =
         {
             ReviewCheckpointId: ReviewCheckpointId
-            CandidateId: CandidateId option
+            PromotionSetId: PromotionSetId option
             PromotionGroupId: PromotionGroup.PromotionGroupId option
             ReviewedUpToReferenceId: ReferenceId
             PolicySnapshotId: PolicySnapshotId
@@ -347,7 +347,7 @@ module Review =
             OwnerId: OwnerId
             OrganizationId: OrganizationId
             RepositoryId: RepositoryId
-            CandidateId: CandidateId option
+            PromotionSetId: PromotionSetId option
             PromotionGroupId: PromotionGroup.PromotionGroupId option
             PolicySnapshotId: PolicySnapshotId
             Summary: string
@@ -368,7 +368,7 @@ module Review =
                 OwnerId = OwnerId.Empty
                 OrganizationId = OrganizationId.Empty
                 RepositoryId = RepositoryId.Empty
-                CandidateId = None
+                PromotionSetId = None
                 PromotionGroupId = None
                 PolicySnapshotId = PolicySnapshotId String.Empty
                 Summary = String.Empty

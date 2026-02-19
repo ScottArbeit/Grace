@@ -5,7 +5,7 @@ open Grace.CLI
 open Grace.CLI.Command
 open Grace.Shared
 open Grace.Types.Policy
-open Grace.Types.Queue
+open Grace.Types.PromotionSet
 open Grace.Types.Types
 open NUnit.Framework
 open System
@@ -45,13 +45,13 @@ module ReviewCommandTests =
         |> Array.append [| "--output"; "Silent" |]
         |> withIds
 
-    let private parseCheckpoint (candidateId: Guid) (extraArgs: string array) =
+    let private parseCheckpoint (promotionSetId: Guid) (extraArgs: string array) =
         let baseArgs =
             [|
                 "review"
                 "checkpoint"
-                "--candidate"
-                candidateId.ToString()
+                "--promotion-set"
+                promotionSetId.ToString()
                 "--reference-id"
                 Guid.NewGuid().ToString()
             |]
@@ -59,12 +59,12 @@ module ReviewCommandTests =
         GraceCommand.rootCommand.Parse(withIdsAndSilent (Array.append baseArgs extraArgs))
 
     [<Test>]
-    let ``review open rejects invalid candidate id`` () =
+    let ``review open rejects invalid promotion set id`` () =
         let parseResult =
             GraceCommand.rootCommand.Parse(
                 withIdsAndSilent [| "review"
                                     "open"
-                                    "--candidate"
+                                    "--promotion-set"
                                     "not-a-guid" |]
             )
 
@@ -77,7 +77,7 @@ module ReviewCommandTests =
             GraceCommand.rootCommand.Parse(
                 withIdsAndSilent [| "review"
                                     "checkpoint"
-                                    "--candidate"
+                                    "--promotion-set"
                                     Guid.NewGuid().ToString()
                                     "--reference-id"
                                     "not-a-guid"
@@ -94,7 +94,7 @@ module ReviewCommandTests =
             GraceCommand.rootCommand.Parse(
                 withIdsAndSilent [| "review"
                                     "resolve"
-                                    "--candidate"
+                                    "--promotion-set"
                                     Guid.NewGuid().ToString()
                                     "--finding-id"
                                     Guid.NewGuid().ToString() |]
@@ -109,7 +109,7 @@ module ReviewCommandTests =
             GraceCommand.rootCommand.Parse(
                 withIdsAndSilent [| "review"
                                     "resolve"
-                                    "--candidate"
+                                    "--promotion-set"
                                     Guid.NewGuid().ToString()
                                     "--finding-id"
                                     Guid.NewGuid().ToString()
@@ -121,20 +121,25 @@ module ReviewCommandTests =
         exitCode |> should equal -1
 
     [<Test>]
-    let ``review checkpoint uses candidate policy snapshot when available`` () =
-        let candidateId = Guid.NewGuid()
-        let parseResult = parseCheckpoint candidateId [||]
+    let ``review checkpoint uses explicit policy snapshot when provided`` () =
+        let promotionSetId = Guid.NewGuid()
 
-        let candidate =
-            { IntegrationCandidate.Default with
-                CandidateId = candidateId
-                TargetBranchId = Guid.NewGuid()
-                PolicySnapshotId = PolicySnapshotId "snapshot-candidate"
-            }
+        let parseResult =
+            parseCheckpoint
+                promotionSetId
+                [|
+                    "--policy-snapshot-id"
+                    "snapshot-explicit"
+                |]
 
+        let promotionSet = { PromotionSetDto.Default with PromotionSetId = promotionSetId; TargetBranchId = Guid.NewGuid() }
+
+        let mutable getPromotionSetCalled = false
         let mutable policyCalled = false
 
-        let getCandidate (_: Parameters.Queue.CandidateParameters) = Task.FromResult(Ok(GraceReturnValue.Create candidate graceIds.CorrelationId))
+        let getPromotionSet (_: Parameters.PromotionSet.GetPromotionSetParameters) =
+            getPromotionSetCalled <- true
+            Task.FromResult(Ok(GraceReturnValue.Create promotionSet graceIds.CorrelationId))
 
         let getPolicy (_: Parameters.Policy.GetPolicyParameters) =
             policyCalled <- true
@@ -144,33 +149,34 @@ module ReviewCommandTests =
             )
 
         let result =
-            ReviewCommand.resolvePolicySnapshotIdWith getCandidate getPolicy parseResult graceIds candidateId
+            ReviewCommand.resolvePolicySnapshotIdWith getPromotionSet getPolicy parseResult graceIds promotionSetId
             |> Async.AwaitTask
             |> Async.RunSynchronously
 
         match result with
-        | Ok snapshotId -> snapshotId |> should equal "snapshot-candidate"
+        | Ok snapshotId -> snapshotId |> should equal "snapshot-explicit"
         | Error error -> Assert.Fail error.Error
 
+        Assert.That(getPromotionSetCalled, Is.False)
         Assert.That(policyCalled, Is.False)
 
     [<Test>]
-    let ``review checkpoint falls back to policy snapshot when candidate missing`` () =
-        let candidateId = Guid.NewGuid()
+    let ``review checkpoint falls back to policy snapshot when promotion set snapshot is missing`` () =
+        let promotionSetId = Guid.NewGuid()
         let targetBranchId = Guid.NewGuid()
-        let parseResult = parseCheckpoint candidateId [||]
+        let parseResult = parseCheckpoint promotionSetId [||]
 
-        let candidate =
-            { IntegrationCandidate.Default with CandidateId = candidateId; TargetBranchId = targetBranchId; PolicySnapshotId = PolicySnapshotId String.Empty }
+        let promotionSet = { PromotionSetDto.Default with PromotionSetId = promotionSetId; TargetBranchId = targetBranchId }
 
-        let getCandidate (_: Parameters.Queue.CandidateParameters) = Task.FromResult(Ok(GraceReturnValue.Create candidate graceIds.CorrelationId))
+        let getPromotionSet (_: Parameters.PromotionSet.GetPromotionSetParameters) =
+            Task.FromResult(Ok(GraceReturnValue.Create promotionSet graceIds.CorrelationId))
 
         let policySnapshot = { PolicySnapshot.Default with PolicySnapshotId = PolicySnapshotId "snapshot-policy"; TargetBranchId = targetBranchId }
 
         let getPolicy (_: Parameters.Policy.GetPolicyParameters) = Task.FromResult(Ok(GraceReturnValue.Create (Some policySnapshot) graceIds.CorrelationId))
 
         let result =
-            ReviewCommand.resolvePolicySnapshotIdWith getCandidate getPolicy parseResult graceIds candidateId
+            ReviewCommand.resolvePolicySnapshotIdWith getPromotionSet getPolicy parseResult graceIds promotionSetId
             |> Async.AwaitTask
             |> Async.RunSynchronously
 
