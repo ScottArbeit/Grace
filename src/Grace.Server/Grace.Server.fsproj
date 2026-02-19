@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk.Web">
+<Project Sdk="Microsoft.NET.Sdk.Web">
     <PropertyGroup>
         <AssemblyInformationalVersion>0.1.0 (Build Time: $([System.DateTime]::UtcNow.ToString("u")))</AssemblyInformationalVersion>
     </PropertyGroup>
@@ -77,19 +77,17 @@
 		<Compile Include="Organization.Server.fs" />
 		<Compile Include="Repository.Server.fs" />
 		<Compile Include="Branch.Server.fs" />
-                <Compile Include="PromotionGroup.Server.fs" />
+                
                 <Compile Include="PromotionSet.Server.fs" />
                 <Compile Include="WorkItem.Server.fs" />
                 <Compile Include="Policy.Server.fs" />
                 <Compile Include="Review.Server.fs" />
-                <Compile Include="Gates.Server.fs" />
                 <Compile Include="Queue.Server.fs" />
                 <Compile Include="ValidationSet.Server.fs" />
                 <Compile Include="ValidationResult.Server.fs" />
                 <Compile Include="Artifact.Server.fs" />
                 <Compile Include="ReviewModels.Server.fs" />
                 <Compile Include="ReviewAnalysis.Server.fs" />
-                <Compile Include="ConflictPipeline.Server.fs" />
                 <Compile Include="Eventing.Server.fs" />
                 <Compile Include="DirectoryVersion.Server.fs" />
 		<Compile Include="Diff.Server.fs" />

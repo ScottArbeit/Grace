@@ -441,8 +441,7 @@ module Notification =
                                 links
                                 |> Seq.exists (fun link ->
                                     match link with
-                                    | ReferenceLinkType.PromotionSetTerminal _
-                                    | ReferenceLinkType.PromotionGroupTerminal _ -> true
+                                    | ReferenceLinkType.PromotionSetTerminal _ -> true
                                     | _ -> false)
 
                             if (not <| isNull hubContext) && isTerminalPromotion then
@@ -639,15 +638,6 @@ module Notification =
                     )
 
                     do! DerivedComputation.handlePolicyEvent policyEvent
-                | PromotionGroupEvent promotionGroupEvent ->
-                    let correlationId = promotionGroupEvent.Metadata.CorrelationId
-
-                    log.LogInformation(
-                        "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Received PromotionGroupEvent notification.",
-                        getCurrentInstantExtended (),
-                        getMachineName,
-                        correlationId
-                    )
                 | WorkItemEvent workItemEvent ->
                     let correlationId = workItemEvent.Metadata.CorrelationId
 
@@ -662,26 +652,6 @@ module Notification =
 
                     log.LogInformation(
                         "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Received ReviewEvent notification.",
-                        getCurrentInstantExtended (),
-                        getMachineName,
-                        correlationId
-                    )
-                | Stage0Event _ -> ()
-                | CandidateEvent candidateEvent ->
-                    let correlationId = candidateEvent.Metadata.CorrelationId
-
-                    log.LogInformation(
-                        "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Received CandidateEvent notification.",
-                        getCurrentInstantExtended (),
-                        getMachineName,
-                        correlationId
-                    )
-                | GateAttestationEvent _ -> ()
-                | ConflictReceiptEvent conflictReceiptEvent ->
-                    let correlationId = conflictReceiptEvent.Metadata.CorrelationId
-
-                    log.LogInformation(
-                        "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Received ConflictReceiptEvent notification.",
                         getCurrentInstantExtended (),
                         getMachineName,
                         correlationId

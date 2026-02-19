@@ -2,7 +2,6 @@ namespace Grace.Types
 
 open Grace.Shared
 open Grace.Shared.Utilities
-open Grace.Types.PromotionGroup
 open Grace.Types.Types
 open NodaTime
 open Orleans
@@ -49,12 +48,10 @@ module WorkItem =
         | UnlinkBranch of branchId: BranchId
         | LinkReference of referenceId: ReferenceId
         | UnlinkReference of referenceId: ReferenceId
-        | LinkPromotionGroup of promotionGroupId: PromotionGroupId
-        | UnlinkPromotionGroup of promotionGroupId: PromotionGroupId
-        | LinkCandidate of candidateId: CandidateId
-        | UnlinkCandidate of candidateId: CandidateId
-        | LinkReviewPacket of reviewPacketId: ReviewPacketId
-        | UnlinkReviewPacket of reviewPacketId: ReviewPacketId
+        | LinkPromotionSet of promotionSetId: PromotionSetId
+        | UnlinkPromotionSet of promotionSetId: PromotionSetId
+        | LinkReviewNotes of reviewNotesId: ReviewNotesId
+        | UnlinkReviewNotes of reviewNotesId: ReviewNotesId
         | LinkReviewCheckpoint of reviewCheckpointId: ReviewCheckpointId
         | UnlinkReviewCheckpoint of reviewCheckpointId: ReviewCheckpointId
         | LinkValidationResult of validationResultId: ValidationResultId
@@ -89,12 +86,10 @@ module WorkItem =
         | BranchUnlinked of branchId: BranchId
         | ReferenceLinked of referenceId: ReferenceId
         | ReferenceUnlinked of referenceId: ReferenceId
-        | PromotionGroupLinked of promotionGroupId: PromotionGroupId
-        | PromotionGroupUnlinked of promotionGroupId: PromotionGroupId
-        | CandidateLinked of candidateId: CandidateId
-        | CandidateUnlinked of candidateId: CandidateId
-        | ReviewPacketLinked of reviewPacketId: ReviewPacketId
-        | ReviewPacketUnlinked of reviewPacketId: ReviewPacketId
+        | PromotionSetLinked of promotionSetId: PromotionSetId
+        | PromotionSetUnlinked of promotionSetId: PromotionSetId
+        | ReviewNotesLinked of reviewNotesId: ReviewNotesId
+        | ReviewNotesUnlinked of reviewNotesId: ReviewNotesId
         | ReviewCheckpointLinked of reviewCheckpointId: ReviewCheckpointId
         | ReviewCheckpointUnlinked of reviewCheckpointId: ReviewCheckpointId
         | ValidationResultLinked of validationResultId: ValidationResultId
@@ -131,9 +126,8 @@ module WorkItem =
             ExternalRefs: string list
             BranchIds: BranchId list
             ReferenceIds: ReferenceId list
-            PromotionGroupIds: PromotionGroupId list
-            CandidateIds: CandidateId list
-            ReviewPacketIds: ReviewPacketId list
+            PromotionSetIds: PromotionSetId list
+            ReviewNotesIds: ReviewNotesId list
             ReviewCheckpointIds: ReviewCheckpointId list
             ValidationResultIds: ValidationResultId list
             OnBehalfOf: UserId list
@@ -161,9 +155,8 @@ module WorkItem =
                 ExternalRefs = []
                 BranchIds = []
                 ReferenceIds = []
-                PromotionGroupIds = []
-                CandidateIds = []
-                ReviewPacketIds = []
+                PromotionSetIds = []
+                ReviewNotesIds = []
                 ReviewCheckpointIds = []
                 ValidationResultIds = []
                 OnBehalfOf = []
@@ -260,44 +253,31 @@ module WorkItem =
                             currentWorkItemDto.ReferenceIds
                             |> List.filter (fun existing -> existing <> referenceId)
                     }
-                | PromotionGroupLinked promotionGroupId ->
+                | PromotionSetLinked promotionSetId ->
                     { currentWorkItemDto with
-                        PromotionGroupIds =
-                            currentWorkItemDto.PromotionGroupIds
-                            |> List.append [ promotionGroupId ]
+                        PromotionSetIds =
+                            currentWorkItemDto.PromotionSetIds
+                            |> List.append [ promotionSetId ]
                             |> List.distinct
                     }
-                | PromotionGroupUnlinked promotionGroupId ->
+                | PromotionSetUnlinked promotionSetId ->
                     { currentWorkItemDto with
-                        PromotionGroupIds =
-                            currentWorkItemDto.PromotionGroupIds
-                            |> List.filter (fun existing -> existing <> promotionGroupId)
+                        PromotionSetIds =
+                            currentWorkItemDto.PromotionSetIds
+                            |> List.filter (fun existing -> existing <> promotionSetId)
                     }
-                | CandidateLinked candidateId ->
+                | ReviewNotesLinked reviewNotesId ->
                     { currentWorkItemDto with
-                        CandidateIds =
-                            currentWorkItemDto.CandidateIds
-                            |> List.append [ candidateId ]
+                        ReviewNotesIds =
+                            currentWorkItemDto.ReviewNotesIds
+                            |> List.append [ reviewNotesId ]
                             |> List.distinct
                     }
-                | CandidateUnlinked candidateId ->
+                | ReviewNotesUnlinked reviewNotesId ->
                     { currentWorkItemDto with
-                        CandidateIds =
-                            currentWorkItemDto.CandidateIds
-                            |> List.filter (fun existing -> existing <> candidateId)
-                    }
-                | ReviewPacketLinked reviewPacketId ->
-                    { currentWorkItemDto with
-                        ReviewPacketIds =
-                            currentWorkItemDto.ReviewPacketIds
-                            |> List.append [ reviewPacketId ]
-                            |> List.distinct
-                    }
-                | ReviewPacketUnlinked reviewPacketId ->
-                    { currentWorkItemDto with
-                        ReviewPacketIds =
-                            currentWorkItemDto.ReviewPacketIds
-                            |> List.filter (fun existing -> existing <> reviewPacketId)
+                        ReviewNotesIds =
+                            currentWorkItemDto.ReviewNotesIds
+                            |> List.filter (fun existing -> existing <> reviewNotesId)
                     }
                 | ReviewCheckpointLinked reviewCheckpointId ->
                     { currentWorkItemDto with

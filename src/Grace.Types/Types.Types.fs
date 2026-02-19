@@ -67,29 +67,17 @@ module Types =
     /// The Id of the work item.
     type WorkItemId = Guid
 
-    /// The Id of the integration candidate.
-    type CandidateId = Guid
-
     /// The Id of the promotion set.
     type PromotionSetId = Guid
 
     /// The Id of a promotion set step.
     type PromotionSetStepId = Guid
 
-    /// The Id of the review packet.
-    type ReviewPacketId = Guid
-
     /// The Id of the review notes payload.
     type ReviewNotesId = Guid
 
     /// The Id of the review checkpoint.
     type ReviewCheckpointId = Guid
-
-    /// The Id of the gate attestation.
-    type GateAttestationId = Guid
-
-    /// The Id of a Stage 0 analysis.
-    type Stage0AnalysisId = Guid
 
     /// The Id of an analysis receipt.
     type AnalysisReceiptId = Guid
@@ -592,9 +580,6 @@ module Types =
         | BasedOn of ReferenceId
         | IncludedInPromotionSet of PromotionSetId
         | PromotionSetTerminal of PromotionSetId // Marks the final promotion in a promotion set.
-        // Deprecated names retained temporarily for compatibility with in-flight dev data.
-        | IncludedInPromotionGroup of Guid
-        | PromotionGroupTerminal of Guid // Marks the final promotion in a promotion group.
 
         static member GetKnownTypes() = GetKnownTypes<ReferenceLinkType>()
 
@@ -981,8 +966,6 @@ module Types =
         | DeleteCachedState
         /// DeleteZipFile reminders are used to remind the DirectoryVersion actor to delete the directory version contents .zip file after the time set in the repository has expired.
         | DeleteZipFile
-        /// ScheduledPromotionGroup reminders are used to trigger a promotion group to start at a scheduled time.
-        | ScheduledPromotionGroup
 
         static member GetKnownTypes() = GetKnownTypes<ReminderTypes>()
 

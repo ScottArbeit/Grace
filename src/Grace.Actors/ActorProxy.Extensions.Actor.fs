@@ -224,19 +224,6 @@ module ActorProxy =
             memoryCache.CreateOrleansContextEntry(grain.GetGrainId(), orleansContext)
             grain
 
-    module PromotionGroup =
-        open Grace.Types.PromotionGroup
-
-        /// Creates an ActorProxy for a PromotionGroup actor, and adds the correlationId to the server's MemoryCache so
-        ///   it's available in the OnActivateAsync() method.
-        let CreateActorProxy (promotionGroupId: PromotionGroupId) (repositoryId: RepositoryId) (correlationId: string) =
-            let grain = orleansClient.CreateActorProxyWithCorrelationId<IPromotionGroupActor>(promotionGroupId, correlationId)
-            let orleansContext = Dictionary<string, obj>()
-            orleansContext.Add(nameof RepositoryId, repositoryId)
-            orleansContext.Add(Constants.ActorNameProperty, ActorName.PromotionGroup)
-            memoryCache.CreateOrleansContextEntry(grain.GetGrainId(), orleansContext)
-            grain
-
     module PromotionQueue =
         open Grace.Types.Queue
 
@@ -260,32 +247,6 @@ module ActorProxy =
             let orleansContext = Dictionary<string, obj>()
             orleansContext.Add(nameof RepositoryId, repositoryId)
             orleansContext.Add(Constants.ActorNameProperty, ActorName.PromotionSet)
-            memoryCache.CreateOrleansContextEntry(grain.GetGrainId(), orleansContext)
-            grain
-
-    module IntegrationCandidate =
-        open Grace.Types.Queue
-
-        /// Creates an ActorProxy for an IntegrationCandidate actor, and adds the correlationId to the server's MemoryCache so
-        ///   it's available in the OnActivateAsync() method.
-        let CreateActorProxy (candidateId: CandidateId) (repositoryId: RepositoryId) (correlationId: string) =
-            let grain = orleansClient.CreateActorProxyWithCorrelationId<IIntegrationCandidateActor>(candidateId, correlationId)
-            let orleansContext = Dictionary<string, obj>()
-            orleansContext.Add(nameof RepositoryId, repositoryId)
-            orleansContext.Add(Constants.ActorNameProperty, ActorName.IntegrationCandidate)
-            memoryCache.CreateOrleansContextEntry(grain.GetGrainId(), orleansContext)
-            grain
-
-    module ConflictReceipt =
-        open Grace.Types.Queue
-
-        /// Creates an ActorProxy for a ConflictReceipt actor, and adds the correlationId to the server's MemoryCache so
-        ///   it's available in the OnActivateAsync() method.
-        let CreateActorProxy (conflictReceiptId: ConflictReceiptId) (repositoryId: RepositoryId) (correlationId: string) =
-            let grain = orleansClient.CreateActorProxyWithCorrelationId<IConflictReceiptActor>(conflictReceiptId, correlationId)
-            let orleansContext = Dictionary<string, obj>()
-            orleansContext.Add(nameof RepositoryId, repositoryId)
-            orleansContext.Add(Constants.ActorNameProperty, ActorName.ConflictReceipt)
             memoryCache.CreateOrleansContextEntry(grain.GetGrainId(), orleansContext)
             grain
 
@@ -346,8 +307,8 @@ module ActorProxy =
 
         /// Creates an ActorProxy for a Review actor, and adds the correlationId to the server's MemoryCache so
         ///   it's available in the OnActivateAsync() method.
-        let CreateActorProxy (candidateId: CandidateId) (repositoryId: RepositoryId) (correlationId: string) =
-            let grain = orleansClient.CreateActorProxyWithCorrelationId<IReviewActor>(candidateId, correlationId)
+        let CreateActorProxy (promotionSetId: PromotionSetId) (repositoryId: RepositoryId) (correlationId: string) =
+            let grain = orleansClient.CreateActorProxyWithCorrelationId<IReviewActor>(promotionSetId, correlationId)
             let orleansContext = Dictionary<string, obj>()
             orleansContext.Add(nameof RepositoryId, repositoryId)
             orleansContext.Add(Constants.ActorNameProperty, ActorName.Review)

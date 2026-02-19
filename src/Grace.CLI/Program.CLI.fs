@@ -239,16 +239,7 @@ module GraceCommand =
                         "watch"
                     ]
             }
-            {
-                Heading = "Review and promotion"
-                CommandNames =
-                    [
-                        "work"
-                        "review"
-                        "promotion-group"
-                        "queue"
-                    ]
-            }
+            { Heading = "Review and promotion"; CommandNames = [ "work"; "review"; "queue" ] }
             {
                 Heading = "Administration and access"
                 CommandNames =
@@ -374,23 +365,6 @@ module GraceCommand =
             { Heading = "Lifecycle"; CommandNames = [ "delete"; "undelete" ] }
         ]
 
-    let private promotionGroupHelpSections =
-        [
-            { Heading = "Create and inspect"; CommandNames = [ "create"; "get"; "list" ] }
-            { Heading = "Manage promotions"; CommandNames = [ "add"; "remove"; "reorder" ] }
-            {
-                Heading = "Workflow"
-                CommandNames =
-                    [
-                        "schedule"
-                        "mark-ready"
-                        "start"
-                        "block"
-                    ]
-            }
-            { Heading = "Lifecycle"; CommandNames = [ "delete" ] }
-        ]
-
     let private groupedHelpSectionsByCommandName =
         let lookup = Dictionary<string, HelpSection list>(StringComparer.InvariantCultureIgnoreCase)
         lookup["repository"] <- repositoryHelpSections
@@ -400,8 +374,6 @@ module GraceCommand =
         lookup["owner"] <- ownerHelpSections
         lookup["organization"] <- organizationHelpSections
         lookup["org"] <- organizationHelpSections
-        lookup["promotion-group"] <- promotionGroupHelpSections
-        lookup["pg"] <- promotionGroupHelpSections
         lookup
 
     let private formatDisplayName (command: Command) =
@@ -576,7 +548,6 @@ module GraceCommand =
         rootCommand.Subcommands.Add(History.Build)
         rootCommand.Subcommands.Add(Auth.Build)
         rootCommand.Subcommands.Add(Maintenance.Build)
-        rootCommand.Subcommands.Add(PromotionGroupCommand.Build)
         rootCommand.Subcommands.Add(WorkItemCommand.Build)
         rootCommand.Subcommands.Add(ReviewCommand.Build)
         rootCommand.Subcommands.Add(QueueCommand.Build)

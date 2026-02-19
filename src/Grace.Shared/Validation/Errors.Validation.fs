@@ -605,48 +605,6 @@ module Errors =
             | Some error -> StorageError.getErrorMessage error
             | None -> String.Empty
 
-    type PromotionGroupError =
-        | DuplicateCorrelationId
-        | FailedWhileApplyingEvent
-        | PromotionGroupAlreadyExists
-        | PromotionGroupDoesNotExist
-        | PromotionGroupNotInEditableState
-        | PromotionGroupNotInDraftState
-        | PromotionGroupNotInReadyState
-        | PromotionGroupNotRunning
-        | PromotionGroupCannotBeBlocked
-        | PromotionGroupCannotBeDeleted
-        | PromotionGroupIsEmpty
-        | InvalidPromotionGroupId
-        | InvalidTargetBranchId
-        | InvalidPromotionId
-        | PromotionNotInGroup
-
-        interface IErrorDiscriminatedUnion
-
-        static member getErrorMessage(promotionGroupError: PromotionGroupError) : string =
-            match promotionGroupError with
-            | DuplicateCorrelationId -> "A command with this correlation ID has already been processed."
-            | FailedWhileApplyingEvent -> "An error occurred while processing the promotion group event."
-            | PromotionGroupAlreadyExists -> "A promotion group with this ID already exists."
-            | PromotionGroupDoesNotExist -> "The specified promotion group does not exist."
-            | PromotionGroupNotInEditableState -> "The promotion group is not in an editable state (must be Draft or Ready)."
-            | PromotionGroupNotInDraftState -> "The promotion group must be in Draft state to perform this operation."
-            | PromotionGroupNotInReadyState -> "The promotion group must be in Ready state to start execution."
-            | PromotionGroupNotRunning -> "The promotion group is not currently running."
-            | PromotionGroupCannotBeBlocked -> "The promotion group cannot be blocked in its current state."
-            | PromotionGroupCannotBeDeleted -> "The promotion group cannot be deleted (it is running or has already succeeded)."
-            | PromotionGroupIsEmpty -> "The promotion group has no promotions to apply."
-            | InvalidPromotionGroupId -> "The promotion group ID is invalid."
-            | InvalidTargetBranchId -> "The target branch ID is invalid."
-            | InvalidPromotionId -> "The promotion ID is invalid."
-            | PromotionNotInGroup -> "The specified promotion is not in this promotion group."
-
-        static member getErrorMessage(promotionGroupError: PromotionGroupError option) : string =
-            match promotionGroupError with
-            | Some error -> PromotionGroupError.getErrorMessage error
-            | None -> String.Empty
-
     type WorkItemError =
         | DuplicateCorrelationId
         | FailedWhileApplyingEvent
@@ -654,7 +612,7 @@ module Errors =
         | WorkItemDoesNotExist
         | InvalidWorkItemId
         | InvalidReferenceId
-        | InvalidPromotionGroupId
+        | InvalidPromotionSetId
         | InvalidStatus
 
         interface IErrorDiscriminatedUnion
@@ -667,7 +625,7 @@ module Errors =
             | WorkItemDoesNotExist -> "The specified work item does not exist."
             | InvalidWorkItemId -> "The work item ID is invalid."
             | InvalidReferenceId -> "The reference ID is invalid."
-            | InvalidPromotionGroupId -> "The promotion group ID is invalid."
+            | InvalidPromotionSetId -> "The promotion set ID is invalid."
             | InvalidStatus -> "The work item status is invalid."
 
         static member getErrorMessage(workItemError: WorkItemError option) : string =
@@ -702,7 +660,7 @@ module Errors =
     type ReviewError =
         | DuplicateCorrelationId
         | FailedWhileApplyingEvent
-        | ReviewPacketDoesNotExist
+        | ReviewNotesDoesNotExist
         | FindingDoesNotExist
         | InvalidPromotionSetId
         | InvalidFindingId
@@ -717,7 +675,7 @@ module Errors =
             match reviewError with
             | DuplicateCorrelationId -> "A command with this correlation ID has already been processed."
             | FailedWhileApplyingEvent -> "An error occurred while processing the review event."
-            | ReviewPacketDoesNotExist -> "The review packet does not exist."
+            | ReviewNotesDoesNotExist -> "The review notes do not exist."
             | FindingDoesNotExist -> "The specified finding does not exist."
             | InvalidPromotionSetId -> "The promotion set ID is invalid."
             | InvalidFindingId -> "The finding ID is invalid."
@@ -731,32 +689,14 @@ module Errors =
             | Some error -> ReviewError.getErrorMessage error
             | None -> String.Empty
 
-    type Stage0Error =
-        | DuplicateCorrelationId
-        | FailedWhileApplyingEvent
-
-        interface IErrorDiscriminatedUnion
-
-        static member getErrorMessage(stage0Error: Stage0Error) : string =
-            match stage0Error with
-            | DuplicateCorrelationId -> "A command with this correlation ID has already been processed."
-            | FailedWhileApplyingEvent -> "An error occurred while processing the Stage 0 analysis event."
-
-        static member getErrorMessage(stage0Error: Stage0Error option) : string =
-            match stage0Error with
-            | Some error -> Stage0Error.getErrorMessage error
-            | None -> String.Empty
-
     type QueueError =
         | DuplicateCorrelationId
         | FailedWhileApplyingEvent
         | QueueAlreadyInitialized
         | QueueNotInitialized
         | PromotionSetNotInQueue
-        | CandidateNotInQueue
         | InvalidTargetBranchId
         | InvalidPromotionSetId
-        | InvalidCandidateId
         | InvalidPolicySnapshotId
 
         interface IErrorDiscriminatedUnion
@@ -768,10 +708,8 @@ module Errors =
             | QueueAlreadyInitialized -> "The promotion queue is already initialized."
             | QueueNotInitialized -> "The promotion queue has not been initialized."
             | PromotionSetNotInQueue -> "The specified promotion set is not in the queue."
-            | CandidateNotInQueue -> "The specified candidate is not in the queue."
             | InvalidTargetBranchId -> "The target branch ID is invalid."
             | InvalidPromotionSetId -> "The promotion set ID is invalid."
-            | InvalidCandidateId -> "The candidate ID is invalid."
             | InvalidPolicySnapshotId -> "The policy snapshot ID is invalid."
 
         static member getErrorMessage(queueError: QueueError option) : string =
@@ -871,66 +809,6 @@ module Errors =
             | Some error -> ArtifactError.getErrorMessage error
             | None -> String.Empty
 
-    type CandidateError =
-        | DuplicateCorrelationId
-        | FailedWhileApplyingEvent
-        | CandidateAlreadyExists
-        | CandidateDoesNotExist
-
-        interface IErrorDiscriminatedUnion
-
-        static member getErrorMessage(candidateError: CandidateError) : string =
-            match candidateError with
-            | DuplicateCorrelationId -> "A command with this correlation ID has already been processed."
-            | FailedWhileApplyingEvent -> "An error occurred while processing the candidate event."
-            | CandidateAlreadyExists -> "The integration candidate already exists."
-            | CandidateDoesNotExist -> "The integration candidate does not exist."
-
-        static member getErrorMessage(candidateError: CandidateError option) : string =
-            match candidateError with
-            | Some error -> CandidateError.getErrorMessage error
-            | None -> String.Empty
-
-    type GateAttestationError =
-        | DuplicateCorrelationId
-        | FailedWhileApplyingEvent
-        | GateAttestationAlreadyExists
-        | GateAttestationDoesNotExist
-
-        interface IErrorDiscriminatedUnion
-
-        static member getErrorMessage(attestationError: GateAttestationError) : string =
-            match attestationError with
-            | DuplicateCorrelationId -> "A command with this correlation ID has already been processed."
-            | FailedWhileApplyingEvent -> "An error occurred while processing the gate attestation event."
-            | GateAttestationAlreadyExists -> "The gate attestation already exists."
-            | GateAttestationDoesNotExist -> "The gate attestation does not exist."
-
-        static member getErrorMessage(attestationError: GateAttestationError option) : string =
-            match attestationError with
-            | Some error -> GateAttestationError.getErrorMessage error
-            | None -> String.Empty
-
-    type ConflictReceiptError =
-        | DuplicateCorrelationId
-        | FailedWhileApplyingEvent
-        | ConflictReceiptAlreadyExists
-        | ConflictReceiptDoesNotExist
-
-        interface IErrorDiscriminatedUnion
-
-        static member getErrorMessage(receiptError: ConflictReceiptError) : string =
-            match receiptError with
-            | DuplicateCorrelationId -> "A command with this correlation ID has already been processed."
-            | FailedWhileApplyingEvent -> "An error occurred while processing the conflict receipt event."
-            | ConflictReceiptAlreadyExists -> "The conflict receipt already exists."
-            | ConflictReceiptDoesNotExist -> "The conflict receipt does not exist."
-
-        static member getErrorMessage(receiptError: ConflictReceiptError option) : string =
-            match receiptError with
-            | Some error -> ConflictReceiptError.getErrorMessage error
-            | None -> String.Empty
-
     type TestError =
         | TestFailed
 
@@ -980,7 +858,6 @@ module Errors =
         | :? DirectoryVersionError as directoryVersionError -> DirectoryVersionError.getErrorMessage directoryVersionError
         | :? OwnerError as ownerError -> OwnerError.getErrorMessage ownerError
         | :? OrganizationError as organizationError -> OrganizationError.getErrorMessage organizationError
-        | :? PromotionGroupError as promotionGroupError -> PromotionGroupError.getErrorMessage promotionGroupError
         | :? ReferenceError as referenceError -> ReferenceError.getErrorMessage referenceError
         | :? ReminderError as reminderError -> ReminderError.getErrorMessage reminderError
         | :? RepositoryError as repositoryError -> RepositoryError.getErrorMessage repositoryError
@@ -989,14 +866,10 @@ module Errors =
         | :? WorkItemError as workItemError -> WorkItemError.getErrorMessage workItemError
         | :? PolicyError as policyError -> PolicyError.getErrorMessage policyError
         | :? ReviewError as reviewError -> ReviewError.getErrorMessage reviewError
-        | :? Stage0Error as stage0Error -> Stage0Error.getErrorMessage stage0Error
         | :? QueueError as queueError -> QueueError.getErrorMessage queueError
         | :? ValidationSetError as validationSetError -> ValidationSetError.getErrorMessage validationSetError
         | :? ValidationResultError as validationResultError -> ValidationResultError.getErrorMessage validationResultError
         | :? ArtifactError as artifactError -> ArtifactError.getErrorMessage artifactError
-        | :? CandidateError as candidateError -> CandidateError.getErrorMessage candidateError
-        | :? GateAttestationError as attestationError -> GateAttestationError.getErrorMessage attestationError
-        | :? ConflictReceiptError as receiptError -> ConflictReceiptError.getErrorMessage receiptError
         | _ -> String.Empty
 
     /// Given an optional error object, returns the corresponding error message string, or an empty string if None.

@@ -45,12 +45,12 @@ module WorkItemCommand =
         let referenceId =
             new Option<string>(OptionName.ReferenceId, Required = true, Description = "The reference ID <Guid>.", Arity = ArgumentArity.ExactlyOne)
 
-        let promotionGroupId =
+        let promotionSetId =
             new Option<string>(
-                "--promotion-group-id",
-                [| "-g" |],
+                "--promotion-set-id",
+                [| "-p" |],
                 Required = true,
-                Description = "The promotion group ID <Guid>.",
+                Description = "The promotion set ID <Guid>.",
                 Arity = ArgumentArity.ExactlyOne
             )
 
@@ -110,7 +110,7 @@ module WorkItemCommand =
 
         let referenceId = new Argument<string>("reference-id", Description = "Reference ID <Guid>.")
 
-        let promotionGroupId = new Argument<string>("promotion-group-id", Description = "Promotion group ID <Guid>.")
+        let promotionSetId = new Argument<string>("promotion-set-id", Description = "Promotion set ID <Guid>.")
 
     let private tryParseGuid (value: string) (error: WorkItemError) (parseResult: ParseResult) =
         let mutable parsed = Guid.Empty
@@ -317,24 +317,24 @@ module WorkItemCommand =
                 return result |> renderOutput parseResult
             }
 
-    let private linkPromotionGroupHandler (parseResult: ParseResult) =
+    let private linkPromotionSetHandler (parseResult: ParseResult) =
         task {
             try
                 if parseResult |> verbose then printParseResult parseResult
                 let graceIds = parseResult |> getNormalizedIdsAndNames
                 let workItemIdRaw = parseResult.GetValue(Arguments.workItemId)
-                let promotionGroupIdRaw = parseResult.GetValue(Arguments.promotionGroupId)
+                let promotionSetIdRaw = parseResult.GetValue(Arguments.promotionSetId)
 
                 match tryParseGuid workItemIdRaw WorkItemError.InvalidWorkItemId parseResult with
                 | Error error -> return Error error
                 | Ok workItemId ->
-                    match tryParseGuid promotionGroupIdRaw WorkItemError.InvalidPromotionGroupId parseResult with
+                    match tryParseGuid promotionSetIdRaw WorkItemError.InvalidPromotionSetId parseResult with
                     | Error error -> return Error error
-                    | Ok promotionGroupId ->
+                    | Ok promotionSetId ->
                         let parameters =
-                            Parameters.WorkItem.LinkPromotionGroupParameters(
+                            Parameters.WorkItem.LinkPromotionSetParameters(
                                 WorkItemId = workItemId.ToString(),
-                                PromotionGroupId = promotionGroupId.ToString(),
+                                PromotionSetId = promotionSetId.ToString(),
                                 OwnerId = graceIds.OwnerIdString,
                                 OwnerName = graceIds.OwnerName,
                                 OrganizationId = graceIds.OrganizationIdString,
@@ -344,17 +344,17 @@ module WorkItemCommand =
                                 CorrelationId = graceIds.CorrelationId
                             )
 
-                        return! WorkItem.LinkPromotionGroup(parameters)
+                        return! WorkItem.LinkPromotionSet(parameters)
             with
             | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
         }
 
-    type LinkPromotionGroup() =
+    type LinkPromotionSet() =
         inherit AsynchronousCommandLineAction()
 
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Task<int> =
             task {
-                let! result = linkPromotionGroupHandler parseResult
+                let! result = linkPromotionSetHandler parseResult
                 return result |> renderOutput parseResult
             }
 
@@ -410,14 +410,14 @@ module WorkItemCommand =
         linkRefCommand.Action <- new LinkReference()
         linkCommand.Subcommands.Add(linkRefCommand)
 
-        let linkGroupCommand =
-            new Command("group", Description = "Link a promotion group to a work item.")
+        let linkSetCommand =
+            new Command("set", Description = "Link a promotion set to a work item.")
             |> addCommonOptions
 
-        linkGroupCommand.Arguments.Add(Arguments.workItemId)
-        linkGroupCommand.Arguments.Add(Arguments.promotionGroupId)
-        linkGroupCommand.Action <- new LinkPromotionGroup()
-        linkCommand.Subcommands.Add(linkGroupCommand)
+        linkSetCommand.Arguments.Add(Arguments.workItemId)
+        linkSetCommand.Arguments.Add(Arguments.promotionSetId)
+        linkSetCommand.Action <- new LinkPromotionSet()
+        linkCommand.Subcommands.Add(linkSetCommand)
 
         workCommand.Subcommands.Add(linkCommand)
         workCommand

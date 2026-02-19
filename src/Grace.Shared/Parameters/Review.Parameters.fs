@@ -14,10 +14,9 @@ module Review =
         member val public RepositoryId = String.Empty with get, set
         member val public RepositoryName = String.Empty with get, set
         member val public PromotionSetId = String.Empty with get, set
-        member val public PromotionGroupId = String.Empty with get, set
 
-    /// Parameters for /review/packet.
-    type GetReviewPacketParameters() =
+    /// Parameters for /review/notes.
+    type GetReviewNotesParameters() =
         inherit ReviewParameters()
 
     /// Parameters for /review/checkpoint.

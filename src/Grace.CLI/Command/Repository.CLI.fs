@@ -240,7 +240,7 @@ module Repository =
             (new Option<String>(
                 "--conflict-resolution-policy",
                 Required = true,
-                Description = "The repository's resolution conflict policy when conflicts are detected in a PromotionGroup.",
+                Description = "The repository's resolution conflict policy when conflicts are detected in a PromotionSet.",
                 Arity = ArgumentArity.ExactlyOne
             ))
                 .AcceptOnlyFromAmong(listCases<ConflictResolutionPolicy> ())

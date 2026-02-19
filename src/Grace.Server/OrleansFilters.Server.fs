@@ -49,12 +49,10 @@ module Orleans =
                             match grainType with
                             | StateName.AccessControl -> grainId.Key.ToString()
                             | StateName.Branch -> repositoryId ()
-                            | StateName.ConflictReceipt -> repositoryId ()
                             | StateName.Diff -> repositoryId ()
                             | StateName.DirectoryAppearance -> repositoryId ()
                             | StateName.DirectoryVersion -> repositoryId ()
                             | StateName.FileAppearance -> repositoryId ()
-                            | StateName.IntegrationCandidate -> repositoryId ()
                             | StateName.NamedSection -> repositoryId ()
                             | StateName.Organization -> StateName.Organization
                             | StateName.Owner -> StateName.Owner

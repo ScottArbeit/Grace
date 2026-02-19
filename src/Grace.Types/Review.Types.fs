@@ -41,7 +41,7 @@ module Review =
     [<GenerateSerializer>]
     type VolatilitySignal = { ReferencesCreated: int; WindowDays: int }
 
-    /// Deterministic triggers that can be fired by Stage 0 analysis.
+    /// Deterministic triggers that can be fired by deterministic review analysis.
     [<KnownType("GetKnownTypes"); GenerateSerializer>]
     type DeterministicTrigger =
         | ChurnLinesExceeded
@@ -56,7 +56,7 @@ module Review =
 
         static member GetKnownTypes() = GetKnownTypes<DeterministicTrigger>()
 
-    /// Stage 0 deterministic analysis output.
+    /// Deterministic analysis output.
     [<GenerateSerializer>]
     type DeterministicRiskProfile =
         {
@@ -95,71 +95,6 @@ module Review =
                 NonTrivialTriggers = []
                 CreatedAt = Constants.DefaultTimestamp
             }
-
-    /// Stored Stage 0 analysis record.
-    [<GenerateSerializer>]
-    type Stage0Analysis =
-        {
-            Class: string
-            Stage0AnalysisId: Stage0AnalysisId
-            OwnerId: OwnerId
-            OrganizationId: OrganizationId
-            RepositoryId: RepositoryId
-            ReferenceId: ReferenceId
-            WorkItemId: WorkItemId option
-            PromotionSetId: PromotionSetId option
-            PolicySnapshotId: PolicySnapshotId
-            RiskProfile: DeterministicRiskProfile
-            CreatedAt: Instant
-            UpdatedAt: Instant option
-        }
-
-        static member Default =
-            {
-                Class = nameof Stage0Analysis
-                Stage0AnalysisId = Guid.Empty
-                OwnerId = OwnerId.Empty
-                OrganizationId = OrganizationId.Empty
-                RepositoryId = RepositoryId.Empty
-                ReferenceId = ReferenceId.Empty
-                WorkItemId = None
-                PromotionSetId = None
-                PolicySnapshotId = PolicySnapshotId String.Empty
-                RiskProfile = DeterministicRiskProfile.Default
-                CreatedAt = Constants.DefaultTimestamp
-                UpdatedAt = None
-            }
-
-    /// Commands for the Stage 0 analysis actor.
-    [<KnownType("GetKnownTypes")>]
-    type Stage0Command =
-        | Record of stage0Analysis: Stage0Analysis
-
-        static member GetKnownTypes() = GetKnownTypes<Stage0Command>()
-
-    /// Events for the Stage 0 analysis actor.
-    [<KnownType("GetKnownTypes")>]
-    type Stage0EventType =
-        | Recorded of stage0Analysis: Stage0Analysis
-
-        static member GetKnownTypes() = GetKnownTypes<Stage0EventType>()
-
-    /// Record that holds the event type and metadata for Stage 0 analysis.
-    type Stage0Event =
-        {
-            /// The Stage0EventType case that describes the event.
-            Event: Stage0EventType
-            /// The EventMetadata for the event. EventMetadata includes the Timestamp, CorrelationId, Principal, and a Properties dictionary.
-            Metadata: EventMetadata
-        }
-
-    module Stage0AnalysisDto =
-        let UpdateDto (stage0Event: Stage0Event) (current: Stage0Analysis) =
-            let updated =
-                match stage0Event.Event with
-                | Recorded analysis -> analysis
-
-            { updated with UpdatedAt = Some stage0Event.Metadata.Timestamp }
 
     /// Identifies the stage for an evidence set.
     [<KnownType("GetKnownTypes"); GenerateSerializer>]
@@ -327,35 +262,33 @@ module Review =
         {
             ReviewCheckpointId: ReviewCheckpointId
             PromotionSetId: PromotionSetId option
-            PromotionGroupId: PromotionGroup.PromotionGroupId option
             ReviewedUpToReferenceId: ReferenceId
             PolicySnapshotId: PolicySnapshotId
             Reviewer: UserId
             Timestamp: Instant
         }
 
-    /// Summary of gate attestations included in the review packet.
+    /// Summary of validation results included in the review notes.
     [<GenerateSerializer>]
-    type GateSummary = { GateAttestationIds: GateAttestationId list; Summary: string }
+    type ValidationSummary = { ValidationResultIds: ValidationResultId list; Summary: string }
 
-    /// Primary review packet for a candidate or promotion group.
+    /// Primary review notes for a promotion set.
     [<GenerateSerializer>]
-    type ReviewPacket =
+    type ReviewNotes =
         {
             Class: string
-            ReviewPacketId: ReviewPacketId
+            ReviewNotesId: ReviewNotesId
             OwnerId: OwnerId
             OrganizationId: OrganizationId
             RepositoryId: RepositoryId
             PromotionSetId: PromotionSetId option
-            PromotionGroupId: PromotionGroup.PromotionGroupId option
             PolicySnapshotId: PolicySnapshotId
             Summary: string
             Chapters: Chapter list
             Findings: Finding list
             ImpactMap: string
             EvidenceSetSummary: EvidenceSetSummary option
-            GateSummary: GateSummary option
+            ValidationSummary: ValidationSummary option
             EscalationReceiptIds: AnalysisReceiptId list
             CreatedAt: Instant
             UpdatedAt: Instant option
@@ -363,20 +296,19 @@ module Review =
 
         static member Default =
             {
-                Class = nameof ReviewPacket
-                ReviewPacketId = ReviewPacketId.Empty
+                Class = nameof ReviewNotes
+                ReviewNotesId = ReviewNotesId.Empty
                 OwnerId = OwnerId.Empty
                 OrganizationId = OrganizationId.Empty
                 RepositoryId = RepositoryId.Empty
                 PromotionSetId = None
-                PromotionGroupId = None
                 PolicySnapshotId = PolicySnapshotId String.Empty
                 Summary = String.Empty
                 Chapters = []
                 Findings = []
                 ImpactMap = String.Empty
                 EvidenceSetSummary = None
-                GateSummary = None
+                ValidationSummary = None
                 EscalationReceiptIds = []
                 CreatedAt = Constants.DefaultTimestamp
                 UpdatedAt = None
@@ -385,7 +317,7 @@ module Review =
     /// Defines the commands for the Review actor.
     [<KnownType("GetKnownTypes")>]
     type ReviewCommand =
-        | UpsertPacket of reviewPacket: ReviewPacket
+        | UpsertNotes of reviewNotes: ReviewNotes
         | ResolveFinding of findingId: FindingId * resolutionState: FindingResolutionState * resolvedBy: UserId * note: string option
         | AddCheckpoint of checkpoint: ReviewCheckpoint
 
@@ -394,7 +326,7 @@ module Review =
     /// Defines the events for the Review actor.
     [<KnownType("GetKnownTypes")>]
     type ReviewEventType =
-        | PacketUpserted of reviewPacket: ReviewPacket
+        | NotesUpserted of reviewNotes: ReviewNotes
         | FindingResolved of findingId: FindingId * resolutionState: FindingResolutionState * resolvedBy: UserId * note: string option
         | CheckpointAdded of checkpoint: ReviewCheckpoint
 

@@ -53,16 +53,6 @@ module RootHelpGroupingTests =
                         "Lifecycle:"
                     ]
             }
-            {
-                Args = [| "pg"; "-h" |]
-                Headings =
-                    [
-                        "Create and inspect:"
-                        "Manage promotions:"
-                        "Workflow:"
-                        "Lifecycle:"
-                    ]
-            }
         ]
 
     let private setAnsiConsoleOutput (writer: TextWriter) =

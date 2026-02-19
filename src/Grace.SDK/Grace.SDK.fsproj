@@ -27,7 +27,7 @@
 		<Compile Include="Repository.SDK.fs" />
 		<Compile Include="DirectoryVersion.SDK.fs" />
 		<Compile Include="Diff.SDK.fs" />
-                <Compile Include="PromotionGroup.SDK.fs" />
+                
                 <Compile Include="WorkItem.SDK.fs" />
                 <Compile Include="Policy.SDK.fs" />
                 <Compile Include="PromotionSet.SDK.fs" />

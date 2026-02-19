@@ -66,10 +66,10 @@ type WorkItemUpdateTests() =
         Assert.That(error, Is.EqualTo(Some WorkItemError.InvalidReferenceId))
 
     [<Test>]
-    member _.LinkPromotionGroupValidationRejectsInvalidPromotionGroupId() =
-        let parameters = LinkPromotionGroupParameters(WorkItemId = Guid.NewGuid().ToString(), PromotionGroupId = "not-a-guid")
+    member _.LinkPromotionSetValidationRejectsInvalidPromotionSetId() =
+        let parameters = LinkPromotionSetParameters(WorkItemId = Guid.NewGuid().ToString(), PromotionSetId = "not-a-guid")
 
-        let validations = WorkItem.validateLinkPromotionGroupParameters parameters
+        let validations = WorkItem.validateLinkPromotionSetParameters parameters
 
         let error =
             validations
@@ -77,7 +77,7 @@ type WorkItemUpdateTests() =
             |> Async.AwaitTask
             |> Async.RunSynchronously
 
-        Assert.That(error, Is.EqualTo(Some WorkItemError.InvalidPromotionGroupId))
+        Assert.That(error, Is.EqualTo(Some WorkItemError.InvalidPromotionSetId))
 
     [<Test>]
     member _.UpdateDtoPreservesCreatedFields() =

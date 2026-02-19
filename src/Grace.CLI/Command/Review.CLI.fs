@@ -29,15 +29,6 @@ module ReviewCommand =
                 Arity = ArgumentArity.ExactlyOne
             )
 
-        let promotionGroupId =
-            new Option<string>(
-                "--promotion-group",
-                [| "--promotion-group-id" |],
-                Required = false,
-                Description = "The promotion group ID <Guid>.",
-                Arity = ArgumentArity.ExactlyOne
-            )
-
         let referenceId =
             new Option<string>(
                 OptionName.ReferenceId,
@@ -204,17 +195,17 @@ module ReviewCommand =
     let private resolvePolicySnapshotId (parseResult: ParseResult) (graceIds: GraceIds) (promotionSetId: Guid) =
         resolvePolicySnapshotIdWith PromotionSet.Get Policy.GetCurrent parseResult graceIds promotionSetId
 
-    let private writePacketSummary (parseResult: ParseResult) (packet: ReviewPacket) =
+    let private writeNotesSummary (parseResult: ParseResult) (notes: ReviewNotes) =
         if
             not (parseResult |> json)
             && not (parseResult |> silent)
         then
-            AnsiConsole.MarkupLine($"[bold]Review Packet[/] {Markup.Escape(packet.ReviewPacketId.ToString())}")
+            AnsiConsole.MarkupLine($"[bold]Review Notes[/] {Markup.Escape(notes.ReviewNotesId.ToString())}")
 
-            if not (String.IsNullOrWhiteSpace packet.Summary) then
-                AnsiConsole.MarkupLine($"[bold]Summary:[/] {Markup.Escape(packet.Summary)}")
+            if not (String.IsNullOrWhiteSpace notes.Summary) then
+                AnsiConsole.MarkupLine($"[bold]Summary:[/] {Markup.Escape(notes.Summary)}")
 
-            AnsiConsole.MarkupLine($"[bold]Chapters:[/] {packet.Chapters.Length}  [bold]Findings:[/] {packet.Findings.Length}")
+            AnsiConsole.MarkupLine($"[bold]Chapters:[/] {notes.Chapters.Length}  [bold]Findings:[/] {notes.Findings.Length}")
 
     let private inboxHandler (parseResult: ParseResult) =
         task {
@@ -243,27 +234,14 @@ module ReviewCommand =
                     |> Option.ofObj
                     |> Option.defaultValue String.Empty
 
-                let promotionGroupRaw =
-                    parseResult.GetValue(Options.promotionGroupId)
-                    |> Option.ofObj
-                    |> Option.defaultValue String.Empty
-
                 if String.IsNullOrWhiteSpace promotionSetIdRaw then
-                    if String.IsNullOrWhiteSpace promotionGroupRaw then
-                        return Error(GraceError.Create (ReviewError.getErrorMessage ReviewError.InvalidPromotionSetId) (getCorrelationId parseResult))
-                    else
-                        return
-                            Error(
-                                GraceError.Create
-                                    "Review packets by promotion group are not supported yet. Provide --promotion-set instead."
-                                    (getCorrelationId parseResult)
-                            )
+                    return Error(GraceError.Create (ReviewError.getErrorMessage ReviewError.InvalidPromotionSetId) (getCorrelationId parseResult))
                 else
                     match tryParseGuid promotionSetIdRaw ReviewError.InvalidPromotionSetId parseResult with
                     | Error error -> return Error error
                     | Ok promotionSetId ->
                         let parameters =
-                            Parameters.Review.GetReviewPacketParameters(
+                            Parameters.Review.GetReviewNotesParameters(
                                 PromotionSetId = promotionSetId.ToString(),
                                 OwnerId = graceIds.OwnerIdString,
                                 OwnerName = graceIds.OwnerName,
@@ -274,18 +252,18 @@ module ReviewCommand =
                                 CorrelationId = graceIds.CorrelationId
                             )
 
-                        let! result = Review.GetPacket(parameters)
+                        let! result = Review.GetNotes(parameters)
 
                         match result with
                         | Ok returnValue ->
                             match returnValue.ReturnValue with
-                            | Some packet -> writePacketSummary parseResult packet
+                            | Some notes -> writeNotesSummary parseResult notes
                             | None ->
                                 if
                                     not (parseResult |> json)
                                     && not (parseResult |> silent)
                                 then
-                                    AnsiConsole.MarkupLine("[yellow]No review packet found.[/]")
+                                    AnsiConsole.MarkupLine("[yellow]No review notes found.[/]")
 
                             return Ok returnValue
                         | Error error -> return Error error
@@ -326,15 +304,9 @@ module ReviewCommand =
                         match policySnapshotIdResult with
                         | Error error -> return Error error
                         | Ok policySnapshotId ->
-                            let promotionGroupIdRaw =
-                                parseResult.GetValue(Options.promotionGroupId)
-                                |> Option.ofObj
-                                |> Option.defaultValue String.Empty
-
                             let parameters =
                                 Parameters.Review.ReviewCheckpointParameters(
                                     PromotionSetId = promotionSetId.ToString(),
-                                    PromotionGroupId = promotionGroupIdRaw,
                                     ReviewedUpToReferenceId = referenceId.ToString(),
                                     PolicySnapshotId = policySnapshotId,
                                     OwnerId = graceIds.OwnerIdString,
@@ -500,7 +472,7 @@ module ReviewCommand =
             |> addOption Options.repositoryName
             |> addOption Options.repositoryId
 
-        let reviewCommand = new Command("review", Description = "Review packets and findings.")
+        let reviewCommand = new Command("review", Description = "Review notes and findings.")
 
         let inboxCommand = new Command("inbox", Description = "Show review inbox (stub).")
 
@@ -512,11 +484,10 @@ module ReviewCommand =
         inboxCommand.Action <- new Inbox()
         reviewCommand.Subcommands.Add(inboxCommand)
 
-        let openCommand = new Command("open", Description = "Open a review packet.")
+        let openCommand = new Command("open", Description = "Open review notes.")
 
         openCommand
         |> addOption Options.promotionSetId
-        |> addOption Options.promotionGroupId
         |> addCommonOptions
         |> ignore
 
@@ -528,7 +499,6 @@ module ReviewCommand =
             |> addOption Options.promotionSetId
             |> addOption Options.referenceId
             |> addOption Options.policySnapshotId
-            |> addOption Options.promotionGroupId
             |> addCommonOptions
 
         checkpointCommand.Action <- new Checkpoint()

@@ -35,8 +35,8 @@
     <Compile Include="Policy.Validation.Derived.Tests.fs" />
     <Compile Include="Validation.QuickScan.Determinism.Tests.fs" />
     <Compile Include="Evidence.Determinism.Tests.fs" />
-    <Compile Include="ReviewPacket.Determinism.Tests.fs" />
-    <Compile Include="Queue.Gates.Conflict.Tests.fs" />
+    <Compile Include="ReviewNotes.Determinism.Tests.fs" />
+    <Compile Include="Queue.PromotionSet.Conflict.Tests.fs" />
     <Compile Include="WorkItem.Update.Tests.fs" />
     <Compile Include="Auth.Server.Tests.fs" />
     <Compile Include="AccessControl.Server.Tests.fs" />

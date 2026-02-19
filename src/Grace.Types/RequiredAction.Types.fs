@@ -17,8 +17,8 @@ module RequiredAction =
         | AcknowledgePolicyChange
         | ProvideHumanApproval
         | ResolveFinding
-        | RunGate
-        | FixGateFailure
+        | RunValidation
+        | FixValidationFailure
         | ResolveConflict
         | ReAckDueToBaselineDrift
         | ProvideMigrationNotes

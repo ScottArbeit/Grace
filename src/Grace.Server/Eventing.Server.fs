@@ -6,7 +6,6 @@ open Grace.Types.Artifact
 open Grace.Types.Automation
 open Grace.Types.Events
 open Grace.Types.Policy
-open Grace.Types.PromotionGroup
 open Grace.Types.PromotionSet
 open Grace.Types.Queue
 open Grace.Types.Reference
@@ -46,7 +45,6 @@ module EventingPublisher =
         |> Seq.tryPick (fun link ->
             match link with
             | ReferenceLinkType.PromotionSetTerminal promotionSetId -> Some promotionSetId
-            | ReferenceLinkType.PromotionGroupTerminal promotionSetId -> Some promotionSetId
             | _ -> Option.None)
 
     let private mapPromotionSetEventType (eventType: PromotionSetEventType) =
@@ -134,56 +132,10 @@ module EventingPublisher =
                      |> Option.defaultValue RepositoryId.Empty)
                     (tryGetActorId queueEvent.Metadata "PromotionQueue")
                     (serialize queueEvent))
-        | CandidateEvent candidateEvent ->
-            let eventType =
-                match candidateEvent.Event with
-                | CandidateEventType.Initialized _ -> AutomationEventType.PromotionSetCreated
-                | CandidateEventType.StatusSet _
-                | CandidateEventType.RequiredActionsSet _
-                | CandidateEventType.RequiredActionAdded _
-                | CandidateEventType.RequiredActionsCleared
-                | CandidateEventType.GateAttestationAdded _
-                | CandidateEventType.ConflictAdded _
-                | CandidateEventType.ConflictReceiptAdded _ -> AutomationEventType.PromotionSetUpdated
-
-            envelope
-                eventType
-                candidateEvent.Metadata
-                OwnerId.Empty
-                OrganizationId.Empty
-                (tryGetRepositoryId candidateEvent.Metadata
-                 |> Option.defaultValue RepositoryId.Empty)
-                (tryGetActorId candidateEvent.Metadata "IntegrationCandidate")
-                (serialize candidateEvent)
-            |> Some
-        | PromotionGroupEvent promotionGroupEvent ->
-            let eventType =
-                match promotionGroupEvent.Event with
-                | PromotionGroupEventType.Created _ -> AutomationEventType.PromotionSetCreated
-                | PromotionGroupEventType.Started -> AutomationEventType.PromotionSetApplyStarted
-                | PromotionGroupEventType.Completed success ->
-                    if success then
-                        AutomationEventType.PromotionSetApplied
-                    else
-                        AutomationEventType.PromotionSetApplyFailed
-                | PromotionGroupEventType.Blocked _ -> AutomationEventType.PromotionSetBlocked
-                | PromotionGroupEventType.ConflictAnalyzed _ -> AutomationEventType.PromotionSetBlocked
-                | _ -> AutomationEventType.PromotionSetUpdated
-
-            envelope
-                eventType
-                promotionGroupEvent.Metadata
-                OwnerId.Empty
-                OrganizationId.Empty
-                (tryGetRepositoryId promotionGroupEvent.Metadata
-                 |> Option.defaultValue RepositoryId.Empty)
-                (tryGetActorId promotionGroupEvent.Metadata "PromotionGroup")
-                (serialize promotionGroupEvent)
-            |> Some
         | ReviewEvent reviewEvent ->
             let ownerId, organizationId, repositoryId, eventType =
                 match reviewEvent.Event with
-                | ReviewEventType.PacketUpserted packet -> packet.OwnerId, packet.OrganizationId, packet.RepositoryId, AutomationEventType.ReviewNotesUpdated
+                | ReviewEventType.NotesUpserted notes -> notes.OwnerId, notes.OrganizationId, notes.RepositoryId, AutomationEventType.ReviewNotesUpdated
                 | ReviewEventType.CheckpointAdded _ ->
                     OwnerId.Empty,
                     OrganizationId.Empty,
@@ -199,8 +151,6 @@ module EventingPublisher =
 
             envelope eventType reviewEvent.Metadata ownerId organizationId repositoryId (tryGetActorId reviewEvent.Metadata "Review") (serialize reviewEvent)
             |> Some
-        | Stage0Event _
-        | GateAttestationEvent _ -> Option.None
         | ReferenceEvent referenceEvent ->
             match referenceEvent.Event with
             | ReferenceEventType.Created (referenceId, ownerId, organizationId, repositoryId, branchId, _, _, referenceType, _, links) ->
@@ -238,5 +188,4 @@ module EventingPublisher =
         | BranchEvent _
         | DirectoryVersionEvent _
         | OrganizationEvent _
-        | RepositoryEvent _
-        | ConflictReceiptEvent _ -> Option.None
+        | RepositoryEvent _ -> Option.None

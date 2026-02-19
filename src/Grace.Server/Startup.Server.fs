@@ -439,45 +439,6 @@ module Application =
                                |> addMetadata typeof<Owner.UndeleteOwnerParameters> ]
                     ]
                 subRoute
-                    "/promotionGroup"
-                    [
-                        POST [ route "/create" PromotionGroup.Create
-                               |> addMetadata typeof<PromotionGroup.CreatePromotionGroupParameters>
-
-                               route "/get" PromotionGroup.Get
-                               |> addMetadata typeof<PromotionGroup.GetPromotionGroupParameters>
-
-                               route "/getEvents" PromotionGroup.GetEvents
-                               |> addMetadata typeof<PromotionGroup.GetPromotionGroupParameters>
-
-                               route "/addPromotion" PromotionGroup.AddPromotion
-                               |> addMetadata typeof<PromotionGroup.AddPromotionParameters>
-
-                               route "/removePromotion" PromotionGroup.RemovePromotion
-                               |> addMetadata typeof<PromotionGroup.RemovePromotionParameters>
-
-                               route "/reorderPromotions" PromotionGroup.ReorderPromotions
-                               |> addMetadata typeof<PromotionGroup.ReorderPromotionsParameters>
-
-                               route "/schedule" PromotionGroup.Schedule
-                               |> addMetadata typeof<PromotionGroup.ScheduleParameters>
-
-                               route "/markReady" PromotionGroup.MarkReady
-                               |> addMetadata typeof<PromotionGroup.MarkReadyParameters>
-
-                               route "/start" PromotionGroup.Start
-                               |> addMetadata typeof<PromotionGroup.StartParameters>
-
-                               route "/complete" PromotionGroup.Complete
-                               |> addMetadata typeof<PromotionGroup.CompleteParameters>
-
-                               route "/block" PromotionGroup.Block
-                               |> addMetadata typeof<PromotionGroup.BlockParameters>
-
-                               route "/delete" PromotionGroup.Delete
-                               |> addMetadata typeof<PromotionGroup.DeletePromotionGroupParameters> ]
-                    ]
-                subRoute
                     "/work"
                     [
                         POST [ route "/create" (composeHandlers requireRepoWrite WorkItem.Create)
@@ -492,8 +453,8 @@ module Application =
                                route "/link/reference" WorkItem.LinkReference
                                |> addMetadata typeof<WorkItem.LinkReferenceParameters>
 
-                               route "/link/promotion-group" WorkItem.LinkPromotionGroup
-                               |> addMetadata typeof<WorkItem.LinkPromotionGroupParameters> ]
+                               route "/link/promotion-set" WorkItem.LinkPromotionSet
+                               |> addMetadata typeof<WorkItem.LinkPromotionSetParameters> ]
                     ]
                 subRoute
                     "/policy"
@@ -507,8 +468,8 @@ module Application =
                 subRoute
                     "/review"
                     [
-                        POST [ route "/packet" Review.GetPacket
-                               |> addMetadata typeof<Review.GetReviewPacketParameters>
+                        POST [ route "/notes" Review.GetNotes
+                               |> addMetadata typeof<Review.GetReviewNotesParameters>
 
                                route "/checkpoint" Review.Checkpoint
                                |> addMetadata typeof<Review.ReviewCheckpointParameters>

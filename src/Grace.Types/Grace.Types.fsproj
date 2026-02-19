@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
     <PropertyGroup>
         <TargetFramework>net10.0</TargetFramework>
@@ -28,7 +28,7 @@
         <Compile Include="Repository.Types.fs" />
         <Compile Include="Reference.Types.fs" />
         <Compile Include="Branch.Types.fs" />
-        <Compile Include="PromotionGroup.Types.fs" />
+        
         <Compile Include="PromotionSet.Types.fs" />
         <Compile Include="WorkItem.Types.fs" />
         <Compile Include="Policy.Types.fs" />

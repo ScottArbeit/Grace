@@ -178,24 +178,24 @@ module Review =
                 return! context |> result500ServerError graceError
         }
 
-    /// Gets a review packet.
-    let GetPacket: HttpHandler =
+    /// Gets review notes.
+    let GetNotes: HttpHandler =
         fun (_next: HttpFunc) (context: HttpContext) ->
             task {
                 let graceIds = getGraceIds context
 
-                let validations (parameters: GetReviewPacketParameters) =
+                let validations (parameters: GetReviewNotesParameters) =
                     [|
                         Guid.isValidAndNotEmptyGuid parameters.PromotionSetId ReviewError.InvalidPromotionSetId
                     |]
 
-                let query (context: HttpContext) _ (actorProxy: IReviewActor) = actorProxy.GetPacket(getCorrelationId context)
+                let query (context: HttpContext) _ (actorProxy: IReviewActor) = actorProxy.GetNotes(getCorrelationId context)
 
-                let! parameters = context |> parse<GetReviewPacketParameters>
+                let! parameters = context |> parse<GetReviewNotesParameters>
                 parameters.OwnerId <- graceIds.OwnerIdString
                 parameters.OrganizationId <- graceIds.OrganizationIdString
                 parameters.RepositoryId <- graceIds.RepositoryIdString
-                context.Items[ "Command" ] <- "GetPacket"
+                context.Items[ "Command" ] <- "GetNotes"
                 return! processQuery context parameters validations query
             }
 
@@ -216,12 +216,6 @@ module Review =
                 let command (parameters: ReviewCheckpointParameters) =
                     let promotionSetId = Guid.Parse(parameters.PromotionSetId)
 
-                    let promotionGroupId =
-                        if String.IsNullOrEmpty(parameters.PromotionGroupId) then
-                            None
-                        else
-                            Some(Guid.Parse(parameters.PromotionGroupId))
-
                     let principal =
                         if
                             isNull context.User
@@ -236,7 +230,6 @@ module Review =
                         {
                             ReviewCheckpointId = Guid.NewGuid()
                             PromotionSetId = Some promotionSetId
-                            PromotionGroupId = promotionGroupId
                             ReviewedUpToReferenceId = Guid.Parse(parameters.ReviewedUpToReferenceId)
                             PolicySnapshotId = PolicySnapshotId parameters.PolicySnapshotId
                             Reviewer = UserId principal

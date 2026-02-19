@@ -7,9 +7,9 @@ open System.Threading.Tasks
 
 /// The Review module provides a set of functions for interacting with reviews in the Grace API.
 type Review() =
-    /// Gets a review packet for a promotion set.
-    static member public GetPacket(parameters: GetReviewPacketParameters) =
-        postServer<GetReviewPacketParameters, ReviewPacket option> (parameters |> ensureCorrelationIdIsSet, "review/packet")
+    /// Gets review notes for a promotion set.
+    static member public GetNotes(parameters: GetReviewNotesParameters) =
+        postServer<GetReviewNotesParameters, ReviewNotes option> (parameters |> ensureCorrelationIdIsSet, "review/notes")
 
     /// Records a review checkpoint.
     static member public Checkpoint(parameters: ReviewCheckpointParameters) =

@@ -137,9 +137,9 @@ module HistoryStorage =
             let mutable found: string option = None
 
             while (not <| isNull current) && found.IsNone do
-                let candidate = Path.Combine(current.FullName, Constants.GraceConfigDirectory, Constants.GraceConfigFileName)
+                let configPath = Path.Combine(current.FullName, Constants.GraceConfigDirectory, Constants.GraceConfigFileName)
 
-                if File.Exists(candidate) then
+                if File.Exists(configPath) then
                     found <- Some current.FullName
                 else
                     current <- current.Parent

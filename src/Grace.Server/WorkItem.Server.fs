@@ -218,10 +218,10 @@ module WorkItem =
             Guid.isValidAndNotEmptyGuid parameters.ReferenceId WorkItemError.InvalidReferenceId
         |]
 
-    let internal validateLinkPromotionGroupParameters (parameters: LinkPromotionGroupParameters) =
+    let internal validateLinkPromotionSetParameters (parameters: LinkPromotionSetParameters) =
         [|
             Guid.isValidAndNotEmptyGuid parameters.WorkItemId WorkItemError.InvalidWorkItemId
-            Guid.isValidAndNotEmptyGuid parameters.PromotionGroupId WorkItemError.InvalidPromotionGroupId
+            Guid.isValidAndNotEmptyGuid parameters.PromotionSetId WorkItemError.InvalidPromotionSetId
         |]
 
     /// Creates a new work item.
@@ -377,16 +377,16 @@ module WorkItem =
                 return! processCommand context validations command
             }
 
-    /// Links a promotion group to a work item.
-    let LinkPromotionGroup: HttpHandler =
+    /// Links a promotion set to a work item.
+    let LinkPromotionSet: HttpHandler =
         fun (_next: HttpFunc) (context: HttpContext) ->
             task {
-                let validations (parameters: LinkPromotionGroupParameters) = validateLinkPromotionGroupParameters parameters
+                let validations (parameters: LinkPromotionSetParameters) = validateLinkPromotionSetParameters parameters
 
-                let command (parameters: LinkPromotionGroupParameters) =
-                    WorkItemCommand.LinkPromotionGroup(Guid.Parse(parameters.PromotionGroupId))
+                let command (parameters: LinkPromotionSetParameters) =
+                    WorkItemCommand.LinkPromotionSet(Guid.Parse(parameters.PromotionSetId))
                     |> returnValueTask
 
-                context.Items[ "Command" ] <- nameof LinkPromotionGroup
+                context.Items[ "Command" ] <- nameof LinkPromotionSet
                 return! processCommand context validations command
             }

@@ -6,7 +6,6 @@ open Grace.Types.Authorization
 open Grace.Types.Branch
 open Grace.Types.Diff
 open Grace.Types.DirectoryVersion
-open Grace.Types.PromotionGroup
 open Grace.Types.Reference
 open Grace.Types.Reminder
 open Grace.Types.Repository
@@ -348,26 +347,6 @@ module Interfaces =
         /// Sends the reminder to the source actor.
         abstract member Remind: correlationId: CorrelationId -> Task<Result<unit, GraceError>>
 
-    /// Defines the operations for the PromotionGroup actor.
-    [<Interface>]
-    type IPromotionGroupActor =
-        inherit IGraceReminderWithGuidKey
-
-        /// Returns true if this promotion group already exists in the database.
-        abstract member Exists: correlationId: CorrelationId -> Task<bool>
-
-        /// Returns true if this promotion group has been deleted.
-        abstract member IsDeleted: correlationId: CorrelationId -> Task<bool>
-
-        /// Returns the current state of the promotion group.
-        abstract member Get: correlationId: CorrelationId -> Task<PromotionGroupDto>
-
-        /// Returns the list of events handled by this promotion group.
-        abstract member GetEvents: correlationId: CorrelationId -> Task<IReadOnlyList<PromotionGroupEvent>>
-
-        /// Validates incoming commands and converts them to events that are stored in the database.
-        abstract member Handle: command: PromotionGroupCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
-
     /// Defines the operations for the PromotionSet actor.
     [<Interface>]
     type IPromotionSetActor =
@@ -410,8 +389,8 @@ module Interfaces =
     type IReviewActor =
         inherit IGrainWithGuidKey
 
-        /// Returns the current review packet.
-        abstract member GetPacket: correlationId: CorrelationId -> Task<ReviewPacket option>
+        /// Returns the current review notes.
+        abstract member GetNotes: correlationId: CorrelationId -> Task<ReviewNotes option>
 
         /// Returns checkpoints for this review target.
         abstract member GetCheckpoints: correlationId: CorrelationId -> Task<IReadOnlyList<ReviewCheckpoint>>
@@ -435,23 +414,6 @@ module Interfaces =
 
         /// Validates incoming commands and converts them to events that are stored in the database.
         abstract member Handle: command: PromotionQueueCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
-
-    /// Defines the operations for the IntegrationCandidate actor.
-    [<Interface>]
-    type IIntegrationCandidateActor =
-        inherit IGrainWithGuidKey
-
-        /// Returns true if this integration candidate already exists in the database.
-        abstract member Exists: correlationId: CorrelationId -> Task<bool>
-
-        /// Returns the current state of the integration candidate.
-        abstract member Get: correlationId: CorrelationId -> Task<IntegrationCandidate option>
-
-        /// Returns the list of events handled by this integration candidate.
-        abstract member GetEvents: correlationId: CorrelationId -> Task<IReadOnlyList<CandidateEvent>>
-
-        /// Validates incoming commands and converts them to events that are stored in the database.
-        abstract member Handle: command: CandidateCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
 
     /// Defines the operations for the ValidationSet actor.
     [<Interface>]
@@ -506,23 +468,6 @@ module Interfaces =
 
         /// Validates incoming commands and converts them to events that are stored in the database.
         abstract member Handle: command: ArtifactCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
-
-    /// Defines the operations for the ConflictReceipt actor.
-    [<Interface>]
-    type IConflictReceiptActor =
-        inherit IGrainWithGuidKey
-
-        /// Returns true if this conflict receipt already exists in the database.
-        abstract member Exists: correlationId: CorrelationId -> Task<bool>
-
-        /// Returns the current conflict receipt.
-        abstract member Get: correlationId: CorrelationId -> Task<ConflictReceipt option>
-
-        /// Returns the list of events handled by this conflict receipt.
-        abstract member GetEvents: correlationId: CorrelationId -> Task<IReadOnlyList<ConflictReceiptEvent>>
-
-        /// Validates incoming commands and converts them to events that are stored in the database.
-        abstract member Handle: command: ConflictReceiptCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
 
     /// Defines the operations for the WorkItem actor.
     [<Interface>]

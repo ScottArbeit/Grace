@@ -2,7 +2,6 @@ namespace Grace.Shared
 
 open Grace.Shared.Utilities
 open Grace.Types.Policy
-open Grace.Types.PromotionGroup
 open Grace.Types.Review
 open Grace.Types.Types
 open NodaTime
@@ -10,7 +9,7 @@ open System
 open System.Security.Cryptography
 open System.Text
 
-module ReviewPacket =
+module ReviewNotes =
     let private normalizePath (relativePath: RelativePath) = relativePath.Replace('\\', '/')
 
     let private getChapterKey (relativePath: RelativePath) =
@@ -45,13 +44,12 @@ module ReviewPacket =
                 Evidence = chapterEvidence
             })
 
-    let assemblePacket
-        (reviewPacketId: ReviewPacketId)
+    let assembleNotes
+        (reviewNotesId: ReviewNotesId)
         (ownerId: OwnerId)
         (organizationId: OrganizationId)
         (repositoryId: RepositoryId)
         (promotionSetId: PromotionSetId option)
-        (promotionGroupId: PromotionGroupId option)
         (policySnapshotId: PolicySnapshotId)
         (riskProfile: DeterministicRiskProfile option)
         (evidenceSummary: EvidenceSetSummary option)
@@ -69,13 +67,12 @@ module ReviewPacket =
             |> Option.map (fun summary -> summary.SliceSummaries)
             |> Option.defaultValue []
 
-        { ReviewPacket.Default with
-            ReviewPacketId = reviewPacketId
+        { ReviewNotes.Default with
+            ReviewNotesId = reviewNotesId
             OwnerId = ownerId
             OrganizationId = organizationId
             RepositoryId = repositoryId
             PromotionSetId = promotionSetId
-            PromotionGroupId = promotionGroupId
             PolicySnapshotId = policySnapshotId
             Chapters = buildChapters paths evidence
             EvidenceSetSummary = evidenceSummary

@@ -116,18 +116,6 @@ module EndpointAuthorizationManifest =
             endpoint "POST" "/owner/undelete" Authenticated
             endpoint "POST" "/policy/acknowledge" Authenticated
             endpoint "POST" "/policy/current" Authenticated
-            endpoint "POST" "/promotionGroup/addPromotion" Authenticated
-            endpoint "POST" "/promotionGroup/block" Authenticated
-            endpoint "POST" "/promotionGroup/complete" Authenticated
-            endpoint "POST" "/promotionGroup/create" Authenticated
-            endpoint "POST" "/promotionGroup/delete" Authenticated
-            endpoint "POST" "/promotionGroup/get" Authenticated
-            endpoint "POST" "/promotionGroup/getEvents" Authenticated
-            endpoint "POST" "/promotionGroup/markReady" Authenticated
-            endpoint "POST" "/promotionGroup/removePromotion" Authenticated
-            endpoint "POST" "/promotionGroup/reorderPromotions" Authenticated
-            endpoint "POST" "/promotionGroup/schedule" Authenticated
-            endpoint "POST" "/promotionGroup/start" Authenticated
             endpoint "POST" "/queue/dequeue" Authenticated
             endpoint "POST" "/queue/enqueue" Authenticated
             endpoint "POST" "/queue/pause" Authenticated
@@ -164,14 +152,14 @@ module EndpointAuthorizationManifest =
             endpoint "POST" "/repository/undelete" Authenticated
             endpoint "POST" "/review/checkpoint" Authenticated
             endpoint "POST" "/review/deepen" Authenticated
-            endpoint "POST" "/review/packet" Authenticated
+            endpoint "POST" "/review/notes" Authenticated
             endpoint "POST" "/review/resolve" Authenticated
             endpoint "POST" "/storage/getDownloadUri" (Authorized(PathRead, Path))
             endpoint "POST" "/storage/getUploadMetadataForFiles" (Authorized(PathWrite, Path))
             endpoint "POST" "/storage/getUploadUri" (Authorized(PathWrite, Path))
             endpoint "POST" "/work/create" (Authorized(RepoWrite, Repository))
             endpoint "POST" "/work/get" Authenticated
-            endpoint "POST" "/work/link/promotion-group" Authenticated
+            endpoint "POST" "/work/link/promotion-set" Authenticated
             endpoint "POST" "/work/link/reference" Authenticated
             endpoint "POST" "/work/update" Authenticated
             endpoint "GET" "/metrics" (Authorized(SystemAdmin, System))

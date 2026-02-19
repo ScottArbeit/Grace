@@ -41,12 +41,6 @@ module Constants =
         let GlobalLock = "GlobalLockActor"
 
         [<Literal>]
-        let IntegrationCandidate = "IntegrationCandidateActor"
-
-        [<Literal>]
-        let ConflictReceipt = "ConflictReceiptActor"
-
-        [<Literal>]
         let GrainRepository = "GrainRepository"
 
         [<Literal>]
@@ -69,9 +63,6 @@ module Constants =
 
         [<Literal>]
         let PersonalAccessToken = "PersonalAccessTokenActor"
-
-        [<Literal>]
-        let PromotionGroup = "PromotionGroupActor"
 
         [<Literal>]
         let PromotionSet = "PromotionSetActor"
@@ -123,9 +114,6 @@ module Constants =
         let Branch = "Branch"
 
         [<Literal>]
-        let ConflictReceipt = "ConflictReceipt"
-
-        [<Literal>]
         let Diff = "Diff"
 
         [<Literal>]
@@ -138,9 +126,6 @@ module Constants =
         let FileAppearance = "FileApp"
 
         [<Literal>]
-        let IntegrationCandidate = "IntegrationCandidate"
-
-        [<Literal>]
         let NamedSection = "NamedSection"
 
         [<Literal>]
@@ -151,9 +136,6 @@ module Constants =
 
         [<Literal>]
         let PersonalAccessToken = "PersonalAccessToken"
-
-        [<Literal>]
-        let PromotionGroup = "PromotionGroup"
 
         [<Literal>]
         let PromotionSet = "PromotionSet"

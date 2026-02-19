@@ -1212,8 +1212,7 @@ module Services =
         referenceDto.Links
         |> Seq.exists (fun link ->
             match link with
-            | ReferenceLinkType.PromotionSetTerminal _
-            | ReferenceLinkType.PromotionGroupTerminal _ -> true
+            | ReferenceLinkType.PromotionSetTerminal _ -> true
             | _ -> false)
 
     /// Gets a list of references that match a provided SHA-256 hash.

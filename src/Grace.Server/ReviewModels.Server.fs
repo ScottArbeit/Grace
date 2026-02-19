@@ -18,7 +18,7 @@ module ReviewModels =
         abstract member TriageModelId: string
         abstract member DeepModelId: string
         abstract member RunTriage: TriageRequest -> Task<TriageResult>
-        abstract member RunDeepReview: DeepReviewRequest -> Task<ReviewPacket>
+        abstract member RunDeepReview: DeepReviewRequest -> Task<ReviewNotes>
 
     type OpenRouterSettings = { ApiBase: string; ApiKeyEnvVar: string; TriageModel: string; DeepModel: string; RequestHeaders: Dictionary<string, string> }
 
@@ -41,7 +41,7 @@ module ReviewModels =
                     }
                 )
 
-            member _.RunDeepReview _ = Task.FromResult({ ReviewPacket.Default with Summary = "Deep review provider not configured." })
+            member _.RunDeepReview _ = Task.FromResult({ ReviewNotes.Default with Summary = "Deep review provider not configured." })
 
     type OpenRouterReviewModelProvider(settings: OpenRouterSettings) =
         interface IReviewModelProvider with
@@ -60,7 +60,7 @@ module ReviewModels =
                     }
                 )
 
-            member _.RunDeepReview _ = Task.FromResult({ ReviewPacket.Default with Summary = $"OpenRouter deep model configured: {settings.DeepModel}." })
+            member _.RunDeepReview _ = Task.FromResult({ ReviewNotes.Default with Summary = $"OpenRouter deep model configured: {settings.DeepModel}." })
 
     let private tryGetSettings (configuration: IConfiguration) =
         if isNull configuration then

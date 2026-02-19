@@ -1,7 +1,7 @@
 namespace Grace.Server.Tests
 
 open Grace.Shared
-open Grace.Shared.ReviewPacket
+open Grace.Shared.ReviewNotes
 open Grace.Types.Policy
 open Grace.Types.Review
 open Grace.Types.Types
@@ -9,7 +9,7 @@ open NUnit.Framework
 open System
 
 [<Parallelizable(ParallelScope.All)>]
-type ReviewPacketDeterminism() =
+type ReviewNotesDeterminism() =
     let evidenceSummary path = { RelativePath = path; StartLine = 1; EndLine = 2; Score = 1.0; Reasons = [] }
 
     [<Test>]
