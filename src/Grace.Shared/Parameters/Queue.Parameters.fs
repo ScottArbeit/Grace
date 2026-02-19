@@ -44,14 +44,3 @@ module Queue =
     type CandidateActionParameters() =
         inherit QueueParameters()
         member val public CandidateId = String.Empty with get, set
-
-    /// Parameters for /candidate/attestations.
-    type CandidateAttestationsParameters() =
-        inherit QueueParameters()
-        member val public CandidateId = String.Empty with get, set
-
-    /// Parameters for /candidate/gate/rerun.
-    type CandidateGateRerunParameters() =
-        inherit QueueParameters()
-        member val public CandidateId = String.Empty with get, set
-        member val public GateName = String.Empty with get, set

@@ -550,13 +550,7 @@ module Application =
                                |> addMetadata typeof<Queue.CandidateActionParameters>
 
                                route "/required-actions" Queue.RequiredActions
-                               |> addMetadata typeof<Queue.CandidateParameters>
-
-                               route "/attestations" Queue.Attestations
-                               |> addMetadata typeof<Queue.CandidateAttestationsParameters>
-
-                               route "/gate/rerun" Queue.RerunGate
-                               |> addMetadata typeof<Queue.CandidateGateRerunParameters> ]
+                               |> addMetadata typeof<Queue.CandidateParameters> ]
                     ]
                 subRoute
                     "/validation-set"

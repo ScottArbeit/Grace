@@ -199,28 +199,8 @@ module EventingPublisher =
 
             envelope eventType reviewEvent.Metadata ownerId organizationId repositoryId (tryGetActorId reviewEvent.Metadata "Review") (serialize reviewEvent)
             |> Some
-        | Stage0Event stage0Event ->
-            envelope
-                AutomationEventType.ValidationResultRecorded
-                stage0Event.Metadata
-                OwnerId.Empty
-                OrganizationId.Empty
-                (tryGetRepositoryId stage0Event.Metadata
-                 |> Option.defaultValue RepositoryId.Empty)
-                (tryGetActorId stage0Event.Metadata "Stage0")
-                (serialize stage0Event)
-            |> Some
-        | GateAttestationEvent gateEvent ->
-            envelope
-                AutomationEventType.ValidationResultRecorded
-                gateEvent.Metadata
-                OwnerId.Empty
-                OrganizationId.Empty
-                (tryGetRepositoryId gateEvent.Metadata
-                 |> Option.defaultValue RepositoryId.Empty)
-                (tryGetActorId gateEvent.Metadata "GateAttestation")
-                (serialize gateEvent)
-            |> Some
+        | Stage0Event _
+        | GateAttestationEvent _ -> Option.None
         | ReferenceEvent referenceEvent ->
             match referenceEvent.Event with
             | ReferenceEventType.Created (referenceId, ownerId, organizationId, repositoryId, branchId, _, _, referenceType, _, links) ->

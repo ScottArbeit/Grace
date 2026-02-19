@@ -44,9 +44,6 @@ module Constants =
         let IntegrationCandidate = "IntegrationCandidateActor"
 
         [<Literal>]
-        let GateAttestation = "GateAttestationActor"
-
-        [<Literal>]
         let ConflictReceipt = "ConflictReceiptActor"
 
         [<Literal>]
@@ -87,9 +84,6 @@ module Constants =
 
         [<Literal>]
         let Review = "ReviewActor"
-
-        [<Literal>]
-        let Stage0 = "Stage0Actor"
 
         [<Literal>]
         let ValidationSet = "ValidationSetActor"
@@ -144,9 +138,6 @@ module Constants =
         let FileAppearance = "FileApp"
 
         [<Literal>]
-        let GateAttestation = "GateAttestation"
-
-        [<Literal>]
         let IntegrationCandidate = "IntegrationCandidate"
 
         [<Literal>]
@@ -175,9 +166,6 @@ module Constants =
 
         [<Literal>]
         let Review = "Review"
-
-        [<Literal>]
-        let Stage0 = "Stage0"
 
         [<Literal>]
         let ValidationSet = "ValidationSet"

@@ -419,23 +419,6 @@ module Interfaces =
         /// Validates incoming commands and converts them to events that are stored in the database.
         abstract member Handle: command: ReviewCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
 
-    /// Defines the operations for the Stage 0 analysis actor.
-    [<Interface>]
-    type IStage0Actor =
-        inherit IGrainWithGuidKey
-
-        /// Returns true if this Stage 0 analysis already exists in the database.
-        abstract member Exists: correlationId: CorrelationId -> Task<bool>
-
-        /// Returns the current Stage 0 analysis.
-        abstract member Get: correlationId: CorrelationId -> Task<Stage0Analysis option>
-
-        /// Returns the list of events handled by this Stage 0 analysis.
-        abstract member GetEvents: correlationId: CorrelationId -> Task<IReadOnlyList<Stage0Event>>
-
-        /// Validates incoming commands and converts them to events that are stored in the database.
-        abstract member Handle: command: Stage0Command -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
-
     /// Defines the operations for the PromotionQueue actor.
     [<Interface>]
     type IPromotionQueueActor =
@@ -469,23 +452,6 @@ module Interfaces =
 
         /// Validates incoming commands and converts them to events that are stored in the database.
         abstract member Handle: command: CandidateCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
-
-    /// Defines the operations for the GateAttestation actor.
-    [<Interface>]
-    type IGateAttestationActor =
-        inherit IGrainWithGuidKey
-
-        /// Returns true if this gate attestation already exists in the database.
-        abstract member Exists: correlationId: CorrelationId -> Task<bool>
-
-        /// Returns the current gate attestation.
-        abstract member Get: correlationId: CorrelationId -> Task<GateAttestation option>
-
-        /// Returns the list of events handled by this gate attestation.
-        abstract member GetEvents: correlationId: CorrelationId -> Task<IReadOnlyList<GateAttestationEvent>>
-
-        /// Validates incoming commands and converts them to events that are stored in the database.
-        abstract member Handle: command: GateAttestationCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
 
     /// Defines the operations for the ValidationSet actor.
     [<Interface>]

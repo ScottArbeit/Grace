@@ -164,8 +164,8 @@ module WorkItem =
                                 | UnlinkReviewPacket reviewPacketId -> return ReviewPacketUnlinked reviewPacketId
                                 | LinkReviewCheckpoint reviewCheckpointId -> return ReviewCheckpointLinked reviewCheckpointId
                                 | UnlinkReviewCheckpoint reviewCheckpointId -> return ReviewCheckpointUnlinked reviewCheckpointId
-                                | LinkGateAttestation gateAttestationId -> return GateAttestationLinked gateAttestationId
-                                | UnlinkGateAttestation gateAttestationId -> return GateAttestationUnlinked gateAttestationId
+                                | LinkValidationResult validationResultId -> return ValidationResultLinked validationResultId
+                                | UnlinkValidationResult validationResultId -> return ValidationResultUnlinked validationResultId
                             }
 
                         let workItemEvent = { Event = workItemEventType; Metadata = metadata }

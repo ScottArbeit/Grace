@@ -666,15 +666,7 @@ module Notification =
                         getMachineName,
                         correlationId
                     )
-                | Stage0Event stage0Event ->
-                    let correlationId = stage0Event.Metadata.CorrelationId
-
-                    log.LogInformation(
-                        "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Received Stage0Event notification.",
-                        getCurrentInstantExtended (),
-                        getMachineName,
-                        correlationId
-                    )
+                | Stage0Event _ -> ()
                 | CandidateEvent candidateEvent ->
                     let correlationId = candidateEvent.Metadata.CorrelationId
 
@@ -684,15 +676,7 @@ module Notification =
                         getMachineName,
                         correlationId
                     )
-                | GateAttestationEvent attestationEvent ->
-                    let correlationId = attestationEvent.Metadata.CorrelationId
-
-                    log.LogInformation(
-                        "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Received GateAttestationEvent notification.",
-                        getCurrentInstantExtended (),
-                        getMachineName,
-                        correlationId
-                    )
+                | GateAttestationEvent _ -> ()
                 | ConflictReceiptEvent conflictReceiptEvent ->
                     let correlationId = conflictReceiptEvent.Metadata.CorrelationId
 

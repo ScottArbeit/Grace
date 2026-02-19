@@ -23,11 +23,3 @@ type Candidate() =
     /// Gets required actions for a candidate.
     static member public RequiredActions(parameters: CandidateParameters) =
         postServer<CandidateParameters, RequiredActionDto list> (parameters |> ensureCorrelationIdIsSet, "candidate/required-actions")
-
-    /// Gets gate attestations for a candidate.
-    static member public Attestations(parameters: CandidateAttestationsParameters) =
-        postServer<CandidateAttestationsParameters, GateAttestation list> (parameters |> ensureCorrelationIdIsSet, "candidate/attestations")
-
-    /// Reruns a gate for a candidate.
-    static member public RerunGate(parameters: CandidateGateRerunParameters) =
-        postServer<CandidateGateRerunParameters, GateAttestation> (parameters |> ensureCorrelationIdIsSet, "candidate/gate/rerun")

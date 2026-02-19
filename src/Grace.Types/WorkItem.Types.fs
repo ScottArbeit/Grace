@@ -57,8 +57,8 @@ module WorkItem =
         | UnlinkReviewPacket of reviewPacketId: ReviewPacketId
         | LinkReviewCheckpoint of reviewCheckpointId: ReviewCheckpointId
         | UnlinkReviewCheckpoint of reviewCheckpointId: ReviewCheckpointId
-        | LinkGateAttestation of gateAttestationId: GateAttestationId
-        | UnlinkGateAttestation of gateAttestationId: GateAttestationId
+        | LinkValidationResult of validationResultId: ValidationResultId
+        | UnlinkValidationResult of validationResultId: ValidationResultId
 
         static member GetKnownTypes() = GetKnownTypes<WorkItemCommand>()
 
@@ -97,8 +97,8 @@ module WorkItem =
         | ReviewPacketUnlinked of reviewPacketId: ReviewPacketId
         | ReviewCheckpointLinked of reviewCheckpointId: ReviewCheckpointId
         | ReviewCheckpointUnlinked of reviewCheckpointId: ReviewCheckpointId
-        | GateAttestationLinked of gateAttestationId: GateAttestationId
-        | GateAttestationUnlinked of gateAttestationId: GateAttestationId
+        | ValidationResultLinked of validationResultId: ValidationResultId
+        | ValidationResultUnlinked of validationResultId: ValidationResultId
 
         static member GetKnownTypes() = GetKnownTypes<WorkItemEventType>()
 
@@ -135,7 +135,7 @@ module WorkItem =
             CandidateIds: CandidateId list
             ReviewPacketIds: ReviewPacketId list
             ReviewCheckpointIds: ReviewCheckpointId list
-            GateAttestationIds: GateAttestationId list
+            ValidationResultIds: ValidationResultId list
             OnBehalfOf: UserId list
             CreatedBy: UserId
             CreatedAt: Instant
@@ -165,7 +165,7 @@ module WorkItem =
                 CandidateIds = []
                 ReviewPacketIds = []
                 ReviewCheckpointIds = []
-                GateAttestationIds = []
+                ValidationResultIds = []
                 OnBehalfOf = []
                 CreatedBy = UserId String.Empty
                 CreatedAt = Constants.DefaultTimestamp
@@ -312,18 +312,18 @@ module WorkItem =
                             currentWorkItemDto.ReviewCheckpointIds
                             |> List.filter (fun existing -> existing <> reviewCheckpointId)
                     }
-                | GateAttestationLinked gateAttestationId ->
+                | ValidationResultLinked validationResultId ->
                     { currentWorkItemDto with
-                        GateAttestationIds =
-                            currentWorkItemDto.GateAttestationIds
-                            |> List.append [ gateAttestationId ]
+                        ValidationResultIds =
+                            currentWorkItemDto.ValidationResultIds
+                            |> List.append [ validationResultId ]
                             |> List.distinct
                     }
-                | GateAttestationUnlinked gateAttestationId ->
+                | ValidationResultUnlinked validationResultId ->
                     { currentWorkItemDto with
-                        GateAttestationIds =
-                            currentWorkItemDto.GateAttestationIds
-                            |> List.filter (fun existing -> existing <> gateAttestationId)
+                        ValidationResultIds =
+                            currentWorkItemDto.ValidationResultIds
+                            |> List.filter (fun existing -> existing <> validationResultId)
                     }
 
             let onBehalfOf =

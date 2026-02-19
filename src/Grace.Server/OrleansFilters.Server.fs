@@ -54,7 +54,6 @@ module Orleans =
                             | StateName.DirectoryAppearance -> repositoryId ()
                             | StateName.DirectoryVersion -> repositoryId ()
                             | StateName.FileAppearance -> repositoryId ()
-                            | StateName.GateAttestation -> repositoryId ()
                             | StateName.IntegrationCandidate -> repositoryId ()
                             | StateName.NamedSection -> repositoryId ()
                             | StateName.Organization -> StateName.Organization
@@ -71,7 +70,6 @@ module Orleans =
                             | StateName.Repository -> organizationId ()
                             | StateName.RepositoryPermission -> repositoryId ()
                             | StateName.Review -> repositoryId ()
-                            | StateName.Stage0 -> repositoryId ()
                             | StateName.User -> StateName.User
                             | StateName.WorkItem -> repositoryId ()
                             | _ ->

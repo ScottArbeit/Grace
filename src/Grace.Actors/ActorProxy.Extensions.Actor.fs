@@ -276,19 +276,6 @@ module ActorProxy =
             memoryCache.CreateOrleansContextEntry(grain.GetGrainId(), orleansContext)
             grain
 
-    module GateAttestation =
-        open Grace.Types.Queue
-
-        /// Creates an ActorProxy for a GateAttestation actor, and adds the correlationId to the server's MemoryCache so
-        ///   it's available in the OnActivateAsync() method.
-        let CreateActorProxy (gateAttestationId: GateAttestationId) (repositoryId: RepositoryId) (correlationId: string) =
-            let grain = orleansClient.CreateActorProxyWithCorrelationId<IGateAttestationActor>(gateAttestationId, correlationId)
-            let orleansContext = Dictionary<string, obj>()
-            orleansContext.Add(nameof RepositoryId, repositoryId)
-            orleansContext.Add(Constants.ActorNameProperty, ActorName.GateAttestation)
-            memoryCache.CreateOrleansContextEntry(grain.GetGrainId(), orleansContext)
-            grain
-
     module ConflictReceipt =
         open Grace.Types.Queue
 
@@ -364,19 +351,6 @@ module ActorProxy =
             let orleansContext = Dictionary<string, obj>()
             orleansContext.Add(nameof RepositoryId, repositoryId)
             orleansContext.Add(Constants.ActorNameProperty, ActorName.Review)
-            memoryCache.CreateOrleansContextEntry(grain.GetGrainId(), orleansContext)
-            grain
-
-    module Stage0 =
-        open Grace.Types.Review
-
-        /// Creates an ActorProxy for a Stage 0 analysis actor, and adds the correlationId to the server's MemoryCache so
-        ///   it's available in the OnActivateAsync() method.
-        let CreateActorProxy (referenceId: ReferenceId) (repositoryId: RepositoryId) (correlationId: string) =
-            let grain = orleansClient.CreateActorProxyWithCorrelationId<IStage0Actor>(referenceId, correlationId)
-            let orleansContext = Dictionary<string, obj>()
-            orleansContext.Add(nameof RepositoryId, repositoryId)
-            orleansContext.Add(Constants.ActorNameProperty, ActorName.Stage0)
             memoryCache.CreateOrleansContextEntry(grain.GetGrainId(), orleansContext)
             grain
 
