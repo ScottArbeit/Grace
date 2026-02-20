@@ -75,6 +75,8 @@ module PromotionSet =
 
         let maxTotalTimeMilliseconds = getIntEnvironmentSetting "grace__promotionset__recompute__max_total_time_ms" 300000
 
+        let maxFilesPerStep = getIntEnvironmentSetting "grace__promotionset__recompute__max_files_per_step" 20000
+
         member val private correlationId: CorrelationId = String.Empty with get, set
 
         member private this.WithActorMetadata(metadata: EventMetadata) =
@@ -802,10 +804,20 @@ module PromotionSet =
                             |> Seq.iter (fun filePath -> allFilePaths.Add(filePath) |> ignore)
 
                             let orderedFilePaths = allFilePaths |> Seq.sortBy id |> Seq.toArray
+                            let mutable fileBudgetFailure: RecomputeFailure option = Option.None
+
+                            if orderedFilePaths.Length > maxFilesPerStep then
+                                fileBudgetFailure <-
+                                    Option.Some(
+                                        Failed(
+                                            $"Step {step.StepId} exceeded configured file budget ({orderedFilePaths.Length} > {maxFilesPerStep})."
+                                        )
+                                    )
 
                             let mutable filePathIndex = 0
 
-                            while filePathIndex < orderedFilePaths.Length do
+                            while filePathIndex < orderedFilePaths.Length
+                                  && fileBudgetFailure.IsNone do
                                 let filePath = orderedFilePaths[filePathIndex]
                                 let baseFile = this.TryGetFileVersion(baseSnapshot.FilesByPath, filePath)
                                 let oursFile = this.TryGetFileVersion(oursSnapshot.FilesByPath, filePath)
@@ -843,7 +855,9 @@ module PromotionSet =
 
                                 filePathIndex <- filePathIndex + 1
 
-                            if conflicts.Count = 0 then
+                            match fileBudgetFailure with
+                            | Option.Some recomputeFailure -> return Error recomputeFailure
+                            | Option.None when conflicts.Count = 0 ->
                                 match!
                                     this.MaterializeMergedDirectoryVersion
                                         (
@@ -855,9 +869,10 @@ module PromotionSet =
                                             metadata
                                         )
                                     with
-                                | Ok appliedDirectoryVersionId -> return Ok(appliedDirectoryVersionId, StepConflictStatus.NoConflicts, Option.None)
+                                | Ok appliedDirectoryVersionId ->
+                                    return Ok(appliedDirectoryVersionId, StepConflictStatus.NoConflicts, Option.None)
                                 | Error graceError -> return Error(Failed graceError.Error)
-                            else
+                            | Option.None ->
                                 let acceptedDecisionsByPath = Dictionary<RelativePath, ConflictResolutionDecision>(StringComparer.OrdinalIgnoreCase)
                                 let acceptedFilePaths = HashSet<RelativePath>(StringComparer.OrdinalIgnoreCase)
                                 let decisions = manualDecisionsForStep |> Option.defaultValue []
