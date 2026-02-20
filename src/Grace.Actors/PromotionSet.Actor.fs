@@ -10,6 +10,7 @@ open Grace.Actors.Services
 open Grace.Actors.Types
 open Grace.Shared
 open Grace.Shared.Constants
+open Grace.Shared.Services
 open Grace.Shared.Utilities
 open Grace.Types.Artifact
 open Grace.Types.Events
@@ -27,6 +28,7 @@ open System.Collections.Generic
 open System.Diagnostics
 open System.Globalization
 open System.IO
+open System.IO.Compression
 open System.Text
 open System.Threading.Tasks
 
@@ -35,6 +37,17 @@ module PromotionSet =
     type private RecomputeFailure =
         | Blocked of reason: string * artifactId: ArtifactId option
         | Failed of reason: string
+
+    type private DirectorySnapshot = { DirectoriesByPath: Dictionary<RelativePath, DirectoryVersion>; FilesByPath: Dictionary<RelativePath, FileVersion> }
+
+    type private StepConflictFile =
+        {
+            FilePath: RelativePath
+            BaseFile: FileVersion option
+            OursFile: FileVersion option
+            TheirsFile: FileVersion option
+            IsBinary: bool
+        }
 
     type PromotionSetActor([<PersistentState(StateName.PromotionSet, Constants.GraceActorStorage)>] state: IPersistentState<List<PromotionSetEvent>>) =
         inherit Grain()
@@ -300,13 +313,716 @@ module PromotionSet =
                             }
             }
 
-        member private this.GetModelConfidence(step: PromotionSetStep, computedAgainstBaseDirectoryVersionId: DirectoryVersionId) =
-            if step.OriginalBaseDirectoryVersionId = computedAgainstBaseDirectoryVersionId then
+        member private this.GetModelConfidence(step: PromotionSetStep, computedAgainstBaseDirectoryVersionId: DirectoryVersionId, conflictCount: int) =
+            if conflictCount <= 0 then
                 1.0
-            elif step.OriginalPromotion.DirectoryVersionId = computedAgainstBaseDirectoryVersionId then
-                0.98
+            elif step.OriginalBaseDirectoryVersionId = computedAgainstBaseDirectoryVersionId then
+                0.99
+            elif conflictCount = 1 then
+                0.93
+            elif conflictCount = 2 then
+                0.82
             else
-                0.5
+                0.51
+
+        member private this.TryGetFileVersion(fileLookup: Dictionary<RelativePath, FileVersion>, filePath: RelativePath) =
+            let mutable fileVersion = FileVersion.Default
+
+            if fileLookup.TryGetValue(filePath, &fileVersion) then
+                Option.Some fileVersion
+            else
+                Option.None
+
+        member private this.FileVersionEquivalent(left: FileVersion option, right: FileVersion option) =
+            match left, right with
+            | Option.None, Option.None -> true
+            | Option.Some leftFile, Option.Some rightFile -> leftFile.Sha256Hash = rightFile.Sha256Hash
+            | _ -> false
+
+        member private this.LoadDirectorySnapshot(directoryVersionId: DirectoryVersionId) =
+            task {
+                let directoriesByPath = Dictionary<RelativePath, DirectoryVersion>(StringComparer.OrdinalIgnoreCase)
+                let filesByPath = Dictionary<RelativePath, FileVersion>(StringComparer.OrdinalIgnoreCase)
+
+                if directoryVersionId = DirectoryVersionId.Empty then
+                    return Ok { DirectoriesByPath = directoriesByPath; FilesByPath = filesByPath }
+                else
+                    let directoryVersionActorProxy = DirectoryVersion.CreateActorProxy directoryVersionId promotionSetDto.RepositoryId this.correlationId
+                    let! rootDirectoryVersion = directoryVersionActorProxy.Get this.correlationId
+
+                    if rootDirectoryVersion.DirectoryVersion.DirectoryVersionId = DirectoryVersionId.Empty then
+                        let graceError = GraceError.Create "DirectoryVersion was not found while recomputing PromotionSet step." this.correlationId
+
+                        graceError.enhance (nameof DirectoryVersionId, directoryVersionId)
+                        |> ignore
+
+                        graceError.enhance (nameof PromotionSetId, promotionSetDto.PromotionSetId)
+                        |> ignore
+
+                        return Error graceError
+                    else
+                        let! recursiveDirectoryVersions = directoryVersionActorProxy.GetRecursiveDirectoryVersions false this.correlationId
+                        let mutable directoryIndex = 0
+
+                        while directoryIndex < recursiveDirectoryVersions.Length do
+                            let directoryVersion =
+                                recursiveDirectoryVersions[directoryIndex]
+                                    .DirectoryVersion
+
+                            directoriesByPath[directoryVersion.RelativePath] <- directoryVersion
+                            let filesInDirectory = directoryVersion.Files
+                            let mutable fileIndex = 0
+
+                            while fileIndex < filesInDirectory.Count do
+                                let fileVersion = filesInDirectory[fileIndex]
+                                filesByPath[fileVersion.RelativePath] <- fileVersion
+                                fileIndex <- fileIndex + 1
+
+                            directoryIndex <- directoryIndex + 1
+
+                        return Ok { DirectoriesByPath = directoriesByPath; FilesByPath = filesByPath }
+            }
+
+        member private this.ReadTextFileVersion(repositoryDto, fileVersion: FileVersion option, correlationId: CorrelationId) =
+            task {
+                match fileVersion with
+                | Option.None -> return Ok Option.None
+                | Option.Some currentFileVersion when currentFileVersion.IsBinary -> return Ok Option.None
+                | Option.Some currentFileVersion ->
+                    try
+                        let! readUri = getUriWithReadSharedAccessSignatureForFileVersion repositoryDto currentFileVersion correlationId
+                        let blobClient = BlockBlobClient(readUri)
+                        use! blobStream = blobClient.OpenReadAsync(position = 0, bufferSize = (64 * 1024))
+
+                        use contentStream = new GZipStream(stream = blobStream, mode = CompressionMode.Decompress, leaveOpen = false) :> Stream
+
+                        use streamReader = new StreamReader(contentStream, Encoding.UTF8, true, 16 * 1024, leaveOpen = false)
+                        let! textContents = streamReader.ReadToEndAsync()
+                        return Ok(Option.Some textContents)
+                    with
+                    | ex ->
+                        return
+                            Error(
+                                (GraceError.CreateWithException ex "Failed while reading conflicted text file for PromotionSet recompute." correlationId)
+                                    .enhance(nameof PromotionSetId, promotionSetDto.PromotionSetId)
+                                    .enhance ("FilePath", currentFileVersion.RelativePath)
+                            )
+            }
+
+        member private this.CreateTextOverrideFileVersion(filePath: RelativePath, textContent: string, repositoryDto, metadata: EventMetadata) =
+            task {
+                try
+                    let payloadBytes = Encoding.UTF8.GetBytes(textContent)
+                    use hashStream = new MemoryStream(payloadBytes)
+                    let! sha256Hash = computeSha256ForFile hashStream filePath
+
+                    let fileVersion = FileVersion.Create filePath sha256Hash String.Empty false (int64 payloadBytes.Length)
+
+                    let! writeUri = getUriWithWriteSharedAccessSignatureForFileVersion repositoryDto fileVersion metadata.CorrelationId
+                    let blobClient = BlobClient(writeUri)
+                    use uploadStream = new MemoryStream()
+
+                    use gzipStream = new GZipStream(uploadStream, CompressionLevel.Optimal, leaveOpen = true)
+                    gzipStream.Write(payloadBytes, 0, payloadBytes.Length)
+                    gzipStream.Flush()
+                    gzipStream.Dispose()
+
+                    uploadStream.Position <- 0L
+                    do! blobClient.UploadAsync(uploadStream, overwrite = true) :> Task
+                    return Ok fileVersion
+                with
+                | ex ->
+                    return
+                        Error(
+                            (GraceError.CreateWithException ex "Failed while creating manual override file version." metadata.CorrelationId)
+                                .enhance(nameof PromotionSetId, promotionSetDto.PromotionSetId)
+                                .enhance ("FilePath", filePath)
+                        )
+            }
+
+        member private this.ReadConflictTextPair(repositoryDto, conflictFile: StepConflictFile) =
+            task {
+                let! oursTextResult = this.ReadTextFileVersion(repositoryDto, conflictFile.OursFile, this.correlationId)
+
+                match oursTextResult with
+                | Error graceError -> return Error graceError
+                | Ok oursTextOption ->
+                    let! theirsTextResult = this.ReadTextFileVersion(repositoryDto, conflictFile.TheirsFile, this.correlationId)
+
+                    match theirsTextResult with
+                    | Error graceError -> return Error graceError
+                    | Ok theirsTextOption ->
+                        let oursContent =
+                            match oursTextOption with
+                            | Option.Some text -> text
+                            | Option.None ->
+                                match conflictFile.OursFile with
+                                | Option.Some fileVersion when fileVersion.IsBinary -> $"<binary sha={fileVersion.Sha256Hash}>"
+                                | Option.Some _ -> "<text unavailable>"
+                                | Option.None -> "<deleted>"
+
+                        let theirsContent =
+                            match theirsTextOption with
+                            | Option.Some text -> text
+                            | Option.None ->
+                                match conflictFile.TheirsFile with
+                                | Option.Some fileVersion when fileVersion.IsBinary -> $"<binary sha={fileVersion.Sha256Hash}>"
+                                | Option.Some _ -> "<text unavailable>"
+                                | Option.None -> "<deleted>"
+
+                        return Ok(oursContent, theirsContent)
+            }
+
+        member private this.BuildConflictAnalyses
+            (
+                repositoryDto,
+                conflictFiles: StepConflictFile list,
+                confidence: float option,
+                resolutionMethod: ConflictResolutionMethod,
+                acceptedFilePaths: HashSet<RelativePath>
+            ) =
+            task {
+                let! conflictTextResults =
+                    conflictFiles
+                    |> List.map (fun conflictFile ->
+                        task {
+                            let! conflictTextResult = this.ReadConflictTextPair(repositoryDto, conflictFile)
+                            return conflictFile, conflictTextResult
+                        })
+                    |> Task.WhenAll
+
+                let firstError =
+                    conflictTextResults
+                    |> Seq.tryPick (fun (_, result) ->
+                        match result with
+                        | Error graceError -> Option.Some graceError
+                        | Ok _ -> Option.None)
+
+                match firstError with
+                | Option.Some graceError -> return Error graceError
+                | Option.None ->
+                    let conflictAnalyses = ResizeArray<ConflictAnalysis>()
+
+                    conflictTextResults
+                    |> Seq.iter (fun (conflictFile, result) ->
+                        match result with
+                        | Error _ -> ()
+                        | Ok (oursContent, theirsContent) ->
+                            let lineCount =
+                                max
+                                    1
+                                    (max
+                                        (if String.IsNullOrEmpty oursContent then 0 else oursContent.Split('\n').Length)
+                                        (if String.IsNullOrEmpty theirsContent then
+                                             0
+                                         else
+                                             theirsContent.Split('\n').Length))
+
+                            let acceptedByManualReview = acceptedFilePaths.Contains(conflictFile.FilePath)
+
+                            let proposedResolution =
+                                match confidence with
+                                | Option.Some score ->
+                                    Option.Some
+                                        {
+                                            ModelResolution =
+                                                if acceptedByManualReview then
+                                                    "Manual resolution accepted during conflict review."
+                                                else
+                                                    "Model-suggested merge proposal."
+                                            Confidence = score
+                                            Accepted = if acceptedByManualReview then Option.Some true else Option.None
+                                        }
+                                | Option.None when acceptedByManualReview ->
+                                    Option.Some
+                                        {
+                                            ModelResolution = "Manual resolution accepted during conflict review."
+                                            Confidence = 1.0
+                                            Accepted = Option.Some true
+                                        }
+                                | Option.None -> Option.None
+
+                            conflictAnalyses.Add(
+                                {
+                                    FilePath = conflictFile.FilePath
+                                    OriginalHunks =
+                                        [
+                                            { StartLine = 1; EndLine = lineCount; OursContent = oursContent; TheirsContent = theirsContent }
+                                        ]
+                                    ProposedResolution = proposedResolution
+                                    ResolutionMethod = resolutionMethod
+                                }
+                            ))
+
+                    return Ok(conflictAnalyses |> Seq.toList)
+            }
+
+        member private this.MaterializeMergedDirectoryVersion
+            (
+                repositoryDto,
+                baseSnapshot: DirectorySnapshot,
+                oursSnapshot: DirectorySnapshot,
+                theirsSnapshot: DirectorySnapshot,
+                mergedFilesByPath: Dictionary<RelativePath, FileVersion>,
+                metadata: EventMetadata
+            ) =
+            task {
+                let directoryPaths = HashSet<RelativePath>(StringComparer.OrdinalIgnoreCase)
+                directoryPaths.Add(RootDirectoryPath) |> ignore
+                let filesByDirectory = Dictionary<RelativePath, ResizeArray<FileVersion>>(StringComparer.OrdinalIgnoreCase)
+                let mergedFileValues = mergedFilesByPath.Values |> Seq.toArray
+                let mutable fileIndex = 0
+
+                while fileIndex < mergedFileValues.Length do
+                    let fileVersion = mergedFileValues[fileIndex]
+                    let fileDirectoryPath = getRelativeDirectory fileVersion.RelativePath RootDirectoryPath
+                    let mutable currentDirectoryPath = fileDirectoryPath
+                    let mutable continueUpTree = true
+
+                    while continueUpTree do
+                        directoryPaths.Add(currentDirectoryPath) |> ignore
+
+                        match getParentPath currentDirectoryPath with
+                        | Option.Some parentPath -> currentDirectoryPath <- parentPath
+                        | Option.None -> continueUpTree <- false
+
+                    let mutable filesInDirectory = Unchecked.defaultof<ResizeArray<FileVersion>>
+
+                    if
+                        not
+                        <| filesByDirectory.TryGetValue(fileDirectoryPath, &filesInDirectory)
+                    then
+                        filesInDirectory <- ResizeArray<FileVersion>()
+                        filesByDirectory[fileDirectoryPath] <- filesInDirectory
+
+                    filesInDirectory.Add(fileVersion)
+                    fileIndex <- fileIndex + 1
+
+                let orderedDirectoryPaths =
+                    directoryPaths
+                    |> Seq.sortByDescending countSegments
+                    |> Seq.toArray
+
+                let childDirectoriesByParent = Dictionary<RelativePath, ResizeArray<RelativePath>>(StringComparer.OrdinalIgnoreCase)
+                let mutable directoryPathIndex = 0
+
+                while directoryPathIndex < orderedDirectoryPaths.Length do
+                    let directoryPath = orderedDirectoryPaths[directoryPathIndex]
+
+                    match getParentPath directoryPath with
+                    | Option.Some parentPath ->
+                        let mutable childDirectories = Unchecked.defaultof<ResizeArray<RelativePath>>
+
+                        if
+                            not
+                            <| childDirectoriesByParent.TryGetValue(parentPath, &childDirectories)
+                        then
+                            childDirectories <- ResizeArray<RelativePath>()
+                            childDirectoriesByParent[parentPath] <- childDirectories
+
+                        childDirectories.Add(directoryPath)
+                    | Option.None -> ()
+
+                    directoryPathIndex <- directoryPathIndex + 1
+
+                let computedDirectoryMetadata = Dictionary<RelativePath, DirectoryVersionId * Sha256Hash>(StringComparer.OrdinalIgnoreCase)
+                let directoryVersionsToCreate = ResizeArray<DirectoryVersion>()
+                let mutable materializationError: GraceError option = Option.None
+                let mutable buildIndex = 0
+
+                while buildIndex < orderedDirectoryPaths.Length
+                      && materializationError.IsNone do
+                    let directoryPath = orderedDirectoryPaths[buildIndex]
+                    let mutable childDirectoryPaths = Unchecked.defaultof<ResizeArray<RelativePath>>
+
+                    let childDirectoryPathsArray =
+                        if childDirectoriesByParent.TryGetValue(directoryPath, &childDirectoryPaths) then
+                            childDirectoryPaths
+                            |> Seq.sortBy id
+                            |> Seq.toArray
+                        else
+                            Array.Empty<RelativePath>()
+
+                    let localChildDirectories = List<LocalDirectoryVersion>()
+                    let childDirectoryIds = List<DirectoryVersionId>()
+                    let mutable childIndex = 0
+
+                    while childIndex < childDirectoryPathsArray.Length do
+                        let childDirectoryPath = childDirectoryPathsArray[childIndex]
+                        let childDirectoryId, childSha = computedDirectoryMetadata[childDirectoryPath]
+                        childDirectoryIds.Add(childDirectoryId)
+
+                        localChildDirectories.Add(
+                            LocalDirectoryVersion.Create
+                                childDirectoryId
+                                promotionSetDto.OwnerId
+                                promotionSetDto.OrganizationId
+                                promotionSetDto.RepositoryId
+                                childDirectoryPath
+                                childSha
+                                (List<DirectoryVersionId>())
+                                (List<LocalFileVersion>())
+                                0L
+                                DateTime.UtcNow
+                        )
+
+                        childIndex <- childIndex + 1
+
+                    let directoryFiles = List<FileVersion>()
+                    let localDirectoryFiles = List<LocalFileVersion>()
+                    let mutable filesForDirectory = Unchecked.defaultof<ResizeArray<FileVersion>>
+
+                    if filesByDirectory.TryGetValue(directoryPath, &filesForDirectory) then
+                        let orderedFiles =
+                            filesForDirectory
+                            |> Seq.sortBy (fun fileVersion -> fileVersion.RelativePath)
+                            |> Seq.toArray
+
+                        let mutable orderedFileIndex = 0
+
+                        while orderedFileIndex < orderedFiles.Length do
+                            let fileVersion = orderedFiles[orderedFileIndex]
+                            directoryFiles.Add(fileVersion)
+                            localDirectoryFiles.Add(fileVersion.ToLocalFileVersion DateTime.UtcNow)
+                            orderedFileIndex <- orderedFileIndex + 1
+
+                    let computedSha = computeSha256ForDirectory directoryPath localChildDirectories localDirectoryFiles
+
+                    let tryReuseDirectoryId (snapshot: DirectorySnapshot) =
+                        let mutable existingDirectoryVersion = DirectoryVersion.Default
+
+                        if
+                            snapshot.DirectoriesByPath.TryGetValue(directoryPath, &existingDirectoryVersion)
+                            && existingDirectoryVersion.Sha256Hash = computedSha
+                        then
+                            Option.Some existingDirectoryVersion.DirectoryVersionId
+                        else
+                            Option.None
+
+                    let reusedDirectoryVersionId =
+                        [
+                            oursSnapshot
+                            theirsSnapshot
+                            baseSnapshot
+                        ]
+                        |> Seq.tryPick tryReuseDirectoryId
+
+                    let directoryVersionId =
+                        reusedDirectoryVersionId
+                        |> Option.defaultValue (Guid.NewGuid())
+
+                    if reusedDirectoryVersionId.IsNone then
+                        let directoryVersion =
+                            DirectoryVersion.Create
+                                directoryVersionId
+                                promotionSetDto.OwnerId
+                                promotionSetDto.OrganizationId
+                                promotionSetDto.RepositoryId
+                                directoryPath
+                                computedSha
+                                childDirectoryIds
+                                directoryFiles
+                                (getDirectorySize directoryFiles)
+
+                        directoryVersionsToCreate.Add(directoryVersion)
+
+                    computedDirectoryMetadata[directoryPath] <- (directoryVersionId, computedSha)
+                    buildIndex <- buildIndex + 1
+
+                let mutable createIndex = 0
+
+                while createIndex < directoryVersionsToCreate.Count
+                      && materializationError.IsNone do
+                    let directoryVersion = directoryVersionsToCreate[createIndex]
+
+                    let directoryVersionActorProxy =
+                        DirectoryVersion.CreateActorProxy directoryVersion.DirectoryVersionId promotionSetDto.RepositoryId this.correlationId
+
+                    match!
+                        directoryVersionActorProxy.Handle
+                            (Grace.Types.DirectoryVersion.DirectoryVersionCommand.Create(directoryVersion, repositoryDto))
+                            (this.WithActorMetadata metadata)
+                        with
+                    | Ok _ -> ()
+                    | Error graceError -> materializationError <- Option.Some graceError
+
+                    createIndex <- createIndex + 1
+
+                match materializationError with
+                | Option.Some graceError -> return Error graceError
+                | Option.None ->
+                    let mutable rootDirectory = Unchecked.defaultof<(DirectoryVersionId * Sha256Hash)>
+
+                    if computedDirectoryMetadata.TryGetValue(RootDirectoryPath, &rootDirectory) then
+                        return Ok(fst rootDirectory)
+                    else
+                        return
+                            Error(
+                                (GraceError.Create "Failed to materialize root DirectoryVersion for PromotionSet recompute." metadata.CorrelationId)
+                                    .enhance (nameof PromotionSetId, promotionSetDto.PromotionSetId)
+                            )
+            }
+
+        member private this.ComputeAppliedDirectoryVersionForStep
+            (
+                step: PromotionSetStep,
+                computedAgainstBaseDirectoryVersionId: DirectoryVersionId,
+                conflictResolutionPolicy: ConflictResolutionPolicy,
+                manualDecisionsForStep: ConflictResolutionDecision list option,
+                repositoryDto,
+                metadata: EventMetadata
+            ) =
+            task {
+                let! baseSnapshotResult = this.LoadDirectorySnapshot step.OriginalBaseDirectoryVersionId
+
+                match baseSnapshotResult with
+                | Error graceError -> return Error(Failed graceError.Error)
+                | Ok baseSnapshot ->
+                    let! oursSnapshotResult = this.LoadDirectorySnapshot computedAgainstBaseDirectoryVersionId
+
+                    match oursSnapshotResult with
+                    | Error graceError -> return Error(Failed graceError.Error)
+                    | Ok oursSnapshot ->
+                        let! theirsSnapshotResult = this.LoadDirectorySnapshot step.OriginalPromotion.DirectoryVersionId
+
+                        match theirsSnapshotResult with
+                        | Error graceError -> return Error(Failed graceError.Error)
+                        | Ok theirsSnapshot ->
+                            let mergedFilesByPath = Dictionary<RelativePath, FileVersion>(StringComparer.OrdinalIgnoreCase)
+                            let conflicts = ResizeArray<StepConflictFile>()
+                            let allFilePaths = HashSet<RelativePath>(StringComparer.OrdinalIgnoreCase)
+
+                            baseSnapshot.FilesByPath.Keys
+                            |> Seq.iter (fun filePath -> allFilePaths.Add(filePath) |> ignore)
+
+                            oursSnapshot.FilesByPath.Keys
+                            |> Seq.iter (fun filePath -> allFilePaths.Add(filePath) |> ignore)
+
+                            theirsSnapshot.FilesByPath.Keys
+                            |> Seq.iter (fun filePath -> allFilePaths.Add(filePath) |> ignore)
+
+                            let orderedFilePaths = allFilePaths |> Seq.sortBy id |> Seq.toArray
+
+                            let mutable filePathIndex = 0
+
+                            while filePathIndex < orderedFilePaths.Length do
+                                let filePath = orderedFilePaths[filePathIndex]
+                                let baseFile = this.TryGetFileVersion(baseSnapshot.FilesByPath, filePath)
+                                let oursFile = this.TryGetFileVersion(oursSnapshot.FilesByPath, filePath)
+                                let theirsFile = this.TryGetFileVersion(theirsSnapshot.FilesByPath, filePath)
+
+                                let oursChanged =
+                                    not
+                                    <| this.FileVersionEquivalent(baseFile, oursFile)
+
+                                let theirsChanged =
+                                    not
+                                    <| this.FileVersionEquivalent(baseFile, theirsFile)
+
+                                let setMergedFile (fileVersion: FileVersion option) =
+                                    match fileVersion with
+                                    | Option.Some selected -> mergedFilesByPath[filePath] <- selected
+                                    | Option.None -> mergedFilesByPath.Remove(filePath) |> ignore
+
+                                if not theirsChanged then
+                                    setMergedFile oursFile
+                                elif not oursChanged then
+                                    setMergedFile theirsFile
+                                elif this.FileVersionEquivalent(oursFile, theirsFile) then
+                                    setMergedFile oursFile
+                                else
+                                    let isBinary =
+                                        match oursFile, theirsFile with
+                                        | Option.Some ours, _
+                                        | _, Option.Some ours -> ours.IsBinary
+                                        | _ -> false
+
+                                    conflicts.Add(
+                                        { FilePath = filePath; BaseFile = baseFile; OursFile = oursFile; TheirsFile = theirsFile; IsBinary = isBinary }
+                                    )
+
+                                filePathIndex <- filePathIndex + 1
+
+                            if conflicts.Count = 0 then
+                                match!
+                                    this.MaterializeMergedDirectoryVersion
+                                        (
+                                            repositoryDto,
+                                            baseSnapshot,
+                                            oursSnapshot,
+                                            theirsSnapshot,
+                                            mergedFilesByPath,
+                                            metadata
+                                        )
+                                    with
+                                | Ok appliedDirectoryVersionId -> return Ok(appliedDirectoryVersionId, StepConflictStatus.NoConflicts, Option.None)
+                                | Error graceError -> return Error(Failed graceError.Error)
+                            else
+                                let acceptedDecisionsByPath = Dictionary<RelativePath, ConflictResolutionDecision>(StringComparer.OrdinalIgnoreCase)
+                                let acceptedFilePaths = HashSet<RelativePath>(StringComparer.OrdinalIgnoreCase)
+                                let decisions = manualDecisionsForStep |> Option.defaultValue []
+                                let mutable decisionIndex = 0
+
+                                while decisionIndex < decisions.Length do
+                                    let decision = decisions[decisionIndex]
+
+                                    if decision.Accepted then
+                                        acceptedDecisionsByPath[normalizeFilePath decision.FilePath] <- decision
+
+                                    decisionIndex <- decisionIndex + 1
+
+                                let unresolvedConflicts = ResizeArray<StepConflictFile>()
+                                let mutable resolutionError: GraceError option = Option.None
+                                let mutable conflictIndex = 0
+
+                                while conflictIndex < conflicts.Count
+                                      && resolutionError.IsNone do
+                                    let conflictFile = conflicts[conflictIndex]
+                                    let normalizedFilePath = normalizeFilePath conflictFile.FilePath
+                                    let mutable acceptedDecision = Unchecked.defaultof<ConflictResolutionDecision>
+
+                                    if acceptedDecisionsByPath.TryGetValue(normalizedFilePath, &acceptedDecision) then
+                                        acceptedFilePaths.Add(conflictFile.FilePath)
+                                        |> ignore
+
+                                        match acceptedDecision.OverrideContentArtifactId with
+                                        | Option.Some artifactId ->
+                                            let! artifactTextResult = this.GetArtifactText(artifactId, metadata)
+
+                                            match artifactTextResult with
+                                            | Error graceError -> resolutionError <- Option.Some graceError
+                                            | Ok artifactText ->
+                                                let! overrideFileVersionResult =
+                                                    this.CreateTextOverrideFileVersion(conflictFile.FilePath, artifactText, repositoryDto, metadata)
+
+                                                match overrideFileVersionResult with
+                                                | Error graceError -> resolutionError <- Option.Some graceError
+                                                | Ok overrideFileVersion -> mergedFilesByPath[conflictFile.FilePath] <- overrideFileVersion
+                                        | Option.None ->
+                                            match conflictFile.TheirsFile with
+                                            | Option.Some theirsFile -> mergedFilesByPath[conflictFile.FilePath] <- theirsFile
+                                            | Option.None ->
+                                                mergedFilesByPath.Remove(conflictFile.FilePath)
+                                                |> ignore
+                                    else
+                                        unresolvedConflicts.Add(conflictFile)
+
+                                    conflictIndex <- conflictIndex + 1
+
+                                match resolutionError with
+                                | Option.Some graceError -> return Error(Failed graceError.Error)
+                                | Option.None ->
+                                    let hasUnresolvedConflicts = unresolvedConflicts.Count > 0
+
+                                    let hasUnresolvedBinaryConflict =
+                                        unresolvedConflicts
+                                        |> Seq.exists (fun conflict -> conflict.IsBinary)
+
+                                    let mutable confidence: float option = Option.None
+                                    let mutable blockedReason: string option = Option.None
+                                    let mutable appliedByPolicy = false
+
+                                    if hasUnresolvedConflicts then
+                                        match conflictResolutionPolicy with
+                                        | ConflictResolutionPolicy.NoConflicts _ ->
+                                            blockedReason <- Option.Some $"Conflict detected at step {step.StepId}, and repository policy is NoConflicts."
+                                        | ConflictResolutionPolicy.ConflictsAllowed threshold ->
+                                            if hasUnresolvedBinaryConflict then
+                                                blockedReason <- Option.Some "Binary file conflicts require manual override and cannot be auto-merged."
+                                            else
+                                                let modelConfidence =
+                                                    this.GetModelConfidence(step, computedAgainstBaseDirectoryVersionId, unresolvedConflicts.Count)
+
+                                                confidence <- Option.Some modelConfidence
+
+                                                if modelConfidence >= float threshold then
+                                                    appliedByPolicy <- true
+
+                                                    let mutable unresolvedIndex = 0
+
+                                                    while unresolvedIndex < unresolvedConflicts.Count do
+                                                        let unresolvedConflict = unresolvedConflicts[unresolvedIndex]
+
+                                                        match unresolvedConflict.TheirsFile with
+                                                        | Option.Some theirsFile -> mergedFilesByPath[unresolvedConflict.FilePath] <- theirsFile
+                                                        | Option.None ->
+                                                            mergedFilesByPath.Remove(unresolvedConflict.FilePath)
+                                                            |> ignore
+
+                                                        unresolvedIndex <- unresolvedIndex + 1
+                                                else
+                                                    blockedReason <-
+                                                        Option.Some(
+                                                            sprintf
+                                                                "Conflict confidence %.2f is below threshold %.2f at step %O."
+                                                                modelConfidence
+                                                                (float threshold)
+                                                                step.StepId
+                                                        )
+
+                                    let conflictFilesForArtifact = conflicts |> Seq.toList
+
+                                    let resolutionMethod =
+                                        if appliedByPolicy then ConflictResolutionMethod.ModelSuggested
+                                        elif acceptedFilePaths.Count > 0 then ConflictResolutionMethod.ManualOverride
+                                        elif confidence.IsSome then ConflictResolutionMethod.ModelSuggested
+                                        else ConflictResolutionMethod.None
+
+                                    let! conflictAnalysesResult =
+                                        this.BuildConflictAnalyses(repositoryDto, conflictFilesForArtifact, confidence, resolutionMethod, acceptedFilePaths)
+
+                                    match conflictAnalysesResult with
+                                    | Error graceError -> return Error(Failed graceError.Error)
+                                    | Ok conflictAnalyses ->
+                                        match blockedReason with
+                                        | Option.Some reasonText ->
+                                            let! artifactId =
+                                                this.CreateConflictArtifact(
+                                                    step,
+                                                    reasonText,
+                                                    confidence,
+                                                    computedAgainstBaseDirectoryVersionId,
+                                                    metadata,
+                                                    manualDecisionsForStep,
+                                                    Option.Some conflictAnalyses
+                                                )
+
+                                            return Error(Blocked(reasonText, artifactId))
+                                        | Option.None ->
+                                            let resolutionReason =
+                                                if appliedByPolicy && confidence.IsSome then
+                                                    sprintf "Conflicts auto-resolved by policy at confidence %.2f." confidence.Value
+                                                elif acceptedFilePaths.Count > 0 then
+                                                    "Conflicts resolved through manual review decisions."
+                                                else
+                                                    "Conflicts resolved."
+
+                                            let! conflictArtifactId =
+                                                this.CreateConflictArtifact(
+                                                    step,
+                                                    resolutionReason,
+                                                    confidence,
+                                                    computedAgainstBaseDirectoryVersionId,
+                                                    metadata,
+                                                    manualDecisionsForStep,
+                                                    Option.Some conflictAnalyses
+                                                )
+
+                                            match!
+                                                this.MaterializeMergedDirectoryVersion
+                                                    (
+                                                        repositoryDto,
+                                                        baseSnapshot,
+                                                        oursSnapshot,
+                                                        theirsSnapshot,
+                                                        mergedFilesByPath,
+                                                        metadata
+                                                    )
+                                                with
+                                            | Ok appliedDirectoryVersionId ->
+                                                return Ok(appliedDirectoryVersionId, StepConflictStatus.AutoResolved, conflictArtifactId)
+                                            | Error graceError -> return Error(Failed graceError.Error)
+            }
 
         member private this.CreateConflictArtifact
             (
@@ -315,29 +1031,12 @@ module PromotionSet =
                 confidence: float option,
                 computedAgainstBaseDirectoryVersionId: DirectoryVersionId,
                 metadata: EventMetadata,
-                manualDecisions: ConflictResolutionDecision list option
+                manualDecisions: ConflictResolutionDecision list option,
+                conflictAnalyses: ConflictAnalysis list option
             ) =
             task {
                 try
-                    let resolutionMethod =
-                        if manualDecisions.IsSome then ConflictResolutionMethod.ManualOverride
-                        elif confidence.IsSome then ConflictResolutionMethod.ModelSuggested
-                        else ConflictResolutionMethod.None
-
-                    let proposedResolution =
-                        confidence
-                        |> Option.map (fun score ->
-                            {
-                                ModelResolution =
-                                    if manualDecisions.IsSome then
-                                        "Manual resolution accepted via review workflow."
-                                    else
-                                        "Model-suggested merge proposal."
-                                Confidence = score
-                                Accepted = if manualDecisions.IsSome then Option.Some true else Option.None
-                            })
-
-                    let conflictAnalysis: ConflictAnalysis =
+                    let defaultConflictAnalysis: ConflictAnalysis =
                         {
                             FilePath = "__step__"
                             OriginalHunks =
@@ -349,8 +1048,8 @@ module PromotionSet =
                                         TheirsContent = $"{step.OriginalPromotion.DirectoryVersionId}"
                                     }
                                 ]
-                            ProposedResolution = proposedResolution
-                            ResolutionMethod = resolutionMethod
+                            ProposedResolution = Option.None
+                            ResolutionMethod = ConflictResolutionMethod.None
                         }
 
                     let report =
@@ -364,7 +1063,9 @@ module PromotionSet =
                             computedAgainstBaseDirectoryVersionId = computedAgainstBaseDirectoryVersionId
                             originalBaseDirectoryVersionId = step.OriginalBaseDirectoryVersionId
                             originalPromotionDirectoryVersionId = step.OriginalPromotion.DirectoryVersionId
-                            conflicts = [ conflictAnalysis ]
+                            conflicts =
+                                conflictAnalyses
+                                |> Option.defaultValue [ defaultConflictAnalysis ]
                             manualDecisions =
                                 (manualDecisions
                                  |> Option.defaultValue []
@@ -539,6 +1240,7 @@ module PromotionSet =
                         | Error graceError -> return Error graceError
                         | Ok _ ->
                             let! conflictResolutionPolicy = this.GetConflictResolutionPolicy()
+                            let! repositoryDto = this.GetRepositoryDto()
 
                             let orderedSteps =
                                 promotionSetDto.Steps
@@ -573,138 +1275,50 @@ module PromotionSet =
                                 | Ok hydratedStep ->
                                     let computedAgainstBaseDirectoryVersionId = currentHeadDirectoryVersionId
 
-                                    let hasConflict =
-                                        computedAgainstBaseDirectoryVersionId
-                                        <> DirectoryVersionId.Empty
-                                        && hydratedStep.OriginalBaseDirectoryVersionId
-                                           <> DirectoryVersionId.Empty
-                                        && hydratedStep.OriginalBaseDirectoryVersionId
-                                           <> computedAgainstBaseDirectoryVersionId
+                                    let manualDecisionsForStep =
+                                        match manualResolution with
+                                        | Option.Some (resolvedStepId, decisions) when resolvedStepId = hydratedStep.StepId -> Option.Some decisions
+                                        | _ -> Option.None
 
-                                    if not hasConflict then
-                                        let computedStep =
-                                            { hydratedStep with
-                                                ComputedAgainstBaseDirectoryVersionId = computedAgainstBaseDirectoryVersionId
-                                                AppliedDirectoryVersionId = hydratedStep.OriginalPromotion.DirectoryVersionId
-                                                ConflictSummaryArtifactId = Option.None
-                                                ConflictStatus = StepConflictStatus.NoConflicts
-                                            }
+                                    let hasManualOverride =
+                                        manualDecisionsForStep
+                                        |> Option.defaultValue []
+                                        |> List.exists (fun decision ->
+                                            decision.Accepted
+                                            && decision.OverrideContentArtifactId.IsSome)
 
-                                        computedSteps.Add(computedStep)
-                                        currentHeadDirectoryVersionId <- computedStep.AppliedDirectoryVersionId
-                                    else
-                                        let manualAccepted, hasManualOverride, manualDecisions =
-                                            match manualResolution with
-                                            | Option.Some (resolvedStepId, decisions) when resolvedStepId = hydratedStep.StepId ->
-                                                let accepted =
-                                                    decisions
-                                                    |> List.exists (fun decision -> decision.Accepted)
-
-                                                let overrideProvided =
-                                                    decisions
-                                                    |> List.exists (fun decision ->
-                                                        decision.Accepted
-                                                        && decision.OverrideContentArtifactId.IsSome)
-
-                                                accepted, overrideProvided, decisions
-                                            | _ -> false, false, []
-
-                                        if manualAccepted then
-                                            let! manualOverrideValidation =
-                                                if hasManualOverride then
-                                                    this.ValidateManualOverrideArtifacts(manualDecisions, metadata)
-                                                else
-                                                    Task.FromResult(Ok())
-
-                                            match manualOverrideValidation with
-                                            | Error graceError -> recomputeFailure <- Option.Some(Failed graceError.Error)
-                                            | Ok () ->
-                                                let! manualConflictArtifactId =
-                                                    this.CreateConflictArtifact(
-                                                        hydratedStep,
-                                                        "Manual conflict resolution accepted.",
-                                                        Option.None,
-                                                        computedAgainstBaseDirectoryVersionId,
-                                                        metadata,
-                                                        Option.Some manualDecisions
-                                                    )
-
-                                                let computedStep =
-                                                    { hydratedStep with
-                                                        ComputedAgainstBaseDirectoryVersionId = computedAgainstBaseDirectoryVersionId
-                                                        AppliedDirectoryVersionId = hydratedStep.OriginalPromotion.DirectoryVersionId
-                                                        ConflictSummaryArtifactId = manualConflictArtifactId
-                                                        ConflictStatus = StepConflictStatus.AutoResolved
-                                                    }
-
-                                                computedSteps.Add(computedStep)
-                                                currentHeadDirectoryVersionId <- computedStep.AppliedDirectoryVersionId
+                                    let! manualOverrideValidation =
+                                        if hasManualOverride then
+                                            this.ValidateManualOverrideArtifacts(manualDecisionsForStep |> Option.defaultValue [], metadata)
                                         else
-                                            match conflictResolutionPolicy with
-                                            | ConflictResolutionPolicy.NoConflicts _ ->
-                                                let reasonText = $"Conflict detected at step {hydratedStep.StepId}, and repository policy is NoConflicts."
+                                            Task.FromResult(Ok())
 
-                                                let! artifactId =
-                                                    this.CreateConflictArtifact(
-                                                        hydratedStep,
-                                                        reasonText,
-                                                        Option.None,
-                                                        computedAgainstBaseDirectoryVersionId,
-                                                        metadata,
-                                                        Option.None
-                                                    )
+                                    match manualOverrideValidation with
+                                    | Error graceError -> recomputeFailure <- Option.Some(Failed graceError.Error)
+                                    | Ok () ->
+                                        let! stepComputationResult =
+                                            this.ComputeAppliedDirectoryVersionForStep(
+                                                hydratedStep,
+                                                computedAgainstBaseDirectoryVersionId,
+                                                conflictResolutionPolicy,
+                                                manualDecisionsForStep,
+                                                repositoryDto,
+                                                metadata
+                                            )
 
-                                                recomputeFailure <- Option.Some(Blocked(reasonText, artifactId))
-                                            | ConflictResolutionPolicy.ConflictsAllowed threshold ->
-                                                let confidence =
-                                                    if hasManualOverride then
-                                                        1.0
-                                                    else
-                                                        this.GetModelConfidence(hydratedStep, computedAgainstBaseDirectoryVersionId)
+                                        match stepComputationResult with
+                                        | Ok (appliedDirectoryVersionId, conflictStatus, conflictArtifactId) ->
+                                            let computedStep =
+                                                { hydratedStep with
+                                                    ComputedAgainstBaseDirectoryVersionId = computedAgainstBaseDirectoryVersionId
+                                                    AppliedDirectoryVersionId = appliedDirectoryVersionId
+                                                    ConflictSummaryArtifactId = conflictArtifactId
+                                                    ConflictStatus = conflictStatus
+                                                }
 
-                                                if confidence >= float threshold then
-                                                    let! autoResolvedArtifactId =
-                                                        this.CreateConflictArtifact(
-                                                            hydratedStep,
-                                                            sprintf
-                                                                "Conflict auto-resolved by policy at confidence %.2f (threshold %.2f)."
-                                                                confidence
-                                                                (float threshold),
-                                                            Option.Some confidence,
-                                                            computedAgainstBaseDirectoryVersionId,
-                                                            metadata,
-                                                            Option.None
-                                                        )
-
-                                                    let computedStep =
-                                                        { hydratedStep with
-                                                            ComputedAgainstBaseDirectoryVersionId = computedAgainstBaseDirectoryVersionId
-                                                            AppliedDirectoryVersionId = hydratedStep.OriginalPromotion.DirectoryVersionId
-                                                            ConflictSummaryArtifactId = autoResolvedArtifactId
-                                                            ConflictStatus = StepConflictStatus.AutoResolved
-                                                        }
-
-                                                    computedSteps.Add(computedStep)
-                                                    currentHeadDirectoryVersionId <- computedStep.AppliedDirectoryVersionId
-                                                else
-                                                    let reasonText =
-                                                        sprintf
-                                                            "Conflict confidence %.2f is below threshold %.2f at step %O."
-                                                            confidence
-                                                            (float threshold)
-                                                            hydratedStep.StepId
-
-                                                    let! artifactId =
-                                                        this.CreateConflictArtifact(
-                                                            hydratedStep,
-                                                            reasonText,
-                                                            Option.Some confidence,
-                                                            computedAgainstBaseDirectoryVersionId,
-                                                            metadata,
-                                                            Option.None
-                                                        )
-
-                                                    recomputeFailure <- Option.Some(Blocked(reasonText, artifactId))
+                                            computedSteps.Add(computedStep)
+                                            currentHeadDirectoryVersionId <- computedStep.AppliedDirectoryVersionId
+                                        | Error stepFailure -> recomputeFailure <- Option.Some stepFailure
 
                                 if recomputeFailure.IsNone
                                    && stepStopwatch.ElapsedMilliseconds > int64 maxStepTimeMilliseconds then
