@@ -149,6 +149,8 @@ module PromotionSetModels =
             with
             | ex -> Error $"Failed to parse model response JSON: {ex.Message}"
 
+    let internal tryParseModelResponse content = parseModelResponse content
+
     type NullConflictResolutionModelProvider() =
         interface IConflictResolutionModelProvider with
             member _.ProviderName = "none"
