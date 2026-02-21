@@ -31,6 +31,7 @@
     <Compile Include="Automation.Eventing.Tests.fs" />
     <Compile Include="ValidationSet.BranchGlob.Tests.fs" />
     <Compile Include="PromotionSet.Determinism.Tests.fs" />
+    <Compile Include="PromotionSet.Models.Tests.fs" />
     <Compile Include="Validation.Artifact.Contract.Tests.fs" />
     <Compile Include="Policy.Determinism.Tests.fs" />
     <Compile Include="Policy.Validation.Derived.Tests.fs" />

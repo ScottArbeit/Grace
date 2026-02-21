@@ -4,6 +4,7 @@ open Azure.Storage.Blobs
 open Azure.Storage.Blobs.Specialized
 open Grace.Actors.Constants
 open Grace.Actors.Context
+open Grace.Actors.PromotionSetConflictModel
 open Grace.Actors.Extensions.ActorProxy
 open Grace.Actors.Interfaces
 open Grace.Actors.Services
@@ -158,6 +159,14 @@ module PromotionSet =
                 let repositoryActorProxy = Repository.CreateActorProxy promotionSetDto.OrganizationId promotionSetDto.RepositoryId this.correlationId
                 return! repositoryActorProxy.Get this.correlationId
             }
+
+        member private this.GetConflictResolutionModelProvider() =
+            match hostServiceProvider with
+            | null -> NullConflictResolutionModelProvider() :> IConflictResolutionModelProvider
+            | services ->
+                match services.GetService(typeof<IConflictResolutionModelProvider>) with
+                | null -> NullConflictResolutionModelProvider() :> IConflictResolutionModelProvider
+                | provider -> provider :?> IConflictResolutionModelProvider
 
         member private this.UploadArtifactPayload(blobPath: string, payloadJson: string, metadata: EventMetadata) =
             task {
@@ -315,18 +324,6 @@ module PromotionSet =
                             }
             }
 
-        member private this.GetModelConfidence(step: PromotionSetStep, computedAgainstBaseDirectoryVersionId: DirectoryVersionId, conflictCount: int) =
-            if conflictCount <= 0 then
-                1.0
-            elif step.OriginalBaseDirectoryVersionId = computedAgainstBaseDirectoryVersionId then
-                0.99
-            elif conflictCount = 1 then
-                0.93
-            elif conflictCount = 2 then
-                0.82
-            else
-                0.51
-
         member private this.TryGetFileVersion(fileLookup: Dictionary<RelativePath, FileVersion>, filePath: RelativePath) =
             let mutable fileVersion = FileVersion.Default
 
@@ -475,13 +472,84 @@ module PromotionSet =
                         return Ok(oursContent, theirsContent)
             }
 
+        member private this.ResolveConflictWithModel(repositoryDto, conflictFile: StepConflictFile, metadata: EventMetadata) =
+            task {
+                let modelProvider = this.GetConflictResolutionModelProvider()
+                let! baseTextResult = this.ReadTextFileVersion(repositoryDto, conflictFile.BaseFile, metadata.CorrelationId)
+
+                match baseTextResult with
+                | Error graceError -> return Error graceError.Error
+                | Ok baseTextOption ->
+                    let! oursTextResult = this.ReadTextFileVersion(repositoryDto, conflictFile.OursFile, metadata.CorrelationId)
+
+                    match oursTextResult with
+                    | Error graceError -> return Error graceError.Error
+                    | Ok oursTextOption ->
+                        let! theirsTextResult = this.ReadTextFileVersion(repositoryDto, conflictFile.TheirsFile, metadata.CorrelationId)
+
+                        match theirsTextResult with
+                        | Error graceError -> return Error graceError.Error
+                        | Ok theirsTextOption ->
+                            let request: ConflictResolutionModelRequest =
+                                {
+                                    FilePath = conflictFile.FilePath
+                                    BaseContent = baseTextOption
+                                    OursContent = oursTextOption
+                                    TheirsContent = theirsTextOption
+                                }
+
+                            let! modelResponseResult = modelProvider.SuggestResolution request
+
+                            match modelResponseResult with
+                            | Error errorText ->
+                                return
+                                    Error(
+                                        sprintf
+                                            "Model resolution failed for file '%s' using provider '%s': %s"
+                                            conflictFile.FilePath
+                                            modelProvider.ProviderName
+                                            errorText
+                                    )
+                            | Ok modelResponse ->
+                                let modelResolutionSummary =
+                                    match modelResponse.Explanation with
+                                    | Option.Some explanation when not <| String.IsNullOrWhiteSpace explanation -> explanation
+                                    | _ ->
+                                        if modelResponse.ShouldDelete then
+                                            "Model proposed deleting the conflicted file."
+                                        else
+                                            "Model-suggested merge proposal."
+
+                                if modelResponse.ShouldDelete then
+                                    return
+                                        Ok(
+                                            { ModelResolution = modelResolutionSummary; Confidence = modelResponse.Confidence; Accepted = Option.None },
+                                            Option.None
+                                        )
+                                else
+                                    match modelResponse.ProposedContent with
+                                    | Option.None ->
+                                        return Error(sprintf "Model response for file '%s' did not include proposed content." conflictFile.FilePath)
+                                    | Some proposedContent ->
+                                        let! overrideFileVersionResult =
+                                            this.CreateTextOverrideFileVersion(conflictFile.FilePath, proposedContent, repositoryDto, metadata)
+
+                                        match overrideFileVersionResult with
+                                        | Error graceError -> return Error graceError.Error
+                                        | Ok overrideFileVersion ->
+                                            return
+                                                Ok(
+                                                    { ModelResolution = modelResolutionSummary; Confidence = modelResponse.Confidence; Accepted = Option.None },
+                                                    Option.Some overrideFileVersion
+                                                )
+            }
+
         member private this.BuildConflictAnalyses
             (
                 repositoryDto,
                 conflictFiles: StepConflictFile list,
-                confidence: float option,
-                resolutionMethod: ConflictResolutionMethod,
-                acceptedFilePaths: HashSet<RelativePath>
+                outcomesByPath: Dictionary<RelativePath, ConflictResolutionOutcome>,
+                resolutionMethodByPath: Dictionary<RelativePath, ConflictResolutionMethod>
             ) =
             task {
                 let! conflictTextResults =
@@ -520,29 +588,21 @@ module PromotionSet =
                                          else
                                              theirsContent.Split('\n').Length))
 
-                            let acceptedByManualReview = acceptedFilePaths.Contains(conflictFile.FilePath)
+                            let mutable resolvedOutcome = Unchecked.defaultof<ConflictResolutionOutcome>
 
                             let proposedResolution =
-                                match confidence with
-                                | Option.Some score ->
-                                    Option.Some
-                                        {
-                                            ModelResolution =
-                                                if acceptedByManualReview then
-                                                    "Manual resolution accepted during conflict review."
-                                                else
-                                                    "Model-suggested merge proposal."
-                                            Confidence = score
-                                            Accepted = if acceptedByManualReview then Option.Some true else Option.None
-                                        }
-                                | Option.None when acceptedByManualReview ->
-                                    Option.Some
-                                        {
-                                            ModelResolution = "Manual resolution accepted during conflict review."
-                                            Confidence = 1.0
-                                            Accepted = Option.Some true
-                                        }
-                                | Option.None -> Option.None
+                                if outcomesByPath.TryGetValue(conflictFile.FilePath, &resolvedOutcome) then
+                                    Option.Some resolvedOutcome
+                                else
+                                    Option.None
+
+                            let mutable resolutionMethod = Unchecked.defaultof<ConflictResolutionMethod>
+
+                            let resolvedMethod =
+                                if resolutionMethodByPath.TryGetValue(conflictFile.FilePath, &resolutionMethod) then
+                                    resolutionMethod
+                                else
+                                    ConflictResolutionMethod.None
 
                             conflictAnalyses.Add(
                                 {
@@ -552,7 +612,7 @@ module PromotionSet =
                                             { StartLine = 1; EndLine = lineCount; OursContent = oursContent; TheirsContent = theirsContent }
                                         ]
                                     ProposedResolution = proposedResolution
-                                    ResolutionMethod = resolutionMethod
+                                    ResolutionMethod = resolvedMethod
                                 }
                             ))
 
@@ -808,11 +868,7 @@ module PromotionSet =
 
                             if orderedFilePaths.Length > maxFilesPerStep then
                                 fileBudgetFailure <-
-                                    Option.Some(
-                                        Failed(
-                                            $"Step {step.StepId} exceeded configured file budget ({orderedFilePaths.Length} > {maxFilesPerStep})."
-                                        )
-                                    )
+                                    Option.Some(Failed($"Step {step.StepId} exceeded configured file budget ({orderedFilePaths.Length} > {maxFilesPerStep})."))
 
                             let mutable filePathIndex = 0
 
@@ -869,12 +925,14 @@ module PromotionSet =
                                             metadata
                                         )
                                     with
-                                | Ok appliedDirectoryVersionId ->
-                                    return Ok(appliedDirectoryVersionId, StepConflictStatus.NoConflicts, Option.None)
+                                | Ok appliedDirectoryVersionId -> return Ok(appliedDirectoryVersionId, StepConflictStatus.NoConflicts, Option.None)
                                 | Error graceError -> return Error(Failed graceError.Error)
                             | Option.None ->
                                 let acceptedDecisionsByPath = Dictionary<RelativePath, ConflictResolutionDecision>(StringComparer.OrdinalIgnoreCase)
-                                let acceptedFilePaths = HashSet<RelativePath>(StringComparer.OrdinalIgnoreCase)
+                                let manualAcceptedWithoutOverride = HashSet<RelativePath>(StringComparer.OrdinalIgnoreCase)
+                                let outcomesByPath = Dictionary<RelativePath, ConflictResolutionOutcome>(StringComparer.OrdinalIgnoreCase)
+                                let resolutionMethodByPath = Dictionary<RelativePath, ConflictResolutionMethod>(StringComparer.OrdinalIgnoreCase)
+                                let modelResolvedFilesByPath = Dictionary<RelativePath, FileVersion option>(StringComparer.OrdinalIgnoreCase)
                                 let decisions = manualDecisionsForStep |> Option.defaultValue []
                                 let mutable decisionIndex = 0
 
@@ -887,19 +945,19 @@ module PromotionSet =
                                     decisionIndex <- decisionIndex + 1
 
                                 let unresolvedConflicts = ResizeArray<StepConflictFile>()
+                                let conflictsNeedingModel = ResizeArray<StepConflictFile>()
                                 let mutable resolutionError: GraceError option = Option.None
+                                let mutable blockedReason: string option = Option.None
                                 let mutable conflictIndex = 0
 
                                 while conflictIndex < conflicts.Count
-                                      && resolutionError.IsNone do
+                                      && resolutionError.IsNone
+                                      && blockedReason.IsNone do
                                     let conflictFile = conflicts[conflictIndex]
                                     let normalizedFilePath = normalizeFilePath conflictFile.FilePath
                                     let mutable acceptedDecision = Unchecked.defaultof<ConflictResolutionDecision>
 
                                     if acceptedDecisionsByPath.TryGetValue(normalizedFilePath, &acceptedDecision) then
-                                        acceptedFilePaths.Add(conflictFile.FilePath)
-                                        |> ignore
-
                                         match acceptedDecision.OverrideContentArtifactId with
                                         | Option.Some artifactId ->
                                             let! artifactTextResult = this.GetArtifactText(artifactId, metadata)
@@ -912,15 +970,28 @@ module PromotionSet =
 
                                                 match overrideFileVersionResult with
                                                 | Error graceError -> resolutionError <- Option.Some graceError
-                                                | Ok overrideFileVersion -> mergedFilesByPath[conflictFile.FilePath] <- overrideFileVersion
+                                                | Ok overrideFileVersion ->
+                                                    mergedFilesByPath[conflictFile.FilePath] <- overrideFileVersion
+
+                                                    outcomesByPath[conflictFile.FilePath] <- {
+                                                                                                 ModelResolution = "Manual override artifact accepted."
+                                                                                                 Confidence = 1.0
+                                                                                                 Accepted = Option.Some true
+                                                                                             }
+
+                                                    resolutionMethodByPath[conflictFile.FilePath] <- ConflictResolutionMethod.ManualOverride
                                         | Option.None ->
-                                            match conflictFile.TheirsFile with
-                                            | Option.Some theirsFile -> mergedFilesByPath[conflictFile.FilePath] <- theirsFile
-                                            | Option.None ->
-                                                mergedFilesByPath.Remove(conflictFile.FilePath)
+                                            if conflictFile.IsBinary then
+                                                blockedReason <- Option.Some "Binary file conflicts require manual override content."
+                                            else
+                                                manualAcceptedWithoutOverride.Add(conflictFile.FilePath)
                                                 |> ignore
+
+                                                conflictsNeedingModel.Add(conflictFile)
                                     else
                                         unresolvedConflicts.Add(conflictFile)
+
+                                        if not conflictFile.IsBinary then conflictsNeedingModel.Add(conflictFile)
 
                                     conflictIndex <- conflictIndex + 1
 
@@ -934,57 +1005,123 @@ module PromotionSet =
                                         |> Seq.exists (fun conflict -> conflict.IsBinary)
 
                                     let mutable confidence: float option = Option.None
-                                    let mutable blockedReason: string option = Option.None
                                     let mutable appliedByPolicy = false
+                                    let mutable minAutoResolvedConfidence = 1.0
 
-                                    if hasUnresolvedConflicts then
+                                    if blockedReason.IsNone
+                                       && hasUnresolvedBinaryConflict then
+                                        blockedReason <- Option.Some "Binary file conflicts require manual override and cannot be auto-merged."
+
+                                    if blockedReason.IsNone && hasUnresolvedConflicts then
                                         match conflictResolutionPolicy with
                                         | ConflictResolutionPolicy.NoConflicts _ ->
                                             blockedReason <- Option.Some $"Conflict detected at step {step.StepId}, and repository policy is NoConflicts."
+                                        | ConflictResolutionPolicy.ConflictsAllowed _ -> ()
+
+                                    if blockedReason.IsNone
+                                       && conflictsNeedingModel.Count > 0 then
+                                        let mutable modelFailure: string option = Option.None
+                                        let mutable modelIndex = 0
+
+                                        while modelIndex < conflictsNeedingModel.Count
+                                              && modelFailure.IsNone do
+                                            let conflictFile = conflictsNeedingModel[modelIndex]
+
+                                            let! modelResolutionResult = this.ResolveConflictWithModel(repositoryDto, conflictFile, metadata)
+
+                                            match modelResolutionResult with
+                                            | Error errorText ->
+                                                modelFailure <-
+                                                    Option.Some(
+                                                        sprintf
+                                                            "Model resolution failed at step %O for file '%s': %s"
+                                                            step.StepId
+                                                            conflictFile.FilePath
+                                                            errorText
+                                                    )
+                                            | Ok (modelOutcome, resolvedFileVersion) ->
+                                                outcomesByPath[conflictFile.FilePath] <- modelOutcome
+                                                modelResolvedFilesByPath[conflictFile.FilePath] <- resolvedFileVersion
+
+                                                if manualAcceptedWithoutOverride.Contains(conflictFile.FilePath) then
+                                                    outcomesByPath[conflictFile.FilePath] <- { modelOutcome with Accepted = Option.Some true }
+
+                                                    resolutionMethodByPath[conflictFile.FilePath] <- ConflictResolutionMethod.ManualOverride
+
+                                                    match resolvedFileVersion with
+                                                    | Option.Some fileVersion -> mergedFilesByPath[conflictFile.FilePath] <- fileVersion
+                                                    | Option.None ->
+                                                        mergedFilesByPath.Remove(conflictFile.FilePath)
+                                                        |> ignore
+                                                else
+                                                    resolutionMethodByPath[conflictFile.FilePath] <- ConflictResolutionMethod.ModelSuggested
+
+                                            modelIndex <- modelIndex + 1
+
+                                        match modelFailure with
+                                        | Option.Some reason -> blockedReason <- Option.Some reason
+                                        | Option.None -> ()
+
+                                    if blockedReason.IsNone && hasUnresolvedConflicts then
+                                        match conflictResolutionPolicy with
+                                        | ConflictResolutionPolicy.NoConflicts _ -> ()
                                         | ConflictResolutionPolicy.ConflictsAllowed threshold ->
-                                            if hasUnresolvedBinaryConflict then
-                                                blockedReason <- Option.Some "Binary file conflicts require manual override and cannot be auto-merged."
-                                            else
-                                                let modelConfidence =
-                                                    this.GetModelConfidence(step, computedAgainstBaseDirectoryVersionId, unresolvedConflicts.Count)
+                                            let mutable unresolvedIndex = 0
 
-                                                confidence <- Option.Some modelConfidence
+                                            while unresolvedIndex < unresolvedConflicts.Count
+                                                  && blockedReason.IsNone do
+                                                let unresolvedConflict = unresolvedConflicts[unresolvedIndex]
+                                                let mutable modelOutcome = Unchecked.defaultof<ConflictResolutionOutcome>
 
-                                                if modelConfidence >= float threshold then
-                                                    appliedByPolicy <- true
+                                                if outcomesByPath.TryGetValue(unresolvedConflict.FilePath, &modelOutcome) then
+                                                    if modelOutcome.Confidence >= float threshold then
+                                                        outcomesByPath[unresolvedConflict.FilePath] <- { modelOutcome with Accepted = Option.Some true }
 
-                                                    let mutable unresolvedIndex = 0
+                                                        minAutoResolvedConfidence <- min minAutoResolvedConfidence modelOutcome.Confidence
+                                                        appliedByPolicy <- true
 
-                                                    while unresolvedIndex < unresolvedConflicts.Count do
-                                                        let unresolvedConflict = unresolvedConflicts[unresolvedIndex]
+                                                        let mutable resolvedFileVersion = Unchecked.defaultof<FileVersion option>
 
-                                                        match unresolvedConflict.TheirsFile with
-                                                        | Option.Some theirsFile -> mergedFilesByPath[unresolvedConflict.FilePath] <- theirsFile
-                                                        | Option.None ->
-                                                            mergedFilesByPath.Remove(unresolvedConflict.FilePath)
-                                                            |> ignore
-
-                                                        unresolvedIndex <- unresolvedIndex + 1
+                                                        if modelResolvedFilesByPath.TryGetValue(unresolvedConflict.FilePath, &resolvedFileVersion) then
+                                                            match resolvedFileVersion with
+                                                            | Option.Some fileVersion -> mergedFilesByPath[unresolvedConflict.FilePath] <- fileVersion
+                                                            | Option.None ->
+                                                                mergedFilesByPath.Remove(unresolvedConflict.FilePath)
+                                                                |> ignore
+                                                        else
+                                                            blockedReason <-
+                                                                Option.Some(
+                                                                    sprintf
+                                                                        "Model resolution did not return content for conflicted file '%s' at step %O."
+                                                                        unresolvedConflict.FilePath
+                                                                        step.StepId
+                                                                )
+                                                    else
+                                                        blockedReason <-
+                                                            Option.Some(
+                                                                sprintf
+                                                                    "Conflict confidence %.2f is below threshold %.2f at step %O."
+                                                                    modelOutcome.Confidence
+                                                                    (float threshold)
+                                                                    step.StepId
+                                                            )
                                                 else
                                                     blockedReason <-
                                                         Option.Some(
                                                             sprintf
-                                                                "Conflict confidence %.2f is below threshold %.2f at step %O."
-                                                                modelConfidence
-                                                                (float threshold)
+                                                                "Model resolution did not return a proposal for conflicted file '%s' at step %O."
+                                                                unresolvedConflict.FilePath
                                                                 step.StepId
                                                         )
 
+                                                unresolvedIndex <- unresolvedIndex + 1
+
+                                            if appliedByPolicy then confidence <- Option.Some minAutoResolvedConfidence
+
                                     let conflictFilesForArtifact = conflicts |> Seq.toList
 
-                                    let resolutionMethod =
-                                        if appliedByPolicy then ConflictResolutionMethod.ModelSuggested
-                                        elif acceptedFilePaths.Count > 0 then ConflictResolutionMethod.ManualOverride
-                                        elif confidence.IsSome then ConflictResolutionMethod.ModelSuggested
-                                        else ConflictResolutionMethod.None
-
                                     let! conflictAnalysesResult =
-                                        this.BuildConflictAnalyses(repositoryDto, conflictFilesForArtifact, confidence, resolutionMethod, acceptedFilePaths)
+                                        this.BuildConflictAnalyses(repositoryDto, conflictFilesForArtifact, outcomesByPath, resolutionMethodByPath)
 
                                     match conflictAnalysesResult with
                                     | Error graceError -> return Error(Failed graceError.Error)
@@ -1007,7 +1144,7 @@ module PromotionSet =
                                             let resolutionReason =
                                                 if appliedByPolicy && confidence.IsSome then
                                                     sprintf "Conflicts auto-resolved by policy at confidence %.2f." confidence.Value
-                                                elif acceptedFilePaths.Count > 0 then
+                                                elif manualAcceptedWithoutOverride.Count > 0 then
                                                     "Conflicts resolved through manual review decisions."
                                                 else
                                                     "Conflicts resolved."

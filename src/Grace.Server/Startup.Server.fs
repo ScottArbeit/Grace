@@ -1087,6 +1087,9 @@ module Application =
             services.AddSingleton<ReviewModels.IReviewModelProvider>(fun _ -> ReviewModels.createProvider configuration)
             |> ignore
 
+            services.AddSingleton<PromotionSetConflictModel.IConflictResolutionModelProvider>(fun _ -> PromotionSetModels.createProvider configuration)
+            |> ignore
+
             logToConsole $"Exiting ConfigureServices."
 
         // List all services to the log.
