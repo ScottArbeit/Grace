@@ -50,6 +50,40 @@ module PromotionSet =
             IsBinary: bool
         }
 
+    let internal validateCommandForState
+        (existingEvents: seq<PromotionSetEvent>)
+        (currentPromotionSetDto: PromotionSetDto)
+        (promotionSetCommand: PromotionSetCommand)
+        (eventMetadata: EventMetadata)
+        =
+        if existingEvents
+           |> Seq.exists (fun event -> event.Metadata.CorrelationId = eventMetadata.CorrelationId) then
+            Error(GraceError.Create "Duplicate correlation ID for PromotionSet command." eventMetadata.CorrelationId)
+        else
+            match promotionSetCommand with
+            | PromotionSetCommand.CreatePromotionSet _ when
+                currentPromotionSetDto.PromotionSetId
+                <> PromotionSetId.Empty
+                ->
+                Error(GraceError.Create "PromotionSet already exists." eventMetadata.CorrelationId)
+            | PromotionSetCommand.CreatePromotionSet _ -> Ok promotionSetCommand
+            | _ when currentPromotionSetDto.PromotionSetId = PromotionSetId.Empty ->
+                Error(GraceError.Create "PromotionSet does not exist." eventMetadata.CorrelationId)
+            | PromotionSetCommand.Apply when currentPromotionSetDto.Status = PromotionSetStatus.Succeeded ->
+                Error(GraceError.Create "PromotionSet has already been applied successfully." eventMetadata.CorrelationId)
+            | PromotionSetCommand.Apply when currentPromotionSetDto.Status = PromotionSetStatus.Running ->
+                Error(GraceError.Create "PromotionSet is already running." eventMetadata.CorrelationId)
+            | PromotionSetCommand.RecomputeStepsIfStale _ when currentPromotionSetDto.StepsComputationStatus = StepsComputationStatus.Computing ->
+                Error(GraceError.Create "PromotionSet steps are already computing." eventMetadata.CorrelationId)
+            | PromotionSetCommand.ResolveConflicts _ when
+                currentPromotionSetDto.Status
+                <> PromotionSetStatus.Blocked
+                ->
+                Error(GraceError.Create "PromotionSet is not blocked for conflict review." eventMetadata.CorrelationId)
+            | PromotionSetCommand.UpdateInputPromotions _ when currentPromotionSetDto.Status = PromotionSetStatus.Succeeded ->
+                Error(GraceError.Create "PromotionSet has already succeeded and cannot be edited." eventMetadata.CorrelationId)
+            | _ -> Ok promotionSetCommand
+
     type PromotionSetActor([<PersistentState(StateName.PromotionSet, Constants.GraceActorStorage)>] state: IPersistentState<List<PromotionSetEvent>>) =
         inherit Grain()
 
@@ -1775,34 +1809,7 @@ module PromotionSet =
 
             member this.Handle command metadata =
                 let isValid (promotionSetCommand: PromotionSetCommand) (eventMetadata: EventMetadata) =
-                    task {
-                        if state.State.Exists(fun ev -> ev.Metadata.CorrelationId = eventMetadata.CorrelationId) then
-                            return Error(GraceError.Create "Duplicate correlation ID for PromotionSet command." eventMetadata.CorrelationId)
-                        else
-                            match promotionSetCommand with
-                            | PromotionSetCommand.CreatePromotionSet _ when
-                                promotionSetDto.PromotionSetId
-                                <> PromotionSetId.Empty
-                                ->
-                                return Error(GraceError.Create "PromotionSet already exists." eventMetadata.CorrelationId)
-                            | PromotionSetCommand.CreatePromotionSet _ -> return Ok promotionSetCommand
-                            | _ when promotionSetDto.PromotionSetId = PromotionSetId.Empty ->
-                                return Error(GraceError.Create "PromotionSet does not exist." eventMetadata.CorrelationId)
-                            | PromotionSetCommand.Apply when promotionSetDto.Status = PromotionSetStatus.Succeeded ->
-                                return Error(GraceError.Create "PromotionSet has already been applied successfully." eventMetadata.CorrelationId)
-                            | PromotionSetCommand.Apply when promotionSetDto.Status = PromotionSetStatus.Running ->
-                                return Error(GraceError.Create "PromotionSet is already running." eventMetadata.CorrelationId)
-                            | PromotionSetCommand.RecomputeStepsIfStale _ when promotionSetDto.StepsComputationStatus = StepsComputationStatus.Computing ->
-                                return Error(GraceError.Create "PromotionSet steps are already computing." eventMetadata.CorrelationId)
-                            | PromotionSetCommand.ResolveConflicts _ when
-                                promotionSetDto.Status
-                                <> PromotionSetStatus.Blocked
-                                ->
-                                return Error(GraceError.Create "PromotionSet is not blocked for conflict review." eventMetadata.CorrelationId)
-                            | PromotionSetCommand.UpdateInputPromotions _ when promotionSetDto.Status = PromotionSetStatus.Succeeded ->
-                                return Error(GraceError.Create "PromotionSet has already succeeded and cannot be edited." eventMetadata.CorrelationId)
-                            | _ -> return Ok promotionSetCommand
-                    }
+                    task { return validateCommandForState state.State promotionSetDto promotionSetCommand eventMetadata }
 
                 let processCommand (promotionSetCommand: PromotionSetCommand) (eventMetadata: EventMetadata) =
                     task {

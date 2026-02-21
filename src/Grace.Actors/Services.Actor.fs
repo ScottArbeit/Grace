@@ -1210,14 +1210,22 @@ module Services =
                     .ToArray()
         }
 
-    let private isNotDeletedReference (referenceDto: ReferenceDto) = referenceDto.DeletedAt.IsNone
+    let internal isNotDeletedReference (referenceDto: ReferenceDto) = referenceDto.DeletedAt.IsNone
 
-    let private hasPromotionSetTerminalLink (referenceDto: ReferenceDto) =
+    let internal hasPromotionSetTerminalLink (referenceDto: ReferenceDto) =
         referenceDto.Links
         |> Seq.exists (fun link ->
             match link with
             | ReferenceLinkType.PromotionSetTerminal _ -> true
             | _ -> false)
+
+    let internal tryGetLatestNotDeletedReference (references: seq<ReferenceDto>) = references |> Seq.tryFind isNotDeletedReference
+
+    let internal tryGetLatestEffectivePromotionReference (references: seq<ReferenceDto>) =
+        references
+        |> Seq.tryFind (fun referenceDto ->
+            isNotDeletedReference referenceDto
+            && hasPromotionSetTerminalLink referenceDto)
 
     /// Gets a list of references that match a provided SHA-256 hash.
     let getReferencesBySha256Hash (repositoryId: RepositoryId) (branchId: BranchId) (sha256Hash: Sha256Hash) (maxCount: int) =
