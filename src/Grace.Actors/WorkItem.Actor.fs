@@ -137,8 +137,8 @@ module WorkItem =
                         let! workItemEventType =
                             task {
                                 match command with
-                                | Create (workItemId, ownerId, organizationId, repositoryId, title, description) ->
-                                    return Created(workItemId, ownerId, organizationId, repositoryId, title, description)
+                                | Create (workItemId, workItemNumber, ownerId, organizationId, repositoryId, title, description) ->
+                                    return Created(workItemId, workItemNumber, ownerId, organizationId, repositoryId, title, description)
                                 | SetTitle title -> return TitleSet title
                                 | SetDescription description -> return DescriptionSet description
                                 | SetStatus status -> return StatusSet status

@@ -163,3 +163,67 @@ module HistoryStorageTests =
 
                 let result = HistoryStorage.readHistoryEntries ()
                 result.Entries.Length |> should equal 2))
+
+    [<Test>]
+    let ``recordInvocation trims source metadata`` () =
+        let configPath = UserConfiguration.getUserConfigurationPath ()
+
+        withFileBackup configPath (fun () ->
+            let configuration = UserConfiguration.UserConfiguration()
+            configuration.History.Enabled <- true
+            configuration.History.RecordHistoryCommands <- true
+
+            match UserConfiguration.saveUserConfiguration configuration with
+            | Ok _ -> ()
+            | Error error -> Assert.Fail(error)
+
+            let input: HistoryStorage.RecordInput =
+                {
+                    argvOriginal = [| "branch"; "status" |]
+                    argvNormalized = [| "branch"; "status" |]
+                    cwd = Environment.CurrentDirectory
+                    exitCode = 0
+                    durationMs = 5L
+                    parseSucceeded = true
+                    timestampUtc = getCurrentInstant ()
+                    source = Some "  codex-session  "
+                }
+
+            match HistoryStorage.recordInvocation input with
+            | Some (entry, _) ->
+                entry.source
+                |> should equal (Some "codex-session")
+            | None -> Assert.Fail("Expected recordInvocation to return a history entry."))
+
+    [<Test>]
+    let ``shouldRecord treats history command with leading source option as history`` () =
+        let configuration = UserConfiguration.UserConfiguration()
+        configuration.History.Enabled <- true
+        configuration.History.RecordHistoryCommands <- false
+
+        let input: HistoryStorage.RecordInput =
+            {
+                argvOriginal =
+                    [|
+                        "--source"
+                        "codex"
+                        "history"
+                        "show"
+                    |]
+                argvNormalized =
+                    [|
+                        "--source"
+                        "codex"
+                        "history"
+                        "show"
+                    |]
+                cwd = Environment.CurrentDirectory
+                exitCode = 0
+                durationMs = 5L
+                parseSucceeded = true
+                timestampUtc = getCurrentInstant ()
+                source = Some "codex"
+            }
+
+        HistoryStorage.shouldRecord input configuration.History
+        |> should equal false

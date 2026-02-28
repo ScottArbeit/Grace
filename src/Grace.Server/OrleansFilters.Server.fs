@@ -70,6 +70,7 @@ module Orleans =
                             | StateName.Review -> repositoryId ()
                             | StateName.User -> StateName.User
                             | StateName.WorkItem -> repositoryId ()
+                            | StateName.WorkItemNumberCounter -> repositoryId ()
                             | _ ->
                                 raise (
                                     ArgumentException(

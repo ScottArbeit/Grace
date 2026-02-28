@@ -8,6 +8,7 @@ open Grace.Types.PromotionSet
 open Grace.Types.Queue
 open Grace.Types.Reference
 open Grace.Types.Types
+open Grace.Types.WorkItem
 open NodaTime
 open NUnit.Framework
 open System
@@ -171,3 +172,65 @@ type AutomationEventingTests() =
         Assert.That(envelope.IsSome, Is.True)
         Assert.That(envelope.Value.EventType, Is.EqualTo(AutomationEventType.PromotionSetStepsUpdated))
         Assert.That(envelope.Value.RepositoryId, Is.EqualTo(repositoryId))
+
+    [<Test>]
+    member _.WorkItemArtifactLinkedMapsToAgentSummaryAdded() =
+        let repositoryId = Guid.NewGuid()
+
+        let workItemEvent: WorkItemEvent =
+            {
+                Event = WorkItemEventType.ArtifactLinked(Guid.NewGuid())
+                Metadata = metadata "corr-work-item-summary" repositoryId
+            }
+
+        let envelope = EventingPublisher.tryCreateEnvelope (GraceEvent.WorkItemEvent workItemEvent)
+        Assert.That(envelope.IsSome, Is.True)
+        Assert.That(envelope.Value.EventType, Is.EqualTo(AutomationEventType.AgentSummaryAdded))
+        Assert.That(envelope.Value.RepositoryId, Is.EqualTo(repositoryId))
+
+    [<Test>]
+    member _.AgentSessionEnvelopeRetainsCorrelationAndIdentityMetadata() =
+        let ownerId = Guid.NewGuid()
+        let organizationId = Guid.NewGuid()
+        let repositoryId = Guid.NewGuid()
+        let correlationId = "corr-agent-session"
+        let metadata = metadata correlationId repositoryId
+        metadata.Properties[nameof OwnerId] <- $"{ownerId}"
+        metadata.Properties[nameof OrganizationId] <- $"{organizationId}"
+        metadata.Properties["ActorId"] <- "agent-session"
+
+        let operationResult =
+            {
+                AgentSessionOperationResult.Default with
+                    Session =
+                        {
+                            AgentSessionInfo.Default with
+                                SessionId = "session-1"
+                                AgentId = "agent-123"
+                                AgentDisplayName = "Agent 123"
+                                WorkItemIdOrNumber = "42"
+                                Source = "cli"
+                                LifecycleState = AgentSessionLifecycleState.Active
+                                StartedAt = Some(Instant.FromUtc(2026, 2, 18, 1, 0))
+                        }
+                    OperationId = "op-1"
+                    Message = "started"
+            }
+
+        let envelope =
+            EventingPublisher.tryCreateAgentSessionEnvelope
+                AutomationEventType.AgentBootstrapped
+                metadata
+                operationResult
+
+        Assert.That(envelope.IsSome, Is.True)
+        Assert.That(envelope.Value.EventType, Is.EqualTo(AutomationEventType.AgentBootstrapped))
+        Assert.That(envelope.Value.CorrelationId, Is.EqualTo(correlationId))
+        Assert.That(envelope.Value.OwnerId, Is.EqualTo(ownerId))
+        Assert.That(envelope.Value.OrganizationId, Is.EqualTo(organizationId))
+        Assert.That(envelope.Value.RepositoryId, Is.EqualTo(repositoryId))
+        Assert.That(envelope.Value.ActorId, Is.EqualTo(operationResult.Session.AgentId))
+
+        use payload = JsonDocument.Parse(envelope.Value.DataJson)
+        let payloadSessionId = payload.RootElement.GetProperty("Session").GetProperty("SessionId").GetString()
+        Assert.That(payloadSessionId, Is.EqualTo(operationResult.Session.SessionId))

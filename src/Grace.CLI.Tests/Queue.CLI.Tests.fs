@@ -60,6 +60,20 @@ module QueueCommandTests =
         exitCode |> should equal -1
 
     [<Test>]
+    let ``queue enqueue accepts numeric work item identifier`` () =
+        let parseResult =
+            GraceCommand.rootCommand.Parse(
+                withIds [| "queue"
+                           "enqueue"
+                           "--branch-id"
+                           branchId.ToString()
+                           "--work"
+                           "42" |]
+            )
+
+        parseResult.Errors.Count |> should equal 0
+
+    [<Test>]
     let ``queue dequeue rejects invalid promotion set id`` () =
         let parseResult =
             GraceCommand.rootCommand.Parse(
@@ -76,13 +90,13 @@ module QueueCommandTests =
 
     [<Test>]
     let ``queue retry command is unavailable`` () =
-        let parseResult =
-            GraceCommand.rootCommand.Parse(
-                withIdsAndSilent [| "queue"
-                                    "retry"
-                                    "--branch-id"
-                                    branchId.ToString() |]
-            )
+        let parseResult = GraceCommand.rootCommand.Parse([| "queue"; "retry" |])
 
-        let exitCode = parseResult.Invoke()
-        exitCode |> should equal 1
+        Assert.That(parseResult.Errors.Count, Is.GreaterThan(0))
+
+        let hasRetryError =
+            parseResult.Errors
+            |> Seq.exists (fun error ->
+                error.Message.Contains("Unrecognized command or argument 'retry'", StringComparison.OrdinalIgnoreCase))
+
+        Assert.That(hasRetryError, Is.True)

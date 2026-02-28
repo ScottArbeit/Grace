@@ -81,13 +81,12 @@
                 <Compile Include="PromotionSet.Server.fs" />
                 <Compile Include="WorkItem.Server.fs" />
                 <Compile Include="Policy.Server.fs" />
+                <Compile Include="ReviewModels.Server.fs" />
                 <Compile Include="Review.Server.fs" />
                 <Compile Include="Queue.Server.fs" />
                 <Compile Include="ValidationSet.Server.fs" />
                 <Compile Include="ValidationResult.Server.fs" />
                 <Compile Include="Artifact.Server.fs" />
-                <Compile Include="ReviewModels.Server.fs" />
-                <Compile Include="PromotionSetModels.Server.fs" />
                 <Compile Include="ReviewAnalysis.Server.fs" />
                 <Compile Include="Eventing.Server.fs" />
                 <Compile Include="DirectoryVersion.Server.fs" />

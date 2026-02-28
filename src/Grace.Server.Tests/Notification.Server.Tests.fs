@@ -5,7 +5,7 @@ open Grace.Types.Types
 open NUnit.Framework
 
 [<Parallelizable(ParallelScope.All)>]
-type ValidationSetBranchGlobTests() =
+type NotificationServerTests() =
 
     [<TestCase("main", "main", true)>]
     [<TestCase("MAIN", "main", true)>]

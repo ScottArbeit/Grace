@@ -18,6 +18,8 @@ open NodaTime
 open System
 open System.Collections.Generic
 open System.Diagnostics
+open System.Security.Cryptography
+open System.Text
 open System.Threading.Tasks
 
 module Artifact =
@@ -26,6 +28,24 @@ module Artifact =
     let internal buildBlobPath (createdAt: Instant) (artifactId: ArtifactId) =
         let utc = createdAt.ToDateTimeUtc()
         $"grace-artifacts/{utc:yyyy}/{utc:MM}/{utc:dd}/{utc:HH}/{artifactId}"
+
+    let internal buildDeterministicBlobPath (artifactId: ArtifactId) = $"grace-artifacts/by-id/{artifactId}"
+
+    let internal createDeterministicArtifactId (seed: string) =
+        let normalizedSeed =
+            if String.IsNullOrWhiteSpace(seed) then
+                String.Empty
+            else
+                seed.Trim().ToLowerInvariant()
+
+        let seedBytes = Encoding.UTF8.GetBytes(normalizedSeed)
+
+        use hasher = SHA256.Create()
+        let hash = hasher.ComputeHash(seedBytes)
+        let guidBytes = hash[0..15]
+        guidBytes[6] <- (guidBytes[6] &&& 0x0Fuy) ||| 0x50uy
+        guidBytes[8] <- (guidBytes[8] &&& 0x3Fuy) ||| 0x80uy
+        Guid(guidBytes)
 
     let internal parseArtifactType (rawArtifactType: string) =
         if String.Equals(rawArtifactType, "AgentSummary", StringComparison.OrdinalIgnoreCase) then

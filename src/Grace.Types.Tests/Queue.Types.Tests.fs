@@ -1,16 +1,15 @@
-namespace Grace.Server.Tests
+namespace Grace.Types.Tests
 
-open Grace.Server
 open Grace.Types.Policy
 open Grace.Types.Queue
 open Grace.Types.Types
-open NUnit.Framework
 open NodaTime
+open NUnit.Framework
 open System
 open System.Collections.Generic
 
 [<Parallelizable(ParallelScope.All)>]
-type QueuePromotionSetTests() =
+type QueueTypesTests() =
     let metadata (timestamp: Instant) : EventMetadata =
         { Timestamp = timestamp; CorrelationId = "corr-queue"; Principal = "tester"; Properties = Dictionary<string, string>() }
 
@@ -61,15 +60,3 @@ type QueuePromotionSetTests() =
         let updated = PromotionQueueDto.UpdateDto event queue
 
         Assert.That(updated.PromotionSetIds, Is.Empty)
-
-    [<Test>]
-    member _.QueueInitializationRequiresPolicySnapshotWhenQueueMissing() =
-        let requiresSnapshot = Grace.Server.Queue.requiresPolicySnapshotForInitialization false String.Empty
-
-        let noRequirementWhenProvided = Grace.Server.Queue.requiresPolicySnapshotForInitialization false "snapshot"
-
-        let noRequirementWhenQueueExists = Grace.Server.Queue.requiresPolicySnapshotForInitialization true String.Empty
-
-        Assert.That(requiresSnapshot, Is.True)
-        Assert.That(noRequirementWhenProvided, Is.False)
-        Assert.That(noRequirementWhenQueueExists, Is.False)

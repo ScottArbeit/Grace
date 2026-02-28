@@ -469,6 +469,25 @@ module Interfaces =
         /// Validates incoming commands and converts them to events that are stored in the database.
         abstract member Handle: command: ArtifactCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
 
+    /// Defines the operations for the WorkItemNumber actor.
+    [<Interface>]
+    type IWorkItemNumberActor =
+        inherit IGrainWithStringKey
+
+        /// Returns the WorkItemId for a repository-scoped WorkItemNumber.
+        abstract member GetWorkItemId: workItemNumber: WorkItemNumber -> correlationId: CorrelationId -> Task<WorkItemId option>
+
+        /// Caches a WorkItemNumber -> WorkItemId mapping while the actor is active.
+        abstract member SetWorkItemId: workItemNumber: WorkItemNumber -> workItemId: WorkItemId -> correlationId: CorrelationId -> Task
+
+    /// Defines the operations for the WorkItemNumberCounter actor.
+    [<Interface>]
+    type IWorkItemNumberCounterActor =
+        inherit IGrainWithStringKey
+
+        /// Allocates and persists the next WorkItemNumber for a repository.
+        abstract member AllocateNext: correlationId: CorrelationId -> Task<WorkItemNumber>
+
     /// Defines the operations for the WorkItem actor.
     [<Interface>]
     type IWorkItemActor =

@@ -197,6 +197,53 @@ module Notification =
             }
             :> Task
 
+    let routeAutomationEvent (serviceProvider: IServiceProvider) (envelope: AutomationEventEnvelope) =
+        task {
+            try
+                if isNull serviceProvider then
+                    log.LogWarning(
+                        "{CurrentInstant}: Node: {HostName}; No service provider available while routing automation event {EventType}.",
+                        getCurrentInstantExtended (),
+                        getMachineName,
+                        envelope.EventType
+                    )
+                else
+                    let hubContext = serviceProvider.GetService<IHubContext<NotificationHub, IGraceClientConnection>>()
+
+                    if isNull hubContext then
+                        log.LogWarning(
+                            "{CurrentInstant}: Node: {HostName}; No SignalR hub context available while routing automation event {EventType}.",
+                            getCurrentInstantExtended (),
+                            getMachineName,
+                            envelope.EventType
+                        )
+                    else
+                        let groupKey =
+                            if envelope.RepositoryId = RepositoryId.Empty then
+                                String.Empty
+                            else
+                                $"{envelope.RepositoryId}"
+
+                        if String.IsNullOrWhiteSpace groupKey then
+                            do! hubContext.Clients.All.NotifyAutomationEvent(envelope)
+                        else
+                            do!
+                                hubContext
+                                    .Clients
+                                    .Group(groupKey)
+                                    .NotifyAutomationEvent(envelope)
+            with
+            | ex ->
+                log.LogError(
+                    ex,
+                    "{CurrentInstant}: Node: {HostName}; CorrelationId: {CorrelationId}; Failed routing automation event {EventType}.",
+                    getCurrentInstantExtended (),
+                    getMachineName,
+                    envelope.CorrelationId,
+                    envelope.EventType
+                )
+        }
+
     module Subscriber =
         /// Gets the ReferenceDto for the given ReferenceId.
         let getReferenceDto referenceId repositoryId correlationId =

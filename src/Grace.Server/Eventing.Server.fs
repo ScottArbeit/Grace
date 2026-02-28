@@ -16,13 +16,20 @@ open Grace.Types.WorkItem
 open System
 
 module EventingPublisher =
-    let private tryGetRepositoryId (metadata: EventMetadata) =
-        match metadata.Properties.TryGetValue(nameof RepositoryId) with
-        | true, repositoryId ->
-            match Guid.TryParse(repositoryId) with
-            | true, value -> Some value
+    let private tryGetGuidFromMetadata (propertyName: string) (metadata: EventMetadata) =
+        match metadata.Properties.TryGetValue(propertyName) with
+        | true, rawValue ->
+            match Guid.TryParse(rawValue) with
+            | true, parsed -> Some parsed
             | _ -> Option.None
         | _ -> Option.None
+
+    let private tryGetRepositoryId (metadata: EventMetadata) =
+        tryGetGuidFromMetadata (nameof RepositoryId) metadata
+
+    let private tryGetOwnerId (metadata: EventMetadata) = tryGetGuidFromMetadata (nameof OwnerId) metadata
+
+    let private tryGetOrganizationId (metadata: EventMetadata) = tryGetGuidFromMetadata (nameof OrganizationId) metadata
 
     let private tryGetActorId (metadata: EventMetadata) (defaultActorId: string) =
         match metadata.Properties.TryGetValue("ActorId") with
@@ -59,6 +66,30 @@ module EventingPublisher =
         | PromotionSetEventType.Applied _ -> AutomationEventType.PromotionSetApplied
         | PromotionSetEventType.ApplyFailed _ -> AutomationEventType.PromotionSetApplyFailed
         | PromotionSetEventType.LogicalDeleted _ -> AutomationEventType.PromotionSetUpdated
+
+    let tryCreateAgentSessionEnvelope
+        (eventType: AutomationEventType)
+        (metadata: EventMetadata)
+        (operationResult: AgentSessionOperationResult)
+        =
+        let actorId =
+            if String.IsNullOrWhiteSpace operationResult.Session.AgentId then
+                tryGetActorId metadata "AgentSession"
+            else
+                operationResult.Session.AgentId
+
+        envelope
+            eventType
+            metadata
+            (tryGetOwnerId metadata
+             |> Option.defaultValue OwnerId.Empty)
+            (tryGetOrganizationId metadata
+             |> Option.defaultValue OrganizationId.Empty)
+            (tryGetRepositoryId metadata
+             |> Option.defaultValue RepositoryId.Empty)
+            actorId
+            (serialize operationResult)
+        |> Some
 
     let tryCreateEnvelope (graceEvent: GraceEvent) =
         match graceEvent with
@@ -173,8 +204,13 @@ module EventingPublisher =
                     Option.None
             | _ -> Option.None
         | WorkItemEvent workItemEvent ->
+            let eventType =
+                match workItemEvent.Event with
+                | WorkItemEventType.ArtifactLinked _ -> AutomationEventType.AgentSummaryAdded
+                | _ -> AutomationEventType.ReviewNotesUpdated
+
             envelope
-                AutomationEventType.ReviewNotesUpdated
+                eventType
                 workItemEvent.Metadata
                 OwnerId.Empty
                 OrganizationId.Empty

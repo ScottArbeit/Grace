@@ -2684,6 +2684,65 @@ module Services =
                 |> Seq.toList
         }
 
+    let getWorkItemIdByNumber (repositoryId: RepositoryId) (workItemNumber: WorkItemNumber) (correlationId: CorrelationId) =
+        task {
+            match actorStateStorageProvider with
+            | Unknown -> return None
+            | AzureCosmosDb ->
+                try
+                    let queryDefinition =
+                        QueryDefinition(
+                            """
+                            SELECT TOP 1 c.id
+                            FROM c
+                            WHERE c.GrainType = @grainType
+                                AND c.PartitionKey = @partitionKey
+                                AND c.State[0].Event.created.workItemNumber = @workItemNumber
+                            """
+                        )
+                            .WithParameter("@grainType", StateName.WorkItem)
+                            .WithParameter("@partitionKey", $"{repositoryId}")
+                            .WithParameter("@workItemNumber", workItemNumber)
+
+                    let iterator = cosmosContainer.GetItemQueryIterator<ActorIdValue>(queryDefinition, requestOptions = queryRequestOptions)
+
+                    if iterator.HasMoreResults then
+                        let! results = iterator.ReadNextAsync()
+                        let actorId =
+                            results.Resource
+                            |> Seq.tryHead
+                            |> Option.map (fun value -> value.id)
+                            |> Option.defaultValue String.Empty
+
+                        if String.IsNullOrWhiteSpace(actorId) then
+                            return None
+                        else
+                            let mutable workItemId = Guid.Empty
+
+                            if
+                                Guid.TryParse(actorId, &workItemId)
+                                && workItemId <> Guid.Empty
+                            then
+                                return Some workItemId
+                            else
+                                return None
+                    else
+                        return None
+                with
+                | ex ->
+                    log.LogError(
+                        ex,
+                        "{CurrentInstant}: Error in getWorkItemIdByNumber. CorrelationId: {correlationId}; RepositoryId: {repositoryId}; WorkItemNumber: {workItemNumber}.",
+                        getCurrentInstantExtended (),
+                        correlationId,
+                        repositoryId,
+                        workItemNumber
+                    )
+
+                    return None
+            | MongoDB -> return None
+        }
+
     /// Gets a list of reminders for a repository, with optional filtering.
     let getReminders
         (graceIds: GraceIds)

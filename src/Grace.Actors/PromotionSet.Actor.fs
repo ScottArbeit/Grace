@@ -4,7 +4,6 @@ open Azure.Storage.Blobs
 open Azure.Storage.Blobs.Specialized
 open Grace.Actors.Constants
 open Grace.Actors.Context
-open Grace.Actors.PromotionSetConflictModel
 open Grace.Actors.Extensions.ActorProxy
 open Grace.Actors.Interfaces
 open Grace.Actors.Services
@@ -15,6 +14,7 @@ open Grace.Shared.Services
 open Grace.Shared.Utilities
 open Grace.Types.Artifact
 open Grace.Types.Events
+open Grace.Types.PromotionSetConflictModel
 open Grace.Types.PromotionSet
 open Grace.Types.Queue
 open Grace.Types.Reference

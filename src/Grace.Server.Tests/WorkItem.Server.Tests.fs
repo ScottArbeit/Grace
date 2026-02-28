@@ -24,20 +24,12 @@ type WorkItemServerUnitTests() =
         |> Async.RunSynchronously
 
     let applyCasePattern (pattern: bool array) (value: string) =
-        let toggles =
-            if isNull pattern then
-                [||]
-            else
-                pattern
+        let toggles = if isNull pattern then [||] else pattern
 
         value
         |> Seq.mapi (fun index character ->
             if Char.IsLetter character then
-                let useUpper =
-                    if toggles.Length = 0 then
-                        false
-                    else
-                        toggles[index % toggles.Length]
+                let useUpper = if toggles.Length = 0 then false else toggles[index % toggles.Length]
 
                 if useUpper then
                     Char.ToUpperInvariant character
@@ -100,28 +92,37 @@ type WorkItemServerUnitTests() =
 
     [<Test>]
     member _.WorkItemIdentifierValidationAcceptsPositiveNumber() =
-        let result = WorkItem.validateWorkItemIdentifier "123" |> runValidation
+        let result =
+            WorkItem.validateWorkItemIdentifier "123"
+            |> runValidation
 
-        Assert.That(result, Is.EqualTo(Ok() : Result<unit, WorkItemError>))
+        Assert.That(result, Is.EqualTo(Ok(): Result<unit, WorkItemError>))
 
     [<Test>]
     member _.WorkItemIdentifierValidationRejectsNonPositiveNumber() =
-        let result = WorkItem.validateWorkItemIdentifier "0" |> runValidation
+        let result =
+            WorkItem.validateWorkItemIdentifier "0"
+            |> runValidation
 
-        Assert.That(result, Is.EqualTo(Error WorkItemError.InvalidWorkItemNumber : Result<unit, WorkItemError>))
+        Assert.That(result, Is.EqualTo(Error WorkItemError.InvalidWorkItemNumber: Result<unit, WorkItemError>))
 
     [<Test>]
     member _.WorkItemIdentifierValidationAcceptsGuid() =
         let workItemId = Guid.NewGuid().ToString()
-        let result = WorkItem.validateWorkItemIdentifier workItemId |> runValidation
 
-        Assert.That(result, Is.EqualTo(Ok() : Result<unit, WorkItemError>))
+        let result =
+            WorkItem.validateWorkItemIdentifier workItemId
+            |> runValidation
+
+        Assert.That(result, Is.EqualTo(Ok(): Result<unit, WorkItemError>))
 
     [<Test>]
     member _.WorkItemIdentifierValidationRejectsInvalidIdentifier() =
-        let result = WorkItem.validateWorkItemIdentifier "not-a-guid-or-number" |> runValidation
+        let result =
+            WorkItem.validateWorkItemIdentifier "not-a-guid-or-number"
+            |> runValidation
 
-        Assert.That(result, Is.EqualTo(Error WorkItemError.InvalidWorkItemId : Result<unit, WorkItemError>))
+        Assert.That(result, Is.EqualTo(Error WorkItemError.InvalidWorkItemId: Result<unit, WorkItemError>))
 
     [<Test>]
     member _.LinkPromotionSetValidationRejectsInvalidPromotionSetId() =
@@ -152,12 +153,102 @@ type WorkItemServerUnitTests() =
         Assert.That(error, Is.EqualTo(Some WorkItemError.InvalidArtifactId))
 
     [<Test>]
+    member _.AddSummaryValidationAcceptsGuidIdentifier() =
+        let parameters = AddSummaryParameters(WorkItemId = Guid.NewGuid().ToString(), SummaryContent = "Summary content")
+
+        let result = WorkItem.validateAddSummaryParameters parameters
+
+        match result with
+        | Ok _ -> Assert.Pass()
+        | Error errorMessage -> Assert.Fail($"Expected validation to succeed, but received '{errorMessage}'.")
+
+    [<Test>]
+    member _.AddSummaryValidationAcceptsNumericIdentifier() =
+        let parameters = AddSummaryParameters(WorkItemId = "42", SummaryContent = "Summary content")
+
+        let result = WorkItem.validateAddSummaryParameters parameters
+
+        match result with
+        | Ok _ -> Assert.Pass()
+        | Error errorMessage -> Assert.Fail($"Expected validation to succeed, but received '{errorMessage}'.")
+
+    [<Test>]
+    member _.AddSummaryValidationRejectsNonPositiveNumericIdentifier() =
+        let parameters = AddSummaryParameters(WorkItemId = "0", SummaryContent = "Summary content")
+
+        match WorkItem.validateAddSummaryParameters parameters with
+        | Ok _ -> Assert.Fail("Expected validation to reject non-positive WorkItemNumber.")
+        | Error errorMessage -> Assert.That(errorMessage, Does.Contain(WorkItemError.getErrorMessage WorkItemError.InvalidWorkItemNumber))
+
+    [<Test>]
+    member _.AddSummaryValidationRejectsUnsupportedArtifactReferenceMode() =
+        let parameters = AddSummaryParameters(WorkItemId = "42", SummaryContent = "Summary content", SummaryArtifactId = Guid.NewGuid().ToString())
+
+        match WorkItem.validateAddSummaryParameters parameters with
+        | Ok _ -> Assert.Fail("Expected validation to reject caller-supplied artifact IDs.")
+        | Error errorMessage ->
+            Assert.That(errorMessage, Does.Contain("Caller-supplied artifact IDs are not supported"))
+            Assert.That(errorMessage, Does.Contain(WorkItem.canonicalAddSummaryContractMessage))
+
+    [<Test>]
+    member _.AddSummaryValidationRejectsPromptOriginWithoutPromptContent() =
+        let parameters = AddSummaryParameters(WorkItemId = "42", SummaryContent = "Summary content", PromptOrigin = "agent://codex")
+
+        match WorkItem.validateAddSummaryParameters parameters with
+        | Ok _ -> Assert.Fail("Expected validation to reject PromptOrigin when PromptContent is absent.")
+        | Error errorMessage ->
+            Assert.That(errorMessage, Does.Contain("PromptOrigin can only be provided when PromptContent is provided"))
+            Assert.That(errorMessage, Does.Contain(WorkItem.canonicalAddSummaryContractMessage))
+
+    [<Test>]
+    member _.AddSummaryValidationRejectsInvalidPromotionSetId() =
+        let parameters = AddSummaryParameters(WorkItemId = "42", SummaryContent = "Summary content", PromotionSetId = "not-a-guid")
+
+        match WorkItem.validateAddSummaryParameters parameters with
+        | Ok _ -> Assert.Fail("Expected validation to reject invalid PromotionSetId.")
+        | Error errorMessage -> Assert.That(errorMessage, Is.EqualTo("PromotionSetId must be a valid non-empty Guid."))
+
+    [<Test>]
+    member _.AddSummaryArtifactSeedNormalizesCorrelationId() =
+        let repositoryId = Guid.Parse("89f08f88-0d98-4562-a5f7-bce8d4e4c2ec")
+        let workItemId = Guid.Parse("6d742a8e-5fd6-4d89-81cd-7ea3005570ef")
+        let lowerSeed = WorkItem.buildAddSummaryArtifactSeed repositoryId workItemId "corr:add-summary:summary-artifact"
+        let mixedSeed = WorkItem.buildAddSummaryArtifactSeed repositoryId workItemId " CoRR:Add-SuMMary:Summary-Artifact "
+
+        Assert.That(lowerSeed, Is.EqualTo(mixedSeed))
+
+    [<Test>]
+    member _.DeterministicAddSummaryArtifactIdIsStableForReplay() =
+        let repositoryId = Guid.Parse("89f08f88-0d98-4562-a5f7-bce8d4e4c2ec")
+        let workItemId = Guid.Parse("6d742a8e-5fd6-4d89-81cd-7ea3005570ef")
+        let correlationId = "corr:add-summary:summary-artifact"
+
+        let firstId = WorkItem.buildDeterministicAddSummaryArtifactId repositoryId workItemId correlationId
+        let replayId = WorkItem.buildDeterministicAddSummaryArtifactId repositoryId workItemId correlationId
+
+        Assert.That(firstId, Is.EqualTo(replayId))
+
+    [<Test>]
+    member _.DeterministicAddSummaryArtifactIdDiffersByArtifactSegment() =
+        let repositoryId = Guid.Parse("89f08f88-0d98-4562-a5f7-bce8d4e4c2ec")
+        let workItemId = Guid.Parse("6d742a8e-5fd6-4d89-81cd-7ea3005570ef")
+
+        let summaryArtifactId = WorkItem.buildDeterministicAddSummaryArtifactId repositoryId workItemId "corr:add-summary:summary-artifact"
+
+        let promptArtifactId = WorkItem.buildDeterministicAddSummaryArtifactId repositoryId workItemId "corr:add-summary:prompt-artifact"
+
+        Assert.That(summaryArtifactId, Is.Not.EqualTo(promptArtifactId))
+
+    [<Test>]
+    member _.DeterministicAddSummaryBlobPathUsesArtifactIdentityPartition() =
+        let artifactId = Guid.Parse("7d535f96-e634-4313-b5ff-d9293ee9db57")
+        let blobPath = WorkItem.buildDeterministicAddSummaryBlobPath artifactId
+
+        Assert.That(blobPath, Is.EqualTo("grace-artifacts/by-id/7d535f96-e634-4313-b5ff-d9293ee9db57"))
+
+    [<Test>]
     member _.RemoveArtifactTypeValidationRejectsMissingArtifactType() =
-        let parameters =
-            RemoveArtifactTypeLinksParameters(
-                WorkItemId = Guid.NewGuid().ToString(),
-                ArtifactType = String.Empty
-            )
+        let parameters = RemoveArtifactTypeLinksParameters(WorkItemId = Guid.NewGuid().ToString(), ArtifactType = String.Empty)
 
         let validations = WorkItem.validateRemoveArtifactTypeLinksParameters parameters
 
@@ -193,15 +284,11 @@ type WorkItemServerUnitTests() =
             |> WorkItem.validateWorkItemIdentifier
             |> runValidation
 
-        result = (Ok() : Result<unit, WorkItemError>)
+        result = (Ok(): Result<unit, WorkItemError>)
 
     [<FsCheck.NUnit.Property(MaxTest = 100)>]
     member _.WorkItemIdentifierValidationRejectsNonPositiveNumberStrings(value: int) =
-        let nonPositiveValue =
-            if value > 0 then
-                -value
-            else
-                value
+        let nonPositiveValue = if value > 0 then -value else value
 
         let result =
             nonPositiveValue
@@ -209,22 +296,18 @@ type WorkItemServerUnitTests() =
             |> WorkItem.validateWorkItemIdentifier
             |> runValidation
 
-        result = (Error WorkItemError.InvalidWorkItemNumber : Result<unit, WorkItemError>)
+        result = (Error WorkItemError.InvalidWorkItemNumber: Result<unit, WorkItemError>)
 
     [<FsCheck.NUnit.Property(MaxTest = 100)>]
     member _.WorkItemIdentifierValidationAcceptsNonEmptyGuidStrings(guid: Guid) =
-        let validGuid =
-            if guid = Guid.Empty then
-                Guid.NewGuid()
-            else
-                guid
+        let validGuid = if guid = Guid.Empty then Guid.NewGuid() else guid
 
         let result =
             validGuid.ToString()
             |> WorkItem.validateWorkItemIdentifier
             |> runValidation
 
-        result = (Ok() : Result<unit, WorkItemError>)
+        result = (Ok(): Result<unit, WorkItemError>)
 
     [<FsCheck.NUnit.Property(MaxTest = 100)>]
     member _.ParseRemovableArtifactTypeIsCaseInsensitive(pattern: bool array) =

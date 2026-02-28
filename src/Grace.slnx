@@ -17,6 +17,7 @@
   <Project Path="Grace.Orleans.CodeGen/Grace.Orleans.CodeGen.csproj" />
   <Project Path="Grace.SDK/Grace.SDK.fsproj" />
   <Project Path="Grace.Server.Tests/Grace.Server.Tests.fsproj" />
+  <Project Path="Grace.Types.Tests/Grace.Types.Tests.fsproj" />
   <Project Path="Grace.Server/Grace.Server.fsproj">
     <BuildDependency Project="Grace.Shared/Grace.Shared.fsproj" />
   </Project>

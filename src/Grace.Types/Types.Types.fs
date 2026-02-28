@@ -67,6 +67,9 @@ module Types =
     /// The Id of the work item.
     type WorkItemId = Guid
 
+    /// The repository-scoped monotonically increasing work item number.
+    type WorkItemNumber = int64
+
     /// The Id of the promotion set.
     type PromotionSetId = Guid
 

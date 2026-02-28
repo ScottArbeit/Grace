@@ -1,4 +1,4 @@
-namespace Grace.Server.Tests
+namespace Grace.Types.Tests
 
 open Grace.Types.PromotionSet
 open Grace.Types.Types

@@ -42,7 +42,7 @@ module QueueCommand =
                 "--work",
                 [| "--work-item-id"; "-w" |],
                 Required = false,
-                Description = "The work item ID <Guid>.",
+                Description = "The work item ID <Guid> or work item number <positive integer>.",
                 Arity = ArgumentArity.ExactlyOne
             )
 
@@ -135,15 +135,23 @@ module QueueCommand =
             Ok parsed
 
     let private tryParseWorkItemId (value: string) (parseResult: ParseResult) =
-        let mutable parsed = Guid.Empty
+        let mutable parsedGuid = Guid.Empty
 
         if String.IsNullOrWhiteSpace(value) then
             Ok String.Empty
-        elif Guid.TryParse(value, &parsed) = false
-             || parsed = Guid.Empty then
-            Error(GraceError.Create (WorkItemError.getErrorMessage WorkItemError.InvalidWorkItemId) (getCorrelationId parseResult))
+        elif Guid.TryParse(value, &parsedGuid)
+             && parsedGuid <> Guid.Empty then
+            Ok(parsedGuid.ToString())
         else
-            Ok(parsed.ToString())
+            let mutable parsedNumber = 0L
+
+            if Int64.TryParse(value, &parsedNumber) then
+                if parsedNumber > 0L then
+                    Ok(parsedNumber.ToString())
+                else
+                    Error(GraceError.Create (WorkItemError.getErrorMessage WorkItemError.InvalidWorkItemNumber) (getCorrelationId parseResult))
+            else
+                Error(GraceError.Create (WorkItemError.getErrorMessage WorkItemError.InvalidWorkItemId) (getCorrelationId parseResult))
 
     let private resolveBranchByName (parseResult: ParseResult) (graceIds: GraceIds) (branchName: string) =
         task {

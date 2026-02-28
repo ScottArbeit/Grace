@@ -26,6 +26,7 @@ module WorkItem =
     type WorkItemCommand =
         | Create of
             workItemId: WorkItemId *
+            workItemNumber: WorkItemNumber *
             ownerId: OwnerId *
             organizationId: OrganizationId *
             repositoryId: RepositoryId *
@@ -66,6 +67,7 @@ module WorkItem =
     type WorkItemEventType =
         | Created of
             workItemId: WorkItemId *
+            workItemNumber: WorkItemNumber *
             ownerId: OwnerId *
             organizationId: OrganizationId *
             repositoryId: RepositoryId *
@@ -115,6 +117,7 @@ module WorkItem =
         {
             Class: string
             WorkItemId: WorkItemId
+            WorkItemNumber: WorkItemNumber
             OwnerId: OwnerId
             OrganizationId: OrganizationId
             RepositoryId: RepositoryId
@@ -145,6 +148,7 @@ module WorkItem =
             {
                 Class = nameof WorkItemDto
                 WorkItemId = WorkItemId.Empty
+                WorkItemNumber = 0L
                 OwnerId = OwnerId.Empty
                 OrganizationId = OrganizationId.Empty
                 RepositoryId = RepositoryId.Empty
@@ -175,9 +179,10 @@ module WorkItem =
         static member UpdateDto workItemEvent currentWorkItemDto =
             let newWorkItemDto =
                 match workItemEvent.Event with
-                | Created (workItemId, ownerId, organizationId, repositoryId, title, description) ->
+                | Created (workItemId, workItemNumber, ownerId, organizationId, repositoryId, title, description) ->
                     { WorkItemDto.Default with
                         WorkItemId = workItemId
+                        WorkItemNumber = workItemNumber
                         OwnerId = ownerId
                         OrganizationId = organizationId
                         RepositoryId = repositoryId
@@ -331,3 +336,29 @@ module WorkItem =
                 |> List.distinct
 
             { newWorkItemDto with OnBehalfOf = onBehalfOf; UpdatedAt = Some workItemEvent.Metadata.Timestamp }
+
+    type WorkItemLinksDto =
+        {
+            WorkItemId: WorkItemId
+            WorkItemNumber: WorkItemNumber
+            ReferenceIds: ReferenceId list
+            PromotionSetIds: PromotionSetId list
+            ArtifactIds: ArtifactId list
+            AgentSummaryArtifactIds: ArtifactId list
+            PromptArtifactIds: ArtifactId list
+            ReviewNotesArtifactIds: ArtifactId list
+            OtherArtifactIds: ArtifactId list
+        }
+
+        static member Default =
+            {
+                WorkItemId = WorkItemId.Empty
+                WorkItemNumber = 0L
+                ReferenceIds = []
+                PromotionSetIds = []
+                ArtifactIds = []
+                AgentSummaryArtifactIds = []
+                PromptArtifactIds = []
+                ReviewNotesArtifactIds = []
+                OtherArtifactIds = []
+            }

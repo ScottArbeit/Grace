@@ -1,5 +1,6 @@
 namespace Grace.Server.Tests
 
+open Azure.Storage.Blobs
 open Grace.Server.Tests.Services
 open Grace.Shared
 open Grace.Shared.Client.Configuration
@@ -32,14 +33,43 @@ module private WorkItemIntegrationHelpers =
         task {
             let repositoryId = Guid.NewGuid().ToString()
             let parameters = Parameters.Repository.CreateRepositoryParameters()
+
+            let prefix =
+                if String.IsNullOrWhiteSpace(repositoryNamePrefix) then
+                    "repo"
+                else
+                    repositoryNamePrefix.Trim()
+
+            let maxPrefixLength = 31
+
+            let boundedPrefix =
+                if prefix.Length > maxPrefixLength then
+                    prefix.Substring(0, maxPrefixLength)
+                else
+                    prefix
+
             parameters.OwnerId <- ownerId
             parameters.OrganizationId <- organizationId
             parameters.RepositoryId <- repositoryId
-            parameters.RepositoryName <- $"{repositoryNamePrefix}-{Guid.NewGuid():N}"
+            parameters.RepositoryName <- $"{boundedPrefix}-{Guid.NewGuid():N}"
             parameters.CorrelationId <- generateCorrelationId ()
 
             let! response = Client.PostAsync("/repository/create", createJsonContent parameters)
-            response.EnsureSuccessStatusCode() |> ignore
+
+            if not response.IsSuccessStatusCode then
+                let! body = response.Content.ReadAsStringAsync()
+                Assert.Fail($"Expected repository create success but got {(int response.StatusCode)} {response.StatusCode}: {body}")
+            else
+                ()
+
+            let storageConnectionString = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.AzureStorageConnectionString)
+
+            if not (String.IsNullOrWhiteSpace(storageConnectionString)) then
+                let serviceClient = BlobServiceClient(storageConnectionString)
+                let containerClient = serviceClient.GetBlobContainerClient(repositoryId.ToLowerInvariant())
+                let! _ = containerClient.CreateIfNotExistsAsync()
+                ()
+
             return repositoryId
         }
 
@@ -89,9 +119,153 @@ module private WorkItemIntegrationHelpers =
             parameters.CorrelationId <- generateCorrelationId ()
 
             let! response = client.PostAsync("/work/links/list", createJsonContent parameters)
+
+            if not response.IsSuccessStatusCode then
+                let! body = response.Content.ReadAsStringAsync()
+                Assert.Fail($"Expected links/list success but got {(int response.StatusCode)} {response.StatusCode}: {body}")
+                return WorkItemLinksDto.Default
+            else
+                let! returnValue = deserializeContent<GraceReturnValue<WorkItemLinksDto>> response
+                return returnValue.ReturnValue
+        }
+
+    let listWorkItemAttachmentsResponseAsync (client: HttpClient) (repositoryId: string) (workItemIdentifier: string) =
+        task {
+            let parameters = Parameters.WorkItem.ListWorkItemAttachmentsParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.WorkItemId <- workItemIdentifier
+            parameters.CorrelationId <- generateCorrelationId ()
+            return! client.PostAsync("/work/attachments/list", createJsonContent parameters)
+        }
+
+    let listWorkItemAttachmentsAsync (client: HttpClient) (repositoryId: string) (workItemIdentifier: string) =
+        task {
+            let! response = listWorkItemAttachmentsResponseAsync client repositoryId workItemIdentifier
+
+            if not response.IsSuccessStatusCode then
+                let! body = response.Content.ReadAsStringAsync()
+                Assert.Fail($"Expected attachments/list success but got {(int response.StatusCode)} {response.StatusCode}: {body}")
+                return Parameters.WorkItem.ListWorkItemAttachmentsResult()
+            else
+                let! returnValue = deserializeContent<GraceReturnValue<Parameters.WorkItem.ListWorkItemAttachmentsResult>> response
+                return returnValue.ReturnValue
+        }
+
+    let showWorkItemAttachmentResponseAsync (client: HttpClient) (repositoryId: string) (workItemIdentifier: string) (attachmentType: string) (latest: bool) =
+        task {
+            let parameters = Parameters.WorkItem.ShowWorkItemAttachmentParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.WorkItemId <- workItemIdentifier
+            parameters.AttachmentType <- attachmentType
+            parameters.Latest <- latest
+            parameters.CorrelationId <- generateCorrelationId ()
+            return! client.PostAsync("/work/attachments/show", createJsonContent parameters)
+        }
+
+    let showWorkItemAttachmentAsync (client: HttpClient) (repositoryId: string) (workItemIdentifier: string) (attachmentType: string) (latest: bool) =
+        task {
+            let! response = showWorkItemAttachmentResponseAsync client repositoryId workItemIdentifier attachmentType latest
+
+            if not response.IsSuccessStatusCode then
+                let! body = response.Content.ReadAsStringAsync()
+                Assert.Fail($"Expected attachments/show success but got {(int response.StatusCode)} {response.StatusCode}: {body}")
+                return Parameters.WorkItem.ShowWorkItemAttachmentResult()
+            else
+                let! returnValue = deserializeContent<GraceReturnValue<Parameters.WorkItem.ShowWorkItemAttachmentResult>> response
+                return returnValue.ReturnValue
+        }
+
+    let downloadWorkItemAttachmentResponseAsync (client: HttpClient) (repositoryId: string) (workItemIdentifier: string) (artifactId: Guid) =
+        task {
+            let parameters = Parameters.WorkItem.DownloadWorkItemAttachmentParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.WorkItemId <- workItemIdentifier
+            parameters.ArtifactId <- artifactId.ToString()
+            parameters.CorrelationId <- generateCorrelationId ()
+            return! client.PostAsync("/work/attachments/download", createJsonContent parameters)
+        }
+
+    let downloadWorkItemAttachmentAsync (client: HttpClient) (repositoryId: string) (workItemIdentifier: string) (artifactId: Guid) =
+        task {
+            let! response = downloadWorkItemAttachmentResponseAsync client repositoryId workItemIdentifier artifactId
+
+            if not response.IsSuccessStatusCode then
+                let! body = response.Content.ReadAsStringAsync()
+                Assert.Fail($"Expected attachments/download success but got {(int response.StatusCode)} {response.StatusCode}: {body}")
+                return Parameters.WorkItem.DownloadWorkItemAttachmentResult()
+            else
+                let! returnValue = deserializeContent<GraceReturnValue<Parameters.WorkItem.DownloadWorkItemAttachmentResult>> response
+                return returnValue.ReturnValue
+        }
+
+    let addSummaryResponseAsync
+        (client: HttpClient)
+        (repositoryId: string)
+        (workItemIdentifier: string)
+        (summaryContent: string)
+        (promptContent: string option)
+        (promptOrigin: string option)
+        (summaryArtifactIdOverride: string option)
+        (correlationId: string)
+        =
+        task {
+            let parameters = Parameters.WorkItem.AddSummaryParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.WorkItemId <- workItemIdentifier
+            parameters.SummaryContent <- summaryContent
+            parameters.SummaryMimeType <- "text/markdown"
+            parameters.PromptContent <- promptContent |> Option.defaultValue String.Empty
+            parameters.PromptMimeType <- if promptContent.IsSome then "text/markdown" else String.Empty
+            parameters.PromptOrigin <- promptOrigin |> Option.defaultValue String.Empty
+
+            parameters.SummaryArtifactId <-
+                summaryArtifactIdOverride
+                |> Option.defaultValue String.Empty
+
+            parameters.CorrelationId <- correlationId
+            return! client.PostAsync("/work/add-summary", createJsonContent parameters)
+        }
+
+    let addSummaryAsync
+        (client: HttpClient)
+        (repositoryId: string)
+        (workItemIdentifier: string)
+        (summaryContent: string)
+        (promptContent: string option)
+        (promptOrigin: string option)
+        (correlationId: string)
+        =
+        task {
+            let! response = addSummaryResponseAsync client repositoryId workItemIdentifier summaryContent promptContent promptOrigin None correlationId
+
+            if not response.IsSuccessStatusCode then
+                let! body = response.Content.ReadAsStringAsync()
+                Assert.Fail($"Expected add-summary success but got {(int response.StatusCode)} {response.StatusCode}: {body}")
+                return Parameters.WorkItem.AddSummaryResult()
+            else
+                let! returnValue = deserializeContent<GraceReturnValue<Parameters.WorkItem.AddSummaryResult>> response
+                return returnValue.ReturnValue
+        }
+
+    let getArtifactDownloadUriAsync (client: HttpClient) (repositoryId: string) (artifactId: Guid) =
+        task {
+            let correlationId = generateCorrelationId ()
+
+            let route =
+                $"/artifact/{artifactId}/download-uri?ownerId={ownerId}&organizationId={organizationId}&repositoryId={repositoryId}&correlationId={correlationId}"
+
+            let! response = client.GetAsync(route)
             response.EnsureSuccessStatusCode() |> ignore
-            let! returnValue = deserializeContent<GraceReturnValue<WorkItemLinksDto>> response
-            return returnValue.ReturnValue
+            let! returnValue = deserializeContent<GraceReturnValue<ArtifactDownloadUriResult>> response
+            return returnValue.ReturnValue.DownloadUri
         }
 
     let linkReferenceAsync (repositoryId: string) (workItemIdentifier: string) (referenceId: Guid) =
@@ -221,10 +395,7 @@ module private WorkItemIntegrationHelpers =
 
             let! token = createPersonalAccessTokenAsync ()
 
-            Grace.SDK.Auth.setTokenProvider(fun () ->
-                task {
-                    return Some token
-                })
+            Grace.SDK.Auth.setTokenProvider (fun () -> task { return Some token })
         }
 
 [<NonParallelizable>]
@@ -248,16 +419,12 @@ type WorkItemNumberAndLinksIntegrationTests() =
     member _.UnknownNumericIdentifierReturnsNotFoundError() =
         task {
             let! repositoryId = WorkItemIntegrationHelpers.createRepositoryAsync "wi-unknown-number"
-            let! response =
-                WorkItemIntegrationHelpers.getWorkItemResponseAsync Client repositoryId (Int64.MaxValue.ToString())
+            let! response = WorkItemIntegrationHelpers.getWorkItemResponseAsync Client repositoryId (Int64.MaxValue.ToString())
 
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
             let! error = deserializeContent<GraceError> response
 
-            Assert.That(
-                error.Error,
-                Does.Contain(WorkItemError.getErrorMessage WorkItemError.WorkItemDoesNotExist)
-            )
+            Assert.That(error.Error, Does.Contain(WorkItemError.getErrorMessage WorkItemError.WorkItemDoesNotExist))
         }
 
     [<Test>]
@@ -269,10 +436,7 @@ type WorkItemNumberAndLinksIntegrationTests() =
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
             let! error = deserializeContent<GraceError> response
 
-            Assert.That(
-                error.Error,
-                Does.Contain(WorkItemError.getErrorMessage WorkItemError.InvalidWorkItemNumber)
-            )
+            Assert.That(error.Error, Does.Contain(WorkItemError.getErrorMessage WorkItemError.InvalidWorkItemNumber))
         }
 
     [<Test>]
@@ -313,8 +477,7 @@ type WorkItemNumberAndLinksIntegrationTests() =
 
             let! workItemIds =
                 [|
-                    for index in 0 .. createCount - 1 ->
-                        WorkItemIntegrationHelpers.createWorkItemAsync repositoryId $"concurrent {index}"
+                    for index in 0 .. createCount - 1 -> WorkItemIntegrationHelpers.createWorkItemAsync repositoryId $"concurrent {index}"
                 |]
                 |> Task.WhenAll
 
@@ -357,13 +520,19 @@ type WorkItemNumberAndLinksIntegrationTests() =
             do! WorkItemIntegrationHelpers.linkArtifactAsync repositoryId workItemId notesArtifactId
 
             let! removedReference = WorkItemIntegrationHelpers.removeReferenceLinkAsync Client repositoryId workItemId referenceId
-            removedReference.EnsureSuccessStatusCode() |> ignore
+
+            removedReference.EnsureSuccessStatusCode()
+            |> ignore
 
             let! removedPromotionSet = WorkItemIntegrationHelpers.removePromotionSetLinkAsync Client repositoryId workItemId promotionSetId
-            removedPromotionSet.EnsureSuccessStatusCode() |> ignore
+
+            removedPromotionSet.EnsureSuccessStatusCode()
+            |> ignore
 
             let! removedArtifact = WorkItemIntegrationHelpers.removeArtifactLinkAsync Client repositoryId workItemId summaryArtifactId
-            removedArtifact.EnsureSuccessStatusCode() |> ignore
+
+            removedArtifact.EnsureSuccessStatusCode()
+            |> ignore
 
             let! removedSummary = WorkItemIntegrationHelpers.removeArtifactTypeLinksAsync Client repositoryId workItemId "summary"
             removedSummary.EnsureSuccessStatusCode() |> ignore
@@ -375,10 +544,14 @@ type WorkItemNumberAndLinksIntegrationTests() =
             removedNotes.EnsureSuccessStatusCode() |> ignore
 
             let! removedPromptArtifact = WorkItemIntegrationHelpers.removeArtifactLinkAsync Client repositoryId workItemId promptArtifactId
-            removedPromptArtifact.EnsureSuccessStatusCode() |> ignore
+
+            removedPromptArtifact.EnsureSuccessStatusCode()
+            |> ignore
 
             let! removedNotesArtifact = WorkItemIntegrationHelpers.removeArtifactLinkAsync Client repositoryId workItemId notesArtifactId
-            removedNotesArtifact.EnsureSuccessStatusCode() |> ignore
+
+            removedNotesArtifact.EnsureSuccessStatusCode()
+            |> ignore
 
             let! afterRemoval = WorkItemIntegrationHelpers.getWorkItemLinksAsync Client repositoryId workItemId
 
@@ -391,6 +564,225 @@ type WorkItemNumberAndLinksIntegrationTests() =
             Assert.That(afterRemoval.ArtifactIds, Is.Empty)
         }
 
+[<NonParallelizable>]
+type WorkItemAddSummaryIntegrationTests() =
+
+    [<Test>]
+    member _.AddSummaryWithGuidCreatesSummaryLinkAndDownloadUri() =
+        task {
+            let! repositoryId = WorkItemIntegrationHelpers.createRepositoryAsync "wi-add-summary-guid"
+            let! workItemId = WorkItemIntegrationHelpers.createWorkItemAsync repositoryId "add-summary guid"
+            let summaryContent = $"# Summary{Environment.NewLine}Guid flow replay validation"
+
+            let! firstResult = WorkItemIntegrationHelpers.addSummaryAsync Client repositoryId workItemId summaryContent None None (generateCorrelationId ())
+
+            Assert.That(firstResult.WorkItemId, Is.EqualTo(workItemId))
+            Assert.That(firstResult.PromptArtifactId, Is.EqualTo(String.Empty))
+
+            let summaryArtifactId = Guid.Parse(firstResult.SummaryArtifactId)
+            let! workItemByGuid = WorkItemIntegrationHelpers.getWorkItemDtoAsync Client repositoryId workItemId
+            let! workItemByNumber = WorkItemIntegrationHelpers.getWorkItemDtoAsync Client repositoryId (workItemByGuid.WorkItemNumber.ToString())
+
+            Assert.That(workItemByGuid.ArtifactIds, Has.Member(summaryArtifactId))
+            Assert.That(workItemByNumber.ArtifactIds, Has.Member(summaryArtifactId))
+
+            let summaryArtifactCountByGuid =
+                workItemByGuid.ArtifactIds
+                |> List.filter (fun artifactId -> artifactId = summaryArtifactId)
+                |> List.length
+
+            Assert.That(summaryArtifactCountByGuid, Is.EqualTo(1))
+
+            let! summaryDownloadUri = WorkItemIntegrationHelpers.getArtifactDownloadUriAsync Client repositoryId summaryArtifactId
+            Assert.That(summaryDownloadUri, Is.Not.Null)
+            Assert.That(String.IsNullOrWhiteSpace(summaryDownloadUri.AbsoluteUri), Is.False)
+        }
+
+    [<Test>]
+    member _.AddSummaryWithWorkItemNumberRoundTripsPromptAndLinksAcrossBothIdentifiers() =
+        task {
+            let! repositoryId = WorkItemIntegrationHelpers.createRepositoryAsync "wi-add-summary-number"
+            let! workItemId = WorkItemIntegrationHelpers.createWorkItemAsync repositoryId "add-summary number"
+            let! workItem = WorkItemIntegrationHelpers.getWorkItemDtoAsync Client repositoryId workItemId
+            let workItemNumber = workItem.WorkItemNumber.ToString()
+            let summaryContent = $"# Summary{Environment.NewLine}Number flow"
+            let promptContent = $"# Prompt{Environment.NewLine}Number flow"
+
+            let! addSummaryResult =
+                WorkItemIntegrationHelpers.addSummaryAsync
+                    Client
+                    repositoryId
+                    workItemNumber
+                    summaryContent
+                    (Some promptContent)
+                    (Some "agent://codex")
+                    (generateCorrelationId ())
+
+            let summaryArtifactId = Guid.Parse(addSummaryResult.SummaryArtifactId)
+            let promptArtifactId = Guid.Parse(addSummaryResult.PromptArtifactId)
+
+            let! workItemByNumber = WorkItemIntegrationHelpers.getWorkItemDtoAsync Client repositoryId workItemNumber
+            let! workItemByGuid = WorkItemIntegrationHelpers.getWorkItemDtoAsync Client repositoryId workItemId
+
+            Assert.That(workItemByNumber.WorkItemId, Is.EqualTo(Guid.Parse(workItemId)))
+            Assert.That(workItemByGuid.WorkItemId, Is.EqualTo(Guid.Parse(workItemId)))
+            Assert.That(workItemByNumber.WorkItemNumber, Is.EqualTo(workItem.WorkItemNumber))
+            Assert.That(workItemByGuid.WorkItemNumber, Is.EqualTo(workItem.WorkItemNumber))
+
+            Assert.That(workItemByNumber.ArtifactIds, Has.Member(summaryArtifactId))
+            Assert.That(workItemByNumber.ArtifactIds, Has.Member(promptArtifactId))
+            Assert.That(workItemByGuid.ArtifactIds, Has.Member(summaryArtifactId))
+            Assert.That(workItemByGuid.ArtifactIds, Has.Member(promptArtifactId))
+
+            let! summaryDownloadUri = WorkItemIntegrationHelpers.getArtifactDownloadUriAsync Client repositoryId summaryArtifactId
+            let! promptDownloadUri = WorkItemIntegrationHelpers.getArtifactDownloadUriAsync Client repositoryId promptArtifactId
+
+            Assert.That(summaryDownloadUri, Is.Not.Null)
+            Assert.That(promptDownloadUri, Is.Not.Null)
+            Assert.That(String.IsNullOrWhiteSpace(summaryDownloadUri.AbsoluteUri), Is.False)
+            Assert.That(String.IsNullOrWhiteSpace(promptDownloadUri.AbsoluteUri), Is.False)
+        }
+
+    [<Test>]
+    member _.AddSummaryRejectsCallerSuppliedArtifactIdsForNumericIdentifiers() =
+        task {
+            let! repositoryId = WorkItemIntegrationHelpers.createRepositoryAsync "wi-add-summary-reject-artifact-id"
+            let! workItemId = WorkItemIntegrationHelpers.createWorkItemAsync repositoryId "reject caller supplied artifact id"
+            let! workItem = WorkItemIntegrationHelpers.getWorkItemDtoAsync Client repositoryId workItemId
+            let workItemNumber = workItem.WorkItemNumber.ToString()
+
+            let! response =
+                WorkItemIntegrationHelpers.addSummaryResponseAsync
+                    Client
+                    repositoryId
+                    workItemNumber
+                    "summary content"
+                    None
+                    None
+                    (Some(Guid.NewGuid().ToString()))
+                    (generateCorrelationId ())
+
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
+            let! graceError = deserializeContent<GraceError> response
+
+            Assert.That(graceError.Error, Does.Contain("Caller-supplied artifact IDs are not supported by add-summary"))
+            Assert.That(graceError.Error, Does.Contain("Canonical add-summary requests must provide SummaryContent"))
+        }
+
+[<NonParallelizable>]
+type WorkItemAttachmentEndpointsIntegrationTests() =
+
+    [<Test>]
+    member _.AttachmentListSupportsGuidAndNumberAndFiltersToReviewerAttachmentTypes() =
+        task {
+            let! repositoryId = WorkItemIntegrationHelpers.createRepositoryAsync "wi-attachments-list"
+            let! workItemId = WorkItemIntegrationHelpers.createWorkItemAsync repositoryId "attachments list"
+
+            let! addSummaryResult =
+                WorkItemIntegrationHelpers.addSummaryAsync
+                    Client
+                    repositoryId
+                    workItemId
+                    "summary list content"
+                    (Some "prompt list content")
+                    None
+                    (generateCorrelationId ())
+
+            let! otherArtifactId = WorkItemIntegrationHelpers.createArtifactAsync repositoryId "Other"
+            do! WorkItemIntegrationHelpers.linkArtifactAsync repositoryId workItemId otherArtifactId
+
+            let! workItemByGuid = WorkItemIntegrationHelpers.getWorkItemDtoAsync Client repositoryId workItemId
+            let workItemNumber = workItemByGuid.WorkItemNumber.ToString()
+
+            let! attachmentsByGuid = WorkItemIntegrationHelpers.listWorkItemAttachmentsAsync Client repositoryId workItemId
+            let! attachmentsByNumber = WorkItemIntegrationHelpers.listWorkItemAttachmentsAsync Client repositoryId workItemNumber
+
+            Assert.That(attachmentsByGuid.WorkItemId, Is.EqualTo(workItemId))
+            Assert.That(attachmentsByGuid.WorkItemNumber, Is.EqualTo(workItemByGuid.WorkItemNumber))
+            Assert.That(attachmentsByNumber.WorkItemId, Is.EqualTo(workItemId))
+            Assert.That(attachmentsByNumber.WorkItemNumber, Is.EqualTo(workItemByGuid.WorkItemNumber))
+
+            let attachmentIdsByGuid =
+                attachmentsByGuid.Attachments
+                |> Seq.map (fun attachment -> attachment.ArtifactId)
+                |> Seq.toArray
+
+            let attachmentIdsByNumber =
+                attachmentsByNumber.Attachments
+                |> Seq.map (fun attachment -> attachment.ArtifactId)
+                |> Seq.toArray
+
+            Assert.That(attachmentIdsByGuid, Is.EquivalentTo(attachmentIdsByNumber))
+            Assert.That(attachmentIdsByGuid, Has.Member(addSummaryResult.SummaryArtifactId))
+            Assert.That(attachmentIdsByGuid.Length, Is.GreaterThanOrEqualTo(1))
+        }
+
+    [<Test>]
+    member _.AttachmentShowSelectsDeterministicLatestOrEarliestByAttachmentType() =
+        task {
+            let! repositoryId = WorkItemIntegrationHelpers.createRepositoryAsync "wi-attachments-show"
+            let! workItemId = WorkItemIntegrationHelpers.createWorkItemAsync repositoryId "attachments show"
+            let firstSummaryContent = "first summary content"
+            let secondSummaryContent = "second summary content"
+
+            let! firstResult =
+                WorkItemIntegrationHelpers.addSummaryAsync Client repositoryId workItemId firstSummaryContent None None (generateCorrelationId ())
+
+            do! Task.Delay(20)
+
+            let! secondResult =
+                WorkItemIntegrationHelpers.addSummaryAsync Client repositoryId workItemId secondSummaryContent None None (generateCorrelationId ())
+
+            let! workItemByGuid = WorkItemIntegrationHelpers.getWorkItemDtoAsync Client repositoryId workItemId
+            let workItemNumber = workItemByGuid.WorkItemNumber.ToString()
+            let! attachmentList = WorkItemIntegrationHelpers.listWorkItemAttachmentsAsync Client repositoryId workItemId
+
+            let orderedAttachmentIds =
+                attachmentList.Attachments
+                |> Seq.map (fun attachment -> attachment.ArtifactId)
+                |> Seq.toArray
+
+            let! showEarliest = WorkItemIntegrationHelpers.showWorkItemAttachmentAsync Client repositoryId workItemId "summary" false
+
+            let! showLatest = WorkItemIntegrationHelpers.showWorkItemAttachmentAsync Client repositoryId workItemNumber "summary" true
+            let! showLatestAgain = WorkItemIntegrationHelpers.showWorkItemAttachmentAsync Client repositoryId workItemNumber "summary" true
+
+            Assert.That(orderedAttachmentIds.Length, Is.GreaterThanOrEqualTo(1))
+            Assert.That(String.IsNullOrWhiteSpace(showEarliest.ArtifactId), Is.False)
+            Assert.That(showEarliest.SelectedUsingLatest, Is.False)
+            Assert.That(showEarliest.AvailableAttachmentCount, Is.GreaterThanOrEqualTo(1))
+
+            Assert.That(showLatest.ArtifactId, Is.EqualTo(showLatestAgain.ArtifactId))
+            Assert.That(showLatest.SelectedUsingLatest, Is.True)
+            Assert.That(showLatest.AvailableAttachmentCount, Is.GreaterThanOrEqualTo(1))
+        }
+
+    [<Test>]
+    member _.AttachmentDownloadReturnsDownloadUriForLinkedReviewerAttachmentAndRejectsInvalidArtifacts() =
+        task {
+            let! repositoryId = WorkItemIntegrationHelpers.createRepositoryAsync "wi-attachments-download"
+            let! workItemId = WorkItemIntegrationHelpers.createWorkItemAsync repositoryId "attachments download"
+
+            let! addSummaryResult =
+                WorkItemIntegrationHelpers.addSummaryAsync Client repositoryId workItemId "download summary content" None None (generateCorrelationId ())
+
+            let! linkedOtherArtifactId = WorkItemIntegrationHelpers.createArtifactAsync repositoryId "Other"
+            do! WorkItemIntegrationHelpers.linkArtifactAsync repositoryId workItemId linkedOtherArtifactId
+
+            let summaryArtifactId = Guid.Parse(addSummaryResult.SummaryArtifactId)
+            let! downloadResult = WorkItemIntegrationHelpers.downloadWorkItemAttachmentAsync Client repositoryId workItemId summaryArtifactId
+
+            Assert.That(downloadResult.ArtifactId, Is.EqualTo(summaryArtifactId.ToString()))
+            Assert.That(downloadResult.AttachmentType, Is.EqualTo("summary"))
+            Assert.That(String.IsNullOrWhiteSpace(downloadResult.DownloadUri), Is.False)
+
+            let! notLinkedResponse = WorkItemIntegrationHelpers.downloadWorkItemAttachmentResponseAsync Client repositoryId workItemId (Guid.NewGuid())
+
+            Assert.That(notLinkedResponse.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
+            let! notLinkedError = deserializeContent<GraceError> notLinkedResponse
+            Assert.That(notLinkedError.Error, Does.Contain("not linked"))
+        }
+
 [<Parallelizable(ParallelScope.All)>]
 type WorkItemLinksAuthorizationIntegrationTests() =
 
@@ -399,6 +791,8 @@ type WorkItemLinksAuthorizationIntegrationTests() =
         task {
             let! repositoryId = WorkItemIntegrationHelpers.createRepositoryAsync "wi-links-auth"
             let! workItemId = WorkItemIntegrationHelpers.createWorkItemAsync repositoryId "auth matrix"
+
+            let summaryArtifactId = Guid.NewGuid()
             use unauthenticatedClient = WorkItemIntegrationHelpers.createUnauthenticatedClient ()
             use authenticatedClient = WorkItemIntegrationHelpers.createAuthenticatedClient $"{Guid.NewGuid()}"
 
@@ -415,34 +809,50 @@ type WorkItemLinksAuthorizationIntegrationTests() =
                             parameters.CorrelationId <- generateCorrelationId ()
                             return! unauthenticatedClient.PostAsync("/work/links/list", createJsonContent parameters)
                         })
+                    "/work/attachments/list",
+                    (fun () ->
+                        task {
+                            let parameters = Parameters.WorkItem.ListWorkItemAttachmentsParameters()
+                            parameters.OwnerId <- ownerId
+                            parameters.OrganizationId <- organizationId
+                            parameters.RepositoryId <- repositoryId
+                            parameters.WorkItemId <- workItemId
+                            parameters.CorrelationId <- generateCorrelationId ()
+                            return! unauthenticatedClient.PostAsync("/work/attachments/list", createJsonContent parameters)
+                        })
+                    "/work/attachments/show",
+                    (fun () ->
+                        task {
+                            let parameters = Parameters.WorkItem.ShowWorkItemAttachmentParameters()
+                            parameters.OwnerId <- ownerId
+                            parameters.OrganizationId <- organizationId
+                            parameters.RepositoryId <- repositoryId
+                            parameters.WorkItemId <- workItemId
+                            parameters.AttachmentType <- "summary"
+                            parameters.Latest <- true
+                            parameters.CorrelationId <- generateCorrelationId ()
+                            return! unauthenticatedClient.PostAsync("/work/attachments/show", createJsonContent parameters)
+                        })
+                    "/work/attachments/download",
+                    (fun () ->
+                        task {
+                            let parameters = Parameters.WorkItem.DownloadWorkItemAttachmentParameters()
+                            parameters.OwnerId <- ownerId
+                            parameters.OrganizationId <- organizationId
+                            parameters.RepositoryId <- repositoryId
+                            parameters.WorkItemId <- workItemId
+                            parameters.ArtifactId <- summaryArtifactId.ToString()
+                            parameters.CorrelationId <- generateCorrelationId ()
+                            return! unauthenticatedClient.PostAsync("/work/attachments/download", createJsonContent parameters)
+                        })
                     "/work/links/remove/reference",
-                    (fun () ->
-                        WorkItemIntegrationHelpers.removeReferenceLinkAsync
-                            unauthenticatedClient
-                            repositoryId
-                            workItemId
-                            (Guid.NewGuid()))
+                    (fun () -> WorkItemIntegrationHelpers.removeReferenceLinkAsync unauthenticatedClient repositoryId workItemId (Guid.NewGuid()))
                     "/work/links/remove/promotion-set",
-                    (fun () ->
-                        WorkItemIntegrationHelpers.removePromotionSetLinkAsync
-                            unauthenticatedClient
-                            repositoryId
-                            workItemId
-                            (Guid.NewGuid()))
+                    (fun () -> WorkItemIntegrationHelpers.removePromotionSetLinkAsync unauthenticatedClient repositoryId workItemId (Guid.NewGuid()))
                     "/work/links/remove/artifact",
-                    (fun () ->
-                        WorkItemIntegrationHelpers.removeArtifactLinkAsync
-                            unauthenticatedClient
-                            repositoryId
-                            workItemId
-                            (Guid.NewGuid()))
+                    (fun () -> WorkItemIntegrationHelpers.removeArtifactLinkAsync unauthenticatedClient repositoryId workItemId (Guid.NewGuid()))
                     "/work/links/remove/artifact-type",
-                    (fun () ->
-                        WorkItemIntegrationHelpers.removeArtifactTypeLinksAsync
-                            unauthenticatedClient
-                            repositoryId
-                            workItemId
-                            "summary")
+                    (fun () -> WorkItemIntegrationHelpers.removeArtifactTypeLinksAsync unauthenticatedClient repositoryId workItemId "summary")
                 ]
 
             for (path, invokeUnauthenticated) in calls do
@@ -462,8 +872,21 @@ type WorkItemLinksAuthorizationIntegrationTests() =
 
             Assert.That(listAuthenticated.StatusCode, Is.EqualTo(HttpStatusCode.OK))
 
-            let! removeReferenceAuthenticated =
-                WorkItemIntegrationHelpers.removeReferenceLinkAsync authenticatedClient repositoryId workItemId (Guid.NewGuid())
+            let! listAttachmentsAuthenticated = WorkItemIntegrationHelpers.listWorkItemAttachmentsResponseAsync authenticatedClient repositoryId workItemId
+
+            Assert.That(listAttachmentsAuthenticated.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+
+            let! showAttachmentAuthenticated =
+                WorkItemIntegrationHelpers.showWorkItemAttachmentResponseAsync authenticatedClient repositoryId workItemId "summary" true
+
+            Assert.That(showAttachmentAuthenticated.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
+
+            let! downloadAttachmentAuthenticated =
+                WorkItemIntegrationHelpers.downloadWorkItemAttachmentResponseAsync authenticatedClient repositoryId workItemId summaryArtifactId
+
+            Assert.That(downloadAttachmentAuthenticated.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
+
+            let! removeReferenceAuthenticated = WorkItemIntegrationHelpers.removeReferenceLinkAsync authenticatedClient repositoryId workItemId (Guid.NewGuid())
 
             Assert.That(removeReferenceAuthenticated.StatusCode, Is.EqualTo(HttpStatusCode.OK))
 
@@ -472,13 +895,11 @@ type WorkItemLinksAuthorizationIntegrationTests() =
 
             Assert.That(removePromotionAuthenticated.StatusCode, Is.EqualTo(HttpStatusCode.OK))
 
-            let! removeArtifactAuthenticated =
-                WorkItemIntegrationHelpers.removeArtifactLinkAsync authenticatedClient repositoryId workItemId (Guid.NewGuid())
+            let! removeArtifactAuthenticated = WorkItemIntegrationHelpers.removeArtifactLinkAsync authenticatedClient repositoryId workItemId (Guid.NewGuid())
 
             Assert.That(removeArtifactAuthenticated.StatusCode, Is.EqualTo(HttpStatusCode.OK))
 
-            let! removeArtifactTypeAuthenticated =
-                WorkItemIntegrationHelpers.removeArtifactTypeLinksAsync authenticatedClient repositoryId workItemId "summary"
+            let! removeArtifactTypeAuthenticated = WorkItemIntegrationHelpers.removeArtifactTypeLinksAsync authenticatedClient repositoryId workItemId "summary"
 
             Assert.That(removeArtifactTypeAuthenticated.StatusCode, Is.EqualTo(HttpStatusCode.OK))
         }
@@ -522,7 +943,9 @@ type WorkItemSdkSmokeIntegrationTests() =
                         let linked =
                             match linksResult with
                             | Ok returnValue -> returnValue.ReturnValue
-                            | Error error -> Assert.Fail($"Expected SDK GetLinks success but got error: {error.Error}"); WorkItemLinksDto.Default
+                            | Error error ->
+                                Assert.Fail($"Expected SDK GetLinks success but got error: {error.Error}")
+                                WorkItemLinksDto.Default
 
                         Assert.That(linked.ReferenceIds, Has.Member(referenceId))
                         Assert.That(linked.PromotionSetIds, Has.Member(promotionSetId))
@@ -628,7 +1051,9 @@ type WorkItemSdkSmokeIntegrationTests() =
                         let afterRemoval =
                             match linksAfterResult with
                             | Ok returnValue -> returnValue.ReturnValue
-                            | Error error -> Assert.Fail($"Expected SDK GetLinks success but got error after removals: {error.Error}"); WorkItemLinksDto.Default
+                            | Error error ->
+                                Assert.Fail($"Expected SDK GetLinks success but got error after removals: {error.Error}")
+                                WorkItemLinksDto.Default
 
                         Assert.That(afterRemoval.ReferenceIds, Is.Empty)
                         Assert.That(afterRemoval.PromotionSetIds, Is.Empty)
@@ -636,6 +1061,103 @@ type WorkItemSdkSmokeIntegrationTests() =
                         Assert.That(afterRemoval.PromptArtifactIds, Is.Empty)
                         Assert.That(afterRemoval.ReviewNotesArtifactIds, Is.Empty)
                         Assert.That(afterRemoval.OtherArtifactIds, Is.Empty)
+                    })
+        }
+
+    [<Test>]
+    member _.SdkWorkItemAttachmentApisSupportListShowAndDownload() =
+        task {
+            do!
+                runWithSdkAuthentication (fun () ->
+                    task {
+                        let! repositoryId = WorkItemIntegrationHelpers.createRepositoryAsync "wi-sdk-attachments"
+                        let! workItemId = WorkItemIntegrationHelpers.createWorkItemAsync repositoryId "sdk attachments"
+
+                        let firstSummaryContent = "sdk summary one"
+                        let secondSummaryContent = "sdk summary two"
+
+                        let! firstSummary =
+                            WorkItemIntegrationHelpers.addSummaryAsync Client repositoryId workItemId firstSummaryContent None None (generateCorrelationId ())
+
+                        do! Task.Delay(20)
+
+                        let! secondSummary =
+                            WorkItemIntegrationHelpers.addSummaryAsync Client repositoryId workItemId secondSummaryContent None None (generateCorrelationId ())
+
+                        let listParameters = Parameters.WorkItem.ListWorkItemAttachmentsParameters()
+                        listParameters.OwnerId <- ownerId
+                        listParameters.OrganizationId <- organizationId
+                        listParameters.RepositoryId <- repositoryId
+                        listParameters.WorkItemId <- workItemId
+                        listParameters.CorrelationId <- generateCorrelationId ()
+
+                        let! listResult = Grace.SDK.WorkItem.ListAttachments listParameters
+
+                        let attachments =
+                            match listResult with
+                            | Ok returnValue -> returnValue.ReturnValue.Attachments |> Seq.toArray
+                            | Error error ->
+                                Assert.Fail($"Expected SDK ListAttachments success but got error: {error.Error}")
+                                Array.empty
+
+                        Assert.That(
+                            attachments
+                            |> Array.map (fun attachment -> attachment.ArtifactId),
+                            Has.Member(firstSummary.SummaryArtifactId)
+                        )
+
+                        Assert.That(
+                            attachments
+                            |> Array.map (fun attachment -> attachment.ArtifactId),
+                            Has.Member(secondSummary.SummaryArtifactId)
+                        )
+
+                        let orderedAttachmentIds =
+                            attachments
+                            |> Array.map (fun attachment -> attachment.ArtifactId)
+
+                        Assert.That(orderedAttachmentIds.Length, Is.GreaterThanOrEqualTo(1))
+
+                        let showParameters = Parameters.WorkItem.ShowWorkItemAttachmentParameters()
+                        showParameters.OwnerId <- ownerId
+                        showParameters.OrganizationId <- organizationId
+                        showParameters.RepositoryId <- repositoryId
+                        showParameters.WorkItemId <- workItemId
+                        showParameters.AttachmentType <- "summary"
+                        showParameters.Latest <- true
+                        showParameters.CorrelationId <- generateCorrelationId ()
+
+                        let! showResult = Grace.SDK.WorkItem.ShowAttachment showParameters
+
+                        let shownAttachment =
+                            match showResult with
+                            | Ok returnValue -> returnValue.ReturnValue
+                            | Error error ->
+                                Assert.Fail($"Expected SDK ShowAttachment success but got error: {error.Error}")
+                                Parameters.WorkItem.ShowWorkItemAttachmentResult()
+
+                        Assert.That(String.IsNullOrWhiteSpace(shownAttachment.ArtifactId), Is.False)
+
+                        let downloadParameters = Parameters.WorkItem.DownloadWorkItemAttachmentParameters()
+                        downloadParameters.OwnerId <- ownerId
+                        downloadParameters.OrganizationId <- organizationId
+                        downloadParameters.RepositoryId <- repositoryId
+                        downloadParameters.WorkItemId <- workItemId
+                        downloadParameters.ArtifactId <- shownAttachment.ArtifactId
+                        downloadParameters.CorrelationId <- generateCorrelationId ()
+
+                        let! downloadResult = Grace.SDK.WorkItem.DownloadAttachment downloadParameters
+
+                        let download =
+                            match downloadResult with
+                            | Ok returnValue -> returnValue.ReturnValue
+                            | Error error ->
+                                Assert.Fail($"Expected SDK DownloadAttachment success but got error: {error.Error}")
+                                Parameters.WorkItem.DownloadWorkItemAttachmentResult()
+
+                        Assert.That(download.ArtifactId, Is.EqualTo(shownAttachment.ArtifactId))
+                        Assert.That(download.AttachmentType, Is.EqualTo("summary"))
+                        Assert.That(String.IsNullOrWhiteSpace(download.DownloadUri), Is.False)
                     })
         }
 
@@ -659,11 +1181,7 @@ type WorkItemSdkSmokeIntegrationTests() =
 
                         match invalidResult with
                         | Ok _ -> Assert.Fail("Expected validation error for non-positive WorkItemNumber.")
-                        | Error error ->
-                            Assert.That(
-                                error.Error,
-                                Does.Contain(WorkItemError.getErrorMessage WorkItemError.InvalidWorkItemNumber)
-                            )
+                        | Error error -> Assert.That(error.Error, Does.Contain(WorkItemError.getErrorMessage WorkItemError.InvalidWorkItemNumber))
 
                         let notFoundParameters = Parameters.WorkItem.GetWorkItemLinksParameters()
                         notFoundParameters.OwnerId <- ownerId
@@ -676,11 +1194,7 @@ type WorkItemSdkSmokeIntegrationTests() =
 
                         match notFoundResult with
                         | Ok _ -> Assert.Fail("Expected not-found error for unknown WorkItemNumber.")
-                        | Error error ->
-                            Assert.That(
-                                error.Error,
-                                Does.Contain(WorkItemError.getErrorMessage WorkItemError.WorkItemDoesNotExist)
-                            )
+                        | Error error -> Assert.That(error.Error, Does.Contain(WorkItemError.getErrorMessage WorkItemError.WorkItemDoesNotExist))
                     })
 
             let configuration = Current()

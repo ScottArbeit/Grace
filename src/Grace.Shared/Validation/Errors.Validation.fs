@@ -611,8 +611,10 @@ module Errors =
         | WorkItemAlreadyExists
         | WorkItemDoesNotExist
         | InvalidWorkItemId
+        | InvalidWorkItemNumber
         | InvalidReferenceId
         | InvalidArtifactId
+        | InvalidArtifactType
         | InvalidPromotionSetId
         | InvalidStatus
 
@@ -625,8 +627,10 @@ module Errors =
             | WorkItemAlreadyExists -> "A work item with this ID already exists."
             | WorkItemDoesNotExist -> "The specified work item does not exist."
             | InvalidWorkItemId -> "The work item ID is invalid."
+            | InvalidWorkItemNumber -> "The work item number is invalid. Use a positive integer."
             | InvalidReferenceId -> "The reference ID is invalid."
             | InvalidArtifactId -> "The artifact ID is invalid."
+            | InvalidArtifactType -> "The artifact type is invalid."
             | InvalidPromotionSetId -> "The promotion set ID is invalid."
             | InvalidStatus -> "The work item status is invalid."
 

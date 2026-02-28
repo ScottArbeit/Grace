@@ -12,18 +12,17 @@
 	</PropertyGroup>
 
   <ItemGroup>
-    <Compile Include="Agent.Commands.Tests.fs" />
+    <Compile Include="Agent.CLI.Tests.fs" />
     <Compile Include="Auth.Tests.fs" />
     <Compile Include="AuthTokenBundle.Tests.fs" />
-    <Compile Include="Connect.Tests.fs" />
-    <Compile Include="CommandParsing.Tests.fs" />
-    <Compile Include="HelpDoesNotReadConfig.Tests.fs" />
-    <Compile Include="RootHelpGrouping.Tests.fs" />
-    <Compile Include="HistoryStorage.Tests.fs" />
-    <Compile Include="WorkItem.Commands.Tests.fs" />
-    <Compile Include="Review.Commands.Tests.fs" />
-    <Compile Include="Queue.Commands.Tests.fs" />
-    <Compile Include="PromotionSet.Commands.Tests.fs" />
+    <Compile Include="Connect.CLI.Tests.fs" />
+    <Compile Include="Program.CLI.Tests.fs" />
+    <Compile Include="HistoryStorage.CLI.Tests.fs" />
+    <Compile Include="History.CLI.Tests.fs" />
+    <Compile Include="WorkItem.CLI.Tests.fs" />
+    <Compile Include="Review.CLI.Tests.fs" />
+    <Compile Include="Queue.CLI.Tests.fs" />
+    <Compile Include="PromotionSet.CLI.Tests.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
 

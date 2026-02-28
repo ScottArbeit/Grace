@@ -33,6 +33,63 @@ module PromotionSetCommand =
                 Arity = ArgumentArity.ExactlyOne
             )
 
+        let promotionSetIdOptional =
+            new Option<string>(
+                "--promotion-set",
+                [|
+                    "--promotion-set-id"
+                    "--promotionSetId"
+                |],
+                Required = false,
+                Description = "The promotion set ID <Guid>. If omitted, a new one is generated.",
+                Arity = ArgumentArity.ExactlyOne
+            )
+
+        let targetBranchId =
+            new Option<string>(
+                "--target-branch-id",
+                [| "--target-branch" |],
+                Required = true,
+                Description = "The target branch ID <Guid>.",
+                Arity = ArgumentArity.ExactlyOne
+            )
+
+        let promotionPointersFile =
+            new Option<string>(
+                "--promotion-pointers-file",
+                [| "--pointers-file"; "--input-file" |],
+                Required = true,
+                Description = "Path to a JSON file containing PromotionPointer entries.",
+                Arity = ArgumentArity.ExactlyOne
+            )
+
+        let reason =
+            new Option<string>(
+                "--reason",
+                [| "--recompute-reason" |],
+                Required = false,
+                Description = "Optional reason for recomputing the promotion set.",
+                Arity = ArgumentArity.ExactlyOne
+            )
+
+        let force =
+            new Option<bool>(
+                OptionName.Force,
+                [| "-f"; "--force" |],
+                Required = false,
+                Description = "Force logical deletion of the promotion set.",
+                Arity = ArgumentArity.ZeroOrOne,
+                DefaultValueFactory = (fun _ -> false)
+            )
+
+        let deleteReason =
+            new Option<string>(
+                OptionName.DeleteReason,
+                Required = false,
+                Description = "Optional reason for deleting the promotion set.",
+                Arity = ArgumentArity.ExactlyOne
+            )
+
         let stepId =
             new Option<string>(
                 "--step",
@@ -122,6 +179,7 @@ module PromotionSetCommand =
         }
 
     type private ConflictDecisionsWrapper = { Decisions: ConflictResolutionDecision list }
+    type private PromotionPointersWrapper = { PromotionPointers: PromotionPointer list }
 
     let private tryParseGuid (value: string) (errorMessage: string) (parseResult: ParseResult) =
         let mutable parsed = Guid.Empty
@@ -132,6 +190,12 @@ module PromotionSetCommand =
             Error(GraceError.Create errorMessage (getCorrelationId parseResult))
         else
             Ok parsed
+
+    let private parseOptionalPromotionSetId (value: string) (parseResult: ParseResult) =
+        if String.IsNullOrWhiteSpace(value) then
+            Ok(Guid.NewGuid())
+        else
+            tryParseGuid value (QueueError.getErrorMessage QueueError.InvalidPromotionSetId) parseResult
 
     let private tryDeserializeDecisionsFromFile (filePath: string) =
         if not <| File.Exists filePath then
@@ -157,6 +221,36 @@ module PromotionSetCommand =
                 | Error error -> Error error
             with
             | ex -> Error($"Unable to read decisions file: {ex.Message}")
+
+    let private tryDeserializePromotionPointersFromFile (filePath: string) =
+        if not <| File.Exists filePath then
+            Error $"Promotion pointers file does not exist: {filePath}"
+        else
+            try
+                let fileContent = File.ReadAllText filePath
+
+                let pointersResult =
+                    try
+                        Ok(JsonSerializer.Deserialize<PromotionPointer list>(fileContent, Constants.JsonSerializerOptions))
+                    with
+                    | _ ->
+                        try
+                            let wrapped = JsonSerializer.Deserialize<PromotionPointersWrapper>(fileContent, Constants.JsonSerializerOptions)
+                            Ok wrapped.PromotionPointers
+                        with
+                        | _ -> Error "Promotion pointers file must be valid JSON as an array or { \"promotionPointers\": [...] }."
+
+                match pointersResult with
+                | Ok pointers ->
+                    let normalizedPointers = if obj.ReferenceEquals(box pointers, null) then [] else pointers
+
+                    if List.isEmpty normalizedPointers then
+                        Error "Promotion pointers file must contain at least one entry."
+                    else
+                        Ok normalizedPointers
+                | Error error -> Error error
+            with
+            | ex -> Error($"Unable to read promotion pointers file: {ex.Message}")
 
     let private getPromotionSet (graceIds: GraceIds) (promotionSetId: PromotionSetId) =
         let parameters =
@@ -187,6 +281,61 @@ module PromotionSetCommand =
             )
 
         Artifact.GetDownloadUri(parameters)
+
+    let private renderPromotionSet (parseResult: ParseResult) (promotionSet: PromotionSetDto) =
+        if
+            not (parseResult |> json)
+            && not (parseResult |> silent)
+        then
+            let table = Table(Border = TableBorder.Rounded)
+            table.AddColumn("Field") |> ignore
+            table.AddColumn("Value") |> ignore
+
+            table.AddRow("PromotionSetId", Markup.Escape(promotionSet.PromotionSetId.ToString()))
+            |> ignore
+
+            table.AddRow("TargetBranchId", Markup.Escape(promotionSet.TargetBranchId.ToString()))
+            |> ignore
+
+            table.AddRow("Status", Markup.Escape(getDiscriminatedUnionCaseName promotionSet.Status))
+            |> ignore
+
+            table.AddRow("StepsComputationStatus", Markup.Escape(getDiscriminatedUnionCaseName promotionSet.StepsComputationStatus))
+            |> ignore
+
+            table.AddRow("StepsComputationAttempt", promotionSet.StepsComputationAttempt.ToString())
+            |> ignore
+
+            table.AddRow("StepCount", promotionSet.Steps.Length.ToString())
+            |> ignore
+
+            AnsiConsole.Write(table)
+
+    let private renderPromotionSetEvents (parseResult: ParseResult) (promotionSetId: PromotionSetId) (events: PromotionSetEvent seq) =
+        if
+            not (parseResult |> json)
+            && not (parseResult |> silent)
+        then
+            let eventsList = events |> Seq.toList
+
+            if List.isEmpty eventsList then
+                AnsiConsole.MarkupLine($"[yellow]No events found for promotion set[/] {Markup.Escape(promotionSetId.ToString())}.")
+            else
+                let table = Table(Border = TableBorder.Rounded)
+                table.AddColumn("Timestamp") |> ignore
+                table.AddColumn("Event") |> ignore
+                table.AddColumn("Principal") |> ignore
+
+                eventsList
+                |> List.iter (fun promotionSetEvent ->
+                    table.AddRow(
+                        Markup.Escape(promotionSetEvent.Metadata.Timestamp.ToString()),
+                        Markup.Escape(getDiscriminatedUnionCaseName promotionSetEvent.Event),
+                        Markup.Escape(promotionSetEvent.Metadata.Principal)
+                    )
+                    |> ignore)
+
+                AnsiConsole.Write(table)
 
     let private buildConflictStepDisplay (graceIds: GraceIds) (step: PromotionSetStep) =
         task {
@@ -311,6 +460,339 @@ module PromotionSetCommand =
                 return result |> renderOutput parseResult
             }
 
+    let private createPromotionSetHandler (parseResult: ParseResult) =
+        task {
+            try
+                if parseResult |> verbose then printParseResult parseResult
+                let graceIds = parseResult |> getNormalizedIdsAndNames
+                let promotionSetIdRaw = parseResult.GetValue(Options.promotionSetIdOptional)
+                let targetBranchIdRaw = parseResult.GetValue(Options.targetBranchId)
+
+                match parseOptionalPromotionSetId promotionSetIdRaw parseResult with
+                | Error error -> return Error error
+                | Ok promotionSetId ->
+                    match tryParseGuid targetBranchIdRaw (QueueError.getErrorMessage QueueError.InvalidTargetBranchId) parseResult with
+                    | Error error -> return Error error
+                    | Ok targetBranchId ->
+                        let parameters =
+                            Parameters.PromotionSet.CreatePromotionSetParameters(
+                                PromotionSetId = promotionSetId.ToString(),
+                                TargetBranchId = targetBranchId.ToString(),
+                                OwnerId = graceIds.OwnerIdString,
+                                OwnerName = graceIds.OwnerName,
+                                OrganizationId = graceIds.OrganizationIdString,
+                                OrganizationName = graceIds.OrganizationName,
+                                RepositoryId = graceIds.RepositoryIdString,
+                                RepositoryName = graceIds.RepositoryName,
+                                CorrelationId = graceIds.CorrelationId
+                            )
+
+                        let! result = Grace.SDK.PromotionSet.Create(parameters)
+
+                        match result with
+                        | Ok returnValue ->
+                            if
+                                not (parseResult |> json)
+                                && not (parseResult |> silent)
+                            then
+                                AnsiConsole.MarkupLine(
+                                    $"[green]Created promotion set[/] {Markup.Escape(promotionSetId.ToString())} [green]for target branch[/] {Markup.Escape(targetBranchId.ToString())}"
+                                )
+
+                            return Ok returnValue
+                        | Error error -> return Error error
+            with
+            | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
+        }
+
+    type CreatePromotionSet() =
+        inherit AsynchronousCommandLineAction()
+
+        override _.InvokeAsync(parseResult: ParseResult, _: CancellationToken) : Task<int> =
+            task {
+                let! result = createPromotionSetHandler parseResult
+                return result |> renderOutput parseResult
+            }
+
+    let private getPromotionSetHandler (parseResult: ParseResult) =
+        task {
+            try
+                if parseResult |> verbose then printParseResult parseResult
+                let graceIds = parseResult |> getNormalizedIdsAndNames
+                let promotionSetIdRaw = parseResult.GetValue(Options.promotionSetId)
+
+                match tryParseGuid promotionSetIdRaw (QueueError.getErrorMessage QueueError.InvalidPromotionSetId) parseResult with
+                | Error error -> return Error error
+                | Ok promotionSetId ->
+                    match! getPromotionSet graceIds promotionSetId with
+                    | Ok returnValue ->
+                        renderPromotionSet parseResult returnValue.ReturnValue
+                        return Ok returnValue
+                    | Error error -> return Error error
+            with
+            | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
+        }
+
+    type GetPromotionSet() =
+        inherit AsynchronousCommandLineAction()
+
+        override _.InvokeAsync(parseResult: ParseResult, _: CancellationToken) : Task<int> =
+            task {
+                let! result = getPromotionSetHandler parseResult
+                return result |> renderOutput parseResult
+            }
+
+    let private getPromotionSetEventsHandler (parseResult: ParseResult) =
+        task {
+            try
+                if parseResult |> verbose then printParseResult parseResult
+                let graceIds = parseResult |> getNormalizedIdsAndNames
+                let promotionSetIdRaw = parseResult.GetValue(Options.promotionSetId)
+
+                match tryParseGuid promotionSetIdRaw (QueueError.getErrorMessage QueueError.InvalidPromotionSetId) parseResult with
+                | Error error -> return Error error
+                | Ok promotionSetId ->
+                    let parameters =
+                        Parameters.PromotionSet.GetPromotionSetEventsParameters(
+                            PromotionSetId = promotionSetId.ToString(),
+                            OwnerId = graceIds.OwnerIdString,
+                            OwnerName = graceIds.OwnerName,
+                            OrganizationId = graceIds.OrganizationIdString,
+                            OrganizationName = graceIds.OrganizationName,
+                            RepositoryId = graceIds.RepositoryIdString,
+                            RepositoryName = graceIds.RepositoryName,
+                            CorrelationId = graceIds.CorrelationId
+                        )
+
+                    let! result = Grace.SDK.PromotionSet.GetEvents(parameters)
+
+                    match result with
+                    | Ok returnValue ->
+                        renderPromotionSetEvents parseResult promotionSetId returnValue.ReturnValue
+                        return Ok returnValue
+                    | Error error -> return Error error
+            with
+            | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
+        }
+
+    type GetPromotionSetEvents() =
+        inherit AsynchronousCommandLineAction()
+
+        override _.InvokeAsync(parseResult: ParseResult, _: CancellationToken) : Task<int> =
+            task {
+                let! result = getPromotionSetEventsHandler parseResult
+                return result |> renderOutput parseResult
+            }
+
+    let private updateInputPromotionsHandler (parseResult: ParseResult) =
+        task {
+            try
+                if parseResult |> verbose then printParseResult parseResult
+                let graceIds = parseResult |> getNormalizedIdsAndNames
+                let promotionSetIdRaw = parseResult.GetValue(Options.promotionSetId)
+                let promotionPointersFilePath = parseResult.GetValue(Options.promotionPointersFile)
+
+                match tryParseGuid promotionSetIdRaw (QueueError.getErrorMessage QueueError.InvalidPromotionSetId) parseResult with
+                | Error error -> return Error error
+                | Ok promotionSetId ->
+                    match tryDeserializePromotionPointersFromFile promotionPointersFilePath with
+                    | Error errorText -> return Error(GraceError.Create errorText (getCorrelationId parseResult))
+                    | Ok promotionPointers ->
+                        let parameters =
+                            Parameters.PromotionSet.UpdatePromotionSetInputPromotionsParameters(
+                                PromotionSetId = promotionSetId.ToString(),
+                                PromotionPointers = promotionPointers,
+                                OwnerId = graceIds.OwnerIdString,
+                                OwnerName = graceIds.OwnerName,
+                                OrganizationId = graceIds.OrganizationIdString,
+                                OrganizationName = graceIds.OrganizationName,
+                                RepositoryId = graceIds.RepositoryIdString,
+                                RepositoryName = graceIds.RepositoryName,
+                                CorrelationId = graceIds.CorrelationId
+                            )
+
+                        let! result = Grace.SDK.PromotionSet.UpdateInputPromotions(parameters)
+
+                        match result with
+                        | Ok returnValue ->
+                            if
+                                not (parseResult |> json)
+                                && not (parseResult |> silent)
+                            then
+                                AnsiConsole.MarkupLine(
+                                    $"[green]Updated input promotions for promotion set[/] {Markup.Escape(promotionSetId.ToString())} [green]with[/] {promotionPointers.Length} [green]pointer(s).[/]"
+                                )
+
+                            return Ok returnValue
+                        | Error error -> return Error error
+            with
+            | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
+        }
+
+    type UpdateInputPromotions() =
+        inherit AsynchronousCommandLineAction()
+
+        override _.InvokeAsync(parseResult: ParseResult, _: CancellationToken) : Task<int> =
+            task {
+                let! result = updateInputPromotionsHandler parseResult
+                return result |> renderOutput parseResult
+            }
+
+    let private recomputePromotionSetHandler (parseResult: ParseResult) =
+        task {
+            try
+                if parseResult |> verbose then printParseResult parseResult
+                let graceIds = parseResult |> getNormalizedIdsAndNames
+                let promotionSetIdRaw = parseResult.GetValue(Options.promotionSetId)
+
+                let reasonText =
+                    parseResult.GetValue(Options.reason)
+                    |> Option.ofObj
+                    |> Option.defaultValue String.Empty
+
+                match tryParseGuid promotionSetIdRaw (QueueError.getErrorMessage QueueError.InvalidPromotionSetId) parseResult with
+                | Error error -> return Error error
+                | Ok promotionSetId ->
+                    let parameters =
+                        Parameters.PromotionSet.RecomputePromotionSetParameters(
+                            PromotionSetId = promotionSetId.ToString(),
+                            Reason = reasonText,
+                            OwnerId = graceIds.OwnerIdString,
+                            OwnerName = graceIds.OwnerName,
+                            OrganizationId = graceIds.OrganizationIdString,
+                            OrganizationName = graceIds.OrganizationName,
+                            RepositoryId = graceIds.RepositoryIdString,
+                            RepositoryName = graceIds.RepositoryName,
+                            CorrelationId = graceIds.CorrelationId
+                        )
+
+                    let! result = Grace.SDK.PromotionSet.Recompute(parameters)
+
+                    match result with
+                    | Ok returnValue ->
+                        if
+                            not (parseResult |> json)
+                            && not (parseResult |> silent)
+                        then
+                            AnsiConsole.MarkupLine($"[green]Requested recompute for promotion set[/] {Markup.Escape(promotionSetId.ToString())}")
+
+                        return Ok returnValue
+                    | Error error -> return Error error
+            with
+            | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
+        }
+
+    type RecomputePromotionSet() =
+        inherit AsynchronousCommandLineAction()
+
+        override _.InvokeAsync(parseResult: ParseResult, _: CancellationToken) : Task<int> =
+            task {
+                let! result = recomputePromotionSetHandler parseResult
+                return result |> renderOutput parseResult
+            }
+
+    let private applyPromotionSetHandler (parseResult: ParseResult) =
+        task {
+            try
+                if parseResult |> verbose then printParseResult parseResult
+                let graceIds = parseResult |> getNormalizedIdsAndNames
+                let promotionSetIdRaw = parseResult.GetValue(Options.promotionSetId)
+
+                match tryParseGuid promotionSetIdRaw (QueueError.getErrorMessage QueueError.InvalidPromotionSetId) parseResult with
+                | Error error -> return Error error
+                | Ok promotionSetId ->
+                    let parameters =
+                        Parameters.PromotionSet.ApplyPromotionSetParameters(
+                            PromotionSetId = promotionSetId.ToString(),
+                            OwnerId = graceIds.OwnerIdString,
+                            OwnerName = graceIds.OwnerName,
+                            OrganizationId = graceIds.OrganizationIdString,
+                            OrganizationName = graceIds.OrganizationName,
+                            RepositoryId = graceIds.RepositoryIdString,
+                            RepositoryName = graceIds.RepositoryName,
+                            CorrelationId = graceIds.CorrelationId
+                        )
+
+                    let! result = Grace.SDK.PromotionSet.Apply(parameters)
+
+                    match result with
+                    | Ok returnValue ->
+                        if
+                            not (parseResult |> json)
+                            && not (parseResult |> silent)
+                        then
+                            AnsiConsole.MarkupLine($"[green]Requested apply for promotion set[/] {Markup.Escape(promotionSetId.ToString())}")
+
+                        return Ok returnValue
+                    | Error error -> return Error error
+            with
+            | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
+        }
+
+    type ApplyPromotionSet() =
+        inherit AsynchronousCommandLineAction()
+
+        override _.InvokeAsync(parseResult: ParseResult, _: CancellationToken) : Task<int> =
+            task {
+                let! result = applyPromotionSetHandler parseResult
+                return result |> renderOutput parseResult
+            }
+
+    let private deletePromotionSetHandler (parseResult: ParseResult) =
+        task {
+            try
+                if parseResult |> verbose then printParseResult parseResult
+                let graceIds = parseResult |> getNormalizedIdsAndNames
+                let promotionSetIdRaw = parseResult.GetValue(Options.promotionSetId)
+                let force = parseResult.GetValue(Options.force)
+
+                let deleteReason =
+                    parseResult.GetValue(Options.deleteReason)
+                    |> Option.ofObj
+                    |> Option.defaultValue String.Empty
+
+                match tryParseGuid promotionSetIdRaw (QueueError.getErrorMessage QueueError.InvalidPromotionSetId) parseResult with
+                | Error error -> return Error error
+                | Ok promotionSetId ->
+                    let parameters =
+                        Parameters.PromotionSet.DeletePromotionSetParameters(
+                            PromotionSetId = promotionSetId.ToString(),
+                            Force = force,
+                            DeleteReason = deleteReason,
+                            OwnerId = graceIds.OwnerIdString,
+                            OwnerName = graceIds.OwnerName,
+                            OrganizationId = graceIds.OrganizationIdString,
+                            OrganizationName = graceIds.OrganizationName,
+                            RepositoryId = graceIds.RepositoryIdString,
+                            RepositoryName = graceIds.RepositoryName,
+                            CorrelationId = graceIds.CorrelationId
+                        )
+
+                    let! result = Grace.SDK.PromotionSet.Delete(parameters)
+
+                    match result with
+                    | Ok returnValue ->
+                        if
+                            not (parseResult |> json)
+                            && not (parseResult |> silent)
+                        then
+                            AnsiConsole.MarkupLine($"[green]Deleted promotion set[/] {Markup.Escape(promotionSetId.ToString())}")
+
+                        return Ok returnValue
+                    | Error error -> return Error error
+            with
+            | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
+        }
+
+    type DeletePromotionSet() =
+        inherit AsynchronousCommandLineAction()
+
+        override _.InvokeAsync(parseResult: ParseResult, _: CancellationToken) : Task<int> =
+            task {
+                let! result = deletePromotionSetHandler parseResult
+                return result |> renderOutput parseResult
+            }
+
     let private resolveConflictsHandler (parseResult: ParseResult) =
         task {
             try
@@ -395,7 +877,69 @@ module PromotionSetCommand =
             |> addOption Options.repositoryId
 
         let promotionSetCommand = new Command("promotion-set", Description = "Manage promotion sets.")
+        promotionSetCommand.Aliases.Add("prset")
         let conflictsCommand = new Command("conflicts", Description = "Inspect and resolve promotion set conflicts.")
+
+        let createCommand =
+            new Command("create", Description = "Create a promotion set for a target branch.")
+            |> addOption Options.promotionSetIdOptional
+            |> addOption Options.targetBranchId
+            |> addCommonOptions
+
+        createCommand.Action <- new CreatePromotionSet()
+        promotionSetCommand.Subcommands.Add(createCommand)
+
+        let getCommand =
+            new Command("get", Description = "Get promotion set details.")
+            |> addOption Options.promotionSetId
+            |> addCommonOptions
+
+        getCommand.Action <- new GetPromotionSet()
+        promotionSetCommand.Subcommands.Add(getCommand)
+
+        let getEventsCommand =
+            new Command("get-events", Description = "Get promotion set events.")
+            |> addOption Options.promotionSetId
+            |> addCommonOptions
+
+        getEventsCommand.Action <- new GetPromotionSetEvents()
+        promotionSetCommand.Subcommands.Add(getEventsCommand)
+
+        let updateInputPromotionsCommand =
+            new Command("update-input-promotions", Description = "Update input promotion pointers for a promotion set.")
+            |> addOption Options.promotionSetId
+            |> addOption Options.promotionPointersFile
+            |> addCommonOptions
+
+        updateInputPromotionsCommand.Action <- new UpdateInputPromotions()
+        promotionSetCommand.Subcommands.Add(updateInputPromotionsCommand)
+
+        let recomputeCommand =
+            new Command("recompute", Description = "Request recomputation of promotion set steps.")
+            |> addOption Options.promotionSetId
+            |> addOption Options.reason
+            |> addCommonOptions
+
+        recomputeCommand.Action <- new RecomputePromotionSet()
+        promotionSetCommand.Subcommands.Add(recomputeCommand)
+
+        let applyCommand =
+            new Command("apply", Description = "Apply a promotion set.")
+            |> addOption Options.promotionSetId
+            |> addCommonOptions
+
+        applyCommand.Action <- new ApplyPromotionSet()
+        promotionSetCommand.Subcommands.Add(applyCommand)
+
+        let deleteCommand =
+            new Command("delete", Description = "Logically delete a promotion set.")
+            |> addOption Options.promotionSetId
+            |> addOption Options.force
+            |> addOption Options.deleteReason
+            |> addCommonOptions
+
+        deleteCommand.Action <- new DeletePromotionSet()
+        promotionSetCommand.Subcommands.Add(deleteCommand)
 
         let showConflictsCommand =
             new Command("show", Description = "Show conflicts for a promotion set and print conflict artifact URIs.")

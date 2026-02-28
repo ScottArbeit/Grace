@@ -42,6 +42,11 @@ module EndpointAuthorizationManifest =
             endpoint "POST" "/auth/token/create" Authenticated
             endpoint "POST" "/auth/token/list" Authenticated
             endpoint "POST" "/auth/token/revoke" Authenticated
+            endpoint "POST" "/agent/session/active" (Authorized(RepoRead, Repository))
+            endpoint "POST" "/agent/session/listActive" (Authorized(RepoRead, Repository))
+            endpoint "POST" "/agent/session/start" (Authorized(RepoWrite, Repository))
+            endpoint "POST" "/agent/session/status" (Authorized(RepoRead, Repository))
+            endpoint "POST" "/agent/session/stop" (Authorized(RepoWrite, Repository))
             endpoint "POST" "/branch/assign" Authenticated
             endpoint "POST" "/branch/checkpoint" Authenticated
             endpoint "POST" "/branch/commit" (Authorized(BranchWrite, Branch))
@@ -158,17 +163,34 @@ module EndpointAuthorizationManifest =
             endpoint "POST" "/repository/setVisibility" (Authorized(RepoAdmin, Repository))
             endpoint "POST" "/repository/undelete" Authenticated
             endpoint "POST" "/review/checkpoint" Authenticated
+            endpoint "POST" "/review/candidate/attestations" Authenticated
+            endpoint "POST" "/review/candidate/cancel" Authenticated
+            endpoint "POST" "/review/candidate/gate-rerun" Authenticated
+            endpoint "POST" "/review/candidate/get" Authenticated
+            endpoint "POST" "/review/candidate/required-actions" Authenticated
+            endpoint "POST" "/review/candidate/resolve" Authenticated
+            endpoint "POST" "/review/candidate/retry" Authenticated
             endpoint "POST" "/review/deepen" Authenticated
             endpoint "POST" "/review/notes" Authenticated
+            endpoint "POST" "/review/report/get" Authenticated
             endpoint "POST" "/review/resolve" Authenticated
             endpoint "POST" "/storage/getDownloadUri" (Authorized(PathRead, Path))
             endpoint "POST" "/storage/getUploadMetadataForFiles" (Authorized(PathWrite, Path))
             endpoint "POST" "/storage/getUploadUri" (Authorized(PathWrite, Path))
             endpoint "POST" "/work/create" (Authorized(RepoWrite, Repository))
+            endpoint "POST" "/work/add-summary" Authenticated
             endpoint "POST" "/work/get" Authenticated
             endpoint "POST" "/work/link/artifact" Authenticated
             endpoint "POST" "/work/link/promotion-set" Authenticated
             endpoint "POST" "/work/link/reference" Authenticated
+            endpoint "POST" "/work/links/list" Authenticated
+            endpoint "POST" "/work/attachments/list" Authenticated
+            endpoint "POST" "/work/attachments/show" Authenticated
+            endpoint "POST" "/work/attachments/download" Authenticated
+            endpoint "POST" "/work/links/remove/artifact" Authenticated
+            endpoint "POST" "/work/links/remove/artifact-type" Authenticated
+            endpoint "POST" "/work/links/remove/promotion-set" Authenticated
+            endpoint "POST" "/work/links/remove/reference" Authenticated
             endpoint "POST" "/work/update" Authenticated
             endpoint "GET" "/metrics" (Authorized(SystemAdmin, System))
             endpoint "GET" "/notifications" Authenticated

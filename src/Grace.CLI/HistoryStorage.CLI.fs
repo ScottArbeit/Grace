@@ -1,5 +1,6 @@
 namespace Grace.CLI
 
+open Grace.CLI.Text
 open Grace.Shared
 open Grace.Shared.Client
 open Grace.Shared.Utilities
@@ -511,12 +512,52 @@ module HistoryStorage =
 
         pruneIfNeeded historyConfig |> ignore
 
+    let private tryGetTopLevelCommand (tokens: string array) =
+        if isNull tokens || tokens.Length = 0 then
+            None
+        else
+            let comparison =
+                if runningOnWindows then
+                    StringComparison.InvariantCultureIgnoreCase
+                else
+                    StringComparison.InvariantCulture
+
+            let isOptionWithValue (token: string) =
+                token.Equals(OptionName.Output, comparison)
+                || token.Equals("-o", comparison)
+                || token.Equals(OptionName.CorrelationId, comparison)
+                || token.Equals("-c", comparison)
+                || token.Equals(OptionName.Source, comparison)
+
+            let rec loop index =
+                if index >= tokens.Length then
+                    None
+                else
+                    let token = tokens[index]
+
+                    if token = "--" then
+                        if index + 1 < tokens.Length then Some tokens[index + 1] else None
+                    elif token.StartsWith("-", StringComparison.Ordinal) then
+                        let nextIndex = if isOptionWithValue token then index + 2 else index + 1
+                        loop nextIndex
+                    else
+                        Some token
+
+            loop 0
+
+    let private normalizeSourceOption (value: string option) =
+        value
+        |> Option.bind (fun source -> if String.IsNullOrWhiteSpace(source) then None else Some(source.Trim()))
+
     let shouldRecord (input: RecordInput) (historyConfig: UserConfiguration.HistoryConfiguration) =
         if not historyConfig.Enabled then
             false
         else
             let tokens = if isNull input.argvNormalized then Array.empty else input.argvNormalized
-            let commandName = if tokens.Length > 0 then tokens[0] else String.Empty
+
+            let commandName =
+                tryGetTopLevelCommand tokens
+                |> Option.defaultValue String.Empty
 
             let isHistory = commandName.Equals("history", StringComparison.InvariantCultureIgnoreCase)
 
@@ -557,7 +598,7 @@ module HistoryStorage =
                     durationMs = input.durationMs
                     parseSucceeded = input.parseSucceeded
                     redactions = redactions
-                    source = input.source
+                    source = normalizeSourceOption input.source
                 }
 
             Some(entry, loadResult.Configuration.History)

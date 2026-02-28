@@ -1,7 +1,6 @@
-namespace Grace.Server.Tests
+namespace Grace.Types.Tests
 
-open Grace.Actors.PromotionSetConflictModel
-open Grace.Server
+open Grace.Types.PromotionSetConflictModel
 open Microsoft.Extensions.Configuration
 open NUnit.Framework
 open System
@@ -9,7 +8,7 @@ open System.Collections.Generic
 open System.Threading.Tasks
 
 [<TestFixture>]
-type PromotionSetModelsTests() =
+type PromotionSetConflictModelTypesTests() =
 
     let sampleRequest: ConflictResolutionModelRequest =
         { FilePath = "src/app.fs"; BaseContent = Some "let value = 1"; OursContent = Some "let value = 2"; TheirsContent = Some "let value = 3" }
@@ -18,7 +17,7 @@ type PromotionSetModelsTests() =
     member _.CreateProviderDefaultsToNullProviderWhenNotConfigured() : Task =
         task {
             let configuration = ConfigurationBuilder().Build()
-            let provider = PromotionSetModels.createProvider configuration
+            let provider = createProvider configuration
 
             Assert.That(provider.ProviderName, Is.EqualTo("none"))
 
@@ -53,7 +52,7 @@ type PromotionSetModelsTests() =
                         .AddInMemoryCollection(settings)
                         .Build()
 
-                let provider = PromotionSetModels.createProvider configuration
+                let provider = createProvider configuration
 
                 Assert.That(provider.ProviderName, Is.EqualTo("OpenRouter"))
 
@@ -72,7 +71,7 @@ type PromotionSetModelsTests() =
     member _.ParseModelResponseRejectsMissingConfidence() =
         let responseJson = """{"proposedContent":"let value = 2","shouldDelete":false,"explanation":"merge"}"""
 
-        match PromotionSetModels.tryParseModelResponse responseJson with
+        match tryParseModelResponse responseJson with
         | Ok _ -> Assert.Fail("Expected parser to reject missing confidence.")
         | Error errorText -> Assert.That(errorText, Does.Contain("confidence"))
 
@@ -80,7 +79,7 @@ type PromotionSetModelsTests() =
     member _.ParseModelResponseRejectsOutOfRangeConfidence() =
         let responseJson = """{"proposedContent":"let value = 2","shouldDelete":false,"confidence":1.5,"explanation":"merge"}"""
 
-        match PromotionSetModels.tryParseModelResponse responseJson with
+        match tryParseModelResponse responseJson with
         | Ok _ -> Assert.Fail("Expected parser to reject out-of-range confidence.")
         | Error errorText -> Assert.That(errorText, Does.Contain("[0.0, 1.0]"))
 
@@ -88,7 +87,7 @@ type PromotionSetModelsTests() =
     member _.ParseModelResponseAcceptsDeleteWithoutProposedContent() =
         let responseJson = """{"proposedContent":null,"shouldDelete":true,"confidence":0.91,"explanation":"delete"}"""
 
-        match PromotionSetModels.tryParseModelResponse responseJson with
+        match tryParseModelResponse responseJson with
         | Error errorText -> Assert.Fail($"Expected delete response to parse successfully, but got error: {errorText}")
         | Ok parsed ->
             Assert.That(parsed.ShouldDelete, Is.True)

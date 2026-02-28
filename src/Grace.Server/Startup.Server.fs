@@ -20,6 +20,7 @@ open Grace.Server.Security
 open Grace.Server.Security.TestAuth
 open Grace.Shared.Converters
 open Grace.Shared.Parameters
+open Grace.Types.Automation
 open Grace.Types.Types
 open Grace.Types.Authorization
 open Grace.Types.PersonalAccessToken
@@ -55,6 +56,7 @@ open System.Linq
 open System.Reflection
 open System.Text.Json
 open System.Collections.Generic
+open System.Collections.Concurrent
 open System.Diagnostics
 open System.IO
 open System.Linq
@@ -218,6 +220,514 @@ module Application =
         let requirePathWriteForUploadUri: HttpHandler = AuthorizationMiddleware.requiresPermissions Operation.PathWrite uploadUriResourcesFromContext
 
         let requirePathRead: HttpHandler = AuthorizationMiddleware.requiresPermission Operation.PathRead downloadPathResourceFromContext
+
+        let activeAgentSessionsByAgentKey = ConcurrentDictionary<string, AgentSessionInfo>()
+        let activeAgentSessionsBySessionId = ConcurrentDictionary<string, string>()
+        let agentSessionOperationCache = ConcurrentDictionary<string, AgentSessionOperationResult>()
+        let bootstrappedAgentKeys = ConcurrentDictionary<string, byte>()
+
+        let tryParseGuid (value: string) =
+            let mutable parsed = Guid.Empty
+
+            if String.IsNullOrWhiteSpace value |> not
+               && Guid.TryParse(value, &parsed)
+               && parsed <> Guid.Empty then
+                Some parsed
+            else
+                Option.None
+
+        let resolveRepositoryId (graceIds: GraceIds) (repositoryIdFromParameters: string) =
+            if graceIds.RepositoryId <> RepositoryId.Empty then
+                graceIds.RepositoryId
+            else
+                repositoryIdFromParameters
+                |> tryParseGuid
+                |> Option.defaultValue RepositoryId.Empty
+
+        let normalizeOperationId (operationId: string) (operationName: string) (correlationId: CorrelationId) =
+            if String.IsNullOrWhiteSpace operationId then
+                $"{operationName}-{correlationId}"
+            else
+                operationId.Trim()
+
+        let normalizeSessionSource (source: string) = if String.IsNullOrWhiteSpace source then "cli" else source.Trim()
+
+        let toAgentKey (repositoryId: RepositoryId) (agentId: string) =
+            if repositoryId = RepositoryId.Empty
+               || String.IsNullOrWhiteSpace agentId then
+                String.Empty
+            else
+                $"{repositoryId:N}:{agentId.Trim().ToLowerInvariant()}"
+
+        let normalizeReplayIdentity (identity: string) =
+            if String.IsNullOrWhiteSpace identity then
+                "unknown"
+            else
+                identity.Trim().ToLowerInvariant()
+
+        let toReplayKey (repositoryId: RepositoryId) (identity: string) (operationId: string) =
+            $"{repositoryId:N}|{normalizeReplayIdentity identity}|{normalizeReplayIdentity operationId}"
+
+        let setAgentSessionParametersFromGraceIds (graceIds: GraceIds) (parameters: Common.AgentSessionParameters) =
+            if graceIds.OwnerId <> OwnerId.Empty then
+                parameters.OwnerId <- graceIds.OwnerIdString
+                parameters.OwnerName <- $"{graceIds.OwnerName}"
+
+            if graceIds.OrganizationId <> OrganizationId.Empty then
+                parameters.OrganizationId <- graceIds.OrganizationIdString
+                parameters.OrganizationName <- $"{graceIds.OrganizationName}"
+
+            if graceIds.RepositoryId <> RepositoryId.Empty then
+                parameters.RepositoryId <- graceIds.RepositoryIdString
+                parameters.RepositoryName <- $"{graceIds.RepositoryName}"
+
+        let createOperationResult (session: AgentSessionInfo) (message: string) (operationId: string) (wasReplay: bool) =
+            { AgentSessionOperationResult.Default with Session = session; Message = message; OperationId = operationId; WasIdempotentReplay = wasReplay }
+
+        let buildAgentSessionMetadata
+            (context: HttpContext)
+            (repositoryId: RepositoryId)
+            (parameters: Common.AgentSessionParameters)
+            (session: AgentSessionInfo)
+            =
+            let metadata = Services.createMetadata context
+
+            if repositoryId <> RepositoryId.Empty then
+                metadata.Properties[ nameof RepositoryId ] <- $"{repositoryId}"
+
+            if String.IsNullOrWhiteSpace parameters.OwnerId
+               |> not then
+                metadata.Properties[ nameof OwnerId ] <- parameters.OwnerId
+
+            if String.IsNullOrWhiteSpace parameters.OrganizationId
+               |> not then
+                metadata.Properties[ nameof OrganizationId ] <- parameters.OrganizationId
+
+            if String.IsNullOrWhiteSpace session.AgentId |> not then
+                metadata.Properties[ "ActorId" ] <- session.AgentId
+
+            if String.IsNullOrWhiteSpace session.SessionId |> not then
+                metadata.Properties[ "SessionId" ] <- session.SessionId
+
+            metadata
+
+        let emitAgentSessionEvent
+            (context: HttpContext)
+            (eventType: AutomationEventType)
+            (metadata: EventMetadata)
+            (operationResult: AgentSessionOperationResult)
+            =
+            task {
+                match EventingPublisher.tryCreateAgentSessionEnvelope eventType metadata operationResult with
+                | Some envelope -> do! Notification.routeAutomationEvent context.RequestServices envelope
+                | None -> ()
+            }
+
+        let tryGetActiveSessionByAgentKey (agentKey: string) =
+            match activeAgentSessionsByAgentKey.TryGetValue(agentKey) with
+            | true, session when session.LifecycleState = AgentSessionLifecycleState.Active -> Some(agentKey, session)
+            | _ -> Option.None
+
+        let tryRemoveSessionByAgentKey (agentKey: string) =
+            let mutable removedSession = AgentSessionInfo.Default
+
+            activeAgentSessionsByAgentKey.TryRemove(agentKey, &removedSession)
+            |> ignore
+
+        let tryRemoveSessionLookup (sessionId: string) =
+            let mutable removedAgentKey = String.Empty
+
+            activeAgentSessionsBySessionId.TryRemove(sessionId, &removedAgentKey)
+            |> ignore
+
+        let tryResolveActiveSession (repositoryId: RepositoryId) (agentId: string) (sessionId: string) (workItemIdOrNumber: string) =
+            let repositoryPrefix = $"{repositoryId:N}:"
+
+            if String.IsNullOrWhiteSpace sessionId |> not then
+                match activeAgentSessionsBySessionId.TryGetValue(sessionId) with
+                | true, agentKey when agentKey.StartsWith(repositoryPrefix, StringComparison.OrdinalIgnoreCase) -> tryGetActiveSessionByAgentKey agentKey
+                | _ -> Option.None
+            elif String.IsNullOrWhiteSpace agentId |> not then
+                let agentKey = toAgentKey repositoryId agentId
+                tryGetActiveSessionByAgentKey agentKey
+            elif String.IsNullOrWhiteSpace workItemIdOrNumber
+                 |> not then
+                activeAgentSessionsByAgentKey
+                |> Seq.tryPick (fun keyValue ->
+                    if
+                        keyValue.Key.StartsWith(repositoryPrefix, StringComparison.OrdinalIgnoreCase)
+                        && keyValue.Value.LifecycleState = AgentSessionLifecycleState.Active
+                        && keyValue.Value.WorkItemIdOrNumber.Equals(workItemIdOrNumber, StringComparison.OrdinalIgnoreCase)
+                    then
+                        Some(keyValue.Key, keyValue.Value)
+                    else
+                        Option.None)
+            else
+                Option.None
+
+        let startAgentSession: HttpHandler =
+            fun (_next: HttpFunc) (context: HttpContext) ->
+                task {
+                    let graceIds = Services.getGraceIds context
+                    let correlationId = Services.getCorrelationId context
+
+                    let! parameters =
+                        context
+                        |> Services.parse<Common.StartAgentSessionParameters>
+
+                    setAgentSessionParametersFromGraceIds graceIds (parameters :> Common.AgentSessionParameters)
+
+                    if String.IsNullOrWhiteSpace parameters.AgentId then
+                        return!
+                            context
+                            |> Services.result400BadRequest (GraceError.Create "AgentId is required to start an agent session." correlationId)
+                    elif String.IsNullOrWhiteSpace parameters.WorkItemIdOrNumber then
+                        return!
+                            context
+                            |> Services.result400BadRequest (GraceError.Create "WorkItemIdOrNumber is required to start an agent session." correlationId)
+                    else
+                        let repositoryId = resolveRepositoryId graceIds parameters.RepositoryId
+
+                        if repositoryId = RepositoryId.Empty then
+                            return!
+                                context
+                                |> Services.result400BadRequest (GraceError.Create "RepositoryId is required to start an agent session." correlationId)
+                        else
+                            let operationId = normalizeOperationId parameters.OperationId "start" correlationId
+                            let replayKey = toReplayKey repositoryId parameters.AgentId operationId
+
+                            match agentSessionOperationCache.TryGetValue(replayKey) with
+                            | true, replayResult ->
+                                let replay = { replayResult with WasIdempotentReplay = true }
+
+                                return!
+                                    context
+                                    |> Services.result200Ok (GraceReturnValue.Create replay correlationId)
+                            | _ ->
+                                let agentKey = toAgentKey repositoryId parameters.AgentId
+                                let source = normalizeSessionSource parameters.Source
+
+                                match tryGetActiveSessionByAgentKey agentKey with
+                                | Some (_, existingSession) ->
+                                    if existingSession.WorkItemIdOrNumber.Equals(parameters.WorkItemIdOrNumber, StringComparison.OrdinalIgnoreCase) then
+                                        let replayResult =
+                                            createOperationResult existingSession "Work session is already active for this work item." operationId true
+
+                                        agentSessionOperationCache[replayKey] <- replayResult
+
+                                        return!
+                                            context
+                                            |> Services.result200Ok (GraceReturnValue.Create replayResult correlationId)
+                                    else
+                                        let graceError =
+                                            GraceError.Create
+                                                ($"An active session already exists for work item '{existingSession.WorkItemIdOrNumber}'. Stop it before starting another.")
+                                                correlationId
+
+                                        return! context |> Services.result400BadRequest graceError
+                                | None ->
+                                    let now = getCurrentInstant ()
+
+                                    let newSession =
+                                        { AgentSessionInfo.Default with
+                                            SessionId =
+                                                (if String.IsNullOrWhiteSpace parameters.OperationId then
+                                                     Guid.NewGuid().ToString("N")
+                                                 else
+                                                     parameters.OperationId.Trim())
+                                            AgentId = parameters.AgentId
+                                            AgentDisplayName = parameters.AgentDisplayName
+                                            WorkItemIdOrNumber = parameters.WorkItemIdOrNumber
+                                            PromotionSetId = parameters.PromotionSetId
+                                            Source = source
+                                            LifecycleState = AgentSessionLifecycleState.Active
+                                            StartedAt = Some now
+                                            LastUpdatedAt = Some now
+                                        }
+
+                                    activeAgentSessionsByAgentKey[agentKey] <- newSession
+                                    activeAgentSessionsBySessionId[newSession.SessionId] <- agentKey
+
+                                    let operationResult = createOperationResult newSession "Agent work session started." operationId false
+
+                                    agentSessionOperationCache[replayKey] <- operationResult
+
+                                    let metadata = buildAgentSessionMetadata context repositoryId (parameters :> Common.AgentSessionParameters) newSession
+
+                                    do! emitAgentSessionEvent context AutomationEventType.AgentWorkStarted metadata operationResult
+
+                                    if bootstrappedAgentKeys.TryAdd(agentKey, 0uy) then
+                                        do! emitAgentSessionEvent context AutomationEventType.AgentBootstrapped metadata operationResult
+
+                                    return!
+                                        context
+                                        |> Services.result200Ok (GraceReturnValue.Create operationResult correlationId)
+                }
+
+        let stopAgentSession: HttpHandler =
+            fun (_next: HttpFunc) (context: HttpContext) ->
+                task {
+                    let graceIds = Services.getGraceIds context
+                    let correlationId = Services.getCorrelationId context
+
+                    let! parameters =
+                        context
+                        |> Services.parse<Common.StopAgentSessionParameters>
+
+                    setAgentSessionParametersFromGraceIds graceIds (parameters :> Common.AgentSessionParameters)
+
+                    let repositoryId = resolveRepositoryId graceIds parameters.RepositoryId
+
+                    if repositoryId = RepositoryId.Empty then
+                        return!
+                            context
+                            |> Services.result400BadRequest (GraceError.Create "RepositoryId is required to stop an agent session." correlationId)
+                    else
+                        let operationId = normalizeOperationId parameters.OperationId "stop" correlationId
+
+                        let replayIdentity =
+                            if String.IsNullOrWhiteSpace parameters.AgentId
+                               |> not then
+                                parameters.AgentId
+                            elif String.IsNullOrWhiteSpace parameters.SessionId
+                                 |> not then
+                                parameters.SessionId
+                            elif String.IsNullOrWhiteSpace parameters.WorkItemIdOrNumber
+                                 |> not then
+                                parameters.WorkItemIdOrNumber
+                            else
+                                "unknown"
+
+                        let replayKey = toReplayKey repositoryId replayIdentity operationId
+
+                        match agentSessionOperationCache.TryGetValue(replayKey) with
+                        | true, replayResult ->
+                            let replay = { replayResult with WasIdempotentReplay = true }
+
+                            return!
+                                context
+                                |> Services.result200Ok (GraceReturnValue.Create replay correlationId)
+                        | _ ->
+                            match tryResolveActiveSession repositoryId parameters.AgentId parameters.SessionId parameters.WorkItemIdOrNumber with
+                            | Some (agentKey, activeSession) ->
+                                if String.IsNullOrWhiteSpace parameters.WorkItemIdOrNumber
+                                   |> not
+                                   && not
+                                      <| activeSession.WorkItemIdOrNumber.Equals(parameters.WorkItemIdOrNumber, StringComparison.OrdinalIgnoreCase) then
+                                    return!
+                                        context
+                                        |> Services.result400BadRequest (
+                                            GraceError.Create
+                                                ($"Active session targets work item '{activeSession.WorkItemIdOrNumber}', but stop requested '{parameters.WorkItemIdOrNumber}'.")
+                                                correlationId
+                                        )
+                                else
+                                    let now = getCurrentInstant ()
+
+                                    let stoppedSession =
+                                        { activeSession with
+                                            LifecycleState = AgentSessionLifecycleState.Stopped
+                                            LastUpdatedAt = Some now
+                                            StoppedAt = Some now
+                                        }
+
+                                    tryRemoveSessionByAgentKey agentKey
+                                    tryRemoveSessionLookup activeSession.SessionId
+
+                                    let stopMessage =
+                                        if String.IsNullOrWhiteSpace parameters.StopReason then
+                                            "Agent work session stopped."
+                                        else
+                                            $"Agent work session stopped: {parameters.StopReason}"
+
+                                    let operationResult = createOperationResult stoppedSession stopMessage operationId false
+
+                                    agentSessionOperationCache[replayKey] <- operationResult
+
+                                    let metadata = buildAgentSessionMetadata context repositoryId (parameters :> Common.AgentSessionParameters) stoppedSession
+
+                                    do! emitAgentSessionEvent context AutomationEventType.AgentWorkStopped metadata operationResult
+
+                                    return!
+                                        context
+                                        |> Services.result200Ok (GraceReturnValue.Create operationResult correlationId)
+                            | None ->
+                                let now = getCurrentInstant ()
+
+                                let inactiveSession =
+                                    { AgentSessionInfo.Default with
+                                        SessionId = parameters.SessionId
+                                        AgentId = parameters.AgentId
+                                        AgentDisplayName = parameters.AgentDisplayName
+                                        WorkItemIdOrNumber = parameters.WorkItemIdOrNumber
+                                        Source = "cli"
+                                        LifecycleState = AgentSessionLifecycleState.Inactive
+                                        LastUpdatedAt = Some now
+                                        StoppedAt = Some now
+                                    }
+
+                                let operationResult =
+                                    createOperationResult inactiveSession "No active session matched this request. Nothing to stop." operationId true
+
+                                agentSessionOperationCache[replayKey] <- operationResult
+
+                                return!
+                                    context
+                                    |> Services.result200Ok (GraceReturnValue.Create operationResult correlationId)
+                }
+
+        let getAgentSessionStatus: HttpHandler =
+            fun (_next: HttpFunc) (context: HttpContext) ->
+                task {
+                    let graceIds = Services.getGraceIds context
+                    let correlationId = Services.getCorrelationId context
+
+                    let! parameters =
+                        context
+                        |> Services.parse<Common.GetAgentSessionStatusParameters>
+
+                    setAgentSessionParametersFromGraceIds graceIds (parameters :> Common.AgentSessionParameters)
+
+                    let repositoryId = resolveRepositoryId graceIds parameters.RepositoryId
+
+                    if repositoryId = RepositoryId.Empty then
+                        return!
+                            context
+                            |> Services.result400BadRequest (GraceError.Create "RepositoryId is required to get agent session status." correlationId)
+                    else
+                        let now = getCurrentInstant ()
+
+                        let result =
+                            match tryResolveActiveSession repositoryId parameters.AgentId parameters.SessionId parameters.WorkItemIdOrNumber with
+                            | Some (_, activeSession) ->
+                                createOperationResult
+                                    activeSession
+                                    "Active agent session found."
+                                    (normalizeOperationId String.Empty "status" correlationId)
+                                    false
+                            | None ->
+                                let inactiveSession =
+                                    { AgentSessionInfo.Default with
+                                        SessionId = parameters.SessionId
+                                        AgentId = parameters.AgentId
+                                        AgentDisplayName = parameters.AgentDisplayName
+                                        WorkItemIdOrNumber = parameters.WorkItemIdOrNumber
+                                        LifecycleState = AgentSessionLifecycleState.Inactive
+                                        LastUpdatedAt = Some now
+                                    }
+
+                                createOperationResult
+                                    inactiveSession
+                                    "No active agent session matched this request."
+                                    (normalizeOperationId String.Empty "status" correlationId)
+                                    false
+
+                        return!
+                            context
+                            |> Services.result200Ok (GraceReturnValue.Create result correlationId)
+                }
+
+        let getActiveAgentSession: HttpHandler =
+            fun (_next: HttpFunc) (context: HttpContext) ->
+                task {
+                    let graceIds = Services.getGraceIds context
+                    let correlationId = Services.getCorrelationId context
+
+                    let! parameters =
+                        context
+                        |> Services.parse<Common.GetActiveAgentSessionParameters>
+
+                    setAgentSessionParametersFromGraceIds graceIds (parameters :> Common.AgentSessionParameters)
+
+                    let repositoryId = resolveRepositoryId graceIds parameters.RepositoryId
+
+                    if repositoryId = RepositoryId.Empty then
+                        return!
+                            context
+                            |> Services.result400BadRequest (GraceError.Create "RepositoryId is required to get the active agent session." correlationId)
+                    else
+                        let now = getCurrentInstant ()
+
+                        let result =
+                            match tryResolveActiveSession repositoryId parameters.AgentId String.Empty parameters.WorkItemIdOrNumber with
+                            | Some (_, activeSession) ->
+                                createOperationResult
+                                    activeSession
+                                    "Active agent session found."
+                                    (normalizeOperationId String.Empty "active" correlationId)
+                                    false
+                            | None ->
+                                let inactiveSession =
+                                    { AgentSessionInfo.Default with
+                                        AgentId = parameters.AgentId
+                                        AgentDisplayName = parameters.AgentDisplayName
+                                        WorkItemIdOrNumber = parameters.WorkItemIdOrNumber
+                                        LifecycleState = AgentSessionLifecycleState.Inactive
+                                        LastUpdatedAt = Some now
+                                    }
+
+                                createOperationResult
+                                    inactiveSession
+                                    "No active agent session matched this request."
+                                    (normalizeOperationId String.Empty "active" correlationId)
+                                    false
+
+                        return!
+                            context
+                            |> Services.result200Ok (GraceReturnValue.Create result correlationId)
+                }
+
+        let listActiveAgentSessions: HttpHandler =
+            fun (_next: HttpFunc) (context: HttpContext) ->
+                task {
+                    let graceIds = Services.getGraceIds context
+                    let correlationId = Services.getCorrelationId context
+
+                    let! parameters =
+                        context
+                        |> Services.parse<Common.ListActiveAgentSessionsParameters>
+
+                    setAgentSessionParametersFromGraceIds graceIds (parameters :> Common.AgentSessionParameters)
+
+                    let repositoryId = resolveRepositoryId graceIds parameters.RepositoryId
+
+                    if repositoryId = RepositoryId.Empty then
+                        return!
+                            context
+                            |> Services.result400BadRequest (GraceError.Create "RepositoryId is required to list active agent sessions." correlationId)
+                    else
+                        let repositoryPrefix = $"{repositoryId:N}:"
+
+                        let maximumSessionCount =
+                            if parameters.MaximumSessionCount <= 0 then
+                                25
+                            else
+                                parameters.MaximumSessionCount
+
+                        let sessions =
+                            activeAgentSessionsByAgentKey
+                            |> Seq.filter (fun keyValue ->
+                                keyValue.Key.StartsWith(repositoryPrefix, StringComparison.OrdinalIgnoreCase)
+                                && keyValue.Value.LifecycleState = AgentSessionLifecycleState.Active)
+                            |> Seq.map (fun keyValue -> keyValue.Value)
+                            |> Seq.sortByDescending (fun session ->
+                                match session.LastUpdatedAt with
+                                | Some instant -> instant.ToUnixTimeTicks()
+                                | None -> Int64.MinValue)
+                            |> Seq.truncate maximumSessionCount
+                            |> Seq.toList
+
+                        let result =
+                            { AgentSessionListResult.Default with
+                                Sessions = sessions
+                                Count = sessions.Length
+                                Message = $"Found {sessions.Length} active agent session(s)."
+                            }
+
+                        return!
+                            context
+                            |> Services.result200Ok (GraceReturnValue.Create result correlationId)
+                }
 
         let endpoints =
             [
@@ -439,6 +949,24 @@ module Application =
                                |> addMetadata typeof<Owner.UndeleteOwnerParameters> ]
                     ]
                 subRoute
+                    "/agent"
+                    [
+                        POST [ route "/session/start" (composeHandlers requireRepoWrite startAgentSession)
+                               |> addMetadata typeof<Grace.Shared.Parameters.Common.StartAgentSessionParameters>
+
+                               route "/session/stop" (composeHandlers requireRepoWrite stopAgentSession)
+                               |> addMetadata typeof<Grace.Shared.Parameters.Common.StopAgentSessionParameters>
+
+                               route "/session/status" (composeHandlers requireRepoRead getAgentSessionStatus)
+                               |> addMetadata typeof<Grace.Shared.Parameters.Common.GetAgentSessionStatusParameters>
+
+                               route "/session/active" (composeHandlers requireRepoRead getActiveAgentSession)
+                               |> addMetadata typeof<Grace.Shared.Parameters.Common.GetActiveAgentSessionParameters>
+
+                               route "/session/listActive" (composeHandlers requireRepoRead listActiveAgentSessions)
+                               |> addMetadata typeof<Grace.Shared.Parameters.Common.ListActiveAgentSessionsParameters> ]
+                    ]
+                subRoute
                     "/work"
                     [
                         POST [ route "/create" (composeHandlers requireRepoWrite WorkItem.Create)
@@ -450,6 +978,9 @@ module Application =
                                route "/update" WorkItem.Update
                                |> addMetadata typeof<WorkItem.UpdateWorkItemParameters>
 
+                               route "/add-summary" WorkItem.AddSummary
+                               |> addMetadata typeof<WorkItem.AddSummaryParameters>
+
                                route "/link/reference" WorkItem.LinkReference
                                |> addMetadata typeof<WorkItem.LinkReferenceParameters>
 
@@ -457,7 +988,31 @@ module Application =
                                |> addMetadata typeof<WorkItem.LinkArtifactParameters>
 
                                route "/link/promotion-set" WorkItem.LinkPromotionSet
-                               |> addMetadata typeof<WorkItem.LinkPromotionSetParameters> ]
+                               |> addMetadata typeof<WorkItem.LinkPromotionSetParameters>
+
+                               route "/links/list" WorkItem.GetLinks
+                               |> addMetadata typeof<WorkItem.GetWorkItemLinksParameters>
+
+                               route "/attachments/list" WorkItem.ListAttachments
+                               |> addMetadata typeof<WorkItem.ListWorkItemAttachmentsParameters>
+
+                               route "/attachments/show" WorkItem.ShowAttachment
+                               |> addMetadata typeof<WorkItem.ShowWorkItemAttachmentParameters>
+
+                               route "/attachments/download" WorkItem.DownloadAttachment
+                               |> addMetadata typeof<WorkItem.DownloadWorkItemAttachmentParameters>
+
+                               route "/links/remove/reference" WorkItem.RemoveReferenceLink
+                               |> addMetadata typeof<WorkItem.RemoveReferenceLinkParameters>
+
+                               route "/links/remove/promotion-set" WorkItem.RemovePromotionSetLink
+                               |> addMetadata typeof<WorkItem.RemovePromotionSetLinkParameters>
+
+                               route "/links/remove/artifact" WorkItem.RemoveArtifactLink
+                               |> addMetadata typeof<WorkItem.RemoveArtifactLinkParameters>
+
+                               route "/links/remove/artifact-type" WorkItem.RemoveArtifactTypeLinks
+                               |> addMetadata typeof<WorkItem.RemoveArtifactTypeLinksParameters> ]
                     ]
                 subRoute
                     "/policy"
@@ -473,6 +1028,30 @@ module Application =
                     [
                         POST [ route "/notes" Review.GetNotes
                                |> addMetadata typeof<Review.GetReviewNotesParameters>
+
+                               route "/candidate/resolve" Review.ResolveCandidateIdentity
+                               |> addMetadata typeof<Review.ResolveCandidateIdentityParameters>
+
+                               route "/candidate/get" Review.GetCandidate
+                               |> addMetadata typeof<Review.CandidateProjectionParameters>
+
+                               route "/candidate/required-actions" Review.GetCandidateRequiredActions
+                               |> addMetadata typeof<Review.CandidateProjectionParameters>
+
+                               route "/candidate/attestations" Review.GetCandidateAttestations
+                               |> addMetadata typeof<Review.CandidateProjectionParameters>
+
+                               route "/report/get" Review.GetReviewReport
+                               |> addMetadata typeof<Review.CandidateProjectionParameters>
+
+                               route "/candidate/retry" Review.RetryCandidate
+                               |> addMetadata typeof<Review.CandidateProjectionParameters>
+
+                               route "/candidate/cancel" Review.CancelCandidate
+                               |> addMetadata typeof<Review.CandidateProjectionParameters>
+
+                               route "/candidate/gate-rerun" Review.RerunCandidateGate
+                               |> addMetadata typeof<Review.CandidateGateRerunParameters>
 
                                route "/checkpoint" Review.Checkpoint
                                |> addMetadata typeof<Review.ReviewCheckpointParameters>
@@ -1087,7 +1666,8 @@ module Application =
             services.AddSingleton<ReviewModels.IReviewModelProvider>(fun _ -> ReviewModels.createProvider configuration)
             |> ignore
 
-            services.AddSingleton<PromotionSetConflictModel.IConflictResolutionModelProvider>(fun _ -> PromotionSetModels.createProvider configuration)
+            services.AddSingleton<Grace.Types.PromotionSetConflictModel.IConflictResolutionModelProvider> (fun _ ->
+                Grace.Types.PromotionSetConflictModel.createProvider configuration)
             |> ignore
 
             logToConsole $"Exiting ConfigureServices."

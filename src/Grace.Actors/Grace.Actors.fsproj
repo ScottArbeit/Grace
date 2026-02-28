@@ -40,9 +40,10 @@
         <Compile Include="Reference.Actor.fs" />
         <Compile Include="Branch.Actor.fs" />
         <Compile Include="BranchName.Actor.fs" />
-        <Compile Include="PromotionSetConflictModel.Actor.fs" />
         
         <Compile Include="PromotionSet.Actor.fs" />
+        <Compile Include="WorkItemNumber.Actor.fs" />
+        <Compile Include="WorkItemNumberCounter.Actor.fs" />
         <Compile Include="WorkItem.Actor.fs" />
         <Compile Include="Policy.Actor.fs" />
         <Compile Include="Review.Actor.fs" />

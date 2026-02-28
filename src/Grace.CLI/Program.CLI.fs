@@ -111,6 +111,7 @@ module GraceCommand =
                 || token.Equals("-o", comparison)
                 || token.Equals(OptionName.CorrelationId, comparison)
                 || token.Equals("-c", comparison)
+                || token.Equals(OptionName.Source, comparison)
 
             let rec loop index =
                 if index >= args.Length then
@@ -243,8 +244,9 @@ module GraceCommand =
                 Heading = "Review and promotion"
                 CommandNames =
                     [
-                        "work"
+                        "workitem"
                         "review"
+                        "candidate"
                         "queue"
                         "promotion-set"
                         "agent"
@@ -375,6 +377,21 @@ module GraceCommand =
             { Heading = "Lifecycle"; CommandNames = [ "delete"; "undelete" ] }
         ]
 
+    let private workItemHelpSections =
+        [
+            { Heading = "Create and update"; CommandNames = [ "create"; "show"; "status" ] }
+            {
+                Heading = "Link and attach"
+                CommandNames =
+                    [
+                        "link"
+                        "attach"
+                        "attachments"
+                        "links"
+                    ]
+            }
+        ]
+
     let private groupedHelpSectionsByCommandName =
         let lookup = Dictionary<string, HelpSection list>(StringComparer.InvariantCultureIgnoreCase)
         lookup["repository"] <- repositoryHelpSections
@@ -384,6 +401,10 @@ module GraceCommand =
         lookup["owner"] <- ownerHelpSections
         lookup["organization"] <- organizationHelpSections
         lookup["org"] <- organizationHelpSections
+        lookup["workitem"] <- workItemHelpSections
+        lookup["work"] <- workItemHelpSections
+        lookup["work-item"] <- workItemHelpSections
+        lookup["wi"] <- workItemHelpSections
         lookup
 
     let private formatDisplayName (command: Command) =
@@ -543,6 +564,7 @@ module GraceCommand =
 
         // Create global options - these appear on every command in the system.
         rootCommand.Options.Add(Options.correlationId)
+        rootCommand.Options.Add(Options.source)
         rootCommand.Options.Add(Options.output)
 
         // Add subcommands.
@@ -560,6 +582,7 @@ module GraceCommand =
         rootCommand.Subcommands.Add(Maintenance.Build)
         rootCommand.Subcommands.Add(WorkItemCommand.Build)
         rootCommand.Subcommands.Add(ReviewCommand.Build)
+        rootCommand.Subcommands.Add(CandidateCommand.Build)
         rootCommand.Subcommands.Add(QueueCommand.Build)
         rootCommand.Subcommands.Add(PromotionSetCommand.Build)
         rootCommand.Subcommands.Add(AgentCommand.Build)
@@ -1049,7 +1072,7 @@ module GraceCommand =
                         durationMs = durationMs
                         parseSucceeded = parseSucceeded
                         timestampUtc = startTime
-                        source = None
+                        source = resolveInvocationSource parseResult
                     }
 
                 // If this was grace watch, delete the inter-process communication file.

@@ -328,6 +328,26 @@ module ActorProxy =
             memoryCache.CreateOrleansContextEntry(grain.GetGrainId(), orleansContext)
             grain
 
+    module WorkItemNumber =
+        /// Creates an ActorProxy for a WorkItemNumber actor. The primary key is repository-scoped.
+        let CreateActorProxy (repositoryId: RepositoryId) (correlationId: string) =
+            let grain = orleansClient.CreateActorProxyWithCorrelationId<IWorkItemNumberActor>($"{repositoryId}", correlationId)
+            let orleansContext = Dictionary<string, obj>()
+            orleansContext.Add(nameof RepositoryId, repositoryId)
+            orleansContext.Add(Constants.ActorNameProperty, ActorName.WorkItemNumber)
+            memoryCache.CreateOrleansContextEntry(grain.GetGrainId(), orleansContext)
+            grain
+
+    module WorkItemNumberCounter =
+        /// Creates an ActorProxy for a WorkItemNumberCounter actor. The primary key is repository-scoped.
+        let CreateActorProxy (repositoryId: RepositoryId) (correlationId: string) =
+            let grain = orleansClient.CreateActorProxyWithCorrelationId<IWorkItemNumberCounterActor>($"{repositoryId}", correlationId)
+            let orleansContext = Dictionary<string, obj>()
+            orleansContext.Add(nameof RepositoryId, repositoryId)
+            orleansContext.Add(Constants.ActorNameProperty, ActorName.WorkItemNumberCounter)
+            memoryCache.CreateOrleansContextEntry(grain.GetGrainId(), orleansContext)
+            grain
+
     module AccessControl =
         /// Creates an ActorProxy for an AccessControl actor, and adds the correlationId to the server's MemoryCache so
         ///   it's available in the OnActivateAsync() method.

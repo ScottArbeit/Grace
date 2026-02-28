@@ -106,6 +106,12 @@ module Constants =
         [<Literal>]
         let WorkItem = "WorkItemActor"
 
+        [<Literal>]
+        let WorkItemNumber = "WorkItemNumberActor"
+
+        [<Literal>]
+        let WorkItemNumberCounter = "WorkItemNumberCounterActor"
+
     module StateName =
         [<Literal>]
         let AccessControl = "AccessControl"
@@ -175,6 +181,9 @@ module Constants =
 
         [<Literal>]
         let WorkItem = "WorkItem"
+
+        [<Literal>]
+        let WorkItemNumberCounter = "WorkItemNumberCounter"
 
     /// Constants for the different types of reminders.
     module ReminderType =

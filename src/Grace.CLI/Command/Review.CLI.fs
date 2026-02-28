@@ -15,6 +15,8 @@ open System
 open System.CommandLine
 open System.CommandLine.Invocation
 open System.CommandLine.Parsing
+open System.IO
+open System.Text
 open System.Threading
 open System.Threading.Tasks
 
@@ -69,6 +71,26 @@ module ReviewCommand =
 
         let chapterId =
             new Option<string>("--chapter", Required = false, Description = "Chapter ID <Sha256Hash> for targeted deepening.", Arity = ArgumentArity.ExactlyOne)
+
+        let candidateId =
+            new Option<string>(
+                "--candidate",
+                [| "--candidate-id" |],
+                Required = true,
+                Description = "The candidate ID <Guid>.",
+                Arity = ArgumentArity.ExactlyOne
+            )
+
+        let reportFormat = new Option<string>("--format", Required = true, Description = "Export format: markdown or json.", Arity = ArgumentArity.ExactlyOne)
+
+        let outputFile =
+            new Option<string>(
+                "--output-file",
+                [| "-f" |],
+                Required = true,
+                Description = "Write exported report content to this file path.",
+                Arity = ArgumentArity.ExactlyOne
+            )
 
         let targetBranch =
             new Option<string>(
@@ -194,6 +216,137 @@ module ReviewCommand =
 
     let private resolvePolicySnapshotId (parseResult: ParseResult) (graceIds: GraceIds) (promotionSetId: Guid) =
         resolvePolicySnapshotIdWith PromotionSet.Get Policy.GetCurrent parseResult graceIds promotionSetId
+
+    type private ReportExportFormat =
+        | Markdown
+        | Json
+
+    let private parseReportExportFormat (rawValue: string) (parseResult: ParseResult) =
+        match rawValue.Trim().ToLowerInvariant() with
+        | "markdown" -> Ok Markdown
+        | "json" -> Ok Json
+        | _ -> Error(GraceError.Create "Format must be either 'markdown' or 'json'." (getCorrelationId parseResult))
+
+    let private resolveCandidateId (parseResult: ParseResult) =
+        let candidateIdRaw =
+            parseResult.GetValue(Options.candidateId)
+            |> Option.ofObj
+            |> Option.defaultValue String.Empty
+
+        let mutable parsed = Guid.Empty
+
+        if String.IsNullOrWhiteSpace(candidateIdRaw)
+           || not (Guid.TryParse(candidateIdRaw, &parsed))
+           || parsed = Guid.Empty then
+            Error(GraceError.Create "CandidateId must be a valid non-empty Guid." (getCorrelationId parseResult))
+        else
+            Ok(parsed.ToString())
+
+    let private buildCandidateProjectionParameters (graceIds: GraceIds) (candidateId: string) =
+        Parameters.Review.CandidateProjectionParameters(
+            CandidateId = candidateId,
+            OwnerId = graceIds.OwnerIdString,
+            OwnerName = graceIds.OwnerName,
+            OrganizationId = graceIds.OrganizationIdString,
+            OrganizationName = graceIds.OrganizationName,
+            RepositoryId = graceIds.RepositoryIdString,
+            RepositoryName = graceIds.RepositoryName,
+            CorrelationId = graceIds.CorrelationId
+        )
+
+    let internal normalizeReviewReportForOutput (report: ReviewReportResult) =
+        let normalized = ReviewReportResult()
+        normalized.ReviewReportSchemaVersion <- report.ReviewReportSchemaVersion
+        normalized.SectionOrder <- report.SectionOrder
+
+        let sectionOrderRank =
+            normalized.SectionOrder
+            |> List.mapi (fun index section -> section, index)
+            |> dict
+
+        let normalizedSections =
+            report.Sections
+            |> List.map (fun section ->
+                let normalizedSection = ReviewReportSection()
+                normalizedSection.Section <- section.Section
+                normalizedSection.Title <- section.Title
+                normalizedSection.SourceState <- section.SourceState
+
+                normalizedSection.SourceStates <-
+                    section.SourceStates
+                    |> List.sortBy (fun sourceState -> sourceState.Section, sourceState.SourceState, sourceState.Detail)
+
+                normalizedSection.Entries <-
+                    section.Entries
+                    |> List.sortBy (fun entry -> entry.Key)
+                    |> List.map (fun entry ->
+                        let normalizedEntry = ReviewReportEntry()
+                        normalizedEntry.Key <- entry.Key
+                        normalizedEntry.Values <- entry.Values |> List.sort
+                        normalizedEntry)
+
+                normalizedSection.Diagnostics <- section.Diagnostics |> List.sort
+                normalizedSection)
+            |> List.sortBy (fun section ->
+                (if sectionOrderRank.ContainsKey(section.Section) then
+                     sectionOrderRank[section.Section]
+                 else
+                     Int32.MaxValue),
+                section.Section)
+
+        normalized.Sections <- normalizedSections
+        normalized
+
+    let internal renderReviewReportMarkdown (report: ReviewReportResult) =
+        let normalized = normalizeReviewReportForOutput report
+        let markdown = StringBuilder()
+
+        markdown.AppendLine($"# Review Report (schema {normalized.ReviewReportSchemaVersion})")
+        |> ignore
+
+        for section in normalized.Sections do
+            markdown.AppendLine() |> ignore
+
+            markdown.AppendLine($"## {section.Title}")
+            |> ignore
+
+            markdown.AppendLine($"- Section: {section.Section}")
+            |> ignore
+
+            markdown.AppendLine($"- SourceState: {section.SourceState}")
+            |> ignore
+
+            for entry in section.Entries do
+                if entry.Values.IsEmpty then
+                    markdown.AppendLine($"- {entry.Key}: NotAvailable")
+                    |> ignore
+                elif entry.Values.Length = 1 then
+                    markdown.AppendLine($"- {entry.Key}: {entry.Values[0]}")
+                    |> ignore
+                else
+                    markdown.AppendLine($"- {entry.Key}:") |> ignore
+
+                    for value in entry.Values do
+                        markdown.AppendLine($"  - {value}") |> ignore
+
+            if not section.Diagnostics.IsEmpty then
+                markdown.AppendLine("- Diagnostics:") |> ignore
+
+                for diagnostic in section.Diagnostics do
+                    markdown.AppendLine($"  - {diagnostic}") |> ignore
+
+            if not section.SourceStates.IsEmpty then
+                markdown.AppendLine("- SourceStates:") |> ignore
+
+                for sourceState in section.SourceStates do
+                    markdown.AppendLine($"  - {sourceState.Section}: {sourceState.SourceState} ({sourceState.Detail})")
+                    |> ignore
+
+        markdown.ToString().TrimEnd()
+
+    let internal serializeReviewReportJson (report: ReviewReportResult) =
+        let normalized = normalizeReviewReportForOutput report
+        serialize normalized
 
     let private writeNotesSummary (parseResult: ParseResult) (notes: ReviewNotes) =
         if
@@ -332,22 +485,6 @@ module ReviewCommand =
                 return result |> renderOutput parseResult
             }
 
-    let private deltaHandler (parseResult: ParseResult) =
-        task {
-            let graceError = GraceError.Create "Review delta is not implemented yet." (getCorrelationId parseResult)
-
-            return Error graceError
-        }
-
-    type Delta() =
-        inherit AsynchronousCommandLineAction()
-
-        override _.InvokeAsync(parseResult: ParseResult, _: CancellationToken) : Task<int> =
-            task {
-                let! result = deltaHandler parseResult
-                return result |> renderOutput parseResult
-            }
-
     let private resolveHandlerImpl (parseResult: ParseResult) =
         if parseResult |> verbose then printParseResult parseResult
         let graceIds = parseResult |> getNormalizedIdsAndNames
@@ -462,6 +599,113 @@ module ReviewCommand =
                 return result |> renderOutput parseResult
             }
 
+    let private reportShowHandler (parseResult: ParseResult) =
+        task {
+            try
+                if parseResult |> verbose then printParseResult parseResult
+                let graceIds = parseResult |> getNormalizedIdsAndNames
+
+                match resolveCandidateId parseResult with
+                | Error error -> return Error error
+                | Ok candidateId ->
+                    let parameters = buildCandidateProjectionParameters graceIds candidateId
+                    let! result = Review.GetReviewReport(parameters)
+
+                    match result with
+                    | Ok returnValue ->
+                        if
+                            not (parseResult |> json)
+                            && not (parseResult |> silent)
+                        then
+                            let markdown = renderReviewReportMarkdown returnValue.ReturnValue
+                            Console.WriteLine(markdown)
+
+                        return Ok returnValue
+                    | Error error -> return Error error
+            with
+            | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
+        }
+
+    type ReportShow() =
+        inherit AsynchronousCommandLineAction()
+
+        override _.InvokeAsync(parseResult: ParseResult, _: CancellationToken) : Task<int> =
+            task {
+                let! result = reportShowHandler parseResult
+                return result |> renderOutput parseResult
+            }
+
+    let private reportExportHandler (parseResult: ParseResult) =
+        task {
+            try
+                if parseResult |> verbose then printParseResult parseResult
+                let graceIds = parseResult |> getNormalizedIdsAndNames
+
+                let outputFile =
+                    parseResult.GetValue(Options.outputFile)
+                    |> Option.ofObj
+                    |> Option.defaultValue String.Empty
+
+                if String.IsNullOrWhiteSpace outputFile then
+                    return Error(GraceError.Create "Output file path is required." (getCorrelationId parseResult))
+                else
+                    let reportFormatRaw =
+                        parseResult.GetValue(Options.reportFormat)
+                        |> Option.ofObj
+                        |> Option.defaultValue String.Empty
+
+                    match parseReportExportFormat reportFormatRaw parseResult with
+                    | Error error -> return Error error
+                    | Ok reportFormat ->
+                        match resolveCandidateId parseResult with
+                        | Error error -> return Error error
+                        | Ok candidateId ->
+                            let parameters = buildCandidateProjectionParameters graceIds candidateId
+                            let! result = Review.GetReviewReport(parameters)
+
+                            match result with
+                            | Error error -> return Error error
+                            | Ok returnValue ->
+                                let report = returnValue.ReturnValue
+
+                                let content =
+                                    match reportFormat with
+                                    | Markdown -> renderReviewReportMarkdown report
+                                    | Json -> serializeReviewReportJson report
+
+                                let outputDirectory = Path.GetDirectoryName(outputFile)
+
+                                if not (String.IsNullOrWhiteSpace outputDirectory) then
+                                    Directory.CreateDirectory(outputDirectory)
+                                    |> ignore
+
+                                do! File.WriteAllTextAsync(outputFile, content)
+
+                                if
+                                    not (parseResult |> json)
+                                    && not (parseResult |> silent)
+                                then
+                                    let formatText =
+                                        match reportFormat with
+                                        | Markdown -> "markdown"
+                                        | Json -> "json"
+
+                                    AnsiConsole.MarkupLine($"[green]Review report exported ({formatText}) to[/] {Markup.Escape(outputFile)}")
+
+                                return Ok returnValue
+            with
+            | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
+        }
+
+    type ReportExport() =
+        inherit AsynchronousCommandLineAction()
+
+        override _.InvokeAsync(parseResult: ParseResult, _: CancellationToken) : Task<int> =
+            task {
+                let! result = reportExportHandler parseResult
+                return result |> renderOutput parseResult
+            }
+
     let Build =
         let addCommonOptions (command: Command) =
             command
@@ -472,7 +716,7 @@ module ReviewCommand =
             |> addOption Options.repositoryName
             |> addOption Options.repositoryId
 
-        let reviewCommand = new Command("review", Description = "Review notes and findings.")
+        let reviewCommand = new Command("review", Description = "Promotion-set review operations plus candidate report output.")
 
         let inboxCommand = new Command("inbox", Description = "Show review inbox (stub).")
 
@@ -484,7 +728,7 @@ module ReviewCommand =
         inboxCommand.Action <- new Inbox()
         reviewCommand.Subcommands.Add(inboxCommand)
 
-        let openCommand = new Command("open", Description = "Open review notes.")
+        let openCommand = new Command("open", Description = "Open review notes for a promotion set.")
 
         openCommand
         |> addOption Options.promotionSetId
@@ -495,7 +739,7 @@ module ReviewCommand =
         reviewCommand.Subcommands.Add(openCommand)
 
         let checkpointCommand =
-            new Command("checkpoint", Description = "Record a review checkpoint.")
+            new Command("checkpoint", Description = "Record a review checkpoint for a promotion set.")
             |> addOption Options.promotionSetId
             |> addOption Options.referenceId
             |> addOption Options.policySnapshotId
@@ -504,16 +748,8 @@ module ReviewCommand =
         checkpointCommand.Action <- new Checkpoint()
         reviewCommand.Subcommands.Add(checkpointCommand)
 
-        let deltaCommand =
-            new Command("delta", Description = "Show changes since last checkpoint (stub).")
-            |> addOption Options.promotionSetId
-            |> addCommonOptions
-
-        deltaCommand.Action <- new Delta()
-        reviewCommand.Subcommands.Add(deltaCommand)
-
         let resolveCommand =
-            new Command("resolve", Description = "Resolve a review finding.")
+            new Command("resolve", Description = "Resolve a review finding for a promotion set.")
             |> addOption Options.promotionSetId
             |> addOption Options.findingId
             |> addOption Options.approve
@@ -532,5 +768,26 @@ module ReviewCommand =
 
         deepenCommand.Action <- new Deepen()
         reviewCommand.Subcommands.Add(deepenCommand)
+
+        let reportCommand = new Command("report", Description = "Generate candidate-first unified review reports.")
+
+        let reportShowCommand =
+            new Command("show", Description = "Show review report sections in deterministic markdown order.")
+            |> addOption Options.candidateId
+            |> addCommonOptions
+
+        reportShowCommand.Action <- new ReportShow()
+        reportCommand.Subcommands.Add(reportShowCommand)
+
+        let reportExportCommand =
+            new Command("export", Description = "Export review report as markdown or json.")
+            |> addOption Options.candidateId
+            |> addOption Options.reportFormat
+            |> addOption Options.outputFile
+            |> addCommonOptions
+
+        reportExportCommand.Action <- new ReportExport()
+        reportCommand.Subcommands.Add(reportExportCommand)
+        reviewCommand.Subcommands.Add(reportCommand)
 
         reviewCommand

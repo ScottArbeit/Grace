@@ -43,6 +43,15 @@ module WorkItemCommandTests =
             yield! extraArgs
         |]
 
+    let private buildAttachmentsArgs (noun: string) (verb: string) (workItemIdentifier: string) (extraArgs: string array) =
+        [|
+            noun
+            "attachments"
+            verb
+            workItemIdentifier
+            yield! extraArgs
+        |]
+
     [<Test>]
     let ``workitem create parses`` () =
         assertParsesWithoutErrors (
@@ -108,7 +117,14 @@ module WorkItemCommandTests =
         let workItemIdentifier = Guid.NewGuid().ToString()
 
         let fileArgs =
-            buildAttachArgs commandAlias attachmentType workItemIdentifier [| "--file"; "C:\\temp\\attachment.txt" |]
+            buildAttachArgs
+                commandAlias
+                attachmentType
+                workItemIdentifier
+                [|
+                    "--file"
+                    "C:\\temp\\attachment.txt"
+                |]
             |> withIds
 
         let textArgs =
@@ -133,6 +149,58 @@ module WorkItemCommandTests =
                        "links"
                        "list"
                        workItemIdentifier |]
+        )
+
+    [<TestCase("workitem", "52")>]
+    [<TestCase("workitem", "9dfdb7a5-27f6-4fd8-95cf-f5e4f2b22803")>]
+    [<TestCase("work", "53")>]
+    [<TestCase("wi", "9761ae11-ec40-4c2a-a6e7-e13001642f8e")>]
+    let ``workitem attachments list parses for guid and numeric work item identifiers`` (commandAlias: string, workItemIdentifier: string) =
+        assertParsesWithoutErrors (
+            buildAttachmentsArgs commandAlias "list" workItemIdentifier [||]
+            |> withIds
+        )
+
+    [<TestCase("workitem", "summary", "54", true)>]
+    [<TestCase("workitem", "prompt", "36f74308-b75c-4a2a-bf2f-fe3e2036b232", false)>]
+    [<TestCase("work", "notes", "55", true)>]
+    [<TestCase("wi", "summary", "16dd0b9b-00eb-480f-bf9c-8cfdad68f249", false)>]
+    let ``workitem attachments show parses with type and latest options``
+        (
+            commandAlias: string,
+            attachmentType: string,
+            workItemIdentifier: string,
+            includeLatest: bool
+        )
+        =
+        let extraArgs = ResizeArray<string>()
+        extraArgs.Add("--type")
+        extraArgs.Add(attachmentType)
+
+        if includeLatest then extraArgs.Add("--latest")
+
+        assertParsesWithoutErrors (
+            buildAttachmentsArgs commandAlias "show" workItemIdentifier (extraArgs.ToArray())
+            |> withIds
+        )
+
+    [<TestCase("workitem", "56")>]
+    [<TestCase("workitem", "f4cf5f70-f4ff-461f-8f2d-5be9734b5b7f")>]
+    [<TestCase("work-item", "57")>]
+    [<TestCase("wi", "b87d5076-6467-4ef6-93f5-8ee7f014295c")>]
+    let ``workitem attachments download parses with artifact id and output file`` (commandAlias: string, workItemIdentifier: string) =
+        assertParsesWithoutErrors (
+            buildAttachmentsArgs
+                commandAlias
+                "download"
+                workItemIdentifier
+                [|
+                    "--artifact-id"
+                    Guid.NewGuid().ToString()
+                    "--output-file"
+                    "C:\\temp\\attachment.bin"
+                |]
+            |> withIds
         )
 
     [<TestCase("workitem", "46")>]
@@ -166,7 +234,11 @@ module WorkItemCommandTests =
     [<TestCase("wi", "notes", "51")>]
     [<TestCase("work", "summary", "fdb37dfa-699d-4f8f-80f0-6e2eb6222596")>]
     let ``workitem links remove artifact-type aliases parse for guid and numeric work item identifiers``
-        (commandAlias: string, linkType: string, workItemIdentifier: string)
+        (
+            commandAlias: string,
+            linkType: string,
+            workItemIdentifier: string
+        )
         =
         assertParsesWithoutErrors (
             withIds [| commandAlias
@@ -258,6 +330,66 @@ module WorkItemCommandTests =
         exitCode |> should equal -1
 
     [<Test>]
+    let ``workitem attachments show rejects invalid type values during parse`` () =
+        let parseResult =
+            GraceCommand.rootCommand.Parse(
+                withIds [| "workitem"
+                           "attachments"
+                           "show"
+                           Guid.NewGuid().ToString()
+                           "--type"
+                           "binary" |]
+            )
+
+        Assert.That(parseResult.Errors.Count, Is.GreaterThan(0))
+
+    [<Test>]
+    let ``workitem attachments download requires artifact id and output file options`` () =
+        let parseResult =
+            GraceCommand.rootCommand.Parse(
+                withIds [| "workitem"
+                           "attachments"
+                           "download"
+                           Guid.NewGuid().ToString() |]
+            )
+
+        Assert.That(parseResult.Errors.Count, Is.GreaterThan(0))
+
+    [<Test>]
+    let ``workitem attachments download rejects invalid artifact id`` () =
+        let parseResult =
+            GraceCommand.rootCommand.Parse(
+                withIdsAndSilent [| "workitem"
+                                    "attachments"
+                                    "download"
+                                    "58"
+                                    "--artifact-id"
+                                    "not-a-guid"
+                                    "--output-file"
+                                    "C:\\temp\\attachment.bin" |]
+            )
+
+        let exitCode = parseResult.Invoke()
+        exitCode |> should equal -1
+
+    [<Test>]
+    let ``workitem attachments download rejects invalid output file path`` () =
+        let parseResult =
+            GraceCommand.rootCommand.Parse(
+                withIdsAndSilent [| "workitem"
+                                    "attachments"
+                                    "download"
+                                    "59"
+                                    "--artifact-id"
+                                    Guid.NewGuid().ToString()
+                                    "--output-file"
+                                    "C:\\temp\\invalid|name.bin" |]
+            )
+
+        let exitCode = parseResult.Invoke()
+        exitCode |> should equal -1
+
+    [<Test>]
     let ``workitem links remove summary parses numeric work item`` () =
         assertParsesWithoutErrors (
             withIds [| "workitem"
@@ -268,11 +400,7 @@ module WorkItemCommandTests =
         )
 
     [<FsCheck.NUnit.Property(MaxTest = 64)>]
-    let ``workitem attach input source combinations are valid iff exactly one is selected``
-        (useFile: bool)
-        (useText: bool)
-        (useStdin: bool)
-        =
+    let ``workitem attach input source combinations are valid iff exactly one is selected`` (useFile: bool) (useText: bool) (useStdin: bool) =
         let args = List<string>()
         args.Add("workitem")
         args.Add("attach")
@@ -287,8 +415,7 @@ module WorkItemCommandTests =
             args.Add("--text")
             args.Add("inline summary")
 
-        if useStdin then
-            args.Add("--stdin")
+        if useStdin then args.Add("--stdin")
 
         let selectedCount =
             (if useFile then 1 else 0)
