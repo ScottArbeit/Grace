@@ -20,7 +20,7 @@ jobs:
     - name: Install .NET Aspire workload
       run: dotnet workload install aspire
     - name: Restore dependencies
-      run: dotnet restore Grace.slnx -c Release
+      run: dotnet restore Grace.slnx
       working-directory: src
     - name: Build
       run: dotnet build Grace.slnx --no-restore -c Release
