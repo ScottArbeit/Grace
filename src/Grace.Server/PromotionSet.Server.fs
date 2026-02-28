@@ -342,7 +342,7 @@ module PromotionSet =
                 else
                     let mutable stepId = Guid.Empty
 
-                    if not <| Guid.TryParse(parameters.StepId, &stepId) then
+                    if not (Guid.TryParse(parameters.StepId, &stepId) && stepId <> Guid.Empty) then
                         return!
                             context
                             |> result400BadRequest (
