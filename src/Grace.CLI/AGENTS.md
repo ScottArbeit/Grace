@@ -29,12 +29,19 @@ Read `../AGENTS.md` for global expectations before updating CLI code.
    straightforward to unit test.
 2. Preserve existing option names and switches. Introduce new aliases when
    expanding behavior instead of breaking existing scripts.
-3. Capture new command patterns or usage tips in this document to guide future
+3. Capture new command patterns or usage tips in this document to guide future  
    agents.
 4. Root and selected subcommand help grouping lives in
    `src/Grace.CLI/Program.CLI.fs` under `rootHelpSections` and the related
    `*HelpSections` lists; update those lists when adding or renaming commands
    so new entries do not silently drift into "Other".
+
+## Local State DB
+
+- Local status and object cache are stored in `.grace/grace-local.db`.
+- SQLite side files (`.db-wal`, `.db-shm`, and optional `.db-journal`) are
+  internal; ignore them in repo scans and watch change detection except for
+  status-change coordination.
 
 ## Recent Patterns
 

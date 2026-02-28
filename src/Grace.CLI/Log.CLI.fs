@@ -7,7 +7,6 @@ open NodaTime
 open System
 open System.Globalization
 open System.Collections.Concurrent
-open MessagePack
 
 module Log =
 

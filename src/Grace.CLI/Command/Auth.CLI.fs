@@ -182,17 +182,6 @@ module Auth =
                 | None ->
                     Error $"GRACE_TOKEN accepts Grace PATs only (prefix {Grace.Types.PersonalAccessToken.TokenPrefix}). Auth0 access tokens are not valid here."
 
-    let private getDeprecatedMicrosoftSettings () =
-        [
-            Constants.EnvironmentVariables.GraceAuthMicrosoftClientId
-            Constants.EnvironmentVariables.GraceAuthMicrosoftClientSecret
-            Constants.EnvironmentVariables.GraceAuthMicrosoftTenantId
-            Constants.EnvironmentVariables.GraceAuthMicrosoftAuthority
-            Constants.EnvironmentVariables.GraceAuthMicrosoftApiScope
-            Constants.EnvironmentVariables.GraceAuthMicrosoftCliClientId
-        ]
-        |> List.choose (fun name -> tryGetEnv name |> Option.map (fun _ -> name))
-
     let private getTokenStoreNamespace (config: OidcCliConfig) =
         let serverUri =
             tryGetEnv Constants.EnvironmentVariables.GraceServerUri
@@ -912,6 +901,16 @@ module Auth =
                 Arity = ArgumentArity.Zero
             )
 
+    let private authDevelopmentGuidance = "During development, TestAuth may be available. See docs/Authentication.md for details."
+
+    let private authenticationRequiredMessage = $"Authentication required. Run 'grace auth login' and try again. {authDevelopmentGuidance}"
+
+    let private addAuthDevelopmentGuidance (message: string) =
+        if String.IsNullOrWhiteSpace message then
+            authDevelopmentGuidance
+        else
+            $"{message} {authDevelopmentGuidance}"
+
     let ensureAccessToken (parseResult: ParseResult) =
         task {
             let correlationId = parseResult |> getCorrelationId
@@ -920,13 +919,13 @@ module Auth =
             match tokenResult with
             | Ok (Some _) -> return ()
             | Ok None ->
-                Error(GraceError.Create "Authentication required. Run 'grace auth login' and try again." correlationId)
+                Error(GraceError.Create authenticationRequiredMessage correlationId)
                 |> renderOutput parseResult
                 |> ignore
 
                 raise (OperationCanceledException())
             | Error message ->
-                Error(GraceError.Create message correlationId)
+                Error(GraceError.Create (addAuthDevelopmentGuidance message) correlationId)
                 |> renderOutput parseResult
                 |> ignore
 
@@ -1093,8 +1092,6 @@ module Auth =
                     else
                         "None"
 
-                let deprecatedSettings = getDeprecatedMicrosoftSettings ()
-
                 if parseResult |> hasOutput then
                     AnsiConsole.MarkupLine($"[{Colors.Highlighted}]GRACE_TOKEN:[/] {graceTokenPresent}")
 
@@ -1121,10 +1118,6 @@ module Auth =
                     match configError with
                     | Some message -> AnsiConsole.MarkupLine($"[{Colors.Important}]Auth config:[/] {Markup.Escape(message)}")
                     | None -> ()
-
-                    if not (List.isEmpty deprecatedSettings) then
-                        let joined = String.Join(", ", deprecatedSettings)
-                        AnsiConsole.MarkupLine($"[{Colors.Important}]Deprecated Microsoft settings ignored:[/] {Markup.Escape(joined)}")
 
                     AnsiConsole.MarkupLine($"[{Colors.Important}]Active source:[/] {Markup.Escape(activeSource)}")
 

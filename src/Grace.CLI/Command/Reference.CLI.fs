@@ -210,16 +210,7 @@ module Reference =
     let private valueOrEmpty (value: string) = if String.IsNullOrWhiteSpace(value) then String.Empty else value
 
     let private ReferenceValidations (parseResult: ParseResult) =
-
-        let ensureFileExists path error (parseResult: ParseResult) =
-            if File.Exists(path) then
-                Ok parseResult
-            else
-                Error(GraceError.Create (getErrorMessage error) (parseResult |> getCorrelationId))
-
-        parseResult
-        |> ensureFileExists (Current().GraceStatusFile) ReferenceError.IndexFileNotFound
-        >>= ensureFileExists (Current().GraceObjectCacheFile) ReferenceError.ObjectCacheFileNotFound
+        Ok parseResult
 
     let printContents (parseResult: ParseResult) (directoryVersions: IEnumerable<DirectoryVersion>) =
         let longestRelativePath =
@@ -745,7 +736,7 @@ module Reference =
                                                     LastSuccessfulDirectoryVersionUpload = lastDirectoryVersionUpload
                                                 }
 
-                                            do! writeGraceStatusFile newGraceStatus
+                                            do! applyGraceStatusIncremental newGraceStatus newDirectoryVersions differences
 
                                         t5.StartTask() // Create new reference.
 

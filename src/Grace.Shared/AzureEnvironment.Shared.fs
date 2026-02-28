@@ -96,6 +96,10 @@ module AzureEnvironment =
             ConnectionString = storageConnectionStringValue
         }
 
+    let storageAccountKey =
+        tryGetEnv Constants.EnvironmentVariables.AzureStorageKey
+        |> Option.orElse (tryGetValue "AccountKey" storageSegments)
+
     let cosmosConnectionString = cosmosConnectionStringValue
 
     let tryGetCosmosEndpointUri () =

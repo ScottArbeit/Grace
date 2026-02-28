@@ -776,6 +776,7 @@ module GraceCommand =
                     parseSucceeded <- parseResult.Errors.Count = 0
                     // Write the ParseResult to Services as global context for the CLI.
                     Services.parseResult <- parseResult
+                    LocalStateDb.setVerbose (parseResult |> verbose)
 
                     let helpAction =
                         match parseResult.Action with
@@ -1036,7 +1037,6 @@ module GraceCommand =
                         else
                             AnsiConsole.MarkupLine($"[{Colors.Important}]{getLocalizedString StringResourceName.GraceConfigFileNotFound}[/]")
 
-                        printParseResult parseResult
                         let finishTime = getCurrentInstant ()
 
                         let elapsed =

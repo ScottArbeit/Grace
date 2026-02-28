@@ -1,187 +1,141 @@
 # Grace.Server Local Development with .NET Aspire
 
-This guide is the executable onboarding path for local Grace development.
-Use `scripts/start-debuglocal.ps1` as the canonical first-run entrypoint.
-
 ## Prerequisites
 
-1. **.NET 10 SDK**: install the version pinned in `global.json` (or compatible roll-forward).
-2. **PowerShell 7+**: required because onboarding scripts are `pwsh` scripts.
-3. **Docker Desktop**: required for local emulators and containers.
-4. **Resources**: reserve at least 8 GB RAM and 10 GB free disk.
+1. **.NET 10 SDK** – Install the SDK pinned in `global.json` (or compatible
+   roll-forward).
+2. **Docker Desktop** – Enable Docker before starting Aspire:
+   - Windows/macOS: <https://www.docker.com/products/docker-desktop>
+   - Linux: install `docker.io` (Ubuntu) or the equivalent package for your
+     distro.
+3. **Resources** – Reserve at least 8 GB RAM and 10 GB free disk space. The
+   Cosmos DB emulator and SQL Server container for Service Bus both consume
+   several GB of memory.
+4. **Cosmos certificates** – With non-SSL ports enabled the emulator uses HTTP.
+   If you prefer HTTPS, export and trust the certificate as described in
+   [Azure Cosmos DB emulator for Linux](https://learn.microsoft.com/azure/cosmos-db/emulator-linux).
 
-## Canonical Onboarding Flow
+## Preferred Local Loop
 
-Run this from the repository root.
-
-PowerShell:
+Use the agent-ready scripts as the canonical entrypoint:
 
 ```powershell
 pwsh ./scripts/bootstrap.ps1
-pwsh ./scripts/start-debuglocal.ps1
-```
-
-bash / zsh:
-
-```bash
-pwsh ./scripts/bootstrap.ps1
-pwsh ./scripts/start-debuglocal.ps1
-```
-
-When startup succeeds, `start-debuglocal.ps1` creates a local PAT and sets `GRACE_SERVER_URI`
-and `GRACE_TOKEN` for the current shell.
-
-Compatibility note:
-
-- `pwsh ./scripts/dev-local.ps1` still works, but it is now only a wrapper that forwards to
-  `start-debuglocal.ps1`.
-
-## What The Script Does
-
-`start-debuglocal.ps1` performs a deterministic startup workflow:
-
-1. Resolves bootstrap user identity in this order:
-   `-BootstrapUserId` -> shell env `grace__authz__bootstrap__system_admin_users` -> launch profile
-   value -> `-BootstrapUserIdFallback` (`test-admin` by default).
-2. Ensures `GRACE_TESTING=1` when not already present in your shell.
-3. Detects stale DebugLocal AppHost processes and attempts cleanup before startup.
-4. Starts `Grace.Aspire.AppHost` with `--launch-profile DebugLocal`.
-5. Waits for `GET /healthz` to become healthy.
-6. Runs auth readiness probes unless `-SkipAuthProbe` is used:
-   `GET /auth/oidc/config`, then `GET /auth/me` with `x-grace-user-id`.
-7. Creates a PAT with bounded retries and deterministic backoff.
-8. Prints shell-ready environment commands and log paths.
-
-## Common Script Options
-
-Use these only when you need to diagnose or customize startup.
-
-PowerShell:
-
-```powershell
-# Bypass auth probe preflight (advanced diagnostics only)
-pwsh ./scripts/start-debuglocal.ps1 -SkipAuthProbe
-
-# Start runtime only (skip PAT bootstrap)
-pwsh ./scripts/start-debuglocal.ps1 -NoTokenBootstrap
-
-# Override bootstrap user and retry behavior
-pwsh ./scripts/start-debuglocal.ps1 `
-  -BootstrapUserId "test-admin" `
-  -TokenBootstrapMaxAttempts 5 `
-  -TokenBootstrapInitialBackoffSeconds 2
-```
-
-bash / zsh:
-
-```bash
-# Bypass auth probe preflight (advanced diagnostics only)
-pwsh ./scripts/start-debuglocal.ps1 --SkipAuthProbe
-
-# Start runtime only (skip PAT bootstrap)
-pwsh ./scripts/start-debuglocal.ps1 --NoTokenBootstrap
-
-# Override bootstrap user and retry behavior
-pwsh ./scripts/start-debuglocal.ps1 \
-  --BootstrapUserId "test-admin" \
-  --TokenBootstrapMaxAttempts 5 \
-  --TokenBootstrapInitialBackoffSeconds 2
-```
-
-## Manual Aspire Start (Advanced)
-
-Use this only when you explicitly want to bypass onboarding automation.
-You will need to handle auth and token setup manually.
-
-PowerShell:
-
-```powershell
-dotnet run --project ./src/Grace.Aspire.AppHost/Grace.Aspire.AppHost.csproj --launch-profile DebugLocal
-```
-
-bash / zsh:
-
-```bash
-dotnet run --project ./src/Grace.Aspire.AppHost/Grace.Aspire.AppHost.csproj --launch-profile DebugLocal
-```
-
-## Verify Runtime Health
-
-The Aspire dashboard is available at <http://localhost:18888>.
-
-Health endpoint checks:
-
-PowerShell:
-
-```powershell
-(Invoke-WebRequest -Uri "http://localhost:5000/healthz").Content
-```
-
-bash / zsh:
-
-```bash
-curl http://localhost:5000/healthz
-```
-
-Expected output contains: `Grace server seems healthy!`.
-
-## Diagnostics And Smoke Artifacts
-
-`start-debuglocal.ps1` writes onboarding artifacts under `.grace/logs`:
-
-- `start-debuglocal-<run-id>.stdout.log`
-- `start-debuglocal-<run-id>.stderr.log`
-- `start-debuglocal-<run-id>.failure.json` (failure summary)
-- `start-debuglocal-<run-id>.runtime-metadata.json` (runtime metadata snapshot)
-
-Failure-path cleanup behavior:
-
-- stale DebugLocal AppHost processes are detected before launch and cleanup is attempted;
-- process cleanup is also attempted in `finally` when a startup failure occurs;
-- cleanup outcomes are recorded in failure diagnostics.
-
-## Smoke Validation Checklist
-
-Use this checklist when reviewing onboarding reliability updates:
-
-1. Run onboarding from a clean shell and confirm startup completes.
-
-PowerShell:
-
-```powershell
-pwsh ./scripts/start-debuglocal.ps1
-```
-
-bash / zsh:
-
-```bash
-pwsh ./scripts/start-debuglocal.ps1
-```
-
-1. Confirm script output includes:
-   - resolved bootstrap user and source,
-   - auth probe pass or fail details,
-   - token bootstrap attempt summary,
-   - cleanup and diagnostics paths on failure.
-2. Validate docs and repo fast checks:
-
-PowerShell:
-
-```powershell
-npx --yes markdownlint-cli2 src/docs/**/*.md
 pwsh ./scripts/validate.ps1 -Fast
 ```
 
-bash / zsh:
+Run `pwsh ./scripts/validate.ps1 -Full` when you need the Aspire integration
+coverage from `Grace.Server.Tests`.
+
+## Environment Variables
+
+For the full environment variable inventory, `dotnet user-secrets` guidance,
+and profile-specific requirements (`DebugLocal` vs `DebugAzure`), use
+`src/docs/ENVIRONMENT.md` as the canonical reference.
+
+## Start Aspire
+
+> The Aspire app host lives in `Grace.Aspire.AppHost`. It orchestrates Azurite,
+> Cosmos DB, Redis, SQL Server, the Service Bus emulator, and `Grace.Server`
+> itself.
+
+### Visual Studio
+
+1. Set `Grace.Aspire.AppHost` as the startup project.
+2. Press **F5**. Visual Studio launches the Aspire host and opens the dashboard
+   at `http://localhost:18888`.
+
+### .NET CLI
 
 ```bash
-npx --yes markdownlint-cli2 src/docs/**/*.md
-pwsh ./scripts/validate.ps1 -Fast
+cd Grace.Aspire.AppHost
+DOTNET_ENVIRONMENT=Development dotnet run
 ```
+
+The CLI host prints connection details for each emulator (Azurite, Redis,
+Cosmos, Service Bus) as they start.
+
+## Verify Components
+
+Open `http://localhost:18888` and confirm the following resources show
+`Running`:
+
+- `azurite` – Azure Storage emulator (blob/queue/table) on ports `10000-10002`
+- `redis` – Redis cache on port `6379`
+- `cosmos-emulator` – Cosmos DB emulator on port `8081`
+- `servicebus-sql` – SQL Server container required by the Service Bus emulator
+- `service-bus-emulator` – Service Bus emulator (AMQP on `5672`, management UI
+  on `9200`)
+- `grace-server` – HTTP `5000` / HTTPS `5001`
+
+## Smoke Tests
+
+1. **Health check**
+
+   ```bash
+   curl http://localhost:5000/healthz
+   ```
+
+   Expected output: `Grace server seems healthy!`
+2. **Traces & metrics** – In the Aspire dashboard, select **grace-server** →
+   **Traces** or **Metrics** to review OpenTelemetry data sent via the OTLP
+   exporter.
+3. **Logs** – Within the same resource view, confirm log entries for Orleans
+   startup and Aspire instrumentation.
+
+## Service Bus Emulator Connection String
+
+The .NET SDK expects a connection string that ends with
+`UseDevelopmentEmulator=true`. After the emulator finishes booting:
+
+1. Browse to `http://localhost:9200` (Service Bus emulator management portal).
+2. Copy the `RootManageSharedAccessKey` connection string shown in the portal.
+3. Before launching Aspire, set the lowercase environment variable so
+   `Grace.Server` can connect:
+
+```powershell
+$env:azureservicebusconnectionstring =
+  "Endpoint=sb://localhost/;" +
+  "SharedAccessKeyName=RootManageSharedAccessKey;" +
+  "SharedAccessKey=<SAS_KEY>;" +
+  "UseDevelopmentEmulator=true;"
+
+dotnet run
+```
+
+Environment keys in `Grace.Shared.Constants` are lowercase. Microsoft Learn
+confirms configuration keys are case-insensitive, so this works for Windows and
+Linux hosts.
+
+## Run Tests
+
+After the host is up:
+
+```bash
+cd ..\Grace.Server.Tests
+DOTNET_ENVIRONMENT=Development dotnet test --no-build
+```
+
+Integration tests reuse the running emulators. Shut down Aspire when tests
+finish to release containers and ports.
 
 ## Troubleshooting
 
-- **Startup timeout**: increase `-StartupTimeoutSeconds` and inspect `.grace/logs/*.stderr.log`.
-- **Auth probe fails with 401/403**: ensure the bootstrap user resolves correctly and `GRACE_TESTING=1` is set.
-- **Token bootstrap retry exhaustion**: inspect `*.failure.json` for classification and retry diagnostics.
-- **Ports already in use**: stop conflicting processes, then rerun `start-debuglocal.ps1`.
+- **Port conflicts** – Update bindings inside
+  `Grace.Aspire.AppHost/Program.cs` if ports `5000`, `5001`, `10000–10002`,
+  `8081`, `10251–10255`, `5672`, `9200`, or `21433` are already used.
+- **Cosmos DB emulator** – First launch can take several minutes. Inspect logs
+  with `docker logs cosmos-emulator`.
+- **Service Bus emulator** – The Service Bus container waits for SQL Server. If
+  startup fails, check `docker logs servicebus-sql` for password or EULA issues.
+- **Missing telemetry** – `OTLP_ENDPOINT_URL` must reach
+  `http://localhost:18889`. In Azure, provide
+  `APPLICATIONINSIGHTS_CONNECTION_STRING` so Azure Monitor exporters activate.
+
+## Next Steps
+
+- Review `infra/app-service.bicep` for a production-ready App Service
+  deployment template.
+- Set GitHub secrets (`AZURE_SUBSCRIPTION_ID`, `AZURE_TENANT_ID`,
+  `AZURE_CLIENT_ID`) before enabling the workflow in
+  `.github/workflows/deploy-to-app-service.yml`.

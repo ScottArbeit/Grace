@@ -125,22 +125,7 @@ module DirectoryVersion =
                 Arity = ArgumentArity.ExactlyOne
             )
 
-    let private DirectoryVersionValidations parseResult =
-        let ``Grace index file must exist`` (parseResult: ParseResult) =
-            if not <| File.Exists(Current().GraceStatusFile) then
-                Error(GraceError.Create (getErrorMessage DirectoryVersionError.IndexFileNotFound) (getCorrelationId parseResult))
-            else
-                Ok parseResult
-
-        let ``Grace object cache file must exist`` (parseResult: ParseResult) =
-            if not <| File.Exists(Current().GraceStatusFile) then
-                Error(GraceError.Create (getErrorMessage DirectoryVersionError.ObjectCacheFileNotFound) (getCorrelationId parseResult))
-            else
-                Ok parseResult
-
-        parseResult
-        |> ``Grace index file must exist``
-        >>= ``Grace object cache file must exist``
+    let private DirectoryVersionValidations parseResult = Ok parseResult
 
     type GetZipFile() =
         inherit AsynchronousCommandLineAction()

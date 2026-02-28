@@ -26,7 +26,6 @@ open System.Threading
 open System.Threading.Tasks
 open System.Collections.Generic
 open NodaTime
-open MessagePack
 
 module Maintenance =
 
@@ -110,6 +109,34 @@ module Maintenance =
                 Arity = ArgumentArity.ExactlyOne,
                 DefaultValueFactory = (fun _ -> "*.*")
             )
+
+    let private tryGetRootSha256Hash (graceStatus: GraceStatus) =
+        let rootHashFromIndex =
+            graceStatus.Index.Values
+            |> Seq.tryFind (fun directoryVersion -> directoryVersion.RelativePath = Constants.RootDirectoryPath)
+            |> Option.map (fun directoryVersion -> directoryVersion.Sha256Hash)
+
+        let rootHashFromStatusMeta =
+            if String.IsNullOrWhiteSpace(graceStatus.RootDirectorySha256Hash) then
+                None
+            else
+                Some graceStatus.RootDirectorySha256Hash
+
+        rootHashFromIndex
+        |> Option.orElse rootHashFromStatusMeta
+
+    let private getShortHash (sha256Hash: Sha256Hash) =
+        if String.IsNullOrWhiteSpace(sha256Hash) then
+            String.Empty
+        elif sha256Hash.Length <= 8 then
+            sha256Hash
+        else
+            sha256Hash.Substring(0, 8)
+
+    let private writeRootShaSummary (graceStatus: GraceStatus) =
+        match tryGetRootSha256Hash graceStatus with
+        | Some rootSha256Hash -> AnsiConsole.MarkupLine($"[{Colors.Highlighted}]Root SHA-256 hash: {getShortHash rootSha256Hash}[/]")
+        | None -> AnsiConsole.MarkupLine($"[{Colors.Error}]Root SHA-256 hash: unavailable (root directory entry missing).[/]")
 
     let private updateIndexHandler (parseResult: ParseResult) =
         task {
@@ -197,29 +224,7 @@ module Maintenance =
 
                                     // Ensure the object cache index is up-to-date.
                                     t4.StartTask()
-                                    let! objectCache = readGraceObjectCacheFile ()
-                                    let incrementAmount = 100.0 / double graceStatus.Index.Count
-
-                                    let plr =
-                                        Parallel.ForEach(
-                                            graceStatus.Index.Values,
-                                            Constants.ParallelOptions,
-                                            (fun localDirectoryVersion ->
-                                                if
-                                                    not
-                                                    <| objectCache.Index.ContainsKey(localDirectoryVersion.DirectoryVersionId)
-                                                then
-                                                    objectCache.Index.AddOrUpdate(
-                                                        localDirectoryVersion.DirectoryVersionId,
-                                                        (fun _ -> localDirectoryVersion),
-                                                        (fun _ _ -> localDirectoryVersion)
-                                                    )
-                                                    |> ignore
-
-                                                t4.Increment(incrementAmount))
-                                        )
-
-                                    do! writeGraceObjectCacheFile objectCache
+                                    do! upsertObjectCache graceStatus.Index.Values
                                     t4.Value <- 100.0
 
                                     // Ensure all files are uploaded to object storage.
@@ -411,13 +416,11 @@ module Maintenance =
 
                     let totalFileSize = graceStatus.Index.Values.Sum(fun directoryVersion -> directoryVersion.Files.Sum(fun f -> int64 f.Size))
 
-                    let rootDirectoryVersion = graceStatus.Index.Values.First(fun d -> d.RelativePath = Constants.RootDirectoryPath)
-
                     AnsiConsole.MarkupLine($"[{Colors.Highlighted}]Number of directories scanned: {graceStatus.Index.Count}.[/]")
 
                     AnsiConsole.MarkupLine($"[{Colors.Highlighted}]Number of files scanned: {fileCount}; total file size: {totalFileSize:N0}.[/]")
 
-                    AnsiConsole.MarkupLine $"[{Colors.Highlighted}]Root SHA-256 hash: {rootDirectoryVersion.Sha256Hash.Substring(0, 8)}[/]"
+                    writeRootShaSummary graceStatus
                     return 0
                 else
                     let! previousGraceStatus = readGraceStatusFile ()
@@ -633,14 +636,12 @@ module Maintenance =
 
                 let totalFileSize = graceStatus.Index.Values.Sum(fun directoryVersion -> directoryVersion.Files.Sum(fun f -> int64 f.Size))
 
-                let rootDirectoryVersion = graceStatus.Index.Values.First(fun d -> d.RelativePath = Constants.RootDirectoryPath)
-
                 AnsiConsole.MarkupLine($"[{Colors.Important}]All values taken from the local Grace status file.[/]")
                 AnsiConsole.MarkupLine($"[{Colors.Highlighted}]Number of directories: {directoryCount}.[/]")
 
                 AnsiConsole.MarkupLine($"[{Colors.Highlighted}]Number of files: {fileCount}; total file size: {totalFileSize:N0}.[/]")
 
-                AnsiConsole.MarkupLine($"[{Colors.Highlighted}]Root SHA-256 hash: {rootDirectoryVersion.Sha256Hash.Substring(0, 8)}[/]")
+                writeRootShaSummary graceStatus
 
                 return 0
             }
@@ -667,64 +668,58 @@ module Maintenance =
 
                 let totalFileSize = graceStatus.Index.Values.Sum(fun directoryVersion -> directoryVersion.Files.Sum(fun f -> int64 f.Size))
 
-                let rootDirectoryVersion = graceStatus.Index.Values.First(fun d -> d.RelativePath = Constants.RootDirectoryPath)
-
                 AnsiConsole.MarkupLine($"[{Colors.Important}]All values taken from the local Grace status file.[/]")
                 AnsiConsole.MarkupLine($"[{Colors.Highlighted}]Number of directories: {directoryCount}.[/]")
 
                 AnsiConsole.MarkupLine($"[{Colors.Highlighted}]Number of files: {fileCount}; total file size: {totalFileSize:N0}.[/]")
 
-                AnsiConsole.MarkupLine($"[{Colors.Highlighted}]Root SHA-256 hash: {rootDirectoryVersion.Sha256Hash.Substring(0, 8)}[/]")
+                writeRootShaSummary graceStatus
 
                 if listDirectories then
-                    let longestRelativePath = getLongestRelativePath graceStatus.Index.Values
-                    let additionalSpaces = String.replicate (longestRelativePath - 2) " "
-                    let additionalImportantDashes = String.replicate (longestRelativePath + 3) "-"
-                    let additionalDeemphasizedDashes = String.replicate 38 "-"
+                    if directoryCount = 0 then
+                        AnsiConsole.MarkupLine($"[{Colors.Verbose}]No directory entries found in the local Grace status file.[/]")
+                    else
+                        let longestRelativePath = getLongestRelativePath graceStatus.Index.Values
+                        let additionalSpaces = String.replicate (longestRelativePath - 2) " "
+                        let additionalImportantDashes = String.replicate (longestRelativePath + 3) "-"
+                        let additionalDeemphasizedDashes = String.replicate 38 "-"
 
-                    let sortedDirectoryVersions = graceStatus.Index.Values.OrderBy(fun dv -> dv.RelativePath)
+                        let sortedDirectoryVersions = graceStatus.Index.Values.OrderBy(fun dv -> dv.RelativePath)
 
-                    sortedDirectoryVersions
-                    |> Seq.iteri (fun i directoryVersion ->
-                        AnsiConsole.WriteLine()
+                        sortedDirectoryVersions
+                        |> Seq.iteri (fun i directoryVersion ->
+                            AnsiConsole.WriteLine()
 
-                        if i = 0 then
-                            AnsiConsole.MarkupLine(
-                                $"[{Colors.Important}]Last Write Time (UTC)        SHA-256            Size  Path{additionalSpaces}[/][{Colors.Deemphasized}] (DirectoryVersionId)[/]"
-                            )
-
-                            AnsiConsole.MarkupLine(
-                                $"[{Colors.Important}]-----------------------------------------------------{additionalImportantDashes}[/][{Colors.Deemphasized}] {additionalDeemphasizedDashes}[/]"
-                            )
-
-                        let rightAlignedDirectoryVersionId =
-                            (String.replicate
-                                (longestRelativePath
-                                 - directoryVersion.RelativePath.Length)
-                                " ")
-                            + $"({directoryVersion.DirectoryVersionId})"
-
-                        AnsiConsole.MarkupLine(
-                            $"[{Colors.Highlighted}]{formatDateTimeAligned directoryVersion.LastWriteTimeUtc}   {getShortSha256Hash directoryVersion.Sha256Hash}  {directoryVersion.Size, 13:N0}  /{directoryVersion.RelativePath}[/] [{Colors.Deemphasized}] {rightAlignedDirectoryVersionId}[/]"
-                        )
-
-                        if listFiles then
-                            let sortedFiles = directoryVersion.Files.OrderBy(fun f -> f.RelativePath)
-
-                            for file in sortedFiles do
+                            if i = 0 then
                                 AnsiConsole.MarkupLine(
-                                    $"[{Colors.Verbose}]{formatDateTimeAligned file.LastWriteTimeUtc}   {getShortSha256Hash file.Sha256Hash}  {file.Size, 13:N0}  |- {file.FileInfo.Name}[/]"
-                                ))
+                                    $"[{Colors.Important}]Last Write Time (UTC)        SHA-256            Size  Path{additionalSpaces}[/][{Colors.Deemphasized}] (DirectoryVersionId)[/]"
+                                )
+
+                                AnsiConsole.MarkupLine(
+                                    $"[{Colors.Important}]-----------------------------------------------------{additionalImportantDashes}[/][{Colors.Deemphasized}] {additionalDeemphasizedDashes}[/]"
+                                )
+
+                            let rightAlignedDirectoryVersionId =
+                                (String.replicate
+                                    (longestRelativePath
+                                     - directoryVersion.RelativePath.Length)
+                                    " ")
+                                + $"({directoryVersion.DirectoryVersionId})"
+
+                            AnsiConsole.MarkupLine(
+                                $"[{Colors.Highlighted}]{formatDateTimeAligned directoryVersion.LastWriteTimeUtc}   {getShortSha256Hash directoryVersion.Sha256Hash}  {directoryVersion.Size, 13:N0}  /{directoryVersion.RelativePath}[/] [{Colors.Deemphasized}] {rightAlignedDirectoryVersionId}[/]"
+                            )
+
+                            if listFiles then
+                                let sortedFiles = directoryVersion.Files.OrderBy(fun f -> f.RelativePath)
+
+                                for file in sortedFiles do
+                                    AnsiConsole.MarkupLine(
+                                        $"[{Colors.Verbose}]{formatDateTimeAligned file.LastWriteTimeUtc}   {getShortSha256Hash file.Sha256Hash}  {file.Size, 13:N0}  |- {file.FileInfo.Name}[/]"
+                                    ))
 
                 return 0
             }
-
-    let verify<'T> (label: string) =
-        try
-            let _ = messagePackSerializerOptions.Resolver.GetFormatterWithVerify<'T>()
-            printfn "%s: formatter OK" label
-        with
-        | ex -> printfn "%s: formatter MISSING\n%s" label (ex.ToString())
 
     type CheckIgnoreEntries() =
         inherit AsynchronousCommandLineAction()
@@ -743,31 +738,6 @@ module Maintenance =
                 for file in Current().GraceFileIgnoreEntries do
                     AnsiConsole.MarkupLine($"[{Colors.Highlighted}]  {file}[/]")
 
-                return 0
-            }
-
-    type Test() =
-        inherit AsynchronousCommandLineAction()
-
-        override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
-            task {
-
-                // Probe the usual suspects
-                verify<Instant> "NodaTime.Instant"
-                verify<Uri> "System.Uri"
-                verify<byte []> "byte[]"
-                verify<ReadOnlyMemory<byte>> "ReadOnlyMemory<byte>"
-                verify<Guid> "Guid"
-
-                // Your concrete types (adjust names if needed)
-                verify<Grace.Types.Types.DirectoryVersion> "DirectoryVersion"
-                verify<Grace.Types.Types.FileVersion> "FileVersion"
-                verify<Grace.Types.Types.LocalDirectoryVersion> "LocalDirectoryVersion"
-                verify<Grace.Types.Types.LocalFileVersion> "LocalFileVersion"
-
-                // Also probe the generic containers which appear in your model
-                verify<List<Grace.Types.Types.DirectoryVersion>> "List<DirectoryVersion>"
-                verify<Grace.Types.Types.DirectoryVersion []> "DirectoryVersion[]"
                 return 0
             }
 
@@ -821,12 +791,5 @@ module Maintenance =
 
         checkIgnoreEntriesCommand.Action <- new CheckIgnoreEntries()
         maintenanceCommand.Subcommands.Add(checkIgnoreEntriesCommand)
-
-        let testCommand =
-            new Command("test", Description = "Just a test.")
-            |> addCommonOptions
-
-        testCommand.Action <- new Test()
-        maintenanceCommand.Subcommands.Add(testCommand)
 
         maintenanceCommand

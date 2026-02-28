@@ -1488,8 +1488,6 @@ module Application =
                     )
                 |> ignore
             else
-                ExternalAuthConfig.warnIfMicrosoftConfigPresent configuration
-
                 let oidcConfig = ExternalAuthConfig.tryGetOidcConfig configuration
                 let hasOidc = oidcConfig |> Option.isSome
 
@@ -1699,6 +1697,7 @@ module Application =
                 .UseStaticFiles()
                 .UseRouting()
                 .UseAuthentication()
+                .UseMiddleware<LogAuthorizationFailureMiddleware>()
                 .UseAuthorization()
                 .Use(
                     Func<HttpContext, RequestDelegate, Task> (fun (context: HttpContext) (next: RequestDelegate) ->
