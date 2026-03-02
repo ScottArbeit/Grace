@@ -53,9 +53,9 @@ module Configuration =
         /// The Grace objects (/.grace/objects) directory path. This is where Grace keeps locally-cached versions of repository artifacts.
         member val public ObjectDirectory = Environment.CurrentDirectory with get, set
         /// The location of the Grace index file.
-        member val public GraceStatusFile = Constants.GraceStatusFileName with get, set
+        member val public GraceStatusFile = Constants.GraceLocalStateDbFileName with get, set
         /// The location of the Grace object cache file.
-        member val public GraceObjectCacheFile = Constants.GraceObjectCacheFile with get, set
+        member val public GraceObjectCacheFile = Constants.GraceLocalStateDbFileName with get, set
         /// The Grace objects directory cache path. This is where Grace keeps locally-cached DirectoryVersion's.
         member val public DirectoryVersionCache = Environment.CurrentDirectory with get, set
         /// The local directory where graceconfig.json is found for this repository.
@@ -175,9 +175,11 @@ module Configuration =
 
         graceConfiguration.ObjectDirectory <- Path.GetFullPath(Path.Combine(graceConfigurationDirectory, Constants.GraceObjectsDirectory))
 
-        graceConfiguration.GraceObjectCacheFile <- Path.Combine(graceConfiguration.ObjectDirectory, Constants.GraceObjectCacheFile)
+        let graceLocalStateDbPath =
+            Path.Combine(graceConfiguration.GraceDirectory, Constants.GraceLocalStateDbFileName)
 
-        graceConfiguration.GraceStatusFile <- Path.Combine(graceConfiguration.GraceDirectory, Constants.GraceStatusFileName)
+        graceConfiguration.GraceStatusFile <- graceLocalStateDbPath
+        graceConfiguration.GraceObjectCacheFile <- graceLocalStateDbPath
 
         graceConfiguration.DirectoryVersionCache <- Path.GetFullPath(Path.Combine(graceConfigurationDirectory, Constants.GraceDirectoryVersionCacheName))
 

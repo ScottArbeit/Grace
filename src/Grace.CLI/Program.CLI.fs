@@ -111,6 +111,7 @@ module GraceCommand =
                 || token.Equals("-o", comparison)
                 || token.Equals(OptionName.CorrelationId, comparison)
                 || token.Equals("-c", comparison)
+                || token.Equals(OptionName.Source, comparison)
 
             let rec loop index =
                 if index >= args.Length then
@@ -243,10 +244,12 @@ module GraceCommand =
                 Heading = "Review and promotion"
                 CommandNames =
                     [
-                        "work"
+                        "workitem"
                         "review"
-                        "promotion-group"
+                        "candidate"
                         "queue"
+                        "promotion-set"
+                        "agent"
                     ]
             }
             {
@@ -374,21 +377,19 @@ module GraceCommand =
             { Heading = "Lifecycle"; CommandNames = [ "delete"; "undelete" ] }
         ]
 
-    let private promotionGroupHelpSections =
+    let private workItemHelpSections =
         [
-            { Heading = "Create and inspect"; CommandNames = [ "create"; "get"; "list" ] }
-            { Heading = "Manage promotions"; CommandNames = [ "add"; "remove"; "reorder" ] }
+            { Heading = "Create and update"; CommandNames = [ "create"; "show"; "status" ] }
             {
-                Heading = "Workflow"
+                Heading = "Link and attach"
                 CommandNames =
                     [
-                        "schedule"
-                        "mark-ready"
-                        "start"
-                        "block"
+                        "link"
+                        "attach"
+                        "attachments"
+                        "links"
                     ]
             }
-            { Heading = "Lifecycle"; CommandNames = [ "delete" ] }
         ]
 
     let private groupedHelpSectionsByCommandName =
@@ -400,8 +401,10 @@ module GraceCommand =
         lookup["owner"] <- ownerHelpSections
         lookup["organization"] <- organizationHelpSections
         lookup["org"] <- organizationHelpSections
-        lookup["promotion-group"] <- promotionGroupHelpSections
-        lookup["pg"] <- promotionGroupHelpSections
+        lookup["workitem"] <- workItemHelpSections
+        lookup["work"] <- workItemHelpSections
+        lookup["work-item"] <- workItemHelpSections
+        lookup["wi"] <- workItemHelpSections
         lookup
 
     let private formatDisplayName (command: Command) =
@@ -561,6 +564,7 @@ module GraceCommand =
 
         // Create global options - these appear on every command in the system.
         rootCommand.Options.Add(Options.correlationId)
+        rootCommand.Options.Add(Options.source)
         rootCommand.Options.Add(Options.output)
 
         // Add subcommands.
@@ -576,10 +580,12 @@ module GraceCommand =
         rootCommand.Subcommands.Add(History.Build)
         rootCommand.Subcommands.Add(Auth.Build)
         rootCommand.Subcommands.Add(Maintenance.Build)
-        rootCommand.Subcommands.Add(PromotionGroupCommand.Build)
         rootCommand.Subcommands.Add(WorkItemCommand.Build)
         rootCommand.Subcommands.Add(ReviewCommand.Build)
+        rootCommand.Subcommands.Add(CandidateCommand.Build)
         rootCommand.Subcommands.Add(QueueCommand.Build)
+        rootCommand.Subcommands.Add(PromotionSetCommand.Build)
+        rootCommand.Subcommands.Add(AgentCommand.Build)
         rootCommand.Subcommands.Add(Admin.Build)
         rootCommand.Subcommands.Add(Access.Build)
 
@@ -770,6 +776,7 @@ module GraceCommand =
                     parseSucceeded <- parseResult.Errors.Count = 0
                     // Write the ParseResult to Services as global context for the CLI.
                     Services.parseResult <- parseResult
+                    LocalStateDb.setVerbose (parseResult |> verbose)
 
                     let helpAction =
                         match parseResult.Action with
@@ -1030,7 +1037,6 @@ module GraceCommand =
                         else
                             AnsiConsole.MarkupLine($"[{Colors.Important}]{getLocalizedString StringResourceName.GraceConfigFileNotFound}[/]")
 
-                        printParseResult parseResult
                         let finishTime = getCurrentInstant ()
 
                         let elapsed =
@@ -1066,7 +1072,7 @@ module GraceCommand =
                         durationMs = durationMs
                         parseSucceeded = parseSucceeded
                         timestampUtc = startTime
-                        source = None
+                        source = resolveInvocationSource parseResult
                     }
 
                 // If this was grace watch, delete the inter-process communication file.

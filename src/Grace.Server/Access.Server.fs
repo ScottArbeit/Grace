@@ -30,8 +30,9 @@ module Access =
 
     let private forbiddenResult (context: HttpContext) (reason: string) =
         let message =
-            if includeReason
-               && not (String.IsNullOrWhiteSpace reason)
+            if
+                includeReason
+                && not (String.IsNullOrWhiteSpace reason)
             then
                 reason
             else
@@ -57,8 +58,7 @@ module Access =
         | Scope.Owner ownerId -> Resource.Owner ownerId
         | Scope.Organization (ownerId, organizationId) -> Resource.Organization(ownerId, organizationId)
         | Scope.Repository (ownerId, organizationId, repositoryId) -> Resource.Repository(ownerId, organizationId, repositoryId)
-        | Scope.Branch (ownerId, organizationId, repositoryId, branchId) ->
-            Resource.Branch(ownerId, organizationId, repositoryId, branchId)
+        | Scope.Branch (ownerId, organizationId, repositoryId, branchId) -> Resource.Branch(ownerId, organizationId, repositoryId, branchId)
 
     let private adminOperationForScope (scope: Scope) =
         match scope with
@@ -75,8 +75,7 @@ module Access =
         | Resource.Organization _ -> Operation.OrgAdmin
         | Resource.Repository _ -> Operation.RepoAdmin
         | Resource.Branch _ -> Operation.BranchAdmin
-        | Resource.Path (ownerId, organizationId, repositoryId, _relativePath) ->
-            Operation.RepoAdmin
+        | Resource.Path (ownerId, organizationId, repositoryId, _relativePath) -> Operation.RepoAdmin
 
     let private authorize (context: HttpContext) (operation: Operation) (resource: Resource) =
         task {
@@ -249,6 +248,7 @@ module Access =
             task {
                 let! parameters = context |> parse<GrantRoleParameters>
                 let correlationId = parameters.CorrelationId
+
                 let validationResult =
                     match parseScope parameters.ScopeKind parameters correlationId with
                     | Error error -> Error error
@@ -262,10 +262,11 @@ module Access =
                                 match Authorization.RoleCatalog.tryGet parameters.RoleId with
                                 | None -> Error(GraceError.Create $"Unknown RoleId '{parameters.RoleId}'." correlationId)
                                 | Some roleDefinition ->
-                                    if not <| roleDefinition.AppliesTo.Contains(scopeKind scope) then
-                                        Error(
-                                            GraceError.Create $"Role '{parameters.RoleId}' does not apply to scope '{scopeKind scope}'." correlationId
-                                        )
+                                    if
+                                        not
+                                        <| roleDefinition.AppliesTo.Contains(scopeKind scope)
+                                    then
+                                        Error(GraceError.Create $"Role '{parameters.RoleId}' does not apply to scope '{scopeKind scope}'." correlationId)
                                     else
                                         Ok(scope, principal)
 
@@ -415,8 +416,7 @@ module Access =
                         | Ok (repositoryId, pathPermission) ->
                             let actorProxy = ActorProxy.RepositoryPermission.CreateActorProxy repositoryId correlationId
 
-                            let! upsertResult =
-                                actorProxy.Handle (RepositoryPermissionCommand.UpsertPathPermission pathPermission) (createMetadata context)
+                            let! upsertResult = actorProxy.Handle (RepositoryPermissionCommand.UpsertPathPermission pathPermission) (createMetadata context)
 
                             match upsertResult with
                             | Ok returnValue -> return! context |> result200Ok returnValue
@@ -498,14 +498,14 @@ module Access =
                             let principals = PrincipalMapper.getPrincipals context.User
 
                             let isCallerPrincipal principalToCheck =
-                                principals |> List.exists (fun candidate -> candidate = principalToCheck)
+                                principals
+                                |> List.exists (fun principal -> principal = principalToCheck)
 
                             let! allowCheck =
                                 match principalOption with
                                 | None -> Task.FromResult(Ok())
                                 | Some principal when isCallerPrincipal principal -> Task.FromResult(Ok())
-                                | Some _ ->
-                                    authorize context (adminOperationForResource resource) resource
+                                | Some _ -> authorize context (adminOperationForResource resource) resource
 
                             match allowCheck with
                             | Error reason -> return! forbiddenResult context reason

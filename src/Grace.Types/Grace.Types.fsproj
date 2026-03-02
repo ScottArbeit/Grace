@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
     <PropertyGroup>
         <TargetFramework>net10.0</TargetFramework>
@@ -28,13 +28,16 @@
         <Compile Include="Repository.Types.fs" />
         <Compile Include="Reference.Types.fs" />
         <Compile Include="Branch.Types.fs" />
-        <Compile Include="PromotionGroup.Types.fs" />
+        
+        <Compile Include="PromotionSet.Types.fs" />
         <Compile Include="WorkItem.Types.fs" />
         <Compile Include="Policy.Types.fs" />
         <Compile Include="RequiredAction.Types.fs" />
         <Compile Include="Review.Types.fs" />
         <Compile Include="Queue.Types.fs" />
-        <Compile Include="Eventing.Types.fs" />
+        <Compile Include="Artifact.Types.fs" />
+        <Compile Include="Automation.Types.fs" />
+        <Compile Include="Validation.Types.fs" />
         <Compile Include="Diff.Types.fs" />
         <Compile Include="DirectoryVersion.Types.fs" />
         <Compile Include="Reminder.Types.fs" />
@@ -52,6 +55,7 @@
         <PackageReference Include="MessagePack.FSharpExtensions" Version="4.0.0" />
         <PackageReference Include="MessagePack.NodaTime" Version="3.5.0" />
         <PackageReference Include="Microsoft.Extensions.Caching.Memory" Version="10.0.0" />
+        <PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" Version="10.0.0" />
         <PackageReference Include="Microsoft.Extensions.ObjectPool" Version="10.0.0" />
         <PackageReference Include="MimeTypeMapOfficial" Version="1.0.17" />
         <PackageReference Include="MimeTypes" Version="2.5.2" />

@@ -101,8 +101,7 @@ module Branch =
                             |> Seq.find (fun link ->
                                 match link with
                                 | ReferenceLinkType.BasedOn _ -> true
-                                | ReferenceLinkType.IncludedInPromotionGroup _ -> false
-                                | ReferenceLinkType.PromotionGroupTerminal _ -> false)
+                                | _ -> false)
 
                         let basedOnReferenceId =
                             match basedOnLink with

@@ -645,26 +645,6 @@ module Connect =
 
         AnsiConsole.MarkupLine $"[{Colors.Important}]Finished writing files to disk.[/]"
 
-    let private updateObjectCacheFromGraceStatus (graceStatus: GraceStatus) (objectCache: GraceObjectCache) =
-        let _ =
-            Parallel.ForEach(
-                graceStatus.Index.Values,
-                Constants.ParallelOptions,
-                (fun localDirectoryVersion ->
-                    if
-                        not
-                        <| objectCache.Index.ContainsKey(localDirectoryVersion.DirectoryVersionId)
-                    then
-                        objectCache.Index.AddOrUpdate(
-                            localDirectoryVersion.DirectoryVersionId,
-                            (fun _ -> localDirectoryVersion),
-                            (fun _ _ -> localDirectoryVersion)
-                        )
-                        |> ignore)
-            )
-
-        ()
-
     let private retrieveDefaultBranchAndWrite
         (parseResult: ParseResult)
         (graceIds: GraceIds)
@@ -749,9 +729,7 @@ module Connect =
                         do! writeGraceStatusFile graceStatus
 
                         AnsiConsole.MarkupLine $"[{Colors.Important}]Creating Grace Object Cache Index file.[/]"
-                        let! objectCache = readGraceObjectCacheFile ()
-                        updateObjectCacheFromGraceStatus graceStatus objectCache
-                        do! writeGraceObjectCacheFile objectCache
+                        do! upsertObjectCache graceStatus.Index.Values
                         return 0
                 | (Error error, _) -> return (Error error |> renderOutput parseResult)
                 | (_, Error error) -> return (Error error |> renderOutput parseResult)

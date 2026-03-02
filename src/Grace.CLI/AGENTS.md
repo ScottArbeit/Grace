@@ -29,12 +29,19 @@ Read `../AGENTS.md` for global expectations before updating CLI code.
    straightforward to unit test.
 2. Preserve existing option names and switches. Introduce new aliases when
    expanding behavior instead of breaking existing scripts.
-3. Capture new command patterns or usage tips in this document to guide future
+3. Capture new command patterns or usage tips in this document to guide future  
    agents.
 4. Root and selected subcommand help grouping lives in
    `src/Grace.CLI/Program.CLI.fs` under `rootHelpSections` and the related
    `*HelpSections` lists; update those lists when adding or renaming commands
    so new entries do not silently drift into "Other".
+
+## Local State DB
+
+- Local status and object cache are stored in `.grace/grace-local.db`.
+- SQLite side files (`.db-wal`, `.db-shm`, and optional `.db-journal`) are
+  internal; ignore them in repo scans and watch change detection except for
+  status-change coordination.
 
 ## Recent Patterns
 
@@ -46,11 +53,11 @@ Read `../AGENTS.md` for global expectations before updating CLI code.
 
 ## Continuous Review Commands
 
-- `grace work` covers create/show/status and linking references or promotion
-  groups.
+- `grace workitem` (aliases: `work`, `work-item`, `wi`) covers create/show/status,
+  linking references or promotion sets, and attach flows (`summary`, `prompt`, `notes`).
 - `grace review` covers inbox/open/checkpoint/delta/resolve/deepen. Inbox and
   delta remain CLI stubs until server endpoints land.
-- `grace queue` covers status/enqueue/pause/resume/dequeue/retry; prefer
+- `grace queue` covers status/enqueue/pause/resume/dequeue; prefer
   `--branch` but `--branch-id`/`--branch-name` still work.
 
 ## Validation

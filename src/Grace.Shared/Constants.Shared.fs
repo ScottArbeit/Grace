@@ -171,11 +171,11 @@ module Constants =
 
     /// The name of the file that holds the current local index for Grace.
     [<Literal>]
-    let GraceStatusFileName = "gracestatus.msgpack"
+    let GraceLocalStateDbFileName = "grace-local.db"
 
     /// The name of the file that holds the current local index for Grace.
     [<Literal>]
-    let GraceObjectCacheFile = "graceObjectCache.msgpack"
+    let GraceObjectCacheFile = GraceLocalStateDbFileName
 
     /// The default branch name for new repositories.
     [<Literal>]

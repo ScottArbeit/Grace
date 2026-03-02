@@ -1,162 +1,169 @@
-
 # Work items
 
-Work items are durable, event-sourced records for tracking a unit of work in
-Grace. They are the place to capture intent (title/description), status, notes,
-and links to other artifacts (references, promotion groups, candidates, review
-packets, checkpoints, gate attestations).
+Work items are durable, event-sourced records for a unit of work in Grace.
+They capture intent (title and description), status, notes, and links to
+references, promotion sets, and reviewer artifacts.
 
-A work item is not a branch, a commit, or a review itself; it is the
-organizational anchor that those artifacts can point to. This makes work items
-the natural place for humans and agents to look first when they want to
-understand "what is this change for?"
+## Canonical command and identifier behavior
 
-## What exists today
-
-- A WorkItem actor stores a stream of WorkItem events and builds a WorkItemDto.
-- The server exposes create/get/update plus two link operations: link reference
-  and link promotion group.
-- The CLI exposes `grace work` commands for the same surface area.
-- The SDK exposes the same endpoints as typed methods.
-
-## Core data model (WorkItemDto)
-
-A WorkItemDto aggregates the current state from the event stream. Key fields:
-
-- Identity: `WorkItemId`, `OwnerId`, `OrganizationId`, `RepositoryId`.
-- Content: `Title`, `Description`.
-- Status and metadata: `Status`, `CreatedBy`, `CreatedAt`, `UpdatedAt`.
-- Notes: `Constraints`, `Notes`, `ArchitecturalNotes`, `MigrationNotes`.
-- People/tags: `Participants`, `Tags`.
-- Links to other artifacts: `ExternalRefs`, `BranchIds`, `ReferenceIds`,
-  `PromotionGroupIds`, `CandidateIds`, `ReviewPacketIds`, `ReviewCheckpointIds`,
-  `GateAttestationIds`.
-
-Only a subset of those link fields are currently wired to server endpoints (see
-"Current limitations" below).
-
-## Status values
-
-Valid statuses are defined in `Grace.Types.WorkItem.WorkItemStatus`:
-
-- `Backlog`
-- `Active`
-- `Blocked`
-- `InReview`
-- `Done`
-- `Canceled`
-
-## Lifecycle and invariants
-
-- A work item is created once. A second `Create` with the same `WorkItemId` is
-  rejected.
-- Updates require the work item to exist. The actor returns
-  `WorkItemDoesNotExist` otherwise.
-- Updates are per-field commands. If an update request has no fields, the server
-  returns "No updates were provided."
-- Correlation IDs are used for idempotency; duplicate correlation IDs are
-  rejected.
+- Use `grace workitem ...` as the canonical CLI path.
+- Aliases (`work`, `work-item`, `wi`) remain supported for compatibility, but
+  examples in docs should use `workitem`.
+- Work item commands that take a `work-item` argument accept either:
+  - a `WorkItemId` GUID, or
+  - a positive `WorkItemNumber` (for example `42`).
 
 ## Server API surface
 
-All work item endpoints are `POST` routes under `/work`.
+All work item routes are `POST` endpoints under `/work`.
 
-- `POST /work/create` -> Create a new work item.
-- `POST /work/get` -> Retrieve the work item DTO.
-- `POST /work/update` -> Update title, description, status, and notes.
-- `POST /work/link/reference` -> Link a reference to the work item.
-- `POST /work/link/promotion-group` -> Link a promotion group to the work item.
+- `/work/create`
+- `/work/get`
+- `/work/update`
+- `/work/add-summary`
+- `/work/link/reference`
+- `/work/link/promotion-set`
+- `/work/link/artifact`
+- `/work/links/list`
+- `/work/links/remove/reference`
+- `/work/links/remove/promotion-set`
+- `/work/links/remove/artifact`
+- `/work/links/remove/artifact-type`
+- `/work/attachments/list`
+- `/work/attachments/show`
+- `/work/attachments/download`
 
-Example: create a work item.
+## CLI workflows
 
-```json
-{
-  "WorkItemId": "f88b46e2-5c36-4b52-9e36-716f7d7a9a8b",
-  "Title": "Introduce baseline drift alerts",
-  "Description": "Add baseline drift detection and update review UI",
-  "OwnerId": "7b0a3be6-4e21-4d3a-8d2c-5f6f4fa0c1a1",
-  "OrganizationId": "c7f5b0cb-5f66-4f7c-93a6-b0b0f3c5f6a0",
-  "RepositoryId": "2e7d2c03-a950-4d64-9d1c-9c8b1cc8a9b9",
-  "CorrelationId": "corr-0001"
-}
-```
+### Create and inspect work items
 
-Example: update status and notes.
-
-```json
-{
-  "WorkItemId": "f88b46e2-5c36-4b52-9e36-716f7d7a9a8b",
-  "Status": "InReview",
-  "Notes": "Waiting on policy gate rollout.",
-  "CorrelationId": "corr-0002"
-}
-```
-
-Example: link a reference.
-
-```json
-{
-  "WorkItemId": "f88b46e2-5c36-4b52-9e36-716f7d7a9a8b",
-  "ReferenceId": "f12a0d31-0d5a-4a5f-a5a7-3d2c3a9f5b2c",
-  "CorrelationId": "corr-0003"
-}
-```
-
-## CLI examples
-
-Create a work item (let the CLI generate the ID):
+PowerShell:
 
 ```powershell
-./grace work create `
+./grace workitem create `
   --title "Introduce baseline drift alerts" `
   --description "Add baseline drift detection and update review UI"
-```
 
-Create a work item with an explicit ID:
-
-```powershell
-./grace work create `
+./grace workitem create `
   --work-item-id f88b46e2-5c36-4b52-9e36-716f7d7a9a8b `
   --title "Introduce baseline drift alerts"
+
+./grace workitem show f88b46e2-5c36-4b52-9e36-716f7d7a9a8b
+./grace workitem show 42
+
+./grace workitem status f88b46e2-5c36-4b52-9e36-716f7d7a9a8b --set InReview
+./grace workitem status 42 --set Done
 ```
 
-Show a work item:
+bash / zsh:
 
-```powershell
-./grace work show f88b46e2-5c36-4b52-9e36-716f7d7a9a8b
+```bash
+./grace workitem create \
+  --title "Introduce baseline drift alerts" \
+  --description "Add baseline drift detection and update review UI"
+
+./grace workitem create \
+  --work-item-id f88b46e2-5c36-4b52-9e36-716f7d7a9a8b \
+  --title "Introduce baseline drift alerts"
+
+./grace workitem show f88b46e2-5c36-4b52-9e36-716f7d7a9a8b
+./grace workitem show 42
+
+./grace workitem status f88b46e2-5c36-4b52-9e36-716f7d7a9a8b --set InReview
+./grace workitem status 42 --set Done
 ```
 
-Update status:
+### Link references and promotion sets
+
+PowerShell:
 
 ```powershell
-./grace work status f88b46e2-5c36-4b52-9e36-716f7d7a9a8b --set InReview
-```
-
-Link a reference:
-
-```powershell
-./grace work link ref `
+./grace workitem link ref `
   f88b46e2-5c36-4b52-9e36-716f7d7a9a8b `
   f12a0d31-0d5a-4a5f-a5a7-3d2c3a9f5b2c
-```
 
-Link a promotion group:
-
-```powershell
-./grace work link group `
-  f88b46e2-5c36-4b52-9e36-716f7d7a9a8b `
+./grace workitem link prset `
+  42 `
   3d5c4d9a-0123-4567-89ab-987654321000
 ```
 
-## SDK examples
+bash / zsh:
 
-Create a work item (F#):
+```bash
+./grace workitem link ref \
+  f88b46e2-5c36-4b52-9e36-716f7d7a9a8b \
+  f12a0d31-0d5a-4a5f-a5a7-3d2c3a9f5b2c
+
+./grace workitem link prset \
+  42 \
+  3d5c4d9a-0123-4567-89ab-987654321000
+```
+
+### Attach summary, prompt, and notes content
+
+PowerShell:
+
+```powershell
+./grace workitem attach summary 42 --file .\summary.md
+./grace workitem attach prompt 42 --file .\prompt.md
+./grace workitem attach notes 42 --text "Reviewer follow-up required before merge."
+```
+
+bash / zsh:
+
+```bash
+./grace workitem attach summary 42 --file ./summary.md
+./grace workitem attach prompt 42 --file ./prompt.md
+./grace workitem attach notes 42 --text "Reviewer follow-up required before merge."
+```
+
+### Retrieve reviewer attachments
+
+PowerShell:
+
+```powershell
+./grace workitem attachments list 42
+./grace workitem attachments show 42 --type summary --latest
+./grace workitem attachments download 42 `
+  --artifact-id 11111111-2222-3333-4444-555555555555 `
+  --output-file .\summary.md
+```
+
+bash / zsh:
+
+```bash
+./grace workitem attachments list 42
+./grace workitem attachments show 42 --type summary --latest
+./grace workitem attachments download 42 \
+  --artifact-id 11111111-2222-3333-4444-555555555555 \
+  --output-file ./summary.md
+```
+
+### Inspect and clean up links
+
+PowerShell:
+
+```powershell
+./grace workitem links list 42
+./grace workitem links remove ref 42 f12a0d31-0d5a-4a5f-a5a7-3d2c3a9f5b2c
+./grace workitem links remove prset 42 3d5c4d9a-0123-4567-89ab-987654321000
+```
+
+bash / zsh:
+
+```bash
+./grace workitem links list 42
+./grace workitem links remove ref 42 f12a0d31-0d5a-4a5f-a5a7-3d2c3a9f5b2c
+./grace workitem links remove prset 42 3d5c4d9a-0123-4567-89ab-987654321000
+```
+
+## SDK example (F#)
 
 ```fsharp
 open Grace.SDK
 open Grace.Shared.Parameters.WorkItem
 
-let parameters =
+let createParameters =
     CreateWorkItemParameters(
         WorkItemId = "f88b46e2-5c36-4b52-9e36-716f7d7a9a8b",
         Title = "Introduce baseline drift alerts",
@@ -164,47 +171,21 @@ let parameters =
         CorrelationId = "corr-0001"
     )
 
-let! result = WorkItem.Create(parameters)
-```
+let! created = WorkItem.Create(createParameters)
 
-Link a reference (F#):
-
-```fsharp
-open Grace.SDK
-open Grace.Shared.Parameters.WorkItem
-
-let parameters =
-    LinkReferenceParameters(
-        WorkItemId = "f88b46e2-5c36-4b52-9e36-716f7d7a9a8b",
-        ReferenceId = "f12a0d31-0d5a-4a5f-a5a7-3d2c3a9f5b2c",
-        CorrelationId = "corr-0003"
+let linksParameters =
+    GetWorkItemLinksParameters(
+        WorkItemId = "42",
+        CorrelationId = "corr-0002"
     )
 
-let! result = WorkItem.LinkReference(parameters)
+let! links = WorkItem.GetLinks(linksParameters)
 ```
 
-## Common workflows
+## Current limitations
 
-Create -> link artifacts -> update status:
-
-1) Create a work item for a new change.
-2) Link the reference that represents the change set.
-3) Link the promotion group that will land the change.
-4) Update status as the change moves through review and promotion.
-
-Example with IDs:
-
-- Create: `f88b46e2-5c36-4b52-9e36-716f7d7a9a8b`
-- Link reference: `f12a0d31-0d5a-4a5f-a5a7-3d2c3a9f5b2c`
-- Link promotion group: `3d5c4d9a-0123-4567-89ab-987654321000`
-- Update status to `InReview` then `Done`
-
-## Current limitations and gaps
-
-- Only reference and promotion group linking are exposed via the server and CLI
-  today.
-- The WorkItem domain supports linking candidates, review packets, checkpoints,
-  and gate attestations, but there are no public endpoints for those links yet.
-- Work item linkage does not automatically happen when you enqueue a candidate;
-  if you want a work item to point at a candidate or review packet, that must be
-  done by an internal service or a future endpoint.
+- Work item commands support reference and promotion-set links plus reviewer
+  artifact links.
+- Candidate, review packet, checkpoint, and gate-attestation link management is
+  still internal and does not yet have dedicated public work-item link
+  endpoints.

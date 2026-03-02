@@ -41,15 +41,6 @@ module Constants =
         let GlobalLock = "GlobalLockActor"
 
         [<Literal>]
-        let IntegrationCandidate = "IntegrationCandidateActor"
-
-        [<Literal>]
-        let GateAttestation = "GateAttestationActor"
-
-        [<Literal>]
-        let ConflictReceipt = "ConflictReceiptActor"
-
-        [<Literal>]
         let GrainRepository = "GrainRepository"
 
         [<Literal>]
@@ -74,7 +65,7 @@ module Constants =
         let PersonalAccessToken = "PersonalAccessTokenActor"
 
         [<Literal>]
-        let PromotionGroup = "PromotionGroupActor"
+        let PromotionSet = "PromotionSetActor"
 
         [<Literal>]
         let PromotionQueue = "PromotionQueueActor"
@@ -86,7 +77,13 @@ module Constants =
         let Review = "ReviewActor"
 
         [<Literal>]
-        let Stage0 = "Stage0Actor"
+        let ValidationSet = "ValidationSetActor"
+
+        [<Literal>]
+        let ValidationResult = "ValidationResultActor"
+
+        [<Literal>]
+        let Artifact = "ArtifactActor"
 
         [<Literal>]
         let Reference = "ReferenceActor"
@@ -109,15 +106,18 @@ module Constants =
         [<Literal>]
         let WorkItem = "WorkItemActor"
 
+        [<Literal>]
+        let WorkItemNumber = "WorkItemNumberActor"
+
+        [<Literal>]
+        let WorkItemNumberCounter = "WorkItemNumberCounterActor"
+
     module StateName =
         [<Literal>]
         let AccessControl = "AccessControl"
 
         [<Literal>]
         let Branch = "Branch"
-
-        [<Literal>]
-        let ConflictReceipt = "ConflictReceipt"
 
         [<Literal>]
         let Diff = "Diff"
@@ -132,12 +132,6 @@ module Constants =
         let FileAppearance = "FileApp"
 
         [<Literal>]
-        let GateAttestation = "GateAttestation"
-
-        [<Literal>]
-        let IntegrationCandidate = "IntegrationCandidate"
-
-        [<Literal>]
         let NamedSection = "NamedSection"
 
         [<Literal>]
@@ -150,7 +144,7 @@ module Constants =
         let PersonalAccessToken = "PersonalAccessToken"
 
         [<Literal>]
-        let PromotionGroup = "PromotionGroup"
+        let PromotionSet = "PromotionSet"
 
         [<Literal>]
         let PromotionQueue = "PromotionQueue"
@@ -162,7 +156,13 @@ module Constants =
         let Review = "Review"
 
         [<Literal>]
-        let Stage0 = "Stage0"
+        let ValidationSet = "ValidationSet"
+
+        [<Literal>]
+        let ValidationResult = "ValidationResult"
+
+        [<Literal>]
+        let Artifact = "Artifact"
 
         [<Literal>]
         let Reference = "Ref"
@@ -181,6 +181,9 @@ module Constants =
 
         [<Literal>]
         let WorkItem = "WorkItem"
+
+        [<Literal>]
+        let WorkItemNumberCounter = "WorkItemNumberCounter"
 
     /// Constants for the different types of reminders.
     module ReminderType =

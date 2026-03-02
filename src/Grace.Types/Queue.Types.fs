@@ -3,30 +3,12 @@ namespace Grace.Types
 open Grace.Shared
 open Grace.Shared.Utilities
 open Grace.Types.Policy
-open Grace.Types.PromotionGroup
-open Grace.Types.RequiredAction
-open Grace.Types.Review
 open Grace.Types.Types
 open NodaTime
 open Orleans
-open System
 open System.Runtime.Serialization
 
 module Queue =
-    /// Current status of an integration candidate.
-    [<KnownType("GetKnownTypes"); GenerateSerializer>]
-    type CandidateStatus =
-        | Pending
-        | Ready
-        | Running
-        | Blocked
-        | Failed
-        | Succeeded
-        | Quarantined
-        | Canceled
-
-        static member GetKnownTypes() = GetKnownTypes<CandidateStatus>()
-
     /// Queue state for a target branch.
     [<KnownType("GetKnownTypes"); GenerateSerializer>]
     type QueueState =
@@ -37,280 +19,14 @@ module Queue =
 
         static member GetKnownTypes() = GetKnownTypes<QueueState>()
 
-    /// Execution mode for a gate.
-    [<KnownType("GetKnownTypes"); GenerateSerializer>]
-    type GateExecutionMode =
-        | Synchronous
-        | AsyncCallback
-
-        static member GetKnownTypes() = GetKnownTypes<GateExecutionMode>()
-
-    /// Outcome for a gate run.
-    [<KnownType("GetKnownTypes"); GenerateSerializer>]
-    type GateResult =
-        | Pass
-        | Fail
-        | Block
-        | Skipped
-
-        static member GetKnownTypes() = GetKnownTypes<GateResult>()
-
-    /// Definition for a gate.
-    [<GenerateSerializer>]
-    type GateDefinition = { Name: string; Version: string; ExecutionMode: GateExecutionMode }
-
-    /// Attestation record for a gate run.
-    [<GenerateSerializer>]
-    type GateAttestation =
-        {
-            GateAttestationId: GateAttestationId
-            OwnerId: OwnerId
-            OrganizationId: OrganizationId
-            RepositoryId: RepositoryId
-            CandidateId: CandidateId
-            PolicySnapshotId: PolicySnapshotId
-            BaselineHeadReferenceId: ReferenceId
-            GateName: string
-            GateVersion: string
-            Result: GateResult
-            ArtifactUris: string list
-            Summary: string
-            Timestamp: Instant
-            Principal: string
-        }
-
-        static member Default =
-            {
-                GateAttestationId = Guid.Empty
-                OwnerId = OwnerId.Empty
-                OrganizationId = OrganizationId.Empty
-                RepositoryId = RepositoryId.Empty
-                CandidateId = CandidateId.Empty
-                PolicySnapshotId = PolicySnapshotId String.Empty
-                BaselineHeadReferenceId = ReferenceId.Empty
-                GateName = String.Empty
-                GateVersion = String.Empty
-                Result = GateResult.Skipped
-                ArtifactUris = []
-                Summary = String.Empty
-                Timestamp = Constants.DefaultTimestamp
-                Principal = String.Empty
-            }
-
-    /// Defines the commands for the GateAttestation actor.
-    [<KnownType("GetKnownTypes")>]
-    type GateAttestationCommand =
-        | Create of attestation: GateAttestation
-
-        static member GetKnownTypes() = GetKnownTypes<GateAttestationCommand>()
-
-    /// Defines the events for the GateAttestation actor.
-    [<KnownType("GetKnownTypes")>]
-    type GateAttestationEventType =
-        | Created of attestation: GateAttestation
-
-        static member GetKnownTypes() = GetKnownTypes<GateAttestationEventType>()
-
-    /// Record that holds the event type and metadata for a GateAttestation event.
-    type GateAttestationEvent =
-        {
-            /// The GateAttestationEventType case that describes the event.
-            Event: GateAttestationEventType
-            /// The EventMetadata for the event. EventMetadata includes the Timestamp, CorrelationId, Principal, and a Properties dictionary.
-            Metadata: EventMetadata
-        }
-
-    /// Updates the GateAttestation based on the GateAttestationEvent.
-    module GateAttestationDto =
-        let UpdateDto (attestationEvent: GateAttestationEvent) (current: GateAttestation) =
-            match attestationEvent.Event with
-            | Created attestation -> attestation
-
-    /// Conflict resolution receipt for a candidate.
-    [<GenerateSerializer>]
-    type ConflictReceipt =
-        {
-            ConflictReceiptId: ConflictReceiptId
-            OwnerId: OwnerId
-            OrganizationId: OrganizationId
-            RepositoryId: RepositoryId
-            CandidateId: CandidateId
-            FilePath: string
-            Resolution: ConflictResolutionOutcome
-            AcceptedBy: UserId option
-            Timestamp: Instant
-            Notes: string option
-        }
-
-        static member Default =
-            {
-                ConflictReceiptId = Guid.Empty
-                OwnerId = OwnerId.Empty
-                OrganizationId = OrganizationId.Empty
-                RepositoryId = RepositoryId.Empty
-                CandidateId = CandidateId.Empty
-                FilePath = String.Empty
-                Resolution = ConflictResolutionOutcome.Default
-                AcceptedBy = None
-                Timestamp = Constants.DefaultTimestamp
-                Notes = None
-            }
-
-    /// Defines the commands for the ConflictReceipt actor.
-    [<KnownType("GetKnownTypes")>]
-    type ConflictReceiptCommand =
-        | Create of receipt: ConflictReceipt
-
-        static member GetKnownTypes() = GetKnownTypes<ConflictReceiptCommand>()
-
-    /// Defines the events for the ConflictReceipt actor.
-    [<KnownType("GetKnownTypes")>]
-    type ConflictReceiptEventType =
-        | Created of receipt: ConflictReceipt
-
-        static member GetKnownTypes() = GetKnownTypes<ConflictReceiptEventType>()
-
-    /// Record that holds the event type and metadata for a ConflictReceipt event.
-    type ConflictReceiptEvent =
-        {
-            /// The ConflictReceiptEventType case that describes the event.
-            Event: ConflictReceiptEventType
-            /// The EventMetadata for the event. EventMetadata includes the Timestamp, CorrelationId, Principal, and a Properties dictionary.
-            Metadata: EventMetadata
-        }
-
-    /// Updates the ConflictReceipt based on the ConflictReceiptEvent.
-    module ConflictReceiptDto =
-        let UpdateDto (receiptEvent: ConflictReceiptEvent) (current: ConflictReceipt) =
-            match receiptEvent.Event with
-            | Created receipt -> receipt
-
-    /// Represents an integration candidate queued for promotion.
-    [<GenerateSerializer>]
-    type IntegrationCandidate =
-        {
-            Class: string
-            CandidateId: CandidateId
-            OwnerId: OwnerId
-            OrganizationId: OrganizationId
-            RepositoryId: RepositoryId
-            WorkItemId: WorkItemId
-            PromotionGroupId: PromotionGroupId option
-            TargetBranchId: BranchId
-            PolicySnapshotId: PolicySnapshotId
-            BaselineHeadReferenceId: ReferenceId
-            Status: CandidateStatus
-            RequiredActions: RequiredActionDto list
-            ReviewPacketId: ReviewPacketId option
-            LastCheckpointId: ReviewCheckpointId option
-            GateAttestationIds: GateAttestationId list
-            Conflicts: ConflictAnalysis list
-            ConflictReceiptIds: ConflictReceiptId list
-            CreatedAt: Instant
-            UpdatedAt: Instant option
-        }
-
-        static member Default =
-            {
-                Class = nameof IntegrationCandidate
-                CandidateId = CandidateId.Empty
-                OwnerId = OwnerId.Empty
-                OrganizationId = OrganizationId.Empty
-                RepositoryId = RepositoryId.Empty
-                WorkItemId = WorkItemId.Empty
-                PromotionGroupId = None
-                TargetBranchId = BranchId.Empty
-                PolicySnapshotId = PolicySnapshotId String.Empty
-                BaselineHeadReferenceId = ReferenceId.Empty
-                Status = CandidateStatus.Pending
-                RequiredActions = []
-                ReviewPacketId = None
-                LastCheckpointId = None
-                GateAttestationIds = []
-                Conflicts = []
-                ConflictReceiptIds = []
-                CreatedAt = Constants.DefaultTimestamp
-                UpdatedAt = None
-            }
-
-    /// Defines the commands for the IntegrationCandidate actor.
-    [<KnownType("GetKnownTypes")>]
-    type CandidateCommand =
-        | Initialize of candidate: IntegrationCandidate
-        | SetStatus of status: CandidateStatus
-        | SetRequiredActions of actions: RequiredActionDto list
-        | AddRequiredAction of action: RequiredActionDto
-        | ClearRequiredActions
-        | AddGateAttestation of gateAttestationId: GateAttestationId
-        | AddConflict of conflict: ConflictAnalysis
-        | AddConflictReceipt of conflictReceiptId: ConflictReceiptId
-
-        static member GetKnownTypes() = GetKnownTypes<CandidateCommand>()
-
-    /// Defines the events for the IntegrationCandidate actor.
-    [<KnownType("GetKnownTypes")>]
-    type CandidateEventType =
-        | Initialized of candidate: IntegrationCandidate
-        | StatusSet of status: CandidateStatus
-        | RequiredActionsSet of actions: RequiredActionDto list
-        | RequiredActionAdded of action: RequiredActionDto
-        | RequiredActionsCleared
-        | GateAttestationAdded of gateAttestationId: GateAttestationId
-        | ConflictAdded of conflict: ConflictAnalysis
-        | ConflictReceiptAdded of conflictReceiptId: ConflictReceiptId
-
-        static member GetKnownTypes() = GetKnownTypes<CandidateEventType>()
-
-    /// Record that holds the event type and metadata for a candidate event.
-    type CandidateEvent =
-        {
-            /// The CandidateEventType case that describes the event.
-            Event: CandidateEventType
-            /// The EventMetadata for the event. EventMetadata includes the Timestamp, CorrelationId, Principal, and a Properties dictionary.
-            Metadata: EventMetadata
-        }
-
-    /// Updates the IntegrationCandidate based on a CandidateEvent.
-    module IntegrationCandidateDto =
-        let UpdateDto (candidateEvent: CandidateEvent) (currentCandidate: IntegrationCandidate) =
-            let updated =
-                match candidateEvent.Event with
-                | Initialized candidate -> candidate
-                | StatusSet status -> { currentCandidate with Status = status }
-                | RequiredActionsSet actions -> { currentCandidate with RequiredActions = actions }
-                | RequiredActionAdded action -> { currentCandidate with RequiredActions = currentCandidate.RequiredActions @ [ action ] }
-                | RequiredActionsCleared -> { currentCandidate with RequiredActions = [] }
-                | GateAttestationAdded gateAttestationId ->
-                    { currentCandidate with
-                        GateAttestationIds =
-                            currentCandidate.GateAttestationIds
-                            |> List.append [ gateAttestationId ]
-                            |> List.distinct
-                    }
-                | ConflictAdded conflict ->
-                    { currentCandidate with
-                        Conflicts =
-                            currentCandidate.Conflicts
-                            |> List.append [ conflict ]
-                    }
-                | ConflictReceiptAdded conflictReceiptId ->
-                    { currentCandidate with
-                        ConflictReceiptIds =
-                            currentCandidate.ConflictReceiptIds
-                            |> List.append [ conflictReceiptId ]
-                            |> List.distinct
-                    }
-
-            { updated with UpdatedAt = Some candidateEvent.Metadata.Timestamp }
-
     /// Promotion queue for a target branch.
     [<GenerateSerializer>]
     type PromotionQueue =
         {
             Class: string
             TargetBranchId: BranchId
-            CandidateIds: CandidateId list
-            RunningCandidateId: CandidateId option
+            PromotionSetIds: PromotionSetId list
+            RunningPromotionSetId: PromotionSetId option
             State: QueueState
             PolicySnapshotId: PolicySnapshotId
             UpdatedAt: Instant option
@@ -320,10 +36,10 @@ module Queue =
             {
                 Class = nameof PromotionQueue
                 TargetBranchId = BranchId.Empty
-                CandidateIds = []
-                RunningCandidateId = None
+                PromotionSetIds = []
+                RunningPromotionSetId = None
                 State = QueueState.Idle
-                PolicySnapshotId = PolicySnapshotId String.Empty
+                PolicySnapshotId = PolicySnapshotId ""
                 UpdatedAt = None
             }
 
@@ -331,9 +47,9 @@ module Queue =
     [<KnownType("GetKnownTypes")>]
     type PromotionQueueCommand =
         | Initialize of targetBranchId: BranchId * policySnapshotId: PolicySnapshotId
-        | Enqueue of candidateId: CandidateId
-        | Dequeue of candidateId: CandidateId
-        | SetRunning of candidateId: CandidateId option
+        | Enqueue of promotionSetId: PromotionSetId
+        | Dequeue of promotionSetId: PromotionSetId
+        | SetRunning of promotionSetId: PromotionSetId option
         | Pause
         | Resume
         | SetDegraded
@@ -345,9 +61,9 @@ module Queue =
     [<KnownType("GetKnownTypes")>]
     type PromotionQueueEventType =
         | Initialized of targetBranchId: BranchId * policySnapshotId: PolicySnapshotId
-        | CandidateEnqueued of candidateId: CandidateId
-        | CandidateDequeued of candidateId: CandidateId
-        | RunningCandidateSet of candidateId: CandidateId option
+        | PromotionSetEnqueued of promotionSetId: PromotionSetId
+        | PromotionSetDequeued of promotionSetId: PromotionSetId
+        | RunningPromotionSetSet of promotionSetId: PromotionSetId option
         | Paused
         | Resumed
         | Degraded
@@ -371,18 +87,18 @@ module Queue =
                 match promotionQueueEvent.Event with
                 | Initialized (targetBranchId, policySnapshotId) ->
                     { PromotionQueue.Default with TargetBranchId = targetBranchId; PolicySnapshotId = policySnapshotId }
-                | CandidateEnqueued candidateId -> { currentQueue with CandidateIds = currentQueue.CandidateIds @ [ candidateId ] }
-                | CandidateDequeued candidateId ->
+                | PromotionSetEnqueued promotionSetId -> { currentQueue with PromotionSetIds = currentQueue.PromotionSetIds @ [ promotionSetId ] }
+                | PromotionSetDequeued promotionSetId ->
                     { currentQueue with
-                        CandidateIds =
-                            currentQueue.CandidateIds
-                            |> List.filter (fun existing -> existing <> candidateId)
+                        PromotionSetIds =
+                            currentQueue.PromotionSetIds
+                            |> List.filter (fun existing -> existing <> promotionSetId)
                     }
-                | RunningCandidateSet candidateId -> { currentQueue with RunningCandidateId = candidateId; State = QueueState.Running }
+                | RunningPromotionSetSet promotionSetId -> { currentQueue with RunningPromotionSetId = promotionSetId; State = QueueState.Running }
                 | Paused -> { currentQueue with State = QueueState.Paused }
                 | Resumed ->
                     let newState =
-                        match currentQueue.RunningCandidateId with
+                        match currentQueue.RunningPromotionSetId with
                         | Some _ -> QueueState.Running
                         | None -> QueueState.Idle
 

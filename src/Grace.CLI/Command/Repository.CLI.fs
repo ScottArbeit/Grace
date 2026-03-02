@@ -240,7 +240,7 @@ module Repository =
             (new Option<String>(
                 "--conflict-resolution-policy",
                 Required = true,
-                Description = "The repository's resolution conflict policy when conflicts are detected in a PromotionGroup.",
+                Description = "The repository's resolution conflict policy when conflicts are detected in a PromotionSet.",
                 Arity = ArgumentArity.ExactlyOne
             ))
                 .AcceptOnlyFromAmong(listCases<ConflictResolutionPolicy> ())
@@ -510,25 +510,7 @@ module Repository =
 
                                                     // Ensure the object cache index is up-to-date.
                                                     t4.StartTask()
-                                                    let! objectCache = readGraceObjectCacheFile ()
-                                                    let incrementAmount = 100.0 / double graceStatus.Index.Count
-
-                                                    let plr =
-                                                        Parallel.ForEach(
-                                                            graceStatus.Index.Values,
-                                                            Constants.ParallelOptions,
-                                                            (fun ldv ->
-                                                                if
-                                                                    not
-                                                                    <| objectCache.Index.ContainsKey(ldv.DirectoryVersionId)
-                                                                then
-                                                                    objectCache.Index.AddOrUpdate(ldv.DirectoryVersionId, (fun _ -> ldv), (fun _ _ -> ldv))
-                                                                    |> ignore
-
-                                                                    t4.Increment(incrementAmount))
-                                                        )
-
-                                                    do! writeGraceObjectCacheFile objectCache
+                                                    do! upsertObjectCache graceStatus.Index.Values
                                                     t4.Value <- 100.0
 
                                                     // Ensure all files are uploaded to object storage.

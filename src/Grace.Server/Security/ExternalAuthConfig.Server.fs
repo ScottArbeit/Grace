@@ -41,21 +41,3 @@ module ExternalAuthConfig =
         | _ -> None
 
     let isOidcConfigured (configuration: IConfiguration) = tryGetOidcConfig configuration |> Option.isSome
-
-    let warnIfMicrosoftConfigPresent (configuration: IConfiguration) =
-        let deprecated =
-            [
-                EnvironmentVariables.GraceAuthMicrosoftClientId
-                EnvironmentVariables.GraceAuthMicrosoftClientSecret
-                EnvironmentVariables.GraceAuthMicrosoftTenantId
-                EnvironmentVariables.GraceAuthMicrosoftAuthority
-                EnvironmentVariables.GraceAuthMicrosoftApiScope
-                EnvironmentVariables.GraceAuthMicrosoftCliClientId
-            ]
-
-        let isSet name =
-            tryGetConfigValue configuration name
-            |> Option.isSome
-
-        if deprecated |> List.exists isSet then
-            logToConsole "Deprecated Microsoft auth settings are ignored. Configure grace__auth__oidc__authority and grace__auth__oidc__audience instead."

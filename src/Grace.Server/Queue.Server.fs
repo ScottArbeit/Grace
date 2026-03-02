@@ -33,35 +33,6 @@ module Queue =
 
     let activitySource = new ActivitySource("Queue")
 
-    let buildRequiredAction actionType reason targetId =
-        {
-            RequiredActionType = actionType
-            TargetId = targetId
-            Reason = reason
-            Parameters = Dictionary<string, string>()
-            SuggestedCliCommand = None
-            SuggestedApiCall = None
-        }
-
-    let computeRequiredActions (candidate: IntegrationCandidate) =
-        let actions = ResizeArray<RequiredActionDto>()
-        actions.AddRange(candidate.RequiredActions)
-
-        if candidate.PolicySnapshotId = PolicySnapshotId String.Empty then
-            actions.Add(buildRequiredAction RequiredActionType.AcknowledgePolicyChange "Policy snapshot not set." None)
-
-        if not candidate.Conflicts.IsEmpty then
-            actions.Add(buildRequiredAction RequiredActionType.ResolveConflict "Candidate has unresolved conflicts." None)
-
-        match candidate.Status with
-        | CandidateStatus.Blocked -> actions.Add(buildRequiredAction RequiredActionType.RunGate "Candidate is blocked; gate re-run may be required." None)
-        | CandidateStatus.Failed -> actions.Add(buildRequiredAction RequiredActionType.FixGateFailure "Candidate failed; gate fixes required." None)
-        | _ -> ()
-
-        actions
-        |> Seq.distinctBy (fun action -> action.RequiredActionType, action.TargetId, action.Reason)
-        |> Seq.toList
-
     let internal requiresPolicySnapshotForInitialization (queueExists: bool) (policySnapshotId: string) =
         not queueExists
         && String.IsNullOrEmpty(policySnapshotId)
@@ -354,7 +325,7 @@ module Queue =
                 return! processCommand context validations command
             }
 
-    /// Enqueues a candidate in the promotion queue.
+    /// Enqueues a promotion set in the promotion queue.
     let Enqueue: HttpHandler =
         fun (_next: HttpFunc) (context: HttpContext) ->
             task {
@@ -364,7 +335,7 @@ module Queue =
                 let validations (parameters: EnqueueParameters) =
                     [|
                         Guid.isValidAndNotEmptyGuid parameters.TargetBranchId QueueError.InvalidTargetBranchId
-                        Guid.isValidAndNotEmptyGuid parameters.CandidateId QueueError.InvalidCandidateId
+                        Guid.isValidAndNotEmptyGuid parameters.PromotionSetId QueueError.InvalidPromotionSetId
                         (if String.IsNullOrEmpty(parameters.PolicySnapshotId) then
                              Ok() |> returnValueTask
                          else
@@ -381,17 +352,17 @@ module Queue =
 
                 if validationsPassed then
                     let targetBranchId = Guid.Parse(parameters.TargetBranchId)
-                    let candidateId = Guid.Parse(parameters.CandidateId)
+                    let promotionSetId = Guid.Parse(parameters.PromotionSetId)
                     let actorProxy = PromotionQueue.CreateActorProxy targetBranchId graceIds.RepositoryId correlationId
+                    let promotionSetActorProxy = PromotionSet.CreateActorProxy promotionSetId graceIds.RepositoryId correlationId
                     let metadata = createMetadata context
-                    let candidateActorProxy = IntegrationCandidate.CreateActorProxy candidateId graceIds.RepositoryId correlationId
 
                     let runEnqueue () =
                         task {
                             context.Items[ "Command" ] <- nameof Enqueue
 
                             let command (_: EnqueueParameters) =
-                                PromotionQueueCommand.Enqueue candidateId
+                                PromotionQueueCommand.Enqueue promotionSetId
                                 |> returnValueTask
 
                             return! processCommandWithParameters context parameters (fun _ -> [||]) command
@@ -416,44 +387,11 @@ module Queue =
                                 return! runEnqueue ()
                         }
 
-                    let! candidateExists = candidateActorProxy.Exists correlationId
+                    let! promotionSetExists = promotionSetActorProxy.Exists correlationId
 
-                    if not candidateExists then
-                        let workItemId =
-                            if String.IsNullOrEmpty(parameters.WorkItemId) then
-                                WorkItemId.Empty
-                            else
-                                Guid.Parse(parameters.WorkItemId)
-
-                        let promotionGroupId =
-                            if String.IsNullOrEmpty(parameters.PromotionGroupId) then
-                                None
-                            else
-                                Some(Guid.Parse(parameters.PromotionGroupId))
-
-                        let policySnapshotId =
-                            if String.IsNullOrEmpty(parameters.PolicySnapshotId) then
-                                PolicySnapshotId String.Empty
-                            else
-                                PolicySnapshotId parameters.PolicySnapshotId
-
-                        let candidate =
-                            { IntegrationCandidate.Default with
-                                CandidateId = candidateId
-                                OwnerId = graceIds.OwnerId
-                                OrganizationId = graceIds.OrganizationId
-                                RepositoryId = graceIds.RepositoryId
-                                WorkItemId = workItemId
-                                PromotionGroupId = promotionGroupId
-                                TargetBranchId = targetBranchId
-                                PolicySnapshotId = policySnapshotId
-                                Status = CandidateStatus.Pending
-                                CreatedAt = getCurrentInstant ()
-                            }
-
-                        match! candidateActorProxy.Handle (CandidateCommand.Initialize candidate) metadata with
-                        | Error error -> return! context |> result400BadRequest error
-                        | Ok _ -> return! continueEnqueue ()
+                    if not promotionSetExists then
+                        let graceError = GraceError.Create "The specified promotion set does not exist." correlationId
+                        return! context |> result400BadRequest graceError
                     else
                         return! continueEnqueue ()
                 else
@@ -463,398 +401,20 @@ module Queue =
                     return! context |> result400BadRequest graceError
             }
 
-    /// Dequeues a candidate from the promotion queue.
+    /// Dequeues a promotion set from the promotion queue.
     let Dequeue: HttpHandler =
         fun (_next: HttpFunc) (context: HttpContext) ->
             task {
-                let validations (parameters: CandidateActionParameters) =
+                let validations (parameters: PromotionSetActionParameters) =
                     [|
                         Guid.isValidAndNotEmptyGuid parameters.TargetBranchId QueueError.InvalidTargetBranchId
-                        Guid.isValidAndNotEmptyGuid parameters.CandidateId QueueError.InvalidCandidateId
+                        Guid.isValidAndNotEmptyGuid parameters.PromotionSetId QueueError.InvalidPromotionSetId
                     |]
 
-                let command (parameters: CandidateActionParameters) =
-                    PromotionQueueCommand.Dequeue(Guid.Parse(parameters.CandidateId))
+                let command (parameters: PromotionSetActionParameters) =
+                    PromotionQueueCommand.Dequeue(Guid.Parse(parameters.PromotionSetId))
                     |> returnValueTask
 
                 context.Items[ "Command" ] <- nameof Dequeue
                 return! processCommand context validations command
-            }
-
-    /// Gets a candidate (placeholder).
-    let GetCandidate: HttpHandler =
-        fun (_next: HttpFunc) (context: HttpContext) ->
-            task {
-                let graceIds = getGraceIds context
-                let correlationId = getCorrelationId context
-
-                let validations (parameters: CandidateParameters) =
-                    [|
-                        Guid.isValidAndNotEmptyGuid parameters.CandidateId QueueError.InvalidCandidateId
-                    |]
-
-                let! parameters = context |> parse<CandidateParameters>
-                parameters.OwnerId <- graceIds.OwnerIdString
-                parameters.OrganizationId <- graceIds.OrganizationIdString
-                parameters.RepositoryId <- graceIds.RepositoryIdString
-
-                let validationResults = validations parameters
-                let! validationsPassed = validationResults |> allPass
-
-                if validationsPassed then
-                    let candidateId = Guid.Parse(parameters.CandidateId)
-                    let actorProxy = IntegrationCandidate.CreateActorProxy candidateId graceIds.RepositoryId correlationId
-
-                    match! actorProxy.Get correlationId with
-                    | Some candidate ->
-                        let graceReturnValue =
-                            (GraceReturnValue.Create candidate correlationId)
-                                .enhance(nameof OwnerId, graceIds.OwnerId)
-                                .enhance(nameof OrganizationId, graceIds.OrganizationId)
-                                .enhance(nameof RepositoryId, graceIds.RepositoryId)
-                                .enhance(nameof CandidateId, candidateId)
-                                .enhance ("Path", context.Request.Path.Value)
-
-                        return! context |> result200Ok graceReturnValue
-                    | None ->
-                        let graceError = GraceError.Create (CandidateError.getErrorMessage CandidateError.CandidateDoesNotExist) correlationId
-
-                        return! context |> result400BadRequest graceError
-                else
-                    let! error = validationResults |> getFirstError
-                    let errorMessage = QueueError.getErrorMessage error
-                    let graceError = GraceError.Create errorMessage correlationId
-                    return! context |> result400BadRequest graceError
-            }
-
-    /// Cancels a candidate in the promotion queue.
-    let CancelCandidate: HttpHandler =
-        fun (_next: HttpFunc) (context: HttpContext) ->
-            task {
-                let graceIds = getGraceIds context
-                let correlationId = getCorrelationId context
-
-                let validations (parameters: CandidateActionParameters) =
-                    [|
-                        Guid.isValidAndNotEmptyGuid parameters.TargetBranchId QueueError.InvalidTargetBranchId
-                        Guid.isValidAndNotEmptyGuid parameters.CandidateId QueueError.InvalidCandidateId
-                    |]
-
-                let! parameters = context |> parse<CandidateActionParameters>
-                parameters.OwnerId <- graceIds.OwnerIdString
-                parameters.OrganizationId <- graceIds.OrganizationIdString
-                parameters.RepositoryId <- graceIds.RepositoryIdString
-
-                let validationResults = validations parameters
-                let! validationsPassed = validationResults |> allPass
-
-                if validationsPassed then
-                    let candidateId = Guid.Parse(parameters.CandidateId)
-                    let targetBranchId = Guid.Parse(parameters.TargetBranchId)
-                    let metadata = createMetadata context
-
-                    let candidateActorProxy = IntegrationCandidate.CreateActorProxy candidateId graceIds.RepositoryId correlationId
-
-                    match! candidateActorProxy.Handle (CandidateCommand.SetStatus CandidateStatus.Canceled) metadata with
-                    | Error error -> return! context |> result400BadRequest error
-                    | Ok _ ->
-                        let queueActorProxy = PromotionQueue.CreateActorProxy targetBranchId graceIds.RepositoryId correlationId
-
-                        match! queueActorProxy.Handle (PromotionQueueCommand.Dequeue candidateId) metadata with
-                        | Ok graceReturnValue ->
-                            graceReturnValue
-                                .enhance(nameof OwnerId, graceIds.OwnerId)
-                                .enhance(nameof OrganizationId, graceIds.OrganizationId)
-                                .enhance(nameof RepositoryId, graceIds.RepositoryId)
-                                .enhance(nameof CandidateId, candidateId)
-                                .enhance(nameof BranchId, targetBranchId)
-                                .enhance("Command", "CancelCandidate")
-                                .enhance ("Path", context.Request.Path.Value)
-                            |> ignore
-
-                            return! context |> result200Ok graceReturnValue
-                        | Error graceError ->
-                            graceError
-                                .enhance(nameof OwnerId, graceIds.OwnerId)
-                                .enhance(nameof OrganizationId, graceIds.OrganizationId)
-                                .enhance(nameof RepositoryId, graceIds.RepositoryId)
-                                .enhance(nameof CandidateId, candidateId)
-                                .enhance(nameof BranchId, targetBranchId)
-                                .enhance("Command", "CancelCandidate")
-                                .enhance ("Path", context.Request.Path.Value)
-                            |> ignore
-
-                            return! context |> result400BadRequest graceError
-                else
-                    let! error = validationResults |> getFirstError
-                    let errorMessage = QueueError.getErrorMessage error
-                    let graceError = GraceError.Create errorMessage correlationId
-                    return! context |> result400BadRequest graceError
-            }
-
-    /// Retries a candidate by re-enqueueing it.
-    let RetryCandidate: HttpHandler =
-        fun (_next: HttpFunc) (context: HttpContext) ->
-            task {
-                let graceIds = getGraceIds context
-                let correlationId = getCorrelationId context
-
-                let validations (parameters: CandidateActionParameters) =
-                    [|
-                        Guid.isValidAndNotEmptyGuid parameters.TargetBranchId QueueError.InvalidTargetBranchId
-                        Guid.isValidAndNotEmptyGuid parameters.CandidateId QueueError.InvalidCandidateId
-                    |]
-
-                let! parameters = context |> parse<CandidateActionParameters>
-                parameters.OwnerId <- graceIds.OwnerIdString
-                parameters.OrganizationId <- graceIds.OrganizationIdString
-                parameters.RepositoryId <- graceIds.RepositoryIdString
-
-                let validationResults = validations parameters
-                let! validationsPassed = validationResults |> allPass
-
-                if validationsPassed then
-                    let candidateId = Guid.Parse(parameters.CandidateId)
-                    let targetBranchId = Guid.Parse(parameters.TargetBranchId)
-                    let metadata = createMetadata context
-
-                    let candidateActorProxy = IntegrationCandidate.CreateActorProxy candidateId graceIds.RepositoryId correlationId
-
-                    match! candidateActorProxy.Handle (CandidateCommand.ClearRequiredActions) metadata with
-                    | Error error -> return! context |> result400BadRequest error
-                    | Ok _ ->
-                        match! candidateActorProxy.Handle (CandidateCommand.SetStatus CandidateStatus.Pending) metadata with
-                        | Error error -> return! context |> result400BadRequest error
-                        | Ok _ ->
-                            let queueActorProxy = PromotionQueue.CreateActorProxy targetBranchId graceIds.RepositoryId correlationId
-
-                            match! queueActorProxy.Handle (PromotionQueueCommand.Enqueue candidateId) metadata with
-                            | Ok graceReturnValue ->
-                                graceReturnValue
-                                    .enhance(nameof OwnerId, graceIds.OwnerId)
-                                    .enhance(nameof OrganizationId, graceIds.OrganizationId)
-                                    .enhance(nameof RepositoryId, graceIds.RepositoryId)
-                                    .enhance(nameof CandidateId, candidateId)
-                                    .enhance(nameof BranchId, targetBranchId)
-                                    .enhance("Command", "RetryCandidate")
-                                    .enhance ("Path", context.Request.Path.Value)
-                                |> ignore
-
-                                return! context |> result200Ok graceReturnValue
-                            | Error graceError ->
-                                graceError
-                                    .enhance(nameof OwnerId, graceIds.OwnerId)
-                                    .enhance(nameof OrganizationId, graceIds.OrganizationId)
-                                    .enhance(nameof RepositoryId, graceIds.RepositoryId)
-                                    .enhance(nameof CandidateId, candidateId)
-                                    .enhance(nameof BranchId, targetBranchId)
-                                    .enhance("Command", "RetryCandidate")
-                                    .enhance ("Path", context.Request.Path.Value)
-                                |> ignore
-
-                                return! context |> result400BadRequest graceError
-                else
-                    let! error = validationResults |> getFirstError
-                    let errorMessage = QueueError.getErrorMessage error
-                    let graceError = GraceError.Create errorMessage correlationId
-                    return! context |> result400BadRequest graceError
-            }
-
-    /// Required actions for a candidate (placeholder).
-    let RequiredActions: HttpHandler =
-        fun (_next: HttpFunc) (context: HttpContext) ->
-            task {
-                let graceIds = getGraceIds context
-                let correlationId = getCorrelationId context
-
-                let validations (parameters: CandidateParameters) =
-                    [|
-                        Guid.isValidAndNotEmptyGuid parameters.CandidateId QueueError.InvalidCandidateId
-                    |]
-
-                let! parameters = context |> parse<CandidateParameters>
-                parameters.OwnerId <- graceIds.OwnerIdString
-                parameters.OrganizationId <- graceIds.OrganizationIdString
-                parameters.RepositoryId <- graceIds.RepositoryIdString
-
-                let validationResults = validations parameters
-                let! validationsPassed = validationResults |> allPass
-
-                if validationsPassed then
-                    let candidateId = Guid.Parse(parameters.CandidateId)
-                    let metadata = createMetadata context
-                    let actorProxy = IntegrationCandidate.CreateActorProxy candidateId graceIds.RepositoryId correlationId
-
-                    match! actorProxy.Get correlationId with
-                    | Some candidate ->
-                        let requiredActions = computeRequiredActions candidate
-
-                        let respondWithRequiredActions actions =
-                            let graceReturnValue =
-                                (GraceReturnValue.Create actions correlationId)
-                                    .enhance(nameof OwnerId, graceIds.OwnerId)
-                                    .enhance(nameof OrganizationId, graceIds.OrganizationId)
-                                    .enhance(nameof RepositoryId, graceIds.RepositoryId)
-                                    .enhance(nameof CandidateId, candidateId)
-                                    .enhance ("Path", context.Request.Path.Value)
-
-                            context |> result200Ok graceReturnValue
-
-                        if requiredActions <> candidate.RequiredActions then
-                            match! actorProxy.Handle (CandidateCommand.SetRequiredActions requiredActions) metadata with
-                            | Error error -> return! context |> result400BadRequest error
-                            | Ok _ -> return! respondWithRequiredActions requiredActions
-                        else
-                            return! respondWithRequiredActions requiredActions
-                    | None ->
-                        let graceError = GraceError.Create (CandidateError.getErrorMessage CandidateError.CandidateDoesNotExist) correlationId
-
-                        return! context |> result400BadRequest graceError
-                else
-                    let! error = validationResults |> getFirstError
-                    let errorMessage = QueueError.getErrorMessage error
-                    let graceError = GraceError.Create errorMessage correlationId
-                    return! context |> result400BadRequest graceError
-            }
-
-    /// Gate attestations for a candidate (placeholder).
-    let Attestations: HttpHandler =
-        fun (_next: HttpFunc) (context: HttpContext) ->
-            task {
-                let graceIds = getGraceIds context
-                let correlationId = getCorrelationId context
-
-                let validations (parameters: CandidateAttestationsParameters) =
-                    [|
-                        Guid.isValidAndNotEmptyGuid parameters.CandidateId QueueError.InvalidCandidateId
-                    |]
-
-                let! parameters = context |> parse<CandidateAttestationsParameters>
-                parameters.OwnerId <- graceIds.OwnerIdString
-                parameters.OrganizationId <- graceIds.OrganizationIdString
-                parameters.RepositoryId <- graceIds.RepositoryIdString
-
-                let validationResults = validations parameters
-                let! validationsPassed = validationResults |> allPass
-
-                if validationsPassed then
-                    let candidateId = Guid.Parse(parameters.CandidateId)
-                    let candidateActorProxy = IntegrationCandidate.CreateActorProxy candidateId graceIds.RepositoryId correlationId
-
-                    match! candidateActorProxy.Get correlationId with
-                    | Some candidate ->
-                        let attestationTasks =
-                            candidate.GateAttestationIds
-                            |> List.map (fun attestationId ->
-                                task {
-                                    let attestationActorProxy = GateAttestation.CreateActorProxy attestationId graceIds.RepositoryId correlationId
-
-                                    return! attestationActorProxy.Get correlationId
-                                })
-
-                        let! attestationResults = Task.WhenAll(attestationTasks)
-
-                        let attestations =
-                            attestationResults
-                            |> Array.choose id
-                            |> Array.toList
-
-                        let graceReturnValue =
-                            (GraceReturnValue.Create attestations correlationId)
-                                .enhance(nameof OwnerId, graceIds.OwnerId)
-                                .enhance(nameof OrganizationId, graceIds.OrganizationId)
-                                .enhance(nameof RepositoryId, graceIds.RepositoryId)
-                                .enhance(nameof CandidateId, candidateId)
-                                .enhance ("Path", context.Request.Path.Value)
-
-                        return! context |> result200Ok graceReturnValue
-                    | None ->
-                        let graceError = GraceError.Create (CandidateError.getErrorMessage CandidateError.CandidateDoesNotExist) correlationId
-
-                        return! context |> result400BadRequest graceError
-                else
-                    let! error = validationResults |> getFirstError
-                    let errorMessage = QueueError.getErrorMessage error
-                    let graceError = GraceError.Create errorMessage correlationId
-                    return! context |> result400BadRequest graceError
-            }
-
-    /// Reruns a gate for a candidate (placeholder).
-    let RerunGate: HttpHandler =
-        fun (_next: HttpFunc) (context: HttpContext) ->
-            task {
-                let graceIds = getGraceIds context
-                let correlationId = getCorrelationId context
-
-                let validations (parameters: CandidateGateRerunParameters) =
-                    [|
-                        Guid.isValidAndNotEmptyGuid parameters.CandidateId QueueError.InvalidCandidateId
-                    |]
-
-                let! parameters = context |> parse<CandidateGateRerunParameters>
-                parameters.OwnerId <- graceIds.OwnerIdString
-                parameters.OrganizationId <- graceIds.OrganizationIdString
-                parameters.RepositoryId <- graceIds.RepositoryIdString
-
-                let validationResults = validations parameters
-                let! validationsPassed = validationResults |> allPass
-
-                if validationsPassed then
-                    if String.IsNullOrWhiteSpace(parameters.GateName) then
-                        let graceError = GraceError.Create "GateName is required." correlationId
-                        return! context |> result400BadRequest graceError
-                    else
-                        let candidateId = Guid.Parse(parameters.CandidateId)
-                        let metadata = createMetadata context
-
-                        let principal =
-                            if
-                                isNull context.User
-                                || isNull context.User.Identity
-                                || String.IsNullOrEmpty(context.User.Identity.Name)
-                            then
-                                Constants.GraceSystemUser
-                            else
-                                context.User.Identity.Name
-
-                        let candidateActorProxy = IntegrationCandidate.CreateActorProxy candidateId graceIds.RepositoryId correlationId
-
-                        match! candidateActorProxy.Get correlationId with
-                        | Some candidate ->
-                            let policyActorProxy = Policy.CreateActorProxy candidate.TargetBranchId graceIds.RepositoryId correlationId
-
-                            let! policySnapshot = policyActorProxy.GetCurrent correlationId
-
-                            let gateContext: Gates.GateContext =
-                                { Candidate = candidate; PolicySnapshot = policySnapshot; CorrelationId = correlationId; Principal = UserId principal }
-
-                            let! attestation = Gates.runGate parameters.GateName gateContext
-
-                            let attestationActorProxy = GateAttestation.CreateActorProxy attestation.GateAttestationId graceIds.RepositoryId correlationId
-
-                            match! attestationActorProxy.Handle (GateAttestationCommand.Create attestation) metadata with
-                            | Error error -> return! context |> result400BadRequest error
-                            | Ok _ ->
-                                match! candidateActorProxy.Handle (CandidateCommand.AddGateAttestation attestation.GateAttestationId) metadata with
-                                | Error error -> return! context |> result400BadRequest error
-                                | Ok _ ->
-                                    let graceReturnValue =
-                                        (GraceReturnValue.Create attestation correlationId)
-                                            .enhance(nameof OwnerId, graceIds.OwnerId)
-                                            .enhance(nameof OrganizationId, graceIds.OrganizationId)
-                                            .enhance(nameof RepositoryId, graceIds.RepositoryId)
-                                            .enhance(nameof CandidateId, candidateId)
-                                            .enhance("GateName", parameters.GateName)
-                                            .enhance ("Path", context.Request.Path.Value)
-
-                                    return! context |> result200Ok graceReturnValue
-                        | None ->
-                            let graceError = GraceError.Create (CandidateError.getErrorMessage CandidateError.CandidateDoesNotExist) correlationId
-
-                            return! context |> result400BadRequest graceError
-                else
-                    let! error = validationResults |> getFirstError
-                    let errorMessage = QueueError.getErrorMessage error
-                    let graceError = GraceError.Create errorMessage correlationId
-                    return! context |> result400BadRequest graceError
             }

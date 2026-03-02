@@ -58,6 +58,15 @@ module Common =
                 DefaultValueFactory = (fun _ -> CorrelationId.Empty)
             )
 
+        let source =
+            new Option<string>(
+                OptionName.Source,
+                Required = false,
+                Description = "Optional invocation source metadata for history attribution.",
+                Arity = ArgumentArity.ExactlyOne,
+                Recursive = true
+            )
+
         let output =
             (new Option<String>(
                 OptionName.Output,
@@ -72,6 +81,38 @@ module Common =
 
     /// Gets the correlationId value from the command's ParseResult.
     let getCorrelationId (parseResult: ParseResult) = Services.resolveCorrelationId parseResult
+
+    [<Literal>]
+    let SourceEnvironmentVariableName = "GRACE_SOURCE"
+
+    let private normalizeSource (value: string) = if String.IsNullOrWhiteSpace(value) then None else Some(value.Trim())
+
+    let private tryGetExplicitSourceFromParseResult (parseResult: ParseResult) =
+        if isNull parseResult then
+            None
+        else
+            let result = parseResult.GetResult(OptionName.Source)
+
+            if isNull result then
+                None
+            else
+                try
+                    let optionResult = result :?> OptionResult
+
+                    if optionResult.Implicit then
+                        None
+                    else
+                        parseResult.GetValue<string>(OptionName.Source)
+                        |> normalizeSource
+                with
+                | :? InvalidOperationException -> None
+
+    let resolveInvocationSource (parseResult: ParseResult) =
+        match tryGetExplicitSourceFromParseResult parseResult with
+        | Some source -> Some source
+        | None ->
+            Environment.GetEnvironmentVariable(SourceEnvironmentVariableName)
+            |> normalizeSource
 
     module Validations =
         /// Checks that a given name option is a valid Grace name. If the option is not present, it does not return an error.

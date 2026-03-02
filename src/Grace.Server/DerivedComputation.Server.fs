@@ -9,8 +9,8 @@ open Grace.Shared.Utilities
 open Grace.Types.Events
 open Grace.Types.Policy
 open Grace.Types.Reference
-open Grace.Types.Review
 open Grace.Types.Types
+open Grace.Types.Validation
 open Microsoft.Extensions.Logging
 open System
 open System.Threading.Tasks
@@ -20,7 +20,7 @@ module DerivedComputation =
     let log = loggerFactory.CreateLogger("DerivedComputation.Server")
 
 
-    let internal shouldRecordStage0 referenceType =
+    let internal shouldRecordQuickScan referenceType =
         match referenceType with
         | ReferenceType.Commit
         | ReferenceType.Checkpoint
@@ -41,7 +41,7 @@ module DerivedComputation =
                                           referenceText,
                                           links) ->
                 match referenceType with
-                | _ when shouldRecordStage0 referenceType ->
+                | _ when shouldRecordQuickScan referenceType ->
                     let correlationId = referenceEvent.Metadata.CorrelationId
                     let policyActorProxy = Policy.CreateActorProxy branchId repositoryId correlationId
 
@@ -54,27 +54,33 @@ module DerivedComputation =
 
                     let now = getCurrentInstant ()
 
-                    let riskProfile = { DeterministicRiskProfile.Default with ReferenceId = referenceId; PolicySnapshotId = policySnapshot; CreatedAt = now }
-
-                    let stage0Analysis =
-                        { Stage0Analysis.Default with
-                            Stage0AnalysisId = Guid.NewGuid()
+                    let validationResult =
+                        { ValidationResultDto.Default with
+                            ValidationResultId = Guid.NewGuid()
                             OwnerId = ownerId
                             OrganizationId = organizationId
                             RepositoryId = repositoryId
-                            ReferenceId = referenceId
-                            PolicySnapshotId = policySnapshot
-                            RiskProfile = riskProfile
+                            ValidationName = "quick-scan"
+                            ValidationVersion = "1.0"
+                            Output =
+                                {
+                                    Status = ValidationStatus.Pass
+                                    Summary =
+                                        $"quick-scan recorded for {getDiscriminatedUnionCaseName referenceType}; referenceId={referenceId}; policySnapshotId={policySnapshot}."
+                                    ArtifactIds = []
+                                }
+                            OnBehalfOf = [ UserId Constants.GraceSystemUser ]
                             CreatedAt = now
                         }
 
-                    let stage0ActorProxy = Stage0.CreateActorProxy referenceId repositoryId correlationId
+                    let validationResultActorProxy = ValidationResult.CreateActorProxy validationResult.ValidationResultId repositoryId correlationId
+
                     let metadata = EventMetadata.New correlationId Constants.GraceSystemUser
 
-                    match! stage0ActorProxy.Handle (Stage0Command.Record stage0Analysis) metadata with
+                    match! validationResultActorProxy.Handle (ValidationResultCommand.Record validationResult) metadata with
                     | Ok _ ->
                         log.LogInformation(
-                            "{CurrentInstant}: Node: {hostName}; CorrelationId: {correlationId}; Stage 0 recorded for {referenceType} ReferenceId: {referenceId}.",
+                            "{CurrentInstant}: Node: {hostName}; CorrelationId: {correlationId}; quick-scan validation recorded for {referenceType} ReferenceId: {referenceId}.",
                             getCurrentInstantExtended (),
                             getMachineName,
                             correlationId,
@@ -83,7 +89,7 @@ module DerivedComputation =
                         )
                     | Error graceError ->
                         log.LogError(
-                            "{CurrentInstant}: Node: {hostName}; CorrelationId: {correlationId}; Failed to record Stage 0 for ReferenceId {referenceId}: {error}.",
+                            "{CurrentInstant}: Node: {hostName}; CorrelationId: {correlationId}; Failed to record quick-scan validation for ReferenceId {referenceId}: {error}.",
                             getCurrentInstantExtended (),
                             getMachineName,
                             correlationId,

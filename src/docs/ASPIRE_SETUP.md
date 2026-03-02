@@ -27,6 +27,12 @@ pwsh ./scripts/validate.ps1 -Fast
 Run `pwsh ./scripts/validate.ps1 -Full` when you need the Aspire integration
 coverage from `Grace.Server.Tests`.
 
+## Environment Variables
+
+For the full environment variable inventory, `dotnet user-secrets` guidance,
+and profile-specific requirements (`DebugLocal` vs `DebugAzure`), use
+`src/docs/ENVIRONMENT.md` as the canonical reference.
+
 ## Start Aspire
 
 > The Aspire app host lives in `Grace.Aspire.AppHost`. It orchestrates Azurite,

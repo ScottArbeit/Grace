@@ -2,7 +2,6 @@ namespace Grace.Types
 
 open Grace.Shared
 open Grace.Shared.Utilities
-open Grace.Types.PromotionGroup
 open Grace.Types.Types
 open NodaTime
 open Orleans
@@ -27,6 +26,7 @@ module WorkItem =
     type WorkItemCommand =
         | Create of
             workItemId: WorkItemId *
+            workItemNumber: WorkItemNumber *
             ownerId: OwnerId *
             organizationId: OrganizationId *
             repositoryId: RepositoryId *
@@ -49,16 +49,16 @@ module WorkItem =
         | UnlinkBranch of branchId: BranchId
         | LinkReference of referenceId: ReferenceId
         | UnlinkReference of referenceId: ReferenceId
-        | LinkPromotionGroup of promotionGroupId: PromotionGroupId
-        | UnlinkPromotionGroup of promotionGroupId: PromotionGroupId
-        | LinkCandidate of candidateId: CandidateId
-        | UnlinkCandidate of candidateId: CandidateId
-        | LinkReviewPacket of reviewPacketId: ReviewPacketId
-        | UnlinkReviewPacket of reviewPacketId: ReviewPacketId
+        | LinkArtifact of artifactId: ArtifactId
+        | UnlinkArtifact of artifactId: ArtifactId
+        | LinkPromotionSet of promotionSetId: PromotionSetId
+        | UnlinkPromotionSet of promotionSetId: PromotionSetId
+        | LinkReviewNotes of reviewNotesId: ReviewNotesId
+        | UnlinkReviewNotes of reviewNotesId: ReviewNotesId
         | LinkReviewCheckpoint of reviewCheckpointId: ReviewCheckpointId
         | UnlinkReviewCheckpoint of reviewCheckpointId: ReviewCheckpointId
-        | LinkGateAttestation of gateAttestationId: GateAttestationId
-        | UnlinkGateAttestation of gateAttestationId: GateAttestationId
+        | LinkValidationResult of validationResultId: ValidationResultId
+        | UnlinkValidationResult of validationResultId: ValidationResultId
 
         static member GetKnownTypes() = GetKnownTypes<WorkItemCommand>()
 
@@ -67,6 +67,7 @@ module WorkItem =
     type WorkItemEventType =
         | Created of
             workItemId: WorkItemId *
+            workItemNumber: WorkItemNumber *
             ownerId: OwnerId *
             organizationId: OrganizationId *
             repositoryId: RepositoryId *
@@ -89,16 +90,16 @@ module WorkItem =
         | BranchUnlinked of branchId: BranchId
         | ReferenceLinked of referenceId: ReferenceId
         | ReferenceUnlinked of referenceId: ReferenceId
-        | PromotionGroupLinked of promotionGroupId: PromotionGroupId
-        | PromotionGroupUnlinked of promotionGroupId: PromotionGroupId
-        | CandidateLinked of candidateId: CandidateId
-        | CandidateUnlinked of candidateId: CandidateId
-        | ReviewPacketLinked of reviewPacketId: ReviewPacketId
-        | ReviewPacketUnlinked of reviewPacketId: ReviewPacketId
+        | ArtifactLinked of artifactId: ArtifactId
+        | ArtifactUnlinked of artifactId: ArtifactId
+        | PromotionSetLinked of promotionSetId: PromotionSetId
+        | PromotionSetUnlinked of promotionSetId: PromotionSetId
+        | ReviewNotesLinked of reviewNotesId: ReviewNotesId
+        | ReviewNotesUnlinked of reviewNotesId: ReviewNotesId
         | ReviewCheckpointLinked of reviewCheckpointId: ReviewCheckpointId
         | ReviewCheckpointUnlinked of reviewCheckpointId: ReviewCheckpointId
-        | GateAttestationLinked of gateAttestationId: GateAttestationId
-        | GateAttestationUnlinked of gateAttestationId: GateAttestationId
+        | ValidationResultLinked of validationResultId: ValidationResultId
+        | ValidationResultUnlinked of validationResultId: ValidationResultId
 
         static member GetKnownTypes() = GetKnownTypes<WorkItemEventType>()
 
@@ -116,6 +117,7 @@ module WorkItem =
         {
             Class: string
             WorkItemId: WorkItemId
+            WorkItemNumber: WorkItemNumber
             OwnerId: OwnerId
             OrganizationId: OrganizationId
             RepositoryId: RepositoryId
@@ -131,11 +133,12 @@ module WorkItem =
             ExternalRefs: string list
             BranchIds: BranchId list
             ReferenceIds: ReferenceId list
-            PromotionGroupIds: PromotionGroupId list
-            CandidateIds: CandidateId list
-            ReviewPacketIds: ReviewPacketId list
+            ArtifactIds: ArtifactId list
+            PromotionSetIds: PromotionSetId list
+            ReviewNotesIds: ReviewNotesId list
             ReviewCheckpointIds: ReviewCheckpointId list
-            GateAttestationIds: GateAttestationId list
+            ValidationResultIds: ValidationResultId list
+            OnBehalfOf: UserId list
             CreatedBy: UserId
             CreatedAt: Instant
             UpdatedAt: Instant option
@@ -145,6 +148,7 @@ module WorkItem =
             {
                 Class = nameof WorkItemDto
                 WorkItemId = WorkItemId.Empty
+                WorkItemNumber = 0L
                 OwnerId = OwnerId.Empty
                 OrganizationId = OrganizationId.Empty
                 RepositoryId = RepositoryId.Empty
@@ -160,11 +164,12 @@ module WorkItem =
                 ExternalRefs = []
                 BranchIds = []
                 ReferenceIds = []
-                PromotionGroupIds = []
-                CandidateIds = []
-                ReviewPacketIds = []
+                ArtifactIds = []
+                PromotionSetIds = []
+                ReviewNotesIds = []
                 ReviewCheckpointIds = []
-                GateAttestationIds = []
+                ValidationResultIds = []
+                OnBehalfOf = []
                 CreatedBy = UserId String.Empty
                 CreatedAt = Constants.DefaultTimestamp
                 UpdatedAt = None
@@ -174,9 +179,10 @@ module WorkItem =
         static member UpdateDto workItemEvent currentWorkItemDto =
             let newWorkItemDto =
                 match workItemEvent.Event with
-                | Created (workItemId, ownerId, organizationId, repositoryId, title, description) ->
+                | Created (workItemId, workItemNumber, ownerId, organizationId, repositoryId, title, description) ->
                     { WorkItemDto.Default with
                         WorkItemId = workItemId
+                        WorkItemNumber = workItemNumber
                         OwnerId = ownerId
                         OrganizationId = organizationId
                         RepositoryId = repositoryId
@@ -258,44 +264,44 @@ module WorkItem =
                             currentWorkItemDto.ReferenceIds
                             |> List.filter (fun existing -> existing <> referenceId)
                     }
-                | PromotionGroupLinked promotionGroupId ->
+                | ArtifactLinked artifactId ->
                     { currentWorkItemDto with
-                        PromotionGroupIds =
-                            currentWorkItemDto.PromotionGroupIds
-                            |> List.append [ promotionGroupId ]
+                        ArtifactIds =
+                            currentWorkItemDto.ArtifactIds
+                            |> List.append [ artifactId ]
                             |> List.distinct
                     }
-                | PromotionGroupUnlinked promotionGroupId ->
+                | ArtifactUnlinked artifactId ->
                     { currentWorkItemDto with
-                        PromotionGroupIds =
-                            currentWorkItemDto.PromotionGroupIds
-                            |> List.filter (fun existing -> existing <> promotionGroupId)
+                        ArtifactIds =
+                            currentWorkItemDto.ArtifactIds
+                            |> List.filter (fun existing -> existing <> artifactId)
                     }
-                | CandidateLinked candidateId ->
+                | PromotionSetLinked promotionSetId ->
                     { currentWorkItemDto with
-                        CandidateIds =
-                            currentWorkItemDto.CandidateIds
-                            |> List.append [ candidateId ]
+                        PromotionSetIds =
+                            currentWorkItemDto.PromotionSetIds
+                            |> List.append [ promotionSetId ]
                             |> List.distinct
                     }
-                | CandidateUnlinked candidateId ->
+                | PromotionSetUnlinked promotionSetId ->
                     { currentWorkItemDto with
-                        CandidateIds =
-                            currentWorkItemDto.CandidateIds
-                            |> List.filter (fun existing -> existing <> candidateId)
+                        PromotionSetIds =
+                            currentWorkItemDto.PromotionSetIds
+                            |> List.filter (fun existing -> existing <> promotionSetId)
                     }
-                | ReviewPacketLinked reviewPacketId ->
+                | ReviewNotesLinked reviewNotesId ->
                     { currentWorkItemDto with
-                        ReviewPacketIds =
-                            currentWorkItemDto.ReviewPacketIds
-                            |> List.append [ reviewPacketId ]
+                        ReviewNotesIds =
+                            currentWorkItemDto.ReviewNotesIds
+                            |> List.append [ reviewNotesId ]
                             |> List.distinct
                     }
-                | ReviewPacketUnlinked reviewPacketId ->
+                | ReviewNotesUnlinked reviewNotesId ->
                     { currentWorkItemDto with
-                        ReviewPacketIds =
-                            currentWorkItemDto.ReviewPacketIds
-                            |> List.filter (fun existing -> existing <> reviewPacketId)
+                        ReviewNotesIds =
+                            currentWorkItemDto.ReviewNotesIds
+                            |> List.filter (fun existing -> existing <> reviewNotesId)
                     }
                 | ReviewCheckpointLinked reviewCheckpointId ->
                     { currentWorkItemDto with
@@ -310,18 +316,49 @@ module WorkItem =
                             currentWorkItemDto.ReviewCheckpointIds
                             |> List.filter (fun existing -> existing <> reviewCheckpointId)
                     }
-                | GateAttestationLinked gateAttestationId ->
+                | ValidationResultLinked validationResultId ->
                     { currentWorkItemDto with
-                        GateAttestationIds =
-                            currentWorkItemDto.GateAttestationIds
-                            |> List.append [ gateAttestationId ]
+                        ValidationResultIds =
+                            currentWorkItemDto.ValidationResultIds
+                            |> List.append [ validationResultId ]
                             |> List.distinct
                     }
-                | GateAttestationUnlinked gateAttestationId ->
+                | ValidationResultUnlinked validationResultId ->
                     { currentWorkItemDto with
-                        GateAttestationIds =
-                            currentWorkItemDto.GateAttestationIds
-                            |> List.filter (fun existing -> existing <> gateAttestationId)
+                        ValidationResultIds =
+                            currentWorkItemDto.ValidationResultIds
+                            |> List.filter (fun existing -> existing <> validationResultId)
                     }
 
-            { newWorkItemDto with UpdatedAt = Some workItemEvent.Metadata.Timestamp }
+            let onBehalfOf =
+                newWorkItemDto.OnBehalfOf
+                |> List.append [ UserId workItemEvent.Metadata.Principal ]
+                |> List.distinct
+
+            { newWorkItemDto with OnBehalfOf = onBehalfOf; UpdatedAt = Some workItemEvent.Metadata.Timestamp }
+
+    type WorkItemLinksDto =
+        {
+            WorkItemId: WorkItemId
+            WorkItemNumber: WorkItemNumber
+            ReferenceIds: ReferenceId list
+            PromotionSetIds: PromotionSetId list
+            ArtifactIds: ArtifactId list
+            AgentSummaryArtifactIds: ArtifactId list
+            PromptArtifactIds: ArtifactId list
+            ReviewNotesArtifactIds: ArtifactId list
+            OtherArtifactIds: ArtifactId list
+        }
+
+        static member Default =
+            {
+                WorkItemId = WorkItemId.Empty
+                WorkItemNumber = 0L
+                ReferenceIds = []
+                PromotionSetIds = []
+                ArtifactIds = []
+                AgentSummaryArtifactIds = []
+                PromptArtifactIds = []
+                ReviewNotesArtifactIds = []
+                OtherArtifactIds = []
+            }

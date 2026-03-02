@@ -49,27 +49,28 @@ module Orleans =
                             match grainType with
                             | StateName.AccessControl -> grainId.Key.ToString()
                             | StateName.Branch -> repositoryId ()
-                            | StateName.ConflictReceipt -> repositoryId ()
                             | StateName.Diff -> repositoryId ()
                             | StateName.DirectoryAppearance -> repositoryId ()
                             | StateName.DirectoryVersion -> repositoryId ()
                             | StateName.FileAppearance -> repositoryId ()
-                            | StateName.GateAttestation -> repositoryId ()
-                            | StateName.IntegrationCandidate -> repositoryId ()
                             | StateName.NamedSection -> repositoryId ()
                             | StateName.Organization -> StateName.Organization
                             | StateName.Owner -> StateName.Owner
                             | StateName.PersonalAccessToken -> grainId.Key.ToString()
                             | StateName.Policy -> repositoryId ()
+                            | StateName.PromotionSet -> repositoryId ()
                             | StateName.PromotionQueue -> repositoryId ()
+                            | StateName.ValidationSet -> repositoryId ()
+                            | StateName.ValidationResult -> repositoryId ()
+                            | StateName.Artifact -> repositoryId ()
                             | StateName.Reference -> repositoryId ()
                             | StateName.Reminder -> StateName.Reminder
                             | StateName.Repository -> organizationId ()
                             | StateName.RepositoryPermission -> repositoryId ()
                             | StateName.Review -> repositoryId ()
-                            | StateName.Stage0 -> repositoryId ()
                             | StateName.User -> StateName.User
                             | StateName.WorkItem -> repositoryId ()
+                            | StateName.WorkItemNumberCounter -> repositoryId ()
                             | _ ->
                                 raise (
                                     ArgumentException(

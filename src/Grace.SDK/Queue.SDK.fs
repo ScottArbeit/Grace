@@ -11,7 +11,7 @@ type Queue() =
     static member public Status(parameters: QueueStatusParameters) =
         postServer<QueueStatusParameters, PromotionQueue> (parameters |> ensureCorrelationIdIsSet, "queue/status")
 
-    /// Enqueues a candidate in a promotion queue.
+    /// Enqueues a promotion set in a promotion queue.
     static member public Enqueue(parameters: EnqueueParameters) =
         postServer<EnqueueParameters, string> (parameters |> ensureCorrelationIdIsSet, "queue/enqueue")
 
@@ -23,6 +23,6 @@ type Queue() =
     static member public Resume(parameters: QueueActionParameters) =
         postServer<QueueActionParameters, string> (parameters |> ensureCorrelationIdIsSet, "queue/resume")
 
-    /// Dequeues a candidate from a promotion queue.
-    static member public Dequeue(parameters: CandidateActionParameters) =
-        postServer<CandidateActionParameters, string> (parameters |> ensureCorrelationIdIsSet, "queue/dequeue")
+    /// Dequeues a promotion set from a promotion queue.
+    static member public Dequeue(parameters: PromotionSetActionParameters) =
+        postServer<PromotionSetActionParameters, string> (parameters |> ensureCorrelationIdIsSet, "queue/dequeue")

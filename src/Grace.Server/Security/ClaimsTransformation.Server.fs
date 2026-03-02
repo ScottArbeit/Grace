@@ -16,7 +16,7 @@ type GraceClaimsTransformation(log: ILogger<GraceClaimsTransformation>) =
                 else
                     let identity =
                         principal.Identities
-                        |> Seq.tryFind (fun candidate -> candidate.IsAuthenticated)
+                        |> Seq.tryFind (fun mappedIdentity -> mappedIdentity.IsAuthenticated)
                         |> Option.orElseWith (fun () -> principal.Identities |> Seq.tryHead)
 
                     match identity with
