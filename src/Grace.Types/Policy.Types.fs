@@ -58,7 +58,7 @@ module Policy =
     type QueueFailureAction =
         | PauseQueue
         | Continue
-        | QuarantineCandidate
+        | QuarantinePromotionSet
 
         static member GetKnownTypes() = GetKnownTypes<QueueFailureAction>()
 

@@ -67,26 +67,35 @@ module Types =
     /// The Id of the work item.
     type WorkItemId = Guid
 
-    /// The Id of the integration candidate.
-    type CandidateId = Guid
+    /// The repository-scoped monotonically increasing work item number.
+    type WorkItemNumber = int64
 
-    /// The Id of the review packet.
-    type ReviewPacketId = Guid
+    /// The Id of the promotion set.
+    type PromotionSetId = Guid
+
+    /// The Id of a promotion set step.
+    type PromotionSetStepId = Guid
+
+    /// The Id of the review notes payload.
+    type ReviewNotesId = Guid
 
     /// The Id of the review checkpoint.
     type ReviewCheckpointId = Guid
-
-    /// The Id of the gate attestation.
-    type GateAttestationId = Guid
-
-    /// The Id of a Stage 0 analysis.
-    type Stage0AnalysisId = Guid
 
     /// The Id of an analysis receipt.
     type AnalysisReceiptId = Guid
 
     /// The Id of a conflict resolution receipt.
     type ConflictReceiptId = Guid
+
+    /// The Id of a validation set.
+    type ValidationSetId = Guid
+
+    /// The Id of a validation result.
+    type ValidationResultId = Guid
+
+    /// The Id of an artifact.
+    type ArtifactId = Guid
 
     /// The text of the reference, generally submitted as the -m parameter in `grace save/checkpoint/commit/etc.`.
     type ReferenceText = string
@@ -572,8 +581,8 @@ module Types =
     [<KnownType("GetKnownTypes"); GenerateSerializer>]
     type ReferenceLinkType =
         | BasedOn of ReferenceId
-        | IncludedInPromotionGroup of Guid
-        | PromotionGroupTerminal of Guid // Marks the final promotion in a promotion group.
+        | IncludedInPromotionSet of PromotionSetId
+        | PromotionSetTerminal of PromotionSetId // Marks the final promotion in a promotion set.
 
         static member GetKnownTypes() = GetKnownTypes<ReferenceLinkType>()
 
@@ -897,7 +906,7 @@ module Types =
     /// Defines the conflict resolution policy for a repository.
     [<KnownType("GetKnownTypes"); GenerateSerializer>]
     type ConflictResolutionPolicy =
-        | NoConflicts of unit // Any conflict blocks the promotion group.
+        | NoConflicts of unit // Any conflict blocks recomputation/apply.
         | ConflictsAllowed of float32 // Conflicts allowed if model confidence >= threshold (0.0 to 1.0).
 
         static member GetKnownTypes() = GetKnownTypes<ConflictResolutionPolicy>()
@@ -960,8 +969,6 @@ module Types =
         | DeleteCachedState
         /// DeleteZipFile reminders are used to remind the DirectoryVersion actor to delete the directory version contents .zip file after the time set in the repository has expired.
         | DeleteZipFile
-        /// ScheduledPromotionGroup reminders are used to trigger a promotion group to start at a scheduled time.
-        | ScheduledPromotionGroup
 
         static member GetKnownTypes() = GetKnownTypes<ReminderTypes>()
 

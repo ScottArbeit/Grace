@@ -164,7 +164,7 @@ module History =
         entry.repoBranch
         |> Option.defaultValue String.Empty
 
-    let private filterEntries
+    let internal filterEntries
         (entries: HistoryStorage.HistoryEntry list)
         (limit: int)
         (filterRepo: bool)
@@ -172,7 +172,16 @@ module History =
         (filterSuccess: bool)
         (sinceDuration: Duration option)
         (containsText: string option)
+        (sourceText: string option)
         =
+        let normalizedContainsText =
+            containsText
+            |> Option.bind (fun text -> if String.IsNullOrWhiteSpace(text) then None else Some(text.Trim()))
+
+        let normalizedSourceText =
+            sourceText
+            |> Option.bind (fun source -> if String.IsNullOrWhiteSpace(source) then None else Some(source.Trim()))
+
         let mutable filtered = entries
 
         if filterRepo then
@@ -201,13 +210,23 @@ module History =
                 |> List.filter (fun entry -> entry.timestampUtc >= cutoff)
         | None -> ()
 
-        match containsText with
+        match normalizedContainsText with
         | Some text ->
             filtered <-
                 filtered
                 |> List.filter (fun entry ->
                     entry.commandLine.IndexOf(text, StringComparison.InvariantCultureIgnoreCase)
                     >= 0)
+        | None -> ()
+
+        match normalizedSourceText with
+        | Some source ->
+            filtered <-
+                filtered
+                |> List.filter (fun entry ->
+                    match entry.source with
+                    | Some entrySource -> entrySource.Equals(source, StringComparison.OrdinalIgnoreCase)
+                    | None -> false)
         | None -> ()
 
         if filterFailed && not filterSuccess then
@@ -380,6 +399,7 @@ module History =
                 let filterSuccess = parseResult.GetValue(Options.success)
                 let sinceText = parseResult.GetValue(Options.since)
                 let containsText = parseResult.GetValue(Options.contains)
+                let sourceText = parseResult.GetValue(Common.Options.source)
                 let showId = parseResult.GetValue(Options.showId)
 
                 if limit < 0 then
@@ -410,6 +430,7 @@ module History =
                                 filterSuccess
                                 since
                                 (if String.IsNullOrWhiteSpace(containsText) then None else Some containsText)
+                                (if String.IsNullOrWhiteSpace(sourceText) then None else Some sourceText)
 
                         outputEntries parseResult filtered showId readResult.CorruptCount
                         return 0
@@ -426,6 +447,7 @@ module History =
                 let filterFailed = parseResult.GetValue(Options.failed)
                 let filterSuccess = parseResult.GetValue(Options.success)
                 let sinceText = parseResult.GetValue(Options.since)
+                let sourceText = parseResult.GetValue(Common.Options.source)
                 let showId = parseResult.GetValue(Options.showId)
 
                 if limit < 0 then
@@ -456,6 +478,7 @@ module History =
                                 filterSuccess
                                 since
                                 (if String.IsNullOrWhiteSpace(searchText) then None else Some searchText)
+                                (if String.IsNullOrWhiteSpace(sourceText) then None else Some sourceText)
 
                         outputEntries parseResult filtered showId readResult.CorruptCount
                         return 0

@@ -24,10 +24,10 @@
 	</PropertyGroup>
 	<ItemGroup>
 		<None Include="instructions.md" />
-    <Compile Include="Log.CLI.fs" />
-    <Compile Include="Text.CLI.fs" />
-    <Compile Include="LocalStateDb.CLI.fs" />
-    <Compile Include="Command\Services.CLI.fs" />
+		<Compile Include="Log.CLI.fs" />
+		<Compile Include="Text.CLI.fs" />
+		<Compile Include="LocalStateDb.CLI.fs" />
+		<Compile Include="Command\Services.CLI.fs" />
 		<Compile Include="Command\Common.CLI.fs" />
 		<Compile Include="Command\Auth.CLI.fs" />
 		<Compile Include="Command\Config.CLI.fs" />
@@ -41,10 +41,13 @@
 		<Compile Include="Command\DirectoryVersion.CLI.fs" />
 		<Compile Include="Command\Watch.CLI.fs" />
 		<Compile Include="Command\Maintenance.CLI.fs" />
-                <Compile Include="Command\PromotionGroup.CLI.fs" />
+                
                 <Compile Include="Command\WorkItem.CLI.fs" />
                 <Compile Include="Command\Review.CLI.fs" />
+                <Compile Include="Command\Candidate.CLI.fs" />
                 <Compile Include="Command\Queue.CLI.fs" />
+                <Compile Include="Command\PromotionSet.CLI.fs" />
+                <Compile Include="Command\Agent.CLI.fs" />
                 <Compile Include="Command\Access.CLI.fs" />
 		<Compile Include="Command\Admin.CLI.fs" />
 		<Compile Include="HistoryStorage.CLI.fs" />
@@ -53,8 +56,12 @@
 	</ItemGroup>
 	<ItemGroup>
 		<PackageReference Include="Ben.Demystifier" Version="0.4.1" />
-    <PackageReference Include="Microsoft.Data.Sqlite.Core" Version="10.0.0" />
-    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="2.1.11" />
+		<PackageReference Include="Microsoft.Data.Sqlite.Core" Version="10.0.0" />
+		<PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="2.1.11" />
+		<PackageReference Include="MessagePack" Version="3.1.4" />
+		<PackageReference Include="MessagePack.Annotations" Version="3.1.4" />
+		<PackageReference Include="MessagePack.FSharpExtensions" Version="4.0.0" />
+		<PackageReference Include="MessagePack.NodaTime" Version="3.5.0" />
 		<PackageReference Include="Microsoft.AspNetCore.SignalR.Client" Version="10.0.0" />
 		<PackageReference Include="Microsoft.AspNetCore.SignalR.Protocols.Json" Version="10.0.0" />
 		<PackageReference Include="Microsoft.Extensions.Logging.Configuration" Version="10.0.0" />

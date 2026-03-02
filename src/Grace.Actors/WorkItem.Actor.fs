@@ -137,8 +137,8 @@ module WorkItem =
                         let! workItemEventType =
                             task {
                                 match command with
-                                | Create (workItemId, ownerId, organizationId, repositoryId, title, description) ->
-                                    return Created(workItemId, ownerId, organizationId, repositoryId, title, description)
+                                | Create (workItemId, workItemNumber, ownerId, organizationId, repositoryId, title, description) ->
+                                    return Created(workItemId, workItemNumber, ownerId, organizationId, repositoryId, title, description)
                                 | SetTitle title -> return TitleSet title
                                 | SetDescription description -> return DescriptionSet description
                                 | SetStatus status -> return StatusSet status
@@ -156,16 +156,16 @@ module WorkItem =
                                 | UnlinkBranch branchId -> return BranchUnlinked branchId
                                 | LinkReference referenceId -> return ReferenceLinked referenceId
                                 | UnlinkReference referenceId -> return ReferenceUnlinked referenceId
-                                | LinkPromotionGroup promotionGroupId -> return PromotionGroupLinked promotionGroupId
-                                | UnlinkPromotionGroup promotionGroupId -> return PromotionGroupUnlinked promotionGroupId
-                                | LinkCandidate candidateId -> return CandidateLinked candidateId
-                                | UnlinkCandidate candidateId -> return CandidateUnlinked candidateId
-                                | LinkReviewPacket reviewPacketId -> return ReviewPacketLinked reviewPacketId
-                                | UnlinkReviewPacket reviewPacketId -> return ReviewPacketUnlinked reviewPacketId
+                                | LinkArtifact artifactId -> return ArtifactLinked artifactId
+                                | UnlinkArtifact artifactId -> return ArtifactUnlinked artifactId
+                                | LinkPromotionSet promotionSetId -> return PromotionSetLinked promotionSetId
+                                | UnlinkPromotionSet promotionSetId -> return PromotionSetUnlinked promotionSetId
+                                | LinkReviewNotes reviewNotesId -> return ReviewNotesLinked reviewNotesId
+                                | UnlinkReviewNotes reviewNotesId -> return ReviewNotesUnlinked reviewNotesId
                                 | LinkReviewCheckpoint reviewCheckpointId -> return ReviewCheckpointLinked reviewCheckpointId
                                 | UnlinkReviewCheckpoint reviewCheckpointId -> return ReviewCheckpointUnlinked reviewCheckpointId
-                                | LinkGateAttestation gateAttestationId -> return GateAttestationLinked gateAttestationId
-                                | UnlinkGateAttestation gateAttestationId -> return GateAttestationUnlinked gateAttestationId
+                                | LinkValidationResult validationResultId -> return ValidationResultLinked validationResultId
+                                | UnlinkValidationResult validationResultId -> return ValidationResultUnlinked validationResultId
                             }
 
                         let workItemEvent = { Event = workItemEventType; Metadata = metadata }

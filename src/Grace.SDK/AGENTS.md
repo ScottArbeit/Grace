@@ -40,7 +40,7 @@ Consult `../AGENTS.md` for global policies before modifying the SDK.
 
 ## Notes
 
-- Added SDK modules for WorkItem, Policy, Review, Queue, and Candidate
+- Added SDK modules for WorkItem, Policy, Review, Queue, and PromotionSet
   APIs (January 6, 2026).
 - Queue SDK adds pause/resume/dequeue helpers aligned to server routes
   (January 6, 2026).

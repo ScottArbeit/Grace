@@ -190,6 +190,7 @@ try {
         Invoke-External "Grace.SDK build" { dotnet build "src/Grace.SDK/Grace.SDK.fsproj" -c $Configuration }
         Invoke-External "Grace.Authorization.Tests build" { dotnet build "src/Grace.Authorization.Tests/Grace.Authorization.Tests.fsproj" -c $Configuration }
         Invoke-External "Grace.CLI.Tests build" { dotnet build "src/Grace.CLI.Tests/Grace.CLI.Tests.fsproj" -c $Configuration }
+        Invoke-External "Grace.Types.Tests build" { dotnet build "src/Grace.Types.Tests/Grace.Types.Tests.fsproj" -c $Configuration }
         if ($Full) {
             Invoke-External "Grace.Server.Tests build" { dotnet build "src/Grace.Server.Tests/Grace.Server.Tests.fsproj" -c $Configuration }
         }
@@ -202,6 +203,7 @@ try {
         Write-Section "Test"
         Invoke-External "Grace.Authorization.Tests" { dotnet test "src/Grace.Authorization.Tests/Grace.Authorization.Tests.fsproj" -c $Configuration --no-build }
         Invoke-External "Grace.CLI.Tests" { dotnet test "src/Grace.CLI.Tests/Grace.CLI.Tests.fsproj" -c $Configuration --no-build }
+        Invoke-External "Grace.Types.Tests" { dotnet test "src/Grace.Types.Tests/Grace.Types.Tests.fsproj" -c $Configuration --no-build }
 
         if ($Full) {
             Invoke-External "Grace.Server.Tests" { dotnet test "src/Grace.Server.Tests/Grace.Server.Tests.fsproj" -c $Configuration --no-build }

@@ -1,0 +1,26 @@
+<Solution>
+  <Configurations>
+    <Platform Name="Any CPU" />
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Folder Name="/Solution items/">
+    <File Path="agents.md" />
+    <File Path="Directory.Build.props" />
+  </Folder>
+  <Project Path="Grace.Actors/Grace.Actors.fsproj" />
+  <Project Path="Grace.Aspire.AppHost/Grace.Aspire.AppHost.csproj" />
+  <Project Path="Grace.Authorization.Tests/Grace.Authorization.Tests.fsproj" />
+  <Project Path="Grace.CLI.Tests/Grace.CLI.Tests.fsproj" />
+  <Project Path="Grace.CLI/Grace.CLI.fsproj" />
+  <Project Path="Grace.Load/Grace.Load.fsproj" />
+  <Project Path="Grace.Orleans.CodeGen/Grace.Orleans.CodeGen.csproj" />
+  <Project Path="Grace.SDK/Grace.SDK.fsproj" />
+  <Project Path="Grace.Server.Tests/Grace.Server.Tests.fsproj" />
+  <Project Path="Grace.Types.Tests/Grace.Types.Tests.fsproj" />
+  <Project Path="Grace.Server/Grace.Server.fsproj">
+    <BuildDependency Project="Grace.Shared/Grace.Shared.fsproj" />
+  </Project>
+  <Project Path="Grace.Shared/Grace.Shared.fsproj" />
+  <Project Path="Grace.Types/Grace.Types.fsproj" />
+</Solution>

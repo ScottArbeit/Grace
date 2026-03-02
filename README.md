@@ -1,4 +1,6 @@
-# Grace Version Control System
+# Grace - Version Control for the AI Era
+
+<!-- markdownlint-disable MD013 -->
 
 grace _(n)_ -
 
@@ -7,410 +9,278 @@ grace _(n)_ -
 3. goodwill or favor
 4. a sense of propriety and consideration for others [^grace]
 
-![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange3.svg)
+![](./Assets/Orange3.svg)
 
-## Welcome to Grace.
-Grace is a **new**, **modern**, **cloud-native** **version control system**.
+Grace is a **version control system** designed and built for the AI Era.
 
-Grace is **easy to use**, **easy to understand**, and **consistently fast**. And it's **powerful**, ready to handle large repositories and large file sizes.
+Grace is designed for kindness to humans, and velocity for agents. It's meant to help you stay calm, in-control, and in-flow as you ship code at agentic speed.
 
-Grace Server **scales up** by running on Kubernetes and **massive PaaS services** from large cloud providers.
+It has all of the basics you'd expect from a version control system, plus primitives that help you monitor your agents, capture the work they're doing, and review that work in real-time using both deterministic checks and AI prompts that you can write, with rules that you set.
 
-Grace Client runs in the background, making it **ambient**, **faster**, and **more valuable to your everyday work** as a developer.
+Grace assumes that AI belongs in the version control system, reacting to events, reviewing changes, and generating whatever you need to get code from idea to agent to production.
 
-Grace **connects you with others** working in your repository, **across the globe**, **in real-time**, enabling **new experiences** and **new ways of sharing**.
+Along with version control, Grace is designed to capture the work items, the prompts, the specifications, the model versions, and so much more - everything that goes into doing agentic coding - so you and your agents have the best possible context to complete the work successfully, and review it with confidence.
 
-![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange3.svg)
-![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
+All you have to do is tell your agents to run `grace agent bootstrap` at the start of the session. Grace and your agents will take care of the rest, automatically capturing what's going on. The `bootstrap` is customizable, and Grace will even help you customize it.
 
-to be clear:
-> Grace is **new** 🧑🏼‍🔬 and **alpha-level** right now. 🔥🧯 The parts that **are** implemented work, but there's much more to do. Grace is not ready to be relied on as a production version control system yet.  It should not be used for anything other than its own design, development and testing, and for feedback.[^git]
+In the repository, you define the checks you want run in respose to which events, you define the prompts, you choose the models, and Grace Server will do the rest, capturing the results in detailed Review reports. Again, Grace will help you define and customize all of it.
 
-![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
-![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange3.svg)
-![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
-### Grace at NDC Oslo 2023
+Of course it's fast. Grace is multitenant, built for massive repositories, insane numbers of developers and agents, and ludicrous amounts of code and binary files of any size.
 
-I gave my first conference talk about Grace at NDC Oslo 2023. You can watch it [here](https://youtu.be/lW0gxMbyLEM):
+It ships with a promotion queue - Grace doesn't do merges, it does promotions - and automatically handles promotion conflict resolution according to rules and confidence levels you set.
+
+> ⚠️👷🏻🚧 Grace is an alpha, and is going through rapid evolution with breaking changes, but it's ready for feedback and contributions. It is not ready for or intended for production usage at this time.
+
+![](./Assets/Orange3.svg)
+
+## Technology stack
+
+Grace is a modern, fast, powerful centralized version control system. It's made up of a web API, with a CLI (and soon a GUI).
+
+Grace is written primarily in **F#**, and uses:
+
+- **ASP.NET Core** for the HTTP API
+- **Orleans** for the virtual-actor and distributed-systems core
+- **Microsoft Azure PaaS services**[^1]:
+  - **Azure Cosmos DB** for actor state storage (repos, branches, references, directory versions, etc.) at ludicrous scale and speed
+  - **Azure Blob Storage** for objects and artifacts, including (virtually) unlimited-size binary files
+  - **Azure Service Bus** for event streams that you can hook into
+  - All come with emulators for frictionless local development
+- **SignalR** for live client-server coordination (`grace watch`)
+- **Redis** (used by SignalR and for caching)
+- **Aspire** to orchestrate everything for both local dev and cloud deployment
+- **Avalonia** (I think) for a fully cross-platform GUI, including WASM
+
+[^1]: Grace is designed to be adaptable to AWS and other cloud providers, and with coding agents, it should be not easy but not too hard to do. I just haven't done it yet.
+
+## Running Grace locally
+
+The fastest way to understand Grace is to run it locally and poke at it.
+
+Grace is designed as a multitenant, massively scalable, centralized, cloud-native version control system, so running it locally isn't quite as simple as "download this one executable and run it". Grace uses [Aspire](https://aspire.dev) to make running Grace as simple as possible, with configurations for using either local emulators or actual Azure services.
+
+### Normal development and debugging
+
+In normal development and debugging, there are three steps to running Grace.
+
+1. Run the Aspire AppHost project. The AppHost will start the local emulators (if requested), and run Grace Server.
+2. Use the Grace CLI to do Grace stuff.
+3. Stop the Aspire AppHost. The AppHost will stop the local emulators and Grace Server as it exits.
+
+### First time setup
+
+The first-time steps below use **local emulators** and **test authentication** (i.e. the same authentication we use in integration tests), so you don't have to set anything up in the cloud to get started. If all goes well, you should be up and running in under 10 minutes.
+
+> There is a detailed guide to configuring authentication at [`/docs/Authentication.md`](/docs/Authentication.md).
+
+1. **Install prerequisites** for your platform:
+   - [.NET 10 SDK](https://dotnet.microsoft.com/en-us/download)
+   - [PowerShell 7+](https://learn.microsoft.com/en-us/powershell/scripting/install/install-powershell)
+   - A container runtime
+     - Aspire supports [Docker Desktop](https://www.docker.com/get-started/) and [Podman](https://podman-desktop.io/).
+     - [Rancher](https://www.rancher.com/products/rancher-desktop) is not officially supported, but with Moby/dockerd it should work.
+
+    NOTE: If using Podman, set the [container runtime](https://aspire.dev/app-host/configuration/#common-configuration) to `podman`:
+
+    PowerShell:
+    ```powershell
+    $env:ASPIRE_CONTAINER_RUNTIME="podman"
+    ```
+
+    bash/zsh:
+    ```bash
+    export ASPIRE_CONTAINER_RUNTIME=podman
+    ```
+
+2. **Clone the Grace repo**: `git clone https://github.com/ScottArbeit/Grace.git` or `gh repo clone ScottArbeit/Grace`.
+3. **Build the solution**: `dotnet build ./src/Grace.slnx` to sanity-check your environment.
+4. **Create an alias to make your life easier**: Add an alias to your profile called `grace` that points to `./src/Grace.CLI/bin/Debug/net10.0/grace.exe`.
+
+   PowerShell:
+
+   ```powershell
+   Set-Alias -Name grace -Value \<repo-path\>\src\Grace.CLI\bin\Debug\net10.0\grace.exe
+   ```
+
+   bash / zsh:
+
+   ```bash
+   alias grace="\<repo-path\>/src/Grace.CLI/bin/Debug/net10.0/grace.exe"
+   ```
+
+5. **Choose a test repository**: You can create an empty directory to start with a blank repo in, or you can copy or clone some code into a directory to start with that code.
+
+6. **Start Grace Server**: Run `pwsh ./scripts/dev-local.ps1` to start Grace Server using Aspire. This will automatically generate a personal access token that you'll use for authentication.
+
+    When `dev-local.ps1` finishes, it will output your new token, along with exact copy/paste commands to set `GRACE_SERVER_URI` and `GRACE_TOKEN`, the first environment variables you'll need.
+
+7. **Create Owner, Organization, and Repository**: Copy and paste (or modify if you want) the scripts below to set up your first Grace repo.
+
+    ```powershell
+    # Create an owner, organization, and repo
+    grace owner create --owner-name demo
+    grace organization create --owner-name demo --organization-name sandbox
+    grace repository create --owner-name demo --organization-name sandbox --repository-name hello
+
+    # Connect to it (writes local Grace config for this working directory)
+    grace connect demo/sandbox/hello
+
+    # Initialize the repo with the contents of the current directory
+    grace repository init --directory .
+    ```
+
+    To see your current state:
+
+    ```powershell
+    grace status
+    ```
+
+    To see what's changed in your branch vs. previous states, use `grace diff`:
+
+    ```powershell
+    grace diff commit
+    grace diff promotion
+    grace diff checkpoint
+    ```
+
+### Verify the CLI can talk to the server
+
+Once you have `GRACE_SERVER_URI` and `GRACE_TOKEN` set, run:
+
+```powershell
+grace auth whoami
+```
+
+### File an issue if anything seems confusing or rough
+
+The intention is for this first-time setup to be as easy as possible. If you run into any problems, please file an issue so we can make it smoother.
+
+### Running Grace and Git in the same directory
+
+You can use Git and Grace side-by-side in the same directory. You just have to make sure they ignore each other's object directories, `.git` and `.grace`.
+
+#### Tell Git to ignore Grace
+
+`.grace` is Grace's version of the `.git` directory.
+
+To ignore it, add the path `.grace/` to your `.gitignore`.
+
+#### Tell Grace to ignore Git
+
+Grace's `.graceignore` file, by default, ignores the `.git` directory.
+
+If it happens to be missing, add the path `/.git/*` to `.graceignore` in the root of your repository.
+
+> Again, ⚠️👷🏻🚧 Grace is an alpha, and still has some alpha-like bugs. For now, I recommend testing Grace either on 1) repos that you won't be sad if something bad happens, or; 2) repos where you're comfortable running `git reset` to restore to a known-good version if you need it.
+
+![](./Assets/Orange3.svg)
+
+## Architecture
+
+### 1) Grace Server is a modern web API that uses an actor system
+
+Grace is built on **Orleans**. Most domain behavior is implemented as virtual actors, which makes it effortless and natural to scale up and scale out.
+
+- HTTP API: `src/Grace.Server`
+- Actor implementations: `src/Grace.Actors`
+- Domain types and events: `src/Grace.Types`
+- Shared utilities and DTOs: `src/Grace.Shared`
+
+### 2) Grace is event-sourced
+
+A version control system is \<waves hands\> just a series of modifications to files and branches and repositories over time. Grace stores every modification to every entity as an event, as the source of truth. Grace then uses those events to pre-compute and cache projections that help you and your agents go faster.
+
+### 3) Files are stored in object storage
+
+Grace relies on cloud object storage systems to provide a safe and infinitely scalable storage layer. Grace currently uses Azure Blob Storage, with the intention of adding the ability to run it on AWS S3 and others. Currently, all files are stored as single blobs in Azure; soon Grace will shift to a content-addressible storage construct that will enable efficient handling of changes to large binary files.
+
+### 4) `grace watch` for effortless, background update tracking
+
+`grace watch` scans the working directory when it starts to get current state and notice any changes that happened while it wasn't running, and then continuously watches for changes, saving new file and directory versions to Grace Server, all generally within a second of the file being saved. This background processing saves time in every session, as other Grace commands like `grace commit` detect `grace watch` and can skip the costly directory rescans and other work that `grace watch` has already taken care of.
+
+Grace has other commands that agents are meant to use to capture the complete context of the work being done.
+
+Together, they give us a step-by-step audit trail of everything an agent has done and is doing, and why, that you can watch and review in real-time from your computer.
+
+> If you want a deeper dive on what `grace watch` does and does not do, see: [What `grace watch` does](./docs/What%20grace%20watch%20does.md).
+
+### 5) “Continuous review” for rapid validation of changes
+
+Grace’s review system is designed to bring AI evaluations and human review and approvals together in one harmonious flow.
+
+Key concepts include:
+
+- **Policy snapshots** (immutable rule bundles)
+- **Stage 0 analysis** (deterministic signals recorded for references)
+- **Promotion queues** and **integration candidates**
+- **Gates** and **attestations**
+- **Review packets** with easy-to-understand, customizable summaries
+
+For more, see: `docs/Continuous review.md`
+
+![](./Assets/Orange3.svg)
+
+## Roadmap
+
+Grace is evolving quickly. Strap in....
+
+### GUI
+
+- Native GUI for Windows, MacOS, Linux Desktop, Android, iOS, and WASM.
+- Not Electron.
+
+### Full rewrite of object storage layer
+
+- Switch to content-addressable storage for more efficient object storage and network transfer
+- Automatic chunking of large binary files
+
+### Multi-hash semantics
+
+- Add abstractions to support multiple hashing algorithms at once
+- Ensure that Grace is not locked into just one hashing algorithm
+- Add BLAKE3 hashing for better performance and to support content-addressable storage
+
+### `grace cache` for CI/CD and in-office scenarios
+
+- Built-in feature of Grace CLI
+- Like a Git mirror, plus full authentication and authorization
+- Pre-fetch by listening to repository events using SignalR and downloading the branches and versions you want
+- Transparent read-through cache for CI workers and in-office users to save time and bandwidth
+
+### Improved database backpressure handling
+
+### Agent skills to help you create and update Grace's automatic review policies
+
+### `grace agent bootstrap` command to give coding agents context for using Grace
+
+### Ergonomics
+
+- smoother onboarding
+- better defaults
+
+### Repeatable performance benchmarking
+
+### Even more unit tests
+
+### Even more integration tests
+
+![](./Assets/Orange3.svg)
+
+## Grace at NDC Oslo 2023
+
+I gave my first conference talk about Grace at NDC Oslo 2023. Grace has changed _a lot_ since then, but this was the original idea. You can watch it [here](https://youtu.be/lW0gxMbyLEM):
 
 [<img src="https://github.com/ScottArbeit/Grace/assets/2406993/2f20bf3a-9907-42d3-8596-84a7e1334f55">](https://youtu.be/lW0gxMbyLEM)
 
-![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
-![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange3.svg)
+![](./Assets/Orange3.svg)
 
-## FAQ
+## Contributing
 
-For a list of (mostly imagined) frequently asked questions, please see the [Frequently Asked Questions](docs/Frequently%20asked%20questions.md) page.
+If you want to help shape Grace:
 
-![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange3.svg)
+- Read `CONTRIBUTING.md`
+- AI submissions are expected and welcomed, but they have to follow
+- Open issues for rough edges, missing docs, or confusing workflows
 
-## Design and Motivations
-
-If you'd like to read about some of the design thinking and motivations behind Grace - topics like UX, performance, scalability, monorepos, Git, why F#, and more - please read [Design and Motivations](docs/Design%20and%20Motivations.md).
-
-![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange3.svg)
-
-## Vision
-
-#### A lot of this remains to be built, but here's the vision for Grace v1.0:
-
-![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
-
-### No more fear
-
-Stop being afraid of your version control system, and start _enjoying_ it instead.
-
-Grace is easy-to-use, easy-to-understand, and fast, with cool new features that let version control fade into the background while you're working, and help you remember where you were when you get interrupted.
-
-There are fewer concepts to understand in Grace, so learning it is easy, and understanding what it's doing is simple. There's a simple-to-understand grammar, built-in aliases for common gestures, and common-sense defaults.
-
-Grace is powerful source control, minus the fear.
-
-![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
-
-### Yes, it's fast
-
-Great UX requires great speed. And Grace is fast.
-
-Grace Server is designed to run on fast, cloud-based PaaS services for incredible scale and performance. Grace uses virtual actors as networked, in-memory data caches to maximize performance.
-
-Grace CLI adds just milliseconds to the server response time for each command.
-
-Grace's GUI apps will be platform-native, with all of the performance and stick-to-your-finger-ness that native apps have always had.
-
-Grace Server can even precompute views and projections that you're likely to want, like diffs and directory contents, and garbage-collect them when they're no longer needed.
-
-![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
-
-### grace watch
-
-Grace CLI includes a command - `grace watch` - that watches your working directory for changes, and keeps a live connection to Grace Server, connecting you in real-time to your team around the world.
-
-`grace watch` takes action for you, whether that's automatically uploading and downloading new file versions, processing notifications from other repo users, or running custom actions that you create.
-
-And don't worry about having yet-another application running in the background. `grace watch` is small and very quiet when nothing is going on.
-
-![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
-
-### Commits... and saves, checkpoints, and promotions
-
-In Git, `commit` is an overloaded concept. It can mean:
-
-- "I'm partially done" - local commit after each unit of work is done
-- "I'm really done" - ready for the pull request
-- "Merge" - merges are called `commits`, even if they're not.
-
-And then you get the "squash" vs. "don't squash" debate. Sigh.
-
-Grace simplifies this by breaking these usages out into their own gestures and events:
-
-- `grace checkpoint` - this means "I'm partially done", for you to keep track of your own progress
-- `grace commit` - this is "I'm really done" or "This version is a candidate for promotion"; you'd use a commit for a PR
-- `grace promote` - in Grace, promotions replace merges; a promotion is how Grace moves code from a child branch to a parent branch
-
-and, introducing:
-
-- `grace save` - this is used by `grace watch` for saving versions of files between checkpoints, because...
-
-![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
-
-### Every save is uploaded, automatically
-
-By default, `grace watch` uploads new file versions after every save-on-disk, along with a new snapshot of the entire directory structure of the repo, including new SHA-256 hashes.
-
-It happens so quickly you don't even notice it.
-
-And it gives you some very cool things, like:
-
-- **file-level undo** for as far back as your repository allows,
-- **very fast** `grace checkpoint`, `grace commit`, and `grace promote` commands, and,
-- a **Version History view** that will let you to flip through your versions, helping you get remember where you were when you get interrupted, and enabling easy, instant restoration of any of your past changes.
-
-![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
-
-### Every change recorded
-
-Grace is event-sourced. That means that everything that changes the state of the repository - every `save` and `commit`, every `branch name change`, every _everything_, is stored as a separate event.
-
-As they're handled, they're sent to an event processor, which can log them in your choice of format and system. You can see the _who / what / where / when_ of everything that happens in your repository, using your favorite event analytics and stream analytics tools, and even set up custom auditing and automation based on those events.[^stream]
-
-![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
-
-### Live, two-way client-server communication
-
-When running `grace watch`, Grace uses [SignalR](https://dotnet.microsoft.com/en-us/apps/aspnet/signalr) to create a live, two-way communication channel between client and server.
-
-This connection allows Grace to do All The Cool Things. Things like connecting you in real-time to everyone else working in your repository. Things like auto-rebasing. Things like watching for events in your repository, notifying you when you want to be notified, and running custom local actions if you want.
-
-Imagine: there's a promotion to `main`, your branch gets auto-rebased on those latest changes, and then your local unit test suite gets run automatically so you immediately know if there's a problem.
-
-Grace lets you share your code with team members effortlessly, around the world, for those times when you need another set of eyes on it, or just want to show them something cool.
-
-Auto-rebasing keeps you up-to-date and ready to go, because...
-
-![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
-
-### Grace reduces merge conflicts
-
-Merge conflicts suck. Finding out that you have one, when you thought you were already done with your work, is anxiety-inducing, and one of the most confusing parts of the user interface in Git. Grace helps you eliminate conflicts by keeping your branch up-to-date, automatically.
-
-When your parent branch gets updated, within seconds, `grace watch` will auto-rebase your branch on those changes, so you're always coding against the latest version that you'll have to promote to.
-
-Most-to-almost-all of the time, you don't even notice it. No errors, no conflicts.
-
-When there is a problem, auto-rebase lets you find out right away.
-
-You can fix it while you're in flow, and skip the conflict later.
-
-![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
-
-### AI to help resolve conflicts
-
-And Grace doesn't just tell you there's a conflict. It uses AI to propose a resolution, and lets you accept it with a single click, or request that it tries again with a different proposal. You can even tell Grace to run a CI/CD pipeline on the resolution before proposing it to you.
-
-C'mon, it's 2024. There's got to be some AI in here, right?
-
-Let's shift left on promotion conflicts. Grace can't eliminate all of them, but it will reduce how often they happen, and it will proactively offer AI help to resolve them, so you don't have to worry about them ever again.
-
-![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
-
-### Personal branches, not forks
-
-With Grace, there's no need for forking entire repositories just to make contributions. In open-source repos, you'll just create a personal branch against the repo.
-
-You'll own your personal branch, and you can make it public or private. Your branch gets auto-rebased like any other branch in the repository, to keep your version up-to-date. When your change is ready you can submit PR's to get your personal branch's version promoted to a parent branch in the repo.
-
-This is how I expect a large, open-source project in Grace to be: dozens of contributors, each with personal branches, working on a public project that remains securely controlled with ACL's. Everyone gets auto-rebased with every update to `main`. No networks of forks to manage, no entire copies of the repo. Just individuals working on the same repo, securely, together.
-
-![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
-
-### Simplified branching
-
-Grace's branching strategy is called _single-step_ and is designed to help reduce conflicts, and to make it easier to work on and promote code to shipping branches (like `main`).
-
-Single-step branching is both easy-to-use and powerful enough to be all that you need to run your projects.
-
-There's a [separate page](docs/Branching%20strategy.md) that describes it in more detail.
-
-![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
-
-### Grace is built for monorepos
-
-At GitHub, I've been fortunate to work with customers who run some of the largest monorepos in the world. I've seen the challenges they face, and I've seen what they need to build and ship code to production.
-
-Grace is ready for it.
-
-Grace is designed to handle monorepos with ease. It's built to scale, and treats every repository, branch, directory version, and file version as a separate entity in a networked cluster of virtual actors. This design allows Grace to scale to handle arbitrarily large repositories, just as easily as it handles small- and medium-sized repositories.
-
-So far, Grace has been tested on repositories as large as 100,000 files with 15,000 directories, with excellent performance, and no limits in sight.
-
-![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
-
-### Large, binary files welcome
-
-Grace has no problem storing large files. Really large files. It's been tested with 10GB files - not that I think files that large belong in version control - and it should handle even larger files well.
-
-Grace will let you specify how to handle those files, like only downloading them for the Design department, but not for Engineering. It's up to you.
-
-![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
-
-### Native GUI
-
-Yeah, I said it.
-
-Grace will have a native GUI app for Windows, Mac, Android, and iOS. (And probably Linux.)
-
-Take Grace with you wherever you go. Merge conflict UI, Version History view, repository browsing, current status and more... all running at full native speed on your devices.
-
-![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
-
-### Web UI
-
-Shipping a native app doesn't mean that we don't also need a great web UI.
-
-Sometimes the best way to share information is using a URL.
-
-CLI + Web UI + GUI... use Grace the way you want to.
-
-![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
-
-### ACL's, down to the file level
-
-Grace goes way beyond just repository-level permissions. Grace uses OpenID and OAuth2 to integrate with your AuthN and AuthZ providers. Want to lock down specific paths in your repository to specific users and groups? With Grace, you'll be able to.
-
-![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
-
-### No stashing
-
-Because `grace watch` automatically uploads new file versions after every save, and commands like `grace switch` ensure that everything in your working directory is preserved before switching to another branch or reference, there's no need to stash anything. Just `switch` and go.
-
-![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
-
-### Branch-level control of reference types
-
-Plan your branching strategy in greater detail than ever before. Grace lets you decide which kinds of references are enabled in each branch. 
-
-For instance, `main` might enable promotions and tags, and disable commits, checkpoints, and saves.
-
-Ordinary user branches might disable promotions, but enable everything else.
-
-It's up to you.
-
-![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
-
-### Ephemeral checkpoints and saves
-
-Checkpoints and saves are features to help **you** be more productive, but we don't need to keep them forever. Grace allows you to control how long they're kept are kept in each repository. 72 hours? One week? A month? Or maybe just "keep the last 1,000 saves". It's up to you.
-
-![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
-
-### Delete versions if you need to
-
-Sometimes you need to delete a version, whether it's because a secret or password was accidentally checked in, or because of some other security issue. With the right permissions, you'll be able to remove bad versions of your code - with a permanent reference that says that you did.
-
-![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
-
-### Pre-rendered diffs
-
-Every time you run `grace promote`, `grace commit`, or `grace checkpoint`, and every time `grace watch` uploads a new version of a file, Grace Server can optionally pre-render diffs for you to see, either in the CLI or in the Version History view. This makes seeing your ongoing changes in the Version History view instantaneous.
-
-They're automatically aged out and deleted after a configurable length of time, so they don't just sit there wasting resources forever.
-
-![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
-
-### Optional file locking
-
-If your repository includes large binary files, like edited video, graphics, or game artifacts, you need to make sure that only one person at a time edits each file. Grace will support optional file locking at the directory level to ensure that you don't have to re-do work.
-
-(Don't worry... if you don't need file locking, you don't have to turn it on.)
-
-![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
-
-### A simple Web API
-
-Grace Server is a modern Web API application. Like Grace's CLI, the Web API is easy to use, and easy to understand.
-
-Grace ships with a .NET SDK, which is simply a projection of the Web API into .NET (and which Grace itself uses). SDK's for other platforms are welcomed as community contributions.
-
-![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
-
-### SHA-256 hashes
-
-Grace uses SHA-256 hashes to verify that the files you uploaded, and the directory versions that went with them, are exactly the ones that get retrieved by clients. Grace will include a command to verify the SHA-256 hashes of all downloaded files and directory versions.
-
-![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
-
-### Local file cache
-
-Grace repositories have a local cache of file versions that have been uploaded and downloaded. When running `grace watch`, Grace can download new file versions from multiple branches in the background so your `grace switch` commands run nearly instantly.
-
-The local file cache is pruned regularly.
-
-![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
-
-### 2048 characters
-
-When you're running `grace promote/commit/checkpoint/save/tag -m <some message>`, the _\<some message\>_ part can be up to 2048 characters.
-
-50 characters... I don't think so. Feel free to share details. The person you help might be future you.
-
-![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
-
-### Import from Git / Export to Git
-
-Yes, we know... it's hard to let go. Grace will perform an initial import from a Git repo, and will export to a Git repo.[^gitexport]
-
-![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
-
-### Operations (if you're thinking about hosting your own server)
-
-Grace Server is a modern, cloud-native Web API application. It will ship in a container on Docker Hub. (Of course.)
-
-Grace Server is designed to be easy to deploy and operate. It runs on your choice of dozens of cloud-native databases, components and services, using [Dapr](https://dapr.io), making it flexible and inherently scalable. Grace Server is stateless and scales up and down well using basic [KEDA](https://keda.sh/) counters.
-
-![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange3.svg)
-
-## Project structure
-
-Grace is written primarily in [F#](https://learn.microsoft.com/en-us/dotnet/fsharp/what-is-fsharp), and is organized into nine .NET projects.
-
-- **Grace.CLI** is the command-line interface for Grace.
-- **Grace.Server** is an ASP.NET Core project that defines the Web API for Grace.
-- **Grace.SDK** is a .NET class library that is a platform-specific projection of the Web API; it is used by Grace.CLI and wraps the HTTPS calls to Grace Server.
-- **Grace.Actors** holds the code for the Actors in the system; it is used exclusively by Grace.Server.
-- **Grace.Shared** is where all common code goes; it is used by all of the other **Grace.*** projects.
-- _(future)_ **Grace.Avalonia** will contain a native GUI for Grace for Windows, Android, MacOS, and iOS (and hopefully Linux).
-- _(future)_ **Grace.Blazor** will be an ASP.NET Core project containing a web UI for Grace.
-- **CosmosJsonSerializer** is a custom JSON serializer class, used when deploying Grace with Azure Cosmos DB.
-
-An additional project, **Grace.Load**, is an experiment to create a load test for Grace.Server.
-
-![](https://gracevcsdevelopment.blob.core.windows.net/static/Green.svg)
-
-### Project diagram
-
-> Solid lines indicate a .NET project reference. Dotted lines indicate network requests.
-
-```mermaid
-flowchart LR
-    subgraph Server
-    Grace.Server-->Grace.Actors
-    Grace.Server-->CosmosJsonSerializer
-    end
-
-    subgraph Clients
-    Grace.CLI-->Grace.SDK
-    Grace.SDK-.->|HTTPS|Grace.Server
-    Avalonia["(future) Grace.Avalonia"]-->|"(not yet started)"|Grace.SDK
-    Blazor["(future) Grace.Blazor"]-->|"(not yet started)"|Grace.SDK
-    end
-
-    subgraph Utilities
-    Grace.Load-->Grace.SDK
-    end
-
-    subgraph Tests
-    Grace.Server.Tests-->Grace.Server
-    end
-
-    Grace.Actors-->Grace.Shared
-    Grace.Server-->Grace.Shared
-    Grace.CLI-->Grace.Shared
-    Grace.SDK-->Grace.Shared
-    Avalonia["(future) Grace.Avalonia"]-->|"(not yet started)"|Grace.Shared
-    Blazor["(future) Grace.Blazor"]-->|"(not yet started)"|Grace.Shared
-```
-
-![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange3.svg)
-
-## Code of Conduct
-
-Our Code of Conduct is available [here](code_of_conduct.md). The tl;dr is:
-
-> **The name of this project is Grace**.
->
-> Be **graceful** in your interactions.
->
-> Give **grace** to everyone participating with us.
->
-> Create something together that embodies **grace** in its design and form.
->
-> When in doubt, **_remember the name of the project._**
-
-![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange3.svg)
-
-## Deployment
-
-Grace Server will be shipped as a container, which will be made available on Docker Hub. Dapr's sidecar and actor placement processes are shipped as containers and are available on Docker Hub.
-
-We intend to provide a Docker Compose template, as well as Kubernetes configuration for deployment, allowing for deployment to any major public cloud provider, as well as on-premises hardware.
-
-![](https://gracevcsdevelopment.blob.core.windows.net/static/Orange3.svg)
 
 [^grace]: Definition excerpted from https://www.thefreedictionary.com/grace.
-
-[^git]: Grace currently uses Git for its source control, and runs Grace in the same directory as a means of testing. Officially self-hosting Grace's source code on Grace will, of course, happen when it's safe to.
-
-[^stream]: One thing I'd like to do with the event log as a stream: detect invalid sequences and frequencies of events in Grace that would indicate bugs or attacks.
-
-[^gitexport]: Grace will export the latest state of each branch into a `git bundle` file. Exporting an entire Grace repository, including history, to a Git repository probably won't be supported, but maybe someone else will write it. (There are, no doubt, a lot of edge cases to be found the hard way in that translation, and it's a very low priority item for me.) Live two-way synchronization between Grace and Git is a non-goal, for the same reason.

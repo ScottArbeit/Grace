@@ -21,6 +21,7 @@ Read `../AGENTS.md` for global expectations before updating CLI code.
 - Auth commands support PATs via `GRACE_TOKEN` (PAT-only), Auth0 M2M, and
   Auth0 interactive login with secure token storage. Local token files are
   disabled. Keep token values out of output except on creation.
+- Avoid positional parameters; prefer named options for clarity.
 
 ## Project Rules
 
@@ -52,11 +53,11 @@ Read `../AGENTS.md` for global expectations before updating CLI code.
 
 ## Continuous Review Commands
 
-- `grace work` covers create/show/status and linking references or promotion
-  groups.
+- `grace workitem` (aliases: `work`, `work-item`, `wi`) covers create/show/status,
+  linking references or promotion sets, and attach flows (`summary`, `prompt`, `notes`).
 - `grace review` covers inbox/open/checkpoint/delta/resolve/deepen. Inbox and
   delta remain CLI stubs until server endpoints land.
-- `grace queue` covers status/enqueue/pause/resume/dequeue/retry; prefer
+- `grace queue` covers status/enqueue/pause/resume/dequeue; prefer
   `--branch` but `--branch-id`/`--branch-name` still work.
 
 ## Validation

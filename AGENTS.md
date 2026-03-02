@@ -1,7 +1,6 @@
 # Agent Instructions
 
-Other `AGENTS.md` files exist in subdirectories, refer to them for more specific
-context.
+Other `AGENTS.md` files exist in subdirectories, refer to them for more specific context.
 
 ## Agent Quickstart (Local)
 
@@ -17,8 +16,7 @@ Commands:
 - `pwsh ./scripts/validate.ps1 -Fast`
 
 Use `pwsh ./scripts/validate.ps1 -Full` for Aspire integration coverage.
-Optional: `pwsh ./scripts/install-githooks.ps1` to add a pre-commit
-`validate -Fast` hook.
+Optional: `pwsh ./scripts/install-githooks.ps1` to add a pre-commit `validate -Fast` hook.
 
 More context:
 
@@ -28,14 +26,12 @@ More context:
 
 ## Issue Tracking
 
-- Use the repository’s issue tracker (or the ticket/work item provided in the prompt) to scope and reference work, or follow other explicit work-tracking instructions provided in the prompt.
-- Keep work items small and independently verifiable.
-- Reference the relevant issue/ticket/work item ID in PR descriptions and (when applicable) commit messages.
+Do not use `bd`/beads workflows in this repository unless a maintainer explicitly asks for it in the current task.
+Use the plan/log files requested in the task (for example `CodexPlan.md`) plus normal git commits instead.
 
-## Markdown guidelines
+## Markdown Guidelines
 
-- Follow the MarkdownLint ruleset found at
-  `https://raw.githubusercontent.com/DavidAnson/markdownlint/refs/heads/main/doc/Rules.md`.
+- Follow the MarkdownLint ruleset found at `https://raw.githubusercontent.com/DavidAnson/markdownlint/refs/heads/main/doc/Rules.md`.
 - Verify updates by running MarkdownLint. Use `npx --yes markdownlint-cli2 ...`. `--help` is available.
 - For MD013, override the guidance to allow for 120-character lines.
 
@@ -48,16 +44,14 @@ When updating documentation files, follow these guidelines:
 - Use clear, concise language; avoid jargon. The tone should be welcoming and informative.
 - Structure content with headings and subheadings. Intersperse written (paragraph / sentence form) documentation with bullet points for readability.
 - Keep documentation up to date with code changes; review related docs when modifying functionality. Explain all documentation changes clearly, both what is changing, and why it's changing.
-- Show all scripting examples in both (first) PowerShell and (then, second) bash/zsh, where applicable. bash and zsh are always spelled in lowercase. Good example:
+- Show all scripting examples in both (first) PowerShell and (then, second) bash/zsh, where applicable. bash and zsh are always spelled in lowercase.
 
-  PowerShell:
-  
-  ```powershell
-  $env:GRACE_SERVER_URI="http://localhost:5000"
-  ```
+PowerShell:
+```powershell
+$env:GRACE_SERVER_URI="http://localhost:5000"
+```
 
-  bash / zsh:
-
-  ```bash
-  export GRACE_SERVER_URI="http://localhost:5000"
-  ```
+bash / zsh:
+```bash
+export GRACE_SERVER_URI="http://localhost:5000"
+```

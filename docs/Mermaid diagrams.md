@@ -53,286 +53,170 @@ graph TD;
     class A,B,C,D,E branch;
 ```
 
-## Work item and related entities
+## Entities
 
 ```mermaid
-  flowchart LR
-    B[Branch]
-    R[Reference]
-    P[PolicySnapshot]
-    S0[Stage0Analysis]
-    Q[PromotionQueue]
-    C[IntegrationCandidate]
-    G[GateAttestation]
-    CR[ConflictReceipt]
-    RP[ReviewPacket]
-    CK[ReviewCheckpoint]
-    WI[WorkItem]
-    PG[PromotionGroup]
+flowchart LR
+  %% Arrows point from "FK holder" --> "referenced DTO".
+  %% Labels are the FK field(s). [*] means list/collection. (optional) means option.
 
-    R -->|BranchId| B
-    R -->|on create triggers| S0
-    P -->|PolicySnapshotId| S0
+  subgraph Identity
+    OwnerDto["OwnerDto<br/>PK: OwnerId"]
+    OrganizationDto["OrganizationDto<br/>PK: OrganizationId"]
+    RepositoryDto["RepositoryDto<br/>PK: RepositoryId"]
+  end
 
-    P -->|TargetBranchId| B
-    Q -->|TargetBranchId| B
-    C -->|TargetBranchId| B
-    PG -->|TargetBranchId| B
+  subgraph VersionGraph
+    BranchDto["BranchDto<br/>PK: BranchId"]
+    ReferenceDto["ReferenceDto<br/>PK: ReferenceId"]
+    DirectoryVersionDto["DirectoryVersionDto<br/>PK: DirectoryVersionId"]
+    DiffDto["DiffDto<br/>Diff between DirectoryVersionIds"]
+  end
 
-    Q -->|CandidateIds| C
-    C -->|PolicySnapshotId| P
-    C -->|WorkItemId| WI
-    C -->|PromotionGroupId?| PG
-    C -->|GateAttestationIds| G
-    C -->|ConflictReceiptIds| CR
-    C -->|ReviewPacketId?| RP
-    C -->|LastCheckpointId?| CK
+  subgraph PolicyReview
+    PolicySnapshot["PolicySnapshot<br/>PK: PolicySnapshotId"]
+    Stage0Analysis["Stage0Analysis<br/>PK: Stage0AnalysisId"]
+    ReviewPacket["ReviewPacket<br/>PK: ReviewPacketId"]
+    ReviewCheckpoint["ReviewCheckpoint<br/>PK: ReviewCheckpointId"]
+  end
 
-    RP -->|CandidateId? / PromotionGroupId?| C
-    CK -->|CandidateId? / PromotionGroupId?| C
-    CK -->|PolicySnapshotId| P
+  subgraph PromotionSystem
+    PromotionGroupDto["PromotionGroupDto<br/>PK: PromotionGroupId"]
+    IntegrationCandidate["IntegrationCandidate<br/>PK: CandidateId"]
+    PromotionQueue["PromotionQueue<br/>Key: TargetBranchId"]
+    GateAttestation["GateAttestation<br/>PK: GateAttestationId"]
+    ConflictReceipt["ConflictReceipt<br/>PK: ConflictReceiptId"]
+  end
 
-    WI -->|ReferenceIds| R
-    WI -->|PromotionGroupIds| PG
-    WI -.domain supports link.-> C
-    WI -.domain supports link.-> RP
-    WI -.domain supports link.-> CK
-    WI -.domain supports link.-> G
-```
+  subgraph WorkManagement
+    WorkItemDto["WorkItemDto<br/>PK: WorkItemId"]
+  end
 
-## Sequence diagram #1
+  subgraph Reminders
+    ReminderDto["ReminderDto<br/>PK: ReminderId"]
+  end
 
-```mermaid
-  sequenceDiagram
-      autonumber
-      actor U as User
-      participant CLI
-      participant SDK
-      participant API
-      participant WI as WorkItemActor
-      participant Q as PromotionQueueActor
-      participant IC as IntegrationCandidateActor
-      participant POL as PolicyActor
-      participant REV as ReviewActor
-      participant G as Gates
-      participant GA as GateAttestationActor
-      participant S0 as Stage0Actor
+  %% Identity hierarchy / tenancy
+  OrganizationDto -->|OwnerId| OwnerDto
+  RepositoryDto -->|OwnerId| OwnerDto
+  RepositoryDto -->|OrganizationId| OrganizationDto
 
-      U->>CLI: grace work create --title --description
-      CLI->>SDK: WorkItem.Create(parameters)
-      SDK->>API: POST /work/create
-      API->>WI: Handle(Create(...))
-      WI-->>API: Ok
-      API-->>SDK: 200
-      SDK-->>CLI: GraceReturnValue
-      CLI-->>U: Work item created
+  %% Branch
+  BranchDto -->|OwnerId| OwnerDto
+  BranchDto -->|OrganizationId| OrganizationDto
+  BranchDto -->|RepositoryId| RepositoryDto
+  BranchDto -->|ParentBranchId| BranchDto
+  BranchDto -->|BasedOn| ReferenceDto
+  BranchDto -->|LatestReference / LatestPromotion / LatestCommit / LatestCheckpoint / LatestSave| ReferenceDto
 
-      U->>CLI: grace work link ref <work-item-id> <reference-id>
-      CLI->>SDK: WorkItem.LinkReference(parameters)
-      SDK->>API: POST /work/link/reference
-      API->>WI: Handle(LinkReference(referenceId))
-      WI-->>API: Ok
-      API-->>CLI: Linked
+  %% Reference
+  ReferenceDto -->|OwnerId| OwnerDto
+  ReferenceDto -->|OrganizationId| OrganizationDto
+  ReferenceDto -->|RepositoryId| RepositoryDto
+  ReferenceDto -->|BranchId| BranchDto
+  ReferenceDto -->|DirectoryId| DirectoryVersionDto
+  ReferenceDto -->|Links.BasedOn| ReferenceDto
+  ReferenceDto -->|Links.IncludedInPromotionGroup / Links.PromotionGroupTerminal| PromotionGroupDto
 
-      U->>CLI: grace work link group <work-item-id> <promotion-group-id>
-      CLI->>SDK: WorkItem.LinkPromotionGroup(parameters)
-      SDK->>API: POST /work/link/promotion-group
-      API->>WI: Handle(LinkPromotionGroup(groupId))
-      WI-->>API: Ok
-      API-->>CLI: Linked
+  %% DirectoryVersion
+  DirectoryVersionDto -->|OwnerId| OwnerDto
+  DirectoryVersionDto -->|OrganizationId| OrganizationDto
+  DirectoryVersionDto -->|RepositoryId| RepositoryDto
+  DirectoryVersionDto -->|DirectoryVersion.Directories| DirectoryVersionDto
 
-      U->>CLI: grace queue enqueue --candidate --branch [--policy-snapshot-id]
-      CLI->>SDK: Queue.Enqueue(parameters)
-      SDK->>API: POST /queue/enqueue
-      API->>Q: Exists(correlationId)?
-      Q-->>API: true or false
+  %% Diff
+  DiffDto -->|OwnerId| OwnerDto
+  DiffDto -->|OrganizationId| OrganizationDto
+  DiffDto -->|RepositoryId| RepositoryDto
+  DiffDto -->|DirectoryVersionId1| DirectoryVersionDto
+  DiffDto -->|DirectoryVersionId2| DirectoryVersionDto
 
-      alt Queue missing
-          API->>Q: Handle(Initialize(targetBranchId, policySnapshotId))
-          Q-->>API: Ok or error
-      end
+  %% PolicySnapshot
+  PolicySnapshot -->|OwnerId| OwnerDto
+  PolicySnapshot -->|OrganizationId| OrganizationDto
+  PolicySnapshot -->|RepositoryId| RepositoryDto
+  PolicySnapshot -->|TargetBranchId| BranchDto
 
-      API->>IC: Exists(correlationId)?
-      IC-->>API: true or false
+  %% PromotionGroup
+  PromotionGroupDto -->|OwnerId| OwnerDto
+  PromotionGroupDto -->|OrganizationId| OrganizationDto
+  PromotionGroupDto -->|RepositoryId| RepositoryDto
+  PromotionGroupDto -->|TargetBranchId| BranchDto
+  PromotionGroupDto -->|Promotions.PromotionId| ReferenceDto
 
-      alt Candidate missing
-          API->>IC: Handle(Initialize(candidate))
-          IC-->>API: Ok
-      end
+  %% PromotionQueue
+  PromotionQueue -->|TargetBranchId| BranchDto
+  PromotionQueue -->|PolicySnapshotId| PolicySnapshot
+  PromotionQueue -->|CandidateIds| IntegrationCandidate
+  PromotionQueue -->|RunningCandidateId| IntegrationCandidate
 
-      API->>Q: Handle(Enqueue(candidateId))
-      Q-->>API: Ok
-      API-->>CLI: Candidate enqueued
+  %% IntegrationCandidate
+  IntegrationCandidate -->|OwnerId| OwnerDto
+  IntegrationCandidate -->|OrganizationId| OrganizationDto
+  IntegrationCandidate -->|RepositoryId| RepositoryDto
+  IntegrationCandidate -->|WorkItemId| WorkItemDto
+  IntegrationCandidate -->|PromotionGroupId| PromotionGroupDto
+  IntegrationCandidate -->|TargetBranchId| BranchDto
+  IntegrationCandidate -->|PolicySnapshotId| PolicySnapshot
+  IntegrationCandidate -->|BaselineHeadReferenceId| ReferenceDto
+  IntegrationCandidate -->|ReviewPacketId| ReviewPacket
+  IntegrationCandidate -->|LastCheckpointId| ReviewCheckpoint
+  IntegrationCandidate -->|GateAttestationIds| GateAttestation
+  IntegrationCandidate -->|ConflictReceiptIds| ConflictReceipt
 
-      SDK->>API: POST /candidate/required-actions
-      API->>IC: Get(candidateId)
-      IC-->>API: candidate
-      API->>IC: Handle(SetRequiredActions(actions)) if changed
-      IC-->>API: Ok
-      API-->>SDK: RequiredActionDto list
+  %% GateAttestation
+  GateAttestation -->|OwnerId| OwnerDto
+  GateAttestation -->|OrganizationId| OrganizationDto
+  GateAttestation -->|RepositoryId| RepositoryDto
+  GateAttestation -->|CandidateId| IntegrationCandidate
+  GateAttestation -->|PolicySnapshotId| PolicySnapshot
+  GateAttestation -->|BaselineHeadReferenceId| ReferenceDto
 
-      U->>CLI: grace review open --candidate
-      CLI->>SDK: Review.GetPacket(parameters)
-      SDK->>API: POST /review/packet
-      API->>REV: GetPacket(correlationId)
-      REV-->>API: ReviewPacket option
-      API-->>CLI: packet or none
+  %% ConflictReceipt
+  ConflictReceipt -->|OwnerId| OwnerDto
+  ConflictReceipt -->|OrganizationId| OrganizationDto
+  ConflictReceipt -->|RepositoryId| RepositoryDto
+  ConflictReceipt -->|CandidateId| IntegrationCandidate
 
-      U->>CLI: grace review checkpoint --candidate --reference
-      CLI->>SDK: Review.Checkpoint(parameters)
-      SDK->>API: POST /review/checkpoint
-      API->>REV: Handle(AddCheckpoint(checkpoint))
-      REV-->>API: Ok
-      API-->>CLI: checkpoint recorded
+  %% WorkItem
+  WorkItemDto -->|OwnerId| OwnerDto
+  WorkItemDto -->|OrganizationId| OrganizationDto
+  WorkItemDto -->|RepositoryId| RepositoryDto
+  WorkItemDto -->|BranchIds| BranchDto
+  WorkItemDto -->|ReferenceIds| ReferenceDto
+  WorkItemDto -->|PromotionGroupIds| PromotionGroupDto
+  WorkItemDto -->|CandidateIds| IntegrationCandidate
+  WorkItemDto -->|ReviewPacketIds| ReviewPacket
+  WorkItemDto -->|ReviewCheckpointIds| ReviewCheckpoint
+  WorkItemDto -->|GateAttestationIds| GateAttestation
 
-      U->>CLI: grace review resolve --candidate --finding-id --approve or --request-changes
-      CLI->>SDK: Review.ResolveFinding(parameters)
-      SDK->>API: POST /review/resolve
-      API->>REV: Handle(ResolveFinding(...))
-      REV-->>API: Ok
-      API-->>CLI: finding resolved
+  %% ReviewPacket
+  ReviewPacket -->|OwnerId| OwnerDto
+  ReviewPacket -->|OrganizationId| OrganizationDto
+  ReviewPacket -->|RepositoryId| RepositoryDto
+  ReviewPacket -->|CandidateId| IntegrationCandidate
+  ReviewPacket -->|PromotionGroupId| PromotionGroupDto
+  ReviewPacket -->|PolicySnapshotId| PolicySnapshot
+  ReviewPacket -->|GateSummary.GateAttestationIds| GateAttestation
 
-      SDK->>API: POST /candidate/gate/rerun
-      API->>IC: Get(candidateId)
-      IC-->>API: candidate
-      API->>POL: GetCurrent(targetBranchId)
-      POL-->>API: PolicySnapshot option
-      API->>G: runGate(gateName, context)
-      G-->>API: GateAttestation
-      API->>GA: Handle(Create(attestation))
-      GA-->>API: Ok
-      API->>IC: Handle(AddGateAttestation(attestationId))
-      IC-->>API: Ok
-      API-->>SDK: attestation
+  %% ReviewCheckpoint
+  ReviewCheckpoint -->|CandidateId| IntegrationCandidate
+  ReviewCheckpoint -->|PromotionGroupId| PromotionGroupDto
+  ReviewCheckpoint -->|ReviewedUpToReferenceId| ReferenceDto
+  ReviewCheckpoint -->|PolicySnapshotId| PolicySnapshot
 
-      Note over API,S0: On Reference.Created of Commit or Checkpoint or Promotion, record Stage0
-      API->>S0: Handle(Record(stage0Analysis))
-      S0-->>API: Ok
-```
+  %% Stage0Analysis
+  Stage0Analysis -->|OwnerId| OwnerDto
+  Stage0Analysis -->|OrganizationId| OrganizationDto
+  Stage0Analysis -->|RepositoryId| RepositoryDto
+  Stage0Analysis -->|ReferenceId| ReferenceDto
+  Stage0Analysis -->|WorkItemId| WorkItemDto
+  Stage0Analysis -->|CandidateId| IntegrationCandidate
+  Stage0Analysis -->|PolicySnapshotId| PolicySnapshot
 
-### Sequence diagram #2
+  %% Reminder
+  ReminderDto -->|OwnerId| OwnerDto
+  ReminderDto -->|OrganizationId| OrganizationDto
+  ReminderDto -->|RepositoryId| RepositoryDto
 
-```mermaid
-    sequenceDiagram
-      autonumber
-      participant ORCH as Orchestrator (Server / Internal Service)
-      participant WI as WorkItemActor
-      participant Q as PromotionQueueActor
-      participant IC as IntegrationCandidateActor
-      participant POL as PolicyActor
-      participant REV as ReviewActor
-      participant GA as GateAttestationActor
-      participant CR as ConflictReceiptActor
-      participant S0 as Stage0Actor
-
-      %% Work item command flow
-      ORCH->>WI: Handle(WorkItemCommand.Create(...), metadata)
-      WI->>WI: validate (duplicate correlation, exists?)
-      WI->>WI: append WorkItemEvent.Created
-      WI-->>ORCH: Ok
-
-      ORCH->>WI: Handle(WorkItemCommand.SetStatus(status), metadata)
-      WI->>WI: append WorkItemEvent.StatusSet
-      WI-->>ORCH: Ok
-
-      ORCH->>WI: Handle(WorkItemCommand.LinkReference(referenceId), metadata)
-      WI->>WI: append WorkItemEvent.ReferenceLinked
-      WI-->>ORCH: Ok
-
-      ORCH->>WI: Handle(WorkItemCommand.LinkPromotionGroup(groupId), metadata)
-      WI->>WI: append WorkItemEvent.PromotionGroupLinked
-      WI-->>ORCH: Ok
-
-      %% Queue + candidate initialization/enqueue
-      ORCH->>Q: Exists(correlationId)?
-      Q-->>ORCH: true/false
-      alt Queue missing
-          ORCH->>Q: Handle(PromotionQueueCommand.Initialize(targetBranchId, policySnapshotId), metadata)
-          Q->>Q: append PromotionQueueEvent.Initialized
-          Q-->>ORCH: Ok
-      end
-
-      ORCH->>IC: Exists(correlationId)?
-      IC-->>ORCH: true/false
-      alt Candidate missing
-          ORCH->>IC: Handle(CandidateCommand.Initialize(candidate), metadata)
-          IC->>IC: append CandidateEvent.Initialized
-          IC-->>ORCH: Ok
-      end
-
-      ORCH->>Q: Handle(PromotionQueueCommand.Enqueue(candidateId), metadata)
-      Q->>Q: append PromotionQueueEvent.CandidateEnqueued
-      Q-->>ORCH: Ok
-
-      %% Candidate lifecycle commands
-      ORCH->>IC: Handle(CandidateCommand.SetStatus(Canceled), metadata)
-      IC->>IC: append CandidateEvent.StatusSet(Canceled)
-      IC-->>ORCH: Ok
-      ORCH->>Q: Handle(PromotionQueueCommand.Dequeue(candidateId), metadata)
-      Q->>Q: append PromotionQueueEvent.CandidateDequeued
-      Q-->>ORCH: Ok
-
-      ORCH->>IC: Handle(CandidateCommand.ClearRequiredActions, metadata)
-      IC->>IC: append CandidateEvent.RequiredActionsCleared
-      IC-->>ORCH: Ok
-      ORCH->>IC: Handle(CandidateCommand.SetStatus(Pending), metadata)
-      IC->>IC: append CandidateEvent.StatusSet(Pending)
-      IC-->>ORCH: Ok
-      IC-->>ORCH: IntegrationCandidate
-      ORCH->>ORCH: computeRequiredActions(candidate)
-      ORCH->>IC: Handle(CandidateCommand.SetRequiredActions(actions), metadata)
-      IC->>IC: append CandidateEvent.RequiredActionsSet
-      IC-->>ORCH: Ok
-
-      %% Gate rerun flow
-      ORCH->>IC: Get(correlationId)
-      IC-->>ORCH: IntegrationCandidate
-      ORCH->>POL: GetCurrent(correlationId)
-      POL-->>ORCH: PolicySnapshot option
-      ORCH->>ORCH: Gates.runGate(gateName, context)
-      ORCH->>GA: Handle(GateAttestationCommand.Create(attestation), metadata)
-      GA->>GA: append GateAttestationEvent.Created
-      GA-->>ORCH: Ok
-      ORCH->>IC: Handle(CandidateCommand.AddGateAttestation(attestationId), metadata)
-      IC->>IC: append CandidateEvent.GateAttestationAdded
-      IC-->>ORCH: Ok
-
-      %% Conflict pipeline (internal)
-      ORCH->>IC: Handle(CandidateCommand.AddConflict(conflict), metadata)
-      IC->>IC: append CandidateEvent.ConflictAdded
-      IC-->>ORCH: Ok
-      ORCH->>CR: Handle(ConflictReceiptCommand.Create(receipt), metadata)
-      CR->>CR: append ConflictReceiptEvent.Created
-      CR-->>ORCH: Ok
-      ORCH->>IC: Handle(CandidateCommand.AddConflictReceipt(receiptId), metadata)
-      IC->>IC: append CandidateEvent.ConflictReceiptAdded
-      IC-->>ORCH: Ok
-
-      %% Review command flow
-      ORCH->>REV: Handle(ReviewCommand.AddCheckpoint(checkpoint), metadata)
-      REV->>REV: append ReviewEvent.CheckpointAdded
-      REV-->>ORCH: Ok
-
-      ORCH->>REV: Handle(ReviewCommand.ResolveFinding(findingId, resolution, resolvedBy, note), metadata)
-      REV->>REV: validate packet/finding exists
-      REV->>REV: append ReviewEvent.FindingResolved
-      REV-->>ORCH: Ok
-
-      Note over ORCH,REV: UpsertPacket is actor-supported command used by internal processes
-      ORCH->>REV: Handle(ReviewCommand.UpsertPacket(packet), metadata)
-      REV->>REV: append ReviewEvent.PacketUpserted
-      REV-->>ORCH: Ok
-
-      %% Policy acknowledge flow
-      ORCH->>POL: Handle(PolicyCommand.Acknowledge(policySnapshotId, userId, note), metadata)
-      POL->>POL: validate snapshot exists
-      POL->>POL: append PolicyEvent.Acknowledged
-      POL-->>ORCH: Ok
-
-      %% Stage0 record flow (triggered from reference events)
-      ORCH->>POL: GetCurrent(correlationId)
-      POL-->>ORCH: PolicySnapshot option
-      ORCH->>S0: Handle(Stage0Command.Record(stage0Analysis), metadata)
-      S0->>S0: append Stage0Event.Recorded
-      S0-->>ORCH: Ok
 ```

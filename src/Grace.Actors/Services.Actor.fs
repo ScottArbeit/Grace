@@ -26,6 +26,7 @@ open Grace.Types.Repository
 open Grace.Types.Organization
 open Grace.Types.Owner
 open Grace.Types.Types
+open Grace.Types.Validation
 open Grace.Shared.Utilities
 open Microsoft.Azure.Cosmos
 open Microsoft.Azure.Cosmos.Linq
@@ -73,6 +74,9 @@ module Services =
 
     type BranchIdValue() =
         member val public branchId = BranchId.Empty with get, set
+
+    type ActorIdValue() =
+        member val public id = String.Empty with get, set
 
     type OwnerEventValue() =
         member val public State: OwnerEvent array = Array.Empty<OwnerEvent>() with get, set
@@ -1219,6 +1223,23 @@ module Services =
                     .ToArray()
         }
 
+    let internal isNotDeletedReference (referenceDto: ReferenceDto) = referenceDto.DeletedAt.IsNone
+
+    let internal hasPromotionSetTerminalLink (referenceDto: ReferenceDto) =
+        referenceDto.Links
+        |> Seq.exists (fun link ->
+            match link with
+            | ReferenceLinkType.PromotionSetTerminal _ -> true
+            | _ -> false)
+
+    let internal tryGetLatestNotDeletedReference (references: seq<ReferenceDto>) = references |> Seq.tryFind isNotDeletedReference
+
+    let internal tryGetLatestEffectivePromotionReference (references: seq<ReferenceDto>) =
+        references
+        |> Seq.tryFind (fun referenceDto ->
+            isNotDeletedReference referenceDto
+            && hasPromotionSetTerminalLink referenceDto)
+
     /// Gets a list of references that match a provided SHA-256 hash.
     let getReferencesBySha256Hash (repositoryId: RepositoryId) (branchId: BranchId) (sha256Hash: Sha256Hash) (maxCount: int) =
         task {
@@ -1272,7 +1293,7 @@ module Services =
                                         |> ReferenceDto.UpdateDto referenceEvent)
                                     ReferenceDto.Default
 
-                            references.Add(referenceDto))
+                            if isNotDeletedReference referenceDto then references.Add(referenceDto))
 
                     if (indexMetrics.Length >= 2)
                        && (requestCharge.Length >= 2)
@@ -1579,12 +1600,12 @@ module Services =
                 let requestCharge = stringBuilderPool.Get()
 
                 try
-                    let references = List<ReferenceDto>()
+                    let mutable latestReference: ReferenceDto option = None
 
                     let queryDefinition =
                         QueryDefinition(
                             """
-                            SELECT TOP 1 c.State
+                            SELECT c.State
                             FROM c
                             WHERE STRINGEQUALS(c.State[0].Event.created.BranchId, @branchId, true)
                                 AND c.GrainType = @grainType
@@ -1598,7 +1619,7 @@ module Services =
 
                     let iterator = cosmosContainer.GetItemQueryIterator<ReferenceEventValue>(queryDefinition, requestOptions = queryRequestOptions)
 
-                    while iterator.HasMoreResults do
+                    while iterator.HasMoreResults && latestReference.IsNone do
                         let! results = iterator.ReadNextAsync()
 
                         indexMetrics.Append($"{results.IndexMetrics}, ")
@@ -1607,19 +1628,19 @@ module Services =
                         requestCharge.Append($"{results.RequestCharge:F3}, ")
                         |> ignore
 
-                        let eventsForAllReferences = results.Resource
+                        let eventsForAllReferences = results.Resource |> Seq.toArray
 
-                        eventsForAllReferences
-                        |> Seq.iter (fun eventsForOneReference ->
+                        let mutable index = 0
+
+                        while index < eventsForAllReferences.Length
+                              && latestReference.IsNone do
                             let referenceDto =
-                                eventsForOneReference.State
-                                |> Array.fold
-                                    (fun referenceDto referenceEvent ->
-                                        referenceDto
-                                        |> ReferenceDto.UpdateDto referenceEvent)
-                                    ReferenceDto.Default
+                                eventsForAllReferences[index].State
+                                |> Array.fold (fun current referenceEvent -> current |> ReferenceDto.UpdateDto referenceEvent) ReferenceDto.Default
 
-                            references.Add(referenceDto))
+                            if isNotDeletedReference referenceDto then latestReference <- Some referenceDto
+
+                            index <- index + 1
 
                     if (indexMetrics.Length >= 2)
                        && (requestCharge.Length >= 2)
@@ -1630,7 +1651,7 @@ module Services =
                             .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
                         |> ignore
 
-                    if references.Count > 0 then return Some references[0] else return None
+                    return latestReference
                 finally
                     stringBuilderPool.Return(indexMetrics)
                     stringBuilderPool.Return(requestCharge)
@@ -1661,7 +1682,7 @@ module Services =
                                         let queryDefinition =
                                             QueryDefinition(
                                                 """
-                                                SELECT TOP 1 c.State
+                                                SELECT c.State
                                                 FROM c
                                                 WHERE STRINGEQUALS(c.State[0].Event.created.BranchId, @branchId, true)
                                                     AND STRINGEQUALS(c.State[0].Event.created.ReferenceType, @referenceType, true)
@@ -1678,26 +1699,33 @@ module Services =
                                         let iterator =
                                             cosmosContainer.GetItemQueryIterator<ReferenceEventValue>(queryDefinition, requestOptions = queryRequestOptions)
 
-                                        while iterator.HasMoreResults do
+                                        let mutable foundForType = false
+
+                                        while iterator.HasMoreResults && not foundForType do
                                             let! results = iterator.ReadNextAsync()
                                             // Save metrics into concurrent bags (thread-safe).
                                             indexMetricsBag.Add(results.IndexMetrics)
                                             requestChargeBag.Add($"{results.RequestCharge:F3}")
 
-                                            let eventsForAllReferences = results.Resource
+                                            let eventsForAllReferences = results.Resource |> Seq.toArray
 
-                                            eventsForAllReferences
-                                            |> Seq.iter (fun eventsForOneReference ->
+                                            let mutable index = 0
+
+                                            while index < eventsForAllReferences.Length
+                                                  && not foundForType do
                                                 let referenceDto =
-                                                    eventsForOneReference.State
+                                                    eventsForAllReferences[index].State
                                                     |> Array.fold
-                                                        (fun referenceDto referenceEvent ->
-                                                            referenceDto
-                                                            |> ReferenceDto.UpdateDto referenceEvent)
+                                                        (fun current referenceEvent -> current |> ReferenceDto.UpdateDto referenceEvent)
                                                         ReferenceDto.Default
 
-                                                referenceDtos.TryAdd(referenceType, referenceDto)
-                                                |> ignore)
+                                                if isNotDeletedReference referenceDto then
+                                                    referenceDtos.TryAdd(referenceType, referenceDto)
+                                                    |> ignore
+
+                                                    foundForType <- true
+
+                                                index <- index + 1
                                     }
                                 ))
                         )
@@ -1741,10 +1769,12 @@ module Services =
                 let requestCharge = stringBuilderPool.Get()
 
                 try
+                    let mutable latestReference: ReferenceDto option = None
+
                     let queryDefinition =
                         QueryDefinition(
                             """
-                            SELECT TOP 1 c.State
+                            SELECT c.State
                             FROM c
                             WHERE STRINGEQUALS(c.State[0].Event.created.BranchId, @branchId, true)
                                 AND STRINGEQUALS(c.State[0].Event.created.ReferenceType, @referenceType, true)
@@ -1760,9 +1790,7 @@ module Services =
 
                     let iterator = cosmosContainer.GetItemQueryIterator<ReferenceEventValue>(queryDefinition, requestOptions = queryRequestOptions)
 
-                    let references = List<ReferenceDto>()
-
-                    while iterator.HasMoreResults do
+                    while iterator.HasMoreResults && latestReference.IsNone do
                         let! results = DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> iterator.ReadNextAsync())
 
                         indexMetrics.Append($"{results.IndexMetrics}, ")
@@ -1771,19 +1799,19 @@ module Services =
                         requestCharge.Append($"{results.RequestCharge:F3}, ")
                         |> ignore
 
-                        let eventsForAllReferences = results.Resource
+                        let eventsForAllReferences = results.Resource |> Seq.toArray
 
-                        eventsForAllReferences
-                        |> Seq.iter (fun eventsForOneReference ->
+                        let mutable index = 0
+
+                        while index < eventsForAllReferences.Length
+                              && latestReference.IsNone do
                             let referenceDto =
-                                eventsForOneReference.State
-                                |> Array.fold
-                                    (fun referenceDto referenceEvent ->
-                                        referenceDto
-                                        |> ReferenceDto.UpdateDto referenceEvent)
-                                    ReferenceDto.Default
+                                eventsForAllReferences[index].State
+                                |> Array.fold (fun current referenceEvent -> current |> ReferenceDto.UpdateDto referenceEvent) ReferenceDto.Default
 
-                            references.Add(referenceDto))
+                            if isNotDeletedReference referenceDto then latestReference <- Some referenceDto
+
+                            index <- index + 1
 
                     if (indexMetrics.Length >= 2)
                        && (requestCharge.Length >= 2)
@@ -1794,7 +1822,7 @@ module Services =
                             .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
                         |> ignore
 
-                    if references.Count > 0 then return Some references[0] else return None
+                    return latestReference
                 finally
                     stringBuilderPool.Return(indexMetrics)
                     stringBuilderPool.Return(requestCharge)
@@ -1802,7 +1830,76 @@ module Services =
         }
 
     /// Gets the latest promotion from a branch.
-    let getLatestPromotion = getLatestReferenceByType ReferenceType.Promotion
+    let getLatestPromotion (repositoryId: RepositoryId) (branchId: BranchId) =
+        task {
+            match actorStateStorageProvider with
+            | Unknown -> return None
+            | AzureCosmosDb ->
+                let indexMetrics = stringBuilderPool.Get()
+                let requestCharge = stringBuilderPool.Get()
+
+                try
+                    let mutable latestPromotion: ReferenceDto option = None
+
+                    let queryDefinition =
+                        QueryDefinition(
+                            """
+                            SELECT c.State
+                            FROM c
+                            WHERE STRINGEQUALS(c.State[0].Event.created.BranchId, @branchId, true)
+                                AND STRINGEQUALS(c.State[0].Event.created.ReferenceType, @referenceType, true)
+                                AND c.GrainType = @grainType
+                                AND c.PartitionKey = @partitionKey
+                            ORDER BY c.State[0].Event.created.CreatedAt DESC
+                            """
+                        )
+                            .WithParameter("@branchId", branchId)
+                            .WithParameter("@referenceType", getDiscriminatedUnionCaseName ReferenceType.Promotion)
+                            .WithParameter("@grainType", StateName.Reference)
+                            .WithParameter("@partitionKey", repositoryId)
+
+                    let iterator = cosmosContainer.GetItemQueryIterator<ReferenceEventValue>(queryDefinition, requestOptions = queryRequestOptions)
+
+                    while iterator.HasMoreResults && latestPromotion.IsNone do
+                        let! results = DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> iterator.ReadNextAsync())
+
+                        indexMetrics.Append($"{results.IndexMetrics}, ")
+                        |> ignore
+
+                        requestCharge.Append($"{results.RequestCharge:F3}, ")
+                        |> ignore
+
+                        let eventsForAllReferences = results.Resource |> Seq.toArray
+
+                        let mutable index = 0
+
+                        while index < eventsForAllReferences.Length
+                              && latestPromotion.IsNone do
+                            let referenceDto =
+                                eventsForAllReferences[index].State
+                                |> Array.fold (fun current referenceEvent -> current |> ReferenceDto.UpdateDto referenceEvent) ReferenceDto.Default
+
+                            if isNotDeletedReference referenceDto
+                               && hasPromotionSetTerminalLink referenceDto then
+                                latestPromotion <- Some referenceDto
+
+                            index <- index + 1
+
+                    if (indexMetrics.Length >= 2)
+                       && (requestCharge.Length >= 2)
+                       && Activity.Current <> null then
+                        Activity
+                            .Current
+                            .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
+                            .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
+                        |> ignore
+
+                    return latestPromotion
+                finally
+                    stringBuilderPool.Return(indexMetrics)
+                    stringBuilderPool.Return(requestCharge)
+            | MongoDB -> return None
+        }
 
     /// Gets the latest commit from a branch.
     let getLatestCommit = getLatestReferenceByType ReferenceType.Commit
@@ -2449,6 +2546,214 @@ module Services =
                 childBranches
                     .OrderBy(fun branchDto -> branchDto.BranchName)
                     .ToArray()
+        }
+
+    /// Gets validation sets for a repository.
+    let getValidationSets (repositoryId: RepositoryId) (maxCount: int) includeDeleted correlationId =
+        task {
+            let validationSets = ConcurrentBag<ValidationSetDto>()
+            let validationSetIds = List<ValidationSetId>()
+
+            match actorStateStorageProvider with
+            | Unknown -> ()
+            | AzureCosmosDb ->
+                try
+                    let queryDefinition =
+                        QueryDefinition(
+                            """
+                            SELECT TOP @maxCount c.id
+                            FROM c
+                            WHERE c.GrainType = @grainType
+                                AND c.PartitionKey = @partitionKey
+                            """
+                        )
+                            .WithParameter("@maxCount", maxCount)
+                            .WithParameter("@grainType", StateName.ValidationSet)
+                            .WithParameter("@partitionKey", repositoryId)
+
+                    let iterator = cosmosContainer.GetItemQueryIterator<ActorIdValue>(queryDefinition, requestOptions = queryRequestOptions)
+
+                    while iterator.HasMoreResults do
+                        let! results = iterator.ReadNextAsync()
+
+                        results.Resource
+                        |> Seq.iter (fun value ->
+                            let mutable parsed = Guid.Empty
+
+                            if String.IsNullOrWhiteSpace value.id |> not
+                               && Guid.TryParse(value.id, &parsed)
+                               && parsed <> Guid.Empty then
+                                validationSetIds.Add(parsed))
+                with
+                | ex ->
+                    log.LogError(
+                        ex,
+                        "{CurrentInstant}: Error in getValidationSets. CorrelationId: {correlationId}; RepositoryId: {repositoryId}.",
+                        getCurrentInstantExtended (),
+                        correlationId,
+                        repositoryId
+                    )
+            | MongoDB -> ()
+
+            do!
+                Parallel.ForEachAsync(
+                    validationSetIds,
+                    (fun validationSetId ct ->
+                        ValueTask(
+                            task {
+                                let actorProxy = ValidationSet.CreateActorProxy validationSetId repositoryId correlationId
+                                let! validationSet = actorProxy.Get correlationId
+
+                                match validationSet with
+                                | Some dto when includeDeleted || dto.DeletedAt.IsNone -> validationSets.Add(dto)
+                                | _ -> ()
+                            }
+                        ))
+                )
+
+            return
+                validationSets
+                |> Seq.sortByDescending (fun dto -> dto.CreatedAt)
+                |> Seq.toList
+        }
+
+    /// Gets validation results for a PromotionSet and computation attempt.
+    let getValidationResultsForPromotionSetAttempt
+        (repositoryId: RepositoryId)
+        (promotionSetId: PromotionSetId)
+        (stepsComputationAttempt: int)
+        (maxCount: int)
+        correlationId
+        =
+        task {
+            let validationResults = ConcurrentBag<ValidationResultDto>()
+            let validationResultIds = List<ValidationResultId>()
+
+            match actorStateStorageProvider with
+            | Unknown -> ()
+            | AzureCosmosDb ->
+                try
+                    let queryDefinition =
+                        QueryDefinition(
+                            """
+                            SELECT TOP @maxCount c.id
+                            FROM c
+                            WHERE c.GrainType = @grainType
+                                AND c.PartitionKey = @partitionKey
+                            """
+                        )
+                            .WithParameter("@maxCount", maxCount)
+                            .WithParameter("@grainType", StateName.ValidationResult)
+                            .WithParameter("@partitionKey", repositoryId)
+
+                    let iterator = cosmosContainer.GetItemQueryIterator<ActorIdValue>(queryDefinition, requestOptions = queryRequestOptions)
+
+                    while iterator.HasMoreResults do
+                        let! results = iterator.ReadNextAsync()
+
+                        results.Resource
+                        |> Seq.iter (fun value ->
+                            let mutable parsed = Guid.Empty
+
+                            if String.IsNullOrWhiteSpace value.id |> not
+                               && Guid.TryParse(value.id, &parsed)
+                               && parsed <> Guid.Empty then
+                                validationResultIds.Add(parsed))
+                with
+                | ex ->
+                    log.LogError(
+                        ex,
+                        "{CurrentInstant}: Error in getValidationResultsForPromotionSetAttempt. CorrelationId: {correlationId}; RepositoryId: {repositoryId}; PromotionSetId: {promotionSetId}.",
+                        getCurrentInstantExtended (),
+                        correlationId,
+                        repositoryId,
+                        promotionSetId
+                    )
+            | MongoDB -> ()
+
+            do!
+                Parallel.ForEachAsync(
+                    validationResultIds,
+                    (fun validationResultId ct ->
+                        ValueTask(
+                            task {
+                                let actorProxy = ValidationResult.CreateActorProxy validationResultId repositoryId correlationId
+                                let! validationResult = actorProxy.Get correlationId
+
+                                match validationResult with
+                                | Some dto when
+                                    dto.PromotionSetId = Some promotionSetId
+                                    && dto.StepsComputationAttempt = Some stepsComputationAttempt
+                                    ->
+                                    validationResults.Add(dto)
+                                | _ -> ()
+                            }
+                        ))
+                )
+
+            return
+                validationResults
+                |> Seq.sortByDescending (fun dto -> dto.CreatedAt)
+                |> Seq.toList
+        }
+
+    let getWorkItemIdByNumber (repositoryId: RepositoryId) (workItemNumber: WorkItemNumber) (correlationId: CorrelationId) =
+        task {
+            match actorStateStorageProvider with
+            | Unknown -> return None
+            | AzureCosmosDb ->
+                try
+                    let queryDefinition =
+                        QueryDefinition(
+                            """
+                            SELECT TOP 1 c.id
+                            FROM c
+                            WHERE c.GrainType = @grainType
+                                AND c.PartitionKey = @partitionKey
+                                AND c.State[0].Event.created.workItemNumber = @workItemNumber
+                            """
+                        )
+                            .WithParameter("@grainType", StateName.WorkItem)
+                            .WithParameter("@partitionKey", $"{repositoryId}")
+                            .WithParameter("@workItemNumber", workItemNumber)
+
+                    let iterator = cosmosContainer.GetItemQueryIterator<ActorIdValue>(queryDefinition, requestOptions = queryRequestOptions)
+
+                    if iterator.HasMoreResults then
+                        let! results = iterator.ReadNextAsync()
+                        let actorId =
+                            results.Resource
+                            |> Seq.tryHead
+                            |> Option.map (fun value -> value.id)
+                            |> Option.defaultValue String.Empty
+
+                        if String.IsNullOrWhiteSpace(actorId) then
+                            return None
+                        else
+                            let mutable workItemId = Guid.Empty
+
+                            if
+                                Guid.TryParse(actorId, &workItemId)
+                                && workItemId <> Guid.Empty
+                            then
+                                return Some workItemId
+                            else
+                                return None
+                    else
+                        return None
+                with
+                | ex ->
+                    log.LogError(
+                        ex,
+                        "{CurrentInstant}: Error in getWorkItemIdByNumber. CorrelationId: {correlationId}; RepositoryId: {repositoryId}; WorkItemNumber: {workItemNumber}.",
+                        getCurrentInstantExtended (),
+                        correlationId,
+                        repositoryId,
+                        workItemNumber
+                    )
+
+                    return None
+            | MongoDB -> return None
         }
 
     /// Gets a list of reminders for a repository, with optional filtering.

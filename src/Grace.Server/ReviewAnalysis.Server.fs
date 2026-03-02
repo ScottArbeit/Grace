@@ -82,11 +82,11 @@ module ReviewAnalysis =
                 return triageResult, receipt
         }
 
-    type CachedDeepReview = { Packet: ReviewPacket; Receipts: AnalysisReceipt list }
+    type CachedDeepReview = { Notes: ReviewNotes; Receipts: AnalysisReceipt list }
 
-    let private requiresMoreContext (packet: ReviewPacket) =
-        not (String.IsNullOrWhiteSpace packet.Summary)
-        && packet.Summary.IndexOf(moreContextMarker, StringComparison.OrdinalIgnoreCase)
+    let private requiresMoreContext (notes: ReviewNotes) =
+        not (String.IsNullOrWhiteSpace notes.Summary)
+        && notes.Summary.IndexOf(moreContextMarker, StringComparison.OrdinalIgnoreCase)
            >= 0
 
     let runDeepReview
@@ -108,7 +108,7 @@ module ReviewAnalysis =
 
             if cache.TryGetValue(cacheKey, &cached) then
                 let cachedDeep = cached :?> CachedDeepReview
-                return cachedDeep.Packet, cachedDeep.Receipts
+                return cachedDeep.Notes, cachedDeep.Receipts
             else
                 let! deepPacket =
                     provider.RunDeepReview { PolicySnapshot = policySnapshot; RiskProfile = riskProfile; Evidence = evidence; WorkItemContext = None }
@@ -156,12 +156,12 @@ module ReviewAnalysis =
                             Principal = principal
                         }
 
-                    cache.Set(cacheKey, { Packet = refinedPacket; Receipts = [ receipt; followupReceipt ] })
+                    cache.Set(cacheKey, { Notes = refinedPacket; Receipts = [ receipt; followupReceipt ] })
                     |> ignore
 
                     return refinedPacket, [ receipt; followupReceipt ]
                 | _ ->
-                    cache.Set(cacheKey, { Packet = deepPacket; Receipts = [ receipt ] })
+                    cache.Set(cacheKey, { Notes = deepPacket; Receipts = [ receipt ] })
                     |> ignore
 
                     return deepPacket, [ receipt ]

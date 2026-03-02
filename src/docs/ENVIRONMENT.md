@@ -1,89 +1,131 @@
 # Grace Environment Inventory
 
-This document summarizes environment dependencies and variables used by Grace.
-Values are sourced from `src/Grace.Shared/Constants.Shared.fs` (module
-`EnvironmentVariables`) and the Aspire host configuration in
-`src/Grace.Aspire.AppHost/Program.Aspire.AppHost.cs`.
+This document summarizes environment dependencies, onboarding variables, and runtime settings used by Grace.
+Primary sources are `src/Grace.Shared/Constants.Shared.fs` (`EnvironmentVariables`) and Aspire host
+configuration in `src/Grace.Aspire.AppHost/Program.Aspire.AppHost.cs`.
 
 ## Docker Dependencies (Local Aspire)
 
-Local Aspire runs containers and emulators for the following dependencies:
+Local Aspire runs containers and emulators for:
 
-- Azurite (Azure Storage emulator: blob/queue/table)
+- Azurite (Azure Storage emulator: blob, queue, table)
 - Azure Cosmos DB emulator
-- Azure Service Bus emulator (requires a SQL Server container)
+- Azure Service Bus emulator (with a SQL Server container)
 - Redis
 
-The Aspire dashboard is exposed on `http://localhost:18888` by default, and the
-OTLP exporter is configured to send to `http://localhost:18889` unless
-overridden.
+The Aspire dashboard defaults to <http://localhost:18888> and OTLP export defaults to
+`http://localhost:18889` unless overridden.
 
 ## Aspire Run Modes
 
 - `ASPIRE_RESOURCE_MODE` (not in `EnvironmentVariables`):
-  - `Local` (default): uses emulators/containers for Azure dependencies.
-  - `Azure`: uses real Azure resources from config/user-secrets/env vars.
+  - `Local` (default): uses emulators and containers.
+  - `Azure`: uses real Azure resources from config, user secrets, or environment.
 
 ## Test Toggles
 
-- `GRACE_TESTING`: set by test host to enable test mode in Aspire.
-- `GRACE_TEST_CLEANUP`: set to `1`/`true` to enable cleanup in server tests.
+- `GRACE_TESTING`: enables test mode in Aspire and local TestAuth paths.
+- `GRACE_TEST_CLEANUP`: set to `1` or `true` to enable cleanup in server tests.
 
-## Auth Forwarding in Aspire
+## Auth Forwarding In Aspire
 
-`Grace.Aspire.AppHost` forwards the following auth-related settings into
-`Grace.Server` when present (environment, user, machine, or config):
+`Grace.Aspire.AppHost` forwards these auth settings into `Grace.Server` when present:
 
 - `grace__auth__oidc__authority`
 - `grace__auth__oidc__audience`
 - `grace__auth__oidc__cli_client_id` (publish mode)
 
-## Using `dotnet user-secrets`
+## DebugLocal Onboarding Variables
 
-If you are new to .NET, `dotnet user-secrets` is a local development secret
-store. It keeps sensitive values out of source control and associates them with
-the project `UserSecretsId`. Grace reads these values when running in
-Development mode via configuration.
+For local onboarding, `scripts/start-debuglocal.ps1` is canonical.
+`scripts/dev-local.ps1` remains a compatibility alias.
 
-Microsoft documentation:
-<https://learn.microsoft.com/aspnet/core/security/app-secrets>
+Bootstrap user resolution order is deterministic:
+
+1. `-BootstrapUserId` script parameter.
+2. First user in shell env `grace__authz__bootstrap__system_admin_users`.
+3. First user in launch profile value
+   `grace__authz__bootstrap__system_admin_users` from
+   `src/Grace.Aspire.AppHost/Properties/launchSettings.json`.
+4. `-BootstrapUserIdFallback` (defaults to `test-admin`).
+
+The script prints both the resolved bootstrap user and the source used.
+
+`GRACE_TESTING` behavior during onboarding:
+
+- if `GRACE_TESTING` is already set in your shell, the script keeps that value;
+- if unset, the script sets `GRACE_TESTING=1` for local TestAuth startup.
 
 PowerShell:
 
 ```powershell
-dotnet user-secrets --project src/Grace.Server/Grace.Server.fsproj set "grace__azure_storage__account_name" "yourstorageaccount"
-dotnet user-secrets --project src/Grace.Server/Grace.Server.fsproj list
+pwsh ./scripts/start-debuglocal.ps1 -GraceServerUri "http://localhost:5000"
 ```
 
 bash / zsh:
 
 ```bash
-dotnet user-secrets --project src/Grace.Server/Grace.Server.fsproj set "grace__azure_storage__account_name" "yourstorageaccount"
-dotnet user-secrets --project src/Grace.Server/Grace.Server.fsproj list
+pwsh ./scripts/start-debuglocal.ps1 --GraceServerUri "http://localhost:5000"
 ```
+
+## DebugLocal Reliability Switches
+
+These are script parameters (not environment variables):
+
+- `-SkipAuthProbe`: skip auth preflight (`/auth/oidc/config`, `/auth/me`).
+- `-NoTokenBootstrap`: skip PAT creation.
+- `-TokenBootstrapMaxAttempts`: set max token bootstrap attempts.
+- `-TokenBootstrapInitialBackoffSeconds`: set initial retry backoff.
+- `-StartupTimeoutSeconds`: set health wait timeout.
+- `-CleanupWaitSeconds`: set process cleanup wait timeout.
+
+PowerShell:
+
+```powershell
+pwsh ./scripts/start-debuglocal.ps1 `
+  -TokenBootstrapMaxAttempts 5 `
+  -TokenBootstrapInitialBackoffSeconds 2
+```
+
+bash / zsh:
+
+```bash
+pwsh ./scripts/start-debuglocal.ps1 \
+  --TokenBootstrapMaxAttempts 5 \
+  --TokenBootstrapInitialBackoffSeconds 2
+```
+
+## DebugLocal Diagnostics Artifacts
+
+On failure, onboarding writes artifacts under `.grace/logs`:
+
+- `start-debuglocal-<run-id>.stdout.log`
+- `start-debuglocal-<run-id>.stderr.log`
+- `start-debuglocal-<run-id>.failure.json`
+- `start-debuglocal-<run-id>.runtime-metadata.json`
+
+These capture failure classification, retryability, cleanup notes, and runtime metadata for troubleshooting.
 
 ## Environment Variables (Canonical List)
 
 ### Telemetry
 
-- `grace__applicationinsightsconnectionstring`: Application Insights connection
-  string (optional).
+- `grace__applicationinsightsconnectionstring`: Application Insights connection string (optional).
 
 ### Storage (Azure)
 
 - `grace__azure_storage__connectionstring`: Azure Storage connection string.
-- `grace__azure_storage__account_name`: Storage account name override (MI).
+- `grace__azure_storage__account_name`: Storage account name override (managed identity path).
 - `grace__azure_storage__endpoint_suffix`: Storage endpoint suffix override.
 - `grace__azure_storage__key`: Storage account key.
-- `grace__azure_storage__directoryversion_container_name`: Directory version
-  container name.
+- `grace__azure_storage__directoryversion_container_name`: Directory version container name.
 - `grace__azure_storage__diff_container_name`: Diff container name.
 - `grace__azure_storage__zipfile_container_name`: Zip container name.
 
 ### Cosmos DB (Azure)
 
-- `grace__azurecosmosdb__connectionstring`: Cosmos connection string.
-- `grace__azurecosmosdb__endpoint`: Cosmos endpoint (MI).
+- `grace__azurecosmosdb__connectionstring`: Cosmos DB connection string.
+- `grace__azurecosmosdb__endpoint`: Cosmos endpoint (managed identity path).
 - `grace__azurecosmosdb__database_name`: Cosmos database name.
 - `grace__azurecosmosdb__container_name`: Cosmos container name.
 
@@ -106,7 +148,7 @@ dotnet user-secrets --project src/Grace.Server/Grace.Server.fsproj list
 
 ### Pub/Sub Routing
 
-- `grace__pubsub__system`: Pub/Sub provider selector (e.g., `AzureServiceBus`).
+- `grace__pubsub__system`: Pub/sub provider selector (for example, `AzureServiceBus`).
 
 ### Auth (OIDC / Auth0)
 
@@ -119,6 +161,15 @@ dotnet user-secrets --project src/Grace.Server/Grace.Server.fsproj list
 - `grace__auth__oidc__m2m_client_secret`
 - `grace__auth__oidc__m2m_scopes`
 
+### Auth (Microsoft, Deprecated)
+
+- `grace__auth__microsoft__client_id`
+- `grace__auth__microsoft__client_secret`
+- `grace__auth__microsoft__tenant_id`
+- `grace__auth__microsoft__authority`
+- `grace__auth__microsoft__api_scope`
+- `grace__auth__microsoft__cli_client_id`
+
 ### Auth (PAT Defaults)
 
 - `grace__auth__pat__default_lifetime_days`
@@ -127,30 +178,28 @@ dotnet user-secrets --project src/Grace.Server/Grace.Server.fsproj list
 
 ### Authorization (Bootstrap)
 
-- `grace__authz__bootstrap__system_admin_users`: Semicolon-delimited user IDs to
-  seed SystemAdmin at system scope when no assignments exist.
-- `grace__authz__bootstrap__system_admin_groups`: Semicolon-delimited group IDs
-  to seed SystemAdmin at system scope when no assignments exist.
+- `grace__authz__bootstrap__system_admin_users`: semicolon-delimited user IDs to seed SystemAdmin at system
+  scope when no assignments exist.
+- `grace__authz__bootstrap__system_admin_groups`: semicolon-delimited group IDs to seed SystemAdmin at system
+  scope when no assignments exist.
 
 ### Metrics
 
-- `grace__metrics__allow_anonymous`: When `true`, allows anonymous access to the
-  Prometheus `/metrics` endpoint (default `false`).
+- `grace__metrics__allow_anonymous`: when `true`, allows anonymous access to `/metrics` (default `false`).
 
 ### CLI / Client
 
-- `GRACE_SERVER_URI`: Grace server base URL (must include port, no trailing
-  slash).
-- `GRACE_TOKEN`: PAT used for non-interactive auth.
-- `GRACE_TOKEN_FILE`: Override for the token file path.
+- `GRACE_SERVER_URI`: Grace server base URL (include port, omit trailing slash).
+- `GRACE_TOKEN`: PAT for non-interactive auth.
+- `GRACE_TOKEN_FILE`: override for token file path.
 
 ### Reminders
 
-- `grace__reminder__batch__size`: Batch size for reminder processing.
+- `grace__reminder__batch__size`: batch size for reminder processing.
 
 ### Diagnostics
 
-- `grace__debug_environment`: Debug environment marker (e.g., `Local`, `Azure`).
+- `grace__debug_environment`: debug environment marker (for example, `Local`, `Azure`).
 - `grace__log_directory`: Grace server log directory.
 
 ### Future / Placeholders
@@ -160,39 +209,3 @@ dotnet user-secrets --project src/Grace.Server/Grace.Server.fsproj list
 - `grace__gcp__projectid`
 - `grace__gcp__topic`
 - `grace__gcp__subscription`
-
-## Debug Profile Settings
-
-### DebugLocal (`ASPIRE_RESOURCE_MODE=Local`)
-
-`DebugLocal` uses local containers and emulators for Azure dependencies.
-`Grace.Aspire.AppHost` injects the connection settings for Azurite, Cosmos DB
-emulator, and Service Bus emulator into `Grace.Server` at runtime.
-
-What this means in practice:
-
-- You usually do not need to define Azure account names or cloud endpoints for
-  local startup.
-- Storage and Cosmos DB are configured with local connection strings.
-- Service Bus uses the emulator connection string (when Service Bus is enabled
-  for the run).
-- `grace__debug_environment` is set to `Local`.
-
-### DebugAzure (`ASPIRE_RESOURCE_MODE=Azure`)
-
-`DebugAzure` still runs `Grace.Server` locally, but uses real Azure resources.
-Managed identity (`DefaultAzureCredential`) is the default path.
-
-Required or conditionally required settings:
-
-- Storage: set either `grace__azure_storage__connectionstring` or
-  `grace__azure_storage__account_name`.
-- Cosmos DB: set `grace__azurecosmosdb__endpoint`.
-- Cosmos DB metadata: set `grace__azurecosmosdb__database_name` and
-  `grace__azurecosmosdb__container_name`.
-- Service Bus (when `grace__pubsub__system=AzureServiceBus`): set
-  `grace__azure_service_bus__namespace`,
-  `grace__azure_service_bus__topic`, and
-  `grace__azure_service_bus__subscription`.
-
-`grace__debug_environment` is set to `Azure` for this profile.

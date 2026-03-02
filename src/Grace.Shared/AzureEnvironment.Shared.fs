@@ -121,12 +121,12 @@ module AzureEnvironment =
             else
                 trimmed
 
-        let candidate = withoutScheme.Trim().TrimEnd('/')
+        let normalizedNamespace = withoutScheme.Trim().TrimEnd('/')
 
-        if candidate.Contains(".") then
-            candidate
+        if normalizedNamespace.Contains(".") then
+            normalizedNamespace
         else
-            $"{candidate}.servicebus.windows.net"
+            $"{normalizedNamespace}.servicebus.windows.net"
 
     let tryGetServiceBusFullyQualifiedNamespace () =
         match tryGetEnv Constants.EnvironmentVariables.AzureServiceBusNamespace with

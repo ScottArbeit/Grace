@@ -3,6 +3,7 @@ namespace Grace.SDK
 open Grace.Shared
 open Grace.Shared.Client.Configuration
 open Grace.Shared.Services
+open Grace.Types.Automation
 open Grace.Types.Types
 open Grace.Shared.Parameters.Common
 open Grace.Shared.Utilities
@@ -140,3 +141,49 @@ module Common =
         let file = FileInfo(Path.Combine(Current().RootDirectory, $"{fileVersion.RelativePath}"))
 
         $"{file.Name.Replace(file.Extension, String.Empty)}_{fileVersion.Sha256Hash}{file.Extension}"
+
+/// Agent session lifecycle API methods.
+type AgentSession() =
+    /// Starts an agent session for a work item.
+    static member public Start(parameters: StartAgentSessionParameters) =
+        Common.postServer<StartAgentSessionParameters, AgentSessionOperationResult> (
+            parameters |> Common.ensureCorrelationIdIsSet,
+            "agent/session/start"
+        )
+
+    /// Stops an active agent session.
+    static member public Stop(parameters: StopAgentSessionParameters) =
+        Common.postServer<StopAgentSessionParameters, AgentSessionOperationResult> (
+            parameters |> Common.ensureCorrelationIdIsSet,
+            "agent/session/stop"
+        )
+
+    /// Gets status for a specific or current agent session.
+    static member public Status(parameters: GetAgentSessionStatusParameters) =
+        Common.postServer<GetAgentSessionStatusParameters, AgentSessionOperationResult> (
+            parameters |> Common.ensureCorrelationIdIsSet,
+            "agent/session/status"
+        )
+
+    /// Gets the active agent session for the current context.
+    static member public Active(parameters: GetActiveAgentSessionParameters) =
+        Common.postServer<GetActiveAgentSessionParameters, AgentSessionOperationResult> (
+            parameters |> Common.ensureCorrelationIdIsSet,
+            "agent/session/active"
+        )
+
+    /// Lists active agent sessions for the current context.
+    static member public ListActive(parameters: ListActiveAgentSessionsParameters) =
+        Common.postServer<ListActiveAgentSessionsParameters, AgentSessionListResult> (
+            parameters |> Common.ensureCorrelationIdIsSet,
+            "agent/session/listActive"
+        )
+
+    /// Alias for Start, named to match CLI `agent work start`.
+    static member public StartWork(parameters: StartAgentSessionParameters) = AgentSession.Start(parameters)
+
+    /// Alias for Stop, named to match CLI `agent work stop`.
+    static member public StopWork(parameters: StopAgentSessionParameters) = AgentSession.Stop(parameters)
+
+    /// Alias for Status, named to match CLI `agent work status`.
+    static member public GetWorkStatus(parameters: GetAgentSessionStatusParameters) = AgentSession.Status(parameters)

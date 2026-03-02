@@ -33,7 +33,7 @@ module Review =
 
         let mutable currentCommand = String.Empty
 
-        let mutable reviewPacket: ReviewPacket option = None
+        let mutable reviewNotes: ReviewNotes option = None
 
         let mutable checkpoints: ReviewCheckpoint list = []
 
@@ -46,22 +46,22 @@ module Review =
 
             let applyToState (reviewEvent: ReviewEvent) =
                 match reviewEvent.Event with
-                | PacketUpserted packet ->
+                | NotesUpserted notes ->
                     let createdAt =
-                        if packet.CreatedAt = Constants.DefaultTimestamp then
+                        if notes.CreatedAt = Constants.DefaultTimestamp then
                             reviewEvent.Metadata.Timestamp
                         else
-                            packet.CreatedAt
+                            notes.CreatedAt
 
-                    let updatedPacket = { packet with CreatedAt = createdAt; UpdatedAt = Some reviewEvent.Metadata.Timestamp }
+                    let updatedNotes = { notes with CreatedAt = createdAt; UpdatedAt = Some reviewEvent.Metadata.Timestamp }
 
-                    reviewPacket <- Some updatedPacket
+                    reviewNotes <- Some updatedNotes
                 | FindingResolved (findingId, resolutionState, resolvedBy, note) ->
-                    reviewPacket <-
-                        reviewPacket
-                        |> Option.map (fun packet ->
+                    reviewNotes <-
+                        reviewNotes
+                        |> Option.map (fun notes ->
                             let updatedFindings =
-                                packet.Findings
+                                notes.Findings
                                 |> List.map (fun finding ->
                                     if finding.FindingId = findingId then
                                         { finding with
@@ -73,7 +73,7 @@ module Review =
                                     else
                                         finding)
 
-                            { packet with Findings = updatedFindings; UpdatedAt = Some reviewEvent.Metadata.Timestamp })
+                            { notes with Findings = updatedFindings; UpdatedAt = Some reviewEvent.Metadata.Timestamp })
                 | CheckpointAdded checkpoint -> checkpoints <- checkpoints @ [ checkpoint ]
 
             state.State |> Seq.iter applyToState
@@ -89,22 +89,22 @@ module Review =
                     do! state.WriteStateAsync()
 
                     match reviewEvent.Event with
-                    | PacketUpserted packet ->
+                    | NotesUpserted notes ->
                         let createdAt =
-                            if packet.CreatedAt = Constants.DefaultTimestamp then
+                            if notes.CreatedAt = Constants.DefaultTimestamp then
                                 reviewEvent.Metadata.Timestamp
                             else
-                                packet.CreatedAt
+                                notes.CreatedAt
 
-                        let updatedPacket = { packet with CreatedAt = createdAt; UpdatedAt = Some reviewEvent.Metadata.Timestamp }
+                        let updatedNotes = { notes with CreatedAt = createdAt; UpdatedAt = Some reviewEvent.Metadata.Timestamp }
 
-                        reviewPacket <- Some updatedPacket
+                        reviewNotes <- Some updatedNotes
                     | FindingResolved (findingId, resolutionState, resolvedBy, note) ->
-                        reviewPacket <-
-                            reviewPacket
-                            |> Option.map (fun packet ->
+                        reviewNotes <-
+                            reviewNotes
+                            |> Option.map (fun notes ->
                                 let updatedFindings =
-                                    packet.Findings
+                                    notes.Findings
                                     |> List.map (fun finding ->
                                         if finding.FindingId = findingId then
                                             { finding with
@@ -116,7 +116,7 @@ module Review =
                                         else
                                             finding)
 
-                                { packet with Findings = updatedFindings; UpdatedAt = Some reviewEvent.Metadata.Timestamp })
+                                { notes with Findings = updatedFindings; UpdatedAt = Some reviewEvent.Metadata.Timestamp })
                     | CheckpointAdded checkpoint -> checkpoints <- checkpoints @ [ checkpoint ]
 
                     let graceEvent = GraceEvent.ReviewEvent reviewEvent
@@ -125,10 +125,10 @@ module Review =
                     let returnValue =
                         (GraceReturnValue.Create "Review command succeeded." correlationId)
                             .enhance(
-                                nameof ReviewPacketId,
-                                reviewPacket
-                                |> Option.map (fun packet -> packet.ReviewPacketId)
-                                |> Option.defaultValue (ReviewPacketId.Empty)
+                                nameof ReviewNotesId,
+                                reviewNotes
+                                |> Option.map (fun notes -> notes.ReviewNotesId)
+                                |> Option.defaultValue (ReviewNotesId.Empty)
                             )
                             .enhance (nameof ReviewEventType, getDiscriminatedUnionFullName reviewEvent.Event)
 
@@ -147,10 +147,10 @@ module Review =
                     let graceError =
                         (GraceError.CreateWithException ex (ReviewError.getErrorMessage ReviewError.FailedWhileApplyingEvent) correlationId)
                             .enhance (
-                                nameof ReviewPacketId,
-                                reviewPacket
-                                |> Option.map (fun packet -> packet.ReviewPacketId)
-                                |> Option.defaultValue (ReviewPacketId.Empty)
+                                nameof ReviewNotesId,
+                                reviewNotes
+                                |> Option.map (fun notes -> notes.ReviewNotesId)
+                                |> Option.defaultValue (ReviewNotesId.Empty)
                             )
 
                     return Error graceError
@@ -159,16 +159,16 @@ module Review =
         interface IHasRepositoryId with
             member this.GetRepositoryId correlationId =
                 let repositoryId =
-                    reviewPacket
-                    |> Option.map (fun packet -> packet.RepositoryId)
+                    reviewNotes
+                    |> Option.map (fun notes -> notes.RepositoryId)
                     |> Option.defaultValue RepositoryId.Empty
 
                 repositoryId |> returnTask
 
         interface IReviewActor with
-            member this.GetPacket correlationId =
+            member this.GetNotes correlationId =
                 this.correlationId <- correlationId
-                reviewPacket |> returnTask
+                reviewNotes |> returnTask
 
             member this.GetCheckpoints correlationId =
                 this.correlationId <- correlationId
@@ -183,15 +183,15 @@ module Review =
                             return Error(GraceError.Create (ReviewError.getErrorMessage ReviewError.DuplicateCorrelationId) metadata.CorrelationId)
                         else
                             match command with
-                            | UpsertPacket _ -> return Ok command
+                            | UpsertNotes _ -> return Ok command
                             | AddCheckpoint _ -> return Ok command
                             | ResolveFinding (findingId, _, _, _) ->
-                                match reviewPacket with
+                                match reviewNotes with
                                 | None ->
-                                    return Error(GraceError.Create (ReviewError.getErrorMessage ReviewError.ReviewPacketDoesNotExist) metadata.CorrelationId)
-                                | Some packet ->
+                                    return Error(GraceError.Create (ReviewError.getErrorMessage ReviewError.ReviewNotesDoesNotExist) metadata.CorrelationId)
+                                | Some notes ->
                                     let exists =
-                                        packet.Findings
+                                        notes.Findings
                                         |> List.exists (fun finding -> finding.FindingId = findingId)
 
                                     if exists then
@@ -205,7 +205,7 @@ module Review =
                         let! reviewEventType =
                             task {
                                 match command with
-                                | UpsertPacket packet -> return PacketUpserted packet
+                                | UpsertNotes notes -> return NotesUpserted notes
                                 | ResolveFinding (findingId, resolutionState, resolvedBy, note) ->
                                     return FindingResolved(findingId, resolutionState, resolvedBy, note)
                                 | AddCheckpoint checkpoint -> return CheckpointAdded checkpoint

@@ -14,9 +14,7 @@ module Queue =
         member val public RepositoryId = String.Empty with get, set
         member val public RepositoryName = String.Empty with get, set
         member val public TargetBranchId = String.Empty with get, set
-        member val public CandidateId = String.Empty with get, set
         member val public PolicySnapshotId = String.Empty with get, set
-        member val public PromotionGroupId = String.Empty with get, set
         member val public WorkItemId = String.Empty with get, set
 
     /// Parameters for /queue/status.
@@ -30,20 +28,9 @@ module Queue =
     /// Parameters for /queue/enqueue.
     type EnqueueParameters() =
         inherit QueueParameters()
+        member val public PromotionSetId = String.Empty with get, set
 
-    /// Parameters for /candidate/get.
-    type CandidateParameters() =
+    /// Parameters for /queue/dequeue.
+    type PromotionSetActionParameters() =
         inherit QueueParameters()
-
-    /// Parameters for /candidate/action.
-    type CandidateActionParameters() =
-        inherit QueueParameters()
-
-    /// Parameters for /candidate/attestations.
-    type CandidateAttestationsParameters() =
-        inherit QueueParameters()
-
-    /// Parameters for /candidate/gate/rerun.
-    type CandidateGateRerunParameters() =
-        inherit QueueParameters()
-        member val public GateName = String.Empty with get, set
+        member val public PromotionSetId = String.Empty with get, set
