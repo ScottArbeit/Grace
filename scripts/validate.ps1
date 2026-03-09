@@ -182,18 +182,7 @@ try {
 
     if (-not $SkipBuild) {
         Write-Section "Build"
-        if ($Full) {
-            Invoke-External "Grace.Aspire.AppHost build" { dotnet build "src/Grace.Aspire.AppHost/Grace.Aspire.AppHost.csproj" -c $Configuration }
-        }
-        Invoke-External "Grace.Server build" { dotnet build "src/Grace.Server/Grace.Server.fsproj" -c $Configuration }
-        Invoke-External "Grace.CLI build" { dotnet build "src/Grace.CLI/Grace.CLI.fsproj" -c $Configuration }
-        Invoke-External "Grace.SDK build" { dotnet build "src/Grace.SDK/Grace.SDK.fsproj" -c $Configuration }
-        Invoke-External "Grace.Authorization.Tests build" { dotnet build "src/Grace.Authorization.Tests/Grace.Authorization.Tests.fsproj" -c $Configuration }
-        Invoke-External "Grace.CLI.Tests build" { dotnet build "src/Grace.CLI.Tests/Grace.CLI.Tests.fsproj" -c $Configuration }
-        Invoke-External "Grace.Types.Tests build" { dotnet build "src/Grace.Types.Tests/Grace.Types.Tests.fsproj" -c $Configuration }
-        if ($Full) {
-            Invoke-External "Grace.Server.Tests build" { dotnet build "src/Grace.Server.Tests/Grace.Server.Tests.fsproj" -c $Configuration }
-        }
+        Invoke-External "Grace solution build" { dotnet build "src/Grace.slnx" -c $Configuration }
     } else {
         Write-Section "Build"
         Write-Host "Skipped (-SkipBuild)."
