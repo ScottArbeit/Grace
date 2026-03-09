@@ -86,8 +86,13 @@ module private WorkItemIntegrationHelpers =
             parameters.CorrelationId <- generateCorrelationId ()
 
             let! response = Client.PostAsync("/work/create", createJsonContent parameters)
-            response.EnsureSuccessStatusCode() |> ignore
-            return workItemId
+
+            if not response.IsSuccessStatusCode then
+                let! body = response.Content.ReadAsStringAsync()
+                Assert.Fail($"Expected work/create success but got {(int response.StatusCode)} {response.StatusCode}: {body}")
+                return workItemId
+            else
+                return workItemId
         }
 
     let getWorkItemResponseAsync (client: HttpClient) (repositoryId: string) (workItemIdentifier: string) =

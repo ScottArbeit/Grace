@@ -94,50 +94,6 @@ module WorkItem =
             do! workItemNumberActorProxy.SetWorkItemId workItemNumber workItemId correlationId
         }
 
-    let private withWorkItemNumberLock (repositoryId: RepositoryId) (correlationId: CorrelationId) (work: unit -> Task<GraceResult<string>>) =
-        task {
-            let lockName = $"workitem-number|{repositoryId}"
-            let lockOwner = $"WorkItemCreate:{correlationId}"
-            let lockActorProxy = GlobalLock.CreateActorProxy lockName correlationId
-            let mutable acquired = false
-            let mutable attempt = 0
-
-            while not acquired && attempt < 100 do
-                let! acquiredNow = lockActorProxy.AcquireLock lockOwner
-
-                if acquiredNow then
-                    acquired <- true
-                else
-                    attempt <- attempt + 1
-                    do! Task.Delay(25)
-
-            if not acquired then
-                return Error(GraceError.Create "Could not acquire lock while allocating WorkItemNumber." correlationId)
-            else
-                let! result =
-                    task {
-                        try
-                            return! work ()
-                        with
-                        | ex -> return Error(GraceError.CreateWithException ex String.Empty correlationId)
-                    }
-
-                let! releaseResult = lockActorProxy.ReleaseLock lockOwner
-
-                match releaseResult with
-                | Ok _ -> ()
-                | Error releaseError ->
-                    log.LogWarning(
-                        "{CurrentInstant}: Failed to release lock for WorkItemNumber allocation. CorrelationId: {correlationId}; RepositoryId: {repositoryId}; Error: {releaseError}.",
-                        getCurrentInstantExtended (),
-                        correlationId,
-                        repositoryId,
-                        releaseError
-                    )
-
-                return result
-        }
-
     let processCommand<'T when 'T :> WorkItemParameters> (context: HttpContext) (validations: Validations<'T>) (command: 'T -> ValueTask<WorkItemCommand>) =
         task {
             let commandName = context.Items["Command"] :?> string
@@ -838,29 +794,28 @@ module WorkItem =
                     let parameterDictionary = getParametersAsDictionary parameters
 
                     let! createResult =
-                        withWorkItemNumberLock graceIds.RepositoryId correlationId (fun () ->
-                            task {
-                                let workItemNumberCounterActorProxy = WorkItemNumberCounter.CreateActorProxy graceIds.RepositoryId correlationId
-                                let! workItemNumber = workItemNumberCounterActorProxy.AllocateNext correlationId
-                                let actorProxy = WorkItem.CreateActorProxy workItemId graceIds.RepositoryId correlationId
+                        task {
+                            let workItemNumberCounterActorProxy = WorkItemNumberCounter.CreateActorProxy graceIds.RepositoryId correlationId
+                            let! workItemNumber = workItemNumberCounterActorProxy.AllocateNext correlationId
+                            let actorProxy = WorkItem.CreateActorProxy workItemId graceIds.RepositoryId correlationId
 
-                                let command =
-                                    WorkItemCommand.Create(
-                                        workItemId,
-                                        workItemNumber,
-                                        Guid.Parse(parameters.OwnerId),
-                                        Guid.Parse(parameters.OrganizationId),
-                                        Guid.Parse(parameters.RepositoryId),
-                                        parameters.Title,
-                                        parameters.Description
-                                    )
+                            let command =
+                                WorkItemCommand.Create(
+                                    workItemId,
+                                    workItemNumber,
+                                    Guid.Parse(parameters.OwnerId),
+                                    Guid.Parse(parameters.OrganizationId),
+                                    Guid.Parse(parameters.RepositoryId),
+                                    parameters.Title,
+                                    parameters.Description
+                                )
 
-                                match! actorProxy.Handle command metadata with
-                                | Ok graceReturnValue ->
-                                    do! cacheWorkItemNumber graceIds.RepositoryId workItemNumber workItemId correlationId
-                                    return Ok graceReturnValue
-                                | Error graceError -> return Error graceError
-                            })
+                            match! actorProxy.Handle command metadata with
+                            | Ok graceReturnValue ->
+                                do! cacheWorkItemNumber graceIds.RepositoryId workItemNumber workItemId correlationId
+                                return Ok graceReturnValue
+                            | Error graceError -> return Error graceError
+                        }
 
                     match createResult with
                     | Ok graceReturnValue ->
