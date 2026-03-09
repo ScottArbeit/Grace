@@ -2,6 +2,7 @@ namespace Grace.SDK
 
 open Grace.SDK.Common
 open Grace.Shared.Parameters.Reminder
+open Grace.Shared.Parameters.ExternalEvent
 open Grace.Shared.Utilities
 open Grace.Types.Reminder
 open Grace.Types.Types
@@ -54,3 +55,12 @@ module Admin =
         /// <param name="parameters">Values to use when creating the reminder.</param>
         static member public Create(parameters: CreateReminderParameters) =
             postServer<CreateReminderParameters, String> (parameters |> ensureCorrelationIdIsSet, $"reminder/{nameof (Reminder.Create)}")
+
+    type ExternalEvent() =
+
+        /// <summary>
+        /// Rebuilds and resends a canonical external event by its event ID.
+        /// </summary>
+        /// <param name="parameters">Values to use when resending the canonical external event.</param>
+        static member public Resend(parameters: ResendExternalEventParameters) =
+            postServer<ResendExternalEventParameters, String> (parameters |> ensureCorrelationIdIsSet, $"external-event/{nameof (ExternalEvent.Resend)}")

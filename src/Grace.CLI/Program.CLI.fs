@@ -392,6 +392,12 @@ module GraceCommand =
             }
         ]
 
+    let private adminHelpSections =
+        [
+            { Heading = "External events"; CommandNames = [ "external-event" ] }
+            { Heading = "Reminders"; CommandNames = [ "reminder" ] }
+        ]
+
     let private groupedHelpSectionsByCommandName =
         let lookup = Dictionary<string, HelpSection list>(StringComparer.InvariantCultureIgnoreCase)
         lookup["repository"] <- repositoryHelpSections
@@ -405,6 +411,7 @@ module GraceCommand =
         lookup["work"] <- workItemHelpSections
         lookup["work-item"] <- workItemHelpSections
         lookup["wi"] <- workItemHelpSections
+        lookup["admin"] <- adminHelpSections
         lookup
 
     let private formatDisplayName (command: Command) =

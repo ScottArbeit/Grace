@@ -48,6 +48,7 @@
         <Compile Include="Parameters\Storage.Parameters.fs" />
         
         <Compile Include="Parameters\Reminder.Parameters.fs" />
+        <Compile Include="Parameters\ExternalEvent.Parameters.fs" />
         <Compile Include="Parameters\WorkItem.Parameters.fs" />
         <Compile Include="Parameters\Policy.Parameters.fs" />
         <Compile Include="Parameters\PromotionSet.Parameters.fs" />
@@ -102,3 +103,4 @@
     </ItemGroup>
 
 </Project>
+

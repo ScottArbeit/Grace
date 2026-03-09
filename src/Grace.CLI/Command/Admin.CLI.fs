@@ -9,6 +9,7 @@ open Grace.SDK.Admin
 open Grace.Shared
 open Grace.Shared.Parameters
 open Grace.Shared.Parameters.Reminder
+open Grace.Shared.Parameters.ExternalEvent
 open Grace.Types.Reminder
 open Grace.Types.Types
 open Grace.Shared.Utilities
@@ -662,9 +663,75 @@ module Admin =
 
             reminderCommand
 
+    module ExternalEvent =
+
+        module private Options =
+            let eventId =
+                new Option<String>(
+                    "--event-id",
+                    Required = true,
+                    Description = "The canonical external event ID to rebuild and resend.",
+                    Arity = ArgumentArity.ExactlyOne
+                )
+
+        type Resend() =
+            inherit AsynchronousCommandLineAction()
+
+            override this.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
+                task {
+                    try
+                        if parseResult |> verbose then printParseResult parseResult
+
+                        let validateIncomingParameters =
+                            parseResult
+                            |> Grace.CLI.Common.Validations.CommonValidations
+
+                        match validateIncomingParameters with
+                        | Ok _ ->
+                            let parameters =
+                                ResendExternalEventParameters(EventId = parseResult.GetValue(Options.eventId), CorrelationId = getCorrelationId parseResult)
+
+                            let! result =
+                                if parseResult |> hasOutput then
+                                    progress
+                                        .Columns(progressColumns)
+                                        .StartAsync(fun progressContext ->
+                                            task {
+                                                let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+                                                let! response = Grace.SDK.Admin.ExternalEvent.Resend(parameters)
+                                                t0.Increment(100.0)
+                                                return response
+                                            })
+                                else
+                                    Grace.SDK.Admin.ExternalEvent.Resend(parameters)
+
+                            return result |> renderOutput parseResult
+                        | Error error -> return Error error |> renderOutput parseResult
+                    with
+                    | ex ->
+                        return
+                            renderOutput
+                                parseResult
+                                (GraceResult.Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId)))
+                }
+
+        /// Builds the External Event subcommand.
+        let Build =
+            let externalEventCommand = new Command("external-event", Description = "Administrative commands for canonical external events.")
+
+            let resendCommand =
+                new Command("resend", Description = "Rebuild and resend a canonical external event by event ID.")
+                |> addOption Options.eventId
+
+            resendCommand.Action <- new Resend()
+            externalEventCommand.Subcommands.Add(resendCommand)
+
+            externalEventCommand
+
     /// Builds the Admin subcommand.
     let Build =
         // Create main command and aliases
         let adminCommand = new Command("admin", Description = "Administrative commands for managing Grace.")
+        adminCommand.Add(ExternalEvent.Build) |> ignore
         adminCommand.Add(Reminder.Build) |> ignore
         adminCommand
