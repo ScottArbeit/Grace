@@ -187,17 +187,26 @@ module ApplicationContext =
     let configurePubSubSettings () =
         let rawSystem = Environment.GetEnvironmentVariable EnvironmentVariables.GracePubSubSystem
 
+        let hasServiceBusConfiguration =
+            Environment.GetEnvironmentVariable EnvironmentVariables.AzureServiceBusConnectionString
+            |> String.IsNullOrWhiteSpace
+            |> not
+            || Environment.GetEnvironmentVariable EnvironmentVariables.AzureServiceBusNamespace
+               |> String.IsNullOrWhiteSpace
+               |> not
+
         let system =
             match rawSystem with
-            | value when value.Equals("AzureEventHubs", StringComparison.OrdinalIgnoreCase) -> GracePubSubSystem.AzureEventHubs
-            | value when value.Equals("AzureServiceBus", StringComparison.OrdinalIgnoreCase) -> GracePubSubSystem.AzureServiceBus
-            | value when value.Equals("AWS_SQS", StringComparison.OrdinalIgnoreCase) -> GracePubSubSystem.AwsSqs
-            | value when value.Equals("AWS-SQS", StringComparison.OrdinalIgnoreCase) -> GracePubSubSystem.AwsSqs
-            | value when value.Equals("AWS", StringComparison.OrdinalIgnoreCase) -> GracePubSubSystem.AwsSqs
-            | value when value.Equals("AWS SQS", StringComparison.OrdinalIgnoreCase) -> GracePubSubSystem.AwsSqs
-            | value when value.Equals("GCP", StringComparison.OrdinalIgnoreCase) -> GracePubSubSystem.GoogleCloudPubSub
-            | value when value.Equals("GOOGLE_CLOUD_PUBSUB", StringComparison.OrdinalIgnoreCase) -> GracePubSubSystem.GoogleCloudPubSub
-            | value when value.Equals("GOOGLECLOUDPUBSUB", StringComparison.OrdinalIgnoreCase) -> GracePubSubSystem.GoogleCloudPubSub
+            | value when String.Equals(value, "AzureEventHubs", StringComparison.OrdinalIgnoreCase) -> GracePubSubSystem.AzureEventHubs
+            | value when String.Equals(value, "AzureServiceBus", StringComparison.OrdinalIgnoreCase) -> GracePubSubSystem.AzureServiceBus
+            | value when String.Equals(value, "AWS_SQS", StringComparison.OrdinalIgnoreCase) -> GracePubSubSystem.AwsSqs
+            | value when String.Equals(value, "AWS-SQS", StringComparison.OrdinalIgnoreCase) -> GracePubSubSystem.AwsSqs
+            | value when String.Equals(value, "AWS", StringComparison.OrdinalIgnoreCase) -> GracePubSubSystem.AwsSqs
+            | value when String.Equals(value, "AWS SQS", StringComparison.OrdinalIgnoreCase) -> GracePubSubSystem.AwsSqs
+            | value when String.Equals(value, "GCP", StringComparison.OrdinalIgnoreCase) -> GracePubSubSystem.GoogleCloudPubSub
+            | value when String.Equals(value, "GOOGLE_CLOUD_PUBSUB", StringComparison.OrdinalIgnoreCase) -> GracePubSubSystem.GoogleCloudPubSub
+            | value when String.Equals(value, "GOOGLECLOUDPUBSUB", StringComparison.OrdinalIgnoreCase) -> GracePubSubSystem.GoogleCloudPubSub
+            | _ when hasServiceBusConfiguration -> GracePubSubSystem.AzureServiceBus
             | _ -> GracePubSubSystem.UnknownPubSubProvider
 
         let azureServiceBusSettings =

@@ -602,7 +602,9 @@ module LocalStateDb =
                                     directoryCommand.Parameters["$created_at"].Value <- directory.CreatedAt.ToUnixTimeTicks()
                                     directoryCommand.Parameters["$last_write"].Value <- directory.LastWriteTimeUtc.Ticks
                                     directoryCommand.ExecuteNonQuery() |> ignore
-                                    knownDirectoryIds.Add(directoryVersionId) |> ignore)
+
+                                    knownDirectoryIds.Add(directoryVersionId)
+                                    |> ignore)
 
                                 // Pass 2: Refresh child and file links for each upserted directory.
                                 directoriesToUpsert
@@ -624,8 +626,7 @@ module LocalStateDb =
                                             insertChildCommand.ExecuteNonQuery() |> ignore
                                         else
                                             invalidOp
-                                                $"Cannot upsert object cache because child DirectoryVersionId {childDirectoryVersionId} is missing. Parent DirectoryVersionId: {directory.DirectoryVersionId}."
-                                    )
+                                                $"Cannot upsert object cache because child DirectoryVersionId {childDirectoryVersionId} is missing. Parent DirectoryVersionId: {directory.DirectoryVersionId}.")
 
                                     directory.Files
                                     |> Seq.iter (fun file ->
@@ -827,7 +828,9 @@ module LocalStateDb =
                                 // Upsert every file in each changed/new directory version. This keeps unchanged sibling files
                                 // attached to the new directory_version_id when a directory row is replaced.
                                 newDirectoryVersions
-                                |> Seq.collect (fun directory -> directory.Files |> Seq.map (fun file -> (file, directory)))
+                                |> Seq.collect (fun directory ->
+                                    directory.Files
+                                    |> Seq.map (fun file -> (file, directory)))
                                 |> Seq.iter (fun (file, directory) ->
                                     fileUpsertCommand.Parameters["$relative_path"].Value <- file.RelativePath
                                     fileUpsertCommand.Parameters["$directory_path"].Value <- directory.RelativePath

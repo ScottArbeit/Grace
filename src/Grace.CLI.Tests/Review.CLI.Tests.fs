@@ -253,7 +253,9 @@ module ReviewCommandTests =
         Assert.That(parseResult.Errors.Count, Is.GreaterThan(0))
         let exitCode, _, standardError = invokeWithCapturedConsole parseResult
         exitCode |> should equal 1
-        standardError |> should contain "Option '--gate' is required."
+
+        standardError
+        |> should contain "Option '--gate' is required."
 
     [<Test>]
     let ``candidate parser normalizes guid candidate id`` () =
@@ -368,8 +370,12 @@ module ReviewCommandTests =
         Assert.That(parseResult.Errors.Count, Is.GreaterThan(0))
         let exitCode, _, standardError = invokeWithCapturedConsole parseResult
         exitCode |> should equal 1
-        standardError |> should contain "Option '--format' is required."
-        standardError |> should contain "Option '--output-file' is required."
+
+        standardError
+        |> should contain "Option '--format' is required."
+
+        standardError
+        |> should contain "Option '--output-file' is required."
 
     [<Test>]
     let ``review report json serialization includes schema version`` () =

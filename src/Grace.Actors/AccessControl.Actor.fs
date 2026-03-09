@@ -45,15 +45,21 @@ module AccessControl =
                 accessControlState <- if state.RecordExists then state.State else AccessControlState.Empty
 
                 let isSystemScope =
-                    this.GetPrimaryKeyString()
+                    this
+                        .GetPrimaryKeyString()
                         .Equals(getScopeKey Scope.System, StringComparison.OrdinalIgnoreCase)
 
-                if isSystemScope && accessControlState.Assignments.IsEmpty then
+                if isSystemScope
+                   && accessControlState.Assignments.IsEmpty then
                     let parseList (value: string) =
                         if String.IsNullOrWhiteSpace value then
                             []
                         else
-                            value.Split(';', StringSplitOptions.RemoveEmptyEntries ||| StringSplitOptions.TrimEntries)
+                            value.Split(
+                                ';',
+                                StringSplitOptions.RemoveEmptyEntries
+                                ||| StringSplitOptions.TrimEntries
+                            )
                             |> Seq.map (fun item -> item.Trim())
                             |> Seq.filter (fun item -> not (String.IsNullOrWhiteSpace item))
                             |> Seq.distinct
@@ -67,7 +73,8 @@ module AccessControl =
                         Environment.GetEnvironmentVariable(EnvironmentVariables.GraceAuthzBootstrapSystemAdminGroups)
                         |> parseList
 
-                    if (not bootstrapUsers.IsEmpty) || (not bootstrapGroups.IsEmpty) then
+                    if (not bootstrapUsers.IsEmpty)
+                       || (not bootstrapGroups.IsEmpty) then
                         let now = getCurrentInstant ()
                         let sourceDetailParts = List<string>()
 

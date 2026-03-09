@@ -549,7 +549,7 @@ module DirectoryVersion =
                                 BlockBlobOpenWriteOptions(Tags = tags, HttpHeaders = BlobHttpHeaders(ContentType = "application/msgpack"))
 
                             let conditionsSummary =
-                                let conditionsProperty = typeof<BlockBlobOpenWriteOptions>.GetProperty("Conditions")
+                                let conditionsProperty = typeof<BlockBlobOpenWriteOptions>.GetProperty ("Conditions")
 
                                 if isNull conditionsProperty then
                                     "not supported"

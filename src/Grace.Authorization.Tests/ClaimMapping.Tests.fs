@@ -26,7 +26,13 @@ type ClaimMappingTests() =
                               Claim("sub", "subject-1") ]
 
         let transformer = GraceClaimsTransformation(NullLogger<GraceClaimsTransformation>.Instance)
-        let transformed = (transformer :> IClaimsTransformation).TransformAsync(principal).Result
+
+        let transformed =
+            (transformer :> IClaimsTransformation)
+                .TransformAsync(
+                principal
+            )
+                .Result
 
         let graceUserIds =
             transformed.Claims
@@ -61,8 +67,13 @@ type ClaimMappingTests() =
 
         let mapped = ClaimMapping.mapClaims principal
 
-        let graceClaims = findValues PrincipalMapper.GraceClaim mapped |> List.sort
-        let graceGroups = findValues PrincipalMapper.GraceGroupIdClaim mapped |> List.sort
+        let graceClaims =
+            findValues PrincipalMapper.GraceClaim mapped
+            |> List.sort
+
+        let graceGroups =
+            findValues PrincipalMapper.GraceGroupIdClaim mapped
+            |> List.sort
 
         Assert.That(graceClaims, Is.EquivalentTo([]))
         Assert.That(graceGroups, Is.EquivalentTo([]))
@@ -74,6 +85,18 @@ type ClaimMappingTests() =
                               Claim("scope", "  repo.list") ]
 
         let mapped = ClaimMapping.mapClaims principal
-        let graceClaims = findValues PrincipalMapper.GraceClaim mapped |> List.sort
 
-        Assert.That(graceClaims, Is.EquivalentTo([ "repo.list"; "repo.read"; "repo.write" ]))
+        let graceClaims =
+            findValues PrincipalMapper.GraceClaim mapped
+            |> List.sort
+
+        Assert.That(
+            graceClaims,
+            Is.EquivalentTo(
+                [
+                    "repo.list"
+                    "repo.read"
+                    "repo.write"
+                ]
+            )
+        )

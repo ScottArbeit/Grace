@@ -3,7 +3,6 @@ namespace Grace.Types
 open Grace.Shared
 open Grace.Shared.Utilities
 open Grace.Types.Artifact
-open Grace.Types.Automation
 open Grace.Types.Types
 open NodaTime
 open Orleans
@@ -32,7 +31,7 @@ module Validation =
     type Validation = { Name: string; Version: string; ExecutionMode: ValidationExecutionMode; RequiredForApply: bool }
 
     [<GenerateSerializer>]
-    type ValidationSetRule = { EventTypes: AutomationEventType list; BranchNameGlob: string }
+    type ValidationSetRule = { EventNames: string list; BranchNameGlob: string }
 
     [<GenerateSerializer>]
     type ValidationSetDto =

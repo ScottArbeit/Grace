@@ -19,17 +19,9 @@ type PermissionEvaluatorTests() =
     let branchId = Guid.Parse("44444444-4444-4444-4444-444444444444")
 
     let createAssignment scope roleId =
-        {
-            Principal = principal
-            Scope = scope
-            RoleId = roleId
-            Source = "test"
-            SourceDetail = None
-            CreatedAt = getCurrentInstant ()
-        }
+        { Principal = principal; Scope = scope; RoleId = roleId; Source = "test"; SourceDetail = None; CreatedAt = getCurrentInstant () }
 
-    let emptyPathPermissions (_repositoryId: RepositoryId, _correlationId: CorrelationId) =
-        Task.FromResult([ ])
+    let emptyPathPermissions (_repositoryId: RepositoryId, _correlationId: CorrelationId) = Task.FromResult([])
 
     [<Test>]
     member _.QueriesScopesForResource() =
@@ -38,11 +30,14 @@ type PermissionEvaluatorTests() =
 
             let getAssignmentsForScope (scope: Scope, _correlationId: CorrelationId) =
                 capturedScopes.Add scope
-                Task.FromResult([ ])
+                Task.FromResult([])
 
             let evaluator = GracePermissionEvaluator(getAssignmentsForScope, emptyPathPermissions)
             let resource = Resource.Repository(ownerId, organizationId, repositoryId)
-            let! _ = (evaluator :> IGracePermissionEvaluator).CheckAsync([ principal ], Set.empty, Operation.RepoRead, resource)
+
+            let! _ =
+                (evaluator :> IGracePermissionEvaluator)
+                    .CheckAsync([ principal ], Set.empty, Operation.RepoRead, resource)
 
             let expected = scopesForResource resource
             Assert.That(capturedScopes, Is.EquivalentTo(expected))
@@ -54,11 +49,14 @@ type PermissionEvaluatorTests() =
             let getAssignmentsForScope (scope: Scope, _correlationId: CorrelationId) =
                 match scope with
                 | Scope.Organization _ -> Task.FromResult([ createAssignment scope "OrgAdmin" ])
-                | _ -> Task.FromResult([ ])
+                | _ -> Task.FromResult([])
 
             let evaluator = GracePermissionEvaluator(getAssignmentsForScope, emptyPathPermissions)
             let resource = Resource.Repository(ownerId, organizationId, repositoryId)
-            let! result = (evaluator :> IGracePermissionEvaluator).CheckAsync([ principal ], Set.empty, Operation.RepoWrite, resource)
+
+            let! result =
+                (evaluator :> IGracePermissionEvaluator)
+                    .CheckAsync([ principal ], Set.empty, Operation.RepoWrite, resource)
 
             match result with
             | Allowed _ -> ()
@@ -72,21 +70,23 @@ type PermissionEvaluatorTests() =
 
             let getPathPermissions (_repositoryId: RepositoryId, _correlationId: CorrelationId) =
                 pathPermissionCalls <- pathPermissionCalls + 1
-                Task.FromResult([ ])
+                Task.FromResult([])
 
-            let evaluator =
-                GracePermissionEvaluator(
-                    (fun _ -> Task.FromResult([ ])),
-                    getPathPermissions
-                )
+            let evaluator = GracePermissionEvaluator((fun _ -> Task.FromResult([])), getPathPermissions)
 
             let repositoryResource = Resource.Repository(ownerId, organizationId, repositoryId)
-            let! _ = (evaluator :> IGracePermissionEvaluator).CheckAsync([ principal ], Set.empty, Operation.RepoRead, repositoryResource)
+
+            let! _ =
+                (evaluator :> IGracePermissionEvaluator)
+                    .CheckAsync([ principal ], Set.empty, Operation.RepoRead, repositoryResource)
 
             Assert.That(pathPermissionCalls, Is.EqualTo(0))
 
             let pathResource = Resource.Path(ownerId, organizationId, repositoryId, "/docs/readme.md")
-            let! _ = (evaluator :> IGracePermissionEvaluator).CheckAsync([ principal ], Set.empty, Operation.PathRead, pathResource)
+
+            let! _ =
+                (evaluator :> IGracePermissionEvaluator)
+                    .CheckAsync([ principal ], Set.empty, Operation.PathRead, pathResource)
 
             Assert.That(pathPermissionCalls, Is.EqualTo(1))
         }
@@ -94,12 +94,14 @@ type PermissionEvaluatorTests() =
     [<Test>]
     member _.FailsClosedWhenRoleMissing() =
         task {
-            let getAssignmentsForScope (scope: Scope, _correlationId: CorrelationId) =
-                Task.FromResult([ createAssignment scope "MissingRole" ])
+            let getAssignmentsForScope (scope: Scope, _correlationId: CorrelationId) = Task.FromResult([ createAssignment scope "MissingRole" ])
 
             let evaluator = GracePermissionEvaluator(getAssignmentsForScope, emptyPathPermissions)
             let resource = Resource.Repository(ownerId, organizationId, repositoryId)
-            let! result = (evaluator :> IGracePermissionEvaluator).CheckAsync([ principal ], Set.empty, Operation.RepoRead, resource)
+
+            let! result =
+                (evaluator :> IGracePermissionEvaluator)
+                    .CheckAsync([ principal ], Set.empty, Operation.RepoRead, resource)
 
             match result with
             | Denied _ -> ()

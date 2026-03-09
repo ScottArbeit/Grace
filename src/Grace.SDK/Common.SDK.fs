@@ -3,7 +3,7 @@ namespace Grace.SDK
 open Grace.Shared
 open Grace.Shared.Client.Configuration
 open Grace.Shared.Services
-open Grace.Types.Automation
+open Grace.Types.ExternalEvents
 open Grace.Types.Types
 open Grace.Shared.Parameters.Common
 open Grace.Shared.Utilities
@@ -146,38 +146,23 @@ module Common =
 type AgentSession() =
     /// Starts an agent session for a work item.
     static member public Start(parameters: StartAgentSessionParameters) =
-        Common.postServer<StartAgentSessionParameters, AgentSessionOperationResult> (
-            parameters |> Common.ensureCorrelationIdIsSet,
-            "agent/session/start"
-        )
+        Common.postServer<StartAgentSessionParameters, AgentSessionOperationResult> (parameters |> Common.ensureCorrelationIdIsSet, "agent/session/start")
 
     /// Stops an active agent session.
     static member public Stop(parameters: StopAgentSessionParameters) =
-        Common.postServer<StopAgentSessionParameters, AgentSessionOperationResult> (
-            parameters |> Common.ensureCorrelationIdIsSet,
-            "agent/session/stop"
-        )
+        Common.postServer<StopAgentSessionParameters, AgentSessionOperationResult> (parameters |> Common.ensureCorrelationIdIsSet, "agent/session/stop")
 
     /// Gets status for a specific or current agent session.
     static member public Status(parameters: GetAgentSessionStatusParameters) =
-        Common.postServer<GetAgentSessionStatusParameters, AgentSessionOperationResult> (
-            parameters |> Common.ensureCorrelationIdIsSet,
-            "agent/session/status"
-        )
+        Common.postServer<GetAgentSessionStatusParameters, AgentSessionOperationResult> (parameters |> Common.ensureCorrelationIdIsSet, "agent/session/status")
 
     /// Gets the active agent session for the current context.
     static member public Active(parameters: GetActiveAgentSessionParameters) =
-        Common.postServer<GetActiveAgentSessionParameters, AgentSessionOperationResult> (
-            parameters |> Common.ensureCorrelationIdIsSet,
-            "agent/session/active"
-        )
+        Common.postServer<GetActiveAgentSessionParameters, AgentSessionOperationResult> (parameters |> Common.ensureCorrelationIdIsSet, "agent/session/active")
 
     /// Lists active agent sessions for the current context.
     static member public ListActive(parameters: ListActiveAgentSessionsParameters) =
-        Common.postServer<ListActiveAgentSessionsParameters, AgentSessionListResult> (
-            parameters |> Common.ensureCorrelationIdIsSet,
-            "agent/session/listActive"
-        )
+        Common.postServer<ListActiveAgentSessionsParameters, AgentSessionListResult> (parameters |> Common.ensureCorrelationIdIsSet, "agent/session/listActive")
 
     /// Alias for Start, named to match CLI `agent work start`.
     static member public StartWork(parameters: StartAgentSessionParameters) = AgentSession.Start(parameters)

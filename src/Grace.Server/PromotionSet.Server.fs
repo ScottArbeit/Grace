@@ -63,6 +63,8 @@ module PromotionSet =
             let graceIds = getGraceIds context
             let correlationId = getCorrelationId context
             let metadata = createMetadata context
+            metadata.Properties[ nameof PromotionSetId ] <- $"{promotionSetId}"
+            metadata.Properties[ "ActorId" ] <- $"{promotionSetId}"
             let parameterDictionary = getParametersAsDictionary parameters
             let validationResults = validations parameters
             let! validationsPassed = validationResults |> allPass
@@ -342,7 +344,13 @@ module PromotionSet =
                 else
                     let mutable stepId = Guid.Empty
 
-                    if not (Guid.TryParse(parameters.StepId, &stepId) && stepId <> Guid.Empty) then
+                    if
+                        not
+                            (
+                                Guid.TryParse(parameters.StepId, &stepId)
+                                && stepId <> Guid.Empty
+                            )
+                    then
                         return!
                             context
                             |> result400BadRequest (

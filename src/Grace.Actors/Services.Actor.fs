@@ -318,8 +318,7 @@ module Services =
                         | Some credential ->
                             let sasQueryParameters = blobSasBuilder.ToSasQueryParameters(credential)
                             return Uri($"{blobContainerClient.Uri}/{blobName}?{sasQueryParameters}")
-                        | None when blobContainerClient.CanGenerateSasUri ->
-                            return blobContainerClient.GenerateSasUri(blobSasBuilder)
+                        | None when blobContainerClient.CanGenerateSasUri -> return blobContainerClient.GenerateSasUri(blobSasBuilder)
                         | None ->
                             return
                                 raise (
@@ -2721,6 +2720,7 @@ module Services =
 
                     if iterator.HasMoreResults then
                         let! results = iterator.ReadNextAsync()
+
                         let actorId =
                             results.Resource
                             |> Seq.tryHead

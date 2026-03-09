@@ -53,19 +53,14 @@ module LocalStateDbTests =
         if not (Directory.Exists(graceDir)) then
             Directory.CreateDirectory(graceDir) |> ignore
 
-        if not (File.Exists(configPath)) then
-            File.WriteAllText(configPath, "{}")
+        if not (File.Exists(configPath)) then File.WriteAllText(configPath, "{}")
 
     let private withTempDir (action: string -> GraceConfiguration -> Task<'T>) =
         task {
             let root = Path.Combine(Path.GetTempPath(), $"grace-tests-{Guid.NewGuid()}")
             Directory.CreateDirectory(root) |> ignore
             let previousDirectory = Environment.CurrentDirectory
-            let previousConfiguration =
-                if configurationFileExists () then
-                    Some(Current())
-                else
-                    None
+            let previousConfiguration = if configurationFileExists () then Some(Current()) else None
 
             try
                 Environment.CurrentDirectory <- root
@@ -1109,7 +1104,7 @@ module LocalStateDbTests =
                 let orphanId = Guid.NewGuid()
 
                 Assert.Throws<SqliteException>(
-                    TestDelegate(fun () ->
+                    TestDelegate (fun () ->
                         executeNonQuery
                             connection
                             $"INSERT OR REPLACE INTO status_files (relative_path, directory_path, directory_version_id, sha256_hash, is_binary, size_bytes, created_at_unix_ticks, uploaded_to_object_storage, last_write_time_utc_ticks) VALUES ('orphan.txt', 'missing', '{orphanId}', 'hash', 0, 1, 0, 0, 0);")
@@ -1287,11 +1282,15 @@ module LocalStateDbTests =
                 rootRead.Files.Count |> should equal 2
 
                 rootRead.Files
-                |> Seq.exists (fun file -> file.RelativePath = "LICENSE.md" && file.Sha256Hash = "license-hash-2")
+                |> Seq.exists (fun file ->
+                    file.RelativePath = "LICENSE.md"
+                    && file.Sha256Hash = "license-hash-2")
                 |> should equal true
 
                 rootRead.Files
-                |> Seq.exists (fun file -> file.RelativePath = "README.md" && file.Sha256Hash = "readme-hash-1")
+                |> Seq.exists (fun file ->
+                    file.RelativePath = "README.md"
+                    && file.Sha256Hash = "readme-hash-1")
                 |> should equal true
             })
 
@@ -1459,16 +1458,7 @@ module LocalStateDbTests =
 
                 let childFile = createFileVersion "src/child/file.txt" "child-file-hash-v2" false 2L now lastWrite
 
-                let childDirV2 =
-                    createDirectoryVersion
-                        configuration
-                        childId
-                        "src/child"
-                        "child-hash-v2"
-                        [||]
-                        [| childFile |]
-                        childFile.Size
-                        lastWrite
+                let childDirV2 = createDirectoryVersion configuration childId "src/child" "child-hash-v2" [||] [| childFile |] childFile.Size lastWrite
 
                 do! LocalStateDb.upsertObjectCache configuration.GraceStatusFile [ childDirV2 ]
 
@@ -1481,10 +1471,7 @@ module LocalStateDbTests =
 
                 childLinkCount |> should equal 1
 
-                let childHash =
-                    executeScalarString
-                        connection
-                        $"SELECT sha256_hash FROM object_cache_directories WHERE directory_version_id = '{childId}';"
+                let childHash = executeScalarString connection $"SELECT sha256_hash FROM object_cache_directories WHERE directory_version_id = '{childId}';"
 
                 childHash |> should equal "child-hash-v2"
 

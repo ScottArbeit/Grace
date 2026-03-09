@@ -89,7 +89,8 @@
                 <Compile Include="ValidationResult.Server.fs" />
                 <Compile Include="Artifact.Server.fs" />
                 <Compile Include="ReviewAnalysis.Server.fs" />
-                <Compile Include="Eventing.Server.fs" />
+                <Compile Include="ExternalEvents.Server.fs" />
+                <Compile Include="ExternalEventPublication.Server.fs" />
                 <Compile Include="DirectoryVersion.Server.fs" />
 		<Compile Include="Diff.Server.fs" />
 		<Compile Include="Storage.Server.fs" />
@@ -169,3 +170,5 @@
 	  <Folder Include="Properties\PublishProfiles\" />
 	</ItemGroup>
 </Project>
+
+

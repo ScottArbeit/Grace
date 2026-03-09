@@ -150,6 +150,12 @@ module Policy =
                 (acknowledgements :> IReadOnlyList<PolicyAcknowledgement>)
                 |> returnTask
 
+            member this.GetEvents correlationId =
+                this.correlationId <- correlationId
+
+                state.State :> IReadOnlyList<PolicyEvent>
+                |> returnTask
+
             member this.Handle command metadata =
                 let isValid (command: PolicyCommand) (metadata: EventMetadata) =
                     task {

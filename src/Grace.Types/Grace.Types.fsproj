@@ -36,7 +36,9 @@
         <Compile Include="Review.Types.fs" />
         <Compile Include="Queue.Types.fs" />
         <Compile Include="Artifact.Types.fs" />
-        <Compile Include="Automation.Types.fs" />
+        <Compile Include="ExternalEvents.Types.fs" />
+        <Compile Include="ExternalEvents.Replay.Types.fs" />
+        <Compile Include="ExternalEvents.Registry.fs" />
         <Compile Include="Validation.Types.fs" />
         <Compile Include="Diff.Types.fs" />
         <Compile Include="DirectoryVersion.Types.fs" />
@@ -72,3 +74,5 @@
     </ItemGroup>
 
 </Project>
+
+

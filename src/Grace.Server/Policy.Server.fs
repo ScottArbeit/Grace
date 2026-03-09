@@ -51,6 +51,8 @@ module Policy =
                     task {
                         let actorProxy = Policy.CreateActorProxy targetBranchId graceIds.RepositoryId correlationId
                         let metadata = createMetadata context
+                        metadata.Properties[ nameof BranchId ] <- $"{targetBranchId}"
+                        metadata.Properties[ "ActorId" ] <- $"{targetBranchId}"
 
                         match! actorProxy.Handle cmd metadata with
                         | Ok graceReturnValue ->

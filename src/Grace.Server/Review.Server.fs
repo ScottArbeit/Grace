@@ -817,6 +817,8 @@ module Review =
                     task {
                         let actorProxy = Review.CreateActorProxy promotionSetId graceIds.RepositoryId correlationId
                         let metadata = createMetadata context
+                        metadata.Properties[ nameof PromotionSetId ] <- $"{promotionSetId}"
+                        metadata.Properties[ "ActorId" ] <- $"{promotionSetId}"
 
                         match! actorProxy.Handle cmd metadata with
                         | Ok graceReturnValue ->
@@ -970,11 +972,18 @@ module Review =
         task {
             let graceIds = getGraceIds context
             let correlationId = getCorrelationId context
-            let metadata = createMetadata context
+            let promotionSetMetadata = createMetadata context
+            promotionSetMetadata.Properties[ nameof PromotionSetId ] <- $"{promotionSet.PromotionSetId}"
+            promotionSetMetadata.Properties[ "ActorId" ] <- $"{promotionSet.PromotionSetId}"
+
+            let queueMetadata = createMetadata context
+            queueMetadata.Properties[ nameof BranchId ] <- $"{promotionSet.TargetBranchId}"
+            queueMetadata.Properties[ nameof PromotionSetId ] <- $"{promotionSet.PromotionSetId}"
+            queueMetadata.Properties[ "ActorId" ] <- $"{promotionSet.TargetBranchId}"
 
             let promotionSetActorProxy = PromotionSet.CreateActorProxy promotionSet.PromotionSetId graceIds.RepositoryId correlationId
 
-            match! promotionSetActorProxy.Handle (PromotionSetCommand.RecomputeStepsIfStale(Option.Some "candidate retry")) metadata with
+            match! promotionSetActorProxy.Handle (PromotionSetCommand.RecomputeStepsIfStale(Option.Some "candidate retry")) promotionSetMetadata with
             | Error error -> return Error error
             | Ok _ ->
                 let queueActorProxy = PromotionQueue.CreateActorProxy promotionSet.TargetBranchId graceIds.RepositoryId correlationId
@@ -996,13 +1005,14 @@ module Review =
                                     GraceError.Create "Candidate retry requires queue initialization, but policy snapshot context is unavailable." correlationId
                                 )
                         else
-                            match! queueActorProxy.Handle (PromotionQueueCommand.Initialize(promotionSet.TargetBranchId, snapshot.PolicySnapshotId)) metadata
+                            match!
+                                queueActorProxy.Handle (PromotionQueueCommand.Initialize(promotionSet.TargetBranchId, snapshot.PolicySnapshotId)) queueMetadata
                                 with
                             | Error error -> return Error error
                             | Ok _ ->
                                 appliedOperations <- appliedOperations @ [ "Queue.Initialize" ]
 
-                                match! queueActorProxy.Handle (PromotionQueueCommand.Enqueue promotionSet.PromotionSetId) metadata with
+                                match! queueActorProxy.Handle (PromotionQueueCommand.Enqueue promotionSet.PromotionSetId) queueMetadata with
                                 | Ok _ ->
                                     appliedOperations <- appliedOperations @ [ "Queue.Enqueue" ]
                                     return Ok(createCandidateActionResult identity "retry" appliedOperations [])
@@ -1013,7 +1023,7 @@ module Review =
                                 GraceError.Create "Candidate retry requires queue initialization, but no policy snapshot is currently available." correlationId
                             )
                 else
-                    match! queueActorProxy.Handle (PromotionQueueCommand.Enqueue promotionSet.PromotionSetId) metadata with
+                    match! queueActorProxy.Handle (PromotionQueueCommand.Enqueue promotionSet.PromotionSetId) queueMetadata with
                     | Ok _ ->
                         appliedOperations <- appliedOperations @ [ "Queue.Enqueue" ]
                         return Ok(createCandidateActionResult identity "retry" appliedOperations [])
@@ -1025,6 +1035,9 @@ module Review =
             let graceIds = getGraceIds context
             let correlationId = getCorrelationId context
             let metadata = createMetadata context
+            metadata.Properties[ nameof BranchId ] <- $"{promotionSet.TargetBranchId}"
+            metadata.Properties[ nameof PromotionSetId ] <- $"{promotionSet.PromotionSetId}"
+            metadata.Properties[ "ActorId" ] <- $"{promotionSet.TargetBranchId}"
             let queueActorProxy = PromotionQueue.CreateActorProxy promotionSet.TargetBranchId graceIds.RepositoryId correlationId
             let! queueExists = queueActorProxy.Exists correlationId
 
@@ -1043,6 +1056,8 @@ module Review =
             let graceIds = getGraceIds context
             let correlationId = getCorrelationId context
             let metadata = createMetadata context
+            metadata.Properties[ nameof PromotionSetId ] <- $"{promotionSet.PromotionSetId}"
+            metadata.Properties[ "ActorId" ] <- $"{promotionSet.PromotionSetId}"
             let promotionSetActorProxy = PromotionSet.CreateActorProxy promotionSet.PromotionSetId graceIds.RepositoryId correlationId
 
             let gateReason = $"candidate gate rerun ({gateName.Trim()})"

@@ -18,28 +18,25 @@ type PathPermissionsTests() =
     let principal = { PrincipalType = PrincipalType.User; PrincipalId = "user-1" }
 
     let createAssignment scope roleId =
-        {
-            Principal = principal
-            Scope = scope
-            RoleId = roleId
-            Source = "test"
-            SourceDetail = None
-            CreatedAt = getCurrentInstant ()
-        }
+        { Principal = principal; Scope = scope; RoleId = roleId; Source = "test"; SourceDetail = None; CreatedAt = getCurrentInstant () }
 
     [<Test>]
     member _.NormalizesPathSeparators() =
         let permissions = List<ClaimPermission>()
         permissions.Add({ Claim = "engineering"; DirectoryPermission = DirectoryPermission.Modify })
 
-        let pathPermissions = [ { Path = "/images"; Permissions = permissions } ]
+        let pathPermissions =
+            [
+                { Path = "/images"; Permissions = permissions }
+            ]
+
         let claims = Set.ofList [ "engineering" ]
 
         let result = checkPathPermission pathPermissions claims "\\images" PathWrite
 
         match result with
-        | Some(Allowed _) -> ()
-        | Some(Denied reason) -> Assert.Fail($"Expected Allowed but got Denied: {reason}")
+        | Some (Allowed _) -> ()
+        | Some (Denied reason) -> Assert.Fail($"Expected Allowed but got Denied: {reason}")
         | None -> Assert.Fail("Expected path permission to match normalized path.")
 
     [<Test>]
@@ -61,17 +58,8 @@ type PathPermissionsTests() =
         for path in weirdPaths do
             let resource = Resource.Path(ownerId, organizationId, repositoryId, path)
 
-            let result =
-                checkPermission
-                    (RoleCatalog.getAll ())
-                    []
-                    []
-                    [ principal ]
-                    Set.empty
-                    Operation.PathRead
-                    resource
+            let result = checkPermission (RoleCatalog.getAll ()) [] [] [ principal ] Set.empty Operation.PathRead resource
 
             match result with
             | Denied _ -> ()
             | Allowed reason -> Assert.Fail($"Expected Denied but got Allowed for '{path}': {reason}")
-

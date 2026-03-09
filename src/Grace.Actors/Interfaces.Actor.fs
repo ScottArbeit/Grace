@@ -258,6 +258,9 @@ module Interfaces =
         /// Returns a list of the repositories under this organization.
         abstract member ListRepositories: correlationId: CorrelationId -> Task<IReadOnlyDictionary<RepositoryId, RepositoryName>>
 
+        /// Returns the list of events handled by this organization.
+        abstract member GetEvents: correlationId: CorrelationId -> Task<IReadOnlyList<OrganizationEvent>>
+
         /// Validates incoming commands and converts them to events that are stored in the database.
         abstract member Handle: command: OrganizationCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
 
@@ -292,6 +295,9 @@ module Interfaces =
         /// Returns a list of the organizations under this owner.
         abstract member ListOrganizations: correlationId: CorrelationId -> Task<IReadOnlyDictionary<OrganizationId, OrganizationName>>
 
+        /// Returns the list of events handled by this owner.
+        abstract member GetEvents: correlationId: CorrelationId -> Task<IReadOnlyList<OwnerEvent>>
+
         /// Validates incoming commands and converts them to events that are stored in the database.
         abstract member Handle: command: OwnerCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
 
@@ -318,6 +324,9 @@ module Interfaces =
 
         /// Returns the dto for this reference.
         abstract member Get: correlationId: CorrelationId -> Task<ReferenceDto>
+
+        /// Returns the list of events handled by this reference.
+        abstract member GetEvents: correlationId: CorrelationId -> Task<IReadOnlyList<ReferenceEvent>>
 
         /// Returns the ReferenceType for this reference.
         abstract member GetReferenceType: correlationId: CorrelationId -> Task<ReferenceType>
@@ -381,6 +390,9 @@ module Interfaces =
         /// Returns policy acknowledgements.
         abstract member GetAcknowledgements: correlationId: CorrelationId -> Task<IReadOnlyList<PolicyAcknowledgement>>
 
+        /// Returns the list of events handled by this policy actor.
+        abstract member GetEvents: correlationId: CorrelationId -> Task<IReadOnlyList<PolicyEvent>>
+
         /// Validates incoming commands and converts them to events that are stored in the database.
         abstract member Handle: command: PolicyCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
 
@@ -394,6 +406,9 @@ module Interfaces =
 
         /// Returns checkpoints for this review target.
         abstract member GetCheckpoints: correlationId: CorrelationId -> Task<IReadOnlyList<ReviewCheckpoint>>
+
+        /// Returns the list of events handled by this review.
+        abstract member GetEvents: correlationId: CorrelationId -> Task<IReadOnlyList<ReviewEvent>>
 
         /// Validates incoming commands and converts them to events that are stored in the database.
         abstract member Handle: command: ReviewCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
@@ -524,6 +539,9 @@ module Interfaces =
 
         /// Returns the object storage provider for this repository.
         abstract member GetObjectStorageProvider: correlationId: CorrelationId -> Task<ObjectStorageProvider>
+
+        /// Returns the list of events handled by this repository.
+        abstract member GetEvents: correlationId: CorrelationId -> Task<IReadOnlyList<RepositoryEvent>>
 
         /// Processes commands by checking that they're valid, and then converting them into events.
         abstract member Handle: command: RepositoryCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>

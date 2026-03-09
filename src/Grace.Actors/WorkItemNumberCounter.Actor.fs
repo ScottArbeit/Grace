@@ -17,10 +17,10 @@ module WorkItemNumberCounter =
     [<CLIMutable>]
     type WorkItemNumberCounterState = { NextWorkItemNumber: WorkItemNumber }
 
-    type WorkItemNumberCounterActor(
-        [<PersistentState(StateName.WorkItemNumberCounter, Grace.Shared.Constants.GraceActorStorage)>]
-        state: IPersistentState<WorkItemNumberCounterState>
-    ) =
+    type WorkItemNumberCounterActor
+        (
+            [<PersistentState(StateName.WorkItemNumberCounter, Grace.Shared.Constants.GraceActorStorage)>] state: IPersistentState<WorkItemNumberCounterState>
+        ) =
         inherit Grain()
 
         static let actorName = ActorName.WorkItemNumberCounter
@@ -33,8 +33,7 @@ module WorkItemNumberCounter =
             let activateStartTime = getCurrentInstant ()
             logActorActivation log this.IdentityString activateStartTime (getActorActivationMessage state.RecordExists)
 
-            if not state.RecordExists then
-                state.State <- { NextWorkItemNumber = 1L }
+            if not state.RecordExists then state.State <- { NextWorkItemNumber = 1L }
 
             Task.CompletedTask
 
@@ -43,7 +42,8 @@ module WorkItemNumberCounter =
                 task {
                     this.correlationId <- correlationId
 
-                    if not state.RecordExists && state.State.NextWorkItemNumber <= 0L then
+                    if not state.RecordExists
+                       && state.State.NextWorkItemNumber <= 0L then
                         state.State <- { NextWorkItemNumber = 1L }
 
                     let nextWorkItemNumber =

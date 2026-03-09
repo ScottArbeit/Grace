@@ -105,7 +105,9 @@ module WatchTests =
 
         match result with
         | Ok token -> Assert.Fail($"Expected missing token error, got token: {token}")
-        | Error error -> error |> should contain "No access token is available."
+        | Error error ->
+            error
+            |> should contain "No access token is available."
 
     [<Test>]
     let ``resolveSignalRAccessTokenResult includes underlying auth error`` () =
@@ -114,7 +116,9 @@ module WatchTests =
         match result with
         | Ok token -> Assert.Fail($"Expected auth error, got token: {token}")
         | Error error ->
-            error |> should contain "Unable to acquire an access token for SignalR notifications:"
+            error
+            |> should contain "Unable to acquire an access token for SignalR notifications:"
+
             error |> should contain "test error"
 
     [<Test>]
@@ -122,8 +126,14 @@ module WatchTests =
         withTempRepo (fun _ ->
             clearWatchAuthEnv (fun () ->
                 let exitCode, output = runWithCapturedOutput [| "watch" |]
+
                 if exitCode <> -1 then
-                    Assert.Fail($"Expected watch to exit with -1 when auth is missing. Actual: {exitCode}.{Environment.NewLine}Output:{Environment.NewLine}{output}")
-                output |> should contain "Unable to acquire an access token for SignalR"
-                output |> should contain "Authentication is not configured."
-            ))
+                    Assert.Fail(
+                        $"Expected watch to exit with -1 when auth is missing. Actual: {exitCode}.{Environment.NewLine}Output:{Environment.NewLine}{output}"
+                    )
+
+                output
+                |> should contain "Unable to acquire an access token for SignalR"
+
+                output
+                |> should contain "Authentication is not configured."))

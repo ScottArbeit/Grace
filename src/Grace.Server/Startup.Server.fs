@@ -20,7 +20,7 @@ open Grace.Server.Security
 open Grace.Server.Security.TestAuth
 open Grace.Shared.Converters
 open Grace.Shared.Parameters
-open Grace.Types.Automation
+open Grace.Types.ExternalEvents
 open Grace.Types.Types
 open Grace.Types.Authorization
 open Grace.Types.PersonalAccessToken
@@ -38,6 +38,7 @@ open Microsoft.Extensions.DependencyInjection
 open Microsoft.Extensions.Hosting
 open Microsoft.Extensions.Hosting.Internal
 open Microsoft.Extensions.Logging
+open Microsoft.Extensions.Logging.Abstractions
 open Microsoft.OpenApi
 open NodaTime
 open OpenTelemetry
@@ -224,7 +225,13 @@ module Application =
         let activeAgentSessionsByAgentKey = ConcurrentDictionary<string, AgentSessionInfo>()
         let activeAgentSessionsBySessionId = ConcurrentDictionary<string, string>()
         let agentSessionOperationCache = ConcurrentDictionary<string, AgentSessionOperationResult>()
-        let bootstrappedAgentKeys = ConcurrentDictionary<string, byte>()
+
+        let agentSessionLog =
+            (if isNull ApplicationContext.loggerFactory then
+                 (NullLoggerFactory.Instance :> ILoggerFactory)
+             else
+                 ApplicationContext.loggerFactory)
+                .CreateLogger("Startup.Server.AgentSession")
 
         let tryParseGuid (value: string) =
             let mutable parsed = Guid.Empty
@@ -235,6 +242,30 @@ module Application =
                 Some parsed
             else
                 Option.None
+
+        let tryGetMetadataGuid (propertyName: string) (metadata: EventMetadata) =
+            match metadata.Properties.TryGetValue(propertyName) with
+            | true, value -> tryParseGuid value
+            | _ -> Option.None
+
+        let tryResolveWorkItemIdentity (workItemIdOrNumber: string) =
+            match tryParseGuid workItemIdOrNumber with
+            | Some workItemId -> Some workItemId, Option.None
+            | Option.None when String.IsNullOrWhiteSpace workItemIdOrNumber -> Option.None, Option.None
+            | None ->
+                let raw = workItemIdOrNumber.Trim()
+                let mutable parsedNumber = 0L
+
+                let kind =
+                    if
+                        Int64.TryParse(raw, &parsedNumber)
+                        && parsedNumber > 0L
+                    then
+                        "number"
+                    else
+                        "opaque"
+
+                Option.None, Some { Raw = raw; Kind = kind }
 
         let resolveRepositoryId (graceIds: GraceIds) (repositoryIdFromParameters: string) =
             if graceIds.RepositoryId <> RepositoryId.Empty then
@@ -313,14 +344,82 @@ module Application =
 
         let emitAgentSessionEvent
             (context: HttpContext)
-            (eventType: AutomationEventType)
+            (eventName: CanonicalEventName)
             (metadata: EventMetadata)
             (operationResult: AgentSessionOperationResult)
             =
             task {
-                match EventingPublisher.tryCreateAgentSessionEnvelope eventType metadata operationResult with
-                | Some envelope -> do! Notification.routeAutomationEvent context.RequestServices envelope
-                | None -> ()
+                let session = operationResult.Session
+                let workItemId, workItemLocator = tryResolveWorkItemIdentity session.WorkItemIdOrNumber
+
+                let runtimeSource =
+                    {
+                        EventName = CanonicalEventName.toString eventName
+                        OccurredAt = metadata.Timestamp
+                        CorrelationId = metadata.CorrelationId
+                        OwnerId =
+                            tryGetMetadataGuid (nameof OwnerId) metadata
+                            |> Option.defaultValue OwnerId.Empty
+                        OrganizationId =
+                            tryGetMetadataGuid (nameof OrganizationId) metadata
+                            |> Option.defaultValue OrganizationId.Empty
+                        RepositoryId =
+                            tryGetMetadataGuid (nameof RepositoryId) metadata
+                            |> Option.defaultValue RepositoryId.Empty
+                        SessionId = session.SessionId
+                        AgentId = session.AgentId
+                        BranchId = tryGetMetadataGuid (nameof BranchId) metadata
+                        WorkItemId = workItemId
+                        WorkItemLocator = workItemLocator
+                        PromotionSetId = tryParseGuid session.PromotionSetId
+                        LifecycleState = getDiscriminatedUnionCaseName session.LifecycleState
+                        Message =
+                            if eventName = CanonicalEventName.AgentWorkStopped
+                               && (String.IsNullOrWhiteSpace operationResult.Message
+                                   |> not) then
+                                Some operationResult.Message
+                            else
+                                Option.None
+                        OperationId =
+                            if String.IsNullOrWhiteSpace operationResult.OperationId then
+                                Option.None
+                            else
+                                Some operationResult.OperationId
+                        WasIdempotentReplay = operationResult.WasIdempotentReplay
+                        Source =
+                            if String.IsNullOrWhiteSpace session.Source then
+                                Option.None
+                            else
+                                Some session.Source
+                        Result =
+                            if eventName = CanonicalEventName.AgentWorkStopped then
+                                Some
+                                    {
+                                        Message = operationResult.Message
+                                        OperationId = operationResult.OperationId
+                                        WasIdempotentReplay = operationResult.WasIdempotentReplay
+                                    }
+                            else
+                                Option.None
+                    }
+
+                match ExternalEventPublication.buildRuntimeEnvelope runtimeSource with
+                | Grace.Server.ExternalEvents.Published envelope ->
+                    ExternalEventPublication.rememberRuntimeSource envelope runtimeSource
+
+                    match! ExternalEventPublication.publishCanonicalEvent envelope with
+                    | Ok () -> do! Notification.routeExternalEvent context.RequestServices envelope
+                    | Error _ -> ()
+                | Grace.Server.ExternalEvents.InternalOnly _ -> ()
+                | Grace.Server.ExternalEvents.Failed failure ->
+                    agentSessionLog.LogWarning(
+                        "{CurrentInstant}: Node: {HostName}; CorrelationId: {CorrelationId}; Failed building runtime canonical event {RawEventCase}: {Reason}",
+                        getCurrentInstantExtended (),
+                        getMachineName,
+                        failure.CorrelationId,
+                        failure.RawEventCase,
+                        failure.Reason
+                    )
             }
 
         let tryGetActiveSessionByAgentKey (agentKey: string) =
@@ -454,10 +553,7 @@ module Application =
 
                                     let metadata = buildAgentSessionMetadata context repositoryId (parameters :> Common.AgentSessionParameters) newSession
 
-                                    do! emitAgentSessionEvent context AutomationEventType.AgentWorkStarted metadata operationResult
-
-                                    if bootstrappedAgentKeys.TryAdd(agentKey, 0uy) then
-                                        do! emitAgentSessionEvent context AutomationEventType.AgentBootstrapped metadata operationResult
+                                    do! emitAgentSessionEvent context CanonicalEventName.AgentWorkStarted metadata operationResult
 
                                     return!
                                         context
@@ -546,7 +642,7 @@ module Application =
 
                                     let metadata = buildAgentSessionMetadata context repositoryId (parameters :> Common.AgentSessionParameters) stoppedSession
 
-                                    do! emitAgentSessionEvent context AutomationEventType.AgentWorkStopped metadata operationResult
+                                    do! emitAgentSessionEvent context CanonicalEventName.AgentWorkStopped metadata operationResult
 
                                     return!
                                         context
@@ -727,6 +823,61 @@ module Application =
                         return!
                             context
                             |> Services.result200Ok (GraceReturnValue.Create result correlationId)
+                }
+
+        let resendExternalEvent: HttpHandler =
+            fun (_next: HttpFunc) (context: HttpContext) ->
+                task {
+                    let correlationId = Services.getCorrelationId context
+
+                    let! parameters =
+                        context
+                        |> Services.parse<ExternalEvent.ResendExternalEventParameters>
+
+                    if String.IsNullOrWhiteSpace parameters.EventId then
+                        return!
+                            context
+                            |> Services.result400BadRequest (GraceError.Create "EventId is required to resend a canonical external event." correlationId)
+                    else
+                        match ExternalEventPublication.rebuildForReplay parameters.EventId with
+                        | None ->
+                            return!
+                                context
+                                |> Services.result400BadRequest (
+                                    GraceError.Create ($"No replayable source was found for eventId '{parameters.EventId}'.") correlationId
+                                )
+                        | Some (Grace.Server.ExternalEvents.InternalOnly rawEventCase) ->
+                            return!
+                                context
+                                |> Services.result400BadRequest (
+                                    GraceError.Create
+                                        ($"EventId '{parameters.EventId}' now resolves to internal-only source '{rawEventCase}' and cannot be resent.")
+                                        correlationId
+                                )
+                        | Some (Grace.Server.ExternalEvents.Failed failure) ->
+                            return!
+                                context
+                                |> Services.result400BadRequest (
+                                    GraceError.Create
+                                        ($"Failed rebuilding canonical external event '{parameters.EventId}': {failure.Reason}")
+                                        failure.CorrelationId
+                                )
+                        | Some (Grace.Server.ExternalEvents.Published envelope) ->
+                            match! ExternalEventPublication.publishCanonicalEvent envelope with
+                            | Ok () ->
+                                do! Notification.routeExternalEvent context.RequestServices envelope
+
+                                return!
+                                    context
+                                    |> Services.result200Ok (
+                                        GraceReturnValue.Create $"Canonical external event '{parameters.EventId}' was resent." correlationId
+                                    )
+                            | Error error ->
+                                return!
+                                    context
+                                    |> Services.result500ServerError (
+                                        GraceError.Create ($"Failed publishing canonical external event '{parameters.EventId}': {error}") correlationId
+                                    )
                 }
 
         let endpoints =
@@ -1283,6 +1434,12 @@ module Application =
 
                                route "/create" Reminder.Create
                                |> addMetadata typeof<Reminder.CreateReminderParameters> ]
+                    ]
+                subRoute
+                    "/external-event"
+                    [
+                        POST [ route "/resend" (composeHandlers requireSystemAdmin resendExternalEvent)
+                               |> addMetadata typeof<ExternalEvent.ResendExternalEventParameters> ]
                     ]
                 subRoute
                     "/admin"

@@ -175,6 +175,8 @@ module WorkItem =
                         let! cmd = command parameters
                         let actorProxy = WorkItem.CreateActorProxy workItemId graceIds.RepositoryId correlationId
                         let metadata = createMetadata context
+                        metadata.Properties[ nameof WorkItemId ] <- $"{workItemId}"
+                        metadata.Properties[ "ActorId" ] <- $"{workItemId}"
 
                         match! actorProxy.Handle cmd metadata with
                         | Ok graceReturnValue ->
@@ -521,7 +523,8 @@ module WorkItem =
             | ex -> return Error(GraceError.Create $"Failed to upload artifact content: {ex.Message}" correlationId)
         }
 
-    let private withCorrelationId (metadata: EventMetadata) (correlationId: CorrelationId) = { metadata with CorrelationId = correlationId }
+    let private withCorrelationId (metadata: EventMetadata) (correlationId: CorrelationId) =
+        { metadata with CorrelationId = correlationId; Properties = Dictionary<string, string>(metadata.Properties) }
 
     let private addSummaryCorrelationId (baseCorrelationId: CorrelationId) (segment: string) = $"{baseCorrelationId}:add-summary:{segment}"
 
@@ -557,6 +560,9 @@ module WorkItem =
         =
         task {
             let artifactId = buildDeterministicAddSummaryArtifactId graceIds.RepositoryId workItemId metadata.CorrelationId
+            metadata.Properties[ nameof WorkItemId ] <- $"{workItemId}"
+            metadata.Properties[ nameof ArtifactId ] <- $"{artifactId}"
+            metadata.Properties[ "ActorId" ] <- $"{artifactId}"
 
             let contentBytes = Encoding.UTF8.GetBytes(content)
             let createdAt = metadata.Timestamp
@@ -660,6 +666,8 @@ module WorkItem =
                             |> Async.AwaitTask
                     | Ok workItemId ->
                         let requestMetadata = createMetadata context
+                        requestMetadata.Properties[ nameof WorkItemId ] <- $"{workItemId}"
+                        requestMetadata.Properties[ "ActorId" ] <- $"{workItemId}"
                         let workItemActorProxy = WorkItem.CreateActorProxy workItemId graceIds.RepositoryId correlationId
                         let repositoryActorProxy = Repository.CreateActorProxy graceIds.OrganizationId graceIds.RepositoryId correlationId
 
@@ -825,6 +833,8 @@ module WorkItem =
                 if validationsPassed then
                     let workItemId = Guid.Parse(parameters.WorkItemId)
                     let metadata = createMetadata context
+                    metadata.Properties[ nameof WorkItemId ] <- $"{workItemId}"
+                    metadata.Properties[ "ActorId" ] <- $"{workItemId}"
                     let parameterDictionary = getParametersAsDictionary parameters
 
                     let! createResult =
@@ -1527,6 +1537,8 @@ module WorkItem =
                     | Ok workItemId ->
                         let actorProxy = WorkItem.CreateActorProxy workItemId graceIds.RepositoryId correlationId
                         let metadata = createMetadata context
+                        metadata.Properties[ nameof WorkItemId ] <- $"{workItemId}"
+                        metadata.Properties[ "ActorId" ] <- $"{workItemId}"
                         let commands = buildUpdateCommands parameters
 
                         if commands.IsEmpty then
@@ -1740,6 +1752,8 @@ module WorkItem =
                                 i <- i + 1
 
                             let metadata = createMetadata context
+                            metadata.Properties[ nameof WorkItemId ] <- $"{workItemId}"
+                            metadata.Properties[ "ActorId" ] <- $"{workItemId}"
                             let removableArtifactIdsArray = removableArtifactIds |> Seq.toArray
                             let mutable removedCount = 0
                             let mutable removeError: GraceError option = None

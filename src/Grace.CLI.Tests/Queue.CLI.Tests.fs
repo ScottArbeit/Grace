@@ -96,7 +96,6 @@ module QueueCommandTests =
 
         let hasRetryError =
             parseResult.Errors
-            |> Seq.exists (fun error ->
-                error.Message.Contains("Unrecognized command or argument 'retry'", StringComparison.OrdinalIgnoreCase))
+            |> Seq.exists (fun error -> error.Message.Contains("Unrecognized command or argument 'retry'", StringComparison.OrdinalIgnoreCase))
 
         Assert.That(hasRetryError, Is.True)

@@ -13,7 +13,7 @@ open Grace.Shared.AzureEnvironment
 open Grace.Shared.Constants
 open Grace.Shared.Utilities
 open Grace.Types
-open Grace.Types.Automation
+open Grace.Types.ExternalEvents
 open Grace.Types.Events
 open Grace.Types.Queue
 open Grace.Types.Reference
@@ -37,6 +37,12 @@ module Notification =
     let log = loggerFactory.CreateLogger("Notification.Server")
     let private defaultAzureCredential = lazy (DefaultAzureCredential())
 
+    let private getRepositoryGroupKey (repositoryId: RepositoryId option) =
+        repositoryId
+        |> Option.filter (fun value -> value <> RepositoryId.Empty)
+        |> Option.map string
+        |> Option.defaultValue String.Empty
+
     type IGraceClientConnection =
         abstract member RegisterRepository: RepositoryId -> Task
         abstract member RegisterParentBranch: BranchId -> BranchId -> Task
@@ -44,7 +50,7 @@ module Notification =
         abstract member NotifyOnCommit: BranchName * BranchName * BranchId * ReferenceId -> Task
         abstract member NotifyOnCheckpoint: BranchName * BranchName * BranchId * ReferenceId -> Task
         abstract member NotifyOnSave: BranchName * BranchName * BranchId * ReferenceId -> Task
-        abstract member NotifyAutomationEvent: AutomationEventEnvelope -> Task
+        abstract member NotifyExternalEvent: CanonicalExternalEventEnvelope -> Task
         abstract member ServerToClientMessage: string -> Task
 
     type NotificationHub() =
@@ -175,72 +181,64 @@ module Notification =
             }
             :> Task
 
-        member this.NotifyAutomationEvent(envelope: AutomationEventEnvelope) =
+        member this.NotifyExternalEvent(envelope: CanonicalExternalEventEnvelope) =
             task {
                 if not <| isNull (this.Clients) then
-                    let groupKey =
-                        if envelope.RepositoryId = RepositoryId.Empty then
-                            String.Empty
-                        else
-                            $"{envelope.RepositoryId}"
+                    let groupKey = getRepositoryGroupKey envelope.RepositoryId
 
                     if String.IsNullOrWhiteSpace groupKey then
-                        do! this.Clients.All.NotifyAutomationEvent(envelope)
+                        do! this.Clients.All.NotifyExternalEvent(envelope)
                     else
                         do!
                             this
                                 .Clients
                                 .Group(groupKey)
-                                .NotifyAutomationEvent(envelope)
+                                .NotifyExternalEvent(envelope)
                 else
                     logToConsole $"No SignalR clients connected."
             }
             :> Task
 
-    let routeAutomationEvent (serviceProvider: IServiceProvider) (envelope: AutomationEventEnvelope) =
+    let routeExternalEvent (serviceProvider: IServiceProvider) (envelope: CanonicalExternalEventEnvelope) =
         task {
             try
                 if isNull serviceProvider then
                     log.LogWarning(
-                        "{CurrentInstant}: Node: {HostName}; No service provider available while routing automation event {EventType}.",
+                        "{CurrentInstant}: Node: {HostName}; No service provider available while routing external event {EventName}.",
                         getCurrentInstantExtended (),
                         getMachineName,
-                        envelope.EventType
+                        envelope.EventName
                     )
                 else
                     let hubContext = serviceProvider.GetService<IHubContext<NotificationHub, IGraceClientConnection>>()
 
                     if isNull hubContext then
                         log.LogWarning(
-                            "{CurrentInstant}: Node: {HostName}; No SignalR hub context available while routing automation event {EventType}.",
+                            "{CurrentInstant}: Node: {HostName}; No SignalR hub context available while routing external event {EventName}",
                             getCurrentInstantExtended (),
                             getMachineName,
-                            envelope.EventType
+                            envelope.EventName
                         )
                     else
-                        let groupKey =
-                            if envelope.RepositoryId = RepositoryId.Empty then
-                                String.Empty
-                            else
-                                $"{envelope.RepositoryId}"
+                        let groupKey = getRepositoryGroupKey envelope.RepositoryId
 
                         if String.IsNullOrWhiteSpace groupKey then
-                            do! hubContext.Clients.All.NotifyAutomationEvent(envelope)
+                            do! hubContext.Clients.All.NotifyExternalEvent(envelope)
                         else
                             do!
                                 hubContext
                                     .Clients
                                     .Group(groupKey)
-                                    .NotifyAutomationEvent(envelope)
+                                    .NotifyExternalEvent(envelope)
             with
             | ex ->
                 log.LogError(
                     ex,
-                    "{CurrentInstant}: Node: {HostName}; CorrelationId: {CorrelationId}; Failed routing automation event {EventType}.",
+                    "{CurrentInstant}: Node: {HostName}; CorrelationId: {CorrelationId}; Failed routing external event {EventName}.",
                     getCurrentInstantExtended (),
                     getMachineName,
                     envelope.CorrelationId,
-                    envelope.EventType
+                    envelope.EventName
                 )
         }
 
@@ -394,23 +392,19 @@ module Notification =
                 | ReferenceLinkType.PromotionSetTerminal promotionSetId -> Some promotionSetId
                 | _ -> None)
 
-        let private emitAutomationEvent (hubContext: IHubContext<NotificationHub, IGraceClientConnection>) (envelope: AutomationEventEnvelope) =
+        let private emitExternalEvent (hubContext: IHubContext<NotificationHub, IGraceClientConnection>) (envelope: CanonicalExternalEventEnvelope) =
             task {
                 if not <| isNull hubContext then
-                    let groupKey =
-                        if envelope.RepositoryId = RepositoryId.Empty then
-                            String.Empty
-                        else
-                            $"{envelope.RepositoryId}"
+                    let groupKey = getRepositoryGroupKey envelope.RepositoryId
 
                     if String.IsNullOrWhiteSpace groupKey then
-                        do! hubContext.Clients.All.NotifyAutomationEvent(envelope)
+                        do! hubContext.Clients.All.NotifyExternalEvent(envelope)
                     else
                         do!
                             hubContext
                                 .Clients
                                 .Group(groupKey)
-                                .NotifyAutomationEvent(envelope)
+                                .NotifyExternalEvent(envelope)
             }
 
         let private getPromotionSetContext (repositoryId: RepositoryId) (promotionSetId: PromotionSetId) (correlationId: CorrelationId) =
@@ -426,7 +420,7 @@ module Notification =
                     return None
             }
 
-        let private tryResolveAutomationBranchContext (graceEvent: GraceEvent) (correlationId: CorrelationId) =
+        let private tryResolveValidationContext (graceEvent: GraceEvent) (correlationId: CorrelationId) =
             task {
                 match graceEvent with
                 | QueueEvent queueEvent ->
@@ -487,13 +481,13 @@ module Notification =
 
         let private emitValidationRequestedEvents
             (hubContext: IHubContext<NotificationHub, IGraceClientConnection>)
-            (sourceEnvelope: AutomationEventEnvelope)
+            (sourceEnvelope: CanonicalExternalEventEnvelope)
             (graceEvent: GraceEvent)
             =
             task {
                 let correlationId = sourceEnvelope.CorrelationId
 
-                let! context = tryResolveAutomationBranchContext graceEvent correlationId
+                let! context = tryResolveValidationContext graceEvent correlationId
 
                 match context with
                 | None -> ()
@@ -502,17 +496,24 @@ module Notification =
 
                     let matchingValidationSets =
                         validationSets
-                        |> List.filter (fun validationSet ->
-                            validationSet.Rules
-                            |> List.exists (fun rule ->
-                                rule.EventTypes
-                                |> List.contains sourceEnvelope.EventType
-                                && matchesBranchGlob branchName rule.BranchNameGlob))
+                        |> List.choose (fun validationSet ->
+                            let matchedRules =
+                                validationSet.Rules
+                                |> List.indexed
+                                |> List.choose (fun (ruleIndex, rule) ->
+                                    if rule.EventNames
+                                       |> List.contains sourceEnvelope.EventName
+                                       && matchesBranchGlob branchName rule.BranchNameGlob then
+                                        Some { RuleIndex = ruleIndex; EventNames = rule.EventNames; BranchNameGlob = rule.BranchNameGlob }
+                                    else
+                                        Option.None)
+
+                            if matchedRules.IsEmpty then Option.None else Some(validationSet, matchedRules))
 
                     let mutable index = 0
 
                     while index < matchingValidationSets.Length do
-                        let validationSet = matchingValidationSets[index]
+                        let validationSet, matchedRules = matchingValidationSets[index]
                         let mutable validationIndex = 0
 
                         while validationIndex < validationSet.Validations.Length do
@@ -520,30 +521,32 @@ module Notification =
 
                             match validation.ExecutionMode with
                             | ValidationExecutionMode.AsyncCallback ->
-                                let payload =
-                                    {|
-                                        validationSetId = validationSet.ValidationSetId
-                                        promotionSetId = promotionSetId
-                                        stepsComputationAttempt = stepsComputationAttempt
-                                        targetBranchId = branchId
-                                        targetBranchName = branchName
-                                        validationName = validation.Name
-                                        validationVersion = validation.Version
-                                        sourceEventType = sourceEnvelope.EventType
-                                    |}
+                                match
+                                    ExternalEventPublication.buildValidationRequestedEnvelope
+                                        validationSet
+                                        sourceEnvelope
+                                        branchId
+                                        branchName
+                                        promotionSetId
+                                        stepsComputationAttempt
+                                        matchedRules
+                                    with
+                                | Grace.Server.ExternalEvents.Published envelope ->
+                                    ExternalEventPublication.rememberEnvelopeSource envelope
 
-                                let validationRequestedEnvelope =
-                                    AutomationEventEnvelope.Create
-                                        AutomationEventType.ValidationRequested
-                                        (getCurrentInstant ())
-                                        correlationId
-                                        validationSet.OwnerId
-                                        validationSet.OrganizationId
-                                        validationSet.RepositoryId
-                                        $"{validationSet.ValidationSetId}"
-                                        (serialize payload)
-
-                                do! emitAutomationEvent hubContext validationRequestedEnvelope
+                                    match! ExternalEventPublication.publishCanonicalEvent envelope with
+                                    | Ok () -> do! emitExternalEvent hubContext envelope
+                                    | Error _ -> ()
+                                | Grace.Server.ExternalEvents.InternalOnly _ -> ()
+                                | Grace.Server.ExternalEvents.Failed failure ->
+                                    log.LogWarning(
+                                        "{CurrentInstant}: Node: {HostName}; CorrelationId: {CorrelationId}; Failed building validation-requested event for ValidationSetId {ValidationSetId}: {Reason}",
+                                        getCurrentInstantExtended (),
+                                        getMachineName,
+                                        failure.CorrelationId,
+                                        validationSet.ValidationSetId,
+                                        failure.Reason
+                                    )
                             | ValidationExecutionMode.Synchronous ->
                                 let validationResultId = Guid.NewGuid()
                                 let validationResultActorProxy = ValidationResult.CreateActorProxy validationResultId repositoryId correlationId
@@ -565,7 +568,7 @@ module Notification =
                                         Output =
                                             {
                                                 Status = ValidationStatus.Pass
-                                                Summary = $"Synchronous validation '{validation.Name}' recorded automatically from {sourceEnvelope.EventType}."
+                                                Summary = $"Synchronous validation '{validation.Name}' recorded automatically from {sourceEnvelope.EventName}."
                                                 ArtifactIds = []
                                             }
                                         OnBehalfOf = [ UserId GraceSystemUser ]
@@ -947,22 +950,25 @@ module Notification =
                         correlationId
                     )
 
-                match EventingPublisher.tryCreateEnvelope graceEvent with
-                | Some envelope ->
-                    do! emitAutomationEvent hubContext envelope
+                match ExternalEvents.buildGraceEvent graceEvent with
+                | Grace.Server.ExternalEvents.Published envelope ->
+                    ExternalEventPublication.rememberGraceEventSource envelope graceEvent
 
-                    if envelope.EventType = AutomationEventType.PromotionSetStepsUpdated then
-                        let recomputeSucceededEnvelope =
-                            { envelope with
-                                EventId = Guid.NewGuid()
-                                EventType = AutomationEventType.PromotionSetRecomputeSucceeded
-                                EventTime = getCurrentInstant ()
-                            }
-
-                        do! emitAutomationEvent hubContext recomputeSucceededEnvelope
-
-                    do! emitValidationRequestedEvents hubContext envelope graceEvent
-                | None -> ()
+                    match! ExternalEventPublication.publishCanonicalEvent envelope with
+                    | Ok () ->
+                        do! emitExternalEvent hubContext envelope
+                        do! emitValidationRequestedEvents hubContext envelope graceEvent
+                    | Error _ -> ()
+                | Grace.Server.ExternalEvents.InternalOnly _ -> ()
+                | Grace.Server.ExternalEvents.Failed failure ->
+                    log.LogWarning(
+                        "{CurrentInstant}: Node: {HostName}; CorrelationId: {CorrelationId}; Failed building canonical external event {RawEventCase}: {Reason}",
+                        getCurrentInstantExtended (),
+                        getMachineName,
+                        failure.CorrelationId,
+                        failure.RawEventCase,
+                        failure.Reason
+                    )
 
             //return! setStatusCode StatusCodes.Status204NoContent next context
             }
@@ -990,11 +996,24 @@ module Notification =
             let processGraceEvent (args: ProcessMessageEventArgs) =
                 task {
                     try
-                        use bodyStream = args.Message.Body.ToStream()
-                        let graceEvent = JsonSerializer.Deserialize<GraceEvent>(bodyStream, options = Constants.JsonSerializerOptions)
+                        let isCanonicalExternalMessage =
+                            (not (String.IsNullOrWhiteSpace args.Message.Subject)
+                             && args.Message.Subject.StartsWith("grace.", StringComparison.OrdinalIgnoreCase))
+                            || args.Message.ApplicationProperties.ContainsKey("eventName")
 
-                        do! handleEvent graceEvent
-                        do! args.CompleteMessageAsync(args.Message, args.CancellationToken)
+                        if isCanonicalExternalMessage then
+                            subscriptionLog.LogDebug(
+                                "Ignoring canonical external-event message {MessageId} on the raw GraceEvent subscriber.",
+                                args.Message.MessageId
+                            )
+
+                            do! args.CompleteMessageAsync(args.Message, args.CancellationToken)
+                        else
+                            use bodyStream = args.Message.Body.ToStream()
+                            let graceEvent = JsonSerializer.Deserialize<GraceEvent>(bodyStream, options = Constants.JsonSerializerOptions)
+
+                            do! handleEvent graceEvent
+                            do! args.CompleteMessageAsync(args.Message, args.CancellationToken)
                     with
                     | ex ->
                         subscriptionLog.LogError(

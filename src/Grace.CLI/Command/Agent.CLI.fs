@@ -9,7 +9,7 @@ open Grace.Shared.Client.Configuration
 open Grace.Shared.Parameters.Common
 open Grace.Shared.Utilities
 open Grace.Shared.Validation.Errors
-open Grace.Types.Automation
+open Grace.Types.ExternalEvents
 open Grace.Types.Types
 open Spectre.Console
 open System

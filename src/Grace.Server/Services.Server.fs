@@ -61,8 +61,32 @@ module Services =
 
         let graceIds = getGraceIds context
 
+        if graceIds.OwnerId <> OwnerId.Empty then
+            metadata.Properties[ nameof OwnerId ] <- $"{graceIds.OwnerId}"
+
+        if graceIds.OrganizationId <> OrganizationId.Empty then
+            metadata.Properties[ nameof OrganizationId ] <- $"{graceIds.OrganizationId}"
+
         if graceIds.RepositoryId <> RepositoryId.Empty then
             metadata.Properties[ nameof RepositoryId ] <- $"{graceIds.RepositoryId}"
+
+        if graceIds.BranchId <> BranchId.Empty then
+            metadata.Properties[ nameof BranchId ] <- $"{graceIds.BranchId}"
+
+        let actorId =
+            if graceIds.BranchId <> BranchId.Empty then
+                $"{graceIds.BranchId}"
+            elif graceIds.RepositoryId <> RepositoryId.Empty then
+                $"{graceIds.RepositoryId}"
+            elif graceIds.OrganizationId <> OrganizationId.Empty then
+                $"{graceIds.OrganizationId}"
+            elif graceIds.OwnerId <> OwnerId.Empty then
+                $"{graceIds.OwnerId}"
+            else
+                String.Empty
+
+        if String.IsNullOrWhiteSpace actorId |> not then
+            metadata.Properties[ "ActorId" ] <- actorId
 
         metadata
 

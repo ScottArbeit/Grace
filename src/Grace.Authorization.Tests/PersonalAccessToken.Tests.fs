@@ -18,7 +18,7 @@ type PersonalAccessTokenTests() =
 
         match tryParseToken token with
         | None -> Assert.Fail("Expected token to parse.")
-        | Some(parsedUserId, parsedTokenId, parsedSecret) ->
+        | Some (parsedUserId, parsedTokenId, parsedSecret) ->
             Assert.That(parsedUserId, Is.EqualTo(userId))
             Assert.That(parsedTokenId, Is.EqualTo(tokenId))
             Assert.That(parsedSecret, Is.EquivalentTo(secret))
@@ -38,8 +38,20 @@ type PersonalAccessTokenTests() =
     member _.RejectsMalformedTokens() =
         let tokenId = Guid.NewGuid().ToString("N")
         let goodUser = "user-123"
-        let goodSecret = Convert.ToBase64String(Array.init 32 (fun i -> byte (i + 1))).TrimEnd('=').Replace('+', '-').Replace('/', '_')
-        let goodUserB64 = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(goodUser)).TrimEnd('=').Replace('+', '-').Replace('/', '_')
+
+        let goodSecret =
+            Convert
+                .ToBase64String(Array.init 32 (fun i -> byte (i + 1)))
+                .TrimEnd('=')
+                .Replace('+', '-')
+                .Replace('/', '_')
+
+        let goodUserB64 =
+            Convert
+                .ToBase64String(System.Text.Encoding.UTF8.GetBytes(goodUser))
+                .TrimEnd('=')
+                .Replace('+', '-')
+                .Replace('/', '_')
 
         let malformed =
             [

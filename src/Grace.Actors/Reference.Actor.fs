@@ -239,6 +239,12 @@ module Reference =
                 this.correlationId <- correlationId
                 referenceDto |> returnTask
 
+            member this.GetEvents correlationId =
+                this.correlationId <- correlationId
+
+                state.State :> IReadOnlyList<ReferenceEvent>
+                |> returnTask
+
             member this.GetReferenceType correlationId =
                 this.correlationId <- correlationId
                 referenceDto.ReferenceType |> returnTask

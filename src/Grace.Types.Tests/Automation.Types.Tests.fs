@@ -1,55 +1,108 @@
 namespace Grace.Types.Tests
 
-open Grace.Shared
-open Grace.Shared.Parameters.Common
-open Grace.Types.Automation
+open Grace.Types.ExternalEvents
+open Grace.Types.Types
+open NodaTime
 open NUnit.Framework
 open System
+open System.Text.Json
 
 [<Parallelizable(ParallelScope.All)>]
-type AutomationTypesTests() =
-    [<Test>]
-    member _.AutomationEventTypeIncludesAgentLifecycleCases() =
-        let eventTypes = Utilities.listCases<AutomationEventType>() |> Set.ofArray
-
-        Assert.Multiple(fun () ->
-            Assert.That(eventTypes.Contains("AgentWorkStarted"), Is.True)
-            Assert.That(eventTypes.Contains("AgentWorkStopped"), Is.True)
-            Assert.That(eventTypes.Contains("AgentSummaryAdded"), Is.True)
-            Assert.That(eventTypes.Contains("AgentBootstrapped"), Is.True)
-        )
+type CanonicalExternalEventEnvelopeTests() =
 
     [<Test>]
-    member _.StartAgentSessionParametersDefaultRequiredFieldsAreEmpty() =
-        let parameters = StartAgentSessionParameters()
+    member _.PublishedCanonicalEventNamesExcludeBootstrapped() =
+        let publishedNames = CanonicalEventName.publishedNames |> Set.ofArray
 
-        Assert.Multiple(fun () ->
-            Assert.That(parameters.CorrelationId, Is.EqualTo(String.Empty))
-            Assert.That(parameters.WorkItemIdOrNumber, Is.EqualTo(String.Empty))
-            Assert.That(parameters.OperationId, Is.EqualTo(String.Empty))
-            Assert.That(parameters.AgentId, Is.EqualTo(String.Empty))
-        )
+        Assert.That(publishedNames.Contains("grace.agent.work-started"), Is.True)
+        Assert.That(publishedNames.Contains("grace.agent.work-stopped"), Is.True)
+        Assert.That(publishedNames.Contains("grace.agent.bootstrapped"), Is.False)
 
     [<Test>]
-    member _.StartAgentSessionParametersRoundTripsSerialization() =
-        let parameters = StartAgentSessionParameters()
-        parameters.CorrelationId <- "corr-session-start"
-        parameters.OwnerId <- "owner-1"
-        parameters.OrganizationId <- "org-1"
-        parameters.RepositoryId <- "repo-1"
-        parameters.AgentId <- "agent-1"
-        parameters.AgentDisplayName <- "Codex"
-        parameters.WorkItemIdOrNumber <- "42"
-        parameters.PromotionSetId <- "promotion-set-9"
-        parameters.Source <- "codex"
-        parameters.OperationId <- "operation-123"
+    member _.TryCreateUsesDeterministicEventIdAndOmitsEmptyTopLevelIds() =
+        let payload = CanonicalExternalEventEnvelope.toPayloadElement {| ownerId = "owner-123" |}
 
-        let json = Utilities.serialize parameters
-        let deserialized = Utilities.deserialize<StartAgentSessionParameters> json
+        let envelopeResult =
+            CanonicalExternalEventEnvelope.tryCreate
+                CanonicalEventName.OwnerCreated
+                (Instant.FromUtc(2026, 3, 9, 19, 0))
+                "corr-owner-created"
+                OwnerId.Empty
+                OrganizationId.Empty
+                RepositoryId.Empty
+                { ActorType = "Owner"; ActorId = "owner-123" }
+                payload
 
-        Assert.Multiple(fun () ->
-            Assert.That(deserialized.CorrelationId, Is.EqualTo("corr-session-start"))
-            Assert.That(deserialized.WorkItemIdOrNumber, Is.EqualTo("42"))
-            Assert.That(deserialized.PromotionSetId, Is.EqualTo("promotion-set-9"))
-            Assert.That(deserialized.OperationId, Is.EqualTo("operation-123"))
-        )
+        match envelopeResult with
+        | Ok envelope ->
+            Assert.That(envelope.EventId, Is.EqualTo("Owner_owner-123_corr-owner-created"))
+            Assert.That(envelope.OwnerId, Is.EqualTo(None))
+            Assert.That(envelope.OrganizationId, Is.EqualTo(None))
+            Assert.That(envelope.RepositoryId, Is.EqualTo(None))
+            Assert.That(envelope.EventVersion, Is.EqualTo(CanonicalExternalEventEnvelope.EventVersion))
+        | Error reason -> Assert.Fail($"Expected Ok envelope, got Error: {reason}")
+
+    [<Test>]
+    member _.TryCreateRejectsNonObjectPayloads() =
+        let payload = JsonSerializer.SerializeToElement(42, CanonicalExternalEventEnvelope.canonicalJsonSerializerOptions)
+
+        let envelopeResult =
+            CanonicalExternalEventEnvelope.tryCreate
+                CanonicalEventName.OwnerCreated
+                (Instant.FromUtc(2026, 3, 9, 19, 5))
+                "corr-invalid-payload"
+                OwnerId.Empty
+                OrganizationId.Empty
+                RepositoryId.Empty
+                { ActorType = "Owner"; ActorId = "owner-123" }
+                payload
+
+        match envelopeResult with
+        | Ok _ -> Assert.Fail("Expected Error for non-object payload.")
+        | Error reason -> Assert.That(reason, Does.Contain("JSON objects"))
+
+    [<Test>]
+    member _.TryCreateTrimsActorIdentityAndUsesCanonicalNameString() =
+        let payload = CanonicalExternalEventEnvelope.toPayloadElement {| workItemId = "work-item-123" |}
+
+        let envelopeResult =
+            CanonicalExternalEventEnvelope.tryCreate
+                CanonicalEventName.WorkItemUpdated
+                (Instant.FromUtc(2026, 3, 9, 19, 10))
+                "corr-work-item-updated"
+                OwnerId.Empty
+                OrganizationId.Empty
+                RepositoryId.Empty
+                { ActorType = "  WorkItem "; ActorId = " work-item-123  " }
+                payload
+
+        match envelopeResult with
+        | Ok envelope ->
+            Assert.That(envelope.ActorType, Is.EqualTo(Some "WorkItem"))
+            Assert.That(envelope.ActorId, Is.EqualTo(Some "work-item-123"))
+            Assert.That(envelope.EventName, Is.EqualTo("grace.work-item.updated"))
+            Assert.That(envelope.EventId, Is.EqualTo("WorkItem_work-item-123_corr-work-item-updated"))
+        | Error reason -> Assert.Fail($"Expected Ok envelope, got Error: {reason}")
+
+    [<Test>]
+    member _.MeasureSizeUsesStrictLessThanDocumentLimit() =
+        let payload = CanonicalExternalEventEnvelope.toPayloadElement {| note = String('a', 256) |}
+
+        let envelopeResult =
+            CanonicalExternalEventEnvelope.tryCreate
+                CanonicalEventName.OwnerCreated
+                (Instant.FromUtc(2026, 3, 9, 19, 15))
+                "corr-size-check"
+                OwnerId.Empty
+                OrganizationId.Empty
+                RepositoryId.Empty
+                { ActorType = "Owner"; ActorId = "owner-123" }
+                payload
+
+        match envelopeResult with
+        | Ok envelope ->
+            let size = CanonicalExternalEventEnvelope.measureSize envelope
+            Assert.That(size.LimitBytes, Is.EqualTo(1_000_000))
+            Assert.That(size.ByteCount, Is.LessThan(size.LimitBytes))
+            Assert.That(CanonicalExternalEventEnvelope.isWithinSizeLimit envelope, Is.True)
+        | Error reason -> Assert.Fail($"Expected Ok envelope, got Error: {reason}")

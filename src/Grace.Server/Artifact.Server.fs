@@ -147,6 +147,8 @@ module Artifact =
                         }
 
                     let metadata = createMetadata context
+                    metadata.Properties[ nameof ArtifactId ] <- $"{artifactId}"
+                    metadata.Properties[ "ActorId" ] <- $"{artifactId}"
                     let artifactActorProxy = Artifact.CreateActorProxy artifactId graceIds.RepositoryId correlationId
 
                     match! artifactActorProxy.Handle (ArtifactCommand.Create artifactDto) metadata with

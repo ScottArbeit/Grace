@@ -9,14 +9,9 @@ open System.Text.RegularExpressions
 [<Parallelizable(ParallelScope.All)>]
 type EndpointAuthorizationManifestTests() =
 
-    let startupPath =
-        Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Server", "Startup.Server.fs"))
+    let startupPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Server", "Startup.Server.fs"))
 
-    let tokenRegex =
-        Regex(
-            "(?<method>\\bGET\\b|\\bPOST\\b|\\bPUT\\b)\\s*\\[|(?<kind>subRoute|routef|route)\\s+\"(?<path>[^\"]+)\"",
-            RegexOptions.Multiline
-        )
+    let tokenRegex = Regex("(?<method>\\bGET\\b|\\bPOST\\b|\\bPUT\\b)\\s*\\[|(?<kind>subRoute|routef|route)\\s+\"(?<path>[^\"]+)\"", RegexOptions.Multiline)
 
     let parseStartupRoutes () =
         let text = File.ReadAllText(startupPath)
@@ -34,31 +29,33 @@ type EndpointAuthorizationManifestTests() =
 
                 if kind = "subRoute" then
                     currentPrefix <- path
+                else if String.IsNullOrWhiteSpace currentMethod then
+                    invalidOp $"Missing HTTP method before route '{path}'."
                 else
-                    if String.IsNullOrWhiteSpace currentMethod then
-                        invalidOp $"Missing HTTP method before route '{path}'."
-                    else
-                        let fullPath =
-                            if String.IsNullOrWhiteSpace currentPrefix then
-                                path
-                            else
-                                $"{currentPrefix}{path}"
+                    let fullPath =
+                        if String.IsNullOrWhiteSpace currentPrefix then
+                            path
+                        else
+                            $"{currentPrefix}{path}"
 
-                        routes.Add(currentMethod, fullPath)
+                    routes.Add(currentMethod, fullPath)
 
         routes
         |> Seq.toList
-        |> List.append [ ("GET", "/metrics"); ("GET", "/notifications") ]
+        |> List.append [ ("GET", "/metrics")
+                         ("GET", "/notifications") ]
 
     [<Test>]
     member _.ManifestCoversAllRoutes() =
         let startupRoutes = parseStartupRoutes () |> Set.ofList
+
         let manifestRoutes =
             definitions
             |> List.map (fun definition -> definition.Method, definition.Path)
             |> Set.ofList
 
         let missing = startupRoutes - manifestRoutes
+
         if missing.Count > 0 then
             let missingText =
                 missing
@@ -69,6 +66,7 @@ type EndpointAuthorizationManifestTests() =
             Assert.Fail($"EndpointAuthorizationManifest is missing routes:{Environment.NewLine}{missingText}")
 
         let extra = manifestRoutes - startupRoutes
+
         if extra.Count > 0 then
             let extraText =
                 extra
@@ -83,11 +81,7 @@ type EndpointAuthorizationManifestTests() =
         let duplicates =
             definitions
             |> List.groupBy (fun definition -> definition.Method, definition.Path)
-            |> List.choose (fun (key, entries) ->
-                if entries.Length > 1 then
-                    Some key
-                else
-                    None)
+            |> List.choose (fun (key, entries) -> if entries.Length > 1 then Some key else None)
 
         if duplicates.Length > 0 then
             let message =

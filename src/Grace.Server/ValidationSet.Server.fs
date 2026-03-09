@@ -12,6 +12,7 @@ open Grace.Shared.Validation.Errors
 open Grace.Shared.Validation.Utilities
 open Grace.Types.Types
 open Grace.Types.Validation
+open Grace.Types.ExternalEvents
 open Microsoft.AspNetCore.Http
 open NodaTime
 open System
@@ -48,6 +49,25 @@ module ValidationSet =
             else
                 Error ValidationSetError.InvalidValidationSetId
 
+    let private validateRuleEventNames (rules: ValidationSetRule list) =
+        let invalidEventNames =
+            rules
+            |> List.collect (fun rule -> rule.EventNames)
+            |> List.filter (
+                Grace.Types.ExternalEvents.Registry.isPublishedEventName
+                >> not
+            )
+            |> List.distinct
+
+        if invalidEventNames |> List.isEmpty |> not then
+            Error ValidationSetError.InvalidValidationRuleEventName
+        else if rules
+                |> List.exists (fun rule -> rule.EventNames.IsEmpty) then
+            Error ValidationSetError.ValidationRuleEventNamesRequired
+        else
+            Ok()
+        |> returnValueTask
+
     let private processCommand<'T when 'T :> ValidationParameters>
         (context: HttpContext)
         (parameters: 'T)
@@ -60,6 +80,8 @@ module ValidationSet =
             let graceIds = getGraceIds context
             let correlationId = getCorrelationId context
             let metadata = createMetadata context
+            metadata.Properties[ nameof ValidationSetId ] <- $"{validationSetId}"
+            metadata.Properties[ "ActorId" ] <- $"{validationSetId}"
             let parameterDictionary = getParametersAsDictionary parameters
 
             let validationResults = validations parameters
@@ -144,6 +166,7 @@ module ValidationSet =
                             else
                                 Ok()
                             |> returnValueTask
+                            validateRuleEventNames parameters.Rules
                             if parameters.Validations.IsEmpty then
                                 Error ValidationSetError.ValidationDefinitionsRequired
                             else
@@ -218,6 +241,7 @@ module ValidationSet =
                         else
                             Ok()
                         |> returnValueTask
+                        validateRuleEventNames parameters.Rules
                         if parameters.Validations.IsEmpty then
                             Error ValidationSetError.ValidationDefinitionsRequired
                         else

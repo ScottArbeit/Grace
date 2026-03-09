@@ -34,6 +34,7 @@ module EndpointAuthorizationManifest =
             endpoint "POST" "/access/upsertPathPermission" (Authorized(RepoAdmin, Repository))
             endpoint "POST" "/admin/deleteAllFromCosmosDB" (Authorized(SystemAdmin, System))
             endpoint "POST" "/admin/deleteAllRemindersFromCosmosDB" (Authorized(SystemAdmin, System))
+            endpoint "POST" "/external-event/resend" (Authorized(SystemAdmin, System))
             endpoint "GET" "/auth/login" AllowAnonymous
             endpoint "GET" "/auth/login/%s" AllowAnonymous
             endpoint "GET" "/auth/logout" Authenticated

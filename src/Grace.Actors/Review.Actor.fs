@@ -176,6 +176,12 @@ module Review =
                 (checkpoints :> IReadOnlyList<ReviewCheckpoint>)
                 |> returnTask
 
+            member this.GetEvents correlationId =
+                this.correlationId <- correlationId
+
+                state.State :> IReadOnlyList<ReviewEvent>
+                |> returnTask
+
             member this.Handle command metadata =
                 let isValid (command: ReviewCommand) (metadata: EventMetadata) =
                     task {
