@@ -50,6 +50,7 @@ module Services =
     let mutable ownerId = String.Empty
     let mutable organizationId = String.Empty
     let mutable repositoryIds: string [] = Array.empty
+    let mutable repositoryDefaultBranchIds: string [] = Array.empty
 
     let mutable serviceBusConnectionString = String.Empty
     let mutable serviceBusTopic = String.Empty
@@ -136,6 +137,7 @@ type Setup() =
 
             organizationId <- $"{Guid.NewGuid()}"
             repositoryIds <- Array.init numberOfRepositories (fun _ -> $"{Guid.NewGuid()}")
+            repositoryDefaultBranchIds <- Array.zeroCreate numberOfRepositories
 
             let organizationParameters = Parameters.Organization.CreateOrganizationParameters()
             organizationParameters.OwnerId <- ownerId
@@ -158,9 +160,11 @@ type Setup() =
 
             do!
                 Parallel.ForEachAsync(
-                    repositoryIds,
+                    Array.indexed repositoryIds,
                     Constants.ParallelOptions,
-                    (fun repositoryId ct ->
+                    (fun repositoryInfo ct ->
+                        let repositoryIndex, repositoryId = repositoryInfo
+
                         ValueTask(
                             task {
                                 let repositoryParameters = Parameters.Repository.CreateRepositoryParameters()
@@ -181,6 +185,10 @@ type Setup() =
                                     logToTestConsole $"StatusCode: {response.StatusCode}; Content: {error}"
 
                                 response.EnsureSuccessStatusCode() |> ignore
+
+                                let! returnValue = deserializeContent<GraceReturnValue<string>> response
+                                let branchId = Common.requireGuidProperty (nameof BranchId) returnValue.Properties[nameof BranchId]
+                                repositoryDefaultBranchIds[repositoryIndex] <- $"{branchId}"
                             }
                         ))
                 )

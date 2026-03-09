@@ -902,30 +902,33 @@ type EndpointAuthorizationTests() =
 
     let getDefaultBranchAsync (repositoryId: string) =
         task {
-            let parameters = Parameters.Repository.GetBranchesParameters()
+            let repositoryIndex = repositoryIds |> Array.findIndex (fun candidate -> candidate = repositoryId)
+            let branchId = repositoryDefaultBranchIds[repositoryIndex]
+            let parameters = Parameters.Branch.GetBranchParameters()
             parameters.OwnerId <- ownerId
             parameters.OrganizationId <- organizationId
             parameters.RepositoryId <- repositoryId
+            parameters.BranchId <- branchId
             let timeoutAt = DateTime.UtcNow.AddSeconds(10.0)
             let mutable branch = None
             let mutable lastStatusCode = HttpStatusCode.OK
             let mutable lastResponseBody = String.Empty
-            let mutable lastBranchCount = 0
 
             while branch.IsNone && DateTime.UtcNow < timeoutAt do
                 parameters.CorrelationId <- generateCorrelationId ()
 
-                let! response = Client.PostAsync("/repository/getBranches", createJsonContent parameters)
+                let! response = Client.PostAsync("/branch/get", createJsonContent parameters)
                 lastStatusCode <- response.StatusCode
 
                 let! responseBody = response.Content.ReadAsStringAsync()
                 lastResponseBody <- responseBody
 
-                response.EnsureSuccessStatusCode() |> ignore
+                if response.IsSuccessStatusCode then
+                    let returnValue = deserialize<GraceReturnValue<BranchDto>> responseBody
+                    let branchDto = returnValue.ReturnValue
 
-                let returnValue = deserialize<GraceReturnValue<BranchDto array>> responseBody
-                lastBranchCount <- returnValue.ReturnValue.Length
-                branch <- returnValue.ReturnValue |> Array.tryHead
+                    if branchDto.BranchId <> Guid.Empty && branchDto.LatestPromotion.ReferenceId <> Guid.Empty then
+                        branch <- Some branchDto
 
                 if branch.IsNone then
                     do! System.Threading.Tasks.Task.Delay(TimeSpan.FromMilliseconds(250.0))
@@ -934,7 +937,7 @@ type EndpointAuthorizationTests() =
             | Some branch -> return branch
             | None ->
                 Assert.Fail(
-                    $"Timed out waiting for repository {repositoryId} to expose its initial branch. Last status: {lastStatusCode}; branch count: {lastBranchCount}; body: {lastResponseBody}"
+                    $"Timed out waiting for repository {repositoryId} to expose initial branch {branchId} through /branch/get. Last status: {lastStatusCode}; body: {lastResponseBody}"
                 )
 
                 return Unchecked.defaultof<BranchDto>
