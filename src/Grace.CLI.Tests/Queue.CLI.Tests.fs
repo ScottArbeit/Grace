@@ -73,3 +73,15 @@ module QueueCommandTests =
 
         let exitCode = parseResult.Invoke()
         exitCode |> should equal -1
+
+    [<Test>]
+    let ``queue retry command is unavailable`` () =
+        let parseResult = GraceCommand.rootCommand.Parse([| "queue"; "retry" |])
+
+        Assert.That(parseResult.Errors.Count, Is.GreaterThan(0))
+
+        let hasRetryError =
+            parseResult.Errors
+            |> Seq.exists (fun error -> error.Message.Contains("Unrecognized command or argument 'retry'", StringComparison.OrdinalIgnoreCase))
+
+        Assert.That(hasRetryError, Is.True)

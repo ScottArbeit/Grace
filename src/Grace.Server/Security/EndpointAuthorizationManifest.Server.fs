@@ -37,6 +37,7 @@ module EndpointAuthorizationManifest =
             endpoint "POST" "/authorize/upsert-path-permission" (Authorized(RepositoryAdmin, Repository))
             endpoint "POST" "/admin/deleteAllFromCosmosDB" (Authorized(SystemAdmin, System))
             endpoint "POST" "/admin/deleteAllRemindersFromCosmosDB" (Authorized(SystemAdmin, System))
+            endpoint "POST" "/external-event/resend" (Authorized(SystemAdmin, System))
             endpoint "POST" "/approval/policy/create" (Authorized(ApprovalPolicyManage, Repository))
             endpoint "POST" "/approval/policy/list" (Authorized(ApprovalPolicyManage, Repository))
             endpoint "POST" "/approval/policy/show" (Authorized(ApprovalPolicyManage, Repository))

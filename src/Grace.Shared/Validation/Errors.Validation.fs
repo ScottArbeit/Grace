@@ -731,6 +731,8 @@ module Errors =
         | InvalidValidationSetId
         | InvalidTargetBranchId
         | ValidationSetRulesRequired
+        | ValidationRuleEventNamesRequired
+        | InvalidValidationRuleEventName
         | ValidationDefinitionsRequired
 
         interface IErrorDiscriminatedUnion
@@ -744,6 +746,8 @@ module Errors =
             | InvalidValidationSetId -> "The validation set ID is invalid."
             | InvalidTargetBranchId -> "The target branch ID is invalid."
             | ValidationSetRulesRequired -> "A validation set must include at least one rule."
+            | ValidationRuleEventNamesRequired -> "Each validation rule must include at least one canonical event name."
+            | InvalidValidationRuleEventName -> "Validation rules may only reference published canonical event names."
             | ValidationDefinitionsRequired -> "A validation set must include at least one validation definition."
 
         static member getErrorMessage(validationSetError: ValidationSetError option) : string =

@@ -229,6 +229,12 @@ module Organization =
                 }
             //Task.FromResult(organizationDto.Repositories :> IReadOnlyDictionary<RepositoryId, RepositoryName>)
 
+            member this.GetEvents correlationId =
+                task {
+                    this.correlationId <- correlationId
+                    return state.State :> IReadOnlyList<OrganizationEvent>
+                }
+
             member this.Handle (command: OrganizationCommand) metadata =
                 let isValid (command: OrganizationCommand) (metadata: EventMetadata) =
                     task {

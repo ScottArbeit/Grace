@@ -3,7 +3,7 @@ namespace Grace.SDK
 open Grace.Shared
 open Grace.Shared.Client.Configuration
 open Grace.Shared.Services
-open Grace.Types.Automation
+open Grace.Types.ExternalEvents
 open Grace.Types.Common
 open Grace.Shared.Parameters.Common
 open Grace.Shared.Utilities

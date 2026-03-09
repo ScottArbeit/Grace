@@ -150,6 +150,17 @@ module ValidationResult =
 
                     let actorProxy = ValidationResult.CreateActorProxy validationResultId graceIds.RepositoryId correlationId
                     let metadata = createMetadata context
+                    metadata.Properties[ nameof ValidationResultId ] <- $"{validationResultId}"
+                    metadata.Properties[ "ActorId" ] <- $"{validationResultId}"
+
+                    validationSetId
+                    |> Option.iter (fun value -> metadata.Properties[ nameof ValidationSetId ] <- $"{value}")
+
+                    promotionSetId
+                    |> Option.iter (fun value -> metadata.Properties[ nameof PromotionSetId ] <- $"{value}")
+
+                    promotionSetStepId
+                    |> Option.iter (fun value -> metadata.Properties[ nameof PromotionSetStepId ] <- $"{value}")
 
                     let! handleResult =
                         actorProxy.Handle (ValidationResultCommand.Record validationResultDto) metadata

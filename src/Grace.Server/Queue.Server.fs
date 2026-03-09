@@ -57,6 +57,8 @@ module Queue =
                     task {
                         let actorProxy = PromotionQueue.CreateActorProxy targetBranchId graceIds.RepositoryId correlationId
                         let metadata = createMetadata context
+                        metadata.Properties[ nameof BranchId ] <- $"{targetBranchId}"
+                        metadata.Properties[ "ActorId" ] <- $"{targetBranchId}"
 
                         match! actorProxy.Handle cmd metadata with
                         | Ok graceReturnValue ->
@@ -150,6 +152,8 @@ module Queue =
                     task {
                         let actorProxy = PromotionQueue.CreateActorProxy targetBranchId graceIds.RepositoryId correlationId
                         let metadata = createMetadata context
+                        metadata.Properties[ nameof BranchId ] <- $"{targetBranchId}"
+                        metadata.Properties[ "ActorId" ] <- $"{targetBranchId}"
 
                         match! actorProxy.Handle cmd metadata with
                         | Ok graceReturnValue ->
@@ -410,6 +414,9 @@ module Queue =
                     let policyActorProxy = Policy.CreateActorProxy targetBranchId graceIds.RepositoryId correlationId
                     let promotionSetActorProxy = PromotionSet.CreateActorProxy promotionSetId graceIds.RepositoryId correlationId
                     let metadata = createMetadata context
+                    metadata.Properties[ nameof BranchId ] <- $"{targetBranchId}"
+                    metadata.Properties[ nameof PromotionSetId ] <- $"{promotionSetId}"
+                    metadata.Properties[ "ActorId" ] <- $"{targetBranchId}"
 
                     let runEnqueue () =
                         task {

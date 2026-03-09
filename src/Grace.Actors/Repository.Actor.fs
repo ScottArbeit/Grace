@@ -433,6 +433,12 @@ module Repository =
                 this.correlationId <- correlationId
                 repositoryDto.ObjectStorageProvider |> returnTask
 
+            member this.GetEvents correlationId =
+                this.correlationId <- correlationId
+
+                state.State :> IReadOnlyList<RepositoryEvent>
+                |> returnTask
+
             member this.Exists correlationId =
                 this.correlationId <- correlationId
                 repositoryDto.UpdatedAt.IsSome |> returnTask

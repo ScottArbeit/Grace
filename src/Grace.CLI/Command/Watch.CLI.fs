@@ -39,7 +39,7 @@ open Spectre.Console
 open System.Text
 open Grace.Shared.Parameters.Storage
 open Grace.CLI.Text
-open Grace.Types.Automation
+open Grace.Types.ExternalEvents
 
 module Watch =
     exception private WatchCommandExit of int
@@ -631,15 +631,14 @@ module Watch =
                             (fun message -> logToAnsiConsole Colors.Important $"From Grace Server: {message}")
                         )
 
-                    use notifyAutomationEvent =
-                        signalRConnection.On<AutomationEventEnvelope>(
-                            "NotifyAutomationEvent",
+                    use notifyExternalEvent =
+                        signalRConnection.On<CanonicalExternalEventEnvelope>(
+                            "NotifyExternalEvent",
                             fun envelope ->
                                 (task {
-                                    if envelope.EventType = AutomationEventType.PromotionSetApplied then
+                                    if envelope.EventName = CanonicalEventName.toString CanonicalEventName.PromotionSetApplied then
                                         try
-                                            use document = JsonDocument.Parse(envelope.DataJson)
-                                            let root = document.RootElement
+                                            let root = envelope.Payload
 
                                             let tryParseGuidProperty (propertyName: string) : Guid option =
                                                 let mutable propertyValue = Unchecked.defaultof<JsonElement>
@@ -679,7 +678,7 @@ module Watch =
                                         | ex ->
                                             logToAnsiConsole
                                                 Colors.Error
-                                                $"Failed to process automation event payload for {envelope.EventType}: {Markup.Escape(ex.Message)}."
+                                                $"Failed to process external event payload for {envelope.EventName}: {Markup.Escape(ex.Message)}."
                                 })
                                 :> Task
                         )

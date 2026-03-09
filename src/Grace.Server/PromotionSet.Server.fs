@@ -211,6 +211,8 @@ module PromotionSet =
             let graceIds = getGraceIds context
             let correlationId = getCorrelationId context
             let metadata = createMetadata context
+            metadata.Properties[ nameof PromotionSetId ] <- $"{promotionSetId}"
+            metadata.Properties[ "ActorId" ] <- $"{promotionSetId}"
             let parameterDictionary = getParametersAsDictionary parameters
             let validationResults = validations parameters
             let! validationsPassed = validationResults |> allPass

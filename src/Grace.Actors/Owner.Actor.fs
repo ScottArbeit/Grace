@@ -255,6 +255,12 @@ module Owner =
                     return dict :> IReadOnlyDictionary<OrganizationId, OrganizationName>
                 }
 
+            member this.GetEvents correlationId =
+                task {
+                    this.correlationId <- correlationId
+                    return state.State :> IReadOnlyList<OwnerEvent>
+                }
+
             member this.Handle command metadata =
                 let isValid command (metadata: EventMetadata) =
                     task {
