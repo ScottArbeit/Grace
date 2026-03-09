@@ -906,13 +906,38 @@ type EndpointAuthorizationTests() =
             parameters.OwnerId <- ownerId
             parameters.OrganizationId <- organizationId
             parameters.RepositoryId <- repositoryId
-            parameters.CorrelationId <- generateCorrelationId ()
+            let timeoutAt = DateTime.UtcNow.AddSeconds(10.0)
+            let mutable branch = None
+            let mutable lastStatusCode = HttpStatusCode.OK
+            let mutable lastResponseBody = String.Empty
+            let mutable lastBranchCount = 0
 
-            let! response = Client.PostAsync("/repository/getBranches", createJsonContent parameters)
-            response.EnsureSuccessStatusCode() |> ignore
+            while branch.IsNone && DateTime.UtcNow < timeoutAt do
+                parameters.CorrelationId <- generateCorrelationId ()
 
-            let! returnValue = deserializeContent<GraceReturnValue<BranchDto array>> response
-            return returnValue.ReturnValue |> Array.head
+                let! response = Client.PostAsync("/repository/getBranches", createJsonContent parameters)
+                lastStatusCode <- response.StatusCode
+
+                let! responseBody = response.Content.ReadAsStringAsync()
+                lastResponseBody <- responseBody
+
+                response.EnsureSuccessStatusCode() |> ignore
+
+                let returnValue = deserialize<GraceReturnValue<BranchDto array>> responseBody
+                lastBranchCount <- returnValue.ReturnValue.Length
+                branch <- returnValue.ReturnValue |> Array.tryHead
+
+                if branch.IsNone then
+                    do! System.Threading.Tasks.Task.Delay(TimeSpan.FromMilliseconds(250.0))
+
+            match branch with
+            | Some branch -> return branch
+            | None ->
+                Assert.Fail(
+                    $"Timed out waiting for repository {repositoryId} to expose its initial branch. Last status: {lastStatusCode}; branch count: {lastBranchCount}; body: {lastResponseBody}"
+                )
+
+                return Unchecked.defaultof<BranchDto>
         }
 
     let createOwnerGetParameters () =
