@@ -117,8 +117,13 @@ module private WorkItemIntegrationHelpers =
     let createWorkItemAsync (repositoryId: string) (title: string) =
         task {
             let! workItemId, response = createWorkItemWithIdResponseAsync Client repositoryId title
-            response.EnsureSuccessStatusCode() |> ignore
-            return workItemId
+
+            if not response.IsSuccessStatusCode then
+                let! body = response.Content.ReadAsStringAsync()
+                Assert.Fail($"Expected work/create success but got {(int response.StatusCode)} {response.StatusCode}: {body}")
+                return workItemId
+            else
+                return workItemId
         }
 
     let updateWorkItemResponseAsync (client: HttpClient) (repositoryId: string) (workItemIdentifier: string) =
