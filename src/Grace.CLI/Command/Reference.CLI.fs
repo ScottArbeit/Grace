@@ -209,8 +209,7 @@ module Reference =
 
     let private valueOrEmpty (value: string) = if String.IsNullOrWhiteSpace(value) then String.Empty else value
 
-    let private ReferenceValidations (parseResult: ParseResult) =
-        Ok parseResult
+    let private ReferenceValidations (parseResult: ParseResult) = Ok parseResult
 
     let printContents (parseResult: ParseResult) (directoryVersions: IEnumerable<DirectoryVersion>) =
         let longestRelativePath =

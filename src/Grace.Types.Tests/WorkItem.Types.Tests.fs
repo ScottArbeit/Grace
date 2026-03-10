@@ -36,16 +36,7 @@ type WorkItemTypesTests() =
 
         let createdEvent =
             {
-                Event =
-                    WorkItemEventType.Created(
-                        workItemId,
-                        workItemNumber,
-                        Guid.NewGuid(),
-                        Guid.NewGuid(),
-                        Guid.NewGuid(),
-                        "Title",
-                        "Description"
-                    )
+                Event = WorkItemEventType.Created(workItemId, workItemNumber, Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "Title", "Description")
                 Metadata = metadata createdAt
             }
 

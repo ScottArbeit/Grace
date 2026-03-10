@@ -94,12 +94,9 @@ module Authorization =
                   BranchWrite
                   BranchRead ]
 
-        let private branchWriterOperations =
-            set [ BranchWrite
-                  BranchRead ]
+        let private branchWriterOperations = set [ BranchWrite; BranchRead ]
 
-        let private branchReaderOperations =
-            set [ BranchRead ]
+        let private branchReaderOperations = set [ BranchRead ]
 
         let private roles: RoleDefinition list =
             [

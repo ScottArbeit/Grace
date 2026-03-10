@@ -175,8 +175,7 @@ module Configuration =
 
         graceConfiguration.ObjectDirectory <- Path.GetFullPath(Path.Combine(graceConfigurationDirectory, Constants.GraceObjectsDirectory))
 
-        let graceLocalStateDbPath =
-            Path.Combine(graceConfiguration.GraceDirectory, Constants.GraceLocalStateDbFileName)
+        let graceLocalStateDbPath = Path.Combine(graceConfiguration.GraceDirectory, Constants.GraceLocalStateDbFileName)
 
         graceConfiguration.GraceStatusFile <- graceLocalStateDbPath
         graceConfiguration.GraceObjectCacheFile <- graceLocalStateDbPath

@@ -139,8 +139,10 @@ module QueueCommand =
 
         if String.IsNullOrWhiteSpace(value) then
             Ok String.Empty
-        elif Guid.TryParse(value, &parsedGuid)
-             && parsedGuid <> Guid.Empty then
+        elif
+            Guid.TryParse(value, &parsedGuid)
+            && parsedGuid <> Guid.Empty
+        then
             Ok(parsedGuid.ToString())
         else
             let mutable parsedNumber = 0L

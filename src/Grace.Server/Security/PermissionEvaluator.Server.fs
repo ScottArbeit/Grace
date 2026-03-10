@@ -34,11 +34,7 @@ type GracePermissionEvaluator
         getPathPermissionsForRepository: RepositoryId * CorrelationId -> Task<PathPermission list>
     ) =
 
-    new () =
-        GracePermissionEvaluator(
-            PermissionEvaluatorDefaults.getAssignmentsForScope,
-            PermissionEvaluatorDefaults.getPathPermissionsForRepository
-        )
+    new() = GracePermissionEvaluator(PermissionEvaluatorDefaults.getAssignmentsForScope, PermissionEvaluatorDefaults.getPathPermissionsForRepository)
 
     interface IGracePermissionEvaluator with
         member _.CheckAsync(principalSet, effectiveClaims, operation, resource) =
@@ -57,8 +53,7 @@ type GracePermissionEvaluator
 
                     let! pathPermissions =
                         match resource with
-                        | Resource.Path (_, _, repositoryId, _) ->
-                            getPathPermissionsForRepository (repositoryId, correlationId)
+                        | Resource.Path (_, _, repositoryId, _) -> getPathPermissionsForRepository (repositoryId, correlationId)
                         | _ -> Task.FromResult List.empty
 
                     return checkPermission roleCatalog allAssignments pathPermissions principalSet effectiveClaims operation resource

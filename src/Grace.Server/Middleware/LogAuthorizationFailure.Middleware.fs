@@ -68,4 +68,3 @@ type LogAuthorizationFailureMiddleware(next: RequestDelegate) =
                     )
         }
         :> Task
-

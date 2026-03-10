@@ -296,13 +296,13 @@ module Services =
     let readGraceStatusMeta () =
         task {
             let! meta = LocalStateDb.readStatusMeta (getLocalStateDbPath ())
+
             return
-                {
-                    GraceStatus.Default with
-                        RootDirectoryId = meta.RootDirectoryId
-                        RootDirectorySha256Hash = meta.RootDirectorySha256Hash
-                        LastSuccessfulFileUpload = meta.LastSuccessfulFileUpload
-                        LastSuccessfulDirectoryVersionUpload = meta.LastSuccessfulDirectoryVersionUpload
+                { GraceStatus.Default with
+                    RootDirectoryId = meta.RootDirectoryId
+                    RootDirectorySha256Hash = meta.RootDirectorySha256Hash
+                    LastSuccessfulFileUpload = meta.LastSuccessfulFileUpload
+                    LastSuccessfulDirectoryVersionUpload = meta.LastSuccessfulDirectoryVersionUpload
                 }
         }
 
@@ -313,8 +313,7 @@ module Services =
     let readGraceStatusFile () = readGraceStatusSnapshot ()
 
     /// Writes the full Grace status snapshot to disk.
-    let writeGraceStatusFile (graceStatus: GraceStatus) =
-        LocalStateDb.replaceStatusSnapshot (getLocalStateDbPath ()) graceStatus
+    let writeGraceStatusFile (graceStatus: GraceStatus) = LocalStateDb.replaceStatusSnapshot (getLocalStateDbPath ()) graceStatus
 
     /// Applies incremental Grace status updates to the local DB.
     let applyGraceStatusIncremental
@@ -639,10 +638,7 @@ module Services =
     /// Adds a LocalDirectoryVersion to the local object cache.
     let addDirectoryToObjectCache (localDirectoryVersion: LocalDirectoryVersion) =
         task {
-            let! exists =
-                LocalStateDb.isDirectoryVersionInObjectCache
-                    (getLocalStateDbPath ())
-                    localDirectoryVersion.DirectoryVersionId
+            let! exists = LocalStateDb.isDirectoryVersionInObjectCache (getLocalStateDbPath ()) localDirectoryVersion.DirectoryVersionId
 
             if not exists then
                 let allFilesExist =
@@ -660,9 +656,7 @@ module Services =
 
     /// Removes a directory from the local object cache.
     let removeDirectoryFromObjectCache (directoryId: DirectoryVersionId) =
-        task {
-            do! LocalStateDb.removeObjectCacheDirectory (getLocalStateDbPath ()) directoryId
-        }
+        task { do! LocalStateDb.removeObjectCacheDirectory (getLocalStateDbPath ()) directoryId }
 
     /// Downloads files from object storage that aren't already present in the local object cache.
     let downloadFilesFromObjectStorage (getDownloadUriParameters: GetDownloadUriParameters) (files: IEnumerable<LocalFileVersion>) (correlationId: string) =
@@ -1131,10 +1125,7 @@ module Services =
     let IpcFileName () = Path.Combine(Path.GetTempPath(), "Grace", Current().BranchName, Constants.IpcFileName)
 
     /// Updates the contents of the `grace watch` status inter-process communication file.
-    let updateGraceWatchInterprocessFile
-        (graceStatus: GraceStatus)
-        (directoryIdsOverride: HashSet<DirectoryVersionId> option)
-        =
+    let updateGraceWatchInterprocessFile (graceStatus: GraceStatus) (directoryIdsOverride: HashSet<DirectoryVersionId> option) =
         task {
             try
                 let directoryIds =
