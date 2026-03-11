@@ -1,5 +1,6 @@
 namespace Grace.Types.ExternalEvents
 
+open Grace.Types.Events
 open Grace.Types.Types
 open NodaTime
 open Orleans
@@ -81,9 +82,8 @@ type WorkItemLocator = { Raw: string; Kind: string }
 type AgentWorkStoppedResult = { Message: string; OperationId: string; WasIdempotentReplay: bool }
 
 [<GenerateSerializer>]
-type AgentRuntimeLifecycleSource =
+type AgentRuntimeSourceContext =
     {
-        EventName: string
         OccurredAt: Instant
         CorrelationId: CorrelationId
         OwnerId: OwnerId
@@ -95,17 +95,86 @@ type AgentRuntimeLifecycleSource =
         WorkItemId: WorkItemId option
         WorkItemLocator: WorkItemLocator option
         PromotionSetId: PromotionSetId option
-        LifecycleState: string
+        LifecycleState: AgentSessionLifecycleState
+    }
+
+[<GenerateSerializer>]
+type AgentWorkStartedSource =
+    {
+        Context: AgentRuntimeSourceContext
         Message: string option
         OperationId: string option
         WasIdempotentReplay: bool
         Source: string option
-        Result: AgentWorkStoppedResult option
     }
 
 [<GenerateSerializer>]
-type CanonicalReplaySource =
-    | RawEventSource of actorType: string * actorId: string * correlationId: CorrelationId
-    | AgentRuntimeSource of runtime: AgentRuntimeLifecycleSource
+type AgentWorkStoppedSource = { Context: AgentRuntimeSourceContext; Result: AgentWorkStoppedResult }
 
-    static member GetKnownTypes() = Grace.Shared.Utilities.GetKnownTypes<CanonicalReplaySource>()
+[<KnownType("GetKnownTypes"); GenerateSerializer>]
+type AgentRuntimeLifecycleSource =
+    | WorkStarted of started: AgentWorkStartedSource
+    | WorkStopped of stopped: AgentWorkStoppedSource
+
+    static member GetKnownTypes() = Grace.Shared.Utilities.GetKnownTypes<AgentRuntimeLifecycleSource>()
+
+module AgentRuntimeLifecycleSource =
+    let context source =
+        match source with
+        | WorkStarted started -> started.Context
+        | WorkStopped stopped -> stopped.Context
+
+    let eventName source =
+        match source with
+        | WorkStarted _ -> CanonicalEventName.toString CanonicalEventName.AgentWorkStarted
+        | WorkStopped _ -> CanonicalEventName.toString CanonicalEventName.AgentWorkStopped
+
+[<KnownType("GetKnownTypes"); GenerateSerializer>]
+type ReplaySourceKind =
+    | RawGraceEvent
+    | AgentRuntimeLifecycle
+    | ValidationRequested
+
+    static member GetKnownTypes() = Grace.Shared.Utilities.GetKnownTypes<ReplaySourceKind>()
+
+module ReplaySourceKind =
+    let toString sourceKind =
+        match sourceKind with
+        | ReplaySourceKind.RawGraceEvent -> "raw-grace-event"
+        | ReplaySourceKind.AgentRuntimeLifecycle -> "agent-runtime-lifecycle"
+        | ReplaySourceKind.ValidationRequested -> "validation-requested"
+
+[<GenerateSerializer>]
+type ValidationRequestedReplaySource =
+    {
+        OccurredAt: Instant
+        CorrelationId: CorrelationId
+        OwnerId: OwnerId
+        OrganizationId: OrganizationId
+        RepositoryId: RepositoryId
+        ValidationSetId: ValidationSetId
+        SourceEventId: string
+        SourceEventName: string
+        TargetBranchId: BranchId
+        TargetBranchName: BranchName
+        PromotionSetId: PromotionSetId option
+        StepsComputationAttempt: int option
+        MatchedRules: MatchedRule list
+        ValidationsSummary: ValidationsSummary
+    }
+
+[<GenerateSerializer>]
+type DurableReplaySourceRecord =
+    {
+        EventId: string
+        EventName: string
+        EventVersion: int
+        SourceKind: ReplaySourceKind
+        ActorType: string
+        ActorId: string
+        CorrelationId: CorrelationId
+        RecordedAt: Instant
+        RawGraceEvent: GraceEvent option
+        RuntimeSource: AgentRuntimeLifecycleSource option
+        ValidationRequestedSource: ValidationRequestedReplaySource option
+    }

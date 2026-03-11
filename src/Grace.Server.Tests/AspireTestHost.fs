@@ -20,6 +20,7 @@ open System.Text.Json
 open System.Threading
 open System.Threading.Tasks
 open Grace.Types
+open Grace.Types.ExternalEvents
 open Grace.Shared.Utilities
 
 type TestHostState =
@@ -655,7 +656,7 @@ module AspireTestHost =
                         let diagnostics =
                             $"Timed out waiting for Cosmos emulator. Attempts={attempt}. LastError={lastError}. Database={databaseName}. Container={containerName}. ConnectionString={redactCosmosConnectionString connectionString}"
 
-                        raise (TimeoutException(diagnostics))
+                        return raise (TimeoutException(diagnostics))
 
                     attempt <- attempt + 1
 
@@ -1024,7 +1025,7 @@ module AspireTestHost =
             return drainedCount
         }
 
-    let waitForOwnerCreatedEventAsync (state: TestHostState) (ownerId: string) =
+    let waitForOwnerCreatedEventAsync (state: TestHostState) (ownerId: string) : Task<ServiceBusReceivedMessage> =
         task {
             let client, receiver = createServiceBusReceiver state
             use _client = client
@@ -1038,12 +1039,14 @@ module AspireTestHost =
             let mutable parsedOwnerId = Guid.Empty
             let hasParsedOwnerId = Guid.TryParse(ownerId, &parsedOwnerId)
             let mutable found: ServiceBusReceivedMessage option = None
+            let mutable diagnostics = String.Empty
 
-            while found.IsNone do
+            while found.IsNone
+                  && String.IsNullOrWhiteSpace diagnostics do
                 let remaining = timeout - sw.Elapsed
 
                 if remaining <= TimeSpan.Zero then
-                    let diagnostics =
+                    diagnostics <-
                         StringBuilder()
                             .AppendLine("Timed out waiting for Owner Created event on Service Bus test subscription.")
                             .AppendLine($"GraceServerBaseAddress: {state.GraceServerBaseAddress}")
@@ -1054,43 +1057,176 @@ module AspireTestHost =
                             .AppendLine($"LastMessageBodies({lastBodies.Count}):")
                             .AppendLine(String.Join(Environment.NewLine, lastBodies))
                             .ToString()
+                else
+                    let waitTime =
+                        if remaining < TimeSpan.FromSeconds(2.0) then
+                            remaining
+                        else
+                            TimeSpan.FromSeconds(2.0)
 
-                    raise (TimeoutException(diagnostics))
+                    let! message = receiver.ReceiveMessageAsync(waitTime)
 
-                let waitTime =
-                    if remaining < TimeSpan.FromSeconds(2.0) then
-                        remaining
-                    else
-                        TimeSpan.FromSeconds(2.0)
+                    if not (isNull message) then
+                        let body = message.Body.ToString()
 
-                let! message = receiver.ReceiveMessageAsync(waitTime)
+                        if lastBodies.Count >= maxBodies then lastBodies.RemoveAt(0)
 
-                if not (isNull message) then
-                    let body = message.Body.ToString()
+                        lastBodies.Add(body)
 
-                    if lastBodies.Count >= maxBodies then lastBodies.RemoveAt(0)
-
-                    lastBodies.Add(body)
-
-                    let tryMatchOwnerCreated (ownerEvent: Owner.OwnerEvent) =
-                        match ownerEvent.Event with
-                        | Owner.OwnerEventType.Created (createdOwnerId, _) when hasParsedOwnerId && createdOwnerId = parsedOwnerId -> true
-                        | _ -> false
-
-                    let matchesOwnerCreated =
-                        try
-                            match JsonSerializer.Deserialize<Events.GraceEvent>(body, Constants.JsonSerializerOptions) with
-                            | Events.GraceEvent.OwnerEvent ownerEvent -> tryMatchOwnerCreated ownerEvent
+                        let tryMatchOwnerCreated (ownerEvent: Owner.OwnerEvent) =
+                            match ownerEvent.Event with
+                            | Owner.OwnerEventType.Created (createdOwnerId, _) when hasParsedOwnerId && createdOwnerId = parsedOwnerId -> true
                             | _ -> false
-                        with
-                        | _ ->
+
+                        let matchesOwnerCreated =
                             try
-                                let ownerEvent = JsonSerializer.Deserialize<Owner.OwnerEvent>(body, Constants.JsonSerializerOptions)
-                                tryMatchOwnerCreated ownerEvent
+                                match JsonSerializer.Deserialize<Events.GraceEvent>(body, Constants.JsonSerializerOptions) with
+                                | Events.GraceEvent.OwnerEvent ownerEvent -> tryMatchOwnerCreated ownerEvent
+                                | _ -> false
                             with
-                            | _ -> false
+                            | _ ->
+                                try
+                                    let ownerEvent = JsonSerializer.Deserialize<Owner.OwnerEvent>(body, Constants.JsonSerializerOptions)
+                                    tryMatchOwnerCreated ownerEvent
+                                with
+                                | _ -> false
 
-                    if matchesOwnerCreated then found <- Some message
+                        if matchesOwnerCreated then found <- Some message
 
-            return found.Value
+            match found with
+            | Some message -> return message
+            | None -> return raise (TimeoutException(diagnostics))
+        }
+
+
+    let collectCanonicalExternalEventsAsync
+        (state: TestHostState)
+        (predicate: CanonicalExternalEventEnvelope -> bool)
+        (timeout: TimeSpan)
+        (idleWindow: TimeSpan)
+        =
+        task {
+            let client, receiver = createServiceBusReceiver state
+            use _client = client
+            use _receiver = receiver
+
+            let sw = Stopwatch.StartNew()
+            let matches = ResizeArray<CanonicalExternalEventEnvelope>()
+            let lastBodies = ResizeArray<string>()
+            let maxBodies = 10
+            let mutable lastMatchAt = TimeSpan.Zero
+            let mutable sawMatch = false
+            let mutable keepGoing = true
+
+            while keepGoing do
+                let remaining = timeout - sw.Elapsed
+
+                if remaining <= TimeSpan.Zero then
+                    keepGoing <- false
+                else
+                    let waitTime =
+                        if remaining < TimeSpan.FromSeconds(1.0) then
+                            remaining
+                        else
+                            TimeSpan.FromSeconds(1.0)
+
+                    let! message = receiver.ReceiveMessageAsync(waitTime)
+
+                    if not (isNull message) then
+                        let body = message.Body.ToString()
+
+                        if lastBodies.Count >= maxBodies then lastBodies.RemoveAt(0)
+
+                        lastBodies.Add(body)
+
+                        try
+                            let envelope =
+                                JsonSerializer.Deserialize<CanonicalExternalEventEnvelope>(body, CanonicalExternalEventEnvelope.canonicalJsonSerializerOptions)
+
+                            if not (isNull (box envelope)) && predicate envelope then
+                                matches.Add(envelope)
+                                sawMatch <- true
+                                lastMatchAt <- sw.Elapsed
+                        with
+                        | _ -> ()
+
+                    if sawMatch && sw.Elapsed - lastMatchAt >= idleWindow then keepGoing <- false
+
+            return (matches |> Seq.toList), (lastBodies |> Seq.toList)
+        }
+
+    let waitForCanonicalExternalEventsAsync
+        (state: TestHostState)
+        (predicate: CanonicalExternalEventEnvelope -> bool)
+        (expectedCount: int)
+        (description: string)
+        =
+        task {
+            let client, receiver = createServiceBusReceiver state
+            use _client = client
+            use _receiver = receiver
+
+            let sw = Stopwatch.StartNew()
+            let timeout = TimeSpan.FromSeconds(30.0)
+            let matches = ResizeArray<CanonicalExternalEventEnvelope>()
+            let lastBodies = ResizeArray<string>()
+            let maxBodies = 10
+            let mutable diagnostics = String.Empty
+
+            while String.IsNullOrWhiteSpace diagnostics
+                  && matches.Count < expectedCount do
+                let remaining = timeout - sw.Elapsed
+
+                if remaining <= TimeSpan.Zero then
+                    let! graceResourceLogs = getResourceLogsAsync state.App graceServerResourceName
+                    let graceResourceLogDetails = formatLogTail "Grace.Server resource logs" graceResourceLogs 80
+                    let! aspireLogSnapshot = getResourceLogSnapshotAsync state.App
+
+                    diagnostics <-
+                        StringBuilder()
+                            .AppendLine($"Timed out waiting for canonical external events: {description}.")
+                            .AppendLine($"ExpectedCount: {expectedCount}; ActualCount: {matches.Count}")
+                            .AppendLine($"GraceServerBaseAddress: {state.GraceServerBaseAddress}")
+                            .AppendLine($"ServiceBusTopic: {state.ServiceBusTopic}")
+                            .AppendLine($"ServiceBusSubscription: {state.ServiceBusServerSubscription}")
+                            .AppendLine($"ServiceBusTestSubscription: {state.ServiceBusTestSubscription}")
+                            .AppendLine($"ServiceBusConnectionString: {redactServiceBusConnectionString state.ServiceBusConnectionString}")
+                            .AppendLine($"LastMessageBodies({lastBodies.Count}):")
+                            .AppendLine(String.Join(Environment.NewLine, lastBodies))
+                            .AppendLine(graceResourceLogDetails)
+                            .AppendLine(aspireLogSnapshot)
+                            .ToString()
+                else
+                    let waitTime =
+                        if remaining < TimeSpan.FromSeconds(1.0) then
+                            remaining
+                        else
+                            TimeSpan.FromSeconds(1.0)
+
+                    let! message = receiver.ReceiveMessageAsync(waitTime)
+
+                    if not (isNull message) then
+                        let body = message.Body.ToString()
+
+                        if lastBodies.Count >= maxBodies then lastBodies.RemoveAt(0)
+
+                        lastBodies.Add(body)
+
+                        try
+                            let envelope =
+                                JsonSerializer.Deserialize<CanonicalExternalEventEnvelope>(body, CanonicalExternalEventEnvelope.canonicalJsonSerializerOptions)
+
+                            if not (isNull (box envelope)) && predicate envelope then matches.Add(envelope)
+                        with
+                        | _ -> ()
+
+            match diagnostics with
+            | value when String.IsNullOrWhiteSpace value -> return matches |> Seq.toList
+            | value -> return raise (TimeoutException(value))
+        }
+
+    let waitForCanonicalExternalEventAsync (state: TestHostState) (predicate: CanonicalExternalEventEnvelope -> bool) (description: string) =
+        task {
+            let! matches = waitForCanonicalExternalEventsAsync state predicate 1 description
+            return matches |> List.head
         }

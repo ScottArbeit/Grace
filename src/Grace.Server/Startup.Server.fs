@@ -352,9 +352,8 @@ module Application =
                 let session = operationResult.Session
                 let workItemId, workItemLocator = tryResolveWorkItemIdentity session.WorkItemIdOrNumber
 
-                let runtimeSource =
+                let runtimeContext =
                     {
-                        EventName = CanonicalEventName.toString eventName
                         OccurredAt = metadata.Timestamp
                         CorrelationId = metadata.CorrelationId
                         OwnerId =
@@ -372,54 +371,42 @@ module Application =
                         WorkItemId = workItemId
                         WorkItemLocator = workItemLocator
                         PromotionSetId = tryParseGuid session.PromotionSetId
-                        LifecycleState = getDiscriminatedUnionCaseName session.LifecycleState
-                        Message =
-                            if eventName = CanonicalEventName.AgentWorkStopped
-                               && (String.IsNullOrWhiteSpace operationResult.Message
-                                   |> not) then
-                                Some operationResult.Message
-                            else
-                                Option.None
-                        OperationId =
-                            if String.IsNullOrWhiteSpace operationResult.OperationId then
-                                Option.None
-                            else
-                                Some operationResult.OperationId
-                        WasIdempotentReplay = operationResult.WasIdempotentReplay
-                        Source =
-                            if String.IsNullOrWhiteSpace session.Source then
-                                Option.None
-                            else
-                                Some session.Source
-                        Result =
-                            if eventName = CanonicalEventName.AgentWorkStopped then
-                                Some
+                        LifecycleState = session.LifecycleState
+                    }
+
+                let runtimeSource =
+                    match eventName with
+                    | CanonicalEventName.AgentWorkStarted ->
+                        WorkStarted
+                            {
+                                Context = runtimeContext
+                                Message =
+                                    if String.IsNullOrWhiteSpace operationResult.Message then
+                                        None
+                                    else
+                                        Some operationResult.Message
+                                OperationId =
+                                    if String.IsNullOrWhiteSpace operationResult.OperationId then
+                                        None
+                                    else
+                                        Some operationResult.OperationId
+                                WasIdempotentReplay = operationResult.WasIdempotentReplay
+                                Source = if String.IsNullOrWhiteSpace session.Source then None else Some session.Source
+                            }
+                    | CanonicalEventName.AgentWorkStopped ->
+                        WorkStopped
+                            {
+                                Context = runtimeContext
+                                Result =
                                     {
                                         Message = operationResult.Message
                                         OperationId = operationResult.OperationId
                                         WasIdempotentReplay = operationResult.WasIdempotentReplay
                                     }
-                            else
-                                Option.None
-                    }
+                            }
+                    | _ -> invalidArg (nameof eventName) $"Unsupported runtime canonical event name: {eventName}"
 
-                match ExternalEventPublication.buildRuntimeEnvelope runtimeSource with
-                | Grace.Server.ExternalEvents.Published envelope ->
-                    ExternalEventPublication.rememberRuntimeSource envelope runtimeSource
-
-                    match! ExternalEventPublication.publishCanonicalEvent envelope with
-                    | Ok () -> do! Notification.routeExternalEvent context.RequestServices envelope
-                    | Error _ -> ()
-                | Grace.Server.ExternalEvents.InternalOnly _ -> ()
-                | Grace.Server.ExternalEvents.Failed failure ->
-                    agentSessionLog.LogWarning(
-                        "{CurrentInstant}: Node: {HostName}; CorrelationId: {CorrelationId}; Failed building runtime canonical event {RawEventCase}: {Reason}",
-                        getCurrentInstantExtended (),
-                        getMachineName,
-                        failure.CorrelationId,
-                        failure.RawEventCase,
-                        failure.Reason
-                    )
+                do! ExternalEventPublication.publishRuntimeSource (Notification.routeExternalEvent context.RequestServices) runtimeSource
             }
 
         let tryGetActiveSessionByAgentKey (agentKey: string) =
@@ -839,7 +826,7 @@ module Application =
                             context
                             |> Services.result400BadRequest (GraceError.Create "EventId is required to resend a canonical external event." correlationId)
                     else
-                        match ExternalEventPublication.rebuildForReplay parameters.EventId with
+                        match! ExternalEventPublication.rebuildForReplayAsync parameters.EventId with
                         | None ->
                             return!
                                 context

@@ -363,6 +363,215 @@ Removed the legacy outward automation constructs as live source: `src/Grace.Type
 
 Final validation completed with `pwsh ./scripts/validate.ps1 -Fast`, `dotnet build --configuration Release`, `dotnet test --configuration Release --no-build`, and `dotnet tool run fantomas --recurse .`. The validate script still reports format as skipped by design, so Fantomas was run separately to satisfy the required formatting pass.
 
+### Step 11: Re-baseline the gap specification against the shipped canonical implementation
+
+Status: Completed
+
+Reconcile the new gap-closure specification with the current branch state before changing behavior again.
+This step exists to turn the follow-up spec into a precise implementation backlog, confirm the still-open
+drift from `UpdatedSpec.md`, and identify the exact seams where resend durability, validation triggering,
+runtime payload compliance, and proof-oriented tests currently diverge.
+
+Includes:
+
+- reread `E:\Temp\GapSpecification.md` and the relevant portions of `E:\Temp\UpdatedSpec.md`
+- inspect the current implementations in:
+  `src/Grace.Server/ExternalEventPublication.Server.fs`,
+  `src/Grace.Server/ExternalEvents.Server.fs`,
+  `src/Grace.Server/Notification.Server.fs`,
+  `src/Grace.Server/Startup.Server.fs`, and
+  `src/Grace.Types/ExternalEvents.Replay.Types.fs`
+- confirm the exact replay-source families currently supported and where process-local memory is still the
+  only source of truth
+- confirm where `grace.validation.requested` is emitted today and document the current per-validation-loop
+  cardinality bug
+- confirm how runtime canonical events currently bypass or partially duplicate the raw-event canonical
+  post-build path
+- confirm the exact payload mismatches for `grace.agent.work-started` and
+  `grace.agent.work-stopped`, including lifecycle-state string formatting and `result` placement
+- inventory the existing tests that claim the feature is complete and note which required acceptance
+  criteria still lack proof
+
+### Step 12: Replace transient replay remembering with a durable replay-source model
+
+Status: Completed
+
+Work summary: Replaced the process-local replay cache with durable replay-source records persisted in Cosmos, keyed by canonical `eventId`, for raw `GraceEvent`, runtime lifecycle, and derived `grace.validation.requested` publication. Resend now rebuilds from authoritative source data and fails clearly when no durable replay source exists or the stored source is incomplete.
+
+Implement a replay-source system that survives process restart and rebuilds outward canonical events from
+durable, authoritative source data instead of replaying remembered finished envelopes. This is the core
+correctness change for resend.
+
+Includes:
+
+- redesign or extend `src/Grace.Types/ExternalEvents.Replay.Types.fs` so replay-source records capture:
+  `eventId`,
+  `eventName`,
+  `eventVersion`,
+  `sourceKind`,
+  `actorType`,
+  `actorId`,
+  `correlationId`,
+  source-specific rebuild data, and
+  `recordedAt`
+- introduce durable storage and lookup for all approved replay-source families:
+  raw `GraceEvent` source,
+  runtime lifecycle source, and
+  derived `grace.validation.requested` source
+- make replay lookup keyed by canonical `eventId` and resilient across process restart
+- remove any dependence on process-local `ConcurrentDictionary<string, ReplaySource>` state as the sole
+  replayability mechanism
+- stop treating `CanonicalEnvelopeSource` or stale serialized canonical JSON as an authoritative replay
+  source
+- update resend resolution so raw-event-backed events rebuild by authoritative source identity
+  (`actorType`, `actorId`, `correlationId`) or equivalent trusted persisted raw-event data
+- persist runtime lifecycle source records before outward publication so `grace.agent.work-started` and
+  `grace.agent.work-stopped` can be resent durably
+- persist a replayable source description for derived `grace.validation.requested` events instead of only
+  remembering the finished canonical envelope
+- make resend fail clearly when no durable source exists, the durable source cannot be resolved, or the
+  current registry now classifies the source as `InternalOnly`
+
+### Step 13: Unify raw-event and runtime publication behind one canonical post-build pipeline
+
+Status: Completed
+
+Work summary: Unified raw `GraceEvent` and runtime lifecycle publication behind the shared canonical post-build flow in `ExternalEventPublication.Server.fs`. Durable replay-source persistence, Service Bus publication, retained SignalR fan-out, validation-trigger evaluation, and fail-closed logging now run through the same path for both raw-event and runtime canonical sources.
+
+Refactor the publication flow so all canonical source events follow the same post-build handling path.
+This is the structural change that keeps replay remembering, Service Bus publication, SignalR routing,
+validation triggering, and failure semantics from drifting between `Notification.Server.fs` and
+`Startup.Server.fs`.
+
+Includes:
+
+- extract or introduce a shared canonical post-build module that is responsible for:
+  durable replay-source remembering,
+  Service Bus publication,
+  SignalR fan-out,
+  validation-trigger evaluation, and
+  structured failure logging
+- route raw `GraceEvent` canonical publication in `src/Grace.Server/Notification.Server.fs` through that
+  shared path
+- route runtime canonical publication in `src/Grace.Server/Startup.Server.fs` through that same shared
+  path
+- preserve fail-closed behavior when canonical build fails or when a replay source cannot be remembered
+- preserve non-blocking subscriber behavior when Service Bus publish or downstream notification work fails
+- ensure only valid canonical source events enter validation-trigger evaluation
+- keep derived canonical events, including `grace.validation.requested`, out of recursive validation
+  triggering unless a later explicit design decision changes that rule
+- update structured logging so replay-source write failures, resend rebuild failures, publish failures, and
+  validation-trigger failures all carry correlation-safe context without leaking sensitive payload content
+
+### Step 14: Fix validation-requested cardinality and derived-event replay semantics
+
+Status: Completed
+
+Work summary: Validation triggering now computes matching validation sets once per successfully built source event and emits exactly one durable, replayable `grace.validation.requested` event per matching validation set before executing per-validation work. Derived validation-requested events no longer recurse into more validation-requested emission, and resend rebuilds them from stored replay-source data instead of cached public envelopes.
+
+Correct the validation-trigger behavior so matching happens once per canonical source event and
+`grace.validation.requested` emits exactly once per matching validation set, independent of the number or
+execution mode of validations inside the set.
+
+Includes:
+
+- refactor `emitValidationRequestedEvents` in `src/Grace.Server/Notification.Server.fs` so matching
+  validation sets are computed once per successfully built canonical source event
+- emit exactly one derived `grace.validation.requested` event per matching validation set before the
+  per-validation execution loop runs
+- preserve deterministic emission order for multiple matching validation sets
+- continue to fail closed when the source canonical event was not built successfully or when the derived
+  canonical event would be invalid
+- keep downstream execution of synchronous and asynchronous validations separate from derived-event
+  emission so cardinality no longer depends on `validationSet.Validations`
+- ensure the derived payload still carries:
+  `validationSetId`,
+  `sourceEventName`,
+  `targetBranchId`,
+  `targetBranchName`,
+  `promotionSetId` when present,
+  `stepsComputationAttempt` when present,
+  `matchedRules`, and
+  `validationsSummary`
+- switch `grace.validation.requested` replay support to the durable source model from Step 12 and remove
+  any remaining dependence on remembered finished envelopes
+
+### Step 15: Normalize runtime lifecycle source records and exact payload serialization
+
+Status: Completed
+
+Work summary: Runtime lifecycle replay-source modeling now distinguishes start and stop data cleanly enough to emit the canonical payload schema exactly. `grace.agent.work-started` publishes canonical lowercase lifecycle state plus top-level `startedAt`, `message`, `operationId`, `wasIdempotentReplay`, and `source`, while `grace.agent.work-stopped` publishes `stoppedAt`, canonical `lifecycleState`, and nested `result` fields without top-level duplication.
+
+Bring runtime lifecycle source modeling and payload building into full compliance with the published
+canonical contract. The main goal is to emit exactly the schema described in the spec, using canonical
+string formats and field placement for both started and stopped events.
+
+Includes:
+
+- update `src/Grace.Types/ExternalEvents.Replay.Types.fs` and related runtime source construction so the
+  model cleanly distinguishes start and stop source data where that improves exact schema emission
+- update runtime source creation in `src/Grace.Server/Startup.Server.fs` so all required started and
+  stopped fields are captured before outward publication
+- add a dedicated lifecycle-state normalization helper so runtime payloads emit canonical kebab-case values
+  instead of DU case names
+- ensure `grace.agent.work-started` serializes:
+  `startedAt`,
+  top-level `message`,
+  top-level `operationId`,
+  top-level `wasIdempotentReplay`,
+  `source` when known, and
+  `workItemLocator` when only a locator is known
+- ensure `grace.agent.work-stopped` serializes:
+  `stoppedAt`,
+  canonical `lifecycleState`, and
+  a nested `result` object containing `message`, `operationId`, and `wasIdempotentReplay`
+- ensure `grace.agent.work-stopped` no longer duplicates `message`, `operationId`, or
+  `wasIdempotentReplay` at the top level unless the specification is later amended
+- continue omitting `branchId` and `workItemId` unless they are confidently known from the runtime source
+
+### Step 16: Add proof-oriented coverage for replay durability, trigger behavior, runtime payloads, and invariants
+
+Status: Completed
+
+Work summary: Added resend durability proofs, runtime validation-trigger proofs, runtime start/stop payload-schema integration checks, and registry/builder invariants across `Notification.Server.Tests.fs`, `AspireTestHost.fs`, and `Eventing.Server.Tests.fs`. The test host now waits for exact expected canonical-message counts instead of stopping after an idle gap, and the server warms promotion-set plus validation-set trigger context from authoritative event flow so the runtime `grace.validation.requested` proofs stay stable for async, synchronous, and multi-set cases.
+
+Replace the remaining smoke-test posture with tests that directly prove the spec's acceptance criteria and
+would fail if the gap-closure behaviors regress.
+
+Includes:
+
+- add or update server integration coverage for resend durability and canonical rebuild semantics in the
+  relevant server test projects
+- prove resend succeeds after clearing process-local caches or recreating the relevant server/test-host
+  state, using durable replay-source data
+- prove resend preserves the same `eventId` and rebuilds from source rather than replaying a cached
+  envelope
+- prove resend fails clearly when:
+  no durable replay source exists,
+  the source can no longer be resolved, or
+  the current registry now classifies the source as `InternalOnly`
+- prove `grace.validation.requested` cardinality for:
+  one matching set with multiple async validations,
+  one matching set with only synchronous validations,
+  and multiple matching validation sets
+- prove a source event that fails canonical build does not emit `grace.validation.requested`
+- prove runtime canonical events such as `grace.agent.work-started` participate in validation matching
+  while derived `grace.validation.requested` events do not recursively trigger more derived events
+- add pure or type-level tests for lifecycle-state normalization and exact runtime payload serialization
+- keep or strengthen registry and builder invariants proving:
+  exhaustive coverage,
+  `PromotionSetEventType.Applied` remains `InternalOnly`,
+  terminal `ReferenceEventType.Created` remains the only authoritative source of
+  `grace.promotion-set.applied`, and
+  all `DirectoryVersionEventType` cases remain explicitly `InternalOnly`
+- preserve negative proof that `grace.agent.bootstrapped` is not published and that no live publication
+  path references `AutomationEventEnvelope`, `AutomationEventType`, or `DataJson`
+- finish with repository validation and formatting runs:
+  `pwsh ./scripts/validate.ps1 -Fast`,
+  `dotnet build --configuration Release`,
+  `dotnet test --configuration Release --no-build`, and
+  `dotnet tool run fantomas --recurse .`
+
 ## Decision Log
 
 - 2026-03-09 03:33:17 PDT: Treat this as a full breaking-contract replacement, not a compatibility layer,
@@ -398,7 +607,9 @@ Final validation completed with `pwsh ./scripts/validate.ps1 -Fast`, `dotnet bui
 - 2026-03-09 14:05:42 PDT: Infer `AzureServiceBus` in `ApplicationContext.Server.fs` when Service Bus configuration is present even if `grace__pubsub__system` is unset, because the previous `value.Equals(...)` path null-dereferenced during server startup and blocked the entire subscriber host.
 - 2026-03-09 14:05:42 PDT: Fall back to `NullLoggerFactory.Instance` when `ApplicationContext.loggerFactory` is still null during `Startup.Server.fs` construction so canonical runtime event routing can initialize without depending on later host wiring.
 - 2026-03-09 14:05:42 PDT: Add `POST /external-event/resend` to `EndpointAuthorizationManifest.Server.fs` rather than weakening tests or bypassing manifest coverage; the resend surface is a real secured outward endpoint and needs first-class authorization metadata.
-- 2026-03-09 14:05:42 PDT: Treat the one-time `ConcurrentCreatesProduceUniqueNumbersWithoutCollisions` failure as test flakiness, not a canonical-event regression, because the isolated rerun passed and the subsequent full solution `dotnet test --configuration Release --no-build` run passed cleanly.`r`n`r`n## Surprises & discoveries
+- 2026-03-09 14:05:42 PDT: Treat the one-time `ConcurrentCreatesProduceUniqueNumbersWithoutCollisions` failure as test flakiness, not a canonical-event regression, because the isolated rerun passed and the subsequent full solution `dotnet test --configuration Release --no-build` run passed cleanly.
+
+## Surprises & discoveries
 
 - The current outward event layer is narrower than the spec assumes:
   `Grace.Server/Eventing.Server.fs` only maps a subset of raw events today, and several top-level families
@@ -428,7 +639,9 @@ Final validation completed with `pwsh ./scripts/validate.ps1 -Fast`, `dotnet bui
 - `Startup.Server.fs` assumed `ApplicationContext.loggerFactory` was already populated during startup construction. Server-test host initialization exposed that this can still be null, so canonical runtime event logging now uses `NullLoggerFactory.Instance` as a safe fallback.
 - The resend route was functionally implemented before authorization metadata was complete: the first full solution test run failed `EndpointAuthorizationManifest` coverage until `POST /external-event/resend` was added to `src/Grace.Server/Security/EndpointAuthorizationManifest.Server.fs`.
 - `dotnet tool run fantomas --recurse .` initially failed because a leftover scratch file, `src/Grace.Server/ExternalEvents.Server.rebuilt.fs`, was still present and unparsable. Removing that transient rebuild artifact and rerunning Fantomas produced a clean formatting pass.
-- One concurrent work-item integration test showed transient instability during the final cycle: `ConcurrentCreatesProduceUniqueNumbersWithoutCollisions` returned HTTP 400 once in a full-server run, then passed immediately in isolation and the following full solution rerun passed. The evidence points to existing test flakiness rather than a repeatable canonical external-event defect.`r`n`r`n## Outcomes & follow-ups
+- One concurrent work-item integration test showed transient instability during the final cycle: `ConcurrentCreatesProduceUniqueNumbersWithoutCollisions` returned HTTP 400 once in a full-server run, then passed immediately in isolation and the following full solution rerun passed. The evidence points to existing test flakiness rather than a repeatable canonical external-event defect.
+
+## Outcomes & follow-ups
 
 - Primary outcome: implement a single authoritative canonical external-event system used for Service Bus,
   SignalR if retained, validation triggering, agent runtime lifecycle events, and resend support.

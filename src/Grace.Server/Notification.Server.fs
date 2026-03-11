@@ -353,16 +353,6 @@ module Notification =
                     )
             }
 
-        let private parseGuid (value: string) =
-            let mutable parsed = Guid.Empty
-
-            if String.IsNullOrWhiteSpace value |> not
-               && Guid.TryParse(value, &parsed)
-               && parsed <> Guid.Empty then
-                Some parsed
-            else
-                None
-
         let internal matchesBranchGlob (branchName: BranchName) (branchNameGlob: string) =
             let normalizedPattern = if String.IsNullOrWhiteSpace branchNameGlob then "*" else branchNameGlob.Trim()
 
@@ -380,18 +370,6 @@ module Notification =
                 ||| RegexOptions.CultureInvariant
             )
 
-        let private tryGetPromotionSetIdFromMetadata (metadata: EventMetadata) =
-            match metadata.Properties.TryGetValue("ActorId") with
-            | true, actorId -> parseGuid actorId
-            | _ -> None
-
-        let private tryGetTerminalPromotionSetId (links: ReferenceLinkType seq) =
-            links
-            |> Seq.tryPick (fun link ->
-                match link with
-                | ReferenceLinkType.PromotionSetTerminal promotionSetId -> Some promotionSetId
-                | _ -> None)
-
         let private emitExternalEvent (hubContext: IHubContext<NotificationHub, IGraceClientConnection>) (envelope: CanonicalExternalEventEnvelope) =
             task {
                 if not <| isNull hubContext then
@@ -405,191 +383,6 @@ module Notification =
                                 .Clients
                                 .Group(groupKey)
                                 .NotifyExternalEvent(envelope)
-            }
-
-        let private getPromotionSetContext (repositoryId: RepositoryId) (promotionSetId: PromotionSetId) (correlationId: CorrelationId) =
-            task {
-                let promotionSetActorProxy = PromotionSet.CreateActorProxy promotionSetId repositoryId correlationId
-                let! exists = promotionSetActorProxy.Exists correlationId
-
-                if exists then
-                    let! promotionSet = promotionSetActorProxy.Get correlationId
-                    let! branch = getBranchDto promotionSet.TargetBranchId repositoryId correlationId
-                    return Some(promotionSet, branch)
-                else
-                    return None
-            }
-
-        let private tryResolveValidationContext (graceEvent: GraceEvent) (correlationId: CorrelationId) =
-            task {
-                match graceEvent with
-                | QueueEvent queueEvent ->
-                    match queueEvent.Event with
-                    | PromotionQueueEventType.PromotionSetEnqueued promotionSetId
-                    | PromotionQueueEventType.PromotionSetDequeued promotionSetId ->
-                        match tryGetRepositoryIdFromMetadata queueEvent.Metadata with
-                        | Some repositoryId ->
-                            let! promotionSetContext = getPromotionSetContext repositoryId promotionSetId correlationId
-
-                            match promotionSetContext with
-                            | Some (promotionSet, branch) ->
-                                return
-                                    Some(
-                                        repositoryId,
-                                        branch.BranchId,
-                                        branch.BranchName,
-                                        Some promotionSet.PromotionSetId,
-                                        Some promotionSet.StepsComputationAttempt
-                                    )
-                            | None -> return None
-                        | None -> return None
-                    | _ -> return None
-                | PromotionSetEvent promotionSetEvent ->
-                    match tryGetPromotionSetIdFromMetadata promotionSetEvent.Metadata, tryGetRepositoryIdFromMetadata promotionSetEvent.Metadata with
-                    | Some promotionSetId, Some repositoryId ->
-                        let! promotionSetContext = getPromotionSetContext repositoryId promotionSetId correlationId
-
-                        match promotionSetContext with
-                        | Some (promotionSet, branch) ->
-                            return
-                                Some(
-                                    repositoryId,
-                                    branch.BranchId,
-                                    branch.BranchName,
-                                    Some promotionSet.PromotionSetId,
-                                    Some promotionSet.StepsComputationAttempt
-                                )
-                        | None -> return None
-                    | _ -> return None
-                | ReferenceEvent referenceEvent ->
-                    match referenceEvent.Event with
-                    | ReferenceEventType.Created (_, _, _, repositoryId, branchId, _, _, referenceType, _, links) when referenceType = ReferenceType.Promotion ->
-                        match tryGetTerminalPromotionSetId links with
-                        | Some promotionSetId ->
-                            let! branchDto = getBranchDto branchId repositoryId correlationId
-                            let! promotionSetContext = getPromotionSetContext repositoryId promotionSetId correlationId
-
-                            let stepsComputationAttempt =
-                                promotionSetContext
-                                |> Option.map (fun (promotionSet, _) -> promotionSet.StepsComputationAttempt)
-
-                            return Some(repositoryId, branchId, branchDto.BranchName, Some promotionSetId, stepsComputationAttempt)
-                        | None -> return None
-                    | _ -> return None
-                | _ -> return None
-            }
-
-        let private emitValidationRequestedEvents
-            (hubContext: IHubContext<NotificationHub, IGraceClientConnection>)
-            (sourceEnvelope: CanonicalExternalEventEnvelope)
-            (graceEvent: GraceEvent)
-            =
-            task {
-                let correlationId = sourceEnvelope.CorrelationId
-
-                let! context = tryResolveValidationContext graceEvent correlationId
-
-                match context with
-                | None -> ()
-                | Some (repositoryId, branchId, branchName, promotionSetId, stepsComputationAttempt) ->
-                    let! validationSets = getValidationSets repositoryId 500 false correlationId
-
-                    let matchingValidationSets =
-                        validationSets
-                        |> List.choose (fun validationSet ->
-                            let matchedRules =
-                                validationSet.Rules
-                                |> List.indexed
-                                |> List.choose (fun (ruleIndex, rule) ->
-                                    if rule.EventNames
-                                       |> List.contains sourceEnvelope.EventName
-                                       && matchesBranchGlob branchName rule.BranchNameGlob then
-                                        Some { RuleIndex = ruleIndex; EventNames = rule.EventNames; BranchNameGlob = rule.BranchNameGlob }
-                                    else
-                                        Option.None)
-
-                            if matchedRules.IsEmpty then Option.None else Some(validationSet, matchedRules))
-
-                    let mutable index = 0
-
-                    while index < matchingValidationSets.Length do
-                        let validationSet, matchedRules = matchingValidationSets[index]
-                        let mutable validationIndex = 0
-
-                        while validationIndex < validationSet.Validations.Length do
-                            let validation = validationSet.Validations[validationIndex]
-
-                            match validation.ExecutionMode with
-                            | ValidationExecutionMode.AsyncCallback ->
-                                match
-                                    ExternalEventPublication.buildValidationRequestedEnvelope
-                                        validationSet
-                                        sourceEnvelope
-                                        branchId
-                                        branchName
-                                        promotionSetId
-                                        stepsComputationAttempt
-                                        matchedRules
-                                    with
-                                | Grace.Server.ExternalEvents.Published envelope ->
-                                    ExternalEventPublication.rememberEnvelopeSource envelope
-
-                                    match! ExternalEventPublication.publishCanonicalEvent envelope with
-                                    | Ok () -> do! emitExternalEvent hubContext envelope
-                                    | Error _ -> ()
-                                | Grace.Server.ExternalEvents.InternalOnly _ -> ()
-                                | Grace.Server.ExternalEvents.Failed failure ->
-                                    log.LogWarning(
-                                        "{CurrentInstant}: Node: {HostName}; CorrelationId: {CorrelationId}; Failed building validation-requested event for ValidationSetId {ValidationSetId}: {Reason}",
-                                        getCurrentInstantExtended (),
-                                        getMachineName,
-                                        failure.CorrelationId,
-                                        validationSet.ValidationSetId,
-                                        failure.Reason
-                                    )
-                            | ValidationExecutionMode.Synchronous ->
-                                let validationResultId = Guid.NewGuid()
-                                let validationResultActorProxy = ValidationResult.CreateActorProxy validationResultId repositoryId correlationId
-                                let metadata = EventMetadata.New correlationId GraceSystemUser
-                                metadata.Properties[ nameof RepositoryId ] <- $"{repositoryId}"
-                                metadata.Properties[ "ActorId" ] <- $"{validationResultId}"
-
-                                let validationResultDto =
-                                    { ValidationResultDto.Default with
-                                        ValidationResultId = validationResultId
-                                        OwnerId = validationSet.OwnerId
-                                        OrganizationId = validationSet.OrganizationId
-                                        RepositoryId = repositoryId
-                                        ValidationSetId = Some validationSet.ValidationSetId
-                                        PromotionSetId = promotionSetId
-                                        StepsComputationAttempt = stepsComputationAttempt
-                                        ValidationName = validation.Name
-                                        ValidationVersion = validation.Version
-                                        Output =
-                                            {
-                                                Status = ValidationStatus.Pass
-                                                Summary = $"Synchronous validation '{validation.Name}' recorded automatically from {sourceEnvelope.EventName}."
-                                                ArtifactIds = []
-                                            }
-                                        OnBehalfOf = [ UserId GraceSystemUser ]
-                                        CreatedAt = getCurrentInstant ()
-                                    }
-
-                                match! validationResultActorProxy.Handle (ValidationResultCommand.Record validationResultDto) metadata with
-                                | Ok _ -> ()
-                                | Error graceError ->
-                                    log.LogWarning(
-                                        "{CurrentInstant}: Node: {HostName}; CorrelationId: {CorrelationId}; Failed recording synchronous validation result for ValidationSetId {ValidationSetId}. Error: {GraceError}",
-                                        getCurrentInstantExtended (),
-                                        getMachineName,
-                                        correlationId,
-                                        validationSet.ValidationSetId,
-                                        graceError
-                                    )
-
-                            validationIndex <- validationIndex + 1
-
-                        index <- index + 1
             }
 
         let hubContext = lazy (serviceProvider.GetService<IHubContext<NotificationHub, IGraceClientConnection>>())
@@ -922,8 +715,11 @@ module Notification =
                         getMachineName,
                         correlationId
                     )
+
+                    do! ExternalEventPublication.absorbPromotionSetEvent promotionSetEvent
                 | ValidationSetEvent validationSetEvent ->
                     let correlationId = validationSetEvent.Metadata.CorrelationId
+                    ExternalEventPublication.absorbValidationSetEvent validationSetEvent
 
                     log.LogInformation(
                         "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Received ValidationSetEvent notification.",
@@ -950,25 +746,7 @@ module Notification =
                         correlationId
                     )
 
-                match ExternalEvents.buildGraceEvent graceEvent with
-                | Grace.Server.ExternalEvents.Published envelope ->
-                    ExternalEventPublication.rememberGraceEventSource envelope graceEvent
-
-                    match! ExternalEventPublication.publishCanonicalEvent envelope with
-                    | Ok () ->
-                        do! emitExternalEvent hubContext envelope
-                        do! emitValidationRequestedEvents hubContext envelope graceEvent
-                    | Error _ -> ()
-                | Grace.Server.ExternalEvents.InternalOnly _ -> ()
-                | Grace.Server.ExternalEvents.Failed failure ->
-                    log.LogWarning(
-                        "{CurrentInstant}: Node: {HostName}; CorrelationId: {CorrelationId}; Failed building canonical external event {RawEventCase}: {Reason}",
-                        getCurrentInstantExtended (),
-                        getMachineName,
-                        failure.CorrelationId,
-                        failure.RawEventCase,
-                        failure.Reason
-                    )
+                do! ExternalEventPublication.publishGraceEvent (emitExternalEvent hubContext) graceEvent
 
             //return! setStatusCode StatusCodes.Status204NoContent next context
             }

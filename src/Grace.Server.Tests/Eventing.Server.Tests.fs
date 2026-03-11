@@ -1,9 +1,11 @@
 namespace Grace.Server.Tests
 
 open Grace.Server
+open Grace.Types.DirectoryVersion
 open Grace.Types.Events
 open Grace.Types.ExternalEvents
 open Grace.Types.Owner
+open Grace.Types.PromotionSet
 open Grace.Types.Reference
 open Grace.Types.Types
 open NodaTime
@@ -25,6 +27,13 @@ type CanonicalEventBuilderTests() =
 
         metadata.Properties[ nameof RepositoryId ] <- $"{repositoryId}"
         metadata.Properties[ "ActorId" ] <- $"{referenceId}"
+        metadata
+
+    let promotionSetMetadata correlationId repositoryId promotionSetId =
+        let metadata = { EventMetadata.New correlationId "tester" with Timestamp = Instant.FromUtc(2026, 3, 9, 20, 10) }
+
+        metadata.Properties[ nameof RepositoryId ] <- $"{repositoryId}"
+        metadata.Properties[ "ActorId" ] <- $"{promotionSetId}"
         metadata
 
     [<Test>]
@@ -82,7 +91,6 @@ type CanonicalEventBuilderTests() =
         match ExternalEvents.buildGraceEvent (GraceEvent.ReferenceEvent referenceEvent) with
         | ExternalEvents.Published envelope ->
             Assert.That(envelope.EventName, Is.EqualTo(CanonicalEventName.toString CanonicalEventName.PromotionSetApplied))
-
             Assert.That(envelope.EventId, Is.EqualTo($"Reference_{referenceId}_corr-promotion-terminal"))
 
             let payload = envelope.Payload
@@ -100,6 +108,33 @@ type CanonicalEventBuilderTests() =
 
             Assert.That(payload.TryGetProperty("referenceId", &ignored), Is.False)
         | outcome -> Assert.Fail($"Expected Published outcome, got {outcome}.")
+
+    [<Test>]
+    member _.PromotionSetAppliedRemainsInternalOnlyWhenSourcedFromPromotionSetEvent() =
+        let repositoryId = Guid.NewGuid()
+        let promotionSetId = Guid.NewGuid()
+        let referenceId = Guid.NewGuid()
+
+        let promotionSetEvent: PromotionSetEvent =
+            { Event = PromotionSetEventType.Applied referenceId; Metadata = promotionSetMetadata "corr-promotion-applied" repositoryId promotionSetId }
+
+        match ExternalEvents.buildGraceEvent (GraceEvent.PromotionSetEvent promotionSetEvent) with
+        | ExternalEvents.InternalOnly rawEventCase -> Assert.That(rawEventCase, Is.EqualTo(RawEventCase.promotionSet "Applied"))
+        | outcome -> Assert.Fail($"Expected InternalOnly outcome, got {outcome}.")
+
+    [<Test>]
+    member _.AllDirectoryVersionRegistryEntriesRemainInternalOnly() =
+        let directoryEntries =
+            Registry.all
+            |> List.filter (fun entry -> entry.RawEventCase.StartsWith("DirectoryVersionEventType.", StringComparison.Ordinal))
+
+        Assert.That(directoryEntries, Is.Not.Empty)
+
+        Assert.That(
+            directoryEntries
+            |> List.forall (fun entry -> entry.Classification = ExternalEventClassification.InternalOnly),
+            Is.True
+        )
 
     [<Test>]
     member _.RuntimeCanonicalRegistryDoesNotPublishBootstrapped() =
