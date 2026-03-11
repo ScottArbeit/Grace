@@ -229,14 +229,17 @@ type ReferenceLinkSummary = { Kind: string; ReferenceId: ReferenceId option; Pro
 
 type LinksSummary = { Count: int; Links: ReferenceLinkSummary list }
 
+[<GenerateSerializer>]
 type MatchedRule = { RuleIndex: int; EventNames: string list; BranchNameGlob: string }
 
 type RuleMatchSummary = { EventNames: string list; BranchNameGlob: string }
 
 type RulesSummary = { RuleCount: int; Rules: RuleMatchSummary list }
 
+[<GenerateSerializer>]
 type ValidationSummary = { Name: string; Version: string; ExecutionMode: string; RequiredForApply: bool }
 
+[<GenerateSerializer>]
 type ValidationsSummary = { ValidationCount: int; Validations: ValidationSummary list }
 
 type BaselineDriftReackThresholdSummary = { ChurnLines: int; FilesTouched: int }
