@@ -136,7 +136,7 @@ module Watch =
     let mutable graceStatusMemoryStream: MemoryStream = null
     let mutable graceStatusHasChanged = false
 
-    let fileDeleted filePath = logToConsole $"In Delete: filePath: {filePath}"   
+    let fileDeleted filePath = logToConsole $"In Delete: filePath: {filePath}"
 
     let isNotDirectory path = not <| Directory.Exists(path)
     let updateInProgress () = File.Exists(updateInProgressFileName ())
@@ -144,10 +144,8 @@ module Watch =
 
     let resolveSignalRAccessTokenResult (tokenResult: Result<string option, string>) =
         match tokenResult with
-        | Ok(Some token) when not (String.IsNullOrWhiteSpace token) -> Ok token
-        | Ok _ ->
-            Error
-                $"No access token is available. Run `grace auth login` or set {Constants.EnvironmentVariables.GraceToken} before starting watch."
+        | Ok (Some token) when not (String.IsNullOrWhiteSpace token) -> Ok token
+        | Ok _ -> Error $"No access token is available. Run `grace auth login` or set {Constants.EnvironmentVariables.GraceToken} before starting watch."
         | Error message -> Error $"Unable to acquire an access token for SignalR notifications: {message}"
 
     let private getSignalRAccessToken () =
@@ -165,7 +163,7 @@ module Watch =
                     options.Transports <- HttpTransportType.ServerSentEvents
 
                     options.AccessTokenProvider <-
-                        Func<Task<string>>(fun () ->
+                        Func<Task<string>> (fun () ->
                             task {
                                 let! accessTokenResult = getSignalRAccessToken ()
 
@@ -178,6 +176,7 @@ module Watch =
 
     let private isGraceStatusArtifact (fullPath: string) =
         let statusFile = Current().GraceStatusFile
+
         fullPath.Equals(statusFile, StringComparison.InvariantCultureIgnoreCase)
         || fullPath.Equals(statusFile + "-wal", StringComparison.InvariantCultureIgnoreCase)
         || fullPath.Equals(statusFile + "-shm", StringComparison.InvariantCultureIgnoreCase)
@@ -287,8 +286,7 @@ module Watch =
                 $"{getDiscriminatedUnionCaseName difference.DifferenceType} for {getDiscriminatedUnionCaseName difference.FileSystemEntryType} {difference.RelativePath}"
 
     /// Update the Grace Object Cache file with the new DirectoryVersions.
-    let updateObjectCacheFile (newDirectoryVersions: List<LocalDirectoryVersion>) =
-        task { do! upsertObjectCache newDirectoryVersions }
+    let updateObjectCacheFile (newDirectoryVersions: List<LocalDirectoryVersion>) = task { do! upsertObjectCache newDirectoryVersions }
 
     /// Updates the Grace Status file's Index with updates detected from the file system.
     let updateGraceStatus graceStatus correlationId =
@@ -347,8 +345,7 @@ module Watch =
                 if (differences.Count > 0) then
                     match! createSaveReference (getRootDirectoryVersion newGraceStatus) message correlationId with
                     | Ok returnValue ->
-                        let newGraceStatusWithUpdatedTime =
-                            { newGraceStatus with LastSuccessfulDirectoryVersionUpload = getCurrentInstant () }
+                        let newGraceStatusWithUpdatedTime = { newGraceStatus with LastSuccessfulDirectoryVersionUpload = getCurrentInstant () }
                         // Apply incremental changes to the Grace Status DB.
                         do! applyGraceStatusIncremental newGraceStatusWithUpdatedTime newDirectoryVersions differences
                         //logToAnsiConsole Colors.Important $"Setting graceStatusHasChanged to false in updateGraceStatus(). Current value: {graceStatusHasChanged}."
@@ -412,8 +409,7 @@ module Watch =
             graceStatus <- GraceStatus.Default
         }
 
-    let updateGraceStatusDirectoryIds (status: GraceStatus) =
-        graceStatusDirectoryIds <- status.Index.Keys.ToHashSet()
+    let updateGraceStatusDirectoryIds (status: GraceStatus) = graceStatusDirectoryIds <- status.Index.Keys.ToHashSet()
 
     /// Processes any changed files since the last timer tick.
     let processChangedFiles () =
@@ -464,6 +460,7 @@ module Watch =
                     if filesToProcess.IsEmpty then
                         let! graceStatusSnapshot = readGraceStatusFile ()
                         graceStatus <- graceStatusSnapshot
+
                         match! (updateGraceStatus graceStatus correlationId) with
                         | Some newGraceStatus -> graceStatus <- newGraceStatus
                         | None ->
@@ -749,7 +746,7 @@ module Watch =
                           && not (cancellationToken.IsCancellationRequested) do
                         // Grace Status may have changed from branch switch, or other commands.
                         if graceStatusHasChanged then
-                            let! updatedGraceStatus = readGraceStatusFile ()    
+                            let! updatedGraceStatus = readGraceStatusFile ()
                             graceStatus <- updatedGraceStatus
                             updateGraceStatusDirectoryIds graceStatus
                             do! updateGraceWatchInterprocessFile graceStatus (Some graceStatusDirectoryIds)
@@ -784,21 +781,27 @@ module Watch =
                 with
                 | :? HttpRequestException as httpEx when
                     httpEx.StatusCode.HasValue
-                    && httpEx.StatusCode.Value = HttpStatusCode.Unauthorized ->
+                    && httpEx.StatusCode.Value = HttpStatusCode.Unauthorized
+                    ->
                     logToAnsiConsole
                         Colors.Error
                         $"SignalR negotiation failed with 401 Unauthorized. Run `grace auth login` or set {Constants.EnvironmentVariables.GraceToken}, then retry `grace watch`."
+
                     return -1
-                | :? InvalidOperationException as invalidOperationException
-                    when invalidOperationException.Message.Contains("access token", StringComparison.OrdinalIgnoreCase) ->
+                | :? InvalidOperationException as invalidOperationException when
+                    invalidOperationException.Message.Contains
+                        (
+                            "access token",
+                            StringComparison.OrdinalIgnoreCase
+                        )
+                    ->
                     logToAnsiConsole Colors.Error $"{Markup.Escape(invalidOperationException.Message)}"
                     return -1
                 | ex ->
                     //let exceptionMarkup = Markup.Escape($"{ExceptionResponse.Create ex}").Replace("\\\\", @"\").Replace("\r\n", Environment.NewLine)
                     //logToAnsiConsole Colors.Error $"{exceptionMarkup}"
-                    let exceptionSettings = ExceptionSettings()
+                    let exceptionSettings = ExceptionSettings(Format = ExceptionFormats.Default)
                     // Need to fill in some exception styles here.
-                    exceptionSettings.Format <- ExceptionFormats.Default
                     AnsiConsole.WriteException(ex, exceptionSettings)
                     return -1
             }

@@ -5,6 +5,7 @@ open Azure.Identity
 open Azure.Messaging.ServiceBus
 open Azure.Storage
 open Azure.Storage.Blobs
+open Azure.Storage.Blobs.Models
 open Azure.Storage.Blobs.Specialized
 open Azure.Storage.Sas
 open Grace.Actors.Constants
@@ -303,11 +304,13 @@ module Services =
                         // For managed identity, we need to get a user delegation key first
                         let blobServiceClient = blobContainerClient.GetParentBlobServiceClient()
 
-                        let! userDelegationKey =
-                            blobServiceClient.GetUserDelegationKeyAsync(
-                                DateTimeOffset.UtcNow,
-                                DateTimeOffset.UtcNow.Add(TimeSpan.FromMinutes(SharedAccessSignatureExpiration))
+                        let userDelegationKeyOptions =
+                            BlobGetUserDelegationKeyOptions(
+                                DateTimeOffset.UtcNow.Add(TimeSpan.FromMinutes(SharedAccessSignatureExpiration)),
+                                StartsOn = DateTimeOffset.UtcNow
                             )
+
+                        let! userDelegationKey = blobServiceClient.GetUserDelegationKeyAsync(userDelegationKeyOptions)
 
                         let sasQueryParameters = blobSasBuilder.ToSasQueryParameters(userDelegationKey.Value, blobServiceClient.AccountName)
                         return Uri($"{blobContainerClient.Uri}/{blobName}?{sasQueryParameters}")
@@ -318,8 +321,7 @@ module Services =
                         | Some credential ->
                             let sasQueryParameters = blobSasBuilder.ToSasQueryParameters(credential)
                             return Uri($"{blobContainerClient.Uri}/{blobName}?{sasQueryParameters}")
-                        | None when blobContainerClient.CanGenerateSasUri ->
-                            return blobContainerClient.GenerateSasUri(blobSasBuilder)
+                        | None when blobContainerClient.CanGenerateSasUri -> return blobContainerClient.GenerateSasUri(blobSasBuilder)
                         | None ->
                             return
                                 raise (
@@ -2721,6 +2723,7 @@ module Services =
 
                     if iterator.HasMoreResults then
                         let! results = iterator.ReadNextAsync()
+
                         let actorId =
                             results.Resource
                             |> Seq.tryHead
