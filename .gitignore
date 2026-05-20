@@ -15,7 +15,6 @@
 **/dapr
 **/*[Aa]zurite*
 **/.env
-*CodexPlan.*
 
 # Secrets file to configure Orleans persistence
 Orleans.secrets.fs
@@ -218,5 +217,3 @@ FakesAssemblies/
 /src/Check-CosmosDB-RUs.ps1
 *.nettrace
 *.gcdump
-
-/plans

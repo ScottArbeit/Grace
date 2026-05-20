@@ -30,18 +30,24 @@ This repo is primarily **F#** and targets **.NET 10**.
 
 - Use the **GitHub fork + pull request** workflow.
 - Keep PRs focused (one change per PR whenever practical).
+- Follow the repository development process in [`docs/Development process.md`](./docs/Development%20process.md):
+  create or confirm the GitHub issue, owned paths, risk surfaces, validation plan, docs impact, and definition of done before
+  editing.
+- Use a focused branch for each issue. Maintainers and agents should use issue-owned worktrees for repo-local work.
+- Prefer vertical slices with focused validation and a commit after each completed slice.
 - Add or update tests when changing behavior.
 - Please add any useful AI prompts you used for diagnosis or implementation to the PR description.
 
 ## Prerequisites
 
-- **.NET 10 SDK** (see: https://dotnet.microsoft.com/download)
-- **PowerShell 7+** (see: https://learn.microsoft.com/powershell/)
+- **.NET 10 SDK** (see: <https://dotnet.microsoft.com/download>)
+- **PowerShell 7+** (see: <https://learn.microsoft.com/powershell/>)
 - **Docker Desktop** or **Podman** (recommended for local emulators / Aspire DebugLocal)
-  - Windows/macOS: https://www.docker.com/products/docker-desktop/
+  - Windows/macOS: <https://www.docker.com/products/docker-desktop/>
   - Linux: use Docker Engine for your distro
 
-`pwsh ./scripts/bootstrap.ps1` is the recommended sanity check. It verifies tools and performs `dotnet tool restore` + `dotnet restore`.
+`pwsh ./scripts/bootstrap.ps1` is the recommended sanity check. It verifies tools and performs `dotnet tool restore`
+and `dotnet restore`.
 
 ## Build
 
@@ -72,7 +78,7 @@ If you’re proposing CI changes, CI should enforce formatting checks (if it doe
 
 Fantomas:
 
-- https://github.com/fsprojects/fantomas
+- <https://github.com/fsprojects/fantomas>
 
 ## Running Grace locally (Aspire)
 
@@ -88,7 +94,7 @@ Where to look in the repo:
 
 Aspire:
 
-- https://learn.microsoft.com/dotnet/aspire/
+- <https://learn.microsoft.com/dotnet/aspire/>
 
 ## Configuration and secrets
 
@@ -106,7 +112,7 @@ The simplest developer setup is to store secrets in **user-secrets** for the `Gr
 
 User-secrets documentation:
 
-- https://learn.microsoft.com/aspnet/core/security/app-secrets
+- <https://learn.microsoft.com/aspnet/core/security/app-secrets>
 
 Examples (run from the repo root):
 
@@ -121,7 +127,8 @@ Examples (run from the repo root):
 
 Notes:
 
-- Keys frequently use `__` to map to hierarchical configuration (see: https://learn.microsoft.com/aspnet/core/fundamentals/configuration/)
+- Keys frequently use `__` to map to hierarchical configuration. See:
+  <https://learn.microsoft.com/aspnet/core/fundamentals/configuration/>.
 - The Aspire AppHost can read the server user-secrets id and forward selected auth settings (see `Grace.Aspire.AppHost/AGENTS.md`).
 
 ## Environment variables
@@ -222,7 +229,8 @@ In general, values may come from:
   - Orleans service id.
 
 Orleans:
-- https://learn.microsoft.com/dotnet/orleans/
+
+- <https://learn.microsoft.com/dotnet/orleans/>
 
 ### Redis
 
@@ -233,7 +241,8 @@ Orleans:
   - Redis port.
 
 Redis:
-- https://redis.io/docs/latest/
+
+- <https://redis.io/docs/latest/>
 
 ### Auth (OIDC)
 
@@ -249,7 +258,8 @@ These are used for external auth providers such as Auth0 / OIDC.
 - `grace__auth__oidc__m2m_scopes`
 
 OpenID Connect:
-- https://openid.net/developers/how-connect-works/
+
+- <https://openid.net/developers/how-connect-works/>
 
 ### Auth (deprecated Microsoft auth)
 
@@ -286,7 +296,7 @@ These constants are marked deprecated in code:
 
 Prometheus:
 
-- https://prometheus.io/docs/introduction/overview/
+- <https://prometheus.io/docs/introduction/overview/>
 
 ### Other providers (placeholders / future)
 
@@ -309,4 +319,7 @@ Prometheus:
 - [ ] Builds: `dotnet build ./src/Grace.sln`
 - [ ] Tests: `dotnet test ./src/Grace.sln`
 - [ ] Formatting: run `dotnet tool run fantomas --recurse .` from `./src`
+- [ ] Focused validation for the touched behavior is listed in the PR
+- [ ] Skipped validation is listed with a reason
 - [ ] Documentation updated (if behavior changed)
+- [ ] Docs impact, residual risk, and rollback or recovery notes are recorded when relevant

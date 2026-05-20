@@ -6,7 +6,15 @@
       "version": "4.7.9",
       "commands": [
         "fantomas"
-      ]
+      ],
+      "rollForward": false
+    },
+    "azure.mcp": {
+      "version": "1.0.2",
+      "commands": [
+        "azmcp"
+      ],
+      "rollForward": false
     }
   }
 }

@@ -1,0 +1,132 @@
+name: Agent Task
+description: Coordinate a Grace implementation task for a human or AI agent.
+labels:
+  - agent-task
+body:
+  - type: textarea
+    id: objective
+    attributes:
+      label: Objective
+      description: What should change, in one concrete slice?
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Context and evidence
+      description: Include relevant logs, files, symptoms, prior PRs, or decisions. Do not paste secrets.
+    validations:
+      required: true
+  - type: textarea
+    id: owned-paths
+    attributes:
+      label: Owned paths
+      description: Files or directories this task may edit.
+      placeholder: |
+        - src/Grace.Server/...
+        - src/Grace.Server.Tests/...
+    validations:
+      required: true
+  - type: textarea
+    id: forbidden-paths
+    attributes:
+      label: Forbidden or sensitive paths
+      description: Paths the agent must not edit unless the issue is updated.
+      placeholder: |
+        - .github/workflows/*
+        - src/Grace.Actors/*
+        - src/Grace.Shared/*
+    validations:
+      required: true
+  - type: dropdown
+    id: risk-surfaces
+    attributes:
+      label: Risk surfaces
+      description: Select every area this task touches. Choose no special risk only when the other options do not apply.
+      multiple: true
+      options:
+        - Auth, authorization, tenant, or secret handling
+        - Storage, Cosmos DB, Service Bus, Redis, or Aspire
+        - CLI public contract
+        - Server or API contract
+        - Orleans actor behavior
+        - SDK or client contract
+        - Deployment, Docker, or GitHub Actions
+        - Docs or workflow
+        - No special risk surface expected
+    validations:
+      required: true
+  - type: dropdown
+    id: validation-profile
+    attributes:
+      label: Validation profile
+      description: Choose the profile from docs/Development process.md that best matches this task.
+      options:
+        - docs-only
+        - domain-contract
+        - cli-command
+        - server-api
+        - actor-workflow
+        - sdk-client
+        - deployment-runtime
+    validations:
+      required: true
+  - type: textarea
+    id: public-behavior
+    attributes:
+      label: Public behavior under test
+      description: Name the stable boundary, behavior, invariant, transition, or docs-only validation target.
+      placeholder: |
+        - Boundary:
+        - Behavior:
+        - RED evidence expected:
+    validations:
+      required: true
+  - type: dropdown
+    id: conflict-score
+    attributes:
+      label: Path lease conflict score
+      description: Choose the score and explain the reason below.
+      options:
+        - 0 - leaf code or docs
+        - 1 - same project or fixture area
+        - 2 - shared contracts or shared repo structure
+        - 3 - high-risk operational surface
+    validations:
+      required: true
+  - type: textarea
+    id: conflict-score-reason
+    attributes:
+      label: Conflict score reason
+      description: Explain why this path lease can run alone or in parallel, including expected overlap.
+    validations:
+      required: true
+  - type: textarea
+    id: validation
+    attributes:
+      label: Expected validation
+      placeholder: |
+        - focused test command
+        - fast validation expectation
+        - full validation expectation, if needed
+        - manual validation, if any
+    validations:
+      required: true
+  - type: textarea
+    id: docs-impact
+    attributes:
+      label: Docs impact
+      description: State whether README, CONTRIBUTING, AGENTS, runbook, or product docs updates are expected.
+    validations:
+      required: true
+  - type: textarea
+    id: done
+    attributes:
+      label: Definition of done
+      placeholder: |
+        - behavior changed
+        - tests added or updated
+        - PR opened and linked
+        - residual risks documented
+    validations:
+      required: true

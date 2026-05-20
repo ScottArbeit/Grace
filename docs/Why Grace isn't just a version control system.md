@@ -10,7 +10,7 @@ Well, if you're reading this, you're aware of how much software development has 
 
 When work methods change this drastically, we have to reconsider what the right kinds of tools are, and whether the old tools are shaped correctly to meet the new requirements. And, sorry, but Git's not good enough anymore. Not even close.
 
-Steve Yegge's [Beads](https://github.com/steveyegge/beads) project, which I've used a bit for Grace, made me realize that capturing intention, and being able to track separate, small work items as part of building a feature, _alongside_ the actual code changes, was too important to leave as just-one-more-thing that we shove into Git as a file. Beads is a cute, not-exactly-designed vibe-coded hack in this direction (and I say that with love) but I think we need to have something like that as a more-deliberately-designed part of our version control now.
+Working on Grace made me realize that capturing intention, and being able to track separate, small work items as part of building a feature, _alongside_ the actual code changes, was too important to leave as just-one-more-thing that we shove into Git as a file. We need something like that as a deliberately designed part of version control now.
 
 If you've looked into context engineering, you know that it's better for the agents to have separate, small work items. For humans reviewing that work, having everything in one place, linked together - the intention, the work item, the automated reviews, the task summaries, the diffs, all of it, linked to the exact version of the code we're interested in - gives us all of the context we need to understand what happened, and why it happened.
 

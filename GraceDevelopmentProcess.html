@@ -1,0 +1,701 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Grace Development Process</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f4f2ed;
+      --paper: #fffdf8;
+      --ink: #221f1c;
+      --muted: #675f56;
+      --line: #d8d0c3;
+      --accent: #d96c00;
+      --accent-dark: #7a3a00;
+      --accent-soft: #fff1df;
+      --blue: #155ca5;
+      --blue-soft: #e9f3ff;
+      --green: #1f7a4d;
+      --green-soft: #e8f7ee;
+      --code: #f7f3ec;
+      --shadow: 0 18px 54px rgba(60, 43, 24, 0.12);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+      line-height: 1.55;
+    }
+
+    main {
+      width: min(1120px, calc(100% - 32px));
+      margin: 32px auto 48px;
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    header {
+      position: relative;
+      min-height: 440px;
+      padding: 42px;
+      color: #fffaf2;
+      background:
+        linear-gradient(90deg, rgba(31, 20, 12, 0.88), rgba(31, 20, 12, 0.58) 48%, rgba(31, 20, 12, 0.12)),
+        radial-gradient(circle at 82% 28%, rgba(255, 190, 96, 0.85), rgba(255, 190, 96, 0) 28%),
+        linear-gradient(135deg, #3a2617 0%, #9a4d00 48%, #f2992e 100%);
+      display: grid;
+      align-content: end;
+    }
+
+    .hero-mark {
+      position: absolute;
+      inset: 28px 34px auto auto;
+      width: 84px;
+      height: 84px;
+      opacity: 0.88;
+    }
+
+    h1,
+    h2,
+    h3 {
+      line-height: 1.16;
+      margin: 0;
+      letter-spacing: 0;
+    }
+
+    h1 {
+      max-width: 780px;
+      font-size: clamp(2.5rem, 5vw, 4.8rem);
+      font-weight: 750;
+    }
+
+    header p {
+      max-width: 760px;
+      margin: 18px 0 0;
+      color: #fff1df;
+      font-size: 1.08rem;
+    }
+
+    .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 24px;
+    }
+
+    .meta span {
+      padding: 6px 10px;
+      border: 1px solid rgba(255, 250, 242, 0.4);
+      border-radius: 999px;
+      background: rgba(255, 250, 242, 0.14);
+      color: #fffaf2;
+      font-size: 0.88rem;
+    }
+
+    section {
+      padding: 34px 42px 0;
+    }
+
+    section:last-of-type {
+      padding-bottom: 42px;
+    }
+
+    h2 {
+      margin-top: 18px;
+      font-size: 1.55rem;
+    }
+
+    h3 {
+      margin-top: 22px;
+      font-size: 1.08rem;
+      color: var(--accent-dark);
+    }
+
+    p {
+      margin: 12px 0 0;
+    }
+
+    ul,
+    ol {
+      margin: 12px 0 0;
+      padding-left: 1.35rem;
+    }
+
+    li {
+      margin: 8px 0;
+    }
+
+    strong {
+      font-weight: 700;
+    }
+
+    code {
+      padding: 0.1rem 0.28rem;
+      border-radius: 4px;
+      background: var(--code);
+      font-family: "Cascadia Mono", Consolas, "Liberation Mono", monospace;
+      font-size: 0.92em;
+    }
+
+    pre {
+      margin: 14px 0 0;
+      padding: 16px;
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--code);
+    }
+
+    pre code {
+      padding: 0;
+      background: transparent;
+      font-size: 0.92rem;
+    }
+
+    .flow-wrap {
+      overflow-x: auto;
+      padding-bottom: 6px;
+    }
+
+    svg.flow {
+      min-width: 1040px;
+      display: block;
+    }
+
+    .flow-box {
+      fill: #fff8ef;
+      stroke: #8f6b45;
+      stroke-width: 1.4;
+      rx: 8;
+    }
+
+    .flow-blue {
+      fill: var(--blue-soft);
+      stroke: var(--blue);
+      stroke-width: 1.4;
+      rx: 8;
+    }
+
+    .flow-green {
+      fill: var(--green-soft);
+      stroke: var(--green);
+      stroke-width: 1.4;
+      rx: 8;
+    }
+
+    .flow-text {
+      font-family: "Segoe UI", Arial, sans-serif;
+      font-size: 14px;
+      fill: var(--ink);
+    }
+
+    .flow-small {
+      font-size: 12px;
+      fill: var(--muted);
+    }
+
+    .arrow {
+      stroke: #806446;
+      stroke-width: 2;
+      fill: none;
+      marker-end: url("#arrowhead");
+    }
+
+    .adaptation {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 18px;
+      margin-top: 18px;
+    }
+
+    .adaptation > div {
+      padding: 18px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fffaf2;
+    }
+
+    .adaptation h3 {
+      margin-top: 0;
+    }
+
+    .rail {
+      margin-top: 18px;
+      border-left: 4px solid var(--accent);
+      padding-left: 20px;
+    }
+
+    .step {
+      position: relative;
+      padding: 0 0 24px;
+    }
+
+    .step:last-child {
+      padding-bottom: 0;
+    }
+
+    .step::before {
+      content: attr(data-step);
+      position: absolute;
+      left: -37px;
+      top: 0;
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      background: var(--accent);
+      color: #fff;
+      display: grid;
+      place-items: center;
+      font-size: 0.8rem;
+      font-weight: 700;
+    }
+
+    .step h3 {
+      margin-top: 0;
+      color: var(--ink);
+    }
+
+    .callout {
+      margin-top: 18px;
+      padding: 17px 18px;
+      border: 1px solid #e1b16e;
+      border-left: 5px solid var(--accent);
+      border-radius: 8px;
+      background: var(--accent-soft);
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 16px;
+      margin-top: 16px;
+    }
+
+    .panel {
+      padding: 16px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fffaf2;
+    }
+
+    .panel h3 {
+      margin-top: 0;
+    }
+
+    .source-list code {
+      word-break: break-word;
+    }
+
+    footer {
+      padding: 18px 42px 36px;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 0.95rem;
+    }
+
+    @media (max-width: 820px) {
+      main {
+        width: 100%;
+        margin: 0;
+        border: 0;
+        border-radius: 0;
+      }
+
+      header,
+      section,
+      footer {
+        padding-left: 22px;
+        padding-right: 22px;
+      }
+
+      header {
+        min-height: 420px;
+      }
+
+      .hero-mark {
+        width: 62px;
+        height: 62px;
+        right: 22px;
+      }
+
+      .adaptation,
+      .grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <img class="hero-mark" src="Assets/Orange3.svg" alt="">
+      <h1>Grace Development Process</h1>
+      <p>
+        A proposed Grace-native process derived from Brain2's disciplined agent workflow, adapted to Grace's current
+        repository guidance, validation scripts, GitHub issue templates, and promotion-review world.
+      </p>
+      <div class="meta" aria-label="Process anchors">
+        <span>GitHub issue first</span>
+        <span>Owned paths</span>
+        <span>Vertical slices</span>
+        <span>Fast validation</span>
+        <span>Checkpoint commits</span>
+        <span>Promotion-ready review</span>
+      </div>
+    </header>
+
+    <section>
+      <h2>What Changes From Brain2</h2>
+      <p>
+        Brain2's process is strict GitHub issue, branch, PR, and merge-queue coordination. Grace should borrow the
+        shape of that discipline while keeping Grace's local validation scripts, project guidance, and product language
+        around promotion candidates, gates, attestations, and review reports.
+      </p>
+
+      <div class="adaptation">
+        <div>
+          <h3>Borrow From Brain2</h3>
+          <ul>
+            <li>Declare objective, context, owned paths, risk, validation, and done criteria before editing.</li>
+            <li>Keep work inside the declared write set unless the task record is updated.</li>
+            <li>Move in small vertical slices with focused tests and clear evidence.</li>
+            <li>Commit after each complete slice and keep PRs reviewable.</li>
+            <li>Treat docs drift, skipped validation, and residual risk as explicit review topics.</li>
+          </ul>
+        </div>
+        <div>
+          <h3>Keep Grace-Native</h3>
+          <ul>
+            <li>Use GitHub issues as the active task record for implementation work.</li>
+            <li>Use <code>pwsh ./scripts/validate.ps1 -Fast</code> as the normal validation gate.</li>
+            <li>Use <code>-Full</code> when Aspire, integration, emulators, or cross-service behavior changes.</li>
+            <li>Keep the fork and PR contribution path for outside contributors.</li>
+            <li>Map final integration language to Grace's promotion model: candidates, gates, attestations, and review reports.</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Process Flow</h2>
+      <div class="flow-wrap">
+        <svg class="flow" width="100%" height="162" viewBox="0 0 1120 162" role="img" aria-label="Grace development process flow">
+          <defs>
+            <marker id="arrowhead" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+              <path d="M0,0 L0,6 L9,3 z" fill="#806446"></path>
+            </marker>
+          </defs>
+
+          <rect class="flow-blue" x="10" y="38" width="122" height="78"></rect>
+          <text class="flow-text" x="71" y="66" text-anchor="middle">Task Record</text>
+          <text class="flow-small" x="71" y="86" text-anchor="middle">issue, plan,</text>
+          <text class="flow-small" x="71" y="102" text-anchor="middle">or work item</text>
+
+          <path class="arrow" d="M132 77 H172"></path>
+
+          <rect class="flow-box" x="172" y="38" width="130" height="78"></rect>
+          <text class="flow-text" x="237" y="66" text-anchor="middle">Scope</text>
+          <text class="flow-small" x="237" y="86" text-anchor="middle">owned paths</text>
+          <text class="flow-small" x="237" y="102" text-anchor="middle">risk + tests</text>
+
+          <path class="arrow" d="M302 77 H342"></path>
+
+          <rect class="flow-box" x="342" y="38" width="130" height="78"></rect>
+          <text class="flow-text" x="407" y="66" text-anchor="middle">Workspace</text>
+          <text class="flow-small" x="407" y="86" text-anchor="middle">branch or</text>
+          <text class="flow-small" x="407" y="102" text-anchor="middle">worktree</text>
+
+          <path class="arrow" d="M472 77 H512"></path>
+
+          <rect class="flow-box" x="512" y="38" width="145" height="78"></rect>
+          <text class="flow-text" x="584" y="62" text-anchor="middle">Vertical Slice</text>
+          <text class="flow-small" x="584" y="82" text-anchor="middle">test, implement,</text>
+          <text class="flow-small" x="584" y="100" text-anchor="middle">validate</text>
+
+          <path class="arrow" d="M657 77 H697"></path>
+
+          <rect class="flow-box" x="697" y="38" width="122" height="78"></rect>
+          <text class="flow-text" x="758" y="66" text-anchor="middle">Commit</text>
+          <text class="flow-small" x="758" y="86" text-anchor="middle">checkpoint</text>
+          <text class="flow-small" x="758" y="102" text-anchor="middle">each slice</text>
+
+          <path class="arrow" d="M819 77 H859"></path>
+
+          <rect class="flow-box" x="859" y="38" width="120" height="78"></rect>
+          <text class="flow-text" x="919" y="66" text-anchor="middle">Review</text>
+          <text class="flow-small" x="919" y="86" text-anchor="middle">PR and</text>
+          <text class="flow-small" x="919" y="102" text-anchor="middle">evidence</text>
+
+          <path class="arrow" d="M979 77 H1019"></path>
+
+          <rect class="flow-green" x="1019" y="38" width="91" height="78"></rect>
+          <text class="flow-text" x="1064" y="66" text-anchor="middle">Promote</text>
+          <text class="flow-small" x="1064" y="86" text-anchor="middle">merge or</text>
+          <text class="flow-small" x="1064" y="102" text-anchor="middle">queue</text>
+        </svg>
+      </div>
+    </section>
+
+    <section>
+      <h2>Step-By-Step</h2>
+      <div class="rail">
+        <article class="step" data-step="1">
+          <h3>Read the local contract</h3>
+          <p>
+            Start with repo-root <code>AGENTS.md</code>, then the closest project <code>AGENTS.md</code>. For most
+            implementation work under <code>src</code>, read <code>src/AGENTS.md</code> and the project-specific guide
+            such as <code>src/Grace.CLI/AGENTS.md</code>, <code>src/Grace.Server/AGENTS.md</code>, or
+            <code>src/Grace.Types/AGENTS.md</code>.
+          </p>
+        </article>
+
+        <article class="step" data-step="2">
+          <h3>Create or confirm the task record</h3>
+          <p>
+            Use the Grace agent task issue template. When the user says <code>Plan &lt;work item&gt;</code>, create a
+            GitHub issue and stop before implementation edits.
+          </p>
+        </article>
+
+        <article class="step" data-step="3">
+          <h3>Turn the task record into a work contract</h3>
+          <p>
+            Before editing, write down objective, context, owned paths, forbidden or sensitive paths, risk surfaces,
+            validation, docs impact, and definition of done. This is the Grace adaptation of Brain2's issue template.
+          </p>
+          <pre><code>Objective:
+Context and evidence:
+Owned paths:
+Forbidden or sensitive paths:
+Risk surfaces:
+Validation plan:
+Docs impact:
+Definition of done:</code></pre>
+        </article>
+
+        <article class="step" data-step="4">
+          <h3>Choose the workspace</h3>
+          <p>
+            For normal contribution work, use a focused branch and PR. For large or parallel work, prefer a task-owned
+            worktree so unrelated work and existing dirty files stay isolated. If the user has asked to work in the
+            current checkout, inspect <code>git status</code> first and avoid overwriting unrelated changes.
+          </p>
+        </article>
+
+        <article class="step" data-step="5">
+          <h3>Classify the change</h3>
+          <p>
+            Pick a validation profile before coding: docs-only, pure domain, command/API boundary, actor/server
+            behavior, SDK/client contract, UI/workflow, or deployment/runtime. Use the closest project guide to choose
+            the test project and the repo-wide guidance to keep domain types in <code>Grace.Types</code>, helpers in
+            <code>Grace.Shared</code>, and orchestration in the project-specific assembly.
+          </p>
+        </article>
+
+        <article class="step" data-step="6">
+          <h3>Build one vertical slice at a time</h3>
+          <p>
+            Work through stable public boundaries: CLI command behavior, server endpoint behavior, Orleans actor
+            behavior through server-surface tests, DTO/type contracts, SDK methods, or script behavior. Avoid broad
+            horizontal rewrites unless the task is explicitly a refactor.
+          </p>
+        </article>
+
+        <article class="step" data-step="7">
+          <h3>Use red, green, refactor evidence where behavior changes</h3>
+          <p>
+            Add or update a focused test that names the behavior, run it to see the meaningful failure, implement the
+            smallest change, rerun the focused test, then refactor while green. Docs-only changes use Markdown,
+            rendered artifact, or parser validation instead of a runtime RED step.
+          </p>
+        </article>
+
+        <article class="step" data-step="8">
+          <h3>Run the fastest meaningful validation first</h3>
+          <p>
+            Start with the impacted test project, then promote to the repo validator when the change crosses project,
+            fixture, build, or integration boundaries. The normal repo gates are:
+          </p>
+          <pre><code>pwsh ./scripts/validate.ps1 -Fast
+pwsh ./scripts/validate.ps1 -Full</code></pre>
+          <p>
+            Use <code>-Full</code> when Aspire integration, emulators, storage, Service Bus, Cosmos, Redis, deployment,
+            or cross-service behavior matters.
+          </p>
+        </article>
+
+        <article class="step" data-step="9">
+          <h3>Commit after each completed slice</h3>
+          <p>
+            Grace guidance already asks for granular git history. Commit each completed slice after its focused
+            validation passes. The commit message should name the task and the behavior changed, not just the files
+            touched.
+          </p>
+        </article>
+
+        <article class="step" data-step="10">
+          <h3>Keep docs and agent guidance current</h3>
+          <p>
+            Update user-facing docs, <code>README.md</code>, <code>CONTRIBUTING.md</code>, or nearby
+            <code>AGENTS.md</code> files when commands, behavior, APIs, dependencies, workflow, or project boundaries
+            change. Keep guidance close to the project it affects.
+          </p>
+        </article>
+
+        <article class="step" data-step="11">
+          <h3>Prepare review evidence</h3>
+          <p>
+            Before review, summarize changed paths, owned-path compliance, validation run, validation skipped with
+            reason, docs impact, residual risks, and rollback or recovery notes. For outside contributions, include
+            useful AI prompts from diagnosis or implementation in the PR description, as <code>CONTRIBUTING.md</code>
+            requests.
+          </p>
+        </article>
+
+        <article class="step" data-step="12">
+          <h3>Integrate by review, then promotion</h3>
+          <p>
+            In Git today, that means a focused PR. In Grace's own model, the equivalent destination is a promotion
+            candidate evaluated by queue operations, gates, attestations, and review reports. The process should make a
+            change easy to audit in either system.
+          </p>
+        </article>
+
+        <article class="step" data-step="13">
+          <h3>Clean up after integration</h3>
+          <p>
+            After merge or promotion, verify the destination branch or reference contains the change, make sure no
+            local work is stranded, remove task worktrees that are no longer needed, and update the task record with
+            the final status and any follow-up.
+          </p>
+        </article>
+      </div>
+    </section>
+
+    <section>
+      <h2>Suggested Grace Task Contract</h2>
+      <p>
+        Use this as the lightweight replacement for Brain2's issue form when a Grace task does not already have a
+        GitHub issue. It belongs in the issue body and should be carried into the pull request evidence.
+      </p>
+      <pre><code>## Task Contract
+
+Objective:
+- One concrete behavior, docs, workflow, or infrastructure slice.
+
+Context and evidence:
+- Logs, files, symptoms, prior PRs, or design notes.
+
+Owned paths:
+- Files or directories this task may edit.
+
+Forbidden or sensitive paths:
+- Files or directories that require explicit expansion before editing.
+
+Risk surfaces:
+- Auth/secrets
+- Storage/Cosmos/Service Bus/Redis/Aspire
+- CLI public contract
+- Server/API contract
+- Orleans actor behavior
+- SDK/client contract
+- Docs/workflow
+- No special risk expected
+
+Validation:
+- Focused command:
+- Fast repo gate:
+- Full/Aspire gate, if needed:
+- Manual verification, if needed:
+
+Definition of done:
+- Behavior changed
+- Tests or docs updated
+- Validation recorded
+- Review evidence prepared
+- Follow-ups named</code></pre>
+    </section>
+
+    <section>
+      <h2>Validation Profiles</h2>
+      <div class="grid">
+        <div class="panel">
+          <h3>Docs Only</h3>
+          <p>
+            Markdown, HTML, guidance, or static documentation. Validate formatting, links or rendered output as
+            appropriate. No code tests are needed unless docs describe generated behavior.
+          </p>
+        </div>
+        <div class="panel">
+          <h3>Domain Or Contract</h3>
+          <p>
+            Types, DTOs, validators, serializers, hashing, or shared helpers. Add focused tests in the matching
+            <code>Grace.Types.Tests</code> or shared test surface.
+          </p>
+        </div>
+        <div class="panel">
+          <h3>CLI Or Server Boundary</h3>
+          <p>
+            Commands, endpoints, SDK calls, or actor-backed workflows. Prefer focused command/API/server-surface tests
+            before broader validation.
+          </p>
+        </div>
+        <div class="panel">
+          <h3>Actor Behavior</h3>
+          <p>
+            Orleans behavior should usually be proven through server-surface integration tests instead of deep actor
+            internals unless the project-specific guide says otherwise.
+          </p>
+        </div>
+        <div class="panel">
+          <h3>Deployment Runtime</h3>
+          <p>
+            Aspire, emulators, Azure settings, Docker, or scripts. Pair parser/script checks with
+            <code>validate.ps1 -Full</code> or live evidence when runtime behavior is affected.
+          </p>
+        </div>
+        <div class="panel">
+          <h3>Review Or Promotion</h3>
+          <p>
+            Queue, candidate, gate, attestation, or report behavior. Capture deterministic evidence that a reviewer can
+            replay from the CLI or API.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Source Files Reviewed</h2>
+      <ul class="source-list">
+        <li><code>C:\Source\Grace\AGENTS.md</code></li>
+        <li><code>C:\Source\Grace\src\AGENTS.md</code></li>
+        <li><code>C:\Source\Grace\README.md</code></li>
+        <li><code>C:\Source\Grace\CONTRIBUTING.md</code></li>
+        <li><code>C:\Source\Grace\docs\Branching strategy.md</code></li>
+        <li><code>C:\Source\Grace\docs\Continuous review.md</code></li>
+        <li><code>C:\Source\Grace\Brain2DevelopmentProcess.html</code></li>
+      </ul>
+      <div class="callout">
+        <strong>Note:</strong>
+        This page is a proposed development process artifact. I did not modify Grace's live <code>AGENTS.md</code>,
+        contribution guide, or validation scripts.
+      </div>
+    </section>
+
+    <footer>
+      Created as a standalone local HTML artifact. Open directly from disk or serve from any static file host.
+    </footer>
+  </main>
+</body>
+</html>

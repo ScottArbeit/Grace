@@ -9,7 +9,7 @@ grace _(n)_ -
 3. goodwill or favor
 4. a sense of propriety and consideration for others [^grace]
 
-![](./Assets/Orange3.svg)
+![Grace orange mark](./Assets/Orange3.svg)
 
 Grace is a **version control system** designed and built for the AI Era.
 
@@ -31,7 +31,7 @@ It ships with a promotion queue - Grace doesn't do merges, it does promotions - 
 
 > ⚠️👷🏻🚧 Grace is an alpha, and is going through rapid evolution with breaking changes, but it's ready for feedback and contributions. It is not ready for or intended for production usage at this time.
 
-![](./Assets/Orange3.svg)
+![Grace orange mark](./Assets/Orange3.svg)
 
 ## Technology stack
 
@@ -52,6 +52,28 @@ Grace is written primarily in **F#**, and uses:
 - **Avalonia** (I think) for a fully cross-platform GUI, including WASM
 
 [^1]: Grace is designed to be adaptable to AWS and other cloud providers, and with coding agents, it should be not easy but not too hard to do. I just haven't done it yet.
+
+## Development process
+
+Grace development uses a task-record-first process that keeps human and agent work reviewable:
+
+1. Read the root `AGENTS.md`, then the closest project `AGENTS.md`.
+2. Create or confirm the GitHub issue using the Grace agent task template.
+3. Declare objective, context, owned paths, forbidden or sensitive paths, risk surfaces, validation, docs impact, and
+   definition of done before editing.
+4. Claim the issue and create an issue-owned branch/worktree from the latest `origin/main`.
+5. Work in vertical slices that prove one public behavior at a time.
+6. Validate with the fastest meaningful focused command, then run `pwsh ./scripts/validate.ps1 -Fast` for the normal
+   repo gate.
+7. Use `pwsh ./scripts/validate.ps1 -Full` when Aspire integration, emulators, storage, Cosmos DB, Service Bus, Redis,
+   deployment/runtime behavior, or cross-service behavior changes.
+8. Commit after each completed slice and keep pull requests focused.
+9. Update docs and nearby `AGENTS.md` files when behavior, commands, APIs, dependencies, or workflow changes.
+
+When a maintainer says `Plan <work item>`, create the GitHub issue and stop before implementation edits.
+
+See [`docs/Development process.md`](./docs/Development%20process.md) for the full workflow, task-contract template,
+validation profiles, review expectations, and cleanup steps.
 
 ## Running Grace locally
 
@@ -83,11 +105,13 @@ The first-time steps below use **local emulators** and **test authentication** (
     NOTE: If using Podman, set the [container runtime](https://aspire.dev/app-host/configuration/#common-configuration) to `podman`:
 
     PowerShell:
+
     ```powershell
     $env:ASPIRE_CONTAINER_RUNTIME="podman"
     ```
 
     bash/zsh:
+
     ```bash
     export ASPIRE_CONTAINER_RUNTIME=podman
     ```
@@ -173,7 +197,7 @@ If it happens to be missing, add the path `/.git/*` to `.graceignore` in the roo
 
 > Again, ⚠️👷🏻🚧 Grace is an alpha, and still has some alpha-like bugs. For now, I recommend testing Grace either on 1) repos that you won't be sad if something bad happens, or; 2) repos where you're comfortable running `git reset` to restore to a known-good version if you need it.
 
-![](./Assets/Orange3.svg)
+![Grace orange mark](./Assets/Orange3.svg)
 
 ## Architecture
 
@@ -218,7 +242,7 @@ Key concepts include:
 
 For more, see: `docs/Continuous review.md`
 
-![](./Assets/Orange3.svg)
+![Grace orange mark](./Assets/Orange3.svg)
 
 ## Roadmap
 
@@ -264,23 +288,24 @@ Grace is evolving quickly. Strap in....
 
 ### Even more integration tests
 
-![](./Assets/Orange3.svg)
+![Grace orange mark](./Assets/Orange3.svg)
 
 ## Grace at NDC Oslo 2023
 
-I gave my first conference talk about Grace at NDC Oslo 2023. Grace has changed _a lot_ since then, but this was the original idea. You can watch it [here](https://youtu.be/lW0gxMbyLEM):
+I gave my first conference talk about Grace at NDC Oslo 2023. Grace has changed _a lot_ since then, but this was the
+original idea. You can watch the [NDC Oslo talk on YouTube](https://youtu.be/lW0gxMbyLEM):
 
-[<img src="https://github.com/ScottArbeit/Grace/assets/2406993/2f20bf3a-9907-42d3-8596-84a7e1334f55">](https://youtu.be/lW0gxMbyLEM)
+[![Grace at NDC Oslo](https://github.com/ScottArbeit/Grace/assets/2406993/2f20bf3a-9907-42d3-8596-84a7e1334f55)](https://youtu.be/lW0gxMbyLEM)
 
-![](./Assets/Orange3.svg)
+![Grace orange mark](./Assets/Orange3.svg)
 
 ## Contributing
 
 If you want to help shape Grace:
 
 - Read `CONTRIBUTING.md`
-- AI submissions are expected and welcomed, but they have to follow
+- Follow the development process in `docs/Development process.md`
+- AI submissions are expected and welcomed, and useful AI prompts should be included in the PR description
 - Open issues for rough edges, missing docs, or confusing workflows
 
-
-[^grace]: Definition excerpted from https://www.thefreedictionary.com/grace.
+[^grace]: Definition excerpted from <https://www.thefreedictionary.com/grace>.

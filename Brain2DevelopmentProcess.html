@@ -1,0 +1,461 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Brain2 Development Process</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f7f8fa;
+      --panel: #ffffff;
+      --ink: #1f2328;
+      --muted: #59636e;
+      --line: #d0d7de;
+      --accent: #0969da;
+      --accent-soft: #ddf4ff;
+      --warn: #fff8c5;
+      --warn-line: #bf8700;
+      --ok: #dafbe1;
+      --ok-line: #1a7f37;
+      --code-bg: #f6f8fa;
+      --shadow: 0 16px 48px rgba(31, 35, 40, 0.08);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+      line-height: 1.55;
+    }
+
+    main {
+      width: min(1080px, calc(100% - 32px));
+      margin: 32px auto 48px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    header {
+      padding: 36px 42px 28px;
+      border-bottom: 1px solid var(--line);
+      background: linear-gradient(180deg, #ffffff 0%, #f6f8fa 100%);
+    }
+
+    header p {
+      max-width: 850px;
+      margin: 14px 0 0;
+      color: var(--muted);
+      font-size: 1.03rem;
+    }
+
+    h1,
+    h2 {
+      line-height: 1.2;
+      margin: 0;
+    }
+
+    h1 {
+      font-size: clamp(2rem, 4vw, 3.4rem);
+      letter-spacing: 0;
+    }
+
+    h2 {
+      margin-top: 34px;
+      padding-top: 4px;
+      font-size: 1.35rem;
+    }
+
+    section,
+    .diagram,
+    .summary {
+      padding: 0 42px;
+    }
+
+    .diagram {
+      padding-top: 30px;
+      overflow-x: auto;
+    }
+
+    .summary {
+      margin-top: 8px;
+    }
+
+    p {
+      margin: 12px 0 0;
+    }
+
+    ul,
+    ol {
+      margin: 12px 0 0;
+      padding-left: 1.4rem;
+    }
+
+    li {
+      margin: 7px 0;
+    }
+
+    code {
+      padding: 0.1rem 0.28rem;
+      border-radius: 4px;
+      background: var(--code-bg);
+      font-family: "Cascadia Mono", Consolas, "Liberation Mono", monospace;
+      font-size: 0.92em;
+    }
+
+    pre {
+      margin: 14px 0 0;
+      padding: 16px;
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--code-bg);
+    }
+
+    pre code {
+      padding: 0;
+      background: transparent;
+      font-size: 0.92rem;
+    }
+
+    .callout {
+      margin: 18px 0 0;
+      padding: 16px 18px;
+      border: 1px solid var(--line);
+      border-left: 5px solid var(--accent);
+      border-radius: 8px;
+      background: var(--accent-soft);
+    }
+
+    .source-list {
+      margin-bottom: 40px;
+    }
+
+    .source-list code {
+      word-break: break-word;
+    }
+
+    .validation {
+      margin: 30px 42px 42px;
+      padding: 16px 18px;
+      border: 1px solid var(--ok-line);
+      border-radius: 8px;
+      background: var(--ok);
+    }
+
+    svg {
+      min-width: 980px;
+      display: block;
+    }
+
+    .box {
+      fill: #f6f8fa;
+      stroke: #57606a;
+      stroke-width: 1.5;
+      rx: 8;
+    }
+
+    .risk {
+      fill: var(--warn);
+      stroke: var(--warn-line);
+      stroke-width: 1.5;
+      rx: 8;
+    }
+
+    .done {
+      fill: var(--ok);
+      stroke: var(--ok-line);
+      stroke-width: 1.5;
+      rx: 8;
+    }
+
+    .text {
+      font-family: "Segoe UI", Arial, sans-serif;
+      font-size: 14px;
+      fill: #24292f;
+    }
+
+    .small {
+      font-size: 12px;
+      fill: #57606a;
+    }
+
+    .arrow {
+      stroke: #57606a;
+      stroke-width: 2;
+      fill: none;
+      marker-end: url("#arrowhead");
+    }
+
+    @media (max-width: 720px) {
+      main {
+        width: 100%;
+        margin: 0;
+        border-radius: 0;
+        border-left: 0;
+        border-right: 0;
+      }
+
+      header,
+      section,
+      .diagram,
+      .summary {
+        padding-left: 20px;
+        padding-right: 20px;
+      }
+
+      .validation {
+        margin-left: 20px;
+        margin-right: 20px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Brain2 Development Process</h1>
+      <p>
+        A browser-viewable summary of the live development workflow documented in
+        <code>C:\Source\ScottArbeit\Brain2</code>. Brain2 is deliberately GitHub-native:
+        GitHub Issues, the Brain2 GitHub Project, pull requests, and the merge queue are the control plane.
+      </p>
+    </header>
+
+    <div class="diagram" aria-label="Brain2 development process flow">
+      <svg width="100%" height="150" viewBox="0 0 1120 150" role="img">
+        <defs>
+          <marker id="arrowhead" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+            <path d="M0,0 L0,6 L9,3 z" fill="#57606a"></path>
+          </marker>
+        </defs>
+
+        <rect class="box" x="10" y="35" width="115" height="70"></rect>
+        <text class="text" x="67" y="63" text-anchor="middle">Issue</text>
+        <text class="small" x="67" y="83" text-anchor="middle">scope + paths</text>
+
+        <path class="arrow" d="M125 70 H165"></path>
+
+        <rect class="risk" x="165" y="35" width="125" height="70"></rect>
+        <text class="text" x="227" y="58" text-anchor="middle">Claim</text>
+        <text class="small" x="227" y="78" text-anchor="middle">write set</text>
+        <text class="small" x="227" y="96" text-anchor="middle">validation plan</text>
+
+        <path class="arrow" d="M290 70 H330"></path>
+
+        <rect class="box" x="330" y="35" width="135" height="70"></rect>
+        <text class="text" x="397" y="58" text-anchor="middle">Worktree</text>
+        <text class="small" x="397" y="78" text-anchor="middle">from origin/main</text>
+        <text class="small" x="397" y="96" text-anchor="middle">issue branch</text>
+
+        <path class="arrow" d="M465 70 H505"></path>
+
+        <rect class="box" x="505" y="35" width="150" height="70"></rect>
+        <text class="text" x="580" y="55" text-anchor="middle">TDD Slice</text>
+        <text class="small" x="580" y="75" text-anchor="middle">RED - GREEN</text>
+        <text class="small" x="580" y="93" text-anchor="middle">refactor + validate</text>
+
+        <path class="arrow" d="M655 70 H695"></path>
+
+        <rect class="box" x="695" y="35" width="125" height="70"></rect>
+        <text class="text" x="757" y="63" text-anchor="middle">Commit</text>
+        <text class="small" x="757" y="83" text-anchor="middle">push each slice</text>
+
+        <path class="arrow" d="M820 70 H860"></path>
+
+        <rect class="box" x="860" y="35" width="115" height="70"></rect>
+        <text class="text" x="917" y="63" text-anchor="middle">PR</text>
+        <text class="small" x="917" y="83" text-anchor="middle">template + CI</text>
+
+        <path class="arrow" d="M975 70 H1015"></path>
+
+        <rect class="done" x="1015" y="35" width="95" height="70"></rect>
+        <text class="text" x="1062" y="63" text-anchor="middle">Merge</text>
+        <text class="small" x="1062" y="83" text-anchor="middle">queue + cleanup</text>
+      </svg>
+    </div>
+
+    <section class="summary">
+      <div class="callout">
+        <strong>The short version:</strong>
+        Brain2 development is an issue-owned, path-leased, evidence-heavy workflow. Scope the work in GitHub, claim it,
+        create a worktree from <code>origin/main</code>, deliver small TDD-backed vertical slices, push after each
+        slice, prove the change with focused validation, open an evidence-rich PR, merge through the queue, and clean
+        up the worktree and branches after verifying the merge.
+      </div>
+    </section>
+
+    <section>
+      <h2>Step 1: Start With The Repo Rules</h2>
+      <p>
+        Every Brain2 session starts by reading <code>AGENTS.md</code>. That file is a router: it gives the always-read
+        contract, then points agents to focused guidance under <code>docs/agents/</code> depending on the task area.
+        Durable cross-task decisions go in <code>docs/CodexDecisions.md</code>, and after coding tasks agents review
+        <code>README.md</code> so the developer roadmap does not drift.
+      </p>
+
+      <h2>Step 2: Begin From A GitHub Issue</h2>
+      <p>
+        Implementation, UI, workflow, script, and documentation changes must start from a GitHub issue. If a request
+        does not name an issue, the agent stops before editing and either creates a properly scoped issue or asks which
+        issue to use. The current checkout can be used for read-only exploration, but not for edits, generated
+        artifacts, commits, pushes, or PR work.
+      </p>
+
+      <h2>Step 3: Shape The Issue As The Work Contract</h2>
+      <p>
+        The issue template is the work contract. It captures objective, context, owned paths, forbidden or sensitive
+        paths, risk surfaces, TDD profile, public behavior under test, conflict score, validation, docs impact, and
+        definition of done.
+      </p>
+
+      <h2>Step 4: Claim The Issue Before Editing</h2>
+      <p>
+        Before touching files, the agent posts a claim comment with the intended branch, planned write set, forbidden
+        paths acknowledged, validation plan, TDD profile, and conflict score. If the write set needs to expand later,
+        the agent comments on the issue before editing new paths.
+      </p>
+
+      <h2>Step 5: Create An Issue-Owned Branch And Worktree</h2>
+      <p>
+        Brain2 expects implementation work in an issue-owned worktree created from the latest <code>origin/main</code>.
+        The recommended branch name is:
+      </p>
+      <pre><code>agent/&lt;issue-number&gt;-&lt;short-slug&gt;</code></pre>
+      <p>The typical local setup is:</p>
+      <pre><code>git fetch origin
+git worktree add ../Brain2-gh-184 -b agent/184-short-slug origin/main
+Set-Location ../Brain2-gh-184</code></pre>
+
+      <h2>Step 6: Respect Owned Paths, Sensitive Paths, And Conflict Score</h2>
+      <p>
+        The agent may edit only the issue's owned paths. Shared or high-risk paths require explicit ownership, and
+        sensitive changes need human review when they touch auth, tenant selection, secrets, Graph, OneDrive, vault
+        writes, deployment, Docker, GitHub Actions, or destructive data operations.
+      </p>
+      <ul>
+        <li><strong>0:</strong> leaf code or docs; safe for parallel lanes when paths do not overlap.</li>
+        <li><strong>1:</strong> same project or fixture area; limited parallel lanes with overlap checks.</li>
+        <li><strong>2:</strong> shared contracts or repo structure; one lane owns the path lease.</li>
+        <li><strong>3:</strong> high-risk operational surface; one lane plus human review, CI or live evidence, and rollback notes.</li>
+      </ul>
+
+      <h2>Step 7: Work In Small Vertical Slices</h2>
+      <p>
+        Brain2 prefers vertical slices over broad horizontal phases. The TDD loop is:
+      </p>
+      <pre><code>Issue -> TDD profile -> public boundary -> RED -> GREEN -> REFACTOR -> focused validation -> commit -> push</code></pre>
+      <p>The TDD profiles are:</p>
+      <ul>
+        <li><strong>docs-only:</strong> Markdown, templates, guidance, or static docs; evidence is lint/parser/whitespace validation.</li>
+        <li><strong>pure-domain:</strong> parsers, formatters, reducers, validation rules, scoring, or state transitions; evidence is focused table/example/property tests.</li>
+        <li><strong>workflow-boundary:</strong> API, services, SQLite, Qdrant, Graph, file IO, clocks, or process boundaries; evidence is focused workflow or integration tests.</li>
+        <li><strong>ui-viewmodel:</strong> Avalonia state, commands, navigation, accessibility, localization, or layout; evidence is view-model/static UI tests plus manual or screenshot evidence when visual behavior changes.</li>
+        <li><strong>deployment-runtime:</strong> GitHub Actions, Docker, deployment scripts, Functions, runner setup, or live host config; evidence is parser/lint/script checks plus CI or live evidence when needed.</li>
+        <li><strong>exploratory-spike:</strong> explicitly scoped investigation; evidence is an issue-approved waiver and cleanup path.</li>
+      </ul>
+
+      <h2>Step 8: Choose Focused Validation From The Test Impact Map</h2>
+      <p>
+        The first validation command should be the fastest meaningful one for the touched paths. The test impact map
+        names focused commands for areas such as <code>src/Brain2.Shared/**</code>, <code>src/Brain2.Api/**</code>,
+        <code>src/Brain2.Avalonia/**</code>, workflows, deploy scripts, and docs.
+      </p>
+      <p>Broader baseline validation uses:</p>
+      <pre><code>pwsh ./scripts/restore.ps1 -SolutionPath ./Brain2.slnx
+pwsh ./scripts/build.ps1 -SolutionPath ./Brain2.slnx
+pwsh ./scripts/test.ps1 -SolutionPath ./Brain2.slnx
+pwsh ./scripts/format.ps1
+git diff --check</code></pre>
+
+      <h2>Step 9: Commit And Push After Each Completed Slice</h2>
+      <p>
+        Brain2 expects a commit after each completed step. Commit messages reference the GitHub issue and summarize the
+        change. Each commit is pushed, keeping progress visible in GitHub and the branch reviewable.
+      </p>
+
+      <h2>Step 10: Keep Documentation Aligned</h2>
+      <p>
+        Documentation ownership is guarded because shared docs are conflict-prone. The default rule is:
+      </p>
+      <pre><code>Workers change code and focused tests.
+Coordinator-owned or explicitly scoped issues change shared workflow docs.</code></pre>
+      <p>
+        Workers update docs when the issue owns docs paths. If behavior changes make docs stale, the agent expands the
+        planned write set before editing. If the issue does not own the relevant docs, the PR records
+        <code>Docs follow-up required</code>.
+      </p>
+
+      <h2>Step 11: Treat UI And User Manual Impact As Part Of Done</h2>
+      <p>
+        UI work must either update the relevant <code>docs/user-manual/</code> page and screenshots, or explicitly
+        record:
+      </p>
+      <pre><code>User manual impact: None - &lt;reason&gt;</code></pre>
+
+      <h2>Step 12: Open A PR With Evidence</h2>
+      <p>
+        The PR template asks for linked issue, touched paths, owned-path compliance, TDD and public-boundary evidence,
+        reviewer-agent pass, risk surfaces, user-manual impact, validation run, skipped validation, residual risks,
+        rollback or recovery notes, and docs follow-up.
+      </p>
+
+      <h2>Step 13: Rebase Before Marking Ready</h2>
+      <pre><code>git fetch origin
+git rebase origin/main</code></pre>
+      <p>
+        Conflicts are resolved inside the issue worktree, focused validation is rerun, and the PR describes the
+        conflict.
+      </p>
+
+      <h2>Step 14: Handle Review Threads Through GitHub</h2>
+      <p>
+        Review comments are inspected through the GitHub API or CLI. Valid suggestions are implemented locally,
+        pushed, validated, and answered on the actual review threads with commit and validation evidence.
+      </p>
+
+      <h2>Step 15: Merge Only Through The Merge Queue</h2>
+      <p>
+        The PR waits for required checks and review, then merges through the merge queue. Direct local merges or normal
+        direct-to-main work are not the standard path.
+      </p>
+
+      <h2>Step 16: Clean Up After Merge</h2>
+      <ol>
+        <li>Confirm the PR is <code>MERGED</code>, targets <code>main</code>, has the expected head branch, and is present on <code>origin/main</code>.</li>
+        <li>Confirm the issue worktree has no uncommitted or unpushed work.</li>
+        <li>Remove the issue worktree.</li>
+        <li>Delete the local branch.</li>
+        <li>Delete the remote branch.</li>
+        <li>Run <code>git fetch --prune origin</code>.</li>
+        <li>Switch to <code>main</code> and fast-forward pull.</li>
+      </ol>
+
+      <h2>Primary Files Reviewed</h2>
+      <ul class="source-list">
+        <li><code>C:\Source\ScottArbeit\Brain2\AGENTS.md</code></li>
+        <li><code>C:\Source\ScottArbeit\Brain2\docs\agents\github-agent-workflow.md</code></li>
+        <li><code>C:\Source\ScottArbeit\Brain2\docs\agents\tdd.md</code></li>
+        <li><code>C:\Source\ScottArbeit\Brain2\docs\agents\test-impact-map.md</code></li>
+        <li><code>C:\Source\ScottArbeit\Brain2\docs\agents\planning-and-docs.md</code></li>
+        <li><code>C:\Source\ScottArbeit\Brain2\docs\CodexDecisions.md</code></li>
+        <li><code>C:\Source\ScottArbeit\Brain2\.github\ISSUE_TEMPLATE\agent-task.yml</code></li>
+        <li><code>C:\Source\ScottArbeit\Brain2\.github\PULL_REQUEST_TEMPLATE.md</code></li>
+      </ul>
+    </section>
+
+    <div class="validation">
+      <strong>Validation:</strong>
+      This is a standalone static HTML file. No dev server is required; open the file directly in a browser.
+    </div>
+  </main>
+</body>
+</html>

@@ -1,6 +1,3 @@
-# Use bd merge for beads JSONL files
-.beads/issues.jsonl merge=beads
-
 # Ensure all text files use LF line endings
 * text=auto eol=lf
 
