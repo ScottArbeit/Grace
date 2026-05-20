@@ -38,6 +38,7 @@ open System.IO
 open System.Linq
 open System.Net.Http
 open System.Net.Security
+open System.Security.Cryptography.X509Certificates
 open System.Security.Authentication
 open System.Text.Json
 open System.Threading
@@ -301,18 +302,15 @@ module Program =
                                     cosmosClientOptions.ConnectionMode <- ConnectionMode.Gateway
                                     cosmosClientOptions.EnableContentResponseOnWrite <- true
 
+                                    cosmosClientOptions.ServerCertificateCustomValidationCallback <-
+                                        Func<X509Certificate2, X509Chain, SslPolicyErrors, bool>(fun _ _ _ -> true)
+
                                     cosmosClientOptions.HttpClientFactory <-
                                         fun () ->
                                             logToConsole "Creating custom HttpClient for Cosmos DB."
 
-                                            let handler =
-                                                new SocketsHttpHandler(
-                                                    SslOptions =
-                                                        new SslClientAuthenticationOptions(
-                                                            TargetHost = "localhost",
-                                                            RemoteCertificateValidationCallback = (fun _ _ _ _ -> true)
-                                                        )
-                                                )
+                                            let handler = new HttpClientHandler()
+                                            handler.ServerCertificateCustomValidationCallback <- HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
 
                                             new HttpClient(handler, disposeHandler = true)
 

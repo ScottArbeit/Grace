@@ -613,17 +613,14 @@ public partial class Program
 
                 if (selected is not null)
                 {
-                    var scheme =
-                        selected.EndpointAnnotation.TargetPort == 8081
-                            ? "https"
-                            : selected.EndpointAnnotation.UriScheme;
+                    var scheme = selected.EndpointAnnotation.UriScheme;
                     if (string.IsNullOrWhiteSpace(scheme))
                     {
                         scheme = selected.IsHttps ? "https" : "http";
                     }
 
                 var hostAndPort = selected.Property(EndpointProperty.HostAndPort);
-                return ReferenceExpression.Create($"AccountEndpoint={scheme}://{hostAndPort}/;AccountKey={accountKey};");
+                return ReferenceExpression.Create($"AccountEndpoint={scheme}://{hostAndPort}/;AccountKey={accountKey};DisableServerCertificateValidation=True;");
             }
         }
 
