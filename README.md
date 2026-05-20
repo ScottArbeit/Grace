@@ -70,7 +70,8 @@ Grace development uses a task-record-first process that keeps human and agent wo
 8. Commit after each completed slice and keep pull requests focused.
 9. Update docs and nearby `AGENTS.md` files when behavior, commands, APIs, dependencies, or workflow changes.
 
-When a maintainer says `Plan <work item>`, create the GitHub issue and stop before implementation edits.
+When a maintainer says `Plan <work item>`, plan the work in chat. Create a GitHub issue only when they explicitly ask
+for one, ask to start tracked implementation, or otherwise request tracker setup.
 
 See [`docs/Development process.md`](./docs/Development%20process.md) for the full workflow, task-contract template,
 validation profiles, review expectations, and cleanup steps.

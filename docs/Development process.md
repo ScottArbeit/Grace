@@ -10,8 +10,10 @@ For small typo fixes or tiny docs corrections, keep the spirit of the process bu
 ## Core Principles
 
 - Start from the repo-local instructions. Read the root `AGENTS.md`, then the closest project `AGENTS.md`.
-- Keep one visible task record for the work: a GitHub issue created from the Grace agent task template.
-- When the user says `Plan <work item>`, create a GitHub issue. Do not edit implementation files yet.
+- For tracked implementation work, keep one visible task record: a GitHub issue created from the Grace agent task
+  template.
+- When the user says `Plan <work item>`, plan the work in chat. Create a GitHub issue only when the user explicitly asks
+  for one, asks to start tracked implementation, or otherwise requests tracker setup.
 - Declare the intended write set before editing. If the write set grows, update the task record before editing the new
   paths.
 - Prefer vertical slices over broad horizontal phases.

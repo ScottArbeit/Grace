@@ -20,7 +20,8 @@ update the issue before editing the new paths.
 ## Core Engineering Expectations
 
 - Make a multi-step plan for non-trivial work, keep edits focused, and leave code cleaner than you found it.
-- When the user says `Plan <work item>`, create a GitHub issue and stop before implementation edits.
+- When the user says `Plan <work item>`, plan the work in chat. Create a GitHub issue only when the user explicitly asks
+  for one, asks to start tracked implementation, or otherwise requests tracker setup.
 - Create or switch to an issue-owned branch/worktree from latest `origin/main` before editing implementation files.
 - Prefer vertical slices that prove one public behavior at a time through the closest stable boundary.
 - Validate changes with `pwsh ./scripts/validate.ps1 -Fast` (use `-Full` for Aspire integration coverage).

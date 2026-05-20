@@ -35,9 +35,11 @@ impact and skipped validation.
 
 - Read the closest `AGENTS.md` before editing. Root guidance applies repo-wide; project guidance applies within that
   subtree.
-- When the user says `Plan <work item>`, create a GitHub issue using the Grace agent task template. Do not edit
-  implementation files yet.
-- Keep one visible task record for the work: the GitHub issue.
+- When the user says `Plan <work item>`, plan the work in chat. Do not create a GitHub issue unless the user asks for
+  an issue, asks to start tracked implementation, or otherwise explicitly requests tracker setup.
+- When the user asks to create a GitHub issue, use the Grace agent task template and stop before implementation edits
+  unless they also ask you to implement.
+- For tracked implementation work, keep one visible task record: the GitHub issue.
 - Declare owned paths, forbidden or sensitive paths, risk surfaces, validation, docs impact, and definition of done
   before editing.
 - After the issue exists, claim it and create an issue-owned branch/worktree from latest `origin/main` before editing.
