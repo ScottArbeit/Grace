@@ -79,14 +79,12 @@ module GraceCommand =
     let printAliases () =
         let table = Table(Border = TableBorder.DoubleEdge)
 
-        table
-            .LeftAligned()
-            .AddColumns(
-                [|
-                    TableColumn($"[{Colors.Important}]Alias[/]")
-                    TableColumn($"[{Colors.Important}]Grace command[/]")
-                |]
-            )
+        table.AddColumns(
+            [|
+                TableColumn($"[{Colors.Important}]Alias[/]")
+                TableColumn($"[{Colors.Important}]Grace command[/]")
+            |]
+        )
         |> ignore
 
         aliases

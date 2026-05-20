@@ -177,6 +177,12 @@ public partial class Program
                     var azuriteContainerName = runSuffix is null ? "azurite" : $"azurite-{runSuffix}";
                     var azurite = builder.AddContainer("azurite", "mcr.microsoft.com/azure-storage/azurite", "latest")
                         .WithContainerName(azuriteContainerName)
+                        .WithArgs(
+                            "azurite",
+                            "--skipApiVersionCheck",
+                            "--blobHost", "0.0.0.0",
+                            "--queueHost", "0.0.0.0",
+                            "--tableHost", "0.0.0.0")
                         .WithBindMount(azuriteDataPath, "/data")
                         //.WithLifetime(ContainerLifetime.Session)
                         .WithEnvironment("AZURITE_ACCOUNTS", "gracevcsdevelopment:Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==")
@@ -607,7 +613,10 @@ public partial class Program
 
                 if (selected is not null)
                 {
-                    var scheme = selected.EndpointAnnotation.UriScheme;
+                    var scheme =
+                        selected.EndpointAnnotation.TargetPort == 8081
+                            ? "https"
+                            : selected.EndpointAnnotation.UriScheme;
                     if (string.IsNullOrWhiteSpace(scheme))
                     {
                         scheme = selected.IsHttps ? "https" : "http";
