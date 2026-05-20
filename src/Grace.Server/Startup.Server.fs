@@ -66,6 +66,7 @@ open System.Threading.Tasks
 open FSharpPlus
 open System.Net.Http
 open System.Net.Security
+open System.Security.Cryptography.X509Certificates
 open Microsoft.IdentityModel.Tokens
 open System.Security.Claims
 
@@ -1595,21 +1596,19 @@ module Application =
             services.AddSingleton<CosmosClient> (fun serviceProvider ->
                 let cosmosConnectionString = configuration.GetValue<string>(getConfigKey Constants.EnvironmentVariables.AzureCosmosDBConnectionString)
 
-                // Force SNI = "localhost" while we connect to 127.0.0.1.
-                let httpHandler =
-                    // Create and configure SslClientAuthenticationOptions
-                    let sslOptions = SslClientAuthenticationOptions()
-                    sslOptions.TargetHost <- "localhost" // SNI host_name must be DNS per RFC 6066
-                    sslOptions.RemoteCertificateValidationCallback <- RemoteCertificateValidationCallback(fun _ _ _ _ -> true)
-                    new SocketsHttpHandler(SslOptions = sslOptions)
-
                 let options =
                     new CosmosClientOptions(
                         ConnectionMode = ConnectionMode.Gateway,
                         UseSystemTextJsonSerializerWithOptions = Constants.JsonSerializerOptions,
-                        HttpClientFactory = (fun () -> new HttpClient(httpHandler, disposeHandler = true)),
+                        HttpClientFactory =
+                            (fun () ->
+                                let httpHandler = new HttpClientHandler()
+                                httpHandler.ServerCertificateCustomValidationCallback <- HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
+                                new HttpClient(httpHandler, disposeHandler = true)),
                         LimitToEndpoint = true // prevents discovery probes that can trigger TLS issues on emulator
                     )
+
+                options.ServerCertificateCustomValidationCallback <- Func<X509Certificate2, X509Chain, SslPolicyErrors, bool>(fun _ _ _ -> true)
 
                 if AzureEnvironment.useManagedIdentity then
                     let endpoint =

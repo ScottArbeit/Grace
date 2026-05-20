@@ -30,6 +30,7 @@ open System.Linq
 open System.Net.Http
 open System.Net.Sockets
 open System.Reflection
+open System.Security.Cryptography.X509Certificates
 open System.Text
 open System.Threading
 open System.Threading.Tasks
@@ -160,16 +161,13 @@ module ApplicationContext =
             // The CosmosDB emulator uses a self-signed certificate, and, by default, HttpClient will refuse
             //   to connect over https: if the certificate can't be traced back to a root.
             // These settings allow Grace Server to access the CosmosDB Emulator by bypassing TLS.
-            let handler =
-                new SocketsHttpHandler(
-                    SslOptions =
-                        new SslClientAuthenticationOptions(
-                            TargetHost = "localhost", // SNI host_name must be DNS per RFC 6066
-                            RemoteCertificateValidationCallback = (fun _ __ ___ ____ -> true) // emulator only
-                        )
-                )
+            cosmosClientOptions.HttpClientFactory <-
+                fun () ->
+                    let handler = new HttpClientHandler()
+                    handler.ServerCertificateCustomValidationCallback <- HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
+                    new HttpClient(handler, disposeHandler = true)
 
-            cosmosClientOptions.HttpClientFactory <- (fun () -> new HttpClient(handler, disposeHandler = true))
+            cosmosClientOptions.ServerCertificateCustomValidationCallback <- Func<X509Certificate2, X509Chain, SslPolicyErrors, bool>(fun _ _ _ -> true)
 
             // During debugging, we might want to see the responses.
             cosmosClientOptions.EnableContentResponseOnWrite <- true

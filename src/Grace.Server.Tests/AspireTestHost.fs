@@ -15,6 +15,7 @@ open System.Diagnostics
 open System.IO
 open System.Net.Http
 open System.Net.Security
+open System.Security.Cryptography.X509Certificates
 open System.Text
 open System.Text.Json
 open System.Threading
@@ -41,6 +42,7 @@ module AspireTestHost =
     let private sharedStateLock = new SemaphoreSlim(1, 1)
     let mutable private sharedState: TestHostState option = None
     let mutable private sharedBootstrapUserId: string option = None
+
     let private getServiceBusSqlResourceName () =
         match Environment.GetEnvironmentVariable("GRACE_TEST_RUN_ID") with
         | value when not (String.IsNullOrWhiteSpace value) -> $"servicebus-sql-{value}"
@@ -50,6 +52,7 @@ module AspireTestHost =
         match Environment.GetEnvironmentVariable("GRACE_TEST_RUN_ID") with
         | value when not (String.IsNullOrWhiteSpace value) -> $"servicebus-emulator-{value}"
         | _ -> "servicebus-emulator"
+
     let private isCi =
         match Environment.GetEnvironmentVariable("GITHUB_ACTIONS"), Environment.GetEnvironmentVariable("CI") with
         | value, _ when not (String.IsNullOrWhiteSpace value) -> true
@@ -65,9 +68,7 @@ module AspireTestHost =
         | None -> ()
         | Some existing when String.IsNullOrWhiteSpace bootstrapUserId ->
             if not (String.IsNullOrWhiteSpace existing) then
-                Console.WriteLine(
-                    $"Aspire test host already started with bootstrap user '{existing}'. Ignoring empty bootstrap request."
-                )
+                Console.WriteLine($"Aspire test host already started with bootstrap user '{existing}'. Ignoring empty bootstrap request.")
         | Some existing when existing.Equals(bootstrapUserId, StringComparison.OrdinalIgnoreCase) -> ()
         | Some existing ->
             raise (
@@ -195,14 +196,7 @@ module AspireTestHost =
             return lines |> Seq.toList
         }
 
-    type private ProcessResult =
-        {
-            ExitCode: int option
-            StdOut: string
-            StdErr: string
-            TimedOut: bool
-            Error: string option
-        }
+    type private ProcessResult = { ExitCode: int option; StdOut: string; StdErr: string; TimedOut: bool; Error: string option }
 
     let private runProcessAsync (fileName: string) (arguments: string) (timeout: TimeSpan) =
         task {
@@ -233,44 +227,44 @@ module AspireTestHost =
                         let! stdOut = proc.StandardOutput.ReadToEndAsync()
                         let! stdErr = proc.StandardError.ReadToEndAsync()
 
-                        return
-                            {
-                                ExitCode = Some proc.ExitCode
-                                StdOut = stdOut
-                                StdErr = stdErr
-                                TimedOut = false
-                                Error = None
-                            }
+                        return { ExitCode = Some proc.ExitCode; StdOut = stdOut; StdErr = stdErr; TimedOut = false; Error = None }
             with
-            | ex ->
-                return { ExitCode = None; StdOut = ""; StdErr = ""; TimedOut = false; Error = Some ex.Message }
+            | ex -> return { ExitCode = None; StdOut = ""; StdErr = ""; TimedOut = false; Error = Some ex.Message }
         }
 
     let private shouldCleanupDocker () =
         match Environment.GetEnvironmentVariable("GRACE_TEST_CLEANUP") with
         | null -> false
-        | value when value.Equals("1", StringComparison.OrdinalIgnoreCase)
-                     || value.Equals("true", StringComparison.OrdinalIgnoreCase)
-                     || value.Equals("yes", StringComparison.OrdinalIgnoreCase) -> true
+        | value when
+            value.Equals("1", StringComparison.OrdinalIgnoreCase)
+            || value.Equals("true", StringComparison.OrdinalIgnoreCase)
+            || value.Equals("yes", StringComparison.OrdinalIgnoreCase)
+            ->
+            true
         | _ -> false
 
     let private shouldSkipServiceBus () =
         match Environment.GetEnvironmentVariable("GRACE_TEST_SKIP_SERVICEBUS") with
         | null -> false
-        | value when value.Equals("1", StringComparison.OrdinalIgnoreCase)
-                     || value.Equals("true", StringComparison.OrdinalIgnoreCase)
-                     || value.Equals("yes", StringComparison.OrdinalIgnoreCase) -> true
+        | value when
+            value.Equals("1", StringComparison.OrdinalIgnoreCase)
+            || value.Equals("true", StringComparison.OrdinalIgnoreCase)
+            || value.Equals("yes", StringComparison.OrdinalIgnoreCase)
+            ->
+            true
         | _ -> false
 
     let private cleanupDockerContainersAsync () =
         task {
             if shouldCleanupDocker () then
                 let containerPrefixes =
-                    [ "servicebus-sql"
-                      "servicebus-emulator"
-                      "cosmosdb-emulator"
-                      "azurite"
-                      "redis" ]
+                    [
+                        "servicebus-sql"
+                        "servicebus-emulator"
+                        "cosmosdb-emulator"
+                        "azurite"
+                        "redis"
+                    ]
 
                 let! listResult = runProcessAsync "docker" "ps -a --format \"{{.Names}}\"" (TimeSpan.FromSeconds(20.0))
 
@@ -318,6 +312,7 @@ module AspireTestHost =
     let private getResourceLogSnapshotAsync (app: DistributedApplication) =
         task {
             let model = app.Services.GetRequiredService<DistributedApplicationModel>()
+
             let tasks =
                 model.Resources
                 |> Seq.map (fun resource ->
@@ -328,8 +323,7 @@ module AspireTestHost =
                             let! logLines = getResourceLogsAsync app name
                             return formatLogTail $"[{name}]" logLines 50
                         with
-                        | ex ->
-                            return $"[{name}]: failed to capture logs ({ex.Message})"
+                        | ex -> return $"[{name}]: failed to capture logs ({ex.Message})"
                     })
                 |> Seq.toArray
 
@@ -364,11 +358,12 @@ module AspireTestHost =
         task {
             let! psResult = runProcessAsync "docker" "ps -a --format \"{{.ID}} {{.Names}}\"" (TimeSpan.FromSeconds(10.0))
 
-            if psResult.TimedOut || psResult.ExitCode <> Some 0 || psResult.Error.IsSome then
+            if psResult.TimedOut
+               || psResult.ExitCode <> Some 0
+               || psResult.Error.IsSome then
                 return formatProcessFailure "Docker ps" psResult
             else
-                let lines =
-                    psResult.StdOut.Split([| '\r'; '\n' |], StringSplitOptions.RemoveEmptyEntries)
+                let lines = psResult.StdOut.Split([| '\r'; '\n' |], StringSplitOptions.RemoveEmptyEntries)
 
                 if lines.Length = 0 then
                     return "Docker ps: no containers."
@@ -377,6 +372,7 @@ module AspireTestHost =
                         lines
                         |> Seq.map (fun line ->
                             let parts = line.Split([| ' ' |], 2, StringSplitOptions.RemoveEmptyEntries)
+
                             if parts.Length = 0 then
                                 None
                             else
@@ -393,7 +389,9 @@ module AspireTestHost =
                             task {
                                 let! logResult = runProcessAsync "docker" $"logs --tail 200 {id}" (TimeSpan.FromSeconds(15.0))
 
-                                if logResult.TimedOut || logResult.ExitCode <> Some 0 || logResult.Error.IsSome then
+                                if logResult.TimedOut
+                                   || logResult.ExitCode <> Some 0
+                                   || logResult.Error.IsSome then
                                     return formatProcessFailure $"Docker logs ({name})" logResult
                                 else if String.IsNullOrWhiteSpace logResult.StdOut then
                                     return $"Docker logs ({name}): <empty>"
@@ -488,6 +486,34 @@ module AspireTestHost =
                 None)
         |> Option.defaultValue "<missing>"
 
+    let private tryGetCosmosEndpointUri (connectionString: string) =
+        let value = tryGetConnValue "AccountEndpoint=" connectionString
+        let mutable uri = Unchecked.defaultof<Uri>
+
+        if Uri.TryCreate(value, UriKind.Absolute, &uri) then Some uri else None
+
+    let private formatExceptionChain (ex: exn) =
+        let parts = ResizeArray<string>()
+        let mutable current = ex
+
+        while not (isNull current) do
+            parts.Add($"{current.GetType().FullName}: {current.Message}")
+            current <- current.InnerException
+
+        parts |> String.concat " --> "
+
+    let private createPermissiveCosmosHttpClient () =
+        let handler = new HttpClientHandler()
+        handler.ServerCertificateCustomValidationCallback <- HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
+        new HttpClient(handler, disposeHandler = true)
+
+    let private createLocalCosmosClientOptions () =
+        let options = CosmosClientOptions(ConnectionMode = ConnectionMode.Gateway, LimitToEndpoint = true)
+        options.RequestTimeout <- TimeSpan.FromSeconds(10.0)
+        options.HttpClientFactory <- (fun () -> createPermissiveCosmosHttpClient ())
+        options.ServerCertificateCustomValidationCallback <- Func<X509Certificate2, X509Chain, SslPolicyErrors, bool>(fun _ _ _ -> true)
+        options
+
     let private formatEnvDiagnostics (env: Map<string, string>) =
         let get key =
             match env |> Map.tryFind key with
@@ -555,11 +581,7 @@ module AspireTestHost =
         with
         | _ -> None
 
-    let private waitForServiceBusReadyAsync
-        (serviceBusEmulatorName: string)
-        (serviceBusSqlName: string)
-        (state: TestHostState)
-        =
+    let private waitForServiceBusReadyAsync (serviceBusEmulatorName: string) (serviceBusSqlName: string) (state: TestHostState) =
         task {
             let sw = Stopwatch.StartNew()
             let timeout = getTimeout (TimeSpan.FromSeconds(60.0)) (TimeSpan.FromMinutes(3.0))
@@ -575,8 +597,7 @@ module AspireTestHost =
 
             let getResourceDiagnosticsAsync (resourceName: string) =
                 task {
-                    let notificationService =
-                        state.App.Services.GetRequiredService<ResourceNotificationService>()
+                    let notificationService = state.App.Services.GetRequiredService<ResourceNotificationService>()
 
                     let details = describeResourceState notificationService resourceName
 
@@ -586,8 +607,7 @@ module AspireTestHost =
                                 let! logLines = getResourceLogsAsync state.App resourceName
                                 return formatLogTail $"{resourceName} logs" logLines 50
                             with
-                            | ex ->
-                                return $"{resourceName} logs: <failed to capture ({ex.Message})>"
+                            | ex -> return $"{resourceName} logs: <failed to capture ({ex.Message})>"
                         }
 
                     return $"{resourceName}: {details}{Environment.NewLine}{logDetails}"
@@ -629,7 +649,13 @@ module AspireTestHost =
                     do! Task.Delay(TimeSpan.FromSeconds(1.0))
         }
 
-    let private waitForCosmosReadyAsync (connectionString: string) (databaseName: string) (containerName: string) =
+    let private waitForCosmosReadyAsync
+        (app: DistributedApplication)
+        (cosmosResourceName: string option)
+        (connectionString: string)
+        (databaseName: string)
+        (containerName: string)
+        =
         task {
             if String.IsNullOrWhiteSpace connectionString then
                 return ()
@@ -641,34 +667,77 @@ module AspireTestHost =
                     connectionString.Contains("localhost", StringComparison.OrdinalIgnoreCase)
                     || connectionString.Contains("127.0.0.1", StringComparison.OrdinalIgnoreCase)
 
-                let handler =
-                    new SocketsHttpHandler(
-                        SslOptions =
-                            new SslClientAuthenticationOptions(TargetHost = "localhost", RemoteCertificateValidationCallback = (fun _ __ ___ ____ -> true))
-                    )
-
-                let options = CosmosClientOptions(ConnectionMode = ConnectionMode.Gateway, LimitToEndpoint = true)
-                options.RequestTimeout <- TimeSpan.FromSeconds(10.0)
-                options.HttpClientFactory <- (fun () -> new HttpClient(handler, disposeHandler = true))
+                let options = createLocalCosmosClientOptions ()
 
                 use client = new CosmosClient(connectionString, options)
+                use probeClient = createPermissiveCosmosHttpClient ()
+                probeClient.Timeout <- TimeSpan.FromSeconds(10.0)
                 let sw = Stopwatch.StartNew()
                 let timeout = getTimeout (TimeSpan.FromMinutes(3.0)) (TimeSpan.FromMinutes(3.0))
                 let perCallTimeout = TimeSpan.FromSeconds(10.0)
                 let mutable lastError = String.Empty
                 let mutable attempt = 0
                 let mutable ready = false
+                let endpoint = tryGetCosmosEndpointUri connectionString
+
+                let endpointText =
+                    endpoint
+                    |> Option.map string
+                    |> Option.defaultValue "<missing>"
+
+                let redactedConnectionString = redactCosmosConnectionString connectionString
+
+                let getResourceDiagnosticsAsync () =
+                    task {
+                        match cosmosResourceName with
+                        | Some resourceName ->
+                            let notificationService = app.Services.GetRequiredService<ResourceNotificationService>()
+
+                            let details = describeResourceState notificationService resourceName
+
+                            let! logDetails =
+                                task {
+                                    try
+                                        let! logLines = getResourceLogsAsync app resourceName
+                                        return formatLogTail $"{resourceName} logs" logLines 80
+                                    with
+                                    | ex -> return $"{resourceName} logs: <failed to capture ({ex.Message})>"
+                                }
+
+                            return $"{resourceName}: {details}{Environment.NewLine}{logDetails}"
+                        | None -> return "Cosmos emulator resource name unavailable."
+                    }
+
+                Console.WriteLine(
+                    $"Cosmos readiness probe: Endpoint={endpointText}; Database={databaseName}; Container={containerName}; Connection={redactedConnectionString}"
+                )
 
                 while not ready do
                     if sw.Elapsed >= timeout then
+                        let! resourceDetails = getResourceDiagnosticsAsync ()
+                        let! dockerDetails = tryGetDockerDiagnosticsAsync ()
+
                         let diagnostics =
-                            $"Timed out waiting for Cosmos emulator. Attempts={attempt}. LastError={lastError}. Database={databaseName}. Container={containerName}. ConnectionString={redactCosmosConnectionString connectionString}"
+                            $"Timed out waiting for Cosmos emulator. Attempts={attempt}. Elapsed={sw.Elapsed.TotalSeconds:n1}s. LastError={lastError}. Database={databaseName}. Container={containerName}. ConnectionString={redactedConnectionString}{Environment.NewLine}{resourceDetails}{Environment.NewLine}{dockerDetails}"
 
                         raise (TimeoutException(diagnostics))
 
                     attempt <- attempt + 1
 
                     try
+                        match endpoint with
+                        | Some endpointUri when isLocalCosmos ->
+                            let probeUri = Uri(endpointUri, "_explorer/emulator.pem")
+
+                            use! response =
+                                probeClient
+                                    .GetAsync(probeUri)
+                                    .WaitAsync(perCallTimeout)
+
+                            if not response.IsSuccessStatusCode then
+                                invalidOp $"Gateway probe returned HTTP {(int response.StatusCode)} {response.StatusCode} from {probeUri}."
+                        | _ -> ()
+
                         let! _ =
                             client
                                 .ReadAccountAsync()
@@ -681,15 +750,18 @@ module AspireTestHost =
                                     .WaitAsync(perCallTimeout)
 
                             let! _ =
-                                database.Database
+                                database
+                                    .Database
                                     .CreateContainerIfNotExistsAsync(containerName, "/PartitionKey")
                                     .WaitAsync(perCallTimeout)
+
                             ()
 
                         ready <- true
                     with
                     | ex ->
-                        lastError <- ex.Message
+                        lastError <- formatExceptionChain ex
+                        Console.WriteLine($"Cosmos readiness attempt {attempt} failed: {lastError}")
                         do! Task.Delay(TimeSpan.FromSeconds(1.0))
         }
 
@@ -699,17 +771,14 @@ module AspireTestHost =
             let sw = Stopwatch.StartNew()
             let mutable attempt = 0
             let mutable lastError = String.Empty
+
             let delayAsync () =
                 task {
                     try
                         do! Task.Delay(TimeSpan.FromSeconds(1.0), ct)
                     with
                     | :? OperationCanceledException when ct.IsCancellationRequested ->
-                        raise (
-                            TimeoutException(
-                                $"Timed out waiting for Grace.Server HTTP readiness. Last error: {lastError}"
-                            )
-                        )
+                        raise (TimeoutException($"Timed out waiting for Grace.Server HTTP readiness. Last error: {lastError}"))
                 }
 
             Console.WriteLine($"Waiting for Grace.Server HTTP readiness at {client.BaseAddress}...")
@@ -718,9 +787,7 @@ module AspireTestHost =
 
             while not ready do
                 if ct.IsCancellationRequested then
-                    raise (
-                        TimeoutException($"Timed out waiting for Grace.Server HTTP readiness. Last error: {lastError}")
-                    )
+                    raise (TimeoutException($"Timed out waiting for Grace.Server HTTP readiness. Last error: {lastError}"))
 
                 attempt <- attempt + 1
 
@@ -731,18 +798,14 @@ module AspireTestHost =
                     use! response = client.GetAsync("/healthz", linkedCts.Token)
 
                     if response.IsSuccessStatusCode then
-                        Console.WriteLine(
-                            $"Grace.Server HTTP readiness confirmed after {sw.Elapsed.TotalSeconds:n1}s (attempt {attempt})."
-                        )
+                        Console.WriteLine($"Grace.Server HTTP readiness confirmed after {sw.Elapsed.TotalSeconds:n1}s (attempt {attempt}).")
                         ready <- true
                     else
                         lastError <- $"Status {(int response.StatusCode)} {response.StatusCode}"
                         do! delayAsync ()
                 with
                 | :? OperationCanceledException when ct.IsCancellationRequested ->
-                    raise (
-                        TimeoutException($"Timed out waiting for Grace.Server HTTP readiness. Last error: {lastError}")
-                    )
+                    raise (TimeoutException($"Timed out waiting for Grace.Server HTTP readiness. Last error: {lastError}"))
                 | ex ->
                     lastError <- ex.Message
                     do! delayAsync ()
@@ -760,6 +823,7 @@ module AspireTestHost =
 
             if not <| String.IsNullOrWhiteSpace bootstrapUserId then
                 Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.GraceAuthzBootstrapSystemAdminUsers, bootstrapUserId)
+
             do! cleanupDockerContainersAsync ()
             let! builder = DistributedApplicationTestingBuilder.CreateAsync<Projects.Grace_Aspire_AppHost>()
             let! app = builder.BuildAsync()
@@ -799,7 +863,9 @@ module AspireTestHost =
             else
                 Console.WriteLine("Skipping Service Bus SQL readiness checks (GRACE_TEST_SKIP_SERVICEBUS=1).")
 
-            match tryFindResourceName<AzureCosmosDBEmulatorResource> app with
+            let cosmosResourceName = tryFindResourceName<AzureCosmosDBEmulatorResource> app
+
+            match cosmosResourceName with
             | Some name ->
                 Console.WriteLine($"Cosmos emulator resource detected: {name}")
                 do! waitForResourceHealthyAsync notificationService app name cts.Token
@@ -809,6 +875,7 @@ module AspireTestHost =
                 do! waitForResourceHealthyAsync notificationService app serviceBusEmulatorResourceName cts.Token
             else
                 Console.WriteLine("Skipping Service Bus emulator readiness checks (GRACE_TEST_SKIP_SERVICEBUS=1).")
+
             let! env = getEnvironmentVariablesAsync app graceServerResourceName
 
             match env
@@ -857,7 +924,7 @@ module AspireTestHost =
                 |> Map.tryFind Constants.EnvironmentVariables.AzureCosmosDBContainerName
                 |> Option.defaultValue String.Empty
 
-            do! waitForCosmosReadyAsync cosmosConnectionString cosmosDatabaseName cosmosContainerName
+            do! waitForCosmosReadyAsync app cosmosResourceName cosmosConnectionString cosmosDatabaseName cosmosContainerName
 
             try
                 do! waitForResourceHealthyAsync notificationService app graceServerResourceName cts.Token
@@ -958,13 +1025,11 @@ module AspireTestHost =
                 if shouldSkipServiceBus () then
                     "", "", "", ""
                 else
-                    let connection =
-                        requireEnv graceServerResourceName Constants.EnvironmentVariables.AzureServiceBusConnectionString env
+                    let connection = requireEnv graceServerResourceName Constants.EnvironmentVariables.AzureServiceBusConnectionString env
 
                     let topic = requireEnv graceServerResourceName Constants.EnvironmentVariables.AzureServiceBusTopic env
 
-                    let subscription =
-                        requireEnv graceServerResourceName Constants.EnvironmentVariables.AzureServiceBusSubscription env
+                    let subscription = requireEnv graceServerResourceName Constants.EnvironmentVariables.AzureServiceBusSubscription env
 
                     let testSubscription = $"{subscription}-tests"
                     connection, topic, subscription, testSubscription

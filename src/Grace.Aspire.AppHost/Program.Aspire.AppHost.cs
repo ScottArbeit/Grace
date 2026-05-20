@@ -623,7 +623,7 @@ public partial class Program
                     }
 
                 var hostAndPort = selected.Property(EndpointProperty.HostAndPort);
-                return ReferenceExpression.Create($"AccountEndpoint={scheme}://{hostAndPort}/;AccountKey={accountKey};");
+                return ReferenceExpression.Create($"AccountEndpoint={scheme}://{hostAndPort}/;AccountKey={accountKey};DisableServerCertificateValidation=True;");
             }
         }
 

@@ -4,9 +4,10 @@ on:
   pull_request:
     branches: [ main ]
   push:
-    branches: [ main ]
+    branches: [ main, agent/** ]
   schedule:
     - cron: "0 3 * * *"
+  workflow_dispatch:
 
 jobs:
   fast:
