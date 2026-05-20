@@ -236,6 +236,9 @@ After merge or promotion:
 
 1. Verify the destination branch or reference contains the change.
 2. Confirm no uncommitted or unpushed work is stranded in the task workspace.
-3. Remove task worktrees that are no longer needed.
-4. Update the task record with final status and follow-ups.
-5. Leave unrelated local changes untouched.
+3. Remove task worktrees that are no longer needed and delete the issue branch locally and remotely.
+4. Run `git fetch --prune` and `git pull --ff-only` in the local repo so `main` is up to date.
+5. Update the task record with final status and follow-ups.
+6. Leave unrelated local changes untouched.
+
+When the user says "PR is merged" or uses equivalent wording, treat that as a request to perform this cleanup sequence.

@@ -29,6 +29,8 @@ update the issue before editing the new paths.
 - Resolve all compilation errors before considering a task complete.
 - Run impacted tests for each task and fix failures introduced by your changes.
 - Create a new git commit after each completed task to keep review scope clear.
+- When the user says a PR is merged, verify the merge, delete the issue branch and worktree, run `git fetch --prune`,
+  and `git pull --ff-only` in the local repo so `main` is up to date.
 - Record skipped validation, docs impact, residual risk, and follow-ups in the task record or pull request.
 - Write tests for new features and bug fixes; prioritize critical paths.
 - Document new public APIs with XML comments and update nearby `AGENTS.md`/docs when behavior changes.

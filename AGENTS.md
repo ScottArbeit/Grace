@@ -49,6 +49,8 @@ impact and skipped validation.
 - Commit after each completed slice and keep pull requests focused and reviewable.
 - Open normal ready-for-review pull requests. Do not open draft pull requests unless the user explicitly asks for a
   draft.
+- When the user says a PR is merged, verify the merge, delete the issue branch and worktree, run `git fetch --prune`,
+  and `git pull --ff-only` in the local repo so `main` is up to date.
 - Update README, CONTRIBUTING, nearby `AGENTS.md`, and other docs when behavior, commands, APIs, or workflow changes.
 
 ## Markdown Guidelines
