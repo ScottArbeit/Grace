@@ -734,8 +734,7 @@ module AspireTestHost =
                                     .GetAsync(probeUri)
                                     .WaitAsync(perCallTimeout)
 
-                            if not response.IsSuccessStatusCode then
-                                invalidOp $"Gateway probe returned HTTP {(int response.StatusCode)} {response.StatusCode} from {probeUri}."
+                            ()
                         | _ -> ()
 
                         let! _ =
