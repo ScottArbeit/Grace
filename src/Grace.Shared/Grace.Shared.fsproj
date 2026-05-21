@@ -3,7 +3,6 @@
         <TargetFramework>net10.0</TargetFramework>
         <LangVersion>preview</LangVersion>
         <PublishReadyToRun>true</PublishReadyToRun>
-        <Version>0.1</Version>
         <Description>The shared core module for Grace.</Description>
         <GenerateDocumentationFile>true</GenerateDocumentationFile>
         <AccelerateBuildsInVisualStudio>true</AccelerateBuildsInVisualStudio>
@@ -25,6 +24,7 @@
         <Compile Include="Resources\Utilities.Resources.fs" />
         <Compile Include="Combinators.fs" />
         <Compile Include="Utilities.Shared.fs" />
+        <Compile Include="BuildInfo.Shared.fs" />
         <Compile Include="Authorization.Shared.fs" />
         <Compile Include="Converters\BranchDtoConverter.Shared.fs" />
         <Compile Include="Services.Shared.fs" />

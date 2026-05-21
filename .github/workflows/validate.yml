@@ -13,6 +13,10 @@ jobs:
   fast:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    env:
+      GraceBuildKind: ci
+      GraceBuildNumber: ${{ github.run_number }}
+      GraceSourceRevisionId: ${{ github.sha }}
     steps:
       - uses: actions/checkout@v6
       - name: Setup .NET
@@ -27,6 +31,10 @@ jobs:
   full:
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
+    env:
+      GraceBuildKind: ci
+      GraceBuildNumber: ${{ github.run_number }}
+      GraceSourceRevisionId: ${{ github.sha }}
     steps:
       - uses: actions/checkout@v6
       - name: Setup .NET

@@ -196,6 +196,39 @@ module HistoryStorageTests =
             | None -> Assert.Fail("Expected recordInvocation to return a history entry."))
 
     [<Test>]
+    let ``recordInvocation stores informational build identity`` () =
+        let configPath = UserConfiguration.getUserConfigurationPath ()
+
+        withFileBackup configPath (fun () ->
+            let configuration = UserConfiguration.UserConfiguration()
+            configuration.History.Enabled <- true
+
+            match UserConfiguration.saveUserConfiguration configuration with
+            | Ok _ -> ()
+            | Error error -> Assert.Fail(error)
+
+            let input: HistoryStorage.RecordInput =
+                {
+                    argvOriginal = [| "branch"; "status" |]
+                    argvNormalized = [| "branch"; "status" |]
+                    cwd = Environment.CurrentDirectory
+                    exitCode = 0
+                    durationMs = 5L
+                    parseSucceeded = true
+                    timestampUtc = getCurrentInstant ()
+                    source = None
+                }
+
+            match HistoryStorage.recordInvocation input with
+            | Some (entry, _) ->
+                entry.graceVersion
+                |> should equal (BuildInfo.current().InformationalVersion)
+
+                entry.graceVersion
+                |> should not' (equal "0.2.0.0")
+            | None -> Assert.Fail("Expected recordInvocation to return a history entry."))
+
+    [<Test>]
     let ``shouldRecord treats history command with leading source option as history`` () =
         let configuration = UserConfiguration.UserConfiguration()
         configuration.History.Enabled <- true

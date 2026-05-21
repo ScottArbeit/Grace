@@ -7,7 +7,6 @@
 		<OutputType>Exe</OutputType>
 		<!--<PublishAot>true</PublishAot>-->
 		<!--<RuntimeIdentifier>win10-x64</RuntimeIdentifier>-->
-		<Version>0.1</Version>
 		<Description>The command-line interface for Grace.</Description>
 		<GenerateDocumentationFile>true</GenerateDocumentationFile>
 		<AccelerateBuildsInVisualStudio>true</AccelerateBuildsInVisualStudio>

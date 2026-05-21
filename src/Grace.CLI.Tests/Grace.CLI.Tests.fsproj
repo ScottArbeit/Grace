@@ -18,6 +18,7 @@
     <Compile Include="Auth.Tests.fs" />
     <Compile Include="AuthTokenBundle.Tests.fs" />
     <Compile Include="Connect.CLI.Tests.fs" />
+    <Compile Include="BuildInfo.Tests.fs" />
     <Compile Include="Program.CLI.Tests.fs" />
     <Compile Include="HistoryStorage.CLI.Tests.fs" />
     <Compile Include="LocalStateDb.Tests.fs" />

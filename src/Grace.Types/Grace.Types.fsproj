@@ -4,7 +4,6 @@
         <TargetFramework>net10.0</TargetFramework>
         <LangVersion>Preview</LangVersion>
         <PublishReadyToRun>true</PublishReadyToRun>
-        <Version>0.1</Version>
         <Description>The shared types module for Grace.</Description>
         <GenerateDocumentationFile>true</GenerateDocumentationFile>
         <AccelerateBuildsInVisualStudio>true</AccelerateBuildsInVisualStudio>

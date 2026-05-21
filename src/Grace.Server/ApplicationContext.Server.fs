@@ -74,11 +74,9 @@ module ApplicationContext =
 
     /// Sets the Application global configuration.
     let setConfiguration (config: IConfiguration) =
-        let assembly = Assembly.GetExecutingAssembly()
-        let version = assembly.GetName().Version
-        let fileInfo = FileInfo(assembly.Location)
+        let buildInfo = BuildInfo.fromAssembly (Assembly.GetExecutingAssembly())
 
-        logToConsole $"Grace Server version: {version}; build time (UTC): {fileInfo.LastWriteTimeUtc}."
+        logToConsole $"Grace Server build: {buildInfo.InformationalVersion}."
 
         configuration <- config
     //configuration.AsEnumerable() |> Seq.iter (fun kvp -> logToConsole $"{kvp.Key}: {kvp.Value}")

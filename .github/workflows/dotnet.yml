@@ -10,6 +10,10 @@ jobs:
   build:
     #runs-on: arc-runner-set
     runs-on: ubuntu-latest
+    env:
+      GraceBuildKind: ci
+      GraceBuildNumber: ${{ github.run_number }}
+      GraceSourceRevisionId: ${{ github.sha }}
 
     steps:
     - uses: actions/checkout@v6
