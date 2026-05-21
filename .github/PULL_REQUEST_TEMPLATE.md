@@ -21,6 +21,15 @@ Closes #
 - RED evidence or docs-only waiver:
 - Focused validation:
 
+## Test coverage changes
+
+Choose one:
+
+- [ ] Tests added or updated; list the test files and covered behavior below.
+- [ ] No tests added; explain why new tests were not required for this change.
+
+Details:
+
 ## Reviewer pass
 
 - [ ] Owned paths and forbidden paths reviewed against the issue.

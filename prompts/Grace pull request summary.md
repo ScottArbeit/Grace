@@ -25,6 +25,7 @@ If items 4 or 5 are not true, stop and output only:
 - Branch or diff to summarize.
 - Work item or issue reference (if applicable).
 - Validation results (tests/build/lint/manual checks).
+- Test files added or updated, or the reason no new tests were required.
 
 If any input is unavailable, state that explicitly and continue with what is verifiable.
 
@@ -34,6 +35,7 @@ If any input is unavailable, state that explicitly and continue with what is ver
 2. Summarize behavior-level change, not just line edits.
 3. Map each changed file to what was accomplished.
 4. Include evidence from validation results.
+5. Identify test coverage changes separately from validation commands.
 
 Use evidence anchors for every major claim in sections 4 through 7.
 
@@ -116,6 +118,8 @@ For each changed file, include:
 
 Include exactly what was run and what happened:
 
+- Test coverage changes: list test files added or updated and the behavior covered,
+  or explain why no new tests were required.
 - Build/test/lint commands
 - Manual verification steps
 - Results and any known gaps
