@@ -27,6 +27,7 @@ open System.IO.Compression
 open System.IO.Enumeration
 open System.IO.Pipelines
 open System.Linq
+open System.Reflection
 open System.Security.Cryptography
 open System.Text
 open System.Text.Json
@@ -91,6 +92,23 @@ module Services =
     let mutable private invocationCorrelationId: CorrelationId option = None
 
     let resetInvocationCorrelationId () = invocationCorrelationId <- None
+
+    let getCliAssemblyFileVersion () =
+        let assembly = Assembly.GetExecutingAssembly()
+
+        if String.IsNullOrWhiteSpace assembly.Location then
+            $"{assembly.GetName().Version}"
+        else
+            let fileVersion = FileVersionInfo.GetVersionInfo(assembly.Location).FileVersion
+
+            if String.IsNullOrWhiteSpace fileVersion then
+                $"{assembly.GetName().Version}"
+            else
+                fileVersion
+
+    let getCliClientType () = ClientType.CLI(getCliAssemblyFileVersion ())
+
+    let configureSdkClientIdentity () = Grace.SDK.ClientIdentity.configure (getCliClientType ())
 
     // Extension methods for dealing with local file changes.
     type DirectoryVersion with

@@ -46,3 +46,7 @@ Consult `../AGENTS.md` for global policies before modifying the SDK.
   (January 6, 2026).
 - Added `Auth.getOidcClientConfig` for fetching server-provided OIDC client
   configuration (January 8, 2026).
+- `ClientIdentity.SDK.fs` owns the process-wide client identity headers
+  (`X-Grace-Client-Type` and `X-Grace-Client-Version`). CLI startup configures
+  it with `ClientType.CLI(<Grace CLI assembly file version>)`; other clients
+  should configure their own identity before making SDK API calls.

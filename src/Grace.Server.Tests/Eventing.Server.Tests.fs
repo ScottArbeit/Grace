@@ -22,7 +22,13 @@ type AutomationEventingTests() =
         let properties = Dictionary<string, string>()
         properties[nameof RepositoryId] <- $"{repositoryId}"
 
-        { Timestamp = Instant.FromUtc(2026, 2, 18, 0, 0); CorrelationId = correlationId; Principal = "tester"; Properties = properties }
+        {
+            Timestamp = Instant.FromUtc(2026, 2, 18, 0, 0)
+            CorrelationId = correlationId
+            Principal = "tester"
+            ClientType = Microsoft.FSharp.Core.Option.None
+            Properties = properties
+        }
 
     [<Test>]
     member _.ReferencePromotionWithTerminalLinkMapsToPromotionSetApplied() =

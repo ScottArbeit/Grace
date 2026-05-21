@@ -16,7 +16,14 @@ open System.Collections.Generic
 
 [<Parallelizable(ParallelScope.All)>]
 type WorkItemServerUnitTests() =
-    let metadata timestamp = { Timestamp = timestamp; CorrelationId = "corr-work-item"; Principal = "tester"; Properties = Dictionary<string, string>() }
+    let metadata timestamp =
+        {
+            Timestamp = timestamp
+            CorrelationId = "corr-work-item"
+            Principal = "tester"
+            ClientType = Microsoft.FSharp.Core.Option.None
+            Properties = Dictionary<string, string>()
+        }
 
     let runValidation (validation: Threading.Tasks.ValueTask<Result<unit, WorkItemError>>) =
         validation.AsTask()

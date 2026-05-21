@@ -20,7 +20,7 @@ module PersonalAccessToken =
         task {
             try
                 let parameters = Common.ensureCorrelationIdIsSet parameters
-                use httpClient = getHttpClient parameters.CorrelationId
+                use httpClient = ClientIdentity.getHttpClient parameters.CorrelationId
                 do! Auth.addAuthorizationHeader httpClient
                 let startTime = getCurrentInstant ()
 

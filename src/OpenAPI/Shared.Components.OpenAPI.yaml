@@ -187,10 +187,21 @@ components:
           type: string
         Principal:
           type: string
+        ClientType:
+          $ref: '#/components/schemas/ClientType'
         Properties:
           type: object
           additionalProperties:
             type: string
+
+    ClientType:
+      description: Identifies the Grace client that initiated an API request.
+      type: object
+      additionalProperties: false
+      properties:
+        CLI:
+          description: The Grace CLI assembly file version.
+          type: string
 
     GraceReturnValue:
       type: object

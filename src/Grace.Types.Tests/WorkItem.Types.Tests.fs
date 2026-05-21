@@ -9,7 +9,14 @@ open System.Collections.Generic
 
 [<Parallelizable(ParallelScope.All)>]
 type WorkItemTypesTests() =
-    let metadata timestamp = { Timestamp = timestamp; CorrelationId = "corr-work-item"; Principal = "tester"; Properties = Dictionary<string, string>() }
+    let metadata timestamp =
+        {
+            Timestamp = timestamp
+            CorrelationId = "corr-work-item"
+            Principal = "tester"
+            ClientType = Microsoft.FSharp.Core.Option.None
+            Properties = Dictionary<string, string>()
+        }
 
     [<Test>]
     member _.UpdateDtoPreservesCreatedFields() =
