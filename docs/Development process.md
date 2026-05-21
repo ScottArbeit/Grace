@@ -61,7 +61,7 @@ Validation:
 Definition of done:
 - Behavior changed
 - Tests or docs updated
-- Pull request opened and linked
+- Ready-for-review pull request opened and linked
 - Validation recorded
 - Review evidence prepared
 - Follow-ups named
@@ -223,6 +223,9 @@ Before opening or updating a pull request, include:
 - residual risk
 - rollback or recovery notes when the change touches runtime or data
 - useful AI prompts used for diagnosis or implementation, when contributing externally
+
+Open normal ready-for-review pull requests for Grace implementation work. Do not open draft pull requests unless the
+maintainer explicitly asks for a draft.
 
 Grace's product model uses promotion candidates, queues, gates, attestations, and review reports. Today's repository
 still uses normal GitHub pull requests, but changes should be prepared so they are easy to audit in either system.

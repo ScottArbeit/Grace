@@ -47,6 +47,8 @@ impact and skipped validation.
 - Use `pwsh ./scripts/validate.ps1 -Full` when Aspire, emulators, storage, Service Bus, Cosmos DB, Redis,
   deployment/runtime behavior, or cross-service integration is affected.
 - Commit after each completed slice and keep pull requests focused and reviewable.
+- Open normal ready-for-review pull requests. Do not open draft pull requests unless the user explicitly asks for a
+  draft.
 - Update README, CONTRIBUTING, nearby `AGENTS.md`, and other docs when behavior, commands, APIs, or workflow changes.
 
 ## Markdown Guidelines
