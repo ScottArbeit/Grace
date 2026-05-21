@@ -31,6 +31,13 @@ if ($configSchemaText -notmatch 'CurrentConfigurationVersion\s*=\s*"0\.1"') {
     $violations.Add('src/Grace.Shared/Constants.Shared.fs: CurrentConfigurationVersion changed; confirm this is an intentional configuration schema migration.')
 }
 
+$directoryBuildProps = Join-Path $src 'Directory.Build.props'
+$directoryBuildPropsText = Get-Content -LiteralPath $directoryBuildProps -Raw
+
+if ($directoryBuildPropsText -match 'UtcNow') {
+    $violations.Add('src/Directory.Build.props: local build numbers must be supplied once per invocation, not computed per project with UtcNow.')
+}
+
 if ($violations.Count -gt 0) {
     $violations | ForEach-Object { Write-Error $_ }
     exit 1

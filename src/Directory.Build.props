@@ -1,8 +1,10 @@
 <Project>
     <PropertyGroup>
         <GraceVersionPrefix Condition="'$(GraceVersionPrefix)' == ''">0.2.0</GraceVersionPrefix>
+        <GraceBuildKind Condition="'$(GraceBuildKind)' == '' and '$(GITHUB_RUN_NUMBER)' != ''">ci</GraceBuildKind>
         <GraceBuildKind Condition="'$(GraceBuildKind)' == ''">dev</GraceBuildKind>
-        <GraceBuildNumber Condition="'$(GraceBuildNumber)' == ''">$([System.DateTime]::UtcNow.ToString("yyyyMMddHHmmss"))</GraceBuildNumber>
+        <GraceBuildNumber Condition="'$(GraceBuildNumber)' == '' and '$(GITHUB_RUN_NUMBER)' != ''">$(GITHUB_RUN_NUMBER)</GraceBuildNumber>
+        <GraceBuildNumber Condition="'$(GraceBuildNumber)' == ''">local</GraceBuildNumber>
         <GraceBuildVersion Condition="'$(GraceBuildKind)' == 'release'">$(GraceVersionPrefix)</GraceBuildVersion>
         <GraceBuildVersion Condition="'$(GraceBuildVersion)' == ''">$(GraceVersionPrefix)-$(GraceBuildKind).$(GraceBuildNumber)</GraceBuildVersion>
         <GraceSourceRevisionId Condition="'$(GraceSourceRevisionId)' == '' and '$(GITHUB_SHA)' != ''">$(GITHUB_SHA)</GraceSourceRevisionId>

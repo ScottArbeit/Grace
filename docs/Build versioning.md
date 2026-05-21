@@ -7,11 +7,16 @@ versions unless a future release process explicitly documents an exception.
 
 The product base version is `0.2.0`.
 
-Local builds default to a development prerelease version:
+Local validation builds default to a development prerelease version:
 
 ```text
 0.2.0-dev.<yyyyMMddHHmmss>
 ```
+
+`scripts/validate.ps1` computes that timestamp once and passes it to the solution build so every project built in that
+invocation receives the same local build identity. Direct `dotnet build` invocations can pass the same properties
+explicitly; if they do not, MSBuild falls back to `0.2.0-dev.local` rather than computing independent per-project
+timestamps.
 
 CI builds pass a monotonic run number and use:
 
