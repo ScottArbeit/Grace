@@ -35,6 +35,7 @@ This repo is primarily **F#** and targets **.NET 10**.
   editing.
 - Use a focused branch for each issue. Maintainers and agents should use issue-owned worktrees for repo-local work.
 - Prefer vertical slices with focused validation and a commit after each completed slice.
+- Open normal ready-for-review pull requests unless a maintainer explicitly asks for a draft pull request.
 - Add or update tests when changing behavior.
 - Please add any useful AI prompts you used for diagnosis or implementation to the PR description.
 
