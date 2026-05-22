@@ -15,6 +15,40 @@ $startTime = Get-Date
 $exitCode = 0
 $formatDisabled = $true
 
+function Get-GraceBuildProperties {
+    $buildKind = $env:GraceBuildKind
+    if ([string]::IsNullOrWhiteSpace($buildKind)) {
+        $buildKind = "dev"
+    }
+
+    $buildNumber = $env:GraceBuildNumber
+    if ([string]::IsNullOrWhiteSpace($buildNumber)) {
+        $buildNumber = [DateTime]::UtcNow.ToString("yyyyMMddHHmmss", [Globalization.CultureInfo]::InvariantCulture)
+    }
+
+    $sourceRevision = $env:GraceSourceRevisionId
+    if ([string]::IsNullOrWhiteSpace($sourceRevision)) {
+        $git = Get-Command git -ErrorAction SilentlyContinue
+        if ($null -ne $git) {
+            $sourceRevision = (& git rev-parse HEAD 2>$null)
+            if ($LASTEXITCODE -ne 0) {
+                $sourceRevision = $null
+            }
+        }
+    }
+
+    $properties = @(
+        "-p:GraceBuildKind=$buildKind",
+        "-p:GraceBuildNumber=$buildNumber"
+    )
+
+    if (-not [string]::IsNullOrWhiteSpace($sourceRevision)) {
+        $properties += "-p:GraceSourceRevisionId=$sourceRevision"
+    }
+
+    [string[]]$properties
+}
+
 function Write-Section([string]$Title) {
     Write-Host ""
     Write-Host ("== {0} ==" -f $Title)
@@ -180,9 +214,11 @@ try {
         Write-Host "Skipped (-SkipFormat)."
     }
 
+    $graceBuildProperties = Get-GraceBuildProperties
+
     if (-not $SkipBuild) {
         Write-Section "Build"
-        Invoke-External "Grace solution build" { dotnet build "src/Grace.slnx" -c $Configuration }
+        Invoke-External "Grace solution build" { dotnet build "src/Grace.slnx" -c $Configuration @graceBuildProperties }
     } else {
         Write-Section "Build"
         Write-Host "Skipped (-SkipBuild)."

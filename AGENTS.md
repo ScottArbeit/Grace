@@ -52,6 +52,10 @@ impact and skipped validation.
 - When the user says a PR is merged, verify the merge, delete the issue branch and worktree, run `git fetch --prune`,
   and `git pull --ff-only` in the local repo so `main` is up to date.
 - Update README, CONTRIBUTING, nearby `AGENTS.md`, and other docs when behavior, commands, APIs, or workflow changes.
+- When the user asks to address a code review comment, review comment, PR feedback, or similar, treat that as a complete
+  review-thread workflow: evaluate the comment, make the appropriate fix or explicitly explain why no code change is
+  needed, validate the result, commit and push the branch, reply to the GitHub review comment with the outcome and
+  evidence, and resolve the GitHub conversation when the feedback has been satisfied.
 
 ## Markdown Guidelines
 

@@ -9,7 +9,6 @@ open System
 open System.Collections.Generic
 open System.Diagnostics
 open System.IO
-open System.Reflection
 open System.Text
 open System.Text.Json
 open System.Text.RegularExpressions
@@ -88,12 +87,7 @@ module HistoryStorage =
 
     let private getGraceVersion () =
         try
-            let version = Assembly.GetEntryAssembly().GetName().Version
-
-            if isNull version then
-                Constants.CurrentConfigurationVersion
-            else
-                version.ToString()
+            BuildInfo.current().InformationalVersion
         with
         | _ -> Constants.CurrentConfigurationVersion
 

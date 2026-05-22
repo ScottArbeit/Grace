@@ -113,11 +113,11 @@ module Application =
         let mustBeLoggedIn = requiresAuthentication notLoggedIn
 
         let graceServerVersion =
-            FileVersionInfo
-                .GetVersionInfo(
-                    Assembly.GetExecutingAssembly().Location
+            BuildInfo
+                .fromAssembly(
+                    Assembly.GetExecutingAssembly()
                 )
-                .FileVersion
+                .InformationalVersion
 
         let repositoryResourceFromContext (context: HttpContext) =
             task {

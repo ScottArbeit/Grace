@@ -1,5 +1,29 @@
 <Project>
     <PropertyGroup>
+        <GraceVersionPrefix Condition="'$(GraceVersionPrefix)' == ''">0.2.0</GraceVersionPrefix>
+        <GraceBuildKind Condition="'$(GraceBuildKind)' == '' and '$(GITHUB_RUN_NUMBER)' != ''">ci</GraceBuildKind>
+        <GraceBuildKind Condition="'$(GraceBuildKind)' == ''">dev</GraceBuildKind>
+        <GraceBuildNumber Condition="'$(GraceBuildNumber)' == '' and '$(GITHUB_RUN_NUMBER)' != ''">$(GITHUB_RUN_NUMBER)</GraceBuildNumber>
+        <GraceBuildNumber Condition="'$(GraceBuildNumber)' == '' and '$(GraceBuildKind)' == 'ci'">0</GraceBuildNumber>
+        <GraceBuildNumber Condition="'$(GraceBuildNumber)' == ''">local</GraceBuildNumber>
+        <GraceBuildVersion Condition="'$(GraceBuildKind)' == 'release'">$(GraceVersionPrefix)</GraceBuildVersion>
+        <GraceBuildVersion Condition="'$(GraceBuildVersion)' == ''">$(GraceVersionPrefix)-$(GraceBuildKind).$(GraceBuildNumber)</GraceBuildVersion>
+        <GraceSourceRevisionId Condition="'$(GraceSourceRevisionId)' == '' and '$(GITHUB_SHA)' != ''">$(GITHUB_SHA)</GraceSourceRevisionId>
+        <GraceShortSourceRevisionId Condition="'$(GraceSourceRevisionId)' != '' and $([System.String]::Copy('$(GraceSourceRevisionId)').Length) &gt;= 7">$([System.String]::Copy('$(GraceSourceRevisionId)').Substring(0, 7))</GraceShortSourceRevisionId>
+        <GraceShortSourceRevisionId Condition="'$(GraceSourceRevisionId)' != '' and '$(GraceShortSourceRevisionId)' == ''">$(GraceSourceRevisionId)</GraceShortSourceRevisionId>
+        <VersionPrefix>$(GraceVersionPrefix)</VersionPrefix>
+        <VersionSuffix Condition="'$(GraceBuildKind)' != 'release'">$(GraceBuildKind).$(GraceBuildNumber)</VersionSuffix>
+        <Version>$(GraceBuildVersion)</Version>
+        <PackageVersion>$(GraceBuildVersion)</PackageVersion>
+        <ProductVersion>$(GraceBuildVersion)</ProductVersion>
+        <AssemblyVersion>0.2.0.0</AssemblyVersion>
+        <GraceFileVersionRevision Condition="'$(GraceFileVersionRevision)' == '' and '$(GraceBuildKind)' == 'ci'">$([MSBuild]::Modulo($(GraceBuildNumber), 65535))</GraceFileVersionRevision>
+        <GraceFileVersionRevision Condition="'$(GraceFileVersionRevision)' == ''">0</GraceFileVersionRevision>
+        <FileVersion>0.2.0.$(GraceFileVersionRevision)</FileVersion>
+        <InformationalVersion Condition="'$(GraceShortSourceRevisionId)' != ''">$(GraceBuildVersion)+$(GraceShortSourceRevisionId)</InformationalVersion>
+        <InformationalVersion Condition="'$(InformationalVersion)' == ''">$(GraceBuildVersion)</InformationalVersion>
+        <AssemblyInformationalVersion>$(InformationalVersion)</AssemblyInformationalVersion>
+        <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
         <AccelerateBuildsInVisualStudio>true</AccelerateBuildsInVisualStudio>
         <ProduceReferenceAssembly>true</ProduceReferenceAssembly>
         <SuppressNETCoreSdkPreviewMessage>true</SuppressNETCoreSdkPreviewMessage>
