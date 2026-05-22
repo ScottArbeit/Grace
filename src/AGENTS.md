@@ -33,6 +33,8 @@ update the issue before editing the new paths.
   review-thread workflow: evaluate the comment, make the appropriate fix or explicitly explain why no code change is
   needed, validate the result, commit and push the branch, reply to the GitHub review comment with the outcome and
   evidence, and resolve the GitHub conversation when the feedback has been satisfied.
+- When the user says a PR is merged, verify the merge, delete the issue branch and worktree, run `git fetch --prune`,
+  and `git pull --ff-only` in the local repo so `main` is up to date.
 - Record skipped validation, docs impact, residual risk, and follow-ups in the task record or pull request.
 - Write tests for new features and bug fixes; prioritize critical paths.
 - Document new public APIs with XML comments and update nearby `AGENTS.md`/docs when behavior changes.

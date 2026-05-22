@@ -47,6 +47,10 @@ impact and skipped validation.
 - Use `pwsh ./scripts/validate.ps1 -Full` when Aspire, emulators, storage, Service Bus, Cosmos DB, Redis,
   deployment/runtime behavior, or cross-service integration is affected.
 - Commit after each completed slice and keep pull requests focused and reviewable.
+- Open normal ready-for-review pull requests. Do not open draft pull requests unless the user explicitly asks for a
+  draft.
+- When the user says a PR is merged, verify the merge, delete the issue branch and worktree, run `git fetch --prune`,
+  and `git pull --ff-only` in the local repo so `main` is up to date.
 - Update README, CONTRIBUTING, nearby `AGENTS.md`, and other docs when behavior, commands, APIs, or workflow changes.
 - When the user asks to address a code review comment, review comment, PR feedback, or similar, treat that as a complete
   review-thread workflow: evaluate the comment, make the appropriate fix or explicitly explain why no code change is

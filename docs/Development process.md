@@ -61,7 +61,7 @@ Validation:
 Definition of done:
 - Behavior changed
 - Tests or docs updated
-- Pull request opened and linked
+- Ready-for-review pull request opened and linked
 - Validation recorded
 - Review evidence prepared
 - Follow-ups named
@@ -224,6 +224,9 @@ Before opening or updating a pull request, include:
 - rollback or recovery notes when the change touches runtime or data
 - useful AI prompts used for diagnosis or implementation, when contributing externally
 
+Open normal ready-for-review pull requests for Grace implementation work. Do not open draft pull requests unless the
+maintainer explicitly asks for a draft.
+
 Grace's product model uses promotion candidates, queues, gates, attestations, and review reports. Today's repository
 still uses normal GitHub pull requests, but changes should be prepared so they are easy to audit in either system.
 
@@ -253,6 +256,9 @@ After merge or promotion:
 
 1. Verify the destination branch or reference contains the change.
 2. Confirm no uncommitted or unpushed work is stranded in the task workspace.
-3. Remove task worktrees that are no longer needed.
-4. Update the task record with final status and follow-ups.
-5. Leave unrelated local changes untouched.
+3. Remove task worktrees that are no longer needed and delete the issue branch locally and remotely.
+4. Run `git fetch --prune` and `git pull --ff-only` in the local repo so `main` is up to date.
+5. Update the task record with final status and follow-ups.
+6. Leave unrelated local changes untouched.
+
+When the user says "PR is merged" or uses equivalent wording, treat that as a request to perform this cleanup sequence.
