@@ -219,6 +219,7 @@ public partial class Program
                                 .WithEnvironment("AZURE_COSMOS_EMULATOR_IP_ADDRESS_OVERRIDE", "127.0.0.1")
                                 .WithEnvironment("ENABLE_OTLP_EXPORTER", "true")
                                 .WithEnvironment("LOG_LEVEL", "info")
+                                .WithArgs("--protocol", "https")
                                 .WithDataExplorer(1234)
                                 .WithGatewayPort(cosmosGatewayHostPort);
 
