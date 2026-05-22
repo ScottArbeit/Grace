@@ -227,6 +227,26 @@ Before opening or updating a pull request, include:
 Grace's product model uses promotion candidates, queues, gates, attestations, and review reports. Today's repository
 still uses normal GitHub pull requests, but changes should be prepared so they are easy to audit in either system.
 
+## Review Feedback
+
+When the user asks an agent to address a code review comment, review comment, PR feedback, or similar wording, treat the
+request as a complete review-thread workflow.
+
+The agent should:
+
+1. Inspect the GitHub review thread or PR feedback directly and separate actionable feedback from informational comments.
+2. Evaluate whether the feedback is correct and identify the smallest appropriate fix, or state why no code change is
+   needed.
+3. Make the fix in the issue-owned branch/worktree and keep the change traceable to the review thread.
+4. Run focused validation for the changed behavior or docs, and broader validation when the feedback touches shared or
+   risky surfaces.
+5. Commit the fix and push the branch.
+6. Reply to the GitHub review comment with the outcome, changed commit, and validation evidence.
+7. Resolve the GitHub conversation after the feedback has been satisfied.
+
+If the comment is ambiguous, conflicts with another requirement, or would cause a behavioral regression, ask for
+clarification or reply with the trade-off instead of resolving the thread prematurely.
+
 ## Cleanup
 
 After merge or promotion:

@@ -29,6 +29,10 @@ update the issue before editing the new paths.
 - Resolve all compilation errors before considering a task complete.
 - Run impacted tests for each task and fix failures introduced by your changes.
 - Create a new git commit after each completed task to keep review scope clear.
+- When the user asks to address a code review comment, review comment, PR feedback, or similar, complete the full
+  review-thread workflow: evaluate the comment, make the appropriate fix or explicitly explain why no code change is
+  needed, validate the result, commit and push the branch, reply to the GitHub review comment with the outcome and
+  evidence, and resolve the GitHub conversation when the feedback has been satisfied.
 - Record skipped validation, docs impact, residual risk, and follow-ups in the task record or pull request.
 - Write tests for new features and bug fixes; prioritize critical paths.
 - Document new public APIs with XML comments and update nearby `AGENTS.md`/docs when behavior changes.
