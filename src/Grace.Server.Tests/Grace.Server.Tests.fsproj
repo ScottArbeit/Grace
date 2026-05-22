@@ -44,7 +44,7 @@
 
   <ItemGroup>
     <PackageReference Include="Ben.Demystifier" Version="0.4.1" />
-    <PackageReference Include="Aspire.Hosting.Testing" Version="13.3.4" />
+    <PackageReference Include="Aspire.Hosting.Testing" Version="13.3.5" />
     <PackageReference Include="FSharp.Control.TaskSeq" Version="1.1.1" />
     <PackageReference Include="FsCheck" Version="3.3.3" />
     <PackageReference Include="FsCheck.NUnit" Version="3.3.3" />

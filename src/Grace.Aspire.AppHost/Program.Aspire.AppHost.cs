@@ -200,8 +200,7 @@ public partial class Program
                     var azuriteQueueHostAndPort = azuriteQueueEndpoint.Property(EndpointProperty.HostAndPort);
                     var azuriteTableHostAndPort = azuriteTableEndpoint.Property(EndpointProperty.HostAndPort);
 
-                    // Cosmos emulator (your existing approach)
-                    const string cosmosKey = "C2y6yDjf5/R+ob0N8A7Cgv30VRDJIWEHLM+4QDU5DE2nQ9nDuVTqobD4b8mGGyPMbIZnqyMsEcaGQy67XIw/Jw==";
+                    // Cosmos emulator
                     var cosmosDatabaseName = configuration[getConfigKey(EnvironmentVariables.AzureCosmosDBDatabaseName)] ?? "grace-dev";
                     var cosmosDbContainerName = configuration[getConfigKey(EnvironmentVariables.AzureCosmosDBContainerName)] ?? "grace-events";
                     const int cosmosGatewayHostPort = 8081;
@@ -232,7 +231,7 @@ public partial class Program
 
                     _ = cosmos.AddCosmosDatabase(cosmosDatabaseName)
                         .AddContainer(cosmosDbContainerName, "/PartitionKey");
-                    var cosmosConnStr = BuildCosmosEmulatorConnectionString(cosmos, cosmosKey);
+                    var cosmosConnStr = cosmos.Resource.ConnectionStringExpression;
 
                     graceServer
                         .WithParentRelationship(azurite)
@@ -584,47 +583,6 @@ public partial class Program
         var port = ((IPEndPoint)listener.LocalEndpoint).Port;
         listener.Stop();
         return port;
-    }
-
-    private static ReferenceExpression BuildCosmosEmulatorConnectionString(
-        IResourceBuilder<AzureCosmosDBResource> cosmos,
-        string accountKey)
-    {
-            if (cosmos.Resource is IResourceWithEndpoints cosmosWithEndpoints)
-            {
-                EndpointReference? selected = null;
-
-            foreach (var endpoint in cosmosWithEndpoints.GetEndpoints())
-            {
-                if (endpoint.EndpointAnnotation.TargetPort == 8081)
-                {
-                    selected = endpoint;
-                    break;
-                }
-
-                if (endpoint.IsHttps)
-                {
-                    selected = endpoint;
-                    break;
-                }
-
-                selected ??= endpoint;
-            }
-
-                if (selected is not null)
-                {
-                    var scheme = selected.EndpointAnnotation.UriScheme;
-                    if (string.IsNullOrWhiteSpace(scheme))
-                    {
-                        scheme = selected.IsHttps ? "https" : "http";
-                    }
-
-                var hostAndPort = selected.Property(EndpointProperty.HostAndPort);
-                return ReferenceExpression.Create($"AccountEndpoint={scheme}://{hostAndPort}/;AccountKey={accountKey};DisableServerCertificateValidation=True;");
-            }
-        }
-
-        return cosmos.Resource.ConnectionStringExpression;
     }
 
     private static readonly JsonSerializerOptions jsonOptions = new()
