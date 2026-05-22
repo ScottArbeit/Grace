@@ -942,7 +942,7 @@ module AspireTestHost =
             match cosmosResourceName with
             | Some name ->
                 Console.WriteLine($"Cosmos emulator resource detected: {name}")
-                do! waitForResourceHealthyAsync notificationService app name cts.Token
+                Console.WriteLine("Cosmos functional readiness probe will verify emulator access.")
             | None -> Console.WriteLine("Cosmos emulator resource not found in model.")
 
             if not (shouldSkipServiceBus ()) then
