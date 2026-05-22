@@ -486,11 +486,78 @@ module AspireTestHost =
                 None)
         |> Option.defaultValue "<missing>"
 
+    let private replaceConnValue (prefix: string) (replacement: string) (value: string) =
+        let mutable replaced = false
+
+        let segments =
+            value.Split(';', StringSplitOptions.RemoveEmptyEntries)
+            |> Array.map (fun segment ->
+                if segment.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) then
+                    replaced <- true
+                    $"{prefix}{replacement}"
+                else
+                    segment)
+
+        if replaced then (String.Join(";", segments)) + ";" else value
+
     let private tryGetCosmosEndpointUri (connectionString: string) =
         let value = tryGetConnValue "AccountEndpoint=" connectionString
         let mutable uri = Unchecked.defaultof<Uri>
 
         if Uri.TryCreate(value, UriKind.Absolute, &uri) then Some uri else None
+
+    let private tryGetEndpointNameForTargetPort (app: DistributedApplication) (resourceName: string) (targetPort: int) =
+        match tryFindResourceByName app resourceName with
+        | Some (:? IResourceWithEndpoints as resourceWithEndpoints) ->
+            resourceWithEndpoints.GetEndpoints()
+            |> Seq.tryFind (fun endpoint ->
+                endpoint.EndpointAnnotation.TargetPort.HasValue
+                && endpoint.EndpointAnnotation.TargetPort.Value = targetPort)
+            |> Option.map (fun endpoint -> endpoint.EndpointAnnotation.Name)
+        | _ -> None
+
+    let private tryFindResourceNameForTargetPort (app: DistributedApplication) (targetPort: int) =
+        let model = app.Services.GetRequiredService<DistributedApplicationModel>()
+
+        model.Resources
+        |> Seq.tryPick (fun resource ->
+            match resource with
+            | :? IResourceWithEndpoints as resourceWithEndpoints ->
+                let hasTargetPort =
+                    resourceWithEndpoints.GetEndpoints()
+                    |> Seq.exists (fun endpoint ->
+                        endpoint.EndpointAnnotation.TargetPort.HasValue
+                        && endpoint.EndpointAnnotation.TargetPort.Value = targetPort)
+
+                if hasTargetPort then Some resource.Name else None
+            | _ -> None)
+
+    let private tryGetRuntimeEndpoint (app: DistributedApplication) (resourceName: string) (targetPort: int) =
+        try
+            let endpointName =
+                tryGetEndpointNameForTargetPort app resourceName targetPort
+                |> Option.defaultWith (fun () -> getEndpointName app resourceName)
+
+            Some(app.GetEndpoint(resourceName, endpointName))
+        with
+        | ex ->
+            Console.WriteLine($"Unable to resolve runtime endpoint for {resourceName}: {ex.Message}")
+            None
+
+    let private resolveLocalCosmosConnectionString (app: DistributedApplication) (cosmosResourceName: string option) (connectionString: string) =
+        match cosmosResourceName with
+        | Some resourceName ->
+            match tryGetRuntimeEndpoint app resourceName 8081 with
+            | Some runtimeEndpoint ->
+                let endpoint = runtimeEndpoint.ToString().TrimEnd('/') + "/"
+                let configuredEndpoint = tryGetConnValue "AccountEndpoint=" connectionString
+
+                if not (endpoint.Equals(configuredEndpoint, StringComparison.OrdinalIgnoreCase)) then
+                    Console.WriteLine($"Cosmos readiness endpoint adjusted from {configuredEndpoint} to {endpoint}.")
+
+                replaceConnValue "AccountEndpoint=" endpoint connectionString
+            | None -> connectionString
+        | None -> connectionString
 
     let private formatExceptionChain (ex: exn) =
         let parts = ResizeArray<string>()
@@ -666,6 +733,12 @@ module AspireTestHost =
                 let isLocalCosmos =
                     connectionString.Contains("localhost", StringComparison.OrdinalIgnoreCase)
                     || connectionString.Contains("127.0.0.1", StringComparison.OrdinalIgnoreCase)
+
+                let connectionString =
+                    if isLocalCosmos then
+                        resolveLocalCosmosConnectionString app cosmosResourceName connectionString
+                    else
+                        connectionString
 
                 let options = createLocalCosmosClientOptions ()
 
@@ -862,12 +935,14 @@ module AspireTestHost =
             else
                 Console.WriteLine("Skipping Service Bus SQL readiness checks (GRACE_TEST_SKIP_SERVICEBUS=1).")
 
-            let cosmosResourceName = tryFindResourceName<AzureCosmosDBEmulatorResource> app
+            let cosmosResourceName =
+                tryFindResourceName<AzureCosmosDBEmulatorResource> app
+                |> Option.orElseWith (fun () -> tryFindResourceNameForTargetPort app 8081)
 
             match cosmosResourceName with
             | Some name ->
                 Console.WriteLine($"Cosmos emulator resource detected: {name}")
-                do! waitForResourceHealthyAsync notificationService app name cts.Token
+                Console.WriteLine("Cosmos functional readiness probe will verify emulator access.")
             | None -> Console.WriteLine("Cosmos emulator resource not found in model.")
 
             if not (shouldSkipServiceBus ()) then
