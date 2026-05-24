@@ -131,6 +131,12 @@ module UploadSession =
             ClaimedAt: Instant
         }
 
+    [<GenerateSerializer>]
+    type FinalizeManifestBlockPayload = { Address: ContentBlockAddress; Payload: byte array }
+
+    [<GenerateSerializer>]
+    type FinalizeManifest = { OperationId: UploadSessionOperationId; Manifest: FileManifest; BlockPayloads: FinalizeManifestBlockPayload array }
+
     [<KnownType("GetKnownTypes")>]
     type UploadSessionCommand =
         | Start of start: StartUploadSession
@@ -138,7 +144,7 @@ module UploadSession =
         | RegisterBlockUploadIntent of intent: RegisterBlockUploadIntent
         | ConfirmBlockUploaded of confirmation: ConfirmBlockUploaded
         | ClaimReuseRanges of claim: ClaimReuseRanges
-        | FinalizeManifest of operationId: UploadSessionOperationId * manifestAddress: ManifestAddress
+        | FinalizeManifest of finalize: FinalizeManifest
         | Abandon of operationId: UploadSessionOperationId
         | Expire of operationId: UploadSessionOperationId
         | DeletePhysicalState of operationId: UploadSessionOperationId
