@@ -108,6 +108,70 @@ module Storage =
             | Error error -> return! context |> result400BadRequest error
         }
 
+    let private downloadContentBlockPayload (repositoryDto: RepositoryDto) (confirmedBlock: ConfirmedBlockUpload) correlationId =
+        task {
+            match repositoryDto.ObjectStorageProvider with
+            | AzureBlobStorage ->
+                let! blobClient = getAzureBlobClient repositoryDto confirmedBlock.StoragePlacement.ObjectKey correlationId
+                let! downloadResult = blobClient.DownloadContentAsync()
+
+                return Ok({ Address = confirmedBlock.ContentBlockAddress; Payload = downloadResult.Value.Content.ToArray() })
+            | AWSS3 -> return Error(GraceError.Create (getErrorMessage StorageError.NotImplemented) correlationId)
+            | GoogleCloudStorage -> return Error(GraceError.Create (getErrorMessage StorageError.NotImplemented) correlationId)
+            | ObjectStorageProvider.Unknown -> return Error(GraceError.Create (getErrorMessage StorageError.UnknownObjectStorageProvider) correlationId)
+        }
+
+    let private hydrateFinalizeBlockPayloads
+        (context: HttpContext)
+        (parameters: FinalizeManifestUploadParameters)
+        (manifest: FileManifest)
+        (correlationId: CorrelationId)
+        =
+        task {
+            if isNull parameters.BlockPayloads |> not
+               && parameters.BlockPayloads.Length > 0 then
+                return Ok parameters.BlockPayloads
+            else
+                let graceIds = getGraceIds context
+                let organizationId, repositoryId = resolveStorageIds graceIds parameters
+                let repositoryActor = Repository.CreateActorProxy organizationId repositoryId correlationId
+                let! repositoryDto = repositoryActor.Get correlationId
+                let uploadSessionActor = Grace.Actors.Extensions.ActorProxy.UploadSession.CreateActorProxy parameters.UploadSessionId repositoryId correlationId
+                let! session = uploadSessionActor.Get correlationId
+
+                let payloads = ResizeArray<FinalizeManifestBlockPayload>()
+                let mutable error = None
+                let mutable index = 0
+
+                let blockAddresses =
+                    if isNull (box manifest) || isNull manifest.Blocks then
+                        Array.empty
+                    else
+                        manifest.Blocks
+                        |> Seq.map (fun block -> block.Address)
+                        |> Seq.distinct
+                        |> Seq.toArray
+
+                while index < blockAddresses.Length
+                      && Option.isNone error do
+                    let address = blockAddresses[index]
+
+                    match session.ConfirmedBlockUploads
+                          |> Array.tryFind (fun confirmedBlock -> confirmedBlock.ContentBlockAddress = address)
+                        with
+                    | None -> ()
+                    | Some confirmedBlock ->
+                        match! downloadContentBlockPayload repositoryDto confirmedBlock correlationId with
+                        | Ok payload -> payloads.Add payload
+                        | Error downloadError -> error <- Some downloadError
+
+                    index <- index + 1
+
+                match error with
+                | Some error -> return Error error
+                | None -> return Ok(payloads.ToArray())
+        }
+
     let private createDiscoveryPolicy () : StorageParameterContracts.ContentBlockDiscoveryPolicy =
         {
             MaxKeyChunkAddresses = StorageParameterContracts.MaxDiscoveryKeyChunkAddresses
@@ -360,12 +424,16 @@ module Storage =
 
                 try
                     let! parameters = context.BindJsonAsync<FinalizeManifestUploadParameters>()
+                    let! blockPayloadsResult = hydrateFinalizeBlockPayloads context parameters parameters.Manifest correlationId
 
-                    let command =
-                        UploadSessionCommand.FinalizeManifest
-                            { OperationId = parameters.OperationId; Manifest = parameters.Manifest; BlockPayloads = parameters.BlockPayloads }
+                    match blockPayloadsResult with
+                    | Error error -> return! context |> result400BadRequest error
+                    | Ok blockPayloads ->
+                        let command =
+                            UploadSessionCommand.FinalizeManifest
+                                { OperationId = parameters.OperationId; Manifest = parameters.Manifest; BlockPayloads = blockPayloads }
 
-                    return! handleUploadSessionCommand context parameters command correlationId
+                        return! handleUploadSessionCommand context parameters command correlationId
                 with
                 | ex ->
                     let exceptionResponse = ExceptionResponse.Create ex

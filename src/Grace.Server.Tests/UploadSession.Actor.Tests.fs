@@ -597,7 +597,7 @@ type UploadSessionActorTests() =
         | Error error -> Assert.Fail($"Expected first confirmation to succeed, got {error.Error}.")
 
     [<Test>]
-    member _.FinalizeManifestFromUploadedBlockUsesConfirmedSessionEvidenceAndFinalizes() =
+    member _.FinalizeManifestFromUploadedBlockValidatesReconstructionAndFinalizes() =
         let fileBytes = Text.Encoding.UTF8.GetBytes("hello world")
         let block = encodedBlock fileBytes
         let manifest = manifestFor fileBytes [| block |]
@@ -644,7 +644,8 @@ type UploadSessionActorTests() =
                 Assert.Fail($"Expected confirmation to succeed, got {error.Error}.")
                 UploadSessionDto.Default, []
 
-        let result = UploadSessionActor.decideCommand confirmedEvents confirmedDto (finalize "op-finalize" manifest Array.empty) (metadata "corr-finalize")
+        let result =
+            UploadSessionActor.decideCommand confirmedEvents confirmedDto (finalize "op-finalize" manifest [| payloadFor block |]) (metadata "corr-finalize")
 
         match result with
         | Ok decision ->
@@ -656,7 +657,7 @@ type UploadSessionActorTests() =
         | Error error -> Assert.Fail($"Expected finalize to succeed, got {error.Error}.")
 
     [<Test>]
-    member _.FinalizeManifestFromClaimedReuseRangeUsesClaimedSessionEvidenceAndFinalizes() =
+    member _.FinalizeManifestFromClaimedReuseRangeValidatesReconstructionAndFinalizes() =
         let fileBytes = Text.Encoding.UTF8.GetBytes("reuse range bytes")
         let block = encodedBlock fileBytes
         let manifest = manifestFor fileBytes [| block |]
@@ -699,7 +700,8 @@ type UploadSessionActorTests() =
                 Assert.Fail($"Expected range claim to succeed, got {error.Error}.")
                 UploadSessionDto.Default, []
 
-        let result = UploadSessionActor.decideCommand claimedEvents claimedDto (finalize "op-finalize" manifest Array.empty) (metadata "corr-finalize")
+        let result =
+            UploadSessionActor.decideCommand claimedEvents claimedDto (finalize "op-finalize" manifest [| payloadFor block |]) (metadata "corr-finalize")
 
         match result with
         | Ok decision ->

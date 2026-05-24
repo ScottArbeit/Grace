@@ -407,6 +407,12 @@ module UploadSession =
         else
             Ok()
 
+    let private finalizeBlockPayload (payload: FinalizeManifestBlockPayload) =
+        if isNull (box payload) then
+            Unchecked.defaultof<ManifestValidation.ManifestBlockPayload>
+        else
+            ManifestValidation.createBlockPayload payload.Address payload.Payload
+
     let private finalizeManifest (session: UploadSessionDto) (finalize: FinalizeManifest) (metadata: EventMetadata) =
         if isNull (box finalize) then
             Error(graceError metadata.CorrelationId "FinalizeManifest payload is required.")
@@ -414,7 +420,14 @@ module UploadSession =
             validateFinalizeSessionFields metadata.CorrelationId session finalize.Manifest
             |> Result.bind (fun () -> validateManifestBlockPresence metadata.CorrelationId session finalize.Manifest)
             |> Result.bind (fun () ->
-                match ManifestValidation.validateStructure session.ChunkingSuiteId finalize.Manifest with
+                let blockPayloads =
+                    if isNull finalize.BlockPayloads then
+                        Unchecked.defaultof<ManifestValidation.ManifestBlockPayload array>
+                    else
+                        finalize.BlockPayloads
+                        |> Array.map finalizeBlockPayload
+
+                match ManifestValidation.validate session.ChunkingSuiteId finalize.Manifest blockPayloads with
                 | Ok _ ->
                     let events =
                         [

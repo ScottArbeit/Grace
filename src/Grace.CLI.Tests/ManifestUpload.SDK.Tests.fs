@@ -45,7 +45,7 @@ type ManifestUploadSdkTests() =
 
         Task.FromResult(Ok(GraceReturnValue.Create decision correlationId))
 
-    static member private CreateRequest tempPath fileVersion correlationId : ManifestUpload.ManifestUploadRequest =
+    static member private CreateRequest tempPath (fileVersion: FileVersion) correlationId : ManifestUpload.ManifestUploadRequest =
         {
             OwnerId = Guid.Parse("22222222-2222-2222-2222-222222222222")
             OwnerName = "owner"
@@ -53,7 +53,7 @@ type ManifestUploadSdkTests() =
             OrganizationName = "org"
             RepositoryId = Guid.Parse("11111111-1111-1111-1111-111111111111")
             RepositoryName = "repo"
-            AuthorizedScope = "/"
+            AuthorizedScope = fileVersion.RelativePath
             FileVersion = fileVersion
             LocalFilePath = tempPath
             CorrelationId = correlationId
@@ -83,13 +83,13 @@ type ManifestUploadSdkTests() =
                     {
                         StartSession =
                             fun parameters ->
-                                Assert.That(parameters.AuthorizedScope, Is.EqualTo("/"))
+                                Assert.That(parameters.AuthorizedScope, Is.EqualTo(fileVersion.RelativePath))
                                 calls.Add("start")
                                 sessionIds.Add(parameters.UploadSessionId)
                                 ManifestUploadSdkTests.Decision correlationId parameters.UploadSessionId parameters.OperationId
                         RegisterBlockUpload =
                             fun parameters ->
-                                Assert.That(parameters.AuthorizedScope, Is.EqualTo("/"))
+                                Assert.That(parameters.AuthorizedScope, Is.EqualTo(fileVersion.RelativePath))
                                 calls.Add($"register:{parameters.ContentBlockAddress}")
                                 Assert.That(parameters.ExpectedPayloadLength, Is.GreaterThan(0L))
                                 ManifestUploadSdkTests.Decision correlationId parameters.UploadSessionId parameters.OperationId
@@ -104,13 +104,13 @@ type ManifestUploadSdkTests() =
                                 Task.FromResult(Ok(GraceReturnValue.Create placement correlationId))
                         ConfirmBlockUploaded =
                             fun parameters ->
-                                Assert.That(parameters.AuthorizedScope, Is.EqualTo("/"))
+                                Assert.That(parameters.AuthorizedScope, Is.EqualTo(fileVersion.RelativePath))
                                 calls.Add($"confirm:{parameters.ContentBlockAddress}")
                                 confirmedBlocks[parameters.ContentBlockAddress] <- parameters.Payload
                                 ManifestUploadSdkTests.Decision correlationId parameters.UploadSessionId parameters.OperationId
                         FinalizeManifest =
                             fun parameters ->
-                                Assert.That(parameters.AuthorizedScope, Is.EqualTo("/"))
+                                Assert.That(parameters.AuthorizedScope, Is.EqualTo(fileVersion.RelativePath))
                                 calls.Add("finalize")
                                 finalizedManifest <- Some parameters.Manifest
                                 Assert.That(parameters.BlockPayloads, Is.Empty)
@@ -163,11 +163,11 @@ type ManifestUploadSdkTests() =
                     {
                         StartSession =
                             fun parameters ->
-                                Assert.That(parameters.AuthorizedScope, Is.EqualTo("/"))
+                                Assert.That(parameters.AuthorizedScope, Is.EqualTo(fileVersion.RelativePath))
                                 ManifestUploadSdkTests.Decision correlationId parameters.UploadSessionId parameters.OperationId
                         RegisterBlockUpload =
                             fun parameters ->
-                                Assert.That(parameters.AuthorizedScope, Is.EqualTo("/"))
+                                Assert.That(parameters.AuthorizedScope, Is.EqualTo(fileVersion.RelativePath))
                                 registeredRanges.Add(parameters.ContentBlockAddress, parameters.LogicalOffset, parameters.LogicalLength)
                                 ManifestUploadSdkTests.Decision correlationId parameters.UploadSessionId parameters.OperationId
                         UploadContentBlock =
@@ -180,12 +180,12 @@ type ManifestUploadSdkTests() =
                                 Task.FromResult(Ok(GraceReturnValue.Create placement correlationId))
                         ConfirmBlockUploaded =
                             fun parameters ->
-                                Assert.That(parameters.AuthorizedScope, Is.EqualTo("/"))
+                                Assert.That(parameters.AuthorizedScope, Is.EqualTo(fileVersion.RelativePath))
                                 confirmedBlocks[parameters.ContentBlockAddress] <- parameters.Payload
                                 ManifestUploadSdkTests.Decision correlationId parameters.UploadSessionId parameters.OperationId
                         FinalizeManifest =
                             fun parameters ->
-                                Assert.That(parameters.AuthorizedScope, Is.EqualTo("/"))
+                                Assert.That(parameters.AuthorizedScope, Is.EqualTo(fileVersion.RelativePath))
                                 manifestBlockCount <- parameters.Manifest.Blocks.Count
                                 Assert.That(parameters.BlockPayloads, Is.Empty)
                                 ManifestUploadSdkTests.Decision correlationId parameters.UploadSessionId parameters.OperationId
