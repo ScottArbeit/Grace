@@ -120,13 +120,12 @@ module ManifestUpload =
         parameters.StoragePlacement <- placement
         parameters
 
-    let private buildFinalizeParameters request uploadSessionId manifest blockPayloads =
+    let private buildFinalizeParameters request uploadSessionId manifest =
         let parameters = FinalizeManifestUploadParameters()
         setStorageParameters request parameters |> ignore
         parameters.UploadSessionId <- uploadSessionId
         parameters.OperationId <- $"manifest-upload-{uploadSessionId:N}-finalize"
         parameters.Manifest <- manifest
-        parameters.BlockPayloads <- blockPayloads
         parameters
 
     let private manifestFileVersion (fileVersion: FileVersion) manifest =
@@ -222,12 +221,7 @@ module ManifestUpload =
                             if errors.Count > 0 then
                                 return Error errors[0]
                             else
-                                let blockPayloads =
-                                    encodedBlocks
-                                    |> Seq.map (fun block -> { Address = block.Address; Payload = block.Payload })
-                                    |> Seq.toArray
-
-                                match! client.FinalizeManifest(buildFinalizeParameters request uploadSessionId manifest blockPayloads) with
+                                match! client.FinalizeManifest(buildFinalizeParameters request uploadSessionId manifest) with
                                 | Error error -> return Error error
                                 | Ok _ ->
                                     return

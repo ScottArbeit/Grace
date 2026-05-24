@@ -169,3 +169,9 @@ module ManifestValidation =
                 Error(FileContentHashMismatch(manifest.FileContentHash, actualHash))
             else
                 Ok(copyBytes reconstructedBytes))
+
+    /// Validates manifest structure and stable address without requiring the physical ContentBlock payloads.
+    let validateStructure expectedChunkingSuiteId (manifest: FileManifest) =
+        validateManifestShape expectedChunkingSuiteId manifest
+        |> Result.bind (fun () -> validateRanges manifest)
+        |> Result.bind (fun () -> validateManifestAddress manifest)

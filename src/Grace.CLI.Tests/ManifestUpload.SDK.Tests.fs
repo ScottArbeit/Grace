@@ -109,7 +109,7 @@ type ManifestUploadSdkTests() =
                             fun parameters ->
                                 calls.Add("finalize")
                                 finalizedManifest <- Some parameters.Manifest
-                                Assert.That(parameters.BlockPayloads, Has.Length.EqualTo(uploadedBlocks.Count))
+                                Assert.That(parameters.BlockPayloads, Is.Empty)
                                 ManifestUploadSdkTests.Decision correlationId parameters.UploadSessionId parameters.OperationId
                     }
 
@@ -177,7 +177,7 @@ type ManifestUploadSdkTests() =
                         FinalizeManifest =
                             fun parameters ->
                                 manifestBlockCount <- parameters.Manifest.Blocks.Count
-                                Assert.That(parameters.BlockPayloads, Has.Length.EqualTo(uploadedBlocks.Count))
+                                Assert.That(parameters.BlockPayloads, Is.Empty)
                                 ManifestUploadSdkTests.Decision correlationId parameters.UploadSessionId parameters.OperationId
                     }
 

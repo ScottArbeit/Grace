@@ -552,11 +552,6 @@ type StorageManifestUploadSessionRoutes() =
             finalize.OperationId <- "finalize"
             finalize.Manifest <- manifest
 
-            finalize.BlockPayloads <-
-                [|
-                    { Address = block.Address; Payload = block.Payload }
-                |]
-
             let! finalizeResult = postUploadSessionDecision "/storage/finalizeManifestUpload" finalize
             Assert.That(finalizeResult.ReturnValue.Session.FinalizedManifestAddress, Is.EqualTo(Some manifest.ManifestAddress))
             Assert.That(finalizeResult.ReturnValue.Session.LifecycleState, Is.EqualTo(UploadSessionLifecycleState.RetentionPending))
