@@ -397,3 +397,30 @@ module Storage =
                 logToConsole $"exception: {exceptionResponse.ToString()}"
                 return Error(GraceError.Create (exceptionResponse.ToString()) parameters.CorrelationId)
         }
+
+    /// Discovers reusable ContentBlock candidates for key chunks without treating empty results as absence.
+    let DiscoverContentBlocks (parameters: DiscoverContentBlocksParameters) =
+        task {
+            let correlationId = parameters.CorrelationId
+
+            try
+                let httpClient = getHttpClient correlationId
+                do! Auth.addAuthorizationHeader httpClient
+                let serviceUrl = $"{Current().ServerUri}/storage/discoverContentBlocks"
+                let jsonContent = createJsonContent parameters
+                let! response = httpClient.PostAsync(serviceUrl, jsonContent)
+
+                if response.IsSuccessStatusCode then
+                    let! discoveryResult = response.Content.ReadFromJsonAsync<GraceReturnValue<DiscoverContentBlocksResult>>(Constants.JsonSerializerOptions)
+
+                    return Ok discoveryResult
+                else
+                    let! errorMessage = response.Content.ReadAsStringAsync()
+
+                    return Error(GraceError.Create $"Failed to discover ContentBlocks; {errorMessage}" correlationId)
+            with
+            | ex ->
+                let exceptionResponse = ExceptionResponse.Create ex
+                logToConsole $"exception: {exceptionResponse.ToString()}"
+                return Error(GraceError.Create (exceptionResponse.ToString()) correlationId)
+        }

@@ -71,6 +71,24 @@ module Storage =
 
         organizationId, repositoryId
 
+    let private createDiscoveryPolicy () : StorageParameterContracts.ContentBlockDiscoveryPolicy =
+        {
+            MaxKeyChunkAddresses = StorageParameterContracts.MaxDiscoveryKeyChunkAddresses
+            PositiveCandidatesEnabled = false
+            EmptyResponseMeansAbsent = false
+            IsAuthoritative = false
+        }
+
+    let private createEmptyDiscoveryResult requestedKeyChunkCount : StorageParameterContracts.DiscoverContentBlocksResult =
+        {
+            RequestedKeyChunkCount = requestedKeyChunkCount
+            AcceptedKeyChunkCount = requestedKeyChunkCount
+            Policy = createDiscoveryPolicy ()
+            CandidateContentBlocks = Array.empty
+            IsPartial = true
+            Message = "No positive ContentBlock candidates are returned yet. Empty discovery results are non-authoritative and do not prove absence."
+        }
+
     /// Gets the metadata stored in the object storage provider for the specified file.
     let getFileMetadata (repositoryDto: RepositoryDto) (fileVersion: FileVersion) (context: HttpContext) =
         task {
@@ -163,6 +181,45 @@ module Storage =
                     logToConsole $"Exception in GetContentBlockDownloadUri: {(ExceptionResponse.Create ex)}"
 
                     return! context.WriteTextAsync $"{getCurrentInstantExtended ()} Error in {context.Request.Path} at {DateTime.Now.ToLongTimeString()}."
+            }
+
+    /// Discovers reusable ContentBlocks for key chunks without exposing a per-chunk existence oracle.
+    let DiscoverContentBlocks: HttpHandler =
+        fun (next: HttpFunc) (context: HttpContext) ->
+            task {
+                let correlationId = getCorrelationId context
+
+                try
+                    let! parameters = context.BindJsonAsync<DiscoverContentBlocksParameters>()
+
+                    let keyChunkAddresses =
+                        if isNull parameters.KeyChunkAddresses then
+                            Array.empty
+                        else
+                            parameters.KeyChunkAddresses
+
+                    Activity.Current.SetTag("keyChunkAddresses.Count", $"{keyChunkAddresses.Length}")
+                    |> ignore
+
+                    if keyChunkAddresses.Length > StorageParameterContracts.MaxDiscoveryKeyChunkAddresses then
+                        return!
+                            context
+                            |> result400BadRequest (
+                                GraceError.Create
+                                    $"KeyChunkAddresses must contain no more than {StorageParameterContracts.MaxDiscoveryKeyChunkAddresses} items."
+                                    correlationId
+                            )
+                    else
+                        return!
+                            context
+                            |> result200Ok (GraceReturnValue.Create (createEmptyDiscoveryResult keyChunkAddresses.Length) correlationId)
+                with
+                | ex ->
+                    logToConsole $"Exception in DiscoverContentBlocks: {(ExceptionResponse.Create ex)}"
+
+                    return!
+                        context
+                        |> result500ServerError (GraceError.Create (getErrorMessage StorageError.ObjectStorageException) correlationId)
             }
 
     /// Gets an upload URI for the specified file version that can be used by a Grace client.
