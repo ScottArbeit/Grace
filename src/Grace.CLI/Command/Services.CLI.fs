@@ -830,8 +830,6 @@ module Services =
                     let fileVersion = parameters.FileVersions[fileVersionIndex]
 
                     match! ManifestUpload.uploadFile (createManifestUploadRequest parameters fileVersion) with
-                    | Ok returnValue when returnValue.ReturnValue.UsedManifestUpload ->
-                        fileVersion.ContentReference <- returnValue.ReturnValue.FileVersion.ContentReference
                     | Ok _ -> fallbackFileVersions.Enqueue(fileVersion)
                     | Error error -> errors.Enqueue(error)
 
