@@ -191,3 +191,19 @@ type UploadSessionActorTests() =
         match state with
         | ReminderState.UploadSessionPhysicalDeletion uploadSessionState -> Assert.That(uploadSessionState.OperationId, Is.EqualTo("op-abandon:cleanup"))
         | _ -> Assert.Fail("Expected UploadSessionPhysicalDeletion reminder state.")
+
+    [<Test>]
+    member _.DeletePhysicalStateRetryAfterStateClearedDrainsAsIdempotentReplay() =
+        let result =
+            UploadSessionActor.decideCommand
+                []
+                UploadSessionDto.Default
+                (UploadSessionCommand.DeletePhysicalState "op-abandon:cleanup")
+                (metadata "corr-cleanup-retry")
+
+        match result with
+        | Ok decision ->
+            Assert.That(decision.WasIdempotentReplay, Is.True)
+            Assert.That(decision.Events, Is.Empty)
+            Assert.That(decision.Session.LifecycleState, Is.EqualTo(UploadSessionLifecycleState.NotStarted))
+        | Error error -> Assert.Fail($"Expected cleanup retry to drain, got {error.Error}.")

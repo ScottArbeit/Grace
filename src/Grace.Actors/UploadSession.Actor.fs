@@ -160,6 +160,8 @@ module UploadSession =
                     | _ -> Error(graceError metadata.CorrelationId $"UploadSession cannot Expire from {session.LifecycleState}.")
             | UploadSessionCommand.DeletePhysicalState operationId ->
                 match session.LifecycleState with
+                | UploadSessionLifecycleState.NotStarted
+                | UploadSessionLifecycleState.StateDeleted -> okDecision session operationId [] true "Upload session physical state was already deleted."
                 | UploadSessionLifecycleState.RetentionPending ->
                     let events =
                         [
@@ -237,7 +239,8 @@ module UploadSession =
 
                         match decideCommand state.State uploadSessionDto command metadata with
                         | Ok decision ->
-                            do! this.ApplyEvents decision.Events
+                            if not decision.Events.IsEmpty then do! this.ApplyEvents decision.Events
+
                             do! state.ClearStateAsync()
                             this.DeactivateOnIdle()
                             return Ok()
