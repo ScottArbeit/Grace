@@ -12,6 +12,7 @@ open System.Reflection
 open System.Security.Cryptography
 open System.Text
 open System.Text.Json
+open System.Net.Http.Headers
 
 [<NonParallelizable>]
 type StorageWholeFileCompatibility() =
@@ -220,6 +221,181 @@ type StorageContentBlockSasRoutes() =
             do! assertSuccessSasForContentBlock allowedDownload parameters.ContentBlockAddress
         }
 
+[<NonParallelizable>]
+type StorageContentBlockDiscoveryRoutes() =
+
+    let maxDiscoveryKeyChunkAddresses = 256
+
+    let createClientWithUserId (userId: string) =
+        let client = new HttpClient()
+        client.BaseAddress <- Client.BaseAddress
+        client.DefaultRequestHeaders.Add("x-grace-user-id", userId)
+        client
+
+    let createUnauthenticatedClient () =
+        let client = new HttpClient()
+        client.BaseAddress <- Client.BaseAddress
+        client
+
+    let grantRoleAsync (client: HttpClient) scopeKind ownerId organizationId repositoryId branchId principalId roleId =
+        task {
+            let parameters = Parameters.Access.GrantRoleParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.BranchId <- branchId
+            parameters.PrincipalType <- "User"
+            parameters.PrincipalId <- principalId
+            parameters.ScopeKind <- scopeKind
+            parameters.RoleId <- roleId
+            parameters.Source <- "test"
+            parameters.CorrelationId <- generateCorrelationId ()
+
+            return! client.PostAsync("/access/grantRole", createJsonContent parameters)
+        }
+
+    let createDiscoveryJson repositoryId (keyChunkAddresses: string array) =
+        let encodedAddresses =
+            keyChunkAddresses
+            |> Array.map JsonSerializer.Serialize
+            |> String.concat ","
+
+        String.Concat(
+            "{",
+            "\"OwnerId\":",
+            JsonSerializer.Serialize ownerId,
+            ",\"OrganizationId\":",
+            JsonSerializer.Serialize organizationId,
+            ",\"RepositoryId\":",
+            JsonSerializer.Serialize repositoryId,
+            ",\"CorrelationId\":",
+            JsonSerializer.Serialize(generateCorrelationId ()),
+            ",\"KeyChunkAddresses\":[",
+            encodedAddresses,
+            "]}"
+        )
+
+    let createJsonContentFromString (json: string) =
+        let content = new StringContent(json, Encoding.UTF8)
+        content.Headers.ContentType <- MediaTypeHeaderValue("application/json")
+        content
+
+    let tryGetJsonProperty (name: string) (element: JsonElement) =
+        element.EnumerateObject()
+        |> Seq.tryFind (fun property -> property.Name.Equals(name, StringComparison.OrdinalIgnoreCase))
+        |> Option.map (fun property -> property.Value)
+
+    let requireJsonProperty (name: string) (element: JsonElement) =
+        match tryGetJsonProperty name element with
+        | Some value -> value
+        | None ->
+            Assert.Fail($"Expected JSON property '{name}'.")
+            Unchecked.defaultof<JsonElement>
+
+    let postDiscoveryAsync (client: HttpClient) repositoryId keyChunkAddresses =
+        client.PostAsync("/storage/discoverContentBlocks", createJsonContentFromString (createDiscoveryJson repositoryId keyChunkAddresses))
+
+    [<Test>]
+    member _.DiscoveryRequiresRepositoryReadAndReturnsSafeEmptyNonAuthoritativeResults() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let repoReader = $"{Guid.NewGuid()}"
+
+            let requestedChunkAddresses =
+                [|
+                    $"chunk-{Guid.NewGuid():N}"
+                    $"chunk-{Guid.NewGuid():N}"
+                |]
+
+            let! grantReader = grantRoleAsync Client "repo" ownerId organizationId repositoryId "" repoReader "RepoReader"
+            Assert.That(grantReader.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+
+            use unauthClient = createUnauthenticatedClient ()
+            use readerClient = createClientWithUserId repoReader
+            use unprivilegedClient = createClientWithUserId $"{Guid.NewGuid()}"
+
+            let! unauthDiscovery = postDiscoveryAsync unauthClient repositoryId requestedChunkAddresses
+            Assert.That(unauthDiscovery.StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized))
+
+            let! deniedDiscovery = postDiscoveryAsync unprivilegedClient repositoryId requestedChunkAddresses
+            Assert.That(deniedDiscovery.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden))
+
+            let! allowedDiscovery = postDiscoveryAsync readerClient repositoryId requestedChunkAddresses
+            let! body = allowedDiscovery.Content.ReadAsStringAsync()
+            Assert.That(allowedDiscovery.StatusCode, Is.EqualTo(HttpStatusCode.OK), body)
+
+            for requestedChunkAddress in requestedChunkAddresses do
+                Assert.That(body, Does.Not.Contain(requestedChunkAddress), "Discovery must not echo per-chunk existence probes.")
+
+            use document = JsonDocument.Parse(body)
+            let returnValue = requireJsonProperty "ReturnValue" document.RootElement
+            let policy = requireJsonProperty "Policy" returnValue
+            let candidates = requireJsonProperty "CandidateContentBlocks" returnValue
+
+            Assert.That(
+                (requireJsonProperty "MaxKeyChunkAddresses" policy)
+                    .GetInt32(),
+                Is.EqualTo(maxDiscoveryKeyChunkAddresses)
+            )
+
+            Assert.That(
+                (requireJsonProperty "PositiveCandidatesEnabled" policy)
+                    .GetBoolean(),
+                Is.False
+            )
+
+            Assert.That(
+                (requireJsonProperty "EmptyResponseMeansAbsent" policy)
+                    .GetBoolean(),
+                Is.False
+            )
+
+            Assert.That(
+                (requireJsonProperty "IsAuthoritative" policy)
+                    .GetBoolean(),
+                Is.False
+            )
+
+            Assert.That(
+                (requireJsonProperty "RequestedKeyChunkCount" returnValue)
+                    .GetInt32(),
+                Is.EqualTo(requestedChunkAddresses.Length)
+            )
+
+            Assert.That(
+                (requireJsonProperty "AcceptedKeyChunkCount" returnValue)
+                    .GetInt32(),
+                Is.EqualTo(requestedChunkAddresses.Length)
+            )
+
+            Assert.That(
+                (requireJsonProperty "IsPartial" returnValue)
+                    .GetBoolean(),
+                Is.True
+            )
+
+            Assert.That(candidates.GetArrayLength(), Is.EqualTo(0))
+        }
+
+    [<Test>]
+    member _.DiscoveryRejectsRequestsAboveMaxKeyChunkLimit() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let repoReader = $"{Guid.NewGuid()}"
+            let requestedChunkAddresses = Array.init (maxDiscoveryKeyChunkAddresses + 1) (fun index -> $"chunk-{index}-{Guid.NewGuid():N}")
+
+            let! grantReader = grantRoleAsync Client "repo" ownerId organizationId repositoryId "" repoReader "RepoReader"
+            Assert.That(grantReader.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+
+            use readerClient = createClientWithUserId repoReader
+            let! response = postDiscoveryAsync readerClient repositoryId requestedChunkAddresses
+            let! body = response.Content.ReadAsStringAsync()
+
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), body)
+            Assert.That(body, Does.Contain("KeyChunkAddresses"))
+            Assert.That(body, Does.Contain($"{maxDiscoveryKeyChunkAddresses}"))
+        }
+
 [<Parallelizable(ParallelScope.All)>]
 type StorageContentBlockSdkContract() =
 
@@ -256,3 +432,12 @@ type StorageContentBlockSdkContract() =
     member _.ContentBlockSasSdkMethodsMatchSharedParameterContracts() =
         assertSdkMethod "GetContentBlockUploadUri" "GetContentBlockUploadUriParameters"
         assertSdkMethod "GetContentBlockDownloadUri" "GetContentBlockDownloadUriParameters"
+
+    [<Test>]
+    member _.ContentBlockDiscoverySdkMethodMatchesSharedParameterContract() =
+        let parameterType = getStorageParameterType "DiscoverContentBlocksParameters"
+        Assert.That(parameterType, Is.Not.Null)
+        Assert.That(parameterType.IsSubclassOf(typeof<Parameters.Storage.StorageParameters>), Is.True)
+        Assert.That(parameterType.GetProperty("KeyChunkAddresses"), Is.Not.Null)
+        Assert.That(parameterType.GetProperty("ContentBlockAddress"), Is.Null)
+        assertSdkMethod "DiscoverContentBlocks" "DiscoverContentBlocksParameters"

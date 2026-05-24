@@ -1259,6 +1259,9 @@ module Application =
                         POST [ route "/getUploadMetadataForFiles" (composeHandlers requirePathWrite Storage.GetUploadMetadataForFiles)
                                |> addMetadata typeof<Storage.GetUploadMetadataForFilesParameters>
 
+                               route "/discoverContentBlocks" (composeHandlers requireRepoRead Storage.DiscoverContentBlocks)
+                               |> addMetadata typeof<Storage.DiscoverContentBlocksParameters>
+
                                route "/getDownloadUri" (composeHandlers requirePathRead Storage.GetDownloadUri)
                                |> addMetadata typeof<Storage.GetDownloadUriParameters>
 

@@ -175,6 +175,7 @@ module EndpointAuthorizationManifest =
             endpoint "POST" "/review/report/get" Authenticated
             endpoint "POST" "/review/resolve" Authenticated
             endpoint "POST" "/storage/getDownloadUri" (Authorized(PathRead, Path))
+            endpoint "POST" "/storage/discoverContentBlocks" (Authorized(RepoRead, Repository))
             endpoint "POST" "/storage/getContentBlockDownloadUri" (Authorized(PathRead, Path))
             endpoint "POST" "/storage/getContentBlockUploadUri" (Authorized(PathWrite, Path))
             endpoint "POST" "/storage/getUploadMetadataForFiles" (Authorized(PathWrite, Path))
