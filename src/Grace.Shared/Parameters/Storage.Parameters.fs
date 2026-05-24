@@ -29,6 +29,8 @@ module Storage =
         inherit StorageParameters()
         member val public FileVersion = FileVersion.Default with get, set
 
+    type UploadMetadata = { RelativePath: RelativePath; BlobUriWithSasToken: Uri; Sha256Hash: Sha256Hash; ContentReference: FileContentReference }
+
     type GetUploadMetadataForFilesParameters() =
         inherit StorageParameters()
         member val public FileVersions = Array.empty<FileVersion> with get, set
