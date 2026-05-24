@@ -1262,6 +1262,18 @@ module Application =
                                route "/discoverContentBlocks" (composeHandlers requireRepoRead Storage.DiscoverContentBlocks)
                                |> addMetadata typeof<Storage.DiscoverContentBlocksParameters>
 
+                               route "/startManifestUploadSession" (composeHandlers requireRepoWrite Storage.StartManifestUploadSession)
+                               |> addMetadata typeof<Storage.StartManifestUploadSessionParameters>
+
+                               route "/registerContentBlockUpload" (composeHandlers requireRepoWrite Storage.RegisterContentBlockUpload)
+                               |> addMetadata typeof<Storage.RegisterContentBlockUploadParameters>
+
+                               route "/confirmContentBlockUpload" (composeHandlers requireRepoWrite Storage.ConfirmContentBlockUpload)
+                               |> addMetadata typeof<Storage.ConfirmContentBlockUploadParameters>
+
+                               route "/finalizeManifestUpload" (composeHandlers requireRepoWrite Storage.FinalizeManifestUpload)
+                               |> addMetadata typeof<Storage.FinalizeManifestUploadParameters>
+
                                route "/getDownloadUri" (composeHandlers requirePathRead Storage.GetDownloadUri)
                                |> addMetadata typeof<Storage.GetDownloadUriParameters>
 

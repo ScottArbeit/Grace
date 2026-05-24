@@ -175,11 +175,15 @@ module EndpointAuthorizationManifest =
             endpoint "POST" "/review/report/get" Authenticated
             endpoint "POST" "/review/resolve" Authenticated
             endpoint "POST" "/storage/getDownloadUri" (Authorized(PathRead, Path))
+            endpoint "POST" "/storage/confirmContentBlockUpload" (Authorized(RepoWrite, Repository))
             endpoint "POST" "/storage/discoverContentBlocks" (Authorized(RepoRead, Repository))
+            endpoint "POST" "/storage/finalizeManifestUpload" (Authorized(RepoWrite, Repository))
             endpoint "POST" "/storage/getContentBlockDownloadUri" (Authorized(PathRead, Path))
             endpoint "POST" "/storage/getContentBlockUploadUri" (Authorized(PathWrite, Path))
             endpoint "POST" "/storage/getUploadMetadataForFiles" (Authorized(PathWrite, Path))
             endpoint "POST" "/storage/getUploadUri" (Authorized(PathWrite, Path))
+            endpoint "POST" "/storage/registerContentBlockUpload" (Authorized(RepoWrite, Repository))
+            endpoint "POST" "/storage/startManifestUploadSession" (Authorized(RepoWrite, Repository))
             endpoint "POST" "/work/create" (Authorized(RepoWrite, Repository))
             endpoint "POST" "/work/add-summary" Authenticated
             endpoint "POST" "/work/get" Authenticated

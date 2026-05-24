@@ -27,6 +27,8 @@ open System.Net.Http.Json
 open System.Threading.Tasks
 open System.Text
 open Grace.Shared.Parameters.Storage
+open Grace.Types.ContentBlockMetadata
+open Grace.Types.UploadSession
 open Azure
 
 module Storage =
@@ -300,6 +302,33 @@ module Storage =
     let SaveFileToObjectStorage (repositoryId: RepositoryId) (fileVersion: FileVersion) (blobUriWithSasToken: Uri) correlationId =
         SaveFileToObjectStorageWithMetadata repositoryId fileVersion blobUriWithSasToken (Dictionary<string, string>()) correlationId
 
+    let SaveContentBlockToObjectStorage (contentBlockAddress: ContentBlockAddress) (payload: byte array) (blobUriWithSasToken: Uri) correlationId =
+        task {
+            try
+                match Current().ObjectStorageProvider with
+                | ObjectStorageProvider.Unknown -> return Error(GraceError.Create (getErrorMessage StorageError.NotImplemented) correlationId)
+                | ObjectStorageProvider.AzureBlobStorage ->
+                    use transport = new HttpClientTransport(getHttpClient correlationId)
+
+                    let blobClientOptions = BlobClientOptions(Transport = transport)
+                    blobClientOptions.Retry.NetworkTimeout <- TimeSpan.FromMinutes(60.0)
+
+                    let blockBlobClient = BlockBlobClient(blobUriWithSasToken, blobClientOptions)
+                    use payloadStream = new MemoryStream(payload, writable = false)
+                    let! response = blockBlobClient.UploadAsync(payloadStream)
+
+                    let placement: ContentBlockStoragePlacement =
+                        { ObjectKey = StorageKeys.contentBlockObjectKey contentBlockAddress; ETag = Some(response.Value.ETag.ToString()) }
+
+                    return Ok(GraceReturnValue.Create placement correlationId)
+                | ObjectStorageProvider.AWSS3 -> return Error(GraceError.Create (getErrorMessage StorageError.NotImplemented) correlationId)
+                | ObjectStorageProvider.GoogleCloudStorage -> return Error(GraceError.Create (getErrorMessage StorageError.NotImplemented) correlationId)
+            with
+            | ex ->
+                let exceptionResponse = ExceptionResponse.Create ex
+                return Error(GraceError.Create (exceptionResponse.ToString()) correlationId)
+        }
+
     /// Gets an upload URI with a SAS token for uploading a file to object storage.
     let GetUploadUri (parameters: GetUploadUriParameters) =
         task {
@@ -424,3 +453,27 @@ module Storage =
                 logToConsole $"exception: {exceptionResponse.ToString()}"
                 return Error(GraceError.Create (exceptionResponse.ToString()) correlationId)
         }
+
+    let StartManifestUploadSession (parameters: StartManifestUploadSessionParameters) =
+        Common.postServer<StartManifestUploadSessionParameters, UploadSessionDecision> (
+            parameters |> Common.ensureCorrelationIdIsSet,
+            "storage/startManifestUploadSession"
+        )
+
+    let RegisterContentBlockUpload (parameters: RegisterContentBlockUploadParameters) =
+        Common.postServer<RegisterContentBlockUploadParameters, UploadSessionDecision> (
+            parameters |> Common.ensureCorrelationIdIsSet,
+            "storage/registerContentBlockUpload"
+        )
+
+    let ConfirmContentBlockUpload (parameters: ConfirmContentBlockUploadParameters) =
+        Common.postServer<ConfirmContentBlockUploadParameters, UploadSessionDecision> (
+            parameters |> Common.ensureCorrelationIdIsSet,
+            "storage/confirmContentBlockUpload"
+        )
+
+    let FinalizeManifestUpload (parameters: FinalizeManifestUploadParameters) =
+        Common.postServer<FinalizeManifestUploadParameters, UploadSessionDecision> (
+            parameters |> Common.ensureCorrelationIdIsSet,
+            "storage/finalizeManifestUpload"
+        )

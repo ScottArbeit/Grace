@@ -69,6 +69,7 @@ module Orleans =
                             | StateName.RepositoryPermission -> repositoryId ()
                             | StateName.Review -> repositoryId ()
                             | StateName.User -> StateName.User
+                            | StateName.UploadSession -> repositoryId ()
                             | StateName.WorkItem -> repositoryId ()
                             | StateName.WorkItemNumberCounter -> repositoryId ()
                             | _ ->

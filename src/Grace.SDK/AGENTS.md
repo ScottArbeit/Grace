@@ -46,3 +46,8 @@ Consult `../AGENTS.md` for global policies before modifying the SDK.
   (January 6, 2026).
 - Added `Auth.getOidcClientConfig` for fetching server-provided OIDC client
   configuration (January 8, 2026).
+- Manifest-backed uploads are temporarily guarded by `GRACE_MANIFEST_UPLOADS=1`.
+  The CL2 flow plans local ContentBlocks, uploads only new local blocks, confirms
+  them, finalizes the manifest, and returns `FileVersion.ContentReference =
+  FileManifest`. Keep the default whole-file upload path unchanged until CL5
+  removes this opt-in gate.
