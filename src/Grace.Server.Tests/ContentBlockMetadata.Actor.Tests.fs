@@ -43,6 +43,21 @@ type ContentBlockMetadataActorTests() =
     let replace operationId expectedVersion ranges =
         ContentBlockMetadataCommand.ReplaceWholeRecord { OperationId = operationId; ExpectedMetadataVersion = expectedVersion; Metadata = record ranges }
 
+    let mergeWithPlacement operationId placement ranges =
+        ContentBlockMetadataCommand.MergePhysicalRanges
+            {
+                OperationId = operationId
+                StoragePoolId = storagePoolId
+                ContentBlockAddress = contentBlockAddress
+                BlockFormatVersion = 1s
+                StoragePlacement = placement
+                Ranges = ranges
+            }
+
+    let mergeWithObjectKey operationId objectKey ranges = mergeWithPlacement operationId { ObjectKey = objectKey; ETag = Some "etag-1" } ranges
+
+    let merge operationId ranges = mergeWithObjectKey operationId "cas/content-blocks/block-blake3-0001" ranges
+
     let applyAll events current =
         events
         |> List.fold (fun state event -> ContentBlockMetadataDto.UpdateDto event state) current
@@ -94,6 +109,16 @@ type ContentBlockMetadataActorTests() =
         Assert.That(ContentBlockMetadataTypes.rangePresence metadata { OrdinalStart = 12; OrdinalCount = 4 }, Is.EqualTo(ContentBlockRangePresence.Absent))
 
     [<Test>]
+    member _.RangePresenceAggregatesDuplicateOrdinalRangesAsActiveWhenAnyPhysicalCopyIsActive() =
+        let activePhysicalCopy = { reclaimableRange with ActiveManifestCount = 1; PhysicalOffset = 2048L }
+
+        let metadata =
+            record [| reclaimableRange
+                      activePhysicalCopy |]
+
+        Assert.That(ContentBlockMetadataTypes.rangePresence metadata { OrdinalStart = 8; OrdinalCount = 4 }, Is.EqualTo(ContentBlockRangePresence.Active))
+
+    [<Test>]
     member _.SameOperationIdIsIdempotentReplayWithoutVersionBump() =
         let command = replace "op-create" None [| activeRange |]
         let first = ContentBlockMetadataActor.decideCommand [] ContentBlockMetadataDto.Empty command (metadata "corr-create")
@@ -110,6 +135,188 @@ type ContentBlockMetadataActorTests() =
                 Assert.That(replayDecision.Metadata.MetadataVersion, Is.EqualTo(1L))
             | Error error -> Assert.Fail($"Expected idempotent replay, got {error.Error}.")
         | Error error -> Assert.Fail($"Expected create to succeed, got {error.Error}.")
+
+    [<Test>]
+    member _.MergePhysicalRangesCreatesAuthoritativeMetadata() =
+        let result = ContentBlockMetadataActor.decideCommand [] ContentBlockMetadataDto.Empty (merge "op-merge" [| reclaimableRange |]) (metadata "corr-merge")
+
+        match result with
+        | Ok decision ->
+            Assert.That(decision.WasIdempotentReplay, Is.False)
+            Assert.That(decision.Metadata.MetadataVersion, Is.EqualTo(1L))
+            Assert.That(decision.Metadata.Ranges.Length, Is.EqualTo(1))
+            Assert.That(decision.Metadata.TotalPhysicalBytes, Is.EqualTo(1536L))
+            Assert.That(decision.Metadata.ActivePhysicalBytes, Is.EqualTo(0L))
+
+            Assert.That(
+                ContentBlockMetadataTypes.rangePresence decision.Metadata { OrdinalStart = 8; OrdinalCount = 4 },
+                Is.EqualTo(ContentBlockRangePresence.Reclaimable)
+            )
+        | Error error -> Assert.Fail($"Expected physical range merge to succeed, got {error.Error}.")
+
+    [<Test>]
+    member _.MergePhysicalRangesRejectsNullStoragePlacementAsGraceError() =
+        let result =
+            ContentBlockMetadataActor.decideCommand
+                []
+                ContentBlockMetadataDto.Empty
+                (mergeWithPlacement "op-merge-null-placement" Unchecked.defaultof<ContentBlockStoragePlacement> [| reclaimableRange |])
+                (metadata "corr-merge-null-placement")
+
+        match result with
+        | Ok _ -> Assert.Fail("Expected null storage placement to be rejected.")
+        | Error error -> Assert.That(error.Error, Is.EqualTo("StoragePlacement is required."))
+
+    [<Test>]
+    member _.MergePhysicalRangesRejectsExistingNullStoragePlacementAsGraceError() =
+        let existing =
+            { ContentBlockMetadataDto.Empty with
+                Metadata = Some { record [| activeRange |] with StoragePlacement = Unchecked.defaultof<ContentBlockStoragePlacement> }
+            }
+
+        let result = ContentBlockMetadataActor.decideCommand [] existing (merge "op-merge" [| reclaimableRange |]) (metadata "corr-merge")
+
+        match result with
+        | Ok _ -> Assert.Fail("Expected null existing storage placement to be rejected.")
+        | Error error -> Assert.That(error.Error, Is.EqualTo("Existing StoragePlacement is required."))
+
+    [<Test>]
+    member _.MergePhysicalRangesRejectsPhysicalEndOverflow() =
+        let overflowingRange = { reclaimableRange with PhysicalOffset = Int64.MaxValue - 5L; PhysicalLength = 10L }
+
+        let result =
+            ContentBlockMetadataActor.decideCommand
+                []
+                ContentBlockMetadataDto.Empty
+                (merge "op-merge-overflow" [| overflowingRange |])
+                (metadata "corr-merge-overflow")
+
+        match result with
+        | Ok _ -> Assert.Fail("Expected physical range overflow to be rejected.")
+        | Error error -> Assert.That(error.Error, Is.EqualTo("ContentBlockMetadataRange.PhysicalOffset plus PhysicalLength must not exceed Int64.MaxValue."))
+
+    [<Test>]
+    member _.MergePhysicalRangesRejectsActivePhysicalBytesOverflow() =
+        let firstActiveRange = { OrdinalStart = 0; OrdinalCount = 1; ActiveManifestCount = 1; PhysicalOffset = 0L; PhysicalLength = (Int64.MaxValue / 2L) + 1L }
+
+        let secondActiveRange = { firstActiveRange with OrdinalStart = 1; PhysicalOffset = 8L }
+
+        let result =
+            ContentBlockMetadataActor.decideCommand
+                []
+                ContentBlockMetadataDto.Empty
+                (merge
+                    "op-merge-active-overflow"
+                    [|
+                        firstActiveRange
+                        secondActiveRange
+                    |])
+                (metadata "corr-merge-active-overflow")
+
+        match result with
+        | Ok _ -> Assert.Fail("Expected active physical byte overflow to be rejected.")
+        | Error error -> Assert.That(error.Error, Is.EqualTo("ActivePhysicalBytes cannot exceed Int64.MaxValue."))
+
+    [<Test>]
+    member _.MergePhysicalRangesRejectsActivePhysicalBytesGreaterThanTotalPhysicalBytes() =
+        let firstActiveRange = { OrdinalStart = 0; OrdinalCount = 1; ActiveManifestCount = 1; PhysicalOffset = 0L; PhysicalLength = 10L }
+
+        let overlappingActiveRange = { firstActiveRange with OrdinalStart = 1; PhysicalOffset = 5L }
+
+        let result =
+            ContentBlockMetadataActor.decideCommand
+                []
+                ContentBlockMetadataDto.Empty
+                (merge
+                    "op-merge-active-exceeds-total"
+                    [|
+                        firstActiveRange
+                        overlappingActiveRange
+                    |])
+                (metadata "corr-merge-active-exceeds-total")
+
+        match result with
+        | Ok _ -> Assert.Fail("Expected active bytes greater than total bytes to be rejected.")
+        | Error error -> Assert.That(error.Error, Is.EqualTo("ActivePhysicalBytes cannot exceed TotalPhysicalBytes."))
+
+    [<Test>]
+    member _.MergePhysicalRangesAddsMissingRangesWithoutDuplicatingExistingOnReplay() =
+        let created =
+            match ContentBlockMetadataActor.decideCommand [] ContentBlockMetadataDto.Empty (merge "op-create" [| activeRange |]) (metadata "corr-create") with
+            | Ok decision -> applyAll decision.Events ContentBlockMetadataDto.Empty, decision.Events
+            | Error error ->
+                Assert.Fail($"Expected create to succeed, got {error.Error}.")
+                ContentBlockMetadataDto.Empty, []
+
+        let createdDto, createdEvents = created
+
+        let updated =
+            ContentBlockMetadataActor.decideCommand createdEvents createdDto (merge "op-append" [| activeRange; reclaimableRange |]) (metadata "corr-append")
+
+        match updated with
+        | Ok decision ->
+            Assert.That(decision.Metadata.MetadataVersion, Is.EqualTo(2L))
+            Assert.That(decision.Metadata.Ranges.Length, Is.EqualTo(2))
+
+            let replay =
+                ContentBlockMetadataActor.decideCommand
+                    (createdEvents @ decision.Events)
+                    (applyAll decision.Events createdDto)
+                    (merge "op-append" [| activeRange; reclaimableRange |])
+                    (metadata "corr-replay")
+
+            match replay with
+            | Ok replayDecision ->
+                Assert.That(replayDecision.WasIdempotentReplay, Is.True)
+                Assert.That(replayDecision.Metadata.MetadataVersion, Is.EqualTo(2L))
+                Assert.That(replayDecision.Metadata.Ranges.Length, Is.EqualTo(2))
+            | Error error -> Assert.Fail($"Expected idempotent replay, got {error.Error}.")
+        | Error error -> Assert.Fail($"Expected append merge to succeed, got {error.Error}.")
+
+    [<Test>]
+    member _.MergePhysicalRangesAllowsSameOrdinalAtDifferentPhysicalOffsets() =
+        let relocatedRange = { activeRange with PhysicalOffset = 4096L; PhysicalLength = activeRange.PhysicalLength; ActiveManifestCount = 0 }
+
+        let created =
+            match ContentBlockMetadataActor.decideCommand [] ContentBlockMetadataDto.Empty (merge "op-create" [| activeRange |]) (metadata "corr-create") with
+            | Ok decision -> applyAll decision.Events ContentBlockMetadataDto.Empty, decision.Events
+            | Error error ->
+                Assert.Fail($"Expected create to succeed, got {error.Error}.")
+                ContentBlockMetadataDto.Empty, []
+
+        let createdDto, createdEvents = created
+
+        let updated = ContentBlockMetadataActor.decideCommand createdEvents createdDto (merge "op-relocated" [| relocatedRange |]) (metadata "corr-relocated")
+
+        match updated with
+        | Ok decision ->
+            Assert.That(decision.Metadata.Ranges.Length, Is.EqualTo(2))
+            Assert.That(decision.Metadata.Ranges[0].PhysicalOffset, Is.EqualTo(0L))
+            Assert.That(decision.Metadata.Ranges[1].PhysicalOffset, Is.EqualTo(4096L))
+            Assert.That(decision.Metadata.TotalPhysicalBytes, Is.EqualTo(5120L))
+        | Error error -> Assert.Fail($"Expected relocated physical range to merge, got {error.Error}.")
+
+    [<Test>]
+    member _.MergePhysicalRangesRejectsStoragePlacementObjectKeyChanges() =
+        let created =
+            match ContentBlockMetadataActor.decideCommand [] ContentBlockMetadataDto.Empty (merge "op-create" [| activeRange |]) (metadata "corr-create") with
+            | Ok decision -> applyAll decision.Events ContentBlockMetadataDto.Empty, decision.Events
+            | Error error ->
+                Assert.Fail($"Expected create to succeed, got {error.Error}.")
+                ContentBlockMetadataDto.Empty, []
+
+        let createdDto, createdEvents = created
+
+        let changedPlacement =
+            ContentBlockMetadataActor.decideCommand
+                createdEvents
+                createdDto
+                (mergeWithObjectKey "op-moved" "cas/content-blocks/other-object" [| reclaimableRange |])
+                (metadata "corr-moved")
+
+        match changedPlacement with
+        | Ok _ -> Assert.Fail("Expected object key change to be rejected.")
+        | Error error -> Assert.That(error.Error, Does.Contain("StoragePlacement.ObjectKey mismatch"))
 
     [<Test>]
     member _.MetadataActorUsesOneCompositeStringKeyAndDoesNotIntroduceChunkActorState() =

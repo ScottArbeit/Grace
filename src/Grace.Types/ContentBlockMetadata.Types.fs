@@ -66,15 +66,28 @@ module ContentBlockMetadata =
     [<GenerateSerializer>]
     type ReplaceContentBlockMetadata = { OperationId: string; ExpectedMetadataVersion: MetadataVersion option; Metadata: ContentBlockMetadata }
 
+    [<GenerateSerializer>]
+    type MergeContentBlockPhysicalRanges =
+        {
+            OperationId: string
+            StoragePoolId: StoragePoolId
+            ContentBlockAddress: ContentBlockAddress
+            BlockFormatVersion: int16
+            StoragePlacement: ContentBlockStoragePlacement
+            Ranges: ContentBlockMetadataRange array
+        }
+
     [<KnownType("GetKnownTypes"); GenerateSerializer>]
     type ContentBlockMetadataCommand =
         | ReplaceWholeRecord of replace: ReplaceContentBlockMetadata
+        | MergePhysicalRanges of merge: MergeContentBlockPhysicalRanges
 
         static member GetKnownTypes() = GetKnownTypes<ContentBlockMetadataCommand>()
 
     [<KnownType("GetKnownTypes"); GenerateSerializer>]
     type ContentBlockMetadataEventType =
         | WholeRecordReplaced of operationId: string * metadata: ContentBlockMetadata
+        | PhysicalRangesMerged of operationId: string * metadata: ContentBlockMetadata
 
         static member GetKnownTypes() = GetKnownTypes<ContentBlockMetadataEventType>()
 
@@ -93,6 +106,7 @@ module ContentBlockMetadata =
         static member UpdateDto event _current =
             match event.Event with
             | ContentBlockMetadataEventType.WholeRecordReplaced (operationId, metadata) -> { Metadata = Some metadata; LastOperationId = Some operationId }
+            | ContentBlockMetadataEventType.PhysicalRangesMerged (operationId, metadata) -> { Metadata = Some metadata; LastOperationId = Some operationId }
 
     [<GenerateSerializer>]
     type ContentBlockMetadataDecision =
@@ -104,17 +118,27 @@ module ContentBlockMetadata =
             Message: string
         }
 
-    let tryFindRange (metadata: ContentBlockMetadata) query =
+    let findRanges (metadata: ContentBlockMetadata) query =
         if query.OrdinalCount <= 0 then
-            None
+            Array.empty
         else
             metadata.Ranges
-            |> Array.tryFind (fun range ->
+            |> Array.filter (fun range ->
                 range.OrdinalStart = query.OrdinalStart
                 && range.OrdinalCount = query.OrdinalCount)
 
+    let tryFindRange metadata query =
+        findRanges metadata query
+        |> Array.sortByDescending (fun range -> range.ActiveManifestCount)
+        |> Array.tryHead
+
     let rangePresence metadata query =
-        match tryFindRange metadata query with
-        | Some range when range.ActiveManifestCount > 0 -> ContentBlockRangePresence.Active
-        | Some _ -> ContentBlockRangePresence.Reclaimable
-        | None -> ContentBlockRangePresence.Absent
+        let ranges = findRanges metadata query
+
+        if ranges
+           |> Array.exists (fun range -> range.ActiveManifestCount > 0) then
+            ContentBlockRangePresence.Active
+        elif ranges.Length > 0 then
+            ContentBlockRangePresence.Reclaimable
+        else
+            ContentBlockRangePresence.Absent

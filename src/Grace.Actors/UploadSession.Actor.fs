@@ -7,6 +7,7 @@ open Grace.Actors.Services
 open Grace.Shared
 open Grace.Shared.Constants
 open Grace.Shared.Utilities
+open Grace.Types.ContentBlockMetadata
 open Grace.Types.Reminder
 open Grace.Types.Types
 open Grace.Types.UploadSession
@@ -38,8 +39,8 @@ module UploadSession =
         match command with
         | UploadSessionCommand.Start start -> start.OperationId
         | UploadSessionCommand.IssueDedupeDiscovery operationId -> operationId
-        | UploadSessionCommand.RegisterBlockUploadIntent (operationId, _) -> operationId
-        | UploadSessionCommand.ConfirmBlockUploaded (operationId, _) -> operationId
+        | UploadSessionCommand.RegisterBlockUploadIntent intent -> intent.OperationId
+        | UploadSessionCommand.ConfirmBlockUploaded confirmation -> confirmation.OperationId
         | UploadSessionCommand.ClaimReuseRanges operationId -> operationId
         | UploadSessionCommand.FinalizeManifest (operationId, _) -> operationId
         | UploadSessionCommand.Abandon operationId -> operationId
@@ -65,6 +66,8 @@ module UploadSession =
         | UploadSessionEventType.Finalized (operationId, _) -> operationId
         | UploadSessionEventType.CleanupReminderScheduled (operationId, _) -> operationId
         | UploadSessionEventType.PhysicalStateDeleted operationId -> operationId
+        | UploadSessionEventType.BlockUploadIntentRegistered (operationId, _) -> operationId
+        | UploadSessionEventType.BlockUploadConfirmed (operationId, _) -> operationId
 
     let private hasAppliedOperationId (events: seq<UploadSessionEvent>) operationId =
         events
@@ -95,6 +98,125 @@ module UploadSession =
         | UploadSessionLifecycleState.StateDeleted ->
             Some(graceError correlationId $"UploadSession physical state has been deleted and cannot be changed by {commandName command}.")
         | _ -> None
+
+    let private requireStartedSession (session: UploadSessionDto) command correlationId =
+        match terminalMutationError session command correlationId with
+        | Some error -> Some error
+        | None ->
+            match session.LifecycleState with
+            | UploadSessionLifecycleState.Started
+            | UploadSessionLifecycleState.Discovering
+            | UploadSessionLifecycleState.UploadingBlocks
+            | UploadSessionLifecycleState.ClaimingRanges -> None
+            | UploadSessionLifecycleState.NotStarted -> Some(graceError correlationId $"UploadSession must be started before {commandName command}.")
+            | _ -> Some(graceError correlationId $"UploadSession cannot {commandName command} from {session.LifecycleState}.")
+
+    let private validateIntent correlationId (intent: RegisterBlockUploadIntent) =
+        if String.IsNullOrWhiteSpace intent.ContentBlockAddress then
+            Some(graceError correlationId "ContentBlockAddress is required.")
+        elif intent.LogicalOffset < 0L then
+            Some(graceError correlationId "LogicalOffset must be zero or greater.")
+        elif intent.LogicalLength <= 0L then
+            Some(graceError correlationId "LogicalLength must be greater than zero.")
+        elif intent.ExpectedPayloadLength <= 0L then
+            Some(graceError correlationId "ExpectedPayloadLength must be greater than zero.")
+        else
+            None
+
+    let private validateStoragePlacement correlationId (placement: ContentBlockStoragePlacement) =
+        if isNull (box placement) then
+            Some(graceError correlationId "StoragePlacement is required.")
+        elif String.IsNullOrWhiteSpace placement.ObjectKey then
+            Some(graceError correlationId "StoragePlacement.ObjectKey is required.")
+        else
+            None
+
+    let private findBlockIntents (session: UploadSessionDto) contentBlockAddress =
+        session.BlockUploadIntents
+        |> Array.filter (fun intent -> intent.ContentBlockAddress = contentBlockAddress)
+
+    let private contentBlockError error = $"ContentBlock payload is invalid: {error}."
+
+    let private physicalRangesFromDecodedBlock (decodedBlock: ContentBlockFormat.DecodedContentBlock) =
+        decodedBlock.Chunks
+        |> Array.mapi (fun index chunk ->
+            { OrdinalStart = index; OrdinalCount = 1; ActiveManifestCount = 0; PhysicalOffset = chunk.PhysicalOffset; PhysicalLength = int64 chunk.Length })
+
+    let private decodedLogicalLength (decodedBlock: ContentBlockFormat.DecodedContentBlock) =
+        decodedBlock.Chunks
+        |> Array.sumBy (fun chunk -> int64 chunk.Length)
+
+    let private confirmBlockUpload (session: UploadSessionDto) (confirmation: ConfirmBlockUploaded) (metadata: EventMetadata) =
+        if String.IsNullOrWhiteSpace confirmation.ContentBlockAddress then
+            Error(graceError metadata.CorrelationId "ContentBlockAddress is required.")
+        elif isNull confirmation.Payload then
+            Error(graceError metadata.CorrelationId "ContentBlock payload is required.")
+        elif confirmation.Payload.LongLength = 0L then
+            Error(graceError metadata.CorrelationId "ContentBlock payload must not be empty.")
+        else
+            match validateStoragePlacement metadata.CorrelationId confirmation.StoragePlacement with
+            | Some error -> Error error
+            | None ->
+                match findBlockIntents session confirmation.ContentBlockAddress with
+                | intents when intents.Length = 0 ->
+                    Error(graceError metadata.CorrelationId $"Block upload intent does not exist for ContentBlockAddress {confirmation.ContentBlockAddress}.")
+                | intents when
+                    intents
+                    |> Array.exists (fun intent -> intent.ExpectedPayloadLength = confirmation.Payload.LongLength)
+                    |> not
+                    ->
+                    let expectedLengths =
+                        intents
+                        |> Array.map (fun intent -> intent.ExpectedPayloadLength.ToString())
+                        |> String.concat ", "
+
+                    Error(
+                        graceError
+                            metadata.CorrelationId
+                            $"ContentBlock payload length mismatch. Expected one of [{expectedLengths}], actual {confirmation.Payload.LongLength}."
+                    )
+                | _ ->
+                    match ContentBlockFormat.decode confirmation.Payload with
+                    | Error error -> Error(graceError metadata.CorrelationId (contentBlockError error))
+                    | Ok decodedBlock ->
+                        match ContentBlockFormat.validateAddress confirmation.ContentBlockAddress decodedBlock with
+                        | Error error -> Error(graceError metadata.CorrelationId (contentBlockError error))
+                        | Ok () ->
+                            let logicalLength = decodedLogicalLength decodedBlock
+
+                            let matchingLogicalLength =
+                                findBlockIntents session confirmation.ContentBlockAddress
+                                |> Array.filter (fun intent -> intent.ExpectedPayloadLength = confirmation.Payload.LongLength)
+
+                            if matchingLogicalLength
+                               |> Array.exists (fun intent -> intent.LogicalLength = logicalLength)
+                               |> not then
+                                let expectedLengths =
+                                    matchingLogicalLength
+                                    |> Array.map (fun intent -> intent.LogicalLength.ToString())
+                                    |> String.concat ", "
+
+                                Error(
+                                    graceError
+                                        metadata.CorrelationId
+                                        $"ContentBlock logical length mismatch. Expected one of [{expectedLengths}], actual {logicalLength}."
+                                )
+                            else
+                                let confirmedBlock =
+                                    {
+                                        ContentBlockAddress = confirmation.ContentBlockAddress
+                                        PayloadLength = confirmation.Payload.LongLength
+                                        StoragePlacement = confirmation.StoragePlacement
+                                        Ranges = physicalRangesFromDecodedBlock decodedBlock
+                                        ConfirmedAt = metadata.Timestamp
+                                    }
+
+                                let events =
+                                    [
+                                        { Event = UploadSessionEventType.BlockUploadConfirmed(confirmation.OperationId, confirmedBlock); Metadata = metadata }
+                                    ]
+
+                                okDecision session confirmation.OperationId events false "ContentBlock upload confirmed."
 
     let decideCommand (events: seq<UploadSessionEvent>) (session: UploadSessionDto) (command: UploadSessionCommand) (metadata: EventMetadata) =
         let operationId = operationId command
@@ -170,9 +292,33 @@ module UploadSession =
 
                     okDecision session operationId events false "Upload session physical state deleted."
                 | _ -> Error(graceError metadata.CorrelationId $"UploadSession cannot DeletePhysicalState from {session.LifecycleState}.")
+            | UploadSessionCommand.RegisterBlockUploadIntent intent ->
+                match requireStartedSession session command metadata.CorrelationId with
+                | Some error -> Error error
+                | None ->
+                    match validateIntent metadata.CorrelationId intent with
+                    | Some error -> Error error
+                    | None ->
+                        let blockUploadIntent =
+                            {
+                                ContentBlockAddress = intent.ContentBlockAddress
+                                LogicalOffset = intent.LogicalOffset
+                                LogicalLength = intent.LogicalLength
+                                ExpectedPayloadLength = intent.ExpectedPayloadLength
+                                RegisteredAt = metadata.Timestamp
+                            }
+
+                        let events =
+                            [
+                                { Event = UploadSessionEventType.BlockUploadIntentRegistered(intent.OperationId, blockUploadIntent); Metadata = metadata }
+                            ]
+
+                        okDecision session intent.OperationId events false "Block upload intent registered."
+            | UploadSessionCommand.ConfirmBlockUploaded confirmation ->
+                match requireStartedSession session command metadata.CorrelationId with
+                | Some error -> Error error
+                | None -> confirmBlockUpload session confirmation metadata
             | UploadSessionCommand.IssueDedupeDiscovery _
-            | UploadSessionCommand.RegisterBlockUploadIntent _
-            | UploadSessionCommand.ConfirmBlockUploaded _
             | UploadSessionCommand.ClaimReuseRanges _
             | UploadSessionCommand.FinalizeManifest _ ->
                 match terminalMutationError session command metadata.CorrelationId with
