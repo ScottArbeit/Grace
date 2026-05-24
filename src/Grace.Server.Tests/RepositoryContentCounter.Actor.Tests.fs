@@ -158,3 +158,20 @@ type RepositoryContentCounterActorTests() =
         match replay with
         | Ok _ -> Assert.Fail("Expected reused operation id with a different target to reject.")
         | Error error -> Assert.That(error.Error, Is.EqualTo("RepositoryContentCounter command target does not match the initialized counter."))
+
+    [<Test>]
+    member _.ReusedOperationIdWithDifferentCommandRejectsInsteadOfReplaying() =
+        let first = RepositoryContentCounterActor.decideCommand [] RepositoryContentCounterDto.Default (add "op-shared") (metadata "corr-add")
+
+        let afterFirst, firstEvents =
+            match first with
+            | Ok decision -> decision.Counter, decision.Events
+            | Error error ->
+                Assert.Fail($"Expected add to succeed, got {error.Error}.")
+                RepositoryContentCounterDto.Default, []
+
+        let reused = RepositoryContentCounterActor.decideCommand firstEvents afterFirst (remove "op-shared") (metadata "corr-remove")
+
+        match reused with
+        | Ok _ -> Assert.Fail("Expected reused operation id with a different command to reject.")
+        | Error error -> Assert.That(error.Error, Is.EqualTo("RepositoryContentCounter operation id was already used for a different command."))

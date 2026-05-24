@@ -39,9 +39,14 @@ module RepositoryContentCounter =
         | RepositoryContentCounterEventType.ReferenceAdded (operationId, _, _) -> operationId
         | RepositoryContentCounterEventType.ReferenceRemoved operationId -> operationId
 
-    let private hasAppliedOperationId (events: seq<RepositoryContentCounterEvent>) operationId =
+    let private eventCommandName counterEvent =
+        match counterEvent.Event with
+        | RepositoryContentCounterEventType.ReferenceAdded _ -> "AddReference"
+        | RepositoryContentCounterEventType.ReferenceRemoved _ -> "RemoveReference"
+
+    let private tryFindAppliedOperation (events: seq<RepositoryContentCounterEvent>) operationId =
         events
-        |> Seq.exists (fun counterEvent -> eventOperationId counterEvent = operationId)
+        |> Seq.tryFind (fun counterEvent -> eventOperationId counterEvent = operationId)
 
     let private applyEvents (events: RepositoryContentCounterEvent list) (counter: RepositoryContentCounterDto) =
         events
@@ -92,37 +97,44 @@ module RepositoryContentCounter =
             Error(graceError metadata.CorrelationId "RepositoryContentCounter command target does not match the grain key.")
         elif targetMismatch counter repositoryId manifestAddress then
             Error(graceError metadata.CorrelationId "RepositoryContentCounter command target does not match the initialized counter.")
-        elif hasAppliedOperationId events operationId then
-            okDecision counter operationId [] [] true "Repository content counter command replayed."
         else
-            match command with
-            | RepositoryContentCounterCommand.AddReference _ ->
-                let counterEvent = { Event = RepositoryContentCounterEventType.ReferenceAdded(operationId, repositoryId, manifestAddress); Metadata = metadata }
-
-                let intents =
-                    if counter.ReferenceCount = 0L then
-                        [
-                            RepositoryContentCounterIntent.IncrementManifestReferenceCount(repositoryId, manifestAddress)
-                        ]
-                    else
-                        []
-
-                okDecision counter operationId [ counterEvent ] intents false "Repository content reference added."
-            | RepositoryContentCounterCommand.RemoveReference _ ->
-                if counter.ReferenceCount = 0L then
-                    Error(graceError metadata.CorrelationId "RepositoryContentCounter cannot remove a reference when the local count is already zero.")
-                else
-                    let counterEvent = { Event = RepositoryContentCounterEventType.ReferenceRemoved operationId; Metadata = metadata }
+            match tryFindAppliedOperation events operationId with
+            | Some counterEvent when
+                eventCommandName counterEvent
+                <> commandName command
+                ->
+                Error(graceError metadata.CorrelationId "RepositoryContentCounter operation id was already used for a different command.")
+            | Some _ -> okDecision counter operationId [] [] true "Repository content counter command replayed."
+            | None ->
+                match command with
+                | RepositoryContentCounterCommand.AddReference _ ->
+                    let counterEvent =
+                        { Event = RepositoryContentCounterEventType.ReferenceAdded(operationId, repositoryId, manifestAddress); Metadata = metadata }
 
                     let intents =
-                        if counter.ReferenceCount = 1L then
+                        if counter.ReferenceCount = 0L then
                             [
-                                RepositoryContentCounterIntent.DecrementManifestReferenceCount(repositoryId, manifestAddress)
+                                RepositoryContentCounterIntent.IncrementManifestReferenceCount(repositoryId, manifestAddress)
                             ]
                         else
                             []
 
-                    okDecision counter operationId [ counterEvent ] intents false "Repository content reference removed."
+                    okDecision counter operationId [ counterEvent ] intents false "Repository content reference added."
+                | RepositoryContentCounterCommand.RemoveReference _ ->
+                    if counter.ReferenceCount = 0L then
+                        Error(graceError metadata.CorrelationId "RepositoryContentCounter cannot remove a reference when the local count is already zero.")
+                    else
+                        let counterEvent = { Event = RepositoryContentCounterEventType.ReferenceRemoved operationId; Metadata = metadata }
+
+                        let intents =
+                            if counter.ReferenceCount = 1L then
+                                [
+                                    RepositoryContentCounterIntent.DecrementManifestReferenceCount(repositoryId, manifestAddress)
+                                ]
+                            else
+                                []
+
+                        okDecision counter operationId [ counterEvent ] intents false "Repository content reference removed."
 
     let decideCommand events counter command metadata = decideCommandForKey None events counter command metadata
 
