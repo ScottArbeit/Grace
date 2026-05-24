@@ -54,6 +54,8 @@ module Storage =
 
         StorageKeys.wholeFileContentObjectKey fileVersion
 
+    let private getContentBlockObjectKey (contentBlockAddress: ContentBlockAddress) = StorageKeys.contentBlockObjectKey contentBlockAddress
+
     let private resolveStorageIds (graceIds: GraceIds) (parameters: StorageParameters) =
         let organizationId =
             if graceIds.OrganizationId <> OrganizationId.Empty then
@@ -111,6 +113,56 @@ module Storage =
                 | ex ->
                     context.SetStatusCode StatusCodes.Status500InternalServerError
                     return! context.WriteTextAsync $"Error in {context.Request.Path} at {DateTime.Now.ToLongTimeString()}."
+            }
+
+    /// Gets an upload URI for the specified ContentBlock payload without probing whether the blob already exists.
+    let GetContentBlockUploadUri: HttpHandler =
+        fun (next: HttpFunc) (context: HttpContext) ->
+            task {
+                let correlationId = getCorrelationId context
+                let graceIds = getGraceIds context
+
+                try
+                    let! parameters = context.BindJsonAsync<GetContentBlockUploadUriParameters>()
+                    let organizationId, repositoryId = resolveStorageIds graceIds parameters
+                    let repositoryActor = Repository.CreateActorProxy organizationId repositoryId correlationId
+                    let! repositoryDto = repositoryActor.Get correlationId
+
+                    let blobName = getContentBlockObjectKey parameters.ContentBlockAddress
+                    let! uploadUri = getUriWithWriteSharedAccessSignature repositoryDto blobName correlationId
+                    context.SetStatusCode StatusCodes.Status200OK
+                    return! context.WriteStringAsync $"{uploadUri}"
+                with
+                | ex ->
+                    context.SetStatusCode StatusCodes.Status500InternalServerError
+                    logToConsole $"Exception in GetContentBlockUploadUri: {(ExceptionResponse.Create ex)}"
+
+                    return! context.WriteTextAsync $"{getCurrentInstantExtended ()} Error in {context.Request.Path} at {DateTime.Now.ToLongTimeString()}."
+            }
+
+    /// Gets a download URI for the specified ContentBlock payload without probing whether the blob already exists.
+    let GetContentBlockDownloadUri: HttpHandler =
+        fun (next: HttpFunc) (context: HttpContext) ->
+            task {
+                let correlationId = getCorrelationId context
+                let graceIds = getGraceIds context
+
+                try
+                    let! parameters = context.BindJsonAsync<GetContentBlockDownloadUriParameters>()
+                    let organizationId, repositoryId = resolveStorageIds graceIds parameters
+                    let repositoryActor = Repository.CreateActorProxy organizationId repositoryId correlationId
+                    let! repositoryDto = repositoryActor.Get correlationId
+
+                    let blobName = getContentBlockObjectKey parameters.ContentBlockAddress
+                    let! downloadUri = getUriWithReadSharedAccessSignature repositoryDto blobName correlationId
+                    context.SetStatusCode StatusCodes.Status200OK
+                    return! context.WriteStringAsync $"{downloadUri}"
+                with
+                | ex ->
+                    context.SetStatusCode StatusCodes.Status500InternalServerError
+                    logToConsole $"Exception in GetContentBlockDownloadUri: {(ExceptionResponse.Create ex)}"
+
+                    return! context.WriteTextAsync $"{getCurrentInstantExtended ()} Error in {context.Request.Path} at {DateTime.Now.ToLongTimeString()}."
             }
 
     /// Gets an upload URI for the specified file version that can be used by a Grace client.

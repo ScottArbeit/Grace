@@ -7,6 +7,8 @@ open Grace.Types.Types
 open NUnit.Framework
 open System
 open System.Net
+open System.Net.Http
+open System.Reflection
 open System.Security.Cryptography
 open System.Text
 open System.Text.Json
@@ -110,3 +112,149 @@ type StorageWholeFileCompatibility() =
             Assert.That(downloadResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), downloadUri)
             Assert.That(downloadUri, Does.Contain(fileVersion.GetObjectFileName))
         }
+
+[<NonParallelizable>]
+type StorageContentBlockSasRoutes() =
+
+    let createClientWithUserId (userId: string) =
+        let client = new HttpClient()
+        client.BaseAddress <- Client.BaseAddress
+        client.DefaultRequestHeaders.Add("x-grace-user-id", userId)
+        client
+
+    let createUnauthenticatedClient () =
+        let client = new HttpClient()
+        client.BaseAddress <- Client.BaseAddress
+        client
+
+    let grantRoleAsync (client: HttpClient) scopeKind ownerId organizationId repositoryId branchId principalId roleId =
+        task {
+            let parameters = Parameters.Access.GrantRoleParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.BranchId <- branchId
+            parameters.PrincipalType <- "User"
+            parameters.PrincipalId <- principalId
+            parameters.ScopeKind <- scopeKind
+            parameters.RoleId <- roleId
+            parameters.Source <- "test"
+            parameters.CorrelationId <- generateCorrelationId ()
+
+            return! client.PostAsync("/access/grantRole", createJsonContent parameters)
+        }
+
+    let setContentBlockParameters (parameters: Parameters.Storage.StorageParameters) repositoryId =
+        parameters.OwnerId <- ownerId
+        parameters.OrganizationId <- organizationId
+        parameters.RepositoryId <- repositoryId
+        parameters.CorrelationId <- generateCorrelationId ()
+
+    let createContentBlockUploadParameters repositoryId =
+        let parameters = Parameters.Storage.GetContentBlockUploadUriParameters()
+        setContentBlockParameters parameters repositoryId
+        parameters.RelativePath <- "large-assets/never-uploaded.bin"
+        parameters.ContentBlockAddress <- $"content-block-{Guid.NewGuid():N}"
+        parameters
+
+    let createContentBlockDownloadParameters repositoryId =
+        let parameters = Parameters.Storage.GetContentBlockDownloadUriParameters()
+        setContentBlockParameters parameters repositoryId
+        parameters.RelativePath <- "large-assets/never-uploaded.bin"
+        parameters.ContentBlockAddress <- $"content-block-{Guid.NewGuid():N}"
+        parameters
+
+    let assertSuccessSasForContentBlock (response: HttpResponseMessage) (contentBlockAddress: ContentBlockAddress) =
+        task {
+            let! body = response.Content.ReadAsStringAsync()
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK), body)
+            Assert.That(body, Does.Contain("cas/content-blocks"))
+            Assert.That(body, Does.Contain(contentBlockAddress))
+        }
+
+    [<Test>]
+    member _.ContentBlockUploadUriRequiresPathWriteAndDoesNotProbeBlockExistence() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let pathWriter = $"{Guid.NewGuid()}"
+
+            let! grantWriter = grantRoleAsync Client "repo" ownerId organizationId repositoryId "" pathWriter "RepoContributor"
+            Assert.That(grantWriter.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+
+            use unauthClient = createUnauthenticatedClient ()
+            use writerClient = createClientWithUserId pathWriter
+            use unprivilegedClient = createClientWithUserId $"{Guid.NewGuid()}"
+
+            let parameters = createContentBlockUploadParameters repositoryId
+
+            let! unauthUpload = unauthClient.PostAsync("/storage/getContentBlockUploadUri", createJsonContent parameters)
+            Assert.That(unauthUpload.StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized))
+
+            let! deniedUpload = unprivilegedClient.PostAsync("/storage/getContentBlockUploadUri", createJsonContent parameters)
+            Assert.That(deniedUpload.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden))
+
+            let! allowedUpload = writerClient.PostAsync("/storage/getContentBlockUploadUri", createJsonContent parameters)
+            do! assertSuccessSasForContentBlock allowedUpload parameters.ContentBlockAddress
+        }
+
+    [<Test>]
+    member _.ContentBlockDownloadUriRequiresPathReadAndDoesNotProbeBlockExistence() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let pathReader = $"{Guid.NewGuid()}"
+
+            let! grantReader = grantRoleAsync Client "repo" ownerId organizationId repositoryId "" pathReader "RepoReader"
+            Assert.That(grantReader.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+
+            use unauthClient = createUnauthenticatedClient ()
+            use readerClient = createClientWithUserId pathReader
+            use unprivilegedClient = createClientWithUserId $"{Guid.NewGuid()}"
+
+            let parameters = createContentBlockDownloadParameters repositoryId
+
+            let! unauthDownload = unauthClient.PostAsync("/storage/getContentBlockDownloadUri", createJsonContent parameters)
+            Assert.That(unauthDownload.StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized))
+
+            let! deniedDownload = unprivilegedClient.PostAsync("/storage/getContentBlockDownloadUri", createJsonContent parameters)
+            Assert.That(deniedDownload.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden))
+
+            let! allowedDownload = readerClient.PostAsync("/storage/getContentBlockDownloadUri", createJsonContent parameters)
+            do! assertSuccessSasForContentBlock allowedDownload parameters.ContentBlockAddress
+        }
+
+[<Parallelizable(ParallelScope.All)>]
+type StorageContentBlockSdkContract() =
+
+    let getStorageParameterType typeName =
+        typeof<Parameters.Storage.StorageParameters>.Assembly.GetType ($"Grace.Shared.Parameters.Storage+{typeName}", throwOnError = false)
+
+    let assertContentBlockParameterShape typeName =
+        let parameterType = getStorageParameterType typeName
+        Assert.That(parameterType, Is.Not.Null, $"{typeName} should be defined in Grace.Shared.Parameters.Storage.")
+        Assert.That(parameterType.IsSubclassOf(typeof<Parameters.Storage.StorageParameters>), Is.True)
+        Assert.That(parameterType.GetProperty("RelativePath"), Is.Not.Null)
+        Assert.That(parameterType.GetProperty("ContentBlockAddress"), Is.Not.Null)
+
+    let assertSdkMethod methodName parameterTypeName =
+        let parameterType = getStorageParameterType parameterTypeName
+        Assert.That(parameterType, Is.Not.Null)
+
+        let storageType = typeof<Grace.SDK.AgentSession>.Assembly.GetType ("Grace.SDK.Storage", throwOnError = false)
+        Assert.That(storageType, Is.Not.Null, "Grace.SDK.Storage should be available as an SDK module.")
+
+        let methodInfo: MethodInfo = storageType.GetMethod(methodName, BindingFlags.Public ||| BindingFlags.Static)
+
+        Assert.That(methodInfo, Is.Not.Null, $"Grace.SDK.Storage.{methodName} should be a public SDK method.")
+        let parameters: ParameterInfo array = methodInfo.GetParameters()
+        Assert.That(parameters, Has.Length.EqualTo(1))
+        Assert.That(parameters[0].ParameterType, Is.EqualTo(parameterType))
+
+    [<Test>]
+    member _.ContentBlockSasParametersExposePathContextAndAddress() =
+        assertContentBlockParameterShape "GetContentBlockUploadUriParameters"
+        assertContentBlockParameterShape "GetContentBlockDownloadUriParameters"
+
+    [<Test>]
+    member _.ContentBlockSasSdkMethodsMatchSharedParameterContracts() =
+        assertSdkMethod "GetContentBlockUploadUri" "GetContentBlockUploadUriParameters"
+        assertSdkMethod "GetContentBlockDownloadUri" "GetContentBlockDownloadUriParameters"
