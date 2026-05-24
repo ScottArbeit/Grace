@@ -65,19 +65,38 @@ module ManifestContributionWorkflow =
             Ranges: ManifestContributionWorkflowRange array
         }
 
+    [<GenerateSerializer>]
+    type ManifestContributionWorkflowRangeProgress =
+        {
+            OperationId: ManifestContributionWorkflowOperationId
+            RepositoryId: RepositoryId
+            ManifestAddress: ManifestAddress
+            Range: ManifestContributionWorkflowRange
+        }
+
+    [<GenerateSerializer>]
+    type ManifestContributionWorkflowRangeFailure =
+        {
+            OperationId: ManifestContributionWorkflowOperationId
+            RepositoryId: RepositoryId
+            ManifestAddress: ManifestAddress
+            Range: ManifestContributionWorkflowRange
+            Message: string
+        }
+
     [<KnownType("GetKnownTypes"); GenerateSerializer>]
     type ManifestContributionWorkflowCommand =
         | Start of StartManifestContributionWorkflow
-        | RecordRangeSucceeded of operationId: ManifestContributionWorkflowOperationId * range: ManifestContributionWorkflowRange
-        | RecordRangeFailed of operationId: ManifestContributionWorkflowOperationId * range: ManifestContributionWorkflowRange * message: string
+        | RecordRangeSucceeded of ManifestContributionWorkflowRangeProgress
+        | RecordRangeFailed of ManifestContributionWorkflowRangeFailure
 
         static member GetKnownTypes() = GetKnownTypes<ManifestContributionWorkflowCommand>()
 
     [<KnownType("GetKnownTypes"); GenerateSerializer>]
     type ManifestContributionWorkflowEventType =
         | WorkflowStarted of start: StartManifestContributionWorkflow
-        | RangeSucceeded of operationId: ManifestContributionWorkflowOperationId * range: ManifestContributionWorkflowRange
-        | RangeFailed of operationId: ManifestContributionWorkflowOperationId * range: ManifestContributionWorkflowRange * message: string
+        | RangeSucceeded of ManifestContributionWorkflowRangeProgress
+        | RangeFailed of ManifestContributionWorkflowRangeFailure
 
         static member GetKnownTypes() = GetKnownTypes<ManifestContributionWorkflowEventType>()
 
@@ -150,27 +169,27 @@ module ManifestContributionWorkflow =
                     LifecycleState = lifecycle
                     LastOperationId = Some start.OperationId
                 }
-            | ManifestContributionWorkflowEventType.RangeSucceeded (operationId, range) ->
+            | ManifestContributionWorkflowEventType.RangeSucceeded progress ->
                 let completed = ManifestContributionWorkflowDto.CloneCompleted current.CompletedRanges
-                completed[range] <- operationId
+                completed[progress.Range] <- progress.OperationId
 
                 let failed = ManifestContributionWorkflowDto.CloneFailed current.FailedRanges
-                failed.Remove(range) |> ignore
+                failed.Remove(progress.Range) |> ignore
 
                 { current with
                     CompletedRanges = completed
                     FailedRanges = failed
                     LifecycleState = ManifestContributionWorkflowDto.Lifecycle current.Ranges completed.Count
-                    LastOperationId = Some operationId
+                    LastOperationId = Some progress.OperationId
                 }
-            | ManifestContributionWorkflowEventType.RangeFailed (operationId, range, message) ->
+            | ManifestContributionWorkflowEventType.RangeFailed failure ->
                 let failed = ManifestContributionWorkflowDto.CloneFailed current.FailedRanges
-                failed[range] <- message
+                failed[failure.Range] <- failure.Message
 
                 { current with
                     FailedRanges = failed
                     LifecycleState = ManifestContributionWorkflowDto.Lifecycle current.Ranges current.CompletedRanges.Count
-                    LastOperationId = Some operationId
+                    LastOperationId = Some failure.OperationId
                 }
 
     [<GenerateSerializer>]

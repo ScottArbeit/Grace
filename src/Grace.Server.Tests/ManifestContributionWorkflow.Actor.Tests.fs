@@ -26,11 +26,23 @@ type ManifestContributionWorkflowActorTests() =
         ManifestContributionWorkflowCommand.Start
             { OperationId = "workflow-start"; RepositoryId = repositoryId; ManifestAddress = manifestAddress; Direction = direction; Ranges = ranges }
 
+    let startWithOperation operationId direction ranges =
+        ManifestContributionWorkflowCommand.Start
+            { OperationId = operationId; RepositoryId = repositoryId; ManifestAddress = manifestAddress; Direction = direction; Ranges = ranges }
+
     let start direction = startWithRanges direction [| range0; range1 |]
 
-    let succeeded operationId range = ManifestContributionWorkflowCommand.RecordRangeSucceeded(operationId, range)
+    let progress operationId range = { OperationId = operationId; RepositoryId = repositoryId; ManifestAddress = manifestAddress; Range = range }
 
-    let failed operationId range message = ManifestContributionWorkflowCommand.RecordRangeFailed(operationId, range, message)
+    let succeeded operationId range = ManifestContributionWorkflowCommand.RecordRangeSucceeded(progress operationId range)
+
+    let succeededFor repositoryId manifestAddress operationId range =
+        ManifestContributionWorkflowCommand.RecordRangeSucceeded
+            { OperationId = operationId; RepositoryId = repositoryId; ManifestAddress = manifestAddress; Range = range }
+
+    let failed operationId range message =
+        ManifestContributionWorkflowCommand.RecordRangeFailed
+            { OperationId = operationId; RepositoryId = repositoryId; ManifestAddress = manifestAddress; Range = range; Message = message }
 
     let applyAll events current =
         events
@@ -102,6 +114,100 @@ type ManifestContributionWorkflowActorTests() =
         match replay with
         | Ok _ -> Assert.Fail("Expected reused range operation id with different range to reject.")
         | Error error -> Assert.That(error.Error, Is.EqualTo("ManifestContributionWorkflow operation id was already used with a different payload."))
+
+    [<Test>]
+    member _.CompletedWorkflowCanStartNextCycleForSameManifest() =
+        let started =
+            ManifestContributionWorkflowActor.decideCommand
+                []
+                ManifestContributionWorkflowDto.Default
+                (start ManifestContributionDirection.Increment)
+                (metadata "corr-start")
+            |> expectOk
+
+        let afterStart = applyAll started.Events ManifestContributionWorkflowDto.Default
+
+        let range0Done =
+            ManifestContributionWorkflowActor.decideCommand started.Events afterStart (succeeded "range-0" range0) (metadata "corr-range-0")
+            |> expectOk
+
+        let afterRange0 = applyAll range0Done.Events afterStart
+
+        let range1Done =
+            ManifestContributionWorkflowActor.decideCommand
+                (started.Events @ range0Done.Events)
+                afterRange0
+                (succeeded "range-1" range1)
+                (metadata "corr-range-1")
+            |> expectOk
+
+        let completedEvents =
+            started.Events
+            @ range0Done.Events @ range1Done.Events
+
+        let restarted =
+            ManifestContributionWorkflowActor.decideCommand
+                completedEvents
+                range1Done.Workflow
+                (startWithOperation "workflow-restart" ManifestContributionDirection.Decrement [| range0 |])
+                (metadata "corr-restart")
+            |> expectOk
+
+        Assert.That(restarted.Workflow.LifecycleState, Is.EqualTo(ManifestContributionWorkflowLifecycleState.InProgress))
+        Assert.That(restarted.Workflow.Direction, Is.EqualTo(ManifestContributionDirection.Decrement))
+        let restartedPending = ManifestContributionWorkflowActor.pendingRanges restarted.Workflow
+        Assert.That(restartedPending.Length, Is.EqualTo(1))
+        Assert.That(restartedPending[0], Is.EqualTo(range0))
+
+    [<Test>]
+    member _.RangeProgressRejectsWhenActorKeyDoesNotMatchWorkflowTarget() =
+        let started =
+            ManifestContributionWorkflowActor.decideCommand
+                []
+                ManifestContributionWorkflowDto.Default
+                (start ManifestContributionDirection.Increment)
+                (metadata "corr-start")
+            |> expectOk
+
+        let afterStart = applyAll started.Events ManifestContributionWorkflowDto.Default
+        let wrongKey = ManifestContributionWorkflowActor.primaryKey (Guid.Parse("24560efe-bb67-4be8-b0d1-1a11990e66b1")) manifestAddress
+
+        let result =
+            ManifestContributionWorkflowActor.decideCommandForKey
+                (Some wrongKey)
+                started.Events
+                afterStart
+                (succeeded "range-wrong-key" range0)
+                (metadata "corr-wrong-key")
+
+        match result with
+        | Ok _ -> Assert.Fail("Expected range progress for a mismatched grain key to reject.")
+        | Error error -> Assert.That(error.Error, Is.EqualTo("ManifestContributionWorkflow command target does not match the grain key."))
+
+    [<Test>]
+    member _.RangeProgressRejectsWhenCommandTargetDoesNotMatchWorkflowTarget() =
+        let started =
+            ManifestContributionWorkflowActor.decideCommand
+                []
+                ManifestContributionWorkflowDto.Default
+                (start ManifestContributionDirection.Increment)
+                (metadata "corr-start")
+            |> expectOk
+
+        let afterStart = applyAll started.Events ManifestContributionWorkflowDto.Default
+        let wrongRepositoryId = Guid.Parse("24560efe-bb67-4be8-b0d1-1a11990e66b1")
+
+        let result =
+            ManifestContributionWorkflowActor.decideCommandForKey
+                (Some(ManifestContributionWorkflowActor.primaryKey repositoryId manifestAddress))
+                started.Events
+                afterStart
+                (succeededFor wrongRepositoryId manifestAddress "range-wrong-target" range0)
+                (metadata "corr-wrong-target")
+
+        match result with
+        | Ok _ -> Assert.Fail("Expected range progress for a mismatched command target to reject.")
+        | Error error -> Assert.That(error.Error, Is.EqualTo("ManifestContributionWorkflow command target does not match the grain key."))
 
     [<Test>]
     member _.ActivationResumeReturnsOnlyUncompletedRanges() =

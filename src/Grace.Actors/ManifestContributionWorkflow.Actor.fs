@@ -27,14 +27,14 @@ module ManifestContributionWorkflow =
     let operationId command =
         match command with
         | ManifestContributionWorkflowCommand.Start start -> start.OperationId
-        | ManifestContributionWorkflowCommand.RecordRangeSucceeded (operationId, _) -> operationId
-        | ManifestContributionWorkflowCommand.RecordRangeFailed (operationId, _, _) -> operationId
+        | ManifestContributionWorkflowCommand.RecordRangeSucceeded progress -> progress.OperationId
+        | ManifestContributionWorkflowCommand.RecordRangeFailed failure -> failure.OperationId
 
     let private eventOperationId workflowEvent =
         match workflowEvent.Event with
         | ManifestContributionWorkflowEventType.WorkflowStarted start -> start.OperationId
-        | ManifestContributionWorkflowEventType.RangeSucceeded (operationId, _) -> operationId
-        | ManifestContributionWorkflowEventType.RangeFailed (operationId, _, _) -> operationId
+        | ManifestContributionWorkflowEventType.RangeSucceeded progress -> progress.OperationId
+        | ManifestContributionWorkflowEventType.RangeFailed failure -> failure.OperationId
 
     let private eventCommandName workflowEvent =
         match workflowEvent.Event with
@@ -55,12 +55,9 @@ module ManifestContributionWorkflow =
     let private eventMatchesCommand workflowEvent command =
         match workflowEvent.Event, command with
         | ManifestContributionWorkflowEventType.WorkflowStarted existing, ManifestContributionWorkflowCommand.Start candidate -> startMatches existing candidate
-        | ManifestContributionWorkflowEventType.RangeSucceeded (_, existingRange), ManifestContributionWorkflowCommand.RecordRangeSucceeded (_, candidateRange) ->
-            existingRange = candidateRange
-        | ManifestContributionWorkflowEventType.RangeFailed (_, existingRange, existingMessage),
-          ManifestContributionWorkflowCommand.RecordRangeFailed (_, candidateRange, candidateMessage) ->
-            existingRange = candidateRange
-            && existingMessage = candidateMessage
+        | ManifestContributionWorkflowEventType.RangeSucceeded existing, ManifestContributionWorkflowCommand.RecordRangeSucceeded candidate ->
+            existing = candidate
+        | ManifestContributionWorkflowEventType.RangeFailed existing, ManifestContributionWorkflowCommand.RecordRangeFailed candidate -> existing = candidate
         | _ -> false
 
     let private tryFindAppliedOperation (events: seq<ManifestContributionWorkflowEvent>) operationId =
@@ -142,11 +139,7 @@ module ManifestContributionWorkflow =
             Some(graceError metadata.CorrelationId "ManifestContributionWorkflow command target does not match the grain key.")
         elif targetMismatch workflow start.RepositoryId start.ManifestAddress then
             Some(graceError metadata.CorrelationId "ManifestContributionWorkflow command target does not match the initialized workflow.")
-        elif
-            workflow.LifecycleState
-            <> ManifestContributionWorkflowLifecycleState.NotStarted
-            && not (String.IsNullOrWhiteSpace workflow.ManifestAddress)
-        then
+        elif workflow.LifecycleState = ManifestContributionWorkflowLifecycleState.InProgress then
             Some(graceError metadata.CorrelationId "ManifestContributionWorkflow has already been started.")
         elif Array.isEmpty start.Ranges then
             Some(graceError metadata.CorrelationId "ManifestContributionWorkflow requires at least one range.")
@@ -155,6 +148,18 @@ module ManifestContributionWorkflow =
         else
             start.Ranges
             |> Array.tryPick (validateRange metadata.CorrelationId)
+
+    let private validateProgressTarget expectedPrimaryKey (workflow: ManifestContributionWorkflowDto) repositoryId manifestAddress (metadata: EventMetadata) =
+        if repositoryId = RepositoryId.Empty then
+            Some(graceError metadata.CorrelationId "ManifestContributionWorkflow requires a non-empty RepositoryId.")
+        elif String.IsNullOrWhiteSpace manifestAddress then
+            Some(graceError metadata.CorrelationId "ManifestContributionWorkflow requires a non-empty ManifestAddress.")
+        elif expectedPrimaryKeyMismatch expectedPrimaryKey repositoryId manifestAddress then
+            Some(graceError metadata.CorrelationId "ManifestContributionWorkflow command target does not match the grain key.")
+        elif targetMismatch workflow repositoryId manifestAddress then
+            Some(graceError metadata.CorrelationId "ManifestContributionWorkflow command target does not match the initialized workflow.")
+        else
+            None
 
     let decideCommandForKey
         (expectedPrimaryKey: string option)
@@ -186,33 +191,39 @@ module ManifestContributionWorkflow =
                     | None ->
                         let workflowEvent = { Event = ManifestContributionWorkflowEventType.WorkflowStarted start; Metadata = metadata }
                         okDecision workflow operationId [ workflowEvent ] [] false "Manifest contribution workflow started."
-                | ManifestContributionWorkflowCommand.RecordRangeSucceeded (_, range) ->
-                    if workflow.LifecycleState = ManifestContributionWorkflowLifecycleState.NotStarted then
-                        Error(graceError metadata.CorrelationId "ManifestContributionWorkflow must be started before recording range progress.")
-                    elif not (isKnownRange workflow range) then
-                        Error(graceError metadata.CorrelationId "ManifestContributionWorkflow range is not part of this workflow.")
-                    elif workflow.CompletedRanges.ContainsKey range then
-                        okDecision workflow operationId [] [] true "Manifest contribution workflow range was already completed."
-                    else
-                        let workflowEvent = { Event = ManifestContributionWorkflowEventType.RangeSucceeded(operationId, range); Metadata = metadata }
+                | ManifestContributionWorkflowCommand.RecordRangeSucceeded progress ->
+                    match validateProgressTarget expectedPrimaryKey workflow progress.RepositoryId progress.ManifestAddress metadata with
+                    | Some error -> Error error
+                    | None ->
+                        if workflow.LifecycleState = ManifestContributionWorkflowLifecycleState.NotStarted then
+                            Error(graceError metadata.CorrelationId "ManifestContributionWorkflow must be started before recording range progress.")
+                        elif not (isKnownRange workflow progress.Range) then
+                            Error(graceError metadata.CorrelationId "ManifestContributionWorkflow range is not part of this workflow.")
+                        elif workflow.CompletedRanges.ContainsKey progress.Range then
+                            okDecision workflow operationId [] [] true "Manifest contribution workflow range was already completed."
+                        else
+                            let workflowEvent = { Event = ManifestContributionWorkflowEventType.RangeSucceeded progress; Metadata = metadata }
 
-                        let intents =
-                            [
-                                ManifestContributionWorkflowIntent.AdjustRangeActiveManifestCount(range, activeCountDelta workflow.Direction)
-                            ]
+                            let intents =
+                                [
+                                    ManifestContributionWorkflowIntent.AdjustRangeActiveManifestCount(progress.Range, activeCountDelta workflow.Direction)
+                                ]
 
-                        okDecision workflow operationId [ workflowEvent ] intents false "Manifest contribution workflow range completed."
-                | ManifestContributionWorkflowCommand.RecordRangeFailed (_, range, message) ->
-                    if workflow.LifecycleState = ManifestContributionWorkflowLifecycleState.NotStarted then
-                        Error(graceError metadata.CorrelationId "ManifestContributionWorkflow must be started before recording range progress.")
-                    elif not (isKnownRange workflow range) then
-                        Error(graceError metadata.CorrelationId "ManifestContributionWorkflow range is not part of this workflow.")
-                    elif workflow.CompletedRanges.ContainsKey range then
-                        okDecision workflow operationId [] [] true "Manifest contribution workflow range was already completed."
-                    else
-                        let workflowEvent = { Event = ManifestContributionWorkflowEventType.RangeFailed(operationId, range, message); Metadata = metadata }
+                            okDecision workflow operationId [ workflowEvent ] intents false "Manifest contribution workflow range completed."
+                | ManifestContributionWorkflowCommand.RecordRangeFailed failure ->
+                    match validateProgressTarget expectedPrimaryKey workflow failure.RepositoryId failure.ManifestAddress metadata with
+                    | Some error -> Error error
+                    | None ->
+                        if workflow.LifecycleState = ManifestContributionWorkflowLifecycleState.NotStarted then
+                            Error(graceError metadata.CorrelationId "ManifestContributionWorkflow must be started before recording range progress.")
+                        elif not (isKnownRange workflow failure.Range) then
+                            Error(graceError metadata.CorrelationId "ManifestContributionWorkflow range is not part of this workflow.")
+                        elif workflow.CompletedRanges.ContainsKey failure.Range then
+                            okDecision workflow operationId [] [] true "Manifest contribution workflow range was already completed."
+                        else
+                            let workflowEvent = { Event = ManifestContributionWorkflowEventType.RangeFailed failure; Metadata = metadata }
 
-                        okDecision workflow operationId [ workflowEvent ] [] false "Manifest contribution workflow range failure recorded."
+                            okDecision workflow operationId [ workflowEvent ] [] false "Manifest contribution workflow range failure recorded."
 
     let decideCommand events workflow command metadata = decideCommandForKey None events workflow command metadata
 
