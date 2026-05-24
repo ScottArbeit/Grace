@@ -780,7 +780,12 @@ module UploadSession =
                                     metadata.CorrelationId
                         | UploadSessionCommand.FinalizeManifest finalize when not decision.WasIdempotentReplay ->
                             DedupeIndex.registerFinalizedManifest
-                                { Session = decision.Session; Manifest = finalize.Manifest; BlockPayloads = finalize.BlockPayloads }
+                                {
+                                    StoragePoolId = DedupeIndex.storagePoolIdForRepositoryId decision.Session.RepositoryId
+                                    Session = decision.Session
+                                    Manifest = finalize.Manifest
+                                    BlockPayloads = finalize.BlockPayloads
+                                }
                             |> ignore
 
                             let reminderState =

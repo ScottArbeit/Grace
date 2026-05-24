@@ -286,7 +286,7 @@ type DedupeIndexServerTests() =
         let metadata = metadataFor 1 17L block
 
         let registration: DedupeIndex.FinalizedManifestRegistration =
-            { Session = finalizedSession manifest; Manifest = manifest; BlockPayloads = [| payloadFor block |] }
+            { StoragePoolId = storagePoolId; Session = finalizedSession manifest; Manifest = manifest; BlockPayloads = [| payloadFor block |] }
 
         let beforeMetadata = DedupeIndex.registerFinalizedManifest registration
         let afterMetadata = DedupeIndex.writeAfterAuthoritativeMetadata metadata
@@ -296,6 +296,58 @@ type DedupeIndexServerTests() =
         Assert.That(afterMetadata, Is.Not.Empty, "Authoritative metadata should publish candidates for an already-finalized manifest.")
         Assert.That(result.CandidateContentBlocks, Has.Length.GreaterThanOrEqualTo(1))
         Assert.That(result.CandidateContentBlocks[0].ManifestAddress, Is.EqualTo(manifest.ManifestAddress))
+
+    [<Test>]
+    member _.FinalizeRegistrationIgnoresAuthoritativeMetadataFromDifferentStoragePool() =
+        let block = encodedBlock "cross-pool" 12
+        let manifest = manifestFor block
+        let foreignStoragePoolId = StoragePoolId "pool-foreign"
+        let localMetadata = metadataFor 1 18L block
+        let foreignMetadata = { localMetadata with StoragePoolId = foreignStoragePoolId; MetadataVersion = 19L }
+
+        let registration: DedupeIndex.FinalizedManifestRegistration =
+            { StoragePoolId = storagePoolId; Session = finalizedSession manifest; Manifest = manifest; BlockPayloads = [| payloadFor block |] }
+
+        let beforeMetadata = DedupeIndex.registerFinalizedManifest registration
+        let afterForeignMetadata = DedupeIndex.writeAfterAuthoritativeMetadata foreignMetadata
+        let afterLocalMetadata = DedupeIndex.writeAfterAuthoritativeMetadata localMetadata
+
+        let result = DedupeIndex.discover storagePoolId [| (decodedChunkAddresses block)[0] |] timestamp (DedupeIndex.snapshot ())
+
+        Assert.That(beforeMetadata, Is.Empty)
+        Assert.That(afterForeignMetadata, Is.Empty, "Metadata from another storage pool must not publish this registration.")
+        Assert.That(afterLocalMetadata, Is.Not.Empty, "The original registration must remain publishable by matching storage-pool metadata.")
+        Assert.That(result.CandidateContentBlocks, Has.Length.GreaterThanOrEqualTo(1))
+        Assert.That(result.CandidateContentBlocks[0].StoragePoolId, Is.EqualTo(storagePoolId))
+        Assert.That(result.CandidateContentBlocks[0].MetadataVersion, Is.EqualTo(localMetadata.MetadataVersion))
+
+    [<Test>]
+    member _.NewerNonAuthoritativeMetadataEvictsOlderCandidateWindows() =
+        let block = encodedBlock "metadata-evict" 12
+        let manifest = manifestFor block
+        let activeMetadata = metadataFor 1 20L block
+        let inactiveMetadata = metadataFor 0 21L block
+
+        DedupeIndex.writeAfterFinalize (sourceFor (finalizedSession manifest) manifest block activeMetadata)
+        |> ignore
+
+        let beforeInactiveMetadata = DedupeIndex.discover storagePoolId [| (decodedChunkAddresses block)[0] |] timestamp (DedupeIndex.snapshot ())
+
+        let afterInactiveMetadata = DedupeIndex.writeAfterAuthoritativeMetadata inactiveMetadata
+
+        let afterInactiveMetadataResult = DedupeIndex.discover storagePoolId [| (decodedChunkAddresses block)[0] |] timestamp (DedupeIndex.snapshot ())
+
+        Assert.That(beforeInactiveMetadata.CandidateContentBlocks, Has.Length.GreaterThanOrEqualTo(1))
+        Assert.That(afterInactiveMetadata, Is.Empty, "Inactive metadata should not create replacement candidate windows.")
+
+        Assert.That(
+            afterInactiveMetadataResult.CandidateContentBlocks
+            |> Array.exists (fun candidate ->
+                candidate.ManifestAddress = manifest.ManifestAddress
+                && candidate.ContentBlockAddress = block.Address),
+            Is.False,
+            "Newer metadata with no reusable ranges should evict older windows for that content block."
+        )
 
     [<Test>]
     member _.NewerMetadataVersionsReplaceOlderCandidateWindows() =

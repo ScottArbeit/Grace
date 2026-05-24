@@ -34,11 +34,23 @@ module DedupeIndex =
             ProtectedChunkAddresses: string array
         }
 
-    type FinalizedManifestRegistration = { Session: UploadSessionDto; Manifest: FileManifest; BlockPayloads: FinalizeManifestBlockPayload array }
+    type FinalizedManifestRegistration =
+        {
+            StoragePoolId: StoragePoolId
+            Session: UploadSessionDto
+            Manifest: FileManifest
+            BlockPayloads: FinalizeManifestBlockPayload array
+        }
 
     type private RegisteredContentBlock = { Address: ContentBlockAddress; ChunkAddresses: ChunkAddress array }
 
-    type private RuntimeFinalizedManifestRegistration = { Session: UploadSessionDto; ManifestAddress: ManifestAddress; Blocks: RegisteredContentBlock array }
+    type private RuntimeFinalizedManifestRegistration =
+        {
+            StoragePoolId: StoragePoolId
+            Session: UploadSessionDto
+            ManifestAddress: ManifestAddress
+            Blocks: RegisteredContentBlock array
+        }
 
     let private records = ConcurrentDictionary<string, DedupeIndexRecord>()
     let private finalizedManifests = ConcurrentDictionary<string, RuntimeFinalizedManifestRegistration>()
@@ -57,7 +69,9 @@ module DedupeIndex =
             IsAuthoritative = false
         }
 
-    let storagePoolIdForRepository (repositoryDto: RepositoryDto) = StoragePoolId $"{repositoryDto.StorageAccountName}/{repositoryDto.StorageContainerName}"
+    let storagePoolIdForRepositoryId (repositoryId: RepositoryId) = StoragePoolId $"{repositoryId}"
+
+    let storagePoolIdForRepository (repositoryDto: RepositoryDto) = storagePoolIdForRepositoryId repositoryDto.RepositoryId
 
     let private protectChunkAddress (storagePoolId: StoragePoolId) (chunkAddress: ChunkAddress) =
         let preimage = $"grace.dedupe-index.v1.protected-window{Environment.NewLine}{storagePoolId}{Environment.NewLine}{chunkAddress}"
@@ -68,10 +82,7 @@ module DedupeIndex =
         $"{record.StoragePoolId}|{record.ManifestAddress}|{record.ContentBlockAddress}|{record.OrdinalStart}|{record.OrdinalCount}|{record.MetadataVersion}"
 
     let private finalizedManifestKey (registration: FinalizedManifestRegistration) =
-        $"{registration.Session.UploadSessionId}|{registration.Manifest.ManifestAddress}"
-
-    let private runtimeFinalizedManifestKey (registration: RuntimeFinalizedManifestRegistration) =
-        $"{registration.Session.UploadSessionId}|{registration.ManifestAddress}"
+        $"{registration.StoragePoolId}|{registration.Session.UploadSessionId}|{registration.Manifest.ManifestAddress}"
 
     let private metadataKey (metadata: ContentBlockMetadata) = $"{metadata.StoragePoolId}|{metadata.ContentBlockAddress}"
 
@@ -147,7 +158,13 @@ module DedupeIndex =
                             | _ -> ()
                         | _ -> ()
 
-            Some { Session = registration.Session; ManifestAddress = registration.Manifest.ManifestAddress; Blocks = blocks.ToArray() }
+            Some
+                {
+                    StoragePoolId = registration.StoragePoolId
+                    Session = registration.Session
+                    ManifestAddress = registration.Manifest.ManifestAddress
+                    Blocks = blocks.ToArray()
+                }
 
     let private rangeEnd (range: ContentBlockMetadataRange) =
         if range.OrdinalCount > Int32.MaxValue - range.OrdinalStart then
@@ -240,7 +257,7 @@ module DedupeIndex =
         else
             sources |> Array.collect recordsAfterFinalize
 
-    let private isSameCandidateWindow left right =
+    let private isSameCandidateWindow (left: DedupeIndexRecord) (right: DedupeIndexRecord) =
         left.StoragePoolId = right.StoragePoolId
         && left.ManifestAddress = right.ManifestAddress
         && left.ContentBlockAddress = right.ContentBlockAddress
@@ -263,6 +280,13 @@ module DedupeIndex =
 
                 records[recordKey record] <- record
 
+    let private removeRecordsForMetadataBlock storagePoolId contentBlockAddress metadataVersion =
+        for existing in records.Values do
+            if existing.StoragePoolId = storagePoolId
+               && existing.ContentBlockAddress = contentBlockAddress
+               && existing.MetadataVersion <= metadataVersion then
+                records.TryRemove(recordKey existing) |> ignore
+
     let replaceAll (newRecords: DedupeIndexRecord array) =
         records.Clear()
         writeRecords newRecords
@@ -273,17 +297,20 @@ module DedupeIndex =
 
         newRecords
 
-    let private runtimeRegistrationContainsBlock contentBlockAddress (registration: RuntimeFinalizedManifestRegistration) =
-        registration.Blocks
-        |> Array.exists (fun block -> block.Address = contentBlockAddress)
+    let private runtimeRegistrationMatchesMetadata (metadata: ContentBlockMetadata) (registration: RuntimeFinalizedManifestRegistration) =
+        registration.StoragePoolId = metadata.StoragePoolId
+        && (registration.Blocks
+            |> Array.exists (fun block -> block.Address = metadata.ContentBlockAddress))
 
-    let private metadataExistsForBlock contentBlockAddress =
+    let private metadataExistsForBlock storagePoolId contentBlockAddress =
         metadataRecords.Values
-        |> Seq.exists (fun metadata -> metadata.ContentBlockAddress = contentBlockAddress)
+        |> Seq.exists (fun metadata ->
+            metadata.StoragePoolId = storagePoolId
+            && metadata.ContentBlockAddress = contentBlockAddress)
 
     let private runtimeRegistrationIsFullyPublished registration =
         registration.Blocks
-        |> Array.forall (fun block -> metadataExistsForBlock block.Address)
+        |> Array.forall (fun block -> metadataExistsForBlock registration.StoragePoolId block.Address)
 
     let private removeRuntimeRegistrationIfFullyPublished (key: string) (registration: RuntimeFinalizedManifestRegistration) =
         if runtimeRegistrationIsFullyPublished registration then
@@ -295,13 +322,15 @@ module DedupeIndex =
     let private writeForRegistrationWithMetadata (registration: RuntimeFinalizedManifestRegistration) (metadata: ContentBlockMetadata) =
         let output = ResizeArray<DedupeIndexRecord>()
 
+        removeRecordsForMetadataBlock registration.StoragePoolId metadata.ContentBlockAddress metadata.MetadataVersion
+
         if not (isNull metadata.Ranges) then
             for block in registration.Blocks do
                 if block.Address = metadata.ContentBlockAddress then
                     for range in metadata.Ranges do
                         match
                             tryCreateRecordFromChunkAddresses
-                                metadata.StoragePoolId
+                                registration.StoragePoolId
                                 registration.ManifestAddress
                                 block.Address
                                 metadata
@@ -323,10 +352,11 @@ module DedupeIndex =
             Array.empty
         else
             metadataRecords[metadataKey metadata] <- metadata
+            removeRecordsForMetadataBlock metadata.StoragePoolId metadata.ContentBlockAddress metadata.MetadataVersion
 
             let matchingRegistrations =
                 finalizedManifests
-                |> Seq.filter (fun kvp -> runtimeRegistrationContainsBlock metadata.ContentBlockAddress kvp.Value)
+                |> Seq.filter (fun kvp -> runtimeRegistrationMatchesMetadata metadata kvp.Value)
                 |> Seq.toArray
 
             let newRecords =
@@ -348,7 +378,7 @@ module DedupeIndex =
 
             let newRecords =
                 metadataRecords.Values
-                |> Seq.filter (fun metadata -> runtimeRegistrationContainsBlock metadata.ContentBlockAddress runtimeRegistration)
+                |> Seq.filter (fun metadata -> runtimeRegistrationMatchesMetadata metadata runtimeRegistration)
                 |> Seq.collect (writeForRegistrationWithMetadata runtimeRegistration)
                 |> Seq.toArray
 
