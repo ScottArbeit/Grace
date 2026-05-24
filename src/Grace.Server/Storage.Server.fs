@@ -197,7 +197,9 @@ module Storage =
                         let repositoryActor = Repository.CreateActorProxy organizationId repositoryId correlationId
                         let! repositoryDto = repositoryActor.Get correlationId
                         let storagePoolId = DedupeIndex.storagePoolIdForRepository repositoryDto
-                        let result = DedupeIndex.discover storagePoolId keyChunkAddresses (getCurrentInstant ()) (DedupeIndex.snapshot ())
+                        let dedupeIndexActor = DedupeIndexActor.CreateActorProxy correlationId
+                        let! snapshot = dedupeIndexActor.Snapshot correlationId
+                        let result = DedupeIndex.discover storagePoolId keyChunkAddresses (getCurrentInstant ()) snapshot
 
                         return!
                             context

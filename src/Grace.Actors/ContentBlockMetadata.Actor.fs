@@ -375,8 +375,9 @@ module ContentBlockMetadata =
                     | Ok decision ->
                         if not decision.Events.IsEmpty then do! this.ApplyEvents decision.Events
 
-                        DedupeIndex.writeAfterAuthoritativeMetadata decision.Metadata
-                        |> ignore
+                        let dedupeIndexActor = DedupeIndexActor.CreateActorProxy eventMetadata.CorrelationId
+
+                        do! dedupeIndexActor.WriteAfterAuthoritativeMetadata decision.Metadata eventMetadata.CorrelationId :> Task
 
                         let returnValue =
                             (GraceReturnValue.Create decision eventMetadata.CorrelationId)

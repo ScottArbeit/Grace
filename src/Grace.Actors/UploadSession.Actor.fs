@@ -779,14 +779,18 @@ module UploadSession =
                                     (ReminderState.UploadSessionPhysicalDeletion reminderState)
                                     metadata.CorrelationId
                         | UploadSessionCommand.FinalizeManifest finalize when not decision.WasIdempotentReplay ->
-                            DedupeIndex.registerFinalizedManifest
-                                {
-                                    StoragePoolId = DedupeIndex.storagePoolIdForRepositoryId decision.Session.RepositoryId
-                                    Session = decision.Session
-                                    Manifest = finalize.Manifest
-                                    BlockPayloads = finalize.BlockPayloads
-                                }
-                            |> ignore
+                            let dedupeIndexActor = DedupeIndexActor.CreateActorProxy metadata.CorrelationId
+
+                            do!
+                                dedupeIndexActor.RegisterFinalizedManifest
+                                    {
+                                        StoragePoolId = DedupeIndex.storagePoolIdForRepositoryId decision.Session.RepositoryId
+                                        Session = decision.Session
+                                        Manifest = finalize.Manifest
+                                        BlockPayloads = finalize.BlockPayloads
+                                    }
+                                    metadata.CorrelationId
+                                :> Task
 
                             let reminderState =
                                 createCleanupReminderState

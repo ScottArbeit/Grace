@@ -180,6 +180,9 @@ module Constants =
         let ContentBlockMetadata = "ContentBlockMetadata"
 
         [<Literal>]
+        let DedupeIndex = "DedupeIndex"
+
+        [<Literal>]
         let UploadSession = "UploadSession"
 
         [<Literal>]

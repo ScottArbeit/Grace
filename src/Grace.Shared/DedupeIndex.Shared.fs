@@ -7,7 +7,6 @@ open Grace.Types.Types
 open Grace.Types.UploadSession
 open NodaTime
 open System
-open System.Collections.Concurrent
 open System.Collections.Generic
 open System.Security.Cryptography
 open System.Text
@@ -42,9 +41,9 @@ module DedupeIndex =
             BlockPayloads: FinalizeManifestBlockPayload array
         }
 
-    type private RegisteredContentBlock = { Address: ContentBlockAddress; ChunkAddresses: ChunkAddress array }
+    type RegisteredContentBlock = { Address: ContentBlockAddress; ChunkAddresses: ChunkAddress array }
 
-    type private RuntimeFinalizedManifestRegistration =
+    type RuntimeFinalizedManifestRegistration =
         {
             StoragePoolId: StoragePoolId
             Session: UploadSessionDto
@@ -52,9 +51,17 @@ module DedupeIndex =
             Blocks: RegisteredContentBlock array
         }
 
-    let private records = ConcurrentDictionary<string, DedupeIndexRecord>()
-    let private finalizedManifests = ConcurrentDictionary<string, RuntimeFinalizedManifestRegistration>()
-    let private metadataRecords = ConcurrentDictionary<string, ContentBlockMetadata>()
+    type DedupeIndexState =
+        {
+            Records: DedupeIndexRecord array
+            FinalizedManifests: RuntimeFinalizedManifestRegistration array
+            MetadataRecords: ContentBlockMetadata array
+        }
+
+        static member Empty = { Records = Array.empty; FinalizedManifests = Array.empty; MetadataRecords = Array.empty }
+
+    let private globalGate = obj ()
+    let mutable private globalState = DedupeIndexState.Empty
 
     let discoveryPolicy () : ContentBlockDiscoveryPolicy =
         {
@@ -84,7 +91,64 @@ module DedupeIndex =
     let private finalizedManifestKey (registration: FinalizedManifestRegistration) =
         $"{registration.StoragePoolId}|{registration.Session.UploadSessionId}|{registration.Manifest.ManifestAddress}"
 
+    let private runtimeFinalizedManifestKey (registration: RuntimeFinalizedManifestRegistration) =
+        $"{registration.StoragePoolId}|{registration.Session.UploadSessionId}|{registration.ManifestAddress}"
+
     let private metadataKey (metadata: ContentBlockMetadata) = $"{metadata.StoragePoolId}|{metadata.ContentBlockAddress}"
+
+    let private normalizeState (state: DedupeIndexState) =
+        if isNull (box state) then
+            DedupeIndexState.Empty
+        else
+            {
+                Records = if isNull state.Records then Array.empty else state.Records
+                FinalizedManifests =
+                    if isNull state.FinalizedManifests then
+                        Array.empty
+                    else
+                        state.FinalizedManifests
+                MetadataRecords = if isNull state.MetadataRecords then Array.empty else state.MetadataRecords
+            }
+
+    let private recordsDictionary state =
+        let map = Dictionary<string, DedupeIndexRecord>()
+
+        for record in (normalizeState state).Records do
+            if not (isNull (box record)) then map[recordKey record] <- record
+
+        map
+
+    let private finalizedManifestDictionary state =
+        let map = Dictionary<string, RuntimeFinalizedManifestRegistration>()
+
+        for registration in (normalizeState state).FinalizedManifests do
+            if not (isNull (box registration)) then
+                map[runtimeFinalizedManifestKey registration] <- registration
+
+        map
+
+    let private metadataDictionary state =
+        let map = Dictionary<string, ContentBlockMetadata>()
+
+        for metadata in (normalizeState state).MetadataRecords do
+            if
+                not (isNull (box metadata))
+                && not (String.IsNullOrWhiteSpace metadata.ContentBlockAddress)
+            then
+                map[metadataKey metadata] <- metadata
+
+        map
+
+    let private materializeState
+        (records: Dictionary<string, DedupeIndexRecord>)
+        (finalizedManifests: Dictionary<string, RuntimeFinalizedManifestRegistration>)
+        (metadataRecords: Dictionary<string, ContentBlockMetadata>)
+        =
+        {
+            Records = records.Values |> Seq.toArray
+            FinalizedManifests = finalizedManifests.Values |> Seq.toArray
+            MetadataRecords = metadataRecords.Values |> Seq.toArray
+        }
 
     let private manifestContainsBlock contentBlockAddress (manifest: FileManifest) =
         not (isNull (box manifest))
@@ -264,7 +328,7 @@ module DedupeIndex =
         && left.OrdinalStart = right.OrdinalStart
         && left.OrdinalCount = right.OrdinalCount
 
-    let private writeRecords (newRecords: DedupeIndexRecord array) =
+    let private writeRecords (records: Dictionary<string, DedupeIndexRecord>) (newRecords: DedupeIndexRecord array) =
         for record in newRecords do
             let hasNewerRecord =
                 records.Values
@@ -273,39 +337,39 @@ module DedupeIndex =
                     && existing.MetadataVersion > record.MetadataVersion)
 
             if not hasNewerRecord then
-                for existing in records.Values do
-                    if isSameCandidateWindow existing record
-                       && existing.MetadataVersion <= record.MetadataVersion then
-                        records.TryRemove(recordKey existing) |> ignore
+                records.Values
+                |> Seq.filter (fun existing ->
+                    isSameCandidateWindow existing record
+                    && existing.MetadataVersion <= record.MetadataVersion)
+                |> Seq.map recordKey
+                |> Seq.toArray
+                |> Array.iter (fun key -> records.Remove key |> ignore)
 
                 records[recordKey record] <- record
 
-    let private removeRecordsForMetadataBlock storagePoolId contentBlockAddress metadataVersion =
-        for existing in records.Values do
-            if existing.StoragePoolId = storagePoolId
-               && existing.ContentBlockAddress = contentBlockAddress
-               && existing.MetadataVersion <= metadataVersion then
-                records.TryRemove(recordKey existing) |> ignore
-
-    let replaceAll (newRecords: DedupeIndexRecord array) =
-        records.Clear()
-        writeRecords newRecords
-
-    let writeAfterFinalize (source: FinalizedManifestIndexSource) =
-        let newRecords = recordsAfterFinalize source
-        writeRecords newRecords
-
-        newRecords
+    let private removeRecordsForMetadataBlock (records: Dictionary<string, DedupeIndexRecord>) storagePoolId contentBlockAddress metadataVersion =
+        records.Values
+        |> Seq.filter (fun existing ->
+            existing.StoragePoolId = storagePoolId
+            && existing.ContentBlockAddress = contentBlockAddress
+            && existing.MetadataVersion <= metadataVersion)
+        |> Seq.map recordKey
+        |> Seq.toArray
+        |> Array.iter (fun key -> records.Remove key |> ignore)
 
     let private runtimeRegistrationMatchesMetadata (metadata: ContentBlockMetadata) (registration: RuntimeFinalizedManifestRegistration) =
         registration.StoragePoolId = metadata.StoragePoolId
         && (registration.Blocks
             |> Array.exists (fun block -> block.Address = metadata.ContentBlockAddress))
 
-    let private writeForRegistrationWithMetadata (registration: RuntimeFinalizedManifestRegistration) (metadata: ContentBlockMetadata) =
+    let private writeForRegistrationWithMetadata
+        (records: Dictionary<string, DedupeIndexRecord>)
+        (registration: RuntimeFinalizedManifestRegistration)
+        (metadata: ContentBlockMetadata)
+        =
         let output = ResizeArray<DedupeIndexRecord>()
 
-        removeRecordsForMetadataBlock registration.StoragePoolId metadata.ContentBlockAddress metadata.MetadataVersion
+        removeRecordsForMetadataBlock records registration.StoragePoolId metadata.ContentBlockAddress metadata.MetadataVersion
 
         if not (isNull metadata.Ranges) then
             for block in registration.Blocks do
@@ -324,18 +388,41 @@ module DedupeIndex =
                         | None -> ()
 
         let newRecords = output.ToArray()
-        writeRecords newRecords
+        writeRecords records newRecords
         newRecords
 
-    let writeAfterAuthoritativeMetadata (metadata: ContentBlockMetadata) =
+    let replaceAllInState state (newRecords: DedupeIndexRecord array) =
+        let records = Dictionary<string, DedupeIndexRecord>()
+        writeRecords records newRecords
+
+        let normalized = normalizeState state
+
+        { normalized with Records = records.Values |> Seq.toArray }
+
+    let writeAfterFinalizeInState state (source: FinalizedManifestIndexSource) =
+        let normalized = normalizeState state
+        let records = recordsDictionary normalized
+        let finalizedManifests = finalizedManifestDictionary normalized
+        let metadataRecords = metadataDictionary normalized
+        let newRecords = recordsAfterFinalize source
+        writeRecords records newRecords
+
+        materializeState records finalizedManifests metadataRecords, newRecords
+
+    let writeAfterAuthoritativeMetadataInState state (metadata: ContentBlockMetadata) =
+        let normalized = normalizeState state
+
         if
             isNull (box metadata)
             || String.IsNullOrWhiteSpace metadata.ContentBlockAddress
         then
-            Array.empty
+            normalized, Array.empty
         else
+            let records = recordsDictionary normalized
+            let finalizedManifests = finalizedManifestDictionary normalized
+            let metadataRecords = metadataDictionary normalized
             metadataRecords[metadataKey metadata] <- metadata
-            removeRecordsForMetadataBlock metadata.StoragePoolId metadata.ContentBlockAddress metadata.MetadataVersion
+            removeRecordsForMetadataBlock records metadata.StoragePoolId metadata.ContentBlockAddress metadata.MetadataVersion
 
             let matchingRegistrations =
                 finalizedManifests
@@ -344,27 +431,52 @@ module DedupeIndex =
 
             let newRecords =
                 matchingRegistrations
-                |> Seq.collect (fun kvp -> writeForRegistrationWithMetadata kvp.Value metadata)
+                |> Seq.collect (fun kvp -> writeForRegistrationWithMetadata records kvp.Value metadata)
                 |> Seq.toArray
 
-            newRecords
+            materializeState records finalizedManifests metadataRecords, newRecords
 
-    let registerFinalizedManifest (registration: FinalizedManifestRegistration) =
+    let registerFinalizedManifestInState state (registration: FinalizedManifestRegistration) =
+        let normalized = normalizeState state
+
         match tryCreateRuntimeRegistration registration with
-        | None -> Array.empty
+        | None -> normalized, Array.empty
         | Some runtimeRegistration ->
+            let records = recordsDictionary normalized
+            let finalizedManifests = finalizedManifestDictionary normalized
+            let metadataRecords = metadataDictionary normalized
             let key = finalizedManifestKey registration
             finalizedManifests[key] <- runtimeRegistration
 
             let newRecords =
                 metadataRecords.Values
                 |> Seq.filter (fun metadata -> runtimeRegistrationMatchesMetadata metadata runtimeRegistration)
-                |> Seq.collect (writeForRegistrationWithMetadata runtimeRegistration)
+                |> Seq.collect (writeForRegistrationWithMetadata records runtimeRegistration)
                 |> Seq.toArray
 
-            newRecords
+            materializeState records finalizedManifests metadataRecords, newRecords
 
-    let snapshot () = records.Values |> Seq.toArray
+    let replaceAll (newRecords: DedupeIndexRecord array) = lock globalGate (fun () -> globalState <- replaceAllInState globalState newRecords)
+
+    let writeAfterFinalize (source: FinalizedManifestIndexSource) =
+        lock globalGate (fun () ->
+            let nextState, newRecords = writeAfterFinalizeInState globalState source
+            globalState <- nextState
+            newRecords)
+
+    let writeAfterAuthoritativeMetadata (metadata: ContentBlockMetadata) =
+        lock globalGate (fun () ->
+            let nextState, newRecords = writeAfterAuthoritativeMetadataInState globalState metadata
+            globalState <- nextState
+            newRecords)
+
+    let registerFinalizedManifest (registration: FinalizedManifestRegistration) =
+        lock globalGate (fun () ->
+            let nextState, newRecords = registerFinalizedManifestInState globalState registration
+            globalState <- nextState
+            newRecords)
+
+    let snapshot () = lock globalGate (fun () -> Array.copy (normalizeState globalState).Records)
 
     let private candidateFromRecord matchingKeyChunkCount (record: DedupeIndexRecord) =
         {
