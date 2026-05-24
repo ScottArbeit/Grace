@@ -169,6 +169,13 @@ type UploadSessionActorTests() =
             Assert.Fail($"Expected start to succeed, got {error.Error}.")
             UploadSessionDto.Default, []
 
+    let decisionOrFail message result =
+        match result with
+        | Ok decision -> decision
+        | Error error ->
+            Assert.Fail($"{message}, got {error.Error}.")
+            Unchecked.defaultof<_>
+
     [<Test>]
     member _.StartWithSameOperationIdIsIdempotentReplay() =
         let command = UploadSessionCommand.Start(start "op-start")
@@ -932,6 +939,202 @@ type UploadSessionActorTests() =
         match state with
         | ReminderState.UploadSessionPhysicalDeletion uploadSessionState -> Assert.That(uploadSessionState.OperationId, Is.EqualTo("op-abandon:cleanup"))
         | _ -> Assert.Fail("Expected UploadSessionPhysicalDeletion reminder state.")
+
+    [<Test>]
+    member _.DeletePhysicalStateAfterFinalizePreservesManifestEvidenceAndClearsUploadCoordination() =
+        let fileBytes = Text.Encoding.UTF8.GetBytes("hello world")
+        let block = encodedBlock fileBytes
+        let manifest = manifestFor fileBytes [| block |]
+
+        let startDecision =
+            UploadSessionActor.decideCommand
+                []
+                UploadSessionDto.Default
+                (UploadSessionCommand.Start(startForManifest "op-start" fileBytes))
+                (metadata "corr-start")
+            |> decisionOrFail "Expected start to succeed"
+
+        let intentDecision =
+            UploadSessionActor.decideCommand
+                startDecision.Events
+                startDecision.Session
+                (UploadSessionCommand.RegisterBlockUploadIntent(intentForBlock "op-block-intent" block 0L))
+                (metadata "corr-block-intent")
+            |> decisionOrFail "Expected block upload intent to succeed"
+
+        let intentEvents = startDecision.Events @ intentDecision.Events
+
+        let confirmedDecision =
+            UploadSessionActor.decideCommand
+                intentEvents
+                intentDecision.Session
+                (UploadSessionCommand.ConfirmBlockUploaded(confirm "op-block-confirm" block.Address block.Payload))
+                (metadata "corr-block-confirm")
+            |> decisionOrFail "Expected block upload confirmation to succeed"
+
+        let confirmedEvents = intentEvents @ confirmedDecision.Events
+
+        let finalizedDecision =
+            UploadSessionActor.decideCommand
+                confirmedEvents
+                confirmedDecision.Session
+                (finalize "op-finalize" manifest [| payloadFor block |])
+                (metadata "corr-finalize")
+            |> decisionOrFail "Expected finalize to succeed"
+
+        Assert.That(finalizedDecision.Session.FinalizedManifestAddress, Is.EqualTo(Some manifest.ManifestAddress))
+        Assert.That(finalizedDecision.Session.BlockUploadIntents, Is.Not.Empty)
+        Assert.That(finalizedDecision.Session.ConfirmedBlockUploads, Is.Not.Empty)
+        Assert.That(finalizedDecision.Session.CleanupReminderOperationId, Is.EqualTo(Some "op-finalize:cleanup"))
+
+        let finalizedEvents = confirmedEvents @ finalizedDecision.Events
+
+        let cleanupDecision =
+            UploadSessionActor.decideCommand
+                finalizedEvents
+                finalizedDecision.Session
+                (UploadSessionCommand.DeletePhysicalState "op-finalize:cleanup")
+                (metadata "corr-cleanup")
+            |> decisionOrFail "Expected cleanup to succeed"
+
+        Assert.That(cleanupDecision.Session.LifecycleState, Is.EqualTo(UploadSessionLifecycleState.StateDeleted))
+        Assert.That(cleanupDecision.Session.UploadSessionId, Is.EqualTo(sessionId))
+        Assert.That(cleanupDecision.Session.RepositoryId, Is.EqualTo(repositoryId))
+        Assert.That(cleanupDecision.Session.FinalizedManifestAddress, Is.EqualTo(Some manifest.ManifestAddress))
+        Assert.That(cleanupDecision.Session.CompletedAt, Is.EqualTo(finalizedDecision.Session.CompletedAt))
+        Assert.That(cleanupDecision.Session.BlockUploadIntents, Is.Empty)
+        Assert.That(cleanupDecision.Session.ConfirmedBlockUploads, Is.Empty)
+        Assert.That(cleanupDecision.Session.DedupeDiscovery, Is.EqualTo(None))
+        Assert.That(cleanupDecision.Session.ClaimedReuseRanges, Is.Empty)
+        Assert.That(cleanupDecision.Session.CleanupReminderScheduledAt, Is.EqualTo(None))
+        Assert.That(cleanupDecision.Session.CleanupReminderOperationId, Is.EqualTo(None))
+
+    [<Test>]
+    member _.DeletePhysicalStateAfterAbandonReleasesTemporaryReuseClaims() =
+        let startedDto, startEvents = startedSession ()
+
+        let issuedDecision =
+            UploadSessionActor.decideCommand startEvents startedDto (discovery "op-discovery" [| reuseHint |]) (metadata "corr-discovery")
+            |> decisionOrFail "Expected discovery to succeed"
+
+        let discoveryEvents = startEvents @ issuedDecision.Events
+
+        let claimedDecision =
+            UploadSessionActor.decideCommand
+                discoveryEvents
+                issuedDecision.Session
+                (claim "op-claim" reuseHint (reuseMetadata 7L [| reusableMetadataRange |]))
+                (metadata "corr-claim")
+            |> decisionOrFail "Expected claim to succeed"
+
+        let claimedEvents = discoveryEvents @ claimedDecision.Events
+
+        let abandonedDecision =
+            UploadSessionActor.decideCommand claimedEvents claimedDecision.Session (UploadSessionCommand.Abandon "op-abandon") (metadata "corr-abandon")
+            |> decisionOrFail "Expected abandon to succeed"
+
+        Assert.That(abandonedDecision.Session.LifecycleState, Is.EqualTo(UploadSessionLifecycleState.RetentionPending))
+        Assert.That(abandonedDecision.Session.DedupeDiscovery.IsSome, Is.True)
+        Assert.That(abandonedDecision.Session.ClaimedReuseRanges, Is.Not.Empty)
+        Assert.That(abandonedDecision.Session.CleanupReminderOperationId, Is.EqualTo(Some "op-abandon:cleanup"))
+
+        let abandonedEvents = claimedEvents @ abandonedDecision.Events
+
+        let cleanupDecision =
+            UploadSessionActor.decideCommand
+                abandonedEvents
+                abandonedDecision.Session
+                (UploadSessionCommand.DeletePhysicalState "op-abandon:cleanup")
+                (metadata "corr-cleanup")
+            |> decisionOrFail "Expected cleanup to succeed"
+
+        Assert.That(cleanupDecision.Session.LifecycleState, Is.EqualTo(UploadSessionLifecycleState.StateDeleted))
+        Assert.That(cleanupDecision.Session.FinalizedManifestAddress, Is.EqualTo(None))
+        Assert.That(cleanupDecision.Session.DedupeDiscovery, Is.EqualTo(None))
+        Assert.That(cleanupDecision.Session.ClaimedReuseRanges, Is.Empty)
+        Assert.That(cleanupDecision.Session.BlockUploadIntents, Is.Empty)
+        Assert.That(cleanupDecision.Session.ConfirmedBlockUploads, Is.Empty)
+        Assert.That(cleanupDecision.Session.CleanupReminderScheduledAt, Is.EqualTo(None))
+        Assert.That(cleanupDecision.Session.CleanupReminderOperationId, Is.EqualTo(None))
+
+    [<Test>]
+    member _.PhysicalCleanupCompactsPersistedEventsToTombstoneAndDropsCoordinationPayloads() =
+        let block = encodedBlock (Text.Encoding.UTF8.GetBytes("hello world"))
+        let manifestAddress = ManifestAddress "manifest-blake3-final"
+        let cleanupReminderTime = timestamp.Plus(Duration.FromMinutes(5L))
+
+        let blockIntent =
+            {
+                ContentBlockAddress = block.Address
+                LogicalOffset = 0L
+                LogicalLength = 11L
+                ExpectedPayloadLength = block.Payload.LongLength
+                RegisteredAt = timestamp
+            }
+
+        let confirmedBlock =
+            {
+                ContentBlockAddress = block.Address
+                PayloadLength = block.Payload.LongLength
+                StoragePlacement = { ObjectKey = $"cas/content-blocks/{block.Address}"; ETag = Some "etag-confirmed" }
+                Ranges =
+                    [|
+                        { OrdinalStart = 0; OrdinalCount = 1; ActiveManifestCount = 0; PhysicalOffset = 0L; PhysicalLength = 11L }
+                    |]
+                ConfirmedAt = timestamp
+            }
+
+        let discoverySnapshot: DedupeDiscoverySnapshot =
+            { OperationId = "op-discovery"; ExpiresAt = discoveryExpiresAt; MinimumReuseRunLength = minimumReuseRunLength; Hints = [| reuseHint |] }
+
+        let claimedRange =
+            {
+                StoragePoolId = storagePoolId
+                ContentBlockAddress = reuseBlockAddress
+                OrdinalStart = 0
+                OrdinalCount = 4
+                PhysicalOffset = 0L
+                PhysicalLength = 4096L
+                MetadataVersion = 7L
+                ClaimedAt = timestamp
+            }
+
+        let eventStream =
+            [
+                { Event = UploadSessionEventType.Started(start "op-start"); Metadata = metadata "corr-start" }
+                { Event = UploadSessionEventType.BlockUploadIntentRegistered("op-intent", blockIntent); Metadata = metadata "corr-intent" }
+                { Event = UploadSessionEventType.BlockUploadConfirmed("op-confirm", confirmedBlock); Metadata = metadata "corr-confirm" }
+                { Event = UploadSessionEventType.DedupeDiscoveryIssued("op-discovery", discoverySnapshot); Metadata = metadata "corr-discovery" }
+                { Event = UploadSessionEventType.ReuseRangesClaimed("op-claim", [| claimedRange |]); Metadata = metadata "corr-claim" }
+                { Event = UploadSessionEventType.Finalized("op-finalize", manifestAddress); Metadata = metadata "corr-finalize" }
+                { Event = UploadSessionEventType.CleanupReminderScheduled("op-finalize:cleanup", cleanupReminderTime); Metadata = metadata "corr-retention" }
+                { Event = UploadSessionEventType.PhysicalStateDeleted "op-finalize:cleanup"; Metadata = metadata "corr-cleanup" }
+            ]
+
+        let compacted = UploadSessionActor.compactEventsForPhysicalStateCleanup eventStream
+
+        Assert.That(compacted.Length, Is.EqualTo(4))
+
+        Assert.That(
+            compacted
+            |> List.exists (fun uploadSessionEvent ->
+                match uploadSessionEvent.Event with
+                | UploadSessionEventType.BlockUploadIntentRegistered _
+                | UploadSessionEventType.BlockUploadConfirmed _
+                | UploadSessionEventType.DedupeDiscoveryIssued _
+                | UploadSessionEventType.ReuseRangesClaimed _ -> true
+                | _ -> false),
+            Is.False
+        )
+
+        let rehydrated = applyAll compacted UploadSessionDto.Default
+
+        Assert.That(rehydrated.LifecycleState, Is.EqualTo(UploadSessionLifecycleState.StateDeleted))
+        Assert.That(rehydrated.FinalizedManifestAddress, Is.EqualTo(Some manifestAddress))
+        Assert.That(rehydrated.BlockUploadIntents, Is.Empty)
+        Assert.That(rehydrated.ConfirmedBlockUploads, Is.Empty)
+        Assert.That(rehydrated.DedupeDiscovery, Is.EqualTo(None))
+        Assert.That(rehydrated.ClaimedReuseRanges, Is.Empty)
 
     [<Test>]
     member _.DeletePhysicalStateRetryAfterStateClearedDrainsAsIdempotentReplay() =

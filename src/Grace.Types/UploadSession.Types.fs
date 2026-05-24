@@ -263,7 +263,16 @@ module UploadSession =
                     LastOperationId = Some operationId
                 }
             | UploadSessionEventType.PhysicalStateDeleted operationId ->
-                { current with LifecycleState = UploadSessionLifecycleState.StateDeleted; LastOperationId = Some operationId }
+                { current with
+                    LifecycleState = UploadSessionLifecycleState.StateDeleted
+                    BlockUploadIntents = Array.empty
+                    ConfirmedBlockUploads = Array.empty
+                    DedupeDiscovery = None
+                    ClaimedReuseRanges = Array.empty
+                    CleanupReminderScheduledAt = None
+                    CleanupReminderOperationId = None
+                    LastOperationId = Some operationId
+                }
             | UploadSessionEventType.BlockUploadIntentRegistered (operationId, intent) ->
                 { current with
                     LifecycleState = UploadSessionLifecycleState.UploadingBlocks
