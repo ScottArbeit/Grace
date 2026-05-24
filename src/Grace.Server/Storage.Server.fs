@@ -32,16 +32,50 @@ open System.Diagnostics
 open System.Reflection.Metadata
 open System.Net.Http.Json
 
+module StorageParameterContracts = Grace.Shared.Parameters.Storage
+
 module Storage =
 
     let log = ApplicationContext.loggerFactory.CreateLogger("Storage.Server")
+
+    let private normalizeWholeFileContentReference (fileVersion: FileVersion) =
+        if isNull (box fileVersion.ContentReference) then
+            FileContentReference.WholeFileContent
+        else
+            match fileVersion.ContentReference.ReferenceType with
+            | FileContentReferenceType.WholeFileContent -> fileVersion.ContentReference
+            | FileContentReferenceType.FileManifest ->
+                invalidOp "FileManifest content references are not supported by the current storage compatibility endpoints."
+            | unsupported -> invalidOp $"Unsupported file content reference type: {unsupported}."
+
+    let private getWholeFileContentObjectKey (fileVersion: FileVersion) =
+        normalizeWholeFileContentReference fileVersion
+        |> ignore
+
+        StorageKeys.wholeFileContentObjectKey fileVersion
+
+    let private resolveStorageIds (graceIds: GraceIds) (parameters: StorageParameters) =
+        let organizationId =
+            if graceIds.OrganizationId <> OrganizationId.Empty then
+                graceIds.OrganizationId
+            else
+                OrganizationId.Parse parameters.OrganizationId
+
+        let repositoryId =
+            if graceIds.RepositoryId <> RepositoryId.Empty then
+                graceIds.RepositoryId
+            else
+                RepositoryId.Parse parameters.RepositoryId
+
+        organizationId, repositoryId
 
     /// Gets the metadata stored in the object storage provider for the specified file.
     let getFileMetadata (repositoryDto: RepositoryDto) (fileVersion: FileVersion) (context: HttpContext) =
         task {
             match repositoryDto.ObjectStorageProvider with
             | AzureBlobStorage ->
-                let! blobClient = getAzureBlobClientForFileVersion repositoryDto fileVersion (getCorrelationId context)
+                let blobName = getWholeFileContentObjectKey fileVersion
+                let! blobClient = getAzureBlobClient repositoryDto blobName (getCorrelationId context)
                 let! azureResponse = blobClient.GetPropertiesAsync()
                 let blobProperties = azureResponse.Value
                 return Ok(blobProperties.Metadata :?> IReadOnlyDictionary<string, string>)
@@ -64,10 +98,12 @@ module Storage =
 
                 try
                     let! parameters = context.BindJsonAsync<GetDownloadUriParameters>()
-                    let repositoryActor = Repository.CreateActorProxy graceIds.OrganizationId graceIds.RepositoryId correlationId
+                    let organizationId, repositoryId = resolveStorageIds graceIds parameters
+                    let repositoryActor = Repository.CreateActorProxy organizationId repositoryId correlationId
                     let! repositoryDto = repositoryActor.Get correlationId
 
-                    let! downloadUri = getUriWithReadSharedAccessSignatureForFileVersion repositoryDto parameters.FileVersion correlationId
+                    let blobName = getWholeFileContentObjectKey parameters.FileVersion
+                    let! downloadUri = getUriWithReadSharedAccessSignature repositoryDto blobName correlationId
                     context.SetStatusCode StatusCodes.Status200OK
                     //log.LogTrace("fileVersion: {fileVersion.RelativePath}; downloadUri: {downloadUri}", [| parameters.FileVersion.RelativePath, downloadUri |])
                     return! context.WriteStringAsync $"{downloadUri}"
@@ -87,11 +123,13 @@ module Storage =
 
                 try
                     let! parameters = context.BindJsonAsync<GetUploadUriParameters>()
-                    let repositoryActor = Repository.CreateActorProxy graceIds.OrganizationId graceIds.RepositoryId correlationId
+                    let organizationId, repositoryId = resolveStorageIds graceIds parameters
+                    let repositoryActor = Repository.CreateActorProxy organizationId repositoryId correlationId
                     let! repositoryDto = repositoryActor.Get correlationId
 
                     for fileVersion in parameters.FileVersions do
-                        let! uploadUri = getUriWithWriteSharedAccessSignatureForFileVersion repositoryDto fileVersion correlationId
+                        let blobName = getWholeFileContentObjectKey fileVersion
+                        let! uploadUri = getUriWithWriteSharedAccessSignature repositoryDto blobName correlationId
                         uris.Add(fileVersion.RelativePath, uploadUri)
 
                     if log.IsEnabled(LogLevel.Debug) then
@@ -130,10 +168,11 @@ module Storage =
                     |> ignore
 
                     if parameters.FileVersions.Length > 0 then
-                        let repositoryActor = Repository.CreateActorProxy graceIds.OrganizationId graceIds.RepositoryId correlationId
+                        let organizationId, repositoryId = resolveStorageIds graceIds parameters
+                        let repositoryActor = Repository.CreateActorProxy organizationId repositoryId correlationId
                         let! repositoryDto = repositoryActor.Get correlationId
 
-                        let uploadMetadata = ConcurrentQueue<UploadMetadata>()
+                        let uploadMetadata = ConcurrentQueue<StorageParameterContracts.UploadMetadata>()
 
                         do!
                             Parallel.ForEachAsync(
@@ -145,16 +184,20 @@ module Storage =
                                             //let! fileExists = fileExists repositoryDto fileVersion context
 
                                             //if not <| fileExists then
-                                            let! blobUriWithSasToken =
-                                                getUriWithWriteSharedAccessSignatureForFileVersion repositoryDto fileVersion correlationId
+                                            let contentReference = normalizeWholeFileContentReference fileVersion
+                                            let blobName = getWholeFileContentObjectKey fileVersion
 
-                                            uploadMetadata.Enqueue(
+                                            let! blobUriWithSasToken = getUriWithWriteSharedAccessSignature repositoryDto blobName correlationId
+
+                                            let metadata: StorageParameterContracts.UploadMetadata =
                                                 {
                                                     RelativePath = fileVersion.RelativePath
                                                     BlobUriWithSasToken = blobUriWithSasToken
                                                     Sha256Hash = fileVersion.Sha256Hash
+                                                    ContentReference = contentReference
                                                 }
-                                            )
+
+                                            uploadMetadata.Enqueue(metadata)
                                         }
                                     ))
                             )
