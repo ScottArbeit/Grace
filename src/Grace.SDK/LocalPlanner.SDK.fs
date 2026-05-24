@@ -136,7 +136,7 @@ module LocalPlanner =
             if contentBlocks.Length = 0 then
                 None
             else
-                Some(ContentAddress.computeManifestAddress expectedSize contentBlocks)
+                Some(ContentAddress.computeManifestAddress options.ChunkingSuiteId fileContentHash expectedSize contentBlocks)
 
         let keyChunks =
             chunks
