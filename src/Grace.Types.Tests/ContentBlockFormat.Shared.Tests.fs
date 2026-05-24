@@ -4,6 +4,7 @@ open Grace.Shared
 open Grace.Types.Types
 open NUnit.Framework
 open System
+open System.Buffers.Binary
 open System.Text
 
 [<Parallelizable(ParallelScope.All)>]
@@ -16,6 +17,18 @@ type ContentBlockFormatSharedTests() =
         | Error error ->
             Assert.Fail($"Expected Ok but got {error}.")
             Unchecked.defaultof<'T>
+
+    static member private RehashTrailerFooter(payload: byte array) =
+        let footerStart = payload.Length - ContentBlockFormat.FooterLength
+        let trailerLength = BinaryPrimitives.ReadUInt32LittleEndian(ReadOnlySpan<byte>(payload, footerStart, 4))
+        let trailerStart = footerStart - int trailerLength
+        let trailer = payload[trailerStart .. footerStart - 1]
+
+        let trailerHash =
+            ContentAddress.computeBlake3Hex trailer
+            |> Convert.FromHexString
+
+        Array.Copy(trailerHash, 0, payload, footerStart + 4, trailerHash.Length)
 
     [<Test>]
     member _.PayloadRoundtripsThroughCompactV1Format() =
@@ -74,6 +87,29 @@ type ContentBlockFormatSharedTests() =
         match ContentBlockFormat.decode corruptedPayload with
         | Error (ContentBlockFormat.ChunkAddressMismatch (0, _, _)) -> Assert.Pass()
         | result -> Assert.Fail($"Expected ChunkAddressMismatch for chunk 0 but got {result}.")
+
+    [<Test>]
+    member _.OversizedTrailerChunkCountIsRejectedWithoutThrowing() =
+        let encoded =
+            ContentBlockFormat.encode [ ContentBlockFormat.createChunk 0L (ContentBlockFormatSharedTests.Bytes "payload") ]
+            |> ContentBlockFormatSharedTests.ExpectOk
+
+        let corruptedPayload = Array.copy encoded.Payload
+
+        let footerStart =
+            corruptedPayload.Length
+            - ContentBlockFormat.FooterLength
+
+        let trailerLength = BinaryPrimitives.ReadUInt32LittleEndian(ReadOnlySpan<byte>(corruptedPayload, footerStart, 4))
+        let trailerStart = footerStart - int trailerLength
+        let chunkCountOffset = trailerStart + 12
+
+        BinaryPrimitives.WriteUInt32LittleEndian(Span<byte>(corruptedPayload, chunkCountOffset, 4), UInt32.MaxValue)
+        ContentBlockFormatSharedTests.RehashTrailerFooter corruptedPayload
+
+        match ContentBlockFormat.decode corruptedPayload with
+        | Error ContentBlockFormat.InvalidTrailer -> Assert.Pass()
+        | result -> Assert.Fail($"Expected InvalidTrailer but got {result}.")
 
     [<Test>]
     member _.PhysicalOffsetsDoNotChangeContentBlockAddress() =

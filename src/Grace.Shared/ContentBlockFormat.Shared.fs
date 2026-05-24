@@ -200,28 +200,29 @@ module ContentBlockFormat =
                     Error InvalidTrailer
                 elif chunkCount = 0u then
                     Error EmptyBlock
-                elif chunkCount > uint32 Int32.MaxValue then
-                    Error InvalidTrailer
                 else
-                    let expectedLength =
-                        TrailerHeaderLength
-                        + (int chunkCount * ChunkRecordLength)
+                    let recordBytes = trailer.Length - TrailerHeaderLength
 
-                    if trailer.Length <> expectedLength then
+                    if recordBytes % ChunkRecordLength <> 0 then
                         Error InvalidTrailer
                     else
-                        let records =
-                            [|
-                                for index in 0 .. int chunkCount - 1 do
-                                    let offset = TrailerHeaderLength + (index * ChunkRecordLength)
-                                    let physicalOffset = readInt64 trailer offset
-                                    let length = readUInt32 trailer (offset + 8)
-                                    let addressBytes = copyRange trailer (offset + 12) AddressLength
+                        let expectedChunkCount = recordBytes / ChunkRecordLength
 
-                                    yield physicalOffset, length, bytesToChunkAddress addressBytes
-                            |]
+                        if chunkCount <> uint32 expectedChunkCount then
+                            Error InvalidTrailer
+                        else
+                            let records =
+                                [|
+                                    for index in 0 .. int chunkCount - 1 do
+                                        let offset = TrailerHeaderLength + (index * ChunkRecordLength)
+                                        let physicalOffset = readInt64 trailer offset
+                                        let length = readUInt32 trailer (offset + 8)
+                                        let addressBytes = copyRange trailer (offset + 12) AddressLength
 
-                        Ok records
+                                        yield physicalOffset, length, bytesToChunkAddress addressBytes
+                                |]
+
+                            Ok records
 
     let decode (payload: byte array) =
         if isNull payload then
