@@ -71,24 +71,6 @@ module Storage =
 
         organizationId, repositoryId
 
-    let private createDiscoveryPolicy () : StorageParameterContracts.ContentBlockDiscoveryPolicy =
-        {
-            MaxKeyChunkAddresses = StorageParameterContracts.MaxDiscoveryKeyChunkAddresses
-            PositiveCandidatesEnabled = false
-            EmptyResponseMeansAbsent = false
-            IsAuthoritative = false
-        }
-
-    let private createEmptyDiscoveryResult requestedKeyChunkCount : StorageParameterContracts.DiscoverContentBlocksResult =
-        {
-            RequestedKeyChunkCount = requestedKeyChunkCount
-            AcceptedKeyChunkCount = requestedKeyChunkCount
-            Policy = createDiscoveryPolicy ()
-            CandidateContentBlocks = Array.empty
-            IsPartial = true
-            Message = "No positive ContentBlock candidates are returned yet. Empty discovery results are non-authoritative and do not prove absence."
-        }
-
     /// Gets the metadata stored in the object storage provider for the specified file.
     let getFileMetadata (repositoryDto: RepositoryDto) (fileVersion: FileVersion) (context: HttpContext) =
         task {
@@ -210,9 +192,16 @@ module Storage =
                                     correlationId
                             )
                     else
+                        let graceIds = getGraceIds context
+                        let organizationId, repositoryId = resolveStorageIds graceIds parameters
+                        let repositoryActor = Repository.CreateActorProxy organizationId repositoryId correlationId
+                        let! repositoryDto = repositoryActor.Get correlationId
+                        let storagePoolId = DedupeIndex.storagePoolIdForRepository repositoryDto
+                        let result = DedupeIndex.discover storagePoolId keyChunkAddresses (getCurrentInstant ()) (DedupeIndex.snapshot ())
+
                         return!
                             context
-                            |> result200Ok (GraceReturnValue.Create (createEmptyDiscoveryResult keyChunkAddresses.Length) correlationId)
+                            |> result200Ok (GraceReturnValue.Create result correlationId)
                 with
                 | ex ->
                     logToConsole $"Exception in DiscoverContentBlocks: {(ExceptionResponse.Create ex)}"
