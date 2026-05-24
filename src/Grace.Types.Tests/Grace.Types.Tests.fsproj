@@ -16,6 +16,7 @@
     <Compile Include="PromotionSet.Types.Tests.fs" />
     <Compile Include="Validation.Types.Tests.fs" />
     <Compile Include="Types.Types.Tests.fs" />
+    <Compile Include="StorageKeys.Shared.Tests.fs" />
     <Compile Include="Queue.Types.Tests.fs" />
     <Compile Include="WorkItem.Types.Tests.fs" />
     <Compile Include="Program.fs" />
