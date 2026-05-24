@@ -276,11 +276,10 @@ module UploadSession =
 
                     match decideCommand state.State uploadSessionDto command metadata with
                     | Ok decision ->
-                        do! this.ApplyEvents decision.Events
+                        if not decision.Events.IsEmpty then do! this.ApplyEvents decision.Events
 
                         match command with
-                        | UploadSessionCommand.Abandon operationId
-                        | UploadSessionCommand.Expire operationId ->
+                        | UploadSessionCommand.Abandon operationId when not decision.WasIdempotentReplay ->
                             let reminderState =
                                 createCleanupReminderState decision.Session.UploadSessionId decision.Session.RepositoryId operationId metadata.CorrelationId
 
@@ -291,7 +290,18 @@ module UploadSession =
                                     DefaultPhysicalDeletionReminderDuration
                                     (ReminderState.UploadSessionPhysicalDeletion reminderState)
                                     metadata.CorrelationId
-                        | UploadSessionCommand.DeletePhysicalState _ ->
+                        | UploadSessionCommand.Expire operationId when not decision.WasIdempotentReplay ->
+                            let reminderState =
+                                createCleanupReminderState decision.Session.UploadSessionId decision.Session.RepositoryId operationId metadata.CorrelationId
+
+                            do!
+                                (this :> IGraceReminderWithGuidKey)
+                                    .ScheduleReminderAsync
+                                    ReminderTypes.PhysicalDeletion
+                                    DefaultPhysicalDeletionReminderDuration
+                                    (ReminderState.UploadSessionPhysicalDeletion reminderState)
+                                    metadata.CorrelationId
+                        | UploadSessionCommand.DeletePhysicalState _ when not decision.WasIdempotentReplay ->
                             do! state.ClearStateAsync()
                             this.DeactivateOnIdle()
                         | _ -> ()

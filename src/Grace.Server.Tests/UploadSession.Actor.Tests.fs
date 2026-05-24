@@ -86,6 +86,35 @@ type UploadSessionActorTests() =
         | Error error -> Assert.Fail($"Expected abandon to succeed, got {error.Error}.")
 
     [<Test>]
+    member _.AbandonWithSameOperationIdIsIdempotentReplayWithoutCleanupEvent() =
+        let startDecision = UploadSessionActor.decideCommand [] UploadSessionDto.Default (UploadSessionCommand.Start(start "op-start")) (metadata "corr-start")
+
+        let startedDto, startEvents =
+            match startDecision with
+            | Ok decision -> applyAll decision.Events UploadSessionDto.Default, decision.Events
+            | Error error ->
+                Assert.Fail($"Expected start to succeed, got {error.Error}.")
+                UploadSessionDto.Default, []
+
+        let abandon = UploadSessionActor.decideCommand startEvents startedDto (UploadSessionCommand.Abandon "op-abandon") (metadata "corr-abandon")
+
+        let retainedDto, retainedEvents =
+            match abandon with
+            | Ok decision -> decision.Session, startEvents @ decision.Events
+            | Error error ->
+                Assert.Fail($"Expected abandon to succeed, got {error.Error}.")
+                UploadSessionDto.Default, []
+
+        let replay = UploadSessionActor.decideCommand retainedEvents retainedDto (UploadSessionCommand.Abandon "op-abandon") (metadata "corr-abandon-retry")
+
+        match replay with
+        | Ok replayDecision ->
+            Assert.That(replayDecision.WasIdempotentReplay, Is.True)
+            Assert.That(replayDecision.Events, Is.Empty)
+            Assert.That(replayDecision.Session.CleanupReminderOperationId, Is.EqualTo(Some "op-abandon:cleanup"))
+        | Error error -> Assert.Fail($"Expected abandon replay to succeed, got {error.Error}.")
+
+    [<Test>]
     member _.ExpireMovesStartedSessionToRetentionPendingAndSchedulesCleanup() =
         let startDecision = UploadSessionActor.decideCommand [] UploadSessionDto.Default (UploadSessionCommand.Start(start "op-start")) (metadata "corr-start")
 
