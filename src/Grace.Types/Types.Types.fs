@@ -246,7 +246,7 @@ module Types =
         static member Default = ContentBlock.Create(String.Empty, 0L, 0L)
 
     /// A file manifest is an inert CAS contract shell for content assembled from one or more content blocks.
-    [<CLIMutable; MessagePackObject; GenerateSerializer>]
+    [<CLIMutable; MessagePackObject; GenerateSerializer; CustomEquality; NoComparison>]
     type FileManifest =
         {
             [<Key(0)>]
@@ -263,6 +263,27 @@ module Types =
             { Class = "FileManifest"; ManifestAddress = manifestAddress; Size = size; Blocks = List<ContentBlock>(blocks) }
 
         static member Default = FileManifest.Create(String.Empty, 0L, [])
+
+        override this.Equals(other: obj) =
+            match other with
+            | :? FileManifest as otherManifest ->
+                this.Class = otherManifest.Class
+                && this.ManifestAddress = otherManifest.ManifestAddress
+                && this.Size = otherManifest.Size
+                && this.Blocks.Count = otherManifest.Blocks.Count
+                && Seq.forall2 (=) this.Blocks otherManifest.Blocks
+            | _ -> false
+
+        override this.GetHashCode() =
+            let mutable hashCode = HashCode()
+            hashCode.Add(this.Class)
+            hashCode.Add(this.ManifestAddress)
+            hashCode.Add(this.Size)
+
+            for block in this.Blocks do
+                hashCode.Add(block)
+
+            hashCode.ToHashCode()
 
     /// Identifies the shape of a FileVersion content reference.
     type FileContentReferenceType =
@@ -350,7 +371,7 @@ module Types =
         [<IgnoreMember>]
         member this.RelativeDirectory = getRelativeDirectory $"{this.RelativePath}" ""
 
-        override this.Equals(other) =
+        override this.Equals(other: obj) =
             match other with
             | :? FileVersion as otherFileVersion ->
                 this.Class = otherFileVersion.Class

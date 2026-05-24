@@ -82,6 +82,7 @@ type TypesTypesTests() =
             )
 
         let fileVersion = FileVersion.Create "src/large.bin" "abc123" "https://example.test/blob" true 4096L
+        fileVersion.CreatedAt <- NodaTime.Instant.FromUtc(2025, 1, 1, 0, 0)
         fileVersion.ContentReference <- FileContentReference.FileManifest manifest
 
         let jsonRoundTrip = deserialize<FileVersion> (serialize fileVersion)
@@ -90,3 +91,16 @@ type TypesTypesTests() =
 
         Assert.That(jsonRoundTrip.ContentReference, Is.EqualTo(FileContentReference.FileManifest manifest))
         Assert.That(messagePackRoundTrip.ContentReference, Is.EqualTo(FileContentReference.FileManifest manifest))
+        Assert.That(jsonRoundTrip.ContentReference, Is.EqualTo(fileVersion.ContentReference))
+        Assert.That(jsonRoundTrip.ContentReference = fileVersion.ContentReference, Is.True)
+        Assert.That(jsonRoundTrip.Class, Is.EqualTo(fileVersion.Class))
+        Assert.That(jsonRoundTrip.RelativePath, Is.EqualTo(fileVersion.RelativePath))
+        Assert.That(jsonRoundTrip.Sha256Hash, Is.EqualTo(fileVersion.Sha256Hash))
+        Assert.That(jsonRoundTrip.IsBinary, Is.EqualTo(fileVersion.IsBinary))
+        Assert.That(jsonRoundTrip.Size, Is.EqualTo(fileVersion.Size))
+        Assert.That(jsonRoundTrip.CreatedAt, Is.EqualTo(fileVersion.CreatedAt))
+        Assert.That(jsonRoundTrip.BlobUri, Is.EqualTo(fileVersion.BlobUri))
+        Assert.That(jsonRoundTrip.Equals(fileVersion), Is.True)
+        Assert.That(messagePackRoundTrip.Equals(fileVersion), Is.True)
+        Assert.That(jsonRoundTrip.GetHashCode(), Is.EqualTo(fileVersion.GetHashCode()))
+        Assert.That(messagePackRoundTrip.GetHashCode(), Is.EqualTo(fileVersion.GetHashCode()))
