@@ -119,6 +119,9 @@ module Types =
     /// A SHA-256 hash value.
     type Sha256Hash = string
 
+    /// The content-addressed identifier for one chunk of manifest-backed file content.
+    type ChunkAddress = string
+
     /// The content-addressed identifier for a reusable content block.
     type ContentBlockAddress = string
 
