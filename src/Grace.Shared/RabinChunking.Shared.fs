@@ -72,7 +72,10 @@ module RabinChunking =
         && (fingerprint &&& cutMask) = cutValue
 
     let private findChunkEnd (bytes: byte array) start =
-        let limit = Math.Min(bytes.Length, start + MaximumChunkSize)
+        let limit =
+            start
+            + Math.Min(bytes.Length - start, MaximumChunkSize)
+
         let mutable fingerprint = 0UL
         let mutable windowBytes = 0
         let mutable index = start
