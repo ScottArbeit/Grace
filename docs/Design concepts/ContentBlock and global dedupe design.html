@@ -1,0 +1,1625 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Grace ContentBlock and Global Dedupe Design</title>
+    <style>
+      :root {
+        --bg: #f5f7f4;
+        --ink: #1f2b30;
+        --muted: #59676c;
+        --line: #c8d2d4;
+        --panel: #ffffff;
+        --blue: #2468a8;
+        --green: #287447;
+        --amber: #a46600;
+        --red: #b23a3a;
+        --violet: #6746a3;
+        --shadow: 0 10px 24px rgba(31, 43, 48, 0.1);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--ink);
+        font:
+          15px/1.55 "Segoe UI",
+          system-ui,
+          -apple-system,
+          BlinkMacSystemFont,
+          sans-serif;
+      }
+
+      main {
+        max-width: 1180px;
+        margin: 0 auto;
+        padding: 34px 24px 56px;
+      }
+
+      header {
+        margin-bottom: 28px;
+        border-bottom: 1px solid var(--line);
+        padding-bottom: 22px;
+      }
+
+      h1 {
+        margin: 0 0 10px;
+        font-size: 34px;
+        line-height: 1.12;
+        letter-spacing: 0;
+      }
+
+      h2 {
+        margin: 34px 0 12px;
+        font-size: 23px;
+        line-height: 1.25;
+        letter-spacing: 0;
+      }
+
+      h3 {
+        margin: 24px 0 8px;
+        font-size: 17px;
+        line-height: 1.25;
+        letter-spacing: 0;
+      }
+
+      p {
+        margin: 0 0 13px;
+      }
+
+      ul,
+      ol {
+        margin: 8px 0 16px 24px;
+        padding: 0;
+      }
+
+      li {
+        margin: 4px 0;
+      }
+
+      a {
+        color: var(--blue);
+      }
+
+      code {
+        background: #e7ece8;
+        border: 1px solid #d7ded9;
+        border-radius: 4px;
+        padding: 0 4px;
+        font:
+          0.93em "Cascadia Code",
+          Consolas,
+          monospace;
+      }
+
+      pre {
+        margin: 12px 0 18px;
+        overflow-x: auto;
+        background: #172126;
+        color: #eef5f3;
+        border-radius: 8px;
+        padding: 14px 16px;
+        box-shadow: var(--shadow);
+      }
+
+      pre code {
+        background: transparent;
+        border: 0;
+        color: inherit;
+        padding: 0;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 12px 0 22px;
+        background: var(--panel);
+        border: 1px solid var(--line);
+        box-shadow: var(--shadow);
+      }
+
+      th,
+      td {
+        text-align: left;
+        vertical-align: top;
+        padding: 10px 12px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      th {
+        background: #e8efee;
+        color: #223137;
+        font-weight: 650;
+      }
+
+      tr:last-child td {
+        border-bottom: 0;
+      }
+
+      .lede {
+        font-size: 18px;
+        color: #33454a;
+        max-width: 940px;
+      }
+
+      .callout {
+        margin: 18px 0 22px;
+        padding: 15px 17px;
+        border-left: 5px solid var(--blue);
+        background: #ffffff;
+        box-shadow: var(--shadow);
+      }
+
+      .callout.good {
+        border-left-color: var(--green);
+      }
+
+      .callout.warn {
+        border-left-color: var(--amber);
+      }
+
+      .callout.risk {
+        border-left-color: var(--red);
+      }
+
+      .callout.decision {
+        border-left-color: var(--violet);
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 18px;
+        align-items: start;
+      }
+
+      .panel {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 16px;
+        box-shadow: var(--shadow);
+      }
+
+      .panel h3:first-child {
+        margin-top: 0;
+      }
+
+      .diagram {
+        margin: 18px 0 24px;
+        background: #ffffff;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 12px;
+        box-shadow: var(--shadow);
+        overflow-x: auto;
+      }
+
+      svg {
+        display: block;
+        width: 100%;
+        height: auto;
+        min-width: 900px;
+      }
+
+      .box {
+        fill: #ffffff;
+        stroke: #8aa0a8;
+        stroke-width: 2;
+        rx: 6;
+      }
+
+      .box.blue {
+        fill: #eaf3fb;
+        stroke: #2468a8;
+      }
+
+      .box.green {
+        fill: #edf7ef;
+        stroke: #287447;
+      }
+
+      .box.amber {
+        fill: #fff5df;
+        stroke: #a46600;
+      }
+
+      .box.violet {
+        fill: #f1edfa;
+        stroke: #6746a3;
+      }
+
+      .arrow {
+        fill: none;
+        stroke: #59676c;
+        stroke-width: 2;
+        marker-end: url(#arrowhead);
+      }
+
+      .t {
+        fill: #1f2b30;
+        font:
+          15px "Segoe UI",
+          system-ui,
+          sans-serif;
+      }
+
+      .smalltxt {
+        fill: #59676c;
+        font:
+          12px "Segoe UI",
+          system-ui,
+          sans-serif;
+      }
+
+      .source-list {
+        font-size: 13px;
+        color: var(--muted);
+      }
+
+      @media (max-width: 860px) {
+        main {
+          padding: 24px 16px 40px;
+        }
+
+        h1 {
+          font-size: 28px;
+        }
+
+        .grid {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>Grace ContentBlock and Global Dedupe Design</h1>
+        <p class="lede">
+          Current design direction for Grace's content-addressable storage,
+          large-file block aggregation, global dedupe hints, and block-level
+          garbage collection.
+        </p>
+        <p class="source-list">
+          This update supersedes the earlier chunk-centric reference-counting
+          report that treated <code>ContentChunk</code>
+          as a StoragePool-level actor or one-row-per-chunk entity.
+        </p>
+      </header>
+
+      <section>
+        <h2>Executive Summary</h2>
+        <div class="callout decision">
+          <p>
+            Grace should use <code>ContentBlock</code> as the StoragePool-wide
+            storage, transfer, dedupe, and GC unit for large manifest-backed
+            files. <code>ContentChunk</code> remains a logical chunk concept
+            identified by a <code>ChunkAddress</code>, not a standalone
+            persisted entity, actor, or per-chunk counter.
+          </p>
+        </div>
+
+        <ul>
+          <li>
+            Small or regular files use repository-scoped
+            <code>WholeFileContent</code> and do not enter global chunk/block
+            dedupe.
+          </li>
+          <li>
+            Large files use <code>FileManifest</code> with ordered
+            <code>ContentBlockRange</code> entries.
+          </li>
+          <li>
+            <code>ContentBlockAddress</code> is based on a compact block format
+            version plus ordered <code>ChunkAddress</code> values.
+          </li>
+          <li>
+            <code>ContentBlockMetadata</code> is the mutable storage and
+            lifecycle companion to a block.
+          </li>
+          <li>
+            <code>ContentBlockMetadataRange</code> existence means physical
+            bytes are present; absence means the range has been reclaimed.
+          </li>
+          <li>
+            Global dedupe results are hints.
+            <code>ContentBlockMetadataRange</code> is the authority for physical
+            presence.
+          </li>
+          <li>
+            Grace v1 uses the first chunk plus modulo-256 key chunks for global
+            dedupe discovery, returning protected candidate windows rather than
+            raw chunk existence answers.
+          </li>
+          <li>
+            <code>ManifestAddress</code> includes per-range
+            <code>UncompressedSize</code>; <code>ContentBlockMetadata</code>
+            claims use whole-record optimistic concurrency; compaction starts at
+            <code>max(64 MiB, 10%)</code> plus age and churn guards.
+          </li>
+        </ul>
+      </section>
+
+      <section>
+        <h2>Xet-Inspired Shape</h2>
+        <p>
+          Grace is borrowing the Xet separation between logical chunks and
+          larger block-like storage units. In Xet, chunks are grouped into
+          xorbs, and file reconstruction refers to xorb chunk ranges. Grace
+          keeps that shape, but uses its own names and adds stronger lifecycle
+          metadata for compaction and hosted-storage cost control.
+        </p>
+
+        <table>
+          <thead>
+            <tr>
+              <th>Xet concept</th>
+              <th>Grace concept</th>
+              <th>Design note</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Chunk</td>
+              <td><code>ContentChunk</code></td>
+              <td>
+                Logical piece of large file content, not a persisted actor or
+                row.
+              </td>
+            </tr>
+            <tr>
+              <td>Chunk hash</td>
+              <td><code>ChunkAddress</code></td>
+              <td>
+                Canonical BLAKE3 hash string over uncompressed chunk bytes.
+              </td>
+            </tr>
+            <tr>
+              <td>Xorb</td>
+              <td><code>ContentBlock</code></td>
+              <td>
+                Ordered group of chunks used as the storage, transfer, and GC
+                unit.
+              </td>
+            </tr>
+            <tr>
+              <td>Xorb chunk range</td>
+              <td><code>ContentBlockRange</code></td>
+              <td>
+                Manifest reconstruction range with
+                <code>UncompressedSize</code>.
+              </td>
+            </tr>
+            <tr>
+              <td>Shard CAS info</td>
+              <td>Future dedupe index</td>
+              <td>
+                Batched candidate lookup, not authoritative storage presence.
+              </td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div class="callout warn">
+          <p>
+            The Xet lesson for Grace is not "never record per-chunk facts." It
+            is "do not make each chunk a separately managed database object,
+            service actor, or counter." Per-chunk facts may appear inside
+            batched block metadata, manifest ranges, cache indexes, or dedupe
+            shards when they earn their storage cost.
+          </p>
+        </div>
+      </section>
+
+      <section>
+        <h2>Content Model</h2>
+        <div class="diagram">
+          <svg
+            viewBox="0 0 1080 560"
+            role="img"
+            aria-label="Grace content model"
+          >
+            <defs>
+              <marker
+                id="arrowhead"
+                markerWidth="10"
+                markerHeight="7"
+                refX="9"
+                refY="3.5"
+                orient="auto"
+              >
+                <polygon points="0 0, 10 3.5, 0 7" fill="#59676c"></polygon>
+              </marker>
+            </defs>
+
+            <rect x="38" y="54" width="190" height="62" class="box blue"></rect>
+            <text x="66" y="82" class="t">FileVersion</text>
+            <text x="66" y="103" class="smalltxt">
+              path-aware repository meaning
+            </text>
+
+            <rect
+              x="294"
+              y="20"
+              width="230"
+              height="62"
+              class="box green"
+            ></rect>
+            <text x="328" y="48" class="t">WholeFileContent</text>
+            <text x="328" y="69" class="smalltxt">small / regular files</text>
+
+            <rect
+              x="294"
+              y="134"
+              width="230"
+              height="62"
+              class="box violet"
+            ></rect>
+            <text x="342" y="162" class="t">FileManifest</text>
+            <text x="342" y="183" class="smalltxt">
+              large manifest-backed files
+            </text>
+
+            <rect
+              x="594"
+              y="134"
+              width="232"
+              height="62"
+              class="box violet"
+            ></rect>
+            <text x="626" y="162" class="t">ContentBlockRange</text>
+            <text x="626" y="183" class="smalltxt">
+              block ordinal range + size
+            </text>
+
+            <rect
+              x="594"
+              y="260"
+              width="232"
+              height="62"
+              class="box amber"
+            ></rect>
+            <text x="652" y="288" class="t">ContentBlock</text>
+            <text x="652" y="309" class="smalltxt">
+              ordered ChunkAddress values
+            </text>
+
+            <rect
+              x="594"
+              y="386"
+              width="232"
+              height="62"
+              class="box amber"
+            ></rect>
+            <text x="625" y="414" class="t">ContentBlockMetadata</text>
+            <text x="625" y="435" class="smalltxt">
+              physical ranges + active counts
+            </text>
+
+            <rect x="884" y="260" width="156" height="62" class="box"></rect>
+            <text x="916" y="288" class="t">ContentChunk</text>
+            <text x="916" y="309" class="smalltxt">logical only</text>
+
+            <rect x="884" y="386" width="156" height="62" class="box"></rect>
+            <text x="914" y="414" class="t">ChunkAddress</text>
+            <text x="914" y="435" class="smalltxt">BLAKE3 hex</text>
+
+            <path d="M228 83 C252 70 264 58 294 52" class="arrow"></path>
+            <path d="M228 96 C252 118 264 148 294 164" class="arrow"></path>
+            <path d="M524 165 L594 165" class="arrow"></path>
+            <path d="M710 196 L710 260" class="arrow"></path>
+            <path d="M710 322 L710 386" class="arrow"></path>
+            <path d="M826 291 L884 291" class="arrow"></path>
+            <path d="M962 322 L962 386" class="arrow"></path>
+
+            <text x="52" y="512" class="smalltxt">
+              WholeFileContent is repository-scoped. FileManifest, ContentBlock,
+              and ContentBlockMetadata carry the global large-file path.
+            </text>
+          </svg>
+        </div>
+      </section>
+
+      <section>
+        <h2>Settled Vocabulary</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Term</th>
+              <th>Meaning</th>
+              <th>Not this</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>ChunkAddress</code></td>
+              <td>
+                Exactly 64 hexadecimal characters representing BLAKE3 over
+                uncompressed chunk bytes.
+              </td>
+              <td>Algorithm-prefixed multihash in the core CAS model.</td>
+            </tr>
+            <tr>
+              <td><code>ContentChunk</code></td>
+              <td>
+                A logical chunk of large file content named by
+                <code>ChunkAddress</code>.
+              </td>
+              <td>A persisted entity, actor, row, or counter.</td>
+            </tr>
+            <tr>
+              <td><code>ContentBlock</code></td>
+              <td>
+                The ordered group of chunk addresses Grace stores, transfers,
+                and compacts as a unit.
+              </td>
+              <td>A storage blob path or repository-owned object.</td>
+            </tr>
+            <tr>
+              <td><code>ContentBlockAddress</code></td>
+              <td>
+                BLAKE3 over the block address domain, compact block format
+                version, and ordered chunk addresses.
+              </td>
+              <td>
+                Physical layout, compression, per-chunk lengths, or repository
+                policy.
+              </td>
+            </tr>
+            <tr>
+              <td><code>ContentBlockRange</code></td>
+              <td>
+                One ordered reconstruction range inside a
+                <code>FileManifest</code>.
+              </td>
+              <td>
+                <code>FileManifestTerm</code>, xorb term, or raw block pointer.
+              </td>
+            </tr>
+            <tr>
+              <td><code>ContentBlockMetadata</code></td>
+              <td>
+                Mutable storage and lifecycle description for a
+                <code>ContentBlock</code>.
+              </td>
+              <td>Part of block identity or the block format specification.</td>
+            </tr>
+            <tr>
+              <td><code>ContentBlockMetadataRange</code></td>
+              <td>
+                A physically present ordinal range inside
+                <code>ContentBlockMetadata</code>.
+              </td>
+              <td>A tombstone or per-chunk presence record.</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section>
+        <h2>Proposed Contract Shape</h2>
+        <p>
+          These records are design-level shapes, not implementation patches.
+          They are intentionally compact and avoid one-object-per-chunk scaling.
+        </p>
+
+        <h3>Chunking and Thresholds</h3>
+        <p>
+          Grace should use Xet-sized chunks once content is on the
+          manifest-backed path. The larger Grace-specific decision is whether a
+          file enters that path at all, and that belongs to the repository's
+          <code>ManifestEligibilityPolicy</code>.
+        </p>
+
+        <table>
+          <thead>
+            <tr>
+              <th>Knob</th>
+              <th>Settled direction</th>
+              <th>Reason</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>ContentChunk</code> target size</td>
+              <td>64 KiB</td>
+              <td>
+                Preserves fine-grained dedupe while
+                <code>ContentBlock</code> handles storage aggregation.
+              </td>
+            </tr>
+            <tr>
+              <td><code>ContentChunk</code> minimum size</td>
+              <td>8 KiB</td>
+              <td>Avoids tiny chunks and matches the Xet-sized range.</td>
+            </tr>
+            <tr>
+              <td><code>ContentChunk</code> maximum size</td>
+              <td>128 KiB</td>
+              <td>
+                Bounds chunk size when the CDC boundary rule does not fire.
+              </td>
+            </tr>
+            <tr>
+              <td><code>ContentBlock</code> target</td>
+              <td>About 64 MiB of uncompressed chunk content</td>
+              <td>
+                Keeps storage, transfer, and manifest ranges large while chunks
+                remain small.
+              </td>
+            </tr>
+            <tr>
+              <td><code>ManifestEligibilityPolicy</code></td>
+              <td>Repository-level binary/text size policy</td>
+              <td>
+                Decides whole-file versus manifest-backed content without
+                changing the fixed <code>ChunkingSuite</code>.
+              </td>
+            </tr>
+            <tr>
+              <td>Binary default threshold</td>
+              <td>Uncompressed size &gt;= 1 MiB</td>
+              <td>
+                Binary files benefit from chunk/block dedupe earlier, even when
+                they are not enormous.
+              </td>
+            </tr>
+            <tr>
+              <td>Text default threshold</td>
+              <td>Grace-defined compressed size &gt;= 1 MiB</td>
+              <td>
+                Large source or generated text often compresses below 1 MiB and
+                should remain <code>WholeFileContent</code>.
+              </td>
+            </tr>
+          </tbody>
+        </table>
+
+        <p>
+          The binary/text split should reuse Grace's existing Git-style binary
+          detector: scan the first 8 KiB of the file for a NUL byte, and
+          classify the file as binary when one is present. Text compressed size
+          must come from a Grace-defined eligibility compression profile, not
+          from an incidental storage encoding.
+        </p>
+
+        <h3>Addresses</h3>
+        <pre><code class="language-fsharp">type ChunkAddress = string
+// Validate with: ^[0-9a-fA-F]{64}$
+// Store canonically as lowercase 64-character BLAKE3 hex.
+
+type ContentBlockAddress = string
+type ManifestAddress = string
+type FileContentHash = string</code></pre>
+
+        <h3>File Manifest</h3>
+        <pre><code class="language-fsharp">type FileManifest =
+    { ManifestAddress: ManifestAddress
+      FileContentHash: FileContentHash
+      TotalUncompressedSize: int64
+      ChunkingSuiteId: string
+      ContentBlockRanges: ContentBlockRange array
+      CreatedAt: Instant }
+
+type ContentBlockRange =
+    { ContentBlockAddress: ContentBlockAddress
+      OrdinalStart: int32
+      OrdinalCount: int32
+      UncompressedSize: int64 }</code></pre>
+
+        <p>
+          <code>ManifestAddress</code> includes each range's
+          <code>UncompressedSize</code> in the reconstruction-content preimage.
+          The size is part of the contract Grace validates, so two manifests
+          that disagree about range sizes should not share one manifest
+          identity.
+        </p>
+
+        <h3>Content Block</h3>
+        <pre><code class="language-fsharp">type ContentBlock =
+    { StoragePoolId: StoragePoolId
+      ContentBlockAddress: ContentBlockAddress
+      BlockFormatVersion: int16
+      ChunkCount: int32
+      OrderedChunkAddresses: ChunkAddress array
+      CreatedAt: Instant }</code></pre>
+
+        <h3>Content Block Metadata</h3>
+        <pre><code class="language-fsharp">type ContentBlockMetadata =
+    { ContentBlockAddress: ContentBlockAddress
+      BlockFormatVersion: int16
+      StoragePlacement: ContentBlockStoragePlacement
+      Ranges: ContentBlockMetadataRange array
+      TotalPhysicalBytes: int64
+      ActivePhysicalBytes: int64
+      MetadataVersion: int64
+      UpdatedAt: Instant }
+
+type ContentBlockMetadataRange =
+    { OrdinalStart: int32
+      OrdinalCount: int32
+      ActiveManifestCount: int32
+      PhysicalOffset: int64
+      PhysicalLength: int64 }</code></pre>
+
+        <h3>Storage Placement</h3>
+        <pre><code class="language-fsharp">type ContentBlockStoragePlacement =
+    { StorageShardId: StorageShardId
+      ObjectKey: string
+      ObjectETag: string option
+      Compression: CompressionKind
+      EncodingVersion: int16 }</code></pre>
+
+        <h3>Physical ContentBlock Format v1</h3>
+        <p>
+          The v1 block payload should be a compact framed format that can be
+          validated independently from object-storage metadata while preserving
+          cheap range reads and future compaction.
+        </p>
+        <pre><code>magic/version
+header length
+chunk count
+chunk table:
+  chunk ordinal
+  ChunkAddress
+  uncompressed length
+  encoded offset
+  encoded length
+  encoding flags
+payload frames in ordinal order
+block checksum/trailer</code></pre>
+        <p>
+          The chunk table is physical format metadata, not block identity.
+          <code>ContentBlockAddress</code> still comes from the address-family
+          context, compact block format version, and ordered
+          <code>ChunkAddress</code> sequence. Encoded offsets, encoded lengths,
+          compression choices, object keys, and ETags remain outside content
+          identity.
+        </p>
+      </section>
+
+      <section>
+        <h2>Identity Boundaries</h2>
+        <div class="grid">
+          <div class="panel">
+            <h3>Included in <code>ContentBlockAddress</code></h3>
+            <ul>
+              <li>Address-family domain/context.</li>
+              <li>Compact block format version.</li>
+              <li>Ordered <code>ChunkAddress</code> values.</li>
+            </ul>
+          </div>
+          <div class="panel">
+            <h3>Excluded from <code>ContentBlockAddress</code></h3>
+            <ul>
+              <li>Per-chunk uncompressed length.</li>
+              <li>Physical offset and physical length.</li>
+              <li>Compression and encoding details.</li>
+              <li>Active manifest counts and lifecycle state.</li>
+              <li>Repository policy or manifest eligibility settings.</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="callout good">
+          <p>
+            Grace can store a compact block format version with
+            <code>ContentBlock</code> and <code>ContentBlockMetadata</code>. The
+            full format specification lives in Grace itself and is not
+            duplicated inside every block.
+          </p>
+        </div>
+      </section>
+
+      <section>
+        <h2>Metadata Range Semantics</h2>
+        <p>
+          <code>ContentBlockMetadataRange</code> should not store a presence
+          enum or bool. Existence is the presence signal.
+        </p>
+
+        <table>
+          <thead>
+            <tr>
+              <th>Condition</th>
+              <th>Meaning</th>
+              <th>Implication</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Range exists and <code>ActiveManifestCount &gt; 0</code></td>
+              <td>Physical bytes are present and live.</td>
+              <td>Compaction must preserve this range.</td>
+            </tr>
+            <tr>
+              <td>Range exists and <code>ActiveManifestCount = 0</code></td>
+              <td>Physical bytes are present but reclaimable.</td>
+              <td>
+                Compaction may remove this range after a concurrency-safe
+                recheck.
+              </td>
+            </tr>
+            <tr>
+              <td>No range covers the ordinal span</td>
+              <td>Physical bytes are not present.</td>
+              <td>Dedupe reuse must treat the candidate as a miss.</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <p>
+          <code>TotalPhysicalBytes</code> and
+          <code>ActivePhysicalBytes</code> are stored because they are cheap and
+          useful for compaction candidate selection. Reclaimable bytes are
+          derived:
+        </p>
+
+        <pre><code>ReclaimablePhysicalBytes = TotalPhysicalBytes - ActivePhysicalBytes</code></pre>
+      </section>
+
+      <section>
+        <h2>Global Dedupe Hints</h2>
+        <div class="callout decision">
+          <p>
+            A global dedupe hit is never enough to create a durable
+            <code>ContentBlockRange</code>. Grace must confirm a matching
+            <code>ContentBlockMetadataRange</code> exists and make that range
+            active before a <code>FileManifest</code> can depend on it.
+          </p>
+        </div>
+
+        <div class="callout decision">
+          <h3>Settled v1 key-chunk rule</h3>
+          <pre><code>isKeyChunk(chunkAddress, chunkOrdinal):
+  if chunkOrdinal == 0:
+    return true
+
+  value = littleEndianUInt64(last 8 bytes of BLAKE3 chunk digest)
+  return value % 256 == 0</code></pre>
+          <p>
+            <code>256</code> is the v1 <code>SamplingRate</code>. Grace should
+            keep it as server policy surfaced in upload-session configuration,
+            not as durable per-chunk state. The rule is deliberately denser than
+            Xet's <code>1024</code> starting point because Grace's manifest path
+            begins around 1 MiB, and early Grace workloads need useful discovery
+            below 64 MiB.
+          </p>
+        </div>
+
+        <ol>
+          <li>
+            Client or server derives sparse key chunks from the local chunk
+            sequence using the upload-session <code>SamplingRate</code>.
+          </li>
+          <li>
+            Client or server asks the dedupe index for candidate block windows
+            associated with those key <code>ChunkAddress</code> values.
+          </li>
+          <li>
+            The dedupe index returns candidate
+            <code>ContentBlockAddress</code> values, ordinal windows, and enough
+            nearby sequence information to score contiguous runs.
+          </li>
+          <li>
+            Grace prefers longer matching runs and rejects isolated chunk
+            matches that would fragment reconstruction.
+          </li>
+          <li>
+            Grace reads <code>ContentBlockMetadata</code> for the candidate
+            block.
+          </li>
+          <li>
+            If the metadata range is missing, the hint is stale and Grace treats
+            it as a miss.
+          </li>
+          <li>
+            If the metadata range is present, Grace increments or claims
+            <code>ActiveManifestCount</code> for that range.
+          </li>
+          <li>
+            Only after that claim succeeds may the new
+            <code>FileManifest</code> record a <code>ContentBlockRange</code>.
+          </li>
+        </ol>
+
+        <p>
+          The dedupe index can contain stale candidates. That is acceptable
+          because it is a performance structure and locality hint, not the
+          source of truth for physical presence.
+        </p>
+      </section>
+
+      <section>
+        <h2>Client Upload Flow</h2>
+        <div class="callout decision">
+          <p>
+            Grace clients can chunk, hash, locally dedupe, and propose
+            manifest-backed content, but they do not get a free-standing
+            <code>ChunkAddress</code> existence API. Grace Server remains
+            authoritative for authorization, physical presence, range claims,
+            and <code>FileManifest</code> finalization.
+          </p>
+        </div>
+
+        <ol>
+          <li>
+            <strong>Choose the content path.</strong> The client applies the
+            Repository's <code>ManifestEligibilityPolicy</code>. Whole-file
+            content stays repository-scoped. Only manifest-backed content enters
+            this chunk, block, and global dedupe flow.
+          </li>
+          <li>
+            <strong>Hash the logical file.</strong> The client reads the
+            unencoded file bytes and computes the file-level
+            <code>FileContentHash</code>. Storage compression, transfer
+            compression, and object-storage layout do not change this identity.
+          </li>
+          <li>
+            <strong>Chunk the unencoded bytes.</strong> The client applies the
+            active <code>ChunkingSuite</code> and records the ordered local
+            chunk sequence: file ordinal, byte offset, uncompressed length, and
+            <code>ChunkAddress</code>.
+          </li>
+          <li>
+            <strong>Hash each chunk.</strong>
+            <code>ChunkAddress</code> is the lowercase BLAKE3 hash of the
+            unencoded chunk bytes. The file path, repository policy, storage
+            provider, and compression settings are not part of chunk identity.
+          </li>
+          <li>
+            <strong>Deduplicate locally first.</strong> The client builds an
+            in-memory map for repeated chunk runs within the file and current
+            upload batch. This produces local block-building opportunities
+            without any server lookup.
+          </li>
+          <li>
+            <strong>Query sparse global anchors.</strong> The client selects the
+            first chunk plus chunks whose BLAKE3 digest satisfies the modulo-256
+            key-chunk rule, then sends only those anchors in an authorized
+            upload-session request. The sampling rate stays server-controlled
+            upload-session policy, and the client does not query every
+            <code>ChunkAddress</code>.
+          </li>
+          <li>
+            <strong>Scan protected candidate windows.</strong> The server
+            returns bounded candidate <code>ContentBlock</code> windows, not raw
+            "exists" answers. Candidate chunk identities are protected with a
+            short-lived response key, so the response does not expose raw
+            neighboring chunk hashes. A conforming client matches by applying
+            the same protection to the upload's local chunk sequence.
+          </li>
+          <li>
+            <strong>Select contiguous reuse runs.</strong> The client scans the
+            candidate windows for matching ordered runs, verifies chunk lengths,
+            rejects stale or short matches, and prefers longer ranges that keep
+            the future <code>FileManifest</code> compact.
+          </li>
+          <li>
+            <strong>Ask Grace to claim reused ranges.</strong> Reuse runs remain
+            proposals until Grace Server checks
+            <code>ContentBlockMetadata</code> and claims the corresponding
+            <code>ContentBlockMetadataRange</code>. Missing, compacted,
+            unauthorized, expired, or over-limit candidates all collapse to
+            "upload these bytes instead."
+          </li>
+          <li>
+            <strong>Build and upload new ContentBlocks.</strong> The client
+            packs all upload-required runs into ordered
+            <code>ContentBlock</code> payloads of about 64 MiB of uncompressed
+            chunk content, computes each <code>ContentBlockAddress</code> from
+            the compact block format version and ordered
+            <code>ChunkAddress</code> sequence, and uploads those block payloads
+            before manifest finalization.
+          </li>
+          <li>
+            <strong>Submit the FileManifest.</strong> The client submits a
+            manifest proposal containing <code>ManifestAddress</code>,
+            <code>FileContentHash</code>, total uncompressed size,
+            <code>ChunkingSuiteId</code>, and ordered
+            <code>ContentBlockRange</code> entries. The ranges must cover the
+            file without gaps or overlaps.
+          </li>
+          <li>
+            <strong>Finalize server-side.</strong> Grace Server validates that
+            all referenced new blocks are uploaded, all reused ranges are still
+            claimed, the ordered ranges reconstruct the expected chunk sequence,
+            and the file-level hash and size match. Only then does the
+            <code>FileManifest</code> become durable and eligible for a
+            <code>FileContentReference</code>.
+          </li>
+        </ol>
+
+        <h3>Settled v1 discovery payload</h3>
+        <div class="grid">
+          <div class="panel">
+            <h3>Request shape</h3>
+            <pre><code class="language-fsharp">type DedupeDiscoveryRequest =
+    { UploadSessionId: UploadSessionId
+      RepositoryId: RepositoryId
+      ChunkingSuiteId: string
+      KeyChunks: DedupeKeyChunk array }
+
+type DedupeKeyChunk =
+    { FileOrdinal: int32
+      ChunkAddress: ChunkAddress
+      UncompressedLength: int32 }</code></pre>
+          </div>
+          <div class="panel">
+            <h3>Candidate window</h3>
+            <pre><code class="language-fsharp">type DedupeCandidateWindow =
+    { ContentBlockAddress: ContentBlockAddress
+      BlockFormatVersion: int16
+      WindowOrdinalStart: int32
+      WindowOrdinalCount: int32
+      ProtectedChunkAddresses: string array
+      ChunkUncompressedLengths: int32 array
+      TotalUncompressedBytes: int64
+      ClaimToken: string
+      ExpiresAt: Instant }</code></pre>
+          </div>
+        </div>
+
+        <div class="callout">
+          <h3>v1 response limits</h3>
+          <ul>
+            <li><code>MaxKeyChunksPerRequest = 256</code>.</li>
+            <li><code>MaxCandidateWindowsPerKeyChunk = 4</code>.</li>
+            <li><code>MaxWindowChunks = 256</code>.</li>
+            <li><code>MaxResponseProtectedChunks = 16_384</code>.</li>
+            <li><code>ResponseTtl = 5 minutes</code>.</li>
+            <li>
+              <code>MinimumAcceptedReuseRun = max(8 chunks, about 1 MiB)</code>.
+            </li>
+          </ul>
+        </div>
+
+        <div class="grid">
+          <div class="panel">
+            <h3>FileManifest invariants</h3>
+            <ul>
+              <li>Ordered ranges reconstruct the exact file byte stream.</li>
+              <li>No gaps, overlaps, or direct chunk references.</li>
+              <li>
+                Every range points to a contiguous ordinal span inside one
+                <code>ContentBlock</code>.
+              </li>
+              <li>
+                Each range records <code>UncompressedSize</code> for validation
+                and accounting.
+              </li>
+              <li>
+                Manifest finalization is rejected if any referenced block range
+                is not physically present and claim-active.
+              </li>
+            </ul>
+          </div>
+          <div class="panel">
+            <h3>Existence-oracle guardrails</h3>
+            <ul>
+              <li>No <code>exists(ChunkAddress)</code> endpoint.</li>
+              <li>No per-chunk upload-skipping answer from global storage.</li>
+              <li>No raw chunk inventory returned in dedupe responses.</li>
+              <li>
+                Empty or partial candidate results do not prove content absence.
+              </li>
+              <li>
+                Positive reuse is scoped to an authorized upload session and a
+                successful range claim.
+              </li>
+              <li>
+                Reuse requires a server-side range claim and manifest
+                validation; when in doubt, Grace uploads duplicate bytes.
+              </li>
+            </ul>
+          </div>
+        </div>
+
+        <p>
+          This intentionally makes dedupe an optimization, not an authority. A
+          client may save bandwidth when Grace can safely claim a range, but the
+          correctness path is always available by uploading new
+          <code>ContentBlock</code> payloads and finalizing a
+          <code>FileManifest</code> from the resulting ranges.
+        </p>
+      </section>
+
+      <section>
+        <h2>Upload Session Lifecycle</h2>
+        <div class="callout decision">
+          <p>
+            The recommended v1 shape is one <code>UploadSession</code> per
+            manifest-backed file, keyed by an <code>UploadSessionId</code>.
+            Batch upload can create many sessions, but each session owns one
+            <code>FileContentHash</code>, one expected total size, one
+            <code>ChunkingSuiteId</code>, and one future
+            <code>FileManifest</code>.
+          </p>
+        </div>
+
+        <p>
+          The existing actor patterns suggest this should be a GUID-keyed actor
+          rather than a composite lookup record: Grace already uses GUID-keyed
+          domain actors for durable workflow objects, composite string keys for
+          alternate-name lookup actors, event lists for retry-safe state
+          transitions, and reminders for delayed cleanup.
+        </p>
+
+        <figure>
+          <img
+            src="UploadSession state machine.svg"
+            alt="UploadSession command state machine"
+            style="
+              width: 100%;
+              max-width: 1180px;
+              border: 1px solid var(--line);
+            "
+          />
+          <figcaption class="source-list">
+            Command flow from <code>Start</code> through discovery, block
+            upload, range claiming, manifest finalization, and retention
+            cleanup.
+          </figcaption>
+        </figure>
+
+        <div class="grid">
+          <div class="panel">
+            <h3>State model</h3>
+            <pre><code>Started
+  -> Discovering
+  -> UploadingBlocks
+  -> ClaimingRanges
+  -> FinalizingManifest
+  -> Finalized
+
+Started/Discovering/UploadingBlocks/ClaimingRanges
+  -> Abandoned
+  -> Expired
+
+Finalized/Abandoned/Expired
+  -> RetentionPending
+  -> StateDeleted</code></pre>
+          </div>
+          <div class="panel">
+            <h3>Durable session state</h3>
+            <ul>
+              <li>
+                <code>UploadSessionId</code> and <code>RepositoryId</code>.
+              </li>
+              <li>
+                Authorized path or write scope used to create the session.
+              </li>
+              <li><code>FileContentHash</code> and expected total size.</li>
+              <li>
+                <code>ChunkingSuiteId</code> and sampling policy snapshot.
+              </li>
+              <li>Issued discovery response ids and expiration times.</li>
+              <li>New <code>ContentBlockAddress</code> upload intents.</li>
+              <li>Claimed reuse ranges and their claim expirations.</li>
+              <li>Final <code>ManifestAddress</code>, if finalized.</li>
+            </ul>
+          </div>
+        </div>
+
+        <h3>Idempotent commands</h3>
+        <p>
+          Upload-session commands need an explicit client operation id in
+          addition to correlation id. Correlation ids are excellent diagnostics,
+          but retries need a stable idempotency key that means "same client
+          operation, replayed."
+        </p>
+        <pre><code class="language-fsharp">type UploadSessionCommand =
+    | Start of StartUploadSession
+    | IssueDedupeDiscovery of DiscoveryOperationId * DedupeKeyChunk array
+    | RegisterBlockUploadIntent of BlockUploadOperationId * ContentBlockAddress
+    | ConfirmBlockUploaded of BlockUploadOperationId * ContentBlockAddress
+            | ClaimReuseRanges of ClaimOperationId * ContentBlockRange array
+            | FinalizeManifest of FinalizeOperationId * FileManifest
+            | Abandon of AbandonOperationId
+            | Expire of ExpireOperationId
+            | DeletePhysicalState of DeletePhysicalStateOperationId</code></pre>
+
+        <div class="callout">
+          <h3>Retry and cleanup rules</h3>
+          <ul>
+            <li>
+              Replaying the same operation id returns the same result if the
+              original command already succeeded.
+            </li>
+            <li>
+              Expired discovery responses cannot be used to claim new ranges.
+            </li>
+            <li>
+              Expired or abandoned sessions release provisional range claims.
+            </li>
+            <li>
+              Uploaded-but-unfinalized blocks are cleaned up by delayed
+              reminders unless another finalized manifest claims them.
+            </li>
+            <li>
+              Finalization is idempotent by <code>ManifestAddress</code> and
+              rejects proposals that do not reconstruct the session's expected
+              file hash and size.
+            </li>
+            <li>
+              Finalized, abandoned, and expired sessions schedule a
+              repository-configured physical-state deletion reminder. The
+              reminder clears only <code>UploadSession</code> actor state after
+              the diagnostic and retry window.
+            </li>
+            <li>
+              The accepted <code>FileManifest</code>,
+              <code>ContentBlock</code> payloads,
+              <code>ContentBlockMetadata</code>, and contribution accounting are
+              durable content state and are not deleted by upload-session
+              cleanup.
+            </li>
+          </ul>
+        </div>
+      </section>
+
+      <section>
+        <h2>Fragmentation Prevention</h2>
+        <p>
+          Xet's important warning is that chunk-level dedupe is useful only when
+          it does not scatter one logical file across too many tiny block
+          references. Grace should honor that by treating dedupe as a run
+          selection problem, not as a per-chunk maximum-match problem.
+        </p>
+
+        <div class="grid">
+          <div class="panel">
+            <h3>Dedupe lookup shape</h3>
+            <ul>
+              <li>
+                Query the first chunk plus modulo-256 key chunks instead of
+                every <code>ChunkAddress</code>.
+              </li>
+              <li>
+                Return bounded, response-protected candidate metadata that
+                describes nearby <code>ContentBlock</code> chunk sequences.
+              </li>
+              <li>
+                Let the uploader or server scan returned candidates for
+                contiguous runs that match the file's local chunk sequence.
+              </li>
+              <li>
+                Treat key chunks as lookup anchors, not as special chunk
+                identities or per-chunk lifecycle records.
+              </li>
+            </ul>
+          </div>
+          <div class="panel">
+            <h3>Manifest construction rule</h3>
+            <ul>
+              <li>
+                Prefer one <code>ContentBlockRange</code> over many short ranges
+                when the content can be reconstructed either way.
+              </li>
+              <li>
+                Accept a dedupe run only when it clears a minimum run threshold,
+                such as at least 8 chunks or roughly 1 MiB.
+              </li>
+              <li>
+                If an isolated chunk match would fragment the file, write that
+                chunk into the next new <code>ContentBlock</code> instead.
+              </li>
+            </ul>
+          </div>
+        </div>
+
+        <p>
+          This means Grace may intentionally duplicate a few chunks when that
+          produces fewer, longer <code>ContentBlockRange</code> entries. The
+          trade-off is deliberate: slightly less perfect dedupe can produce
+          better reconstruction locality, lower metadata fan-out, and fewer
+          read-time block fetches.
+        </p>
+
+        <div class="callout">
+          <h3>Presence-aware locality</h3>
+          <p>
+            A candidate run is usable only if the corresponding
+            <code>ContentBlockMetadataRange</code> is still physically present
+            and can be claimed active before manifest finalization. If a
+            candidate block has been compacted and no longer covers the ordinal
+            span, the run is stale and Grace treats it as unavailable.
+          </p>
+        </div>
+      </section>
+
+      <section>
+        <h2>Dedupe Index Maintenance</h2>
+        <p>
+          The dedupe index is a rebuildable discovery structure. Grace should
+          write index entries only after block upload and manifest finalization
+          succeed, and should remove or age out entries opportunistically when
+          compaction reclaims ranges.
+        </p>
+
+        <ul>
+          <li>
+            The index is populated from finalized <code>FileManifest</code> and
+            <code>ContentBlockMetadata</code> facts, not from in-flight upload
+            proposals.
+          </li>
+          <li>
+            Stale index entries are expected and safe; range claim checks
+            against
+            <code>ContentBlockMetadata</code> remain authoritative.
+          </li>
+          <li>
+            Compaction does not need to synchronously scrub every index entry.
+            It can publish maintenance work or let future misses age stale
+            candidates out.
+          </li>
+          <li>
+            Rebuilding the index from manifests and block metadata must be a
+            valid recovery path.
+          </li>
+        </ul>
+      </section>
+
+      <section>
+        <h2>Compaction and GC</h2>
+        <p>
+          Compaction rewrites physical payload placement without changing
+          <code>ContentBlockAddress</code> or logical chunk ordinals. When Grace
+          removes a reclaimable range, it removes the corresponding
+          <code>ContentBlockMetadataRange</code> instead of storing a reclaimed
+          tombstone.
+        </p>
+
+        <div class="grid">
+          <div class="panel">
+            <h3>Compaction selection</h3>
+            <ul>
+              <li>
+                Rewrite only when
+                <code
+                  >ReclaimablePhysicalBytes >= max(64 MiB, 10% of
+                  TotalPhysicalBytes)</code
+                >.
+              </li>
+              <li>
+                Treat hosted-storage transaction break-even as a floor, not the
+                main selection rule.
+              </li>
+              <li>
+                Require reclaimable ranges to be at least 24 hours old before
+                compaction can reclaim them.
+              </li>
+              <li>
+                Avoid blocks with active upload, finalization, range-claim, or
+                compaction churn.
+              </li>
+              <li>Prefer older or larger candidates after the hard floor.</li>
+              <li>
+                Do not store permanent <code>CompactionState</code> on every
+                block.
+              </li>
+            </ul>
+          </div>
+          <div class="panel">
+            <h3>Concurrency rule</h3>
+            <ul>
+              <li>Reuse must claim active use before manifest finalization.</li>
+              <li>
+                Compaction must recheck active counts before removing ranges.
+              </li>
+              <li>
+                Optimistic metadata concurrency is enough to make stale hints
+                safe.
+              </li>
+              <li>
+                <code>ContentBlockMetadata</code> claims and compaction updates
+                use a whole-record <code>MetadataVersion</code> or storage ETag.
+              </li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="callout">
+          <h3>Hosted storage cost floor</h3>
+          <p>
+            For Standard General Block Blob v2 in West US 2 using Hot GZRS, the
+            current retail meters are approximately $0.0414 per GB-month, $0.004
+            per 10,000 read operations, and $0.1125 per 10,000 write operations.
+            A simple one-read, one-write block rewrite costs about $0.00001165.
+            That is offset by roughly 0.000281 GB-month, or about 295 KiB
+            reclaimed for one month.
+          </p>
+          <p>
+            If the implementation charges work in 4 MiB transfer units,
+            rewriting a 64 MiB physical block down to 48 MiB costs about
+            $0.0001414 in read/write transactions. That is offset by roughly 3.5
+            MiB-month of Hot GZRS storage. Even then, raw transaction break-even
+            is far below the operational threshold Grace should use for
+            compaction.
+          </p>
+          <p>
+            Therefore, compaction should be gated by churn control, concurrency
+            safety, candidate age, and batching, with transaction break-even
+            used only as a sanity check.
+          </p>
+        </div>
+      </section>
+
+      <section>
+        <h2>Reference Counting Impact</h2>
+        <p>
+          The old per-<code>ContentChunk</code> counter design is retired.
+          Chunk-level logical identity still matters for dedupe and
+          verification, but lifecycle accounting should happen at the manifest
+          and block-range level.
+        </p>
+
+        <table>
+          <thead>
+            <tr>
+              <th>Old direction</th>
+              <th>Current direction</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>
+                <code>ContentChunkActor</code> with
+                <code>RepositoryReferenceCount</code>.
+              </td>
+              <td>No per-chunk actor, row, or lifecycle counter.</td>
+            </tr>
+            <tr>
+              <td><code>CASTarget.ContentChunk chunkAddress</code>.</td>
+              <td>
+                Large content flows through <code>FileManifest</code>,
+                <code>ContentBlock</code>, and block ranges.
+              </td>
+            </tr>
+            <tr>
+              <td>Manifest workflow fans out to distinct chunk counters.</td>
+              <td>
+                Manifest workflow adjusts active block ranges in bounded
+                batches.
+              </td>
+            </tr>
+            <tr>
+              <td>Chunk physical deletion reminder.</td>
+              <td>
+                Block compaction/removal based on
+                <code>ContentBlockMetadataRange</code> liveness.
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section>
+        <h2>Implementation Boundary</h2>
+        <p>
+          Grace is not in production, so the CAS work does not need a
+          compatibility migration path from the current path-shaped object
+          upload model. The implementation can move directly to the right
+          architecture: repository-scoped <code>WholeFileContent</code> for
+          small or regular files, and <code>FileManifest</code> plus
+          <code>ContentBlock</code> for eligible manifest-backed files.
+        </p>
+        <p>
+          Existing path-shaped upload behavior remains useful repo evidence, but
+          it is not a migration constraint for the CAS design.
+        </p>
+      </section>
+
+      <section>
+        <h2>ADR Closure</h2>
+        <p>
+          These design questions are now captured in
+          <a href="../adr/0001-content-addressed-storage-contentblocks.md"
+            >ADR 0001: Use ContentBlock-based content-addressed storage for
+            large manifest-backed files</a
+          >.
+        </p>
+        <ul>
+          <li>
+            <code>UploadSession</code> is a GUID-keyed actor per manifest-backed
+            file. Batch upload is represented as many upload sessions.
+          </li>
+          <li>
+            <code>ManifestContributionWorkflow</code> is keyed by
+            <code>RepositoryId + ManifestAddress</code> and owns repository
+            contribution fan-out progress.
+          </li>
+          <li>
+            A save that introduces a manifest-backed <code>FileVersion</code>
+            completes after the repository contribution increment intent is
+            durably recorded. Full block-range fan-out can continue
+            asynchronously with retry while blocking unsafe cleanup.
+          </li>
+        </ul>
+      </section>
+
+      <section>
+        <h2>Repo Evidence Used</h2>
+        <ul class="source-list">
+          <li>
+            <code>CONTEXT.md</code>: current glossary for
+            <code>ContentBlock</code>, <code>ContentBlockRange</code>,
+            <code>ContentBlockMetadata</code>, and related ambiguity notes.
+          </li>
+          <li>
+            <code>AGENTS.md</code>: repo workflow, documentation, and Markdown
+            validation guidance.
+          </li>
+          <li>
+            <code>src/Grace.Shared/Services.Shared.fs</code>: existing Git-style
+            binary detector that scans the first 8 KiB for a NUL byte.
+          </li>
+          <li>
+            <code>src/Grace.SDK/Storage.SDK.fs</code>: current upload behavior
+            stores binary files raw, gzip-compresses text files, and applies the
+            1 MiB existence-check threshold to raw binary size or compressed
+            text size.
+          </li>
+          <li>
+            <a
+              href="https://learn.microsoft.com/en-us/rest/api/cost-management/retail-prices/azure-retail-prices"
+              >Azure Retail Prices API</a
+            >: current West US 2 General Block Blob v2 Hot GZRS storage and
+            operation meters.
+          </li>
+          <li>
+            <a
+              href="https://azure.microsoft.com/en-us/pricing/details/storage/blobs/"
+              >Azure Blob Storage pricing</a
+            >: operation categories and GZRS geo-replication pricing context.
+          </li>
+          <li>
+            <a href="https://huggingface.co/docs/xet/chunking"
+              >Xet Content-Defined Chunking Algorithm</a
+            >: deterministic chunking and 64 KiB target chunk context.
+          </li>
+          <li>
+            <a href="https://huggingface.co/docs/xet/xorb"
+              >Xet Xorb Formation and Serialization Format</a
+            >: block-like sequence of chunks, chunk indexes, and compressed
+            chunk headers.
+          </li>
+          <li>
+            <a href="https://huggingface.co/docs/xet/file-reconstruction"
+              >Xet File Reconstruction</a
+            >: reconstruction by xorb chunk ranges.
+          </li>
+          <li>
+            <a href="https://huggingface.co/docs/xet/upload-protocol"
+              >Xet Upload Protocol</a
+            >: upload ordering, reconstruction metadata, and the rule that
+            block-like payloads are uploaded before the file reconstruction that
+            references them.
+          </li>
+          <li>
+            <a href="https://huggingface.co/docs/xet/shard">Xet Shard Format</a
+            >: shard/CAS metadata as batched dedupe information.
+          </li>
+          <li>
+            <a href="https://huggingface.co/docs/xet/deduplication"
+              >Xet Chunk-Level Deduplication</a
+            >: global dedupe, shard responses, and fragmentation prevention
+            guidance.
+          </li>
+          <li>
+            <a href="https://huggingface.co/blog/from-chunks-to-blocks"
+              >From Chunks to Blocks</a
+            >: motivation for moving from per-chunk behavior to block-level
+            transfer and dedupe workflows.
+          </li>
+        </ul>
+      </section>
+    </main>
+  </body>
+</html>
