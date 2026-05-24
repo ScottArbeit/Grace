@@ -73,10 +73,14 @@ type ContentAddressTypesTests() =
             ]
 
         let manifest = FileManifest.Create(ManifestAddress "", 8192L, blocks)
+        let fileContentHash = FileContentHash "fb283dfc43483eae4cfb9f3eb0d1da0c46c9c557acfab283907eeb3803008bae"
+        let manifest = FileManifest.Create(ManifestAddress "", RabinChunking.SuiteName, fileContentHash, manifest.Size, blocks)
 
         let expectedPreimage =
             [
                 "grace.cas.v1.file-manifest"
+                $"chunking-suite:{RabinChunking.SuiteName}"
+                $"file-content-hash:{fileContentHash}"
                 "size:8192"
                 "block-count:2"
                 $"block:0:{blockAddress}:0:4096"
@@ -85,8 +89,8 @@ type ContentAddressTypesTests() =
             |> String.concat "\n"
             |> fun value -> value + "\n"
 
-        let preimage = ContentAddress.manifestPreimage manifest.Size manifest.Blocks
-        let address = ContentAddress.computeManifestAddress manifest.Size manifest.Blocks
+        let preimage = ContentAddress.manifestPreimage manifest.ChunkingSuiteId manifest.FileContentHash manifest.Size manifest.Blocks
+        let address = ContentAddress.computeManifestAddressForManifest manifest
 
         let firstPath = FileVersion.Create "src/assets/movie.bin" "abc123" "https://example.test/a" true manifest.Size
         firstPath.ContentReference <- FileContentReference.FileManifest { manifest with ManifestAddress = address }
@@ -95,6 +99,6 @@ type ContentAddressTypesTests() =
         secondPath.ContentReference <- FileContentReference.FileManifest { manifest with ManifestAddress = address }
 
         Assert.That(preimage, Is.EqualTo(expectedPreimage))
-        Assert.That(address, Is.EqualTo(ManifestAddress "ac308ff0b0f4f8c6dc0046d8c3a8bb268d73d425b33c51ff7aa93b50da4d12fd"))
+        Assert.That(address, Is.EqualTo(ManifestAddress "5dd11fdb1534c0f1c4fecca3c07498f9b59a7dff26d69fe78e43f7ce50d90895"))
         Assert.That(ContentAddress.isValidAddress address, Is.True)
         Assert.That(firstPath.ContentReference, Is.EqualTo(secondPath.ContentReference))
