@@ -153,14 +153,12 @@ type StorageContentBlockSasRoutes() =
     let createContentBlockUploadParameters repositoryId =
         let parameters = Parameters.Storage.GetContentBlockUploadUriParameters()
         setContentBlockParameters parameters repositoryId
-        parameters.RelativePath <- "large-assets/never-uploaded.bin"
         parameters.ContentBlockAddress <- $"content-block-{Guid.NewGuid():N}"
         parameters
 
     let createContentBlockDownloadParameters repositoryId =
         let parameters = Parameters.Storage.GetContentBlockDownloadUriParameters()
         setContentBlockParameters parameters repositoryId
-        parameters.RelativePath <- "large-assets/never-uploaded.bin"
         parameters.ContentBlockAddress <- $"content-block-{Guid.NewGuid():N}"
         parameters
 
@@ -232,7 +230,7 @@ type StorageContentBlockSdkContract() =
         let parameterType = getStorageParameterType typeName
         Assert.That(parameterType, Is.Not.Null, $"{typeName} should be defined in Grace.Shared.Parameters.Storage.")
         Assert.That(parameterType.IsSubclassOf(typeof<Parameters.Storage.StorageParameters>), Is.True)
-        Assert.That(parameterType.GetProperty("RelativePath"), Is.Not.Null)
+        Assert.That(parameterType.GetProperty("RelativePath"), Is.Null)
         Assert.That(parameterType.GetProperty("ContentBlockAddress"), Is.Not.Null)
 
     let assertSdkMethod methodName parameterTypeName =
@@ -250,7 +248,7 @@ type StorageContentBlockSdkContract() =
         Assert.That(parameters[0].ParameterType, Is.EqualTo(parameterType))
 
     [<Test>]
-    member _.ContentBlockSasParametersExposePathContextAndAddress() =
+    member _.ContentBlockSasParametersExposeAddressWithoutCallerSuppliedPath() =
         assertContentBlockParameterShape "GetContentBlockUploadUriParameters"
         assertContentBlockParameterShape "GetContentBlockDownloadUriParameters"
 

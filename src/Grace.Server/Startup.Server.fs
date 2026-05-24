@@ -202,7 +202,13 @@ module Application =
 
                 let graceIds = Services.getGraceIds context
 
-                return Resource.Path(graceIds.OwnerId, graceIds.OrganizationId, graceIds.RepositoryId, parameters.RelativePath)
+                return
+                    Resource.Path(
+                        graceIds.OwnerId,
+                        graceIds.OrganizationId,
+                        graceIds.RepositoryId,
+                        StorageKeys.contentBlockObjectKey parameters.ContentBlockAddress
+                    )
             }
 
         let contentBlockDownloadPathResourceFromContext (context: HttpContext) =
@@ -215,7 +221,13 @@ module Application =
 
                 let graceIds = Services.getGraceIds context
 
-                return Resource.Path(graceIds.OwnerId, graceIds.OrganizationId, graceIds.RepositoryId, parameters.RelativePath)
+                return
+                    Resource.Path(
+                        graceIds.OwnerId,
+                        graceIds.OrganizationId,
+                        graceIds.RepositoryId,
+                        StorageKeys.contentBlockObjectKey parameters.ContentBlockAddress
+                    )
             }
 
         let composeHandlers (first: HttpHandler) (second: HttpHandler) : HttpHandler = fun next context -> first (second next) context
