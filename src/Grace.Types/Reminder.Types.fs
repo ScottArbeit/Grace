@@ -9,6 +9,7 @@ open Grace.Types.Owner
 open Grace.Types.Reference
 open Grace.Types.Repository
 open Grace.Types.Types
+open Grace.Types.UploadSession
 open NodaTime
 open Orleans
 open System
@@ -27,6 +28,7 @@ module Reminder =
         | DirectoryVersionDeleteCachedState of DirectoryVersion.PhysicalDeletionReminderState
         | DirectoryVersionDeleteZipFile of DirectoryVersion.PhysicalDeletionReminderState
         | DiffDeleteCachedState of Diff.DeleteCachedStateReminderState
+        | UploadSessionPhysicalDeletion of UploadSession.PhysicalDeletionReminderState
 
     /// Defines all reminders used in Grace.
     type ReminderDto =

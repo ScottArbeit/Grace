@@ -86,6 +86,9 @@ module Constants =
         let Artifact = "ArtifactActor"
 
         [<Literal>]
+        let UploadSession = "UploadSessionActor"
+
+        [<Literal>]
         let Reference = "ReferenceActor"
 
         [<Literal>]
@@ -163,6 +166,9 @@ module Constants =
 
         [<Literal>]
         let Artifact = "Artifact"
+
+        [<Literal>]
+        let UploadSession = "UploadSession"
 
         [<Literal>]
         let Reference = "Ref"

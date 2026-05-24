@@ -167,6 +167,9 @@ module Reminder =
                         | ActorName.Reference ->
                             let referenceActorProxy = Reference.CreateActorProxy actorId reminderDto.RepositoryId correlationId
                             return! referenceActorProxy.ReceiveReminderAsync reminderDto
+                        | ActorName.UploadSession ->
+                            let uploadSessionActorProxy = UploadSession.CreateActorProxy actorId reminderDto.RepositoryId correlationId
+                            return! uploadSessionActorProxy.ReceiveReminderAsync reminderDto
                         | ActorName.Diff ->
                             // Example reminderDto.ActorId: "diffactor/15b50c95-7306-4ecb-9850-a0a5dc7419cf*1e7b6f83-4715-42f8-ba0b-9b0262356f08"
                             let directoryVersionIds = reminderDto.ActorId.Split("/").[1].Split("*")

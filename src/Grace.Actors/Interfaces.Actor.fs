@@ -18,6 +18,7 @@ open Grace.Types.Review
 open Grace.Types.Queue
 open Grace.Types.Validation
 open Grace.Types.Artifact
+open Grace.Types.UploadSession
 open Grace.Types.WorkItem
 open Grace.Types.Types
 open Grace.Shared.Utilities
@@ -468,6 +469,23 @@ module Interfaces =
 
         /// Validates incoming commands and converts them to events that are stored in the database.
         abstract member Handle: command: ArtifactCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
+
+    /// Defines the operations for the UploadSession actor.
+    [<Interface>]
+    type IUploadSessionActor =
+        inherit IGraceReminderWithGuidKey
+
+        /// Returns true if this upload session already exists in the database.
+        abstract member Exists: correlationId: CorrelationId -> Task<bool>
+
+        /// Returns the current upload session state.
+        abstract member Get: correlationId: CorrelationId -> Task<UploadSessionDto>
+
+        /// Returns the events handled by this upload session.
+        abstract member GetEvents: correlationId: CorrelationId -> Task<IReadOnlyList<UploadSessionEvent>>
+
+        /// Validates incoming commands and converts them to persisted events.
+        abstract member Handle: command: UploadSessionCommand -> eventMetadata: EventMetadata -> Task<GraceResult<UploadSessionDecision>>
 
     /// Defines the operations for the WorkItemNumber actor.
     [<Interface>]
