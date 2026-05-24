@@ -124,14 +124,16 @@ module UploadSession =
             None
 
     let private validateStoragePlacement correlationId (placement: ContentBlockStoragePlacement) =
-        if String.IsNullOrWhiteSpace placement.ObjectKey then
+        if isNull (box placement) then
+            Some(graceError correlationId "StoragePlacement is required.")
+        elif String.IsNullOrWhiteSpace placement.ObjectKey then
             Some(graceError correlationId "StoragePlacement.ObjectKey is required.")
         else
             None
 
-    let private findBlockIntent (session: UploadSessionDto) contentBlockAddress =
+    let private findBlockIntents (session: UploadSessionDto) contentBlockAddress =
         session.BlockUploadIntents
-        |> Array.tryFind (fun intent -> intent.ContentBlockAddress = contentBlockAddress)
+        |> Array.filter (fun intent -> intent.ContentBlockAddress = contentBlockAddress)
 
     let private contentBlockError error = $"ContentBlock payload is invalid: {error}."
 
@@ -151,19 +153,25 @@ module UploadSession =
             match validateStoragePlacement metadata.CorrelationId confirmation.StoragePlacement with
             | Some error -> Error error
             | None ->
-                match findBlockIntent session confirmation.ContentBlockAddress with
-                | None ->
+                match findBlockIntents session confirmation.ContentBlockAddress with
+                | intents when intents.Length = 0 ->
                     Error(graceError metadata.CorrelationId $"Block upload intent does not exist for ContentBlockAddress {confirmation.ContentBlockAddress}.")
-                | Some intent when
-                    intent.ExpectedPayloadLength
-                    <> confirmation.Payload.LongLength
+                | intents when
+                    intents
+                    |> Array.exists (fun intent -> intent.ExpectedPayloadLength = confirmation.Payload.LongLength)
+                    |> not
                     ->
+                    let expectedLengths =
+                        intents
+                        |> Array.map (fun intent -> intent.ExpectedPayloadLength.ToString())
+                        |> String.concat ", "
+
                     Error(
                         graceError
                             metadata.CorrelationId
-                            $"ContentBlock payload length mismatch. Expected {intent.ExpectedPayloadLength}, actual {confirmation.Payload.LongLength}."
+                            $"ContentBlock payload length mismatch. Expected one of [{expectedLengths}], actual {confirmation.Payload.LongLength}."
                     )
-                | Some _ ->
+                | _ ->
                     match ContentBlockFormat.decode confirmation.Payload with
                     | Error error -> Error(graceError metadata.CorrelationId (contentBlockError error))
                     | Ok decodedBlock ->

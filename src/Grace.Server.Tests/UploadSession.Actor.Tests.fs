@@ -64,6 +64,9 @@ type UploadSessionActorTests() =
             StoragePlacement = { ObjectKey = $"cas/content-blocks/{blockAddress}"; ETag = Some "etag-confirmed" }
         }
 
+    let confirmWithPlacement operationId blockAddress payload placement : ConfirmBlockUploaded =
+        { OperationId = operationId; ContentBlockAddress = blockAddress; Payload = payload; StoragePlacement = placement }
+
     let apply event dto = UploadSessionDto.UpdateDto event dto
 
     let applyAll events dto =
@@ -309,6 +312,81 @@ type UploadSessionActorTests() =
                 Is.EqualTo(11L)
             )
         | Error error -> Assert.Fail($"Expected block upload confirmation to succeed, got {error.Error}.")
+
+    [<Test>]
+    member _.ConfirmBlockUploadedRejectsNullStoragePlacementAsGraceError() =
+        let block = encodedBlock (Text.Encoding.UTF8.GetBytes("hello world"))
+        let startedDto, startEvents = startedSession ()
+
+        let intentDto, intentEvents =
+            match
+                UploadSessionActor.decideCommand
+                    startEvents
+                    startedDto
+                    (UploadSessionCommand.RegisterBlockUploadIntent(intent "op-block-intent" block.Address block.Payload.LongLength))
+                    (metadata "corr-block-intent")
+                with
+            | Ok decision -> decision.Session, startEvents @ decision.Events
+            | Error error ->
+                Assert.Fail($"Expected intent to succeed, got {error.Error}.")
+                UploadSessionDto.Default, []
+
+        let result =
+            UploadSessionActor.decideCommand
+                intentEvents
+                intentDto
+                (UploadSessionCommand.ConfirmBlockUploaded(
+                    confirmWithPlacement "op-block-confirm" block.Address block.Payload Unchecked.defaultof<ContentBlockStoragePlacement>
+                ))
+                (metadata "corr-block-confirm")
+
+        match result with
+        | Ok _ -> Assert.Fail("Expected null storage placement to be rejected.")
+        | Error error -> Assert.That(error.Error, Is.EqualTo("StoragePlacement is required."))
+
+    [<Test>]
+    member _.ConfirmBlockUploadedMatchesAnyCompatibleDuplicateIntent() =
+        let block = encodedBlock (Text.Encoding.UTF8.GetBytes("hello world"))
+        let startedDto, startEvents = startedSession ()
+
+        let first =
+            UploadSessionActor.decideCommand
+                startEvents
+                startedDto
+                (UploadSessionCommand.RegisterBlockUploadIntent(intentAt "op-block-intent-1" block.Address (block.Payload.LongLength + 1L) 0L))
+                (metadata "corr-block-intent-1")
+
+        let firstDto, firstEvents =
+            match first with
+            | Ok decision -> decision.Session, startEvents @ decision.Events
+            | Error error ->
+                Assert.Fail($"Expected first intent to succeed, got {error.Error}.")
+                UploadSessionDto.Default, []
+
+        let second =
+            UploadSessionActor.decideCommand
+                firstEvents
+                firstDto
+                (UploadSessionCommand.RegisterBlockUploadIntent(intentAt "op-block-intent-2" block.Address block.Payload.LongLength 4096L))
+                (metadata "corr-block-intent-2")
+
+        let secondDto, secondEvents =
+            match second with
+            | Ok decision -> decision.Session, firstEvents @ decision.Events
+            | Error error ->
+                Assert.Fail($"Expected second intent to succeed, got {error.Error}.")
+                UploadSessionDto.Default, []
+
+        let result =
+            UploadSessionActor.decideCommand
+                secondEvents
+                secondDto
+                (UploadSessionCommand.ConfirmBlockUploaded(confirm "op-block-confirm" block.Address block.Payload))
+                (metadata "corr-block-confirm")
+
+        match result with
+        | Ok decision -> Assert.That(decision.Session.ConfirmedBlockUploads.Length, Is.EqualTo(1))
+        | Error error -> Assert.Fail($"Expected confirmation to match compatible duplicate intent, got {error.Error}.")
 
     [<Test>]
     member _.ConfirmBlockUploadedRejectsCorruptPayloadWithoutConsumingOperationId() =

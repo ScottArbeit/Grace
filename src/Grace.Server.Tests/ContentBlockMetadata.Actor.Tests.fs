@@ -43,16 +43,18 @@ type ContentBlockMetadataActorTests() =
     let replace operationId expectedVersion ranges =
         ContentBlockMetadataCommand.ReplaceWholeRecord { OperationId = operationId; ExpectedMetadataVersion = expectedVersion; Metadata = record ranges }
 
-    let mergeWithObjectKey operationId objectKey ranges =
+    let mergeWithPlacement operationId placement ranges =
         ContentBlockMetadataCommand.MergePhysicalRanges
             {
                 OperationId = operationId
                 StoragePoolId = storagePoolId
                 ContentBlockAddress = contentBlockAddress
                 BlockFormatVersion = 1s
-                StoragePlacement = { ObjectKey = objectKey; ETag = Some "etag-1" }
+                StoragePlacement = placement
                 Ranges = ranges
             }
+
+    let mergeWithObjectKey operationId objectKey ranges = mergeWithPlacement operationId { ObjectKey = objectKey; ETag = Some "etag-1" } ranges
 
     let merge operationId ranges = mergeWithObjectKey operationId "cas/content-blocks/block-blake3-0001" ranges
 
@@ -151,6 +153,19 @@ type ContentBlockMetadataActorTests() =
                 Is.EqualTo(ContentBlockRangePresence.Reclaimable)
             )
         | Error error -> Assert.Fail($"Expected physical range merge to succeed, got {error.Error}.")
+
+    [<Test>]
+    member _.MergePhysicalRangesRejectsNullStoragePlacementAsGraceError() =
+        let result =
+            ContentBlockMetadataActor.decideCommand
+                []
+                ContentBlockMetadataDto.Empty
+                (mergeWithPlacement "op-merge-null-placement" Unchecked.defaultof<ContentBlockStoragePlacement> [| reclaimableRange |])
+                (metadata "corr-merge-null-placement")
+
+        match result with
+        | Ok _ -> Assert.Fail("Expected null storage placement to be rejected.")
+        | Error error -> Assert.That(error.Error, Is.EqualTo("StoragePlacement is required."))
 
     [<Test>]
     member _.MergePhysicalRangesAddsMissingRangesWithoutDuplicatingExistingOnReplay() =

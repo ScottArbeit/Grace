@@ -78,7 +78,9 @@ module ContentBlockMetadata =
             |> Array.tryPick (validateRange correlationId)
 
     let private validateStoragePlacement correlationId (placement: ContentBlockStoragePlacement) =
-        if String.IsNullOrWhiteSpace placement.ObjectKey then
+        if isNull (box placement) then
+            Some(graceError correlationId "StoragePlacement is required.")
+        elif String.IsNullOrWhiteSpace placement.ObjectKey then
             Some(graceError correlationId "StoragePlacement.ObjectKey is required.")
         else
             None
