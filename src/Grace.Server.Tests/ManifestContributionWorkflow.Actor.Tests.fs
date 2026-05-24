@@ -22,15 +22,11 @@ type ManifestContributionWorkflowActorTests() =
 
     let metadata correlationId = { Timestamp = timestamp; CorrelationId = correlationId; Principal = "tester"; Properties = Dictionary<string, string>() }
 
-    let start direction =
+    let startWithRanges direction ranges =
         ManifestContributionWorkflowCommand.Start
-            {
-                OperationId = "workflow-start"
-                RepositoryId = repositoryId
-                ManifestAddress = manifestAddress
-                Direction = direction
-                Ranges = [| range0; range1 |]
-            }
+            { OperationId = "workflow-start"; RepositoryId = repositoryId; ManifestAddress = manifestAddress; Direction = direction; Ranges = ranges }
+
+    let start direction = startWithRanges direction [| range0; range1 |]
 
     let succeeded operationId range = ManifestContributionWorkflowCommand.RecordRangeSucceeded(operationId, range)
 
@@ -52,6 +48,60 @@ type ManifestContributionWorkflowActorTests() =
         let key = ManifestContributionWorkflowActor.primaryKey repositoryId manifestAddress
 
         Assert.That(key, Is.EqualTo("a6c6b60ad4d240f68362258dbe75a5bf|manifest:blake3:alpha"))
+
+    [<Test>]
+    member _.StartRejectsDuplicateRanges() =
+        let duplicateStart = startWithRanges ManifestContributionDirection.Increment [| range0; range0 |]
+
+        let result = ManifestContributionWorkflowActor.decideCommand [] ManifestContributionWorkflowDto.Default duplicateStart (metadata "corr-duplicate")
+
+        match result with
+        | Ok _ -> Assert.Fail("Expected duplicate ranges to reject.")
+        | Error error -> Assert.That(error.Error, Is.EqualTo("ManifestContributionWorkflow ranges must be unique."))
+
+    [<Test>]
+    member _.ReusedStartOperationIdWithDifferentPayloadRejectsInsteadOfReplaying() =
+        let started =
+            ManifestContributionWorkflowActor.decideCommand
+                []
+                ManifestContributionWorkflowDto.Default
+                (start ManifestContributionDirection.Increment)
+                (metadata "corr-start")
+            |> expectOk
+
+        let afterStart = applyAll started.Events ManifestContributionWorkflowDto.Default
+        let mismatchedStart = startWithRanges ManifestContributionDirection.Increment [| range0 |]
+
+        let replay = ManifestContributionWorkflowActor.decideCommand started.Events afterStart mismatchedStart (metadata "corr-start-reused")
+
+        match replay with
+        | Ok _ -> Assert.Fail("Expected reused start operation id with different payload to reject.")
+        | Error error -> Assert.That(error.Error, Is.EqualTo("ManifestContributionWorkflow operation id was already used with a different payload."))
+
+    [<Test>]
+    member _.ReusedRangeSuccessOperationIdWithDifferentRangeRejectsInsteadOfReplaying() =
+        let started =
+            ManifestContributionWorkflowActor.decideCommand
+                []
+                ManifestContributionWorkflowDto.Default
+                (start ManifestContributionDirection.Increment)
+                (metadata "corr-start")
+            |> expectOk
+
+        let afterStart = applyAll started.Events ManifestContributionWorkflowDto.Default
+
+        let firstSuccess =
+            ManifestContributionWorkflowActor.decideCommand started.Events afterStart (succeeded "range-shared" range0) (metadata "corr-range-0")
+            |> expectOk
+
+        let allEvents = started.Events @ firstSuccess.Events
+        let afterSuccess = applyAll firstSuccess.Events afterStart
+
+        let replay = ManifestContributionWorkflowActor.decideCommand allEvents afterSuccess (succeeded "range-shared" range1) (metadata "corr-range-reused")
+
+        match replay with
+        | Ok _ -> Assert.Fail("Expected reused range operation id with different range to reject.")
+        | Error error -> Assert.That(error.Error, Is.EqualTo("ManifestContributionWorkflow operation id was already used with a different payload."))
 
     [<Test>]
     member _.ActivationResumeReturnsOnlyUncompletedRanges() =

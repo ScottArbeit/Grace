@@ -42,6 +42,27 @@ module ManifestContributionWorkflow =
         | ManifestContributionWorkflowEventType.RangeSucceeded _ -> "RecordRangeSucceeded"
         | ManifestContributionWorkflowEventType.RangeFailed _ -> "RecordRangeFailed"
 
+    let private rangesEqual left right =
+        Array.length left = Array.length right
+        && Seq.forall2 (=) left right
+
+    let private startMatches (existing: StartManifestContributionWorkflow) (candidate: StartManifestContributionWorkflow) =
+        existing.RepositoryId = candidate.RepositoryId
+        && existing.ManifestAddress = candidate.ManifestAddress
+        && existing.Direction = candidate.Direction
+        && rangesEqual existing.Ranges candidate.Ranges
+
+    let private eventMatchesCommand workflowEvent command =
+        match workflowEvent.Event, command with
+        | ManifestContributionWorkflowEventType.WorkflowStarted existing, ManifestContributionWorkflowCommand.Start candidate -> startMatches existing candidate
+        | ManifestContributionWorkflowEventType.RangeSucceeded (_, existingRange), ManifestContributionWorkflowCommand.RecordRangeSucceeded (_, candidateRange) ->
+            existingRange = candidateRange
+        | ManifestContributionWorkflowEventType.RangeFailed (_, existingRange, existingMessage),
+          ManifestContributionWorkflowCommand.RecordRangeFailed (_, candidateRange, candidateMessage) ->
+            existingRange = candidateRange
+            && existingMessage = candidateMessage
+        | _ -> false
+
     let private tryFindAppliedOperation (events: seq<ManifestContributionWorkflowEvent>) operationId =
         events
         |> Seq.tryFind (fun workflowEvent -> eventOperationId workflowEvent = operationId)
@@ -101,6 +122,12 @@ module ManifestContributionWorkflow =
         else
             None
 
+    let private hasDuplicateRanges ranges =
+        let seen = HashSet<ManifestContributionWorkflowRange>()
+
+        ranges
+        |> Array.exists (fun range -> not (seen.Add range))
+
     let private validateStart
         expectedPrimaryKey
         (workflow: ManifestContributionWorkflowDto)
@@ -123,6 +150,8 @@ module ManifestContributionWorkflow =
             Some(graceError metadata.CorrelationId "ManifestContributionWorkflow has already been started.")
         elif Array.isEmpty start.Ranges then
             Some(graceError metadata.CorrelationId "ManifestContributionWorkflow requires at least one range.")
+        elif hasDuplicateRanges start.Ranges then
+            Some(graceError metadata.CorrelationId "ManifestContributionWorkflow ranges must be unique.")
         else
             start.Ranges
             |> Array.tryPick (validateRange metadata.CorrelationId)
@@ -146,6 +175,8 @@ module ManifestContributionWorkflow =
                 <> commandName command
                 ->
                 Error(graceError metadata.CorrelationId "ManifestContributionWorkflow operation id was already used for a different command.")
+            | Some workflowEvent when not (eventMatchesCommand workflowEvent command) ->
+                Error(graceError metadata.CorrelationId "ManifestContributionWorkflow operation id was already used with a different payload.")
             | Some _ -> okDecision workflow operationId [] [] true "Manifest contribution workflow command replayed."
             | None ->
                 match command with
