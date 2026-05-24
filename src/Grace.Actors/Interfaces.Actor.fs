@@ -11,6 +11,7 @@ open Grace.Types.Reference
 open Grace.Types.Reminder
 open Grace.Types.Repository
 open Grace.Types.RepositoryContentCounter
+open Grace.Types.ManifestContributionWorkflow
 open Grace.Types.Organization
 open Grace.Types.Owner
 open Grace.Types.PersonalAccessToken
@@ -606,6 +607,30 @@ module Interfaces =
 
         /// Validates incoming commands and converts them to persisted events and zero-crossing intents.
         abstract member Handle: command: RepositoryContentCounterCommand -> eventMetadata: EventMetadata -> Task<GraceResult<RepositoryContentCounterDecision>>
+
+    /// Defines the operations for the ManifestContributionWorkflow actor.
+    [<Interface>]
+    type IManifestContributionWorkflowActor =
+        inherit IGrainWithStringKey
+
+        /// Returns true if this manifest contribution workflow has been initialized.
+        abstract member Exists: correlationId: CorrelationId -> Task<bool>
+
+        /// Returns the current workflow state.
+        abstract member Get: correlationId: CorrelationId -> Task<ManifestContributionWorkflowDto>
+
+        /// Returns the ranges that still need active-count fan-out.
+        abstract member GetPendingRanges: correlationId: CorrelationId -> Task<ManifestContributionWorkflowRange array>
+
+        /// Returns true when this workflow still owns pending work for the range.
+        abstract member BlocksUnsafeDeletion: range: ManifestContributionWorkflowRange -> correlationId: CorrelationId -> Task<bool>
+
+        /// Returns the events handled by this manifest contribution workflow.
+        abstract member GetEvents: correlationId: CorrelationId -> Task<IReadOnlyList<ManifestContributionWorkflowEvent>>
+
+        /// Validates incoming commands and converts them to persisted workflow progress and fan-out intents.
+        abstract member Handle:
+            command: ManifestContributionWorkflowCommand -> eventMetadata: EventMetadata -> Task<GraceResult<ManifestContributionWorkflowDecision>>
 
     /// Defines the operations for the RepositoryName actor.
     [<Interface>]

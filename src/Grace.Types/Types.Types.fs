@@ -143,6 +143,9 @@ module Types =
     /// Caller-supplied retry identity for repository-content-counter commands.
     type RepositoryContentCounterOperationId = string
 
+    /// Caller-supplied retry identity for manifest-contribution workflow commands.
+    type ManifestContributionWorkflowOperationId = string
+
     /// Repository-local count of live references to a manifest-backed file.
     type ReferenceCount = int64
 

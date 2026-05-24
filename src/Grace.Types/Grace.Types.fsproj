@@ -42,6 +42,7 @@
         <Compile Include="DirectoryVersion.Types.fs" />
         <Compile Include="UploadSession.Types.fs" />
         <Compile Include="RepositoryContentCounter.Types.fs" />
+        <Compile Include="ManifestContributionWorkflow.Types.fs" />
         <Compile Include="Reminder.Types.fs" />
         <Compile Include="Events.Types.fs" />
     </ItemGroup>

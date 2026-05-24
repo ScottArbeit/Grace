@@ -1,0 +1,213 @@
+namespace Grace.Server.Tests
+
+open Grace.Types.ManifestContributionWorkflow
+open Grace.Types.Types
+open NodaTime
+open NUnit.Framework
+open System
+open System.Collections.Generic
+
+module ManifestContributionWorkflowActor = Grace.Actors.ManifestContributionWorkflow
+
+[<Parallelizable(ParallelScope.All)>]
+type ManifestContributionWorkflowActorTests() =
+
+    let timestamp = Instant.FromUtc(2026, 5, 24, 14, 0)
+    let repositoryId = Guid.Parse("a6c6b60a-d4d2-40f6-8362-258dbe75a5bf")
+    let manifestAddress = "manifest:blake3:alpha"
+
+    let range0 = { StoragePoolId = StoragePoolId "pool-main"; ContentBlockAddress = ContentBlockAddress "block-a"; OrdinalStart = 0; OrdinalCount = 8 }
+
+    let range1 = { StoragePoolId = StoragePoolId "pool-main"; ContentBlockAddress = ContentBlockAddress "block-b"; OrdinalStart = 8; OrdinalCount = 4 }
+
+    let metadata correlationId = { Timestamp = timestamp; CorrelationId = correlationId; Principal = "tester"; Properties = Dictionary<string, string>() }
+
+    let start direction =
+        ManifestContributionWorkflowCommand.Start
+            {
+                OperationId = "workflow-start"
+                RepositoryId = repositoryId
+                ManifestAddress = manifestAddress
+                Direction = direction
+                Ranges = [| range0; range1 |]
+            }
+
+    let succeeded operationId range = ManifestContributionWorkflowCommand.RecordRangeSucceeded(operationId, range)
+
+    let failed operationId range message = ManifestContributionWorkflowCommand.RecordRangeFailed(operationId, range, message)
+
+    let applyAll events current =
+        events
+        |> List.fold (fun state event -> ManifestContributionWorkflowDto.UpdateDto event state) current
+
+    let expectOk result =
+        match result with
+        | Ok decision -> decision
+        | Error error ->
+            Assert.Fail($"Expected command to succeed, got {error.Error}.")
+            Unchecked.defaultof<ManifestContributionWorkflowDecision>
+
+    [<Test>]
+    member _.WorkflowPrimaryKeyCombinesRepositoryIdAndManifestAddress() =
+        let key = ManifestContributionWorkflowActor.primaryKey repositoryId manifestAddress
+
+        Assert.That(key, Is.EqualTo("a6c6b60ad4d240f68362258dbe75a5bf|manifest:blake3:alpha"))
+
+    [<Test>]
+    member _.ActivationResumeReturnsOnlyUncompletedRanges() =
+        let started =
+            ManifestContributionWorkflowActor.decideCommand
+                []
+                ManifestContributionWorkflowDto.Default
+                (start ManifestContributionDirection.Increment)
+                (metadata "corr-start")
+            |> expectOk
+
+        let afterStart = applyAll started.Events ManifestContributionWorkflowDto.Default
+
+        let completedRange0 =
+            ManifestContributionWorkflowActor.decideCommand started.Events afterStart (succeeded "range-0" range0) (metadata "corr-range-0")
+            |> expectOk
+
+        let allEvents = started.Events @ completedRange0.Events
+        let afterActivation = applyAll allEvents ManifestContributionWorkflowDto.Default
+
+        Assert.That(afterActivation.LifecycleState, Is.EqualTo(ManifestContributionWorkflowLifecycleState.InProgress))
+        let pending = ManifestContributionWorkflowActor.pendingRanges afterActivation
+        Assert.That(pending.Length, Is.EqualTo(1))
+        Assert.That(pending[0], Is.EqualTo(range1))
+
+    [<Test>]
+    member _.PartialBatchFailureRetriesOnlyFailedRangeAndThenCompletes() =
+        let started =
+            ManifestContributionWorkflowActor.decideCommand
+                []
+                ManifestContributionWorkflowDto.Default
+                (start ManifestContributionDirection.Increment)
+                (metadata "corr-start")
+            |> expectOk
+
+        let afterStart = applyAll started.Events ManifestContributionWorkflowDto.Default
+
+        let range0Done =
+            ManifestContributionWorkflowActor.decideCommand started.Events afterStart (succeeded "range-0" range0) (metadata "corr-range-0")
+            |> expectOk
+
+        let afterRange0 = applyAll range0Done.Events afterStart
+
+        let range1Failed =
+            ManifestContributionWorkflowActor.decideCommand
+                (started.Events @ range0Done.Events)
+                afterRange0
+                (failed "range-1-failed" range1 "transient")
+                (metadata "corr-range-1-failed")
+            |> expectOk
+
+        let afterFailure = applyAll range1Failed.Events afterRange0
+
+        Assert.That(afterFailure.LifecycleState, Is.EqualTo(ManifestContributionWorkflowLifecycleState.InProgress))
+        let pendingAfterFailure = ManifestContributionWorkflowActor.pendingRanges afterFailure
+        Assert.That(pendingAfterFailure.Length, Is.EqualTo(1))
+        Assert.That(pendingAfterFailure[0], Is.EqualTo(range1))
+        Assert.That(afterFailure.FailedRanges.ContainsKey(range1), Is.True)
+
+        let retrySucceeded =
+            ManifestContributionWorkflowActor.decideCommand
+                (started.Events
+                 @ range0Done.Events @ range1Failed.Events)
+                afterFailure
+                (succeeded "range-1-retry" range1)
+                (metadata "corr-range-1-retry")
+            |> expectOk
+
+        Assert.That(retrySucceeded.Workflow.LifecycleState, Is.EqualTo(ManifestContributionWorkflowLifecycleState.Completed))
+        Assert.That(ManifestContributionWorkflowActor.pendingRanges retrySucceeded.Workflow, Is.Empty)
+
+    [<Test>]
+    member _.RangeSuccessEmitsOneActiveCountIntentAndReplayDoesNotEmitSecondIntent() =
+        let started =
+            ManifestContributionWorkflowActor.decideCommand
+                []
+                ManifestContributionWorkflowDto.Default
+                (start ManifestContributionDirection.Increment)
+                (metadata "corr-start")
+            |> expectOk
+
+        let afterStart = applyAll started.Events ManifestContributionWorkflowDto.Default
+
+        let firstSuccess =
+            ManifestContributionWorkflowActor.decideCommand started.Events afterStart (succeeded "range-0" range0) (metadata "corr-range-0")
+            |> expectOk
+
+        Assert.That(firstSuccess.Intents.Length, Is.EqualTo(1))
+        Assert.That(firstSuccess.Intents[0], Is.EqualTo(ManifestContributionWorkflowIntent.AdjustRangeActiveManifestCount(range0, 1)))
+
+        let allEvents = started.Events @ firstSuccess.Events
+        let afterSuccess = applyAll firstSuccess.Events afterStart
+
+        let replay =
+            ManifestContributionWorkflowActor.decideCommand allEvents afterSuccess (succeeded "range-0" range0) (metadata "corr-range-0-replay")
+            |> expectOk
+
+        Assert.That(replay.WasIdempotentReplay, Is.True)
+        Assert.That(replay.Events, Is.Empty)
+        Assert.That(replay.Intents, Is.Empty)
+
+    [<Test>]
+    member _.IncrementAndDecrementDirectionsProduceOppositeActiveRangeDeltas() =
+        let startAndSucceed direction =
+            let started =
+                ManifestContributionWorkflowActor.decideCommand
+                    []
+                    ManifestContributionWorkflowDto.Default
+                    (start direction)
+                    (metadata $"corr-start-{direction}")
+                |> expectOk
+
+            let afterStart = applyAll started.Events ManifestContributionWorkflowDto.Default
+
+            ManifestContributionWorkflowActor.decideCommand started.Events afterStart (succeeded "range-0" range0) (metadata $"corr-range-{direction}")
+            |> expectOk
+
+        let increment = startAndSucceed ManifestContributionDirection.Increment
+        let decrement = startAndSucceed ManifestContributionDirection.Decrement
+
+        Assert.That(increment.Intents.Length, Is.EqualTo(1))
+        Assert.That(increment.Intents[0], Is.EqualTo(ManifestContributionWorkflowIntent.AdjustRangeActiveManifestCount(range0, 1)))
+        Assert.That(decrement.Intents.Length, Is.EqualTo(1))
+        Assert.That(decrement.Intents[0], Is.EqualTo(ManifestContributionWorkflowIntent.AdjustRangeActiveManifestCount(range0, -1)))
+
+    [<Test>]
+    member _.PendingWorkflowBlocksUnsafeDeletionUntilAllRangesComplete() =
+        let started =
+            ManifestContributionWorkflowActor.decideCommand
+                []
+                ManifestContributionWorkflowDto.Default
+                (start ManifestContributionDirection.Decrement)
+                (metadata "corr-start")
+            |> expectOk
+
+        let afterStart = applyAll started.Events ManifestContributionWorkflowDto.Default
+
+        Assert.That(ManifestContributionWorkflowActor.blocksUnsafeDeletion afterStart range0, Is.True)
+        Assert.That(ManifestContributionWorkflowActor.blocksUnsafeDeletion afterStart range1, Is.True)
+
+        let range0Done =
+            ManifestContributionWorkflowActor.decideCommand started.Events afterStart (succeeded "range-0" range0) (metadata "corr-range-0")
+            |> expectOk
+
+        let afterRange0 = applyAll range0Done.Events afterStart
+
+        Assert.That(ManifestContributionWorkflowActor.blocksUnsafeDeletion afterRange0 range0, Is.False)
+        Assert.That(ManifestContributionWorkflowActor.blocksUnsafeDeletion afterRange0 range1, Is.True)
+
+        let range1Done =
+            ManifestContributionWorkflowActor.decideCommand
+                (started.Events @ range0Done.Events)
+                afterRange0
+                (succeeded "range-1" range1)
+                (metadata "corr-range-1")
+            |> expectOk
+
+        Assert.That(ManifestContributionWorkflowActor.blocksUnsafeDeletion range1Done.Workflow range0, Is.False)
+        Assert.That(ManifestContributionWorkflowActor.blocksUnsafeDeletion range1Done.Workflow range1, Is.False)
