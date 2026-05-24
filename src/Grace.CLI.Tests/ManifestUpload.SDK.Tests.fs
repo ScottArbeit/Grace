@@ -15,7 +15,7 @@ open System.IO
 open System.Security.Cryptography
 open System.Threading.Tasks
 
-[<Parallelizable(ParallelScope.All)>]
+[<NonParallelizable>]
 type ManifestUploadSdkTests() =
     static member private PseudoRandomBytes length =
         let bytes = Array.zeroCreate<byte> length

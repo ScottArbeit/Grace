@@ -267,8 +267,16 @@ module ManifestUpload =
                         match! Storage.GetContentBlockUploadUri parameters with
                         | Error error -> return Error error
                         | Ok uri ->
-                            return!
-                                Storage.SaveContentBlockToObjectStorage parameters.ContentBlockAddress payload (Uri(uri.ReturnValue)) parameters.CorrelationId
+                            match Uri.TryCreate(uri.ReturnValue, UriKind.Absolute) with
+                            | false, _ ->
+                                return
+                                    Error(
+                                        GraceError.Create
+                                            $"Failed to get a valid ContentBlock upload URI for {parameters.ContentBlockAddress}."
+                                            parameters.CorrelationId
+                                    )
+                            | true, uploadUri ->
+                                return! Storage.SaveContentBlockToObjectStorage parameters.ContentBlockAddress payload uploadUri parameters.CorrelationId
                     }
             ConfirmBlockUploaded = Storage.ConfirmContentBlockUpload
             FinalizeManifest = Storage.FinalizeManifestUpload
