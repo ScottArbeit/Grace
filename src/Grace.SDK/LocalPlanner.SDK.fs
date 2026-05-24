@@ -162,10 +162,11 @@ module LocalPlanner =
         let fileContentHash = FileContentHash(ContentAddress.computeBlake3Hex bytes)
         let expectedSize = int64 bytes.Length
 
-        match ManifestEligibility.evaluateContentReferenceType options.EligibilityPolicy bytes with
-        | FileContentReferenceType.WholeFileContent -> fallbackPlan options fileContentHash expectedSize bytes
-        | FileContentReferenceType.FileManifest -> planManifest options fileContentHash expectedSize bytes
-        | unexpected -> invalidOp $"Unsupported file content reference type: {unexpected}."
+        match bytes.Length, ManifestEligibility.evaluateContentReferenceType options.EligibilityPolicy bytes with
+        | 0, _ -> fallbackPlan options fileContentHash expectedSize bytes
+        | _, FileContentReferenceType.WholeFileContent -> fallbackPlan options fileContentHash expectedSize bytes
+        | _, FileContentReferenceType.FileManifest -> planManifest options fileContentHash expectedSize bytes
+        | _, unexpected -> invalidOp $"Unsupported file content reference type: {unexpected}."
 
     /// Analyzes a local file and returns the deterministic upload plan without contacting Grace Server.
     let analyzeFile options filePath =

@@ -40,6 +40,21 @@ type LocalPlannerSdkTests() =
         Assert.That(plan.ContentBlockUploads, Is.Empty)
 
     [<Test>]
+    member _.EmptyPayloadFallsBackEvenWhenThresholdWouldAllowManifest() =
+        let payload = Array.empty<byte>
+        let options = { LocalPlanner.Options.Default with EligibilityPolicy = LocalPlannerSdkTests.BinaryPolicy 0L }
+
+        let plan = LocalPlanner.analyzeBytes options payload
+
+        Assert.That(plan.ReferenceType, Is.EqualTo(FileContentReferenceType.WholeFileContent))
+        Assert.That(plan.ManifestAddress, Is.EqualTo(None))
+        Assert.That(plan.FallbackUpload, Is.Not.Null)
+        Assert.That(plan.FallbackUpload.Value.Bytes = payload, Is.True)
+        Assert.That(plan.Chunks, Is.Empty)
+        Assert.That(plan.Blocks, Is.Empty)
+        Assert.That(plan.ContentBlockUploads, Is.Empty)
+
+    [<Test>]
     member _.EligibleBinaryPayloadPlansDeterministicChunksBlocksAndManifest() =
         let payload = LocalPlannerSdkTests.PseudoRandomBytes 220000
         payload[0] <- 0uy
