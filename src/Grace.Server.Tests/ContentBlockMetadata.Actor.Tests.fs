@@ -175,6 +175,29 @@ type ContentBlockMetadataActorTests() =
         | Error error -> Assert.Fail($"Expected append merge to succeed, got {error.Error}.")
 
     [<Test>]
+    member _.MergePhysicalRangesAllowsSameOrdinalAtDifferentPhysicalOffsets() =
+        let relocatedRange = { activeRange with PhysicalOffset = 4096L; PhysicalLength = activeRange.PhysicalLength; ActiveManifestCount = 0 }
+
+        let created =
+            match ContentBlockMetadataActor.decideCommand [] ContentBlockMetadataDto.Empty (merge "op-create" [| activeRange |]) (metadata "corr-create") with
+            | Ok decision -> applyAll decision.Events ContentBlockMetadataDto.Empty, decision.Events
+            | Error error ->
+                Assert.Fail($"Expected create to succeed, got {error.Error}.")
+                ContentBlockMetadataDto.Empty, []
+
+        let createdDto, createdEvents = created
+
+        let updated = ContentBlockMetadataActor.decideCommand createdEvents createdDto (merge "op-relocated" [| relocatedRange |]) (metadata "corr-relocated")
+
+        match updated with
+        | Ok decision ->
+            Assert.That(decision.Metadata.Ranges.Length, Is.EqualTo(2))
+            Assert.That(decision.Metadata.Ranges[0].PhysicalOffset, Is.EqualTo(0L))
+            Assert.That(decision.Metadata.Ranges[1].PhysicalOffset, Is.EqualTo(4096L))
+            Assert.That(decision.Metadata.TotalPhysicalBytes, Is.EqualTo(5120L))
+        | Error error -> Assert.Fail($"Expected relocated physical range to merge, got {error.Error}.")
+
+    [<Test>]
     member _.MetadataActorUsesOneCompositeStringKeyAndDoesNotIntroduceChunkActorState() =
         let key = ContentBlockMetadataActorKey.Create storagePoolId contentBlockAddress
 

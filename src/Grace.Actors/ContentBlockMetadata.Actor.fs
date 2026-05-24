@@ -112,11 +112,10 @@ module ContentBlockMetadata =
         |> Array.filter (fun range -> range.ActiveManifestCount > 0)
         |> Array.sumBy (fun range -> range.PhysicalLength)
 
-    let private rangeKey (range: ContentBlockMetadataRange) = $"{range.OrdinalStart}:{range.OrdinalCount}"
+    let private rangeKey (range: ContentBlockMetadataRange) = $"{range.OrdinalStart}:{range.OrdinalCount}:{range.PhysicalOffset}:{range.PhysicalLength}"
 
-    let private mergeRanges correlationId existingRanges incomingRanges =
+    let private mergeRanges existingRanges incomingRanges =
         let merged = Dictionary<string, ContentBlockMetadataRange>()
-        let mutable error = None
 
         let addRange preserveActiveCount range =
             let key = rangeKey range
@@ -124,22 +123,13 @@ module ContentBlockMetadata =
             if merged.ContainsKey key then
                 let existing = merged[key]
 
-                if existing.PhysicalOffset <> range.PhysicalOffset
-                   || existing.PhysicalLength <> range.PhysicalLength then
-                    error <-
-                        Some(
-                            graceError
-                                correlationId
-                                $"Conflicting physical metadata range for OrdinalStart {range.OrdinalStart}, OrdinalCount {range.OrdinalCount}."
-                        )
-                else
-                    let activeManifestCount =
-                        if preserveActiveCount then
-                            max existing.ActiveManifestCount range.ActiveManifestCount
-                        else
-                            range.ActiveManifestCount
+                let activeManifestCount =
+                    if preserveActiveCount then
+                        max existing.ActiveManifestCount range.ActiveManifestCount
+                    else
+                        range.ActiveManifestCount
 
-                    merged[key] <- { existing with ActiveManifestCount = activeManifestCount }
+                merged[key] <- { existing with ActiveManifestCount = activeManifestCount }
             else
                 merged[key] <- range
 
@@ -147,13 +137,10 @@ module ContentBlockMetadata =
 
         incomingRanges |> Array.iter (addRange true)
 
-        match error with
-        | Some error -> Error error
-        | None ->
-            merged.Values
-            |> Seq.sortBy (fun range -> range.OrdinalStart, range.OrdinalCount)
-            |> Seq.toArray
-            |> Ok
+        merged.Values
+        |> Seq.sortBy (fun range -> range.OrdinalStart, range.OrdinalCount, range.PhysicalOffset, range.PhysicalLength)
+        |> Seq.toArray
+        |> Ok
 
     let private createMergedMetadata
         correlationId
@@ -194,7 +181,7 @@ module ContentBlockMetadata =
                     |> Option.map (fun metadata -> metadata.Ranges)
                     |> Option.defaultValue Array.empty
 
-                match mergeRanges correlationId existingRanges merge.Ranges with
+                match mergeRanges existingRanges merge.Ranges with
                 | Error error -> Error error
                 | Ok ranges ->
                     let metadataVersion =
