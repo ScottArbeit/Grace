@@ -389,6 +389,36 @@ type UploadSessionActorTests() =
         | Error error -> Assert.Fail($"Expected confirmation to match compatible duplicate intent, got {error.Error}.")
 
     [<Test>]
+    member _.ConfirmBlockUploadedRejectsIntentLogicalLengthMismatch() =
+        let block = encodedBlock (Text.Encoding.UTF8.GetBytes("hello world"))
+        let startedDto, startEvents = startedSession ()
+
+        let intentDto, intentEvents =
+            match
+                UploadSessionActor.decideCommand
+                    startEvents
+                    startedDto
+                    (UploadSessionCommand.RegisterBlockUploadIntent
+                        { intentAt "op-block-intent" block.Address block.Payload.LongLength 0L with LogicalLength = 10L })
+                    (metadata "corr-block-intent")
+                with
+            | Ok decision -> decision.Session, startEvents @ decision.Events
+            | Error error ->
+                Assert.Fail($"Expected intent to succeed, got {error.Error}.")
+                UploadSessionDto.Default, []
+
+        let result =
+            UploadSessionActor.decideCommand
+                intentEvents
+                intentDto
+                (UploadSessionCommand.ConfirmBlockUploaded(confirm "op-block-confirm" block.Address block.Payload))
+                (metadata "corr-block-confirm")
+
+        match result with
+        | Ok _ -> Assert.Fail("Expected logical length mismatch to be rejected.")
+        | Error error -> Assert.That(error.Error, Is.EqualTo("ContentBlock logical length mismatch. Expected one of [10], actual 11."))
+
+    [<Test>]
     member _.ConfirmBlockUploadedRejectsCorruptPayloadWithoutConsumingOperationId() =
         let block = encodedBlock (Text.Encoding.UTF8.GetBytes("hello world"))
         let corruptPayload = Array.copy block.Payload

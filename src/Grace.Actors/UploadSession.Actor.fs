@@ -142,6 +142,10 @@ module UploadSession =
         |> Array.mapi (fun index chunk ->
             { OrdinalStart = index; OrdinalCount = 1; ActiveManifestCount = 0; PhysicalOffset = chunk.PhysicalOffset; PhysicalLength = int64 chunk.Length })
 
+    let private decodedLogicalLength (decodedBlock: ContentBlockFormat.DecodedContentBlock) =
+        decodedBlock.Chunks
+        |> Array.sumBy (fun chunk -> int64 chunk.Length)
+
     let private confirmBlockUpload (session: UploadSessionDto) (confirmation: ConfirmBlockUploaded) (metadata: EventMetadata) =
         if String.IsNullOrWhiteSpace confirmation.ContentBlockAddress then
             Error(graceError metadata.CorrelationId "ContentBlockAddress is required.")
@@ -178,21 +182,41 @@ module UploadSession =
                         match ContentBlockFormat.validateAddress confirmation.ContentBlockAddress decodedBlock with
                         | Error error -> Error(graceError metadata.CorrelationId (contentBlockError error))
                         | Ok () ->
-                            let confirmedBlock =
-                                {
-                                    ContentBlockAddress = confirmation.ContentBlockAddress
-                                    PayloadLength = confirmation.Payload.LongLength
-                                    StoragePlacement = confirmation.StoragePlacement
-                                    Ranges = physicalRangesFromDecodedBlock decodedBlock
-                                    ConfirmedAt = metadata.Timestamp
-                                }
+                            let logicalLength = decodedLogicalLength decodedBlock
 
-                            let events =
-                                [
-                                    { Event = UploadSessionEventType.BlockUploadConfirmed(confirmation.OperationId, confirmedBlock); Metadata = metadata }
-                                ]
+                            let matchingLogicalLength =
+                                findBlockIntents session confirmation.ContentBlockAddress
+                                |> Array.filter (fun intent -> intent.ExpectedPayloadLength = confirmation.Payload.LongLength)
 
-                            okDecision session confirmation.OperationId events false "ContentBlock upload confirmed."
+                            if matchingLogicalLength
+                               |> Array.exists (fun intent -> intent.LogicalLength = logicalLength)
+                               |> not then
+                                let expectedLengths =
+                                    matchingLogicalLength
+                                    |> Array.map (fun intent -> intent.LogicalLength.ToString())
+                                    |> String.concat ", "
+
+                                Error(
+                                    graceError
+                                        metadata.CorrelationId
+                                        $"ContentBlock logical length mismatch. Expected one of [{expectedLengths}], actual {logicalLength}."
+                                )
+                            else
+                                let confirmedBlock =
+                                    {
+                                        ContentBlockAddress = confirmation.ContentBlockAddress
+                                        PayloadLength = confirmation.Payload.LongLength
+                                        StoragePlacement = confirmation.StoragePlacement
+                                        Ranges = physicalRangesFromDecodedBlock decodedBlock
+                                        ConfirmedAt = metadata.Timestamp
+                                    }
+
+                                let events =
+                                    [
+                                        { Event = UploadSessionEventType.BlockUploadConfirmed(confirmation.OperationId, confirmedBlock); Metadata = metadata }
+                                    ]
+
+                                okDecision session confirmation.OperationId events false "ContentBlock upload confirmed."
 
     let decideCommand (events: seq<UploadSessionEvent>) (session: UploadSessionDto) (command: UploadSessionCommand) (metadata: EventMetadata) =
         let operationId = operationId command
