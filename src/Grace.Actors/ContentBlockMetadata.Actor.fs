@@ -24,14 +24,17 @@ module ContentBlockMetadata =
     let commandName command =
         match command with
         | ContentBlockMetadataCommand.ReplaceWholeRecord _ -> "ReplaceWholeRecord"
+        | ContentBlockMetadataCommand.MergePhysicalRanges _ -> "MergePhysicalRanges"
 
     let operationId command =
         match command with
         | ContentBlockMetadataCommand.ReplaceWholeRecord replace -> replace.OperationId
+        | ContentBlockMetadataCommand.MergePhysicalRanges merge -> merge.OperationId
 
     let private eventOperationId metadataEvent =
         match metadataEvent.Event with
         | ContentBlockMetadataEventType.WholeRecordReplaced (operationId, _) -> operationId
+        | ContentBlockMetadataEventType.PhysicalRangesMerged (operationId, _) -> operationId
 
     let private hasAppliedOperationId (events: seq<ContentBlockMetadataEvent>) operationId =
         events
@@ -73,6 +76,147 @@ module ContentBlockMetadata =
         else
             metadata.Ranges
             |> Array.tryPick (validateRange correlationId)
+
+    let private validateStoragePlacement correlationId (placement: ContentBlockStoragePlacement) =
+        if String.IsNullOrWhiteSpace placement.ObjectKey then
+            Some(graceError correlationId "StoragePlacement.ObjectKey is required.")
+        else
+            None
+
+    let private validateMergePhysicalRanges correlationId (merge: MergeContentBlockPhysicalRanges) =
+        if String.IsNullOrWhiteSpace merge.StoragePoolId then
+            Some(graceError correlationId "StoragePoolId is required.")
+        elif String.IsNullOrWhiteSpace merge.ContentBlockAddress then
+            Some(graceError correlationId "ContentBlockAddress is required.")
+        elif merge.BlockFormatVersion <= 0s then
+            Some(graceError correlationId "BlockFormatVersion must be greater than zero.")
+        elif isNull merge.Ranges || merge.Ranges.Length = 0 then
+            Some(graceError correlationId "At least one ContentBlockMetadataRange is required.")
+        else
+            match validateStoragePlacement correlationId merge.StoragePlacement with
+            | Some error -> Some error
+            | None ->
+                merge.Ranges
+                |> Array.tryPick (validateRange correlationId)
+
+    let private physicalEnd (range: ContentBlockMetadataRange) = range.PhysicalOffset + range.PhysicalLength
+
+    let private totalPhysicalBytes ranges =
+        ranges
+        |> Array.map physicalEnd
+        |> Array.append [| 0L |]
+        |> Array.max
+
+    let private activePhysicalBytes ranges =
+        ranges
+        |> Array.filter (fun range -> range.ActiveManifestCount > 0)
+        |> Array.sumBy (fun range -> range.PhysicalLength)
+
+    let private rangeKey (range: ContentBlockMetadataRange) = $"{range.OrdinalStart}:{range.OrdinalCount}"
+
+    let private mergeRanges correlationId existingRanges incomingRanges =
+        let merged = Dictionary<string, ContentBlockMetadataRange>()
+        let mutable error = None
+
+        let addRange preserveActiveCount range =
+            let key = rangeKey range
+
+            if merged.ContainsKey key then
+                let existing = merged[key]
+
+                if existing.PhysicalOffset <> range.PhysicalOffset
+                   || existing.PhysicalLength <> range.PhysicalLength then
+                    error <-
+                        Some(
+                            graceError
+                                correlationId
+                                $"Conflicting physical metadata range for OrdinalStart {range.OrdinalStart}, OrdinalCount {range.OrdinalCount}."
+                        )
+                else
+                    let activeManifestCount =
+                        if preserveActiveCount then
+                            max existing.ActiveManifestCount range.ActiveManifestCount
+                        else
+                            range.ActiveManifestCount
+
+                    merged[key] <- { existing with ActiveManifestCount = activeManifestCount }
+            else
+                merged[key] <- range
+
+        existingRanges |> Array.iter (addRange true)
+
+        incomingRanges |> Array.iter (addRange true)
+
+        match error with
+        | Some error -> Error error
+        | None ->
+            merged.Values
+            |> Seq.sortBy (fun range -> range.OrdinalStart, range.OrdinalCount)
+            |> Seq.toArray
+            |> Ok
+
+    let private createMergedMetadata
+        correlationId
+        (currentMetadata: ContentBlockMetadata option)
+        (merge: MergeContentBlockPhysicalRanges)
+        timestamp
+        : Result<ContentBlockMetadata, GraceError>
+        =
+        match validateMergePhysicalRanges correlationId merge with
+        | Some error -> Error error
+        | None ->
+            match currentMetadata with
+            | Some existing when existing.StoragePoolId <> merge.StoragePoolId ->
+                Error(
+                    graceError correlationId $"ContentBlockMetadata StoragePoolId mismatch. Existing {existing.StoragePoolId}, requested {merge.StoragePoolId}."
+                )
+            | Some existing when
+                existing.ContentBlockAddress
+                <> merge.ContentBlockAddress
+                ->
+                Error(
+                    graceError
+                        correlationId
+                        $"ContentBlockMetadata ContentBlockAddress mismatch. Existing {existing.ContentBlockAddress}, requested {merge.ContentBlockAddress}."
+                )
+            | Some existing when
+                existing.BlockFormatVersion
+                <> merge.BlockFormatVersion
+                ->
+                Error(
+                    graceError
+                        correlationId
+                        $"ContentBlockMetadata BlockFormatVersion mismatch. Existing {existing.BlockFormatVersion}, requested {merge.BlockFormatVersion}."
+                )
+            | _ ->
+                let existingRanges =
+                    currentMetadata
+                    |> Option.map (fun metadata -> metadata.Ranges)
+                    |> Option.defaultValue Array.empty
+
+                match mergeRanges correlationId existingRanges merge.Ranges with
+                | Error error -> Error error
+                | Ok ranges ->
+                    let metadataVersion =
+                        currentMetadata
+                        |> Option.map (fun metadata -> metadata.MetadataVersion + 1L)
+                        |> Option.defaultValue 1L
+
+                    let metadata: ContentBlockMetadata =
+                        {
+                            Class = nameof ContentBlockMetadata
+                            StoragePoolId = merge.StoragePoolId
+                            ContentBlockAddress = merge.ContentBlockAddress
+                            BlockFormatVersion = merge.BlockFormatVersion
+                            StoragePlacement = merge.StoragePlacement
+                            Ranges = ranges
+                            TotalPhysicalBytes = totalPhysicalBytes ranges
+                            ActivePhysicalBytes = activePhysicalBytes ranges
+                            MetadataVersion = metadataVersion
+                            UpdatedAt = timestamp
+                        }
+
+                    Ok metadata
 
     let private stampMetadata (metadata: ContentBlockMetadata) nextVersion timestamp = { metadata with MetadataVersion = nextVersion; UpdatedAt = timestamp }
 
@@ -124,6 +268,16 @@ module ContentBlockMetadata =
                             ]
 
                         okDecision metadata operationId events false "ContentBlockMetadata whole record replaced."
+            | ContentBlockMetadataCommand.MergePhysicalRanges merge ->
+                match createMergedMetadata eventMetadata.CorrelationId current.Metadata merge eventMetadata.Timestamp with
+                | Error error -> Error error
+                | Ok metadata ->
+                    let events =
+                        [
+                            { Event = ContentBlockMetadataEventType.PhysicalRangesMerged(operationId, metadata); Metadata = eventMetadata }
+                        ]
+
+                    okDecision metadata operationId events false "ContentBlockMetadata physical ranges merged."
 
     type ContentBlockMetadataActor
         (

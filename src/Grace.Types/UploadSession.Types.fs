@@ -2,6 +2,7 @@ namespace Grace.Types
 
 open Grace.Shared
 open Grace.Shared.Utilities
+open Grace.Types.ContentBlockMetadata
 open Grace.Types.Types
 open NodaTime
 open Orleans
@@ -41,12 +42,51 @@ module UploadSession =
             OperationId: UploadSessionOperationId
         }
 
+    [<GenerateSerializer>]
+    type RegisterBlockUploadIntent =
+        {
+            OperationId: UploadSessionOperationId
+            ContentBlockAddress: ContentBlockAddress
+            LogicalOffset: int64
+            LogicalLength: int64
+            ExpectedPayloadLength: int64
+        }
+
+    [<GenerateSerializer>]
+    type ConfirmBlockUploaded =
+        {
+            OperationId: UploadSessionOperationId
+            ContentBlockAddress: ContentBlockAddress
+            Payload: byte array
+            StoragePlacement: ContentBlockStoragePlacement
+        }
+
+    [<GenerateSerializer>]
+    type BlockUploadIntent =
+        {
+            ContentBlockAddress: ContentBlockAddress
+            LogicalOffset: int64
+            LogicalLength: int64
+            ExpectedPayloadLength: int64
+            RegisteredAt: Instant
+        }
+
+    [<GenerateSerializer>]
+    type ConfirmedBlockUpload =
+        {
+            ContentBlockAddress: ContentBlockAddress
+            PayloadLength: int64
+            StoragePlacement: ContentBlockStoragePlacement
+            Ranges: ContentBlockMetadataRange array
+            ConfirmedAt: Instant
+        }
+
     [<KnownType("GetKnownTypes")>]
     type UploadSessionCommand =
         | Start of start: StartUploadSession
         | IssueDedupeDiscovery of operationId: UploadSessionOperationId
-        | RegisterBlockUploadIntent of operationId: UploadSessionOperationId * contentBlockAddress: ContentBlockAddress
-        | ConfirmBlockUploaded of operationId: UploadSessionOperationId * contentBlockAddress: ContentBlockAddress
+        | RegisterBlockUploadIntent of intent: RegisterBlockUploadIntent
+        | ConfirmBlockUploaded of confirmation: ConfirmBlockUploaded
         | ClaimReuseRanges of operationId: UploadSessionOperationId
         | FinalizeManifest of operationId: UploadSessionOperationId * manifestAddress: ManifestAddress
         | Abandon of operationId: UploadSessionOperationId
@@ -63,6 +103,8 @@ module UploadSession =
         | Finalized of operationId: UploadSessionOperationId * manifestAddress: ManifestAddress
         | CleanupReminderScheduled of operationId: UploadSessionOperationId * reminderTime: Instant
         | PhysicalStateDeleted of operationId: UploadSessionOperationId
+        | BlockUploadIntentRegistered of operationId: UploadSessionOperationId * intent: BlockUploadIntent
+        | BlockUploadConfirmed of operationId: UploadSessionOperationId * confirmedBlock: ConfirmedBlockUpload
 
         static member GetKnownTypes() = GetKnownTypes<UploadSessionEventType>()
 
@@ -85,6 +127,8 @@ module UploadSession =
             StartedAt: Instant
             CompletedAt: Instant option
             FinalizedManifestAddress: ManifestAddress option
+            BlockUploadIntents: BlockUploadIntent array
+            ConfirmedBlockUploads: ConfirmedBlockUpload array
             CleanupReminderScheduledAt: Instant option
             CleanupReminderOperationId: UploadSessionOperationId option
             LastOperationId: UploadSessionOperationId option
@@ -106,6 +150,8 @@ module UploadSession =
                 StartedAt = Constants.DefaultTimestamp
                 CompletedAt = None
                 FinalizedManifestAddress = None
+                BlockUploadIntents = Array.empty
+                ConfirmedBlockUploads = Array.empty
                 CleanupReminderScheduledAt = None
                 CleanupReminderOperationId = None
                 LastOperationId = None
@@ -156,6 +202,30 @@ module UploadSession =
                 }
             | UploadSessionEventType.PhysicalStateDeleted operationId ->
                 { current with LifecycleState = UploadSessionLifecycleState.StateDeleted; LastOperationId = Some operationId }
+            | UploadSessionEventType.BlockUploadIntentRegistered (operationId, intent) ->
+                let existing =
+                    current.BlockUploadIntents
+                    |> Array.filter (fun existingIntent ->
+                        existingIntent.ContentBlockAddress
+                        <> intent.ContentBlockAddress)
+
+                { current with
+                    LifecycleState = UploadSessionLifecycleState.UploadingBlocks
+                    BlockUploadIntents = Array.append existing [| intent |]
+                    LastOperationId = Some operationId
+                }
+            | UploadSessionEventType.BlockUploadConfirmed (operationId, confirmedBlock) ->
+                let existing =
+                    current.ConfirmedBlockUploads
+                    |> Array.filter (fun existingBlock ->
+                        existingBlock.ContentBlockAddress
+                        <> confirmedBlock.ContentBlockAddress)
+
+                { current with
+                    LifecycleState = UploadSessionLifecycleState.UploadingBlocks
+                    ConfirmedBlockUploads = Array.append existing [| confirmedBlock |]
+                    LastOperationId = Some operationId
+                }
 
     [<GenerateSerializer>]
     type UploadSessionDecision =

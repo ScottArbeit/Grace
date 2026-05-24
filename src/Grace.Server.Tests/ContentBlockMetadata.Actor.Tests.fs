@@ -43,6 +43,17 @@ type ContentBlockMetadataActorTests() =
     let replace operationId expectedVersion ranges =
         ContentBlockMetadataCommand.ReplaceWholeRecord { OperationId = operationId; ExpectedMetadataVersion = expectedVersion; Metadata = record ranges }
 
+    let merge operationId ranges =
+        ContentBlockMetadataCommand.MergePhysicalRanges
+            {
+                OperationId = operationId
+                StoragePoolId = storagePoolId
+                ContentBlockAddress = contentBlockAddress
+                BlockFormatVersion = 1s
+                StoragePlacement = { ObjectKey = "cas/content-blocks/block-blake3-0001"; ETag = Some "etag-1" }
+                Ranges = ranges
+            }
+
     let applyAll events current =
         events
         |> List.fold (fun state event -> ContentBlockMetadataDto.UpdateDto event state) current
@@ -110,6 +121,58 @@ type ContentBlockMetadataActorTests() =
                 Assert.That(replayDecision.Metadata.MetadataVersion, Is.EqualTo(1L))
             | Error error -> Assert.Fail($"Expected idempotent replay, got {error.Error}.")
         | Error error -> Assert.Fail($"Expected create to succeed, got {error.Error}.")
+
+    [<Test>]
+    member _.MergePhysicalRangesCreatesAuthoritativeMetadata() =
+        let result = ContentBlockMetadataActor.decideCommand [] ContentBlockMetadataDto.Empty (merge "op-merge" [| reclaimableRange |]) (metadata "corr-merge")
+
+        match result with
+        | Ok decision ->
+            Assert.That(decision.WasIdempotentReplay, Is.False)
+            Assert.That(decision.Metadata.MetadataVersion, Is.EqualTo(1L))
+            Assert.That(decision.Metadata.Ranges.Length, Is.EqualTo(1))
+            Assert.That(decision.Metadata.TotalPhysicalBytes, Is.EqualTo(1536L))
+            Assert.That(decision.Metadata.ActivePhysicalBytes, Is.EqualTo(0L))
+
+            Assert.That(
+                ContentBlockMetadataTypes.rangePresence decision.Metadata { OrdinalStart = 8; OrdinalCount = 4 },
+                Is.EqualTo(ContentBlockRangePresence.Reclaimable)
+            )
+        | Error error -> Assert.Fail($"Expected physical range merge to succeed, got {error.Error}.")
+
+    [<Test>]
+    member _.MergePhysicalRangesAddsMissingRangesWithoutDuplicatingExistingOnReplay() =
+        let created =
+            match ContentBlockMetadataActor.decideCommand [] ContentBlockMetadataDto.Empty (merge "op-create" [| activeRange |]) (metadata "corr-create") with
+            | Ok decision -> applyAll decision.Events ContentBlockMetadataDto.Empty, decision.Events
+            | Error error ->
+                Assert.Fail($"Expected create to succeed, got {error.Error}.")
+                ContentBlockMetadataDto.Empty, []
+
+        let createdDto, createdEvents = created
+
+        let updated =
+            ContentBlockMetadataActor.decideCommand createdEvents createdDto (merge "op-append" [| activeRange; reclaimableRange |]) (metadata "corr-append")
+
+        match updated with
+        | Ok decision ->
+            Assert.That(decision.Metadata.MetadataVersion, Is.EqualTo(2L))
+            Assert.That(decision.Metadata.Ranges.Length, Is.EqualTo(2))
+
+            let replay =
+                ContentBlockMetadataActor.decideCommand
+                    (createdEvents @ decision.Events)
+                    (applyAll decision.Events createdDto)
+                    (merge "op-append" [| activeRange; reclaimableRange |])
+                    (metadata "corr-replay")
+
+            match replay with
+            | Ok replayDecision ->
+                Assert.That(replayDecision.WasIdempotentReplay, Is.True)
+                Assert.That(replayDecision.Metadata.MetadataVersion, Is.EqualTo(2L))
+                Assert.That(replayDecision.Metadata.Ranges.Length, Is.EqualTo(2))
+            | Error error -> Assert.Fail($"Expected idempotent replay, got {error.Error}.")
+        | Error error -> Assert.Fail($"Expected append merge to succeed, got {error.Error}.")
 
     [<Test>]
     member _.MetadataActorUsesOneCompositeStringKeyAndDoesNotIntroduceChunkActorState() =

@@ -1,5 +1,7 @@
 namespace Grace.Server.Tests
 
+open Grace.Shared
+open Grace.Types.ContentBlockMetadata
 open Grace.Types.Reminder
 open Grace.Types.Types
 open Grace.Types.UploadSession
@@ -36,11 +38,38 @@ type UploadSessionActorTests() =
             OperationId = operationId
         }
 
+    let encodedBlock bytes =
+        match ContentBlockFormat.encode [ { PhysicalOffset = 0L; Bytes = bytes } ] with
+        | Ok block -> block
+        | Error error ->
+            Assert.Fail($"Expected test content block to encode, got {error}.")
+            Unchecked.defaultof<ContentBlockFormat.EncodedContentBlock>
+
+    let intent operationId blockAddress payloadLength : RegisterBlockUploadIntent =
+        { OperationId = operationId; ContentBlockAddress = blockAddress; LogicalOffset = 0L; LogicalLength = 11L; ExpectedPayloadLength = payloadLength }
+
+    let confirm operationId blockAddress payload : ConfirmBlockUploaded =
+        {
+            OperationId = operationId
+            ContentBlockAddress = blockAddress
+            Payload = payload
+            StoragePlacement = { ObjectKey = $"cas/content-blocks/{blockAddress}"; ETag = Some "etag-confirmed" }
+        }
+
     let apply event dto = UploadSessionDto.UpdateDto event dto
 
     let applyAll events dto =
         events
         |> List.fold (fun current event -> apply event current) dto
+
+    let startedSession () =
+        let startDecision = UploadSessionActor.decideCommand [] UploadSessionDto.Default (UploadSessionCommand.Start(start "op-start")) (metadata "corr-start")
+
+        match startDecision with
+        | Ok decision -> applyAll decision.Events UploadSessionDto.Default, decision.Events
+        | Error error ->
+            Assert.Fail($"Expected start to succeed, got {error.Error}.")
+            UploadSessionDto.Default, []
 
     [<Test>]
     member _.StartWithSameOperationIdIsIdempotentReplay() =
@@ -154,28 +183,180 @@ type UploadSessionActorTests() =
         | Error error -> Assert.That(error.Error, Is.EqualTo("UploadSession is finalized and cannot be changed by Abandon."))
 
     [<Test>]
-    member _.BlockUploadAndFinalizeCommandsRemainUnimplementedForSkeleton() =
-        let startDecision = UploadSessionActor.decideCommand [] UploadSessionDto.Default (UploadSessionCommand.Start(start "op-start")) (metadata "corr-start")
-
-        let started =
-            match startDecision with
-            | Ok decision -> applyAll decision.Events UploadSessionDto.Default, decision.Events
-            | Error error ->
-                Assert.Fail($"Expected start to succeed, got {error.Error}.")
-                UploadSessionDto.Default, []
-
-        let (startedDto, existingEvents) = started
+    member _.BlockUploadIntentMovesStartedSessionToUploadingBlocks() =
+        let block = encodedBlock (Text.Encoding.UTF8.GetBytes("hello world"))
+        let startedDto, existingEvents = startedSession ()
 
         let result =
             UploadSessionActor.decideCommand
                 existingEvents
                 startedDto
-                (UploadSessionCommand.RegisterBlockUploadIntent("op-block", "block-blake3"))
-                (metadata "corr-block")
+                (UploadSessionCommand.RegisterBlockUploadIntent(intent "op-block-intent" block.Address block.Payload.LongLength))
+                (metadata "corr-block-intent")
 
         match result with
-        | Ok _ -> Assert.Fail("Expected block upload intent to remain unimplemented in the skeleton.")
-        | Error error -> Assert.That(error.Error, Is.EqualTo("UploadSession command RegisterBlockUploadIntent is not implemented in this skeleton."))
+        | Ok decision ->
+            Assert.That(decision.WasIdempotentReplay, Is.False)
+            Assert.That(decision.Events.Length, Is.EqualTo(1))
+            Assert.That(decision.Session.LifecycleState, Is.EqualTo(UploadSessionLifecycleState.UploadingBlocks))
+            Assert.That(decision.Session.BlockUploadIntents.Length, Is.EqualTo(1))
+
+            Assert.That(
+                decision.Session.BlockUploadIntents[0]
+                    .ContentBlockAddress,
+                Is.EqualTo(block.Address)
+            )
+        | Error error -> Assert.Fail($"Expected block upload intent to succeed, got {error.Error}.")
+
+    [<Test>]
+    member _.ConfirmBlockUploadedValidatesPayloadAndRecordsPhysicalRanges() =
+        let block = encodedBlock (Text.Encoding.UTF8.GetBytes("hello world"))
+        let startedDto, startEvents = startedSession ()
+
+        let intentDecision =
+            UploadSessionActor.decideCommand
+                startEvents
+                startedDto
+                (UploadSessionCommand.RegisterBlockUploadIntent(intent "op-block-intent" block.Address block.Payload.LongLength))
+                (metadata "corr-block-intent")
+
+        let intentDto, intentEvents =
+            match intentDecision with
+            | Ok decision -> decision.Session, startEvents @ decision.Events
+            | Error error ->
+                Assert.Fail($"Expected intent to succeed, got {error.Error}.")
+                UploadSessionDto.Default, []
+
+        let result =
+            UploadSessionActor.decideCommand
+                intentEvents
+                intentDto
+                (UploadSessionCommand.ConfirmBlockUploaded(confirm "op-block-confirm" block.Address block.Payload))
+                (metadata "corr-block-confirm")
+
+        match result with
+        | Ok decision ->
+            Assert.That(decision.WasIdempotentReplay, Is.False)
+            Assert.That(decision.Session.ConfirmedBlockUploads.Length, Is.EqualTo(1))
+
+            Assert.That(
+                decision.Session.ConfirmedBlockUploads[0]
+                    .ContentBlockAddress,
+                Is.EqualTo(block.Address)
+            )
+
+            Assert.That(
+                decision.Session.ConfirmedBlockUploads[0]
+                    .Ranges
+                    .Length,
+                Is.EqualTo(1)
+            )
+
+            Assert.That(
+                decision.Session.ConfirmedBlockUploads[0].Ranges[0]
+                    .PhysicalLength,
+                Is.EqualTo(11L)
+            )
+        | Error error -> Assert.Fail($"Expected block upload confirmation to succeed, got {error.Error}.")
+
+    [<Test>]
+    member _.ConfirmBlockUploadedRejectsCorruptPayloadWithoutConsumingOperationId() =
+        let block = encodedBlock (Text.Encoding.UTF8.GetBytes("hello world"))
+        let corruptPayload = Array.copy block.Payload
+        corruptPayload[0] <- corruptPayload[0] ^^^ 0xffuy
+        let startedDto, startEvents = startedSession ()
+
+        let intentDto, intentEvents =
+            match
+                UploadSessionActor.decideCommand
+                    startEvents
+                    startedDto
+                    (UploadSessionCommand.RegisterBlockUploadIntent(intent "op-block-intent" block.Address block.Payload.LongLength))
+                    (metadata "corr-block-intent")
+                with
+            | Ok decision -> decision.Session, startEvents @ decision.Events
+            | Error error ->
+                Assert.Fail($"Expected intent to succeed, got {error.Error}.")
+                UploadSessionDto.Default, []
+
+        let corrupt =
+            UploadSessionActor.decideCommand
+                intentEvents
+                intentDto
+                (UploadSessionCommand.ConfirmBlockUploaded(confirm "op-block-confirm" block.Address corruptPayload))
+                (metadata "corr-block-confirm-corrupt")
+
+        match corrupt with
+        | Ok _ -> Assert.Fail("Expected corrupt ContentBlock payload to be rejected.")
+        | Error error -> Assert.That(error.Error, Does.Contain("ContentBlock payload is invalid"))
+
+        let retry =
+            UploadSessionActor.decideCommand
+                intentEvents
+                intentDto
+                (UploadSessionCommand.ConfirmBlockUploaded(confirm "op-block-confirm" block.Address block.Payload))
+                (metadata "corr-block-confirm-retry")
+
+        match retry with
+        | Ok decision -> Assert.That(decision.Session.ConfirmedBlockUploads.Length, Is.EqualTo(1))
+        | Error error -> Assert.Fail($"Expected retry after corrupt payload to succeed, got {error.Error}.")
+
+    [<Test>]
+    member _.ConfirmBlockUploadedWithSameOperationIdIsIdempotentReplay() =
+        let block = encodedBlock (Text.Encoding.UTF8.GetBytes("hello world"))
+        let startedDto, startEvents = startedSession ()
+
+        let intentDto, intentEvents =
+            match
+                UploadSessionActor.decideCommand
+                    startEvents
+                    startedDto
+                    (UploadSessionCommand.RegisterBlockUploadIntent(intent "op-block-intent" block.Address block.Payload.LongLength))
+                    (metadata "corr-block-intent")
+                with
+            | Ok decision -> decision.Session, startEvents @ decision.Events
+            | Error error ->
+                Assert.Fail($"Expected intent to succeed, got {error.Error}.")
+                UploadSessionDto.Default, []
+
+        let first =
+            UploadSessionActor.decideCommand
+                intentEvents
+                intentDto
+                (UploadSessionCommand.ConfirmBlockUploaded(confirm "op-block-confirm" block.Address block.Payload))
+                (metadata "corr-block-confirm")
+
+        match first with
+        | Ok decision ->
+            let replay =
+                UploadSessionActor.decideCommand
+                    (intentEvents @ decision.Events)
+                    decision.Session
+                    (UploadSessionCommand.ConfirmBlockUploaded(confirm "op-block-confirm" block.Address block.Payload))
+                    (metadata "corr-block-confirm-replay")
+
+            match replay with
+            | Ok replayDecision ->
+                Assert.That(replayDecision.WasIdempotentReplay, Is.True)
+                Assert.That(replayDecision.Events, Is.Empty)
+                Assert.That(replayDecision.Session.ConfirmedBlockUploads.Length, Is.EqualTo(1))
+            | Error error -> Assert.Fail($"Expected idempotent replay, got {error.Error}.")
+        | Error error -> Assert.Fail($"Expected first confirmation to succeed, got {error.Error}.")
+
+    [<Test>]
+    member _.FinalizeCommandRemainsUnimplementedForSkeleton() =
+        let startedDto, existingEvents = startedSession ()
+
+        let result =
+            UploadSessionActor.decideCommand
+                existingEvents
+                startedDto
+                (UploadSessionCommand.FinalizeManifest("op-finalize", "manifest-blake3"))
+                (metadata "corr-finalize")
+
+        match result with
+        | Ok _ -> Assert.Fail("Expected finalize to remain unimplemented in this slice.")
+        | Error error -> Assert.That(error.Error, Is.EqualTo("UploadSession command FinalizeManifest is not implemented in this skeleton."))
 
     [<Test>]
     member _.CleanupReminderStateCarriesDeletePhysicalStateOperationId() =

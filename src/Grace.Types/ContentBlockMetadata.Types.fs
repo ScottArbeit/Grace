@@ -66,15 +66,28 @@ module ContentBlockMetadata =
     [<GenerateSerializer>]
     type ReplaceContentBlockMetadata = { OperationId: string; ExpectedMetadataVersion: MetadataVersion option; Metadata: ContentBlockMetadata }
 
+    [<GenerateSerializer>]
+    type MergeContentBlockPhysicalRanges =
+        {
+            OperationId: string
+            StoragePoolId: StoragePoolId
+            ContentBlockAddress: ContentBlockAddress
+            BlockFormatVersion: int16
+            StoragePlacement: ContentBlockStoragePlacement
+            Ranges: ContentBlockMetadataRange array
+        }
+
     [<KnownType("GetKnownTypes"); GenerateSerializer>]
     type ContentBlockMetadataCommand =
         | ReplaceWholeRecord of replace: ReplaceContentBlockMetadata
+        | MergePhysicalRanges of merge: MergeContentBlockPhysicalRanges
 
         static member GetKnownTypes() = GetKnownTypes<ContentBlockMetadataCommand>()
 
     [<KnownType("GetKnownTypes"); GenerateSerializer>]
     type ContentBlockMetadataEventType =
         | WholeRecordReplaced of operationId: string * metadata: ContentBlockMetadata
+        | PhysicalRangesMerged of operationId: string * metadata: ContentBlockMetadata
 
         static member GetKnownTypes() = GetKnownTypes<ContentBlockMetadataEventType>()
 
@@ -93,6 +106,7 @@ module ContentBlockMetadata =
         static member UpdateDto event _current =
             match event.Event with
             | ContentBlockMetadataEventType.WholeRecordReplaced (operationId, metadata) -> { Metadata = Some metadata; LastOperationId = Some operationId }
+            | ContentBlockMetadataEventType.PhysicalRangesMerged (operationId, metadata) -> { Metadata = Some metadata; LastOperationId = Some operationId }
 
     [<GenerateSerializer>]
     type ContentBlockMetadataDecision =
