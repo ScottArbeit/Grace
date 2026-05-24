@@ -119,6 +119,12 @@ module Types =
     /// A SHA-256 hash value.
     type Sha256Hash = string
 
+    /// The content-addressed identifier for a reusable content block.
+    type ContentBlockAddress = string
+
+    /// The content-addressed identifier for a file manifest.
+    type ManifestAddress = string
+
     type StorageAccountName = string
     type StorageConnectionString = string
     type StorageContainerName = string
@@ -220,28 +226,95 @@ module Types =
         static member New correlationId principal =
             { Timestamp = getCurrentInstant (); CorrelationId = correlationId; Principal = principal; Properties = Dictionary<string, string>() }
 
-    /// A FileVersion represents a version of a file in a repository with unique contents, and therefore with a unique SHA-256 hash. It is immutable.
-    ///
-    /// It is the server-side representation of the LocalFileVersion type, used for the local object cache.
+    /// A content block is an inert CAS contract shell for a contiguous byte range inside manifest-backed file content.
     [<CLIMutable; MessagePackObject; GenerateSerializer>]
-    type FileVersion =
+    type ContentBlock =
         {
             [<Key(0)>]
             Class: string
-            //RepositoryId: RepositoryId
             [<Key(1)>]
-            RelativePath: RelativePath
+            Address: ContentBlockAddress
             [<Key(2)>]
-            Sha256Hash: Sha256Hash
+            Offset: int64
             [<Key(3)>]
-            IsBinary: bool
-            [<Key(4)>]
             Size: int64
-            [<Key(5)>]
-            CreatedAt: Instant
-            [<Key(6)>]
-            BlobUri: string
         }
+
+        static member Create(address: ContentBlockAddress, offset: int64, size: int64) =
+            { Class = "ContentBlock"; Address = address; Offset = offset; Size = size }
+
+        static member Default = ContentBlock.Create(String.Empty, 0L, 0L)
+
+    /// A file manifest is an inert CAS contract shell for content assembled from one or more content blocks.
+    [<CLIMutable; MessagePackObject; GenerateSerializer>]
+    type FileManifest =
+        {
+            [<Key(0)>]
+            Class: string
+            [<Key(1)>]
+            ManifestAddress: ManifestAddress
+            [<Key(2)>]
+            Size: int64
+            [<Key(3)>]
+            Blocks: List<ContentBlock>
+        }
+
+        static member Create(manifestAddress: ManifestAddress, size: int64, blocks: ContentBlock list) =
+            { Class = "FileManifest"; ManifestAddress = manifestAddress; Size = size; Blocks = List<ContentBlock>(blocks) }
+
+        static member Default = FileManifest.Create(String.Empty, 0L, [])
+
+    /// Identifies the shape of a FileVersion content reference.
+    type FileContentReferenceType =
+        | WholeFileContent = 0
+        | FileManifest = 1
+
+    /// Identifies how a FileVersion refers to its file bytes.
+    [<CLIMutable; MessagePackObject; GenerateSerializer>]
+    type FileContentReference =
+        {
+            [<Key(0)>]
+            Class: string
+            [<Key(1)>]
+            ReferenceType: FileContentReferenceType
+            [<Key(2)>]
+            Manifest: FileManifest option
+        }
+
+        static member WholeFileContent = { Class = "FileContentReference"; ReferenceType = FileContentReferenceType.WholeFileContent; Manifest = None }
+
+        static member FileManifest manifest =
+            { Class = "FileContentReference"; ReferenceType = FileContentReferenceType.FileManifest; Manifest = Some manifest }
+
+    /// A FileVersion represents a version of a file in a repository with unique contents, and therefore with a unique SHA-256 hash. It is immutable.
+    ///
+    /// It is the server-side representation of the LocalFileVersion type, used for the local object cache.
+    [<MessagePackObject; GenerateSerializer>]
+    type FileVersion() =
+        [<Key(0)>]
+        member val Class: string = "FileVersion" with get, set
+
+        //RepositoryId: RepositoryId
+        [<Key(1)>]
+        member val RelativePath: RelativePath = String.Empty with get, set
+
+        [<Key(2)>]
+        member val Sha256Hash: Sha256Hash = String.Empty with get, set
+
+        [<Key(3)>]
+        member val IsBinary: bool = false with get, set
+
+        [<Key(4)>]
+        member val Size: int64 = 0L with get, set
+
+        [<Key(5)>]
+        member val CreatedAt: Instant = getCurrentInstant () with get, set
+
+        [<Key(6)>]
+        member val BlobUri: string = String.Empty with get, set
+
+        [<Key(7)>]
+        member val ContentReference: FileContentReference = FileContentReference.WholeFileContent with get, set
 
         static member Create
             //(repositoryId: RepositoryId)
@@ -251,16 +324,17 @@ module Types =
             (isBinary: bool)
             (size: int64)
             =
-            {
-                Class = "FileVersion"
-                //RepositoryId = repositoryId
-                RelativePath = RelativePath(normalizeFilePath $"{relativePath}")
-                Sha256Hash = sha256Hash
-                BlobUri = blobUri
-                IsBinary = isBinary
-                Size = size
-                CreatedAt = getCurrentInstant ()
-            }
+            let fileVersion = FileVersion()
+            fileVersion.Class <- "FileVersion"
+            //fileVersion.RepositoryId <- repositoryId
+            fileVersion.RelativePath <- RelativePath(normalizeFilePath $"{relativePath}")
+            fileVersion.Sha256Hash <- sha256Hash
+            fileVersion.BlobUri <- blobUri
+            fileVersion.IsBinary <- isBinary
+            fileVersion.Size <- size
+            fileVersion.CreatedAt <- getCurrentInstant ()
+            fileVersion.ContentReference <- FileContentReference.WholeFileContent
+            fileVersion
 
         static member Default = FileVersion.Create String.Empty String.Empty String.Empty false 0L
 
@@ -275,6 +349,22 @@ module Types =
         /// Gets the relative directory path of the file. Example: "/dir/subdir/file.js" -> "/dir/subdir/".
         [<IgnoreMember>]
         member this.RelativeDirectory = getRelativeDirectory $"{this.RelativePath}" ""
+
+        override this.Equals(other) =
+            match other with
+            | :? FileVersion as otherFileVersion ->
+                this.Class = otherFileVersion.Class
+                && this.RelativePath = otherFileVersion.RelativePath
+                && this.Sha256Hash = otherFileVersion.Sha256Hash
+                && this.IsBinary = otherFileVersion.IsBinary
+                && this.Size = otherFileVersion.Size
+                && this.CreatedAt = otherFileVersion.CreatedAt
+                && this.BlobUri = otherFileVersion.BlobUri
+                && this.ContentReference = otherFileVersion.ContentReference
+            | _ -> false
+
+        override this.GetHashCode() =
+            HashCode.Combine(this.Class, this.RelativePath, this.Sha256Hash, this.IsBinary, this.Size, this.CreatedAt, this.BlobUri, this.ContentReference)
 
     /// A LocalFileVersion represents a version of a file in a repository with unique contents, and therefore with a unique SHA-256 hash. It is immutable.
     ///
