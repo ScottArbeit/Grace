@@ -196,6 +196,28 @@ type ContentBlockMetadataActorTests() =
         | Error error -> Assert.That(error.Error, Is.EqualTo("ContentBlockMetadataRange.PhysicalOffset plus PhysicalLength must not exceed Int64.MaxValue."))
 
     [<Test>]
+    member _.MergePhysicalRangesRejectsActivePhysicalBytesOverflow() =
+        let firstActiveRange = { OrdinalStart = 0; OrdinalCount = 1; ActiveManifestCount = 1; PhysicalOffset = 0L; PhysicalLength = (Int64.MaxValue / 2L) + 1L }
+
+        let secondActiveRange = { firstActiveRange with OrdinalStart = 1; PhysicalOffset = 8L }
+
+        let result =
+            ContentBlockMetadataActor.decideCommand
+                []
+                ContentBlockMetadataDto.Empty
+                (merge
+                    "op-merge-active-overflow"
+                    [|
+                        firstActiveRange
+                        secondActiveRange
+                    |])
+                (metadata "corr-merge-active-overflow")
+
+        match result with
+        | Ok _ -> Assert.Fail("Expected active physical byte overflow to be rejected.")
+        | Error error -> Assert.That(error.Error, Is.EqualTo("ActivePhysicalBytes cannot exceed Int64.MaxValue."))
+
+    [<Test>]
     member _.MergePhysicalRangesAddsMissingRangesWithoutDuplicatingExistingOnReplay() =
         let created =
             match ContentBlockMetadataActor.decideCommand [] ContentBlockMetadataDto.Empty (merge "op-create" [| activeRange |]) (metadata "corr-create") with

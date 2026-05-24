@@ -119,10 +119,17 @@ module ContentBlockMetadata =
         |> Array.append [| 0L |]
         |> Array.max
 
-    let private activePhysicalBytes ranges =
+    let private activePhysicalBytes correlationId ranges =
         ranges
         |> Array.filter (fun range -> range.ActiveManifestCount > 0)
-        |> Array.sumBy (fun range -> range.PhysicalLength)
+        |> Array.fold
+            (fun total range ->
+                match total with
+                | Error error -> Error error
+                | Ok current when range.PhysicalLength > Int64.MaxValue - current ->
+                    Error(graceError correlationId "ActivePhysicalBytes cannot exceed Int64.MaxValue.")
+                | Ok current -> Ok(current + range.PhysicalLength))
+            (Ok 0L)
 
     let private rangeKey (range: ContentBlockMetadataRange) = $"{range.OrdinalStart}:{range.OrdinalCount}:{range.PhysicalOffset}:{range.PhysicalLength}"
 
@@ -213,26 +220,29 @@ module ContentBlockMetadata =
                 match mergeRanges existingRanges merge.Ranges with
                 | Error error -> Error error
                 | Ok ranges ->
-                    let metadataVersion =
-                        currentMetadata
-                        |> Option.map (fun metadata -> metadata.MetadataVersion + 1L)
-                        |> Option.defaultValue 1L
+                    match activePhysicalBytes correlationId ranges with
+                    | Error error -> Error error
+                    | Ok activePhysicalBytes ->
+                        let metadataVersion =
+                            currentMetadata
+                            |> Option.map (fun metadata -> metadata.MetadataVersion + 1L)
+                            |> Option.defaultValue 1L
 
-                    let metadata: ContentBlockMetadata =
-                        {
-                            Class = nameof ContentBlockMetadata
-                            StoragePoolId = merge.StoragePoolId
-                            ContentBlockAddress = merge.ContentBlockAddress
-                            BlockFormatVersion = merge.BlockFormatVersion
-                            StoragePlacement = merge.StoragePlacement
-                            Ranges = ranges
-                            TotalPhysicalBytes = totalPhysicalBytes ranges
-                            ActivePhysicalBytes = activePhysicalBytes ranges
-                            MetadataVersion = metadataVersion
-                            UpdatedAt = timestamp
-                        }
+                        let metadata: ContentBlockMetadata =
+                            {
+                                Class = nameof ContentBlockMetadata
+                                StoragePoolId = merge.StoragePoolId
+                                ContentBlockAddress = merge.ContentBlockAddress
+                                BlockFormatVersion = merge.BlockFormatVersion
+                                StoragePlacement = merge.StoragePlacement
+                                Ranges = ranges
+                                TotalPhysicalBytes = totalPhysicalBytes ranges
+                                ActivePhysicalBytes = activePhysicalBytes
+                                MetadataVersion = metadataVersion
+                                UpdatedAt = timestamp
+                            }
 
-                    Ok metadata
+                        Ok metadata
 
     let private stampMetadata (metadata: ContentBlockMetadata) nextVersion timestamp = { metadata with MetadataVersion = nextVersion; UpdatedAt = timestamp }
 
