@@ -29,6 +29,7 @@
     <Compile Include="Notification.Server.Tests.fs" />
     <Compile Include="PromotionSet.CommandValidation.Tests.fs" />
     <Compile Include="UploadSession.Actor.Tests.fs" />
+    <Compile Include="ContentBlockMetadata.Actor.Tests.fs" />
     <Compile Include="Services.EffectivePromotion.Tests.fs" />
     <Compile Include="Validation.Artifact.Contract.Tests.fs" />
     <Compile Include="Policy.Determinism.Tests.fs" />
