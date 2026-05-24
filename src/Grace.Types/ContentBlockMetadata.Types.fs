@@ -118,17 +118,27 @@ module ContentBlockMetadata =
             Message: string
         }
 
-    let tryFindRange (metadata: ContentBlockMetadata) query =
+    let findRanges (metadata: ContentBlockMetadata) query =
         if query.OrdinalCount <= 0 then
-            None
+            Array.empty
         else
             metadata.Ranges
-            |> Array.tryFind (fun range ->
+            |> Array.filter (fun range ->
                 range.OrdinalStart = query.OrdinalStart
                 && range.OrdinalCount = query.OrdinalCount)
 
+    let tryFindRange metadata query =
+        findRanges metadata query
+        |> Array.sortByDescending (fun range -> range.ActiveManifestCount)
+        |> Array.tryHead
+
     let rangePresence metadata query =
-        match tryFindRange metadata query with
-        | Some range when range.ActiveManifestCount > 0 -> ContentBlockRangePresence.Active
-        | Some _ -> ContentBlockRangePresence.Reclaimable
-        | None -> ContentBlockRangePresence.Absent
+        let ranges = findRanges metadata query
+
+        if ranges
+           |> Array.exists (fun range -> range.ActiveManifestCount > 0) then
+            ContentBlockRangePresence.Active
+        elif ranges.Length > 0 then
+            ContentBlockRangePresence.Reclaimable
+        else
+            ContentBlockRangePresence.Absent

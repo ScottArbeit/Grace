@@ -175,6 +175,15 @@ module ContentBlockMetadata =
                         correlationId
                         $"ContentBlockMetadata BlockFormatVersion mismatch. Existing {existing.BlockFormatVersion}, requested {merge.BlockFormatVersion}."
                 )
+            | Some existing when
+                existing.StoragePlacement.ObjectKey
+                <> merge.StoragePlacement.ObjectKey
+                ->
+                Error(
+                    graceError
+                        correlationId
+                        $"ContentBlockMetadata StoragePlacement.ObjectKey mismatch. Existing {existing.StoragePlacement.ObjectKey}, requested {merge.StoragePlacement.ObjectKey}."
+                )
             | _ ->
                 let existingRanges =
                     currentMetadata

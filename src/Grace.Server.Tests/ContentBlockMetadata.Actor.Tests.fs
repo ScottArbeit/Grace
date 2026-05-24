@@ -43,16 +43,18 @@ type ContentBlockMetadataActorTests() =
     let replace operationId expectedVersion ranges =
         ContentBlockMetadataCommand.ReplaceWholeRecord { OperationId = operationId; ExpectedMetadataVersion = expectedVersion; Metadata = record ranges }
 
-    let merge operationId ranges =
+    let mergeWithObjectKey operationId objectKey ranges =
         ContentBlockMetadataCommand.MergePhysicalRanges
             {
                 OperationId = operationId
                 StoragePoolId = storagePoolId
                 ContentBlockAddress = contentBlockAddress
                 BlockFormatVersion = 1s
-                StoragePlacement = { ObjectKey = "cas/content-blocks/block-blake3-0001"; ETag = Some "etag-1" }
+                StoragePlacement = { ObjectKey = objectKey; ETag = Some "etag-1" }
                 Ranges = ranges
             }
+
+    let merge operationId ranges = mergeWithObjectKey operationId "cas/content-blocks/block-blake3-0001" ranges
 
     let applyAll events current =
         events
@@ -103,6 +105,16 @@ type ContentBlockMetadataActorTests() =
         Assert.That(ContentBlockMetadataTypes.rangePresence metadata { OrdinalStart = 8; OrdinalCount = 4 }, Is.EqualTo(ContentBlockRangePresence.Reclaimable))
 
         Assert.That(ContentBlockMetadataTypes.rangePresence metadata { OrdinalStart = 12; OrdinalCount = 4 }, Is.EqualTo(ContentBlockRangePresence.Absent))
+
+    [<Test>]
+    member _.RangePresenceAggregatesDuplicateOrdinalRangesAsActiveWhenAnyPhysicalCopyIsActive() =
+        let activePhysicalCopy = { reclaimableRange with ActiveManifestCount = 1; PhysicalOffset = 2048L }
+
+        let metadata =
+            record [| reclaimableRange
+                      activePhysicalCopy |]
+
+        Assert.That(ContentBlockMetadataTypes.rangePresence metadata { OrdinalStart = 8; OrdinalCount = 4 }, Is.EqualTo(ContentBlockRangePresence.Active))
 
     [<Test>]
     member _.SameOperationIdIsIdempotentReplayWithoutVersionBump() =
@@ -196,6 +208,28 @@ type ContentBlockMetadataActorTests() =
             Assert.That(decision.Metadata.Ranges[1].PhysicalOffset, Is.EqualTo(4096L))
             Assert.That(decision.Metadata.TotalPhysicalBytes, Is.EqualTo(5120L))
         | Error error -> Assert.Fail($"Expected relocated physical range to merge, got {error.Error}.")
+
+    [<Test>]
+    member _.MergePhysicalRangesRejectsStoragePlacementObjectKeyChanges() =
+        let created =
+            match ContentBlockMetadataActor.decideCommand [] ContentBlockMetadataDto.Empty (merge "op-create" [| activeRange |]) (metadata "corr-create") with
+            | Ok decision -> applyAll decision.Events ContentBlockMetadataDto.Empty, decision.Events
+            | Error error ->
+                Assert.Fail($"Expected create to succeed, got {error.Error}.")
+                ContentBlockMetadataDto.Empty, []
+
+        let createdDto, createdEvents = created
+
+        let changedPlacement =
+            ContentBlockMetadataActor.decideCommand
+                createdEvents
+                createdDto
+                (mergeWithObjectKey "op-moved" "cas/content-blocks/other-object" [| reclaimableRange |])
+                (metadata "corr-moved")
+
+        match changedPlacement with
+        | Ok _ -> Assert.Fail("Expected object key change to be rejected.")
+        | Error error -> Assert.That(error.Error, Does.Contain("StoragePlacement.ObjectKey mismatch"))
 
     [<Test>]
     member _.MetadataActorUsesOneCompositeStringKeyAndDoesNotIntroduceChunkActorState() =
