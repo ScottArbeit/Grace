@@ -28,6 +28,7 @@
         <Compile Include="Authorization.Shared.fs" />
         <Compile Include="Converters\BranchDtoConverter.Shared.fs" />
         <Compile Include="Services.Shared.fs" />
+        <Compile Include="ManifestEligibility.Shared.fs" />
         <Compile Include="Diff.Shared.fs" />
         <Compile Include="Evidence.Shared.fs" />
         <Compile Include="ReviewNotes.Shared.fs" />
