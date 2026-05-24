@@ -18,6 +18,7 @@
     <Compile Include="Types.Types.Tests.fs" />
     <Compile Include="StorageKeys.Shared.Tests.fs" />
     <Compile Include="ContentAddress.Types.Tests.fs" />
+    <Compile Include="RabinChunking.Shared.Tests.fs" />
     <Compile Include="Queue.Types.Tests.fs" />
     <Compile Include="WorkItem.Types.Tests.fs" />
     <Compile Include="Program.fs" />
@@ -25,6 +26,8 @@
 
   <ItemGroup>
     <PackageReference Include="FsUnit" Version="7.1.1" />
+    <PackageReference Include="FsCheck" Version="3.3.3" />
+    <PackageReference Include="FsCheck.NUnit" Version="3.3.3" />
     <PackageReference Include="Microsoft.Extensions.Configuration" Version="10.0.8" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.5.1" />
     <PackageReference Include="NUnit" Version="4.6.1" />
