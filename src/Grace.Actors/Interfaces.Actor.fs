@@ -4,6 +4,7 @@ open Grace.Actors.Types
 open Grace.Shared
 open Grace.Types.Authorization
 open Grace.Types.Branch
+open Grace.Types.ContentBlockMetadata
 open Grace.Types.Diff
 open Grace.Types.DirectoryVersion
 open Grace.Types.Reference
@@ -469,6 +470,26 @@ module Interfaces =
 
         /// Validates incoming commands and converts them to events that are stored in the database.
         abstract member Handle: command: ArtifactCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
+
+    /// Defines the operations for the StoragePool-scoped ContentBlock metadata actor.
+    [<Interface>]
+    type IContentBlockMetadataActor =
+        inherit IGrainWithStringKey
+
+        /// Returns true if metadata exists for this ContentBlock.
+        abstract member Exists: correlationId: CorrelationId -> Task<bool>
+
+        /// Returns the current ContentBlock metadata, if it exists.
+        abstract member Get: correlationId: CorrelationId -> Task<ContentBlockMetadata option>
+
+        /// Returns the events handled by this ContentBlock metadata actor.
+        abstract member GetEvents: correlationId: CorrelationId -> Task<IReadOnlyList<ContentBlockMetadataEvent>>
+
+        /// Returns the authoritative physical presence for an exact logical range.
+        abstract member GetRangePresence: query: ContentBlockRangeQuery -> correlationId: CorrelationId -> Task<ContentBlockRangePresence>
+
+        /// Validates whole-record metadata updates and converts them to persisted events.
+        abstract member Handle: command: ContentBlockMetadataCommand -> eventMetadata: EventMetadata -> Task<GraceResult<ContentBlockMetadataDecision>>
 
     /// Defines the operations for the UploadSession actor.
     [<Interface>]

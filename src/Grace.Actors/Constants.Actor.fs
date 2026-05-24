@@ -86,6 +86,9 @@ module Constants =
         let Artifact = "ArtifactActor"
 
         [<Literal>]
+        let ContentBlockMetadata = "ContentBlockMetadataActor"
+
+        [<Literal>]
         let UploadSession = "UploadSessionActor"
 
         [<Literal>]
@@ -166,6 +169,9 @@ module Constants =
 
         [<Literal>]
         let Artifact = "Artifact"
+
+        [<Literal>]
+        let ContentBlockMetadata = "ContentBlockMetadata"
 
         [<Literal>]
         let UploadSession = "UploadSession"

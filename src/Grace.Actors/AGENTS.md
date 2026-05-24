@@ -23,6 +23,8 @@ Start with `../AGENTS.md` for global rules before working on Orleans code.
    entire implementation.
 4. `UploadSessionActor` cleanup reminders delete only temporary upload coordination state after finalization, abandon, or
    expiration. They must not delete accepted manifests, content blocks, block metadata, or contribution accounting.
+5. `ContentBlockMetadataActor` is keyed by the StoragePoolId and ContentBlockAddress composite key. Preserve whole-record
+   MetadataVersion concurrency and exact range presence semantics; do not introduce per-chunk actor or grain state.
 
 ## Validation
 

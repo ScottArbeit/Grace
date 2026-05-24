@@ -128,6 +128,12 @@ module Types =
     /// The content-addressed identifier for a file manifest.
     type ManifestAddress = string
 
+    /// The StoragePool-wide scope for manifest-backed content-addressed storage.
+    type StoragePoolId = string
+
+    /// Optimistic concurrency version for mutable content block metadata.
+    type MetadataVersion = int64
+
     /// The Id of an upload session.
     type UploadSessionId = Guid
 
