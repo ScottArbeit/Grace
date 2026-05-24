@@ -302,23 +302,6 @@ module DedupeIndex =
         && (registration.Blocks
             |> Array.exists (fun block -> block.Address = metadata.ContentBlockAddress))
 
-    let private metadataExistsForBlock storagePoolId contentBlockAddress =
-        metadataRecords.Values
-        |> Seq.exists (fun metadata ->
-            metadata.StoragePoolId = storagePoolId
-            && metadata.ContentBlockAddress = contentBlockAddress)
-
-    let private runtimeRegistrationIsFullyPublished registration =
-        registration.Blocks
-        |> Array.forall (fun block -> metadataExistsForBlock registration.StoragePoolId block.Address)
-
-    let private removeRuntimeRegistrationIfFullyPublished (key: string) (registration: RuntimeFinalizedManifestRegistration) =
-        if runtimeRegistrationIsFullyPublished registration then
-            let mutable removed = Unchecked.defaultof<RuntimeFinalizedManifestRegistration>
-
-            finalizedManifests.TryRemove(key, &removed)
-            |> ignore
-
     let private writeForRegistrationWithMetadata (registration: RuntimeFinalizedManifestRegistration) (metadata: ContentBlockMetadata) =
         let output = ResizeArray<DedupeIndexRecord>()
 
@@ -364,9 +347,6 @@ module DedupeIndex =
                 |> Seq.collect (fun kvp -> writeForRegistrationWithMetadata kvp.Value metadata)
                 |> Seq.toArray
 
-            for kvp in matchingRegistrations do
-                removeRuntimeRegistrationIfFullyPublished kvp.Key kvp.Value
-
             newRecords
 
     let registerFinalizedManifest (registration: FinalizedManifestRegistration) =
@@ -382,7 +362,6 @@ module DedupeIndex =
                 |> Seq.collect (writeForRegistrationWithMetadata runtimeRegistration)
                 |> Seq.toArray
 
-            removeRuntimeRegistrationIfFullyPublished key runtimeRegistration
             newRecords
 
     let snapshot () = records.Values |> Seq.toArray

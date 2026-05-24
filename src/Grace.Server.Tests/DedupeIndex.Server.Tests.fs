@@ -350,6 +350,47 @@ type DedupeIndexServerTests() =
         )
 
     [<Test>]
+    member _.PublishedRegistrationRebuildsCandidatesForLaterMetadataVersions() =
+        let block = encodedBlock "metadata-rebuild" 12
+        let manifest = manifestFor block
+        let firstMetadata = metadataFor 1 22L block
+        let secondMetadata = metadataFor 1 23L block
+
+        let registration: DedupeIndex.FinalizedManifestRegistration =
+            { StoragePoolId = storagePoolId; Session = finalizedSession manifest; Manifest = manifest; BlockPayloads = [| payloadFor block |] }
+
+        DedupeIndex.registerFinalizedManifest registration
+        |> ignore
+
+        let firstRecords = DedupeIndex.writeAfterAuthoritativeMetadata firstMetadata
+        let secondRecords = DedupeIndex.writeAfterAuthoritativeMetadata secondMetadata
+
+        let result = DedupeIndex.discover storagePoolId [| (decodedChunkAddresses block)[0] |] timestamp (DedupeIndex.snapshot ())
+
+        let matchingSnapshot =
+            DedupeIndex.snapshot ()
+            |> Array.filter (fun record ->
+                record.ManifestAddress = manifest.ManifestAddress
+                && record.ContentBlockAddress = block.Address)
+
+        Assert.That(firstRecords, Is.Not.Empty)
+        Assert.That(secondRecords, Is.Not.Empty, "Published finalized registrations should rebuild windows for later metadata versions.")
+        Assert.That(result.CandidateContentBlocks, Has.Length.GreaterThanOrEqualTo(1))
+        Assert.That(result.CandidateContentBlocks[0].MetadataVersion, Is.EqualTo(secondMetadata.MetadataVersion))
+
+        Assert.That(
+            matchingSnapshot
+            |> Array.exists (fun record -> record.MetadataVersion = firstMetadata.MetadataVersion),
+            Is.False
+        )
+
+        Assert.That(
+            matchingSnapshot
+            |> Array.exists (fun record -> record.MetadataVersion = secondMetadata.MetadataVersion),
+            Is.True
+        )
+
+    [<Test>]
     member _.NewerMetadataVersionsReplaceOlderCandidateWindows() =
         let block = encodedBlock "newer-metadata" 12
         let manifest = manifestFor block
