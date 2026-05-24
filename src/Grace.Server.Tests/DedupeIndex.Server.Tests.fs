@@ -296,3 +296,40 @@ type DedupeIndexServerTests() =
         Assert.That(afterMetadata, Is.Not.Empty, "Authoritative metadata should publish candidates for an already-finalized manifest.")
         Assert.That(result.CandidateContentBlocks, Has.Length.GreaterThanOrEqualTo(1))
         Assert.That(result.CandidateContentBlocks[0].ManifestAddress, Is.EqualTo(manifest.ManifestAddress))
+
+    [<Test>]
+    member _.NewerMetadataVersionsReplaceOlderCandidateWindows() =
+        let block = encodedBlock "newer-metadata" 12
+        let manifest = manifestFor block
+        let olderMetadata = metadataFor 1 1L block
+        let newerMetadata = metadataFor 1 5L block
+        let olderRecords = DedupeIndex.recordsAfterFinalize (sourceFor (finalizedSession manifest) manifest block olderMetadata)
+        let newerRecords = DedupeIndex.recordsAfterFinalize (sourceFor (finalizedSession manifest) manifest block newerMetadata)
+
+        DedupeIndex.writeAfterFinalize (sourceFor (finalizedSession manifest) manifest block olderMetadata)
+        |> ignore
+
+        DedupeIndex.writeAfterFinalize (sourceFor (finalizedSession manifest) manifest block newerMetadata)
+        |> ignore
+
+        let result = discover (Array.append olderRecords newerRecords) [| (decodedChunkAddresses block)[0] |]
+
+        let matchingSnapshot =
+            DedupeIndex.snapshot ()
+            |> Array.filter (fun record ->
+                record.ManifestAddress = manifest.ManifestAddress
+                && record.ContentBlockAddress = block.Address)
+
+        Assert.That(result.CandidateContentBlocks[0].MetadataVersion, Is.EqualTo(5L))
+
+        Assert.That(
+            matchingSnapshot
+            |> Array.exists (fun record -> record.MetadataVersion = 1L),
+            Is.False
+        )
+
+        Assert.That(
+            matchingSnapshot
+            |> Array.exists (fun record -> record.MetadataVersion = 5L),
+            Is.True
+        )
