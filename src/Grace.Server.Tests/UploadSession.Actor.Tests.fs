@@ -67,6 +67,51 @@ type UploadSessionActorTests() =
     let confirmWithPlacement operationId blockAddress payload placement : ConfirmBlockUploaded =
         { OperationId = operationId; ContentBlockAddress = blockAddress; Payload = payload; StoragePlacement = placement }
 
+    let storagePoolId = StoragePoolId "pool-main"
+    let reuseBlockAddress = ContentBlockAddress "block-blake3-reuse"
+    let discoveryExpiresAt = timestamp.Plus(Duration.FromMinutes(10L))
+    let minimumReuseRunLength = 4
+
+    let reusableMetadataRange = { OrdinalStart = 0; OrdinalCount = 4; ActiveManifestCount = 0; PhysicalOffset = 0L; PhysicalLength = 4096L }
+
+    let reuseMetadata metadataVersion ranges : ContentBlockMetadata =
+        {
+            Class = nameof ContentBlockMetadata
+            StoragePoolId = storagePoolId
+            ContentBlockAddress = reuseBlockAddress
+            BlockFormatVersion = 1s
+            StoragePlacement = { ObjectKey = $"cas/content-blocks/{reuseBlockAddress}"; ETag = Some "etag-reuse" }
+            Ranges = ranges
+            TotalPhysicalBytes = 4096L
+            ActivePhysicalBytes = 0L
+            MetadataVersion = metadataVersion
+            UpdatedAt = timestamp
+        }
+
+    let reuseHint =
+        {
+            StoragePoolId = storagePoolId
+            ContentBlockAddress = reuseBlockAddress
+            OrdinalStart = reusableMetadataRange.OrdinalStart
+            OrdinalCount = reusableMetadataRange.OrdinalCount
+            MetadataVersion = 7L
+        }
+
+    let discovery operationId hints =
+        UploadSessionCommand.IssueDedupeDiscovery
+            { OperationId = operationId; ExpiresAt = discoveryExpiresAt; MinimumReuseRunLength = minimumReuseRunLength; Hints = hints }
+
+    let claim operationId hint metadata =
+        UploadSessionCommand.ClaimReuseRanges
+            {
+                OperationId = operationId
+                DiscoveryOperationId = "op-discovery"
+                Ranges =
+                    [|
+                        { Hint = hint; Metadata = metadata }
+                    |]
+            }
+
     let apply event dto = UploadSessionDto.UpdateDto event dto
 
     let applyAll events dto =
@@ -547,3 +592,133 @@ type UploadSessionActorTests() =
             Assert.That(decision.Events, Is.Empty)
             Assert.That(decision.Session.LifecycleState, Is.EqualTo(UploadSessionLifecycleState.NotStarted))
         | Error error -> Assert.Fail($"Expected cleanup retry to drain, got {error.Error}.")
+
+    [<Test>]
+    member _.ClaimReuseRangesRejectsStaleDiscoveryHintVersion() =
+        let startedDto, startEvents = startedSession ()
+
+        let issued = UploadSessionActor.decideCommand startEvents startedDto (discovery "op-discovery" [| reuseHint |]) (metadata "corr-discovery")
+
+        let discoveredDto, discoveryEvents =
+            match issued with
+            | Ok decision -> decision.Session, startEvents @ decision.Events
+            | Error error ->
+                Assert.Fail($"Expected discovery to succeed, got {error.Error}.")
+                UploadSessionDto.Default, []
+
+        let staleMetadata = reuseMetadata 8L [| reusableMetadataRange |]
+
+        let result = UploadSessionActor.decideCommand discoveryEvents discoveredDto (claim "op-claim" reuseHint staleMetadata) (metadata "corr-claim")
+
+        match result with
+        | Ok _ -> Assert.Fail("Expected stale discovery hint to be rejected.")
+        | Error error -> Assert.That(error.Error, Does.Contain("stale"))
+
+    [<Test>]
+    member _.ClaimReuseRangesRejectsExpiredDiscovery() =
+        let startedDto, startEvents = startedSession ()
+
+        let issued = UploadSessionActor.decideCommand startEvents startedDto (discovery "op-discovery" [| reuseHint |]) (metadata "corr-discovery")
+
+        let discoveredDto, discoveryEvents =
+            match issued with
+            | Ok decision -> decision.Session, startEvents @ decision.Events
+            | Error error ->
+                Assert.Fail($"Expected discovery to succeed, got {error.Error}.")
+                UploadSessionDto.Default, []
+
+        let result =
+            UploadSessionActor.decideCommand
+                discoveryEvents
+                discoveredDto
+                (claim "op-claim" reuseHint (reuseMetadata 7L [| reusableMetadataRange |]))
+                { metadata "corr-claim" with Timestamp = discoveryExpiresAt }
+
+        match result with
+        | Ok _ -> Assert.Fail("Expected expired discovery to be rejected.")
+        | Error error -> Assert.That(error.Error, Does.Contain("expired"))
+
+    [<Test>]
+    member _.ClaimReuseRangesRejectsMissingAuthoritativePhysicalRange() =
+        let startedDto, startEvents = startedSession ()
+
+        let issued = UploadSessionActor.decideCommand startEvents startedDto (discovery "op-discovery" [| reuseHint |]) (metadata "corr-discovery")
+
+        let discoveredDto, discoveryEvents =
+            match issued with
+            | Ok decision -> decision.Session, startEvents @ decision.Events
+            | Error error ->
+                Assert.Fail($"Expected discovery to succeed, got {error.Error}.")
+                UploadSessionDto.Default, []
+
+        let metadataWithoutRange =
+            reuseMetadata
+                7L
+                [|
+                    { reusableMetadataRange with OrdinalStart = 8; PhysicalOffset = 8192L }
+                |]
+
+        let result = UploadSessionActor.decideCommand discoveryEvents discoveredDto (claim "op-claim" reuseHint metadataWithoutRange) (metadata "corr-claim")
+
+        match result with
+        | Ok _ -> Assert.Fail("Expected absent authoritative physical range to be rejected.")
+        | Error error -> Assert.That(error.Error, Does.Contain("absent"))
+
+    [<Test>]
+    member _.ClaimReuseRangesRejectsRunsBelowMinimumReuseLength() =
+        let shortHint = { reuseHint with OrdinalCount = minimumReuseRunLength - 1 }
+        let shortRange = { reusableMetadataRange with OrdinalCount = minimumReuseRunLength - 1 }
+        let startedDto, startEvents = startedSession ()
+
+        let issued = UploadSessionActor.decideCommand startEvents startedDto (discovery "op-discovery" [| shortHint |]) (metadata "corr-discovery")
+
+        let discoveredDto, discoveryEvents =
+            match issued with
+            | Ok decision -> decision.Session, startEvents @ decision.Events
+            | Error error ->
+                Assert.Fail($"Expected discovery to succeed, got {error.Error}.")
+                UploadSessionDto.Default, []
+
+        let result =
+            UploadSessionActor.decideCommand
+                discoveryEvents
+                discoveredDto
+                (claim "op-claim" shortHint (reuseMetadata 7L [| shortRange |]))
+                (metadata "corr-claim")
+
+        match result with
+        | Ok _ -> Assert.Fail("Expected too-short reuse run to be rejected.")
+        | Error error -> Assert.That(error.Error, Does.Contain("minimum reuse run"))
+
+    [<Test>]
+    member _.ClaimReuseRangesWithSameOperationIdIsStableIdempotentReplay() =
+        let startedDto, startEvents = startedSession ()
+
+        let issued = UploadSessionActor.decideCommand startEvents startedDto (discovery "op-discovery" [| reuseHint |]) (metadata "corr-discovery")
+
+        let discoveredDto, discoveryEvents =
+            match issued with
+            | Ok decision -> decision.Session, startEvents @ decision.Events
+            | Error error ->
+                Assert.Fail($"Expected discovery to succeed, got {error.Error}.")
+                UploadSessionDto.Default, []
+
+        let command = claim "op-claim" reuseHint (reuseMetadata 7L [| reusableMetadataRange |])
+        let first = UploadSessionActor.decideCommand discoveryEvents discoveredDto command (metadata "corr-claim")
+
+        match first with
+        | Ok decision ->
+            Assert.That(decision.WasIdempotentReplay, Is.False)
+            Assert.That(decision.Session.LifecycleState, Is.EqualTo(UploadSessionLifecycleState.ClaimingRanges))
+            Assert.That(decision.Session.ClaimedReuseRanges.Length, Is.EqualTo(1))
+
+            let replay = UploadSessionActor.decideCommand (discoveryEvents @ decision.Events) decision.Session command (metadata "corr-claim-replay")
+
+            match replay with
+            | Ok replayDecision ->
+                Assert.That(replayDecision.WasIdempotentReplay, Is.True)
+                Assert.That(replayDecision.Events, Is.Empty)
+                Assert.That(replayDecision.Session.ClaimedReuseRanges.Length, Is.EqualTo(decision.Session.ClaimedReuseRanges.Length))
+                Assert.That(replayDecision.Session.ClaimedReuseRanges[0], Is.EqualTo(decision.Session.ClaimedReuseRanges[0]))
+            | Error error -> Assert.Fail($"Expected idempotent claim replay, got {error.Error}.")
+        | Error error -> Assert.Fail($"Expected claim to succeed, got {error.Error}.")

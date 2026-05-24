@@ -38,10 +38,10 @@ module UploadSession =
     let operationId command =
         match command with
         | UploadSessionCommand.Start start -> start.OperationId
-        | UploadSessionCommand.IssueDedupeDiscovery operationId -> operationId
+        | UploadSessionCommand.IssueDedupeDiscovery discovery -> discovery.OperationId
         | UploadSessionCommand.RegisterBlockUploadIntent intent -> intent.OperationId
         | UploadSessionCommand.ConfirmBlockUploaded confirmation -> confirmation.OperationId
-        | UploadSessionCommand.ClaimReuseRanges operationId -> operationId
+        | UploadSessionCommand.ClaimReuseRanges claim -> claim.OperationId
         | UploadSessionCommand.FinalizeManifest (operationId, _) -> operationId
         | UploadSessionCommand.Abandon operationId -> operationId
         | UploadSessionCommand.Expire operationId -> operationId
@@ -68,6 +68,8 @@ module UploadSession =
         | UploadSessionEventType.PhysicalStateDeleted operationId -> operationId
         | UploadSessionEventType.BlockUploadIntentRegistered (operationId, _) -> operationId
         | UploadSessionEventType.BlockUploadConfirmed (operationId, _) -> operationId
+        | UploadSessionEventType.DedupeDiscoveryIssued (operationId, _) -> operationId
+        | UploadSessionEventType.ReuseRangesClaimed (operationId, _) -> operationId
 
     let private hasAppliedOperationId (events: seq<UploadSessionEvent>) operationId =
         events
@@ -130,6 +132,145 @@ module UploadSession =
             Some(graceError correlationId "StoragePlacement.ObjectKey is required.")
         else
             None
+
+    let private normalizeHints (hints: ContentBlockReuseRangeHint array) = if isNull hints then Array.empty else hints
+
+    let private validateReuseHint correlationId (hint: ContentBlockReuseRangeHint) =
+        if isNull (box hint) then
+            Some(graceError correlationId "Reuse range hint is required.")
+        elif String.IsNullOrWhiteSpace hint.StoragePoolId then
+            Some(graceError correlationId "Reuse range hint StoragePoolId is required.")
+        elif String.IsNullOrWhiteSpace hint.ContentBlockAddress then
+            Some(graceError correlationId "Reuse range hint ContentBlockAddress is required.")
+        elif hint.OrdinalStart < 0 then
+            Some(graceError correlationId "Reuse range hint OrdinalStart must be zero or greater.")
+        elif hint.OrdinalCount <= 0 then
+            Some(graceError correlationId "Reuse range hint OrdinalCount must be greater than zero.")
+        elif hint.MetadataVersion <= 0L then
+            Some(graceError correlationId "Reuse range hint MetadataVersion must be greater than zero.")
+        else
+            None
+
+    let private sameHint (left: ContentBlockReuseRangeHint) (right: ContentBlockReuseRangeHint) =
+        left.StoragePoolId = right.StoragePoolId
+        && left.ContentBlockAddress = right.ContentBlockAddress
+        && left.OrdinalStart = right.OrdinalStart
+        && left.OrdinalCount = right.OrdinalCount
+        && left.MetadataVersion = right.MetadataVersion
+
+    let private issueDedupeDiscovery (session: UploadSessionDto) (discovery: IssueDedupeDiscovery) (metadata: EventMetadata) =
+        if discovery.MinimumReuseRunLength <= 0 then
+            Error(graceError metadata.CorrelationId "MinimumReuseRunLength must be greater than zero.")
+        elif discovery.ExpiresAt <= metadata.Timestamp then
+            Error(graceError metadata.CorrelationId "Dedupe discovery ExpiresAt must be later than the issue timestamp.")
+        else
+            let hints = normalizeHints discovery.Hints
+
+            match
+                hints
+                |> Array.tryPick (validateReuseHint metadata.CorrelationId)
+                with
+            | Some error -> Error error
+            | None ->
+                let snapshot: DedupeDiscoverySnapshot =
+                    {
+                        OperationId = discovery.OperationId
+                        ExpiresAt = discovery.ExpiresAt
+                        MinimumReuseRunLength = discovery.MinimumReuseRunLength
+                        Hints = hints
+                    }
+
+                let events =
+                    [
+                        { Event = UploadSessionEventType.DedupeDiscoveryIssued(discovery.OperationId, snapshot); Metadata = metadata }
+                    ]
+
+                okDecision session discovery.OperationId events false "Dedupe discovery issued."
+
+    let private claimReuseRange correlationId timestamp (discovery: DedupeDiscoverySnapshot) (claimRange: ClaimReuseRange) =
+        if isNull (box claimRange) then
+            Error(graceError correlationId "Reuse range claim is required.")
+        else
+            match validateReuseHint correlationId claimRange.Hint with
+            | Some error -> Error error
+            | None ->
+                let hint = claimRange.Hint
+
+                if hint.OrdinalCount < discovery.MinimumReuseRunLength then
+                    Error(graceError correlationId $"Reuse range is shorter than the minimum reuse run length {discovery.MinimumReuseRunLength}.")
+                elif discovery.Hints
+                     |> Array.exists (sameHint hint)
+                     |> not then
+                    Error(graceError correlationId "Reuse range hint was not issued by the active discovery.")
+                elif isNull (box claimRange.Metadata) then
+                    Error(graceError correlationId "Authoritative ContentBlockMetadata is required.")
+                elif claimRange.Metadata.StoragePoolId
+                     <> hint.StoragePoolId then
+                    Error(graceError correlationId "Authoritative ContentBlockMetadata StoragePoolId does not match the reuse range hint.")
+                elif claimRange.Metadata.ContentBlockAddress
+                     <> hint.ContentBlockAddress then
+                    Error(graceError correlationId "Authoritative ContentBlockMetadata ContentBlockAddress does not match the reuse range hint.")
+                elif claimRange.Metadata.MetadataVersion
+                     <> hint.MetadataVersion then
+                    Error(
+                        graceError
+                            correlationId
+                            $"stale reuse range hint rejected. Hinted MetadataVersion {hint.MetadataVersion}, authoritative MetadataVersion {claimRange.Metadata.MetadataVersion}."
+                    )
+                elif isNull claimRange.Metadata.Ranges then
+                    Error(graceError correlationId "Authoritative ContentBlockMetadata range is absent; reuse range cannot be claimed.")
+                else
+                    match
+                        Grace.Types.ContentBlockMetadata.tryFindRange claimRange.Metadata { OrdinalStart = hint.OrdinalStart; OrdinalCount = hint.OrdinalCount }
+                        with
+                    | None -> Error(graceError correlationId "Authoritative ContentBlockMetadata range is absent; reuse range cannot be claimed.")
+                    | Some physicalRange ->
+                        Ok
+                            {
+                                StoragePoolId = hint.StoragePoolId
+                                ContentBlockAddress = hint.ContentBlockAddress
+                                OrdinalStart = hint.OrdinalStart
+                                OrdinalCount = hint.OrdinalCount
+                                PhysicalOffset = physicalRange.PhysicalOffset
+                                PhysicalLength = physicalRange.PhysicalLength
+                                MetadataVersion = claimRange.Metadata.MetadataVersion
+                                ClaimedAt = timestamp
+                            }
+
+    let private claimReuseRanges (session: UploadSessionDto) (claim: ClaimReuseRanges) (metadata: EventMetadata) =
+        match session.DedupeDiscovery with
+        | None -> Error(graceError metadata.CorrelationId "Dedupe discovery must be issued before reuse ranges can be claimed.")
+        | Some discovery when
+            discovery.OperationId
+            <> claim.DiscoveryOperationId
+            ->
+            Error(graceError metadata.CorrelationId "ClaimReuseRanges DiscoveryOperationId does not match the active discovery.")
+        | Some discovery when metadata.Timestamp >= discovery.ExpiresAt ->
+            Error(graceError metadata.CorrelationId "Dedupe discovery has expired; reuse ranges cannot be claimed.")
+        | Some discovery ->
+            if isNull claim.Ranges || claim.Ranges.Length = 0 then
+                Error(graceError metadata.CorrelationId "At least one reuse range claim is required.")
+            else
+                let claimedRanges = ResizeArray<ClaimedReuseRange>()
+                let mutable error = None
+                let mutable index = 0
+
+                while error.IsNone && index < claim.Ranges.Length do
+                    match claimReuseRange metadata.CorrelationId metadata.Timestamp discovery claim.Ranges[index] with
+                    | Ok claimedRange ->
+                        claimedRanges.Add(claimedRange)
+                        index <- index + 1
+                    | Error claimError -> error <- Some claimError
+
+                match error with
+                | Some claimError -> Error claimError
+                | None ->
+                    let events =
+                        [
+                            { Event = UploadSessionEventType.ReuseRangesClaimed(claim.OperationId, claimedRanges.ToArray()); Metadata = metadata }
+                        ]
+
+                    okDecision session claim.OperationId events false "Reuse ranges claimed."
 
     let private findBlockIntents (session: UploadSessionDto) contentBlockAddress =
         session.BlockUploadIntents
@@ -318,8 +459,14 @@ module UploadSession =
                 match requireStartedSession session command metadata.CorrelationId with
                 | Some error -> Error error
                 | None -> confirmBlockUpload session confirmation metadata
-            | UploadSessionCommand.IssueDedupeDiscovery _
-            | UploadSessionCommand.ClaimReuseRanges _
+            | UploadSessionCommand.IssueDedupeDiscovery discovery ->
+                match requireStartedSession session command metadata.CorrelationId with
+                | Some error -> Error error
+                | None -> issueDedupeDiscovery session discovery metadata
+            | UploadSessionCommand.ClaimReuseRanges claim ->
+                match requireStartedSession session command metadata.CorrelationId with
+                | Some error -> Error error
+                | None -> claimReuseRanges session claim metadata
             | UploadSessionCommand.FinalizeManifest _ ->
                 match terminalMutationError session command metadata.CorrelationId with
                 | Some error -> Error error
