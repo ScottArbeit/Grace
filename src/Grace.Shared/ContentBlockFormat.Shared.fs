@@ -180,7 +180,7 @@ module ContentBlockFormat =
                         |> Array.map (fun chunk -> chunk.Address)
                         |> ContentAddress.computeContentBlockAddress FormatName
 
-                    Ok { Address = address; Payload = payload; Chunks = metadata }
+                    Ok({ Address = address; Payload = payload; Chunks = metadata }: EncodedContentBlock)
 
     let private parseTrailer (trailer: byte array) =
         if trailer.Length < TrailerHeaderLength then
@@ -300,7 +300,7 @@ module ContentBlockFormat =
                                     |> Array.map (fun chunk -> chunk.Address)
                                     |> ContentAddress.computeContentBlockAddress FormatName
 
-                                Ok { Address = address; Payload = copyRange payload 0 trailerStart; Chunks = chunks }
+                                Ok({ Address = address; Payload = copyRange payload 0 trailerStart; Chunks = chunks }: DecodedContentBlock)
 
     let validateAddress expectedAddress decodedBlock =
         if expectedAddress = decodedBlock.Address then
