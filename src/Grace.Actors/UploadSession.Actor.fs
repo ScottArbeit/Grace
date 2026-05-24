@@ -778,7 +778,7 @@ module UploadSession =
                                     DefaultPhysicalDeletionReminderDuration
                                     (ReminderState.UploadSessionPhysicalDeletion reminderState)
                                     metadata.CorrelationId
-                        | UploadSessionCommand.FinalizeManifest finalize when not decision.WasIdempotentReplay ->
+                        | UploadSessionCommand.FinalizeManifest finalize ->
                             let dedupeIndexActor = DedupeIndexActor.CreateActorProxy metadata.CorrelationId
 
                             do!
@@ -792,20 +792,21 @@ module UploadSession =
                                     metadata.CorrelationId
                                 :> Task
 
-                            let reminderState =
-                                createCleanupReminderState
-                                    decision.Session.UploadSessionId
-                                    decision.Session.RepositoryId
-                                    finalize.OperationId
-                                    metadata.CorrelationId
+                            if not decision.WasIdempotentReplay then
+                                let reminderState =
+                                    createCleanupReminderState
+                                        decision.Session.UploadSessionId
+                                        decision.Session.RepositoryId
+                                        finalize.OperationId
+                                        metadata.CorrelationId
 
-                            do!
-                                (this :> IGraceReminderWithGuidKey)
-                                    .ScheduleReminderAsync
-                                    ReminderTypes.PhysicalDeletion
-                                    DefaultPhysicalDeletionReminderDuration
-                                    (ReminderState.UploadSessionPhysicalDeletion reminderState)
-                                    metadata.CorrelationId
+                                do!
+                                    (this :> IGraceReminderWithGuidKey)
+                                        .ScheduleReminderAsync
+                                        ReminderTypes.PhysicalDeletion
+                                        DefaultPhysicalDeletionReminderDuration
+                                        (ReminderState.UploadSessionPhysicalDeletion reminderState)
+                                        metadata.CorrelationId
                         | UploadSessionCommand.DeletePhysicalState _ ->
                             do! this.CompactPhysicalStateEvents()
                             this.DeactivateOnIdle()

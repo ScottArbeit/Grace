@@ -81,7 +81,7 @@ module DedupeIndex =
     let storagePoolIdForRepository (repositoryDto: RepositoryDto) = storagePoolIdForRepositoryId repositoryDto.RepositoryId
 
     let private protectChunkAddress (storagePoolId: StoragePoolId) (chunkAddress: ChunkAddress) =
-        let preimage = $"grace.dedupe-index.v1.protected-window{Environment.NewLine}{storagePoolId}{Environment.NewLine}{chunkAddress}"
+        let preimage = $"grace.dedupe-index.v1.protected-window\n{storagePoolId}\n{chunkAddress}"
         let hash = SHA256.HashData(Encoding.UTF8.GetBytes(preimage))
         $"protected-sha256:{Convert.ToHexString(hash).ToLowerInvariant()}"
 

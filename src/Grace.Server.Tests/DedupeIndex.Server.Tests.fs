@@ -10,6 +10,7 @@ open NodaTime
 open NUnit.Framework
 open System
 open System.Collections.Generic
+open System.Security.Cryptography
 open System.Text
 
 [<Parallelizable(ParallelScope.All)>]
@@ -110,6 +111,11 @@ type DedupeIndexServerTests() =
     let candidateShape (candidate: ContentBlockDiscoveryCandidate) =
         candidate.ContentBlockAddress, candidate.OrdinalStart, candidate.OrdinalCount, candidate.MetadataVersion, candidate.ProtectedChunkAddresses
 
+    let protectedChunkAddress storagePoolId chunkAddress =
+        let preimage = $"grace.dedupe-index.v1.protected-window\n{storagePoolId}\n{chunkAddress}"
+        let hash = SHA256.HashData(Encoding.UTF8.GetBytes(preimage))
+        $"protected-sha256:{Convert.ToHexString(hash).ToLowerInvariant()}"
+
     [<Test>]
     member _.WritesOnlyAfterFinalizedManifestAndActiveMetadataWithoutRawInventory() =
         let block = encodedBlock "primary" 12
@@ -138,6 +144,17 @@ type DedupeIndexServerTests() =
 
         for rawChunkAddress in decodedChunkAddresses block do
             Assert.That(candidate.ProtectedChunkAddresses, Has.None.EqualTo(rawChunkAddress))
+
+    [<Test>]
+    member _.ProtectedChunkAddressesUseStablePreimageSeparator() =
+        let block = encodedBlock "stable-protection" 12
+        let manifest = manifestFor block
+        let metadata = metadataFor 1 8L block
+        let records = DedupeIndex.recordsAfterFinalize (sourceFor (finalizedSession manifest) manifest block metadata)
+        let expectedProtectedAddress = protectedChunkAddress storagePoolId (decodedChunkAddresses block).[0]
+
+        Assert.That(records, Is.Not.Empty)
+        Assert.That(records[0].ProtectedChunkAddresses[0], Is.EqualTo(expectedProtectedAddress))
 
     [<Test>]
     member _.DiscoveryLimitsCandidateWindowsForAKeyChunk() =
