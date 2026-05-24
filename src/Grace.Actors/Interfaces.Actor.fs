@@ -10,6 +10,7 @@ open Grace.Types.DirectoryVersion
 open Grace.Types.Reference
 open Grace.Types.Reminder
 open Grace.Types.Repository
+open Grace.Types.RepositoryContentCounter
 open Grace.Types.Organization
 open Grace.Types.Owner
 open Grace.Types.PersonalAccessToken
@@ -588,6 +589,23 @@ module Interfaces =
 
         /// Returns path permissions for this repository.
         abstract member GetPathPermissions: pathFilter: RelativePath option -> correlationId: CorrelationId -> Task<PathPermission list>
+
+    /// Defines the operations for the RepositoryContentCounter actor.
+    [<Interface>]
+    type IRepositoryContentCounterActor =
+        inherit IGrainWithStringKey
+
+        /// Returns true if this repository content counter has been initialized.
+        abstract member Exists: correlationId: CorrelationId -> Task<bool>
+
+        /// Returns the current repository-local count for this manifest.
+        abstract member Get: correlationId: CorrelationId -> Task<RepositoryContentCounterDto>
+
+        /// Returns the events handled by this repository content counter.
+        abstract member GetEvents: correlationId: CorrelationId -> Task<IReadOnlyList<RepositoryContentCounterEvent>>
+
+        /// Validates incoming commands and converts them to persisted events and zero-crossing intents.
+        abstract member Handle: command: RepositoryContentCounterCommand -> eventMetadata: EventMetadata -> Task<GraceResult<RepositoryContentCounterDecision>>
 
     /// Defines the operations for the RepositoryName actor.
     [<Interface>]
