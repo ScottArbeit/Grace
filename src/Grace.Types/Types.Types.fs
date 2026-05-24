@@ -125,6 +125,18 @@ module Types =
     /// The content-addressed identifier for a file manifest.
     type ManifestAddress = string
 
+    /// The Id of an upload session.
+    type UploadSessionId = Guid
+
+    /// Caller-supplied retry identity for upload-session commands.
+    type UploadSessionOperationId = string
+
+    /// The content-derived hash for a complete manifest-backed file.
+    type FileContentHash = string
+
+    /// The versioned chunking suite used for a manifest-backed file.
+    type ChunkingSuiteId = string
+
     type StorageAccountName = string
     type StorageConnectionString = string
     type StorageContainerName = string
