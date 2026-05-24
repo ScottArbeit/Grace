@@ -349,3 +349,51 @@ module Storage =
                 logToConsole $"exception: {exceptionResponse.ToString()}"
                 return Error(GraceError.Create (exceptionResponse.ToString()) parameters.CorrelationId)
         }
+
+    /// Gets an upload URI with a SAS token for uploading a ContentBlock payload to object storage.
+    let GetContentBlockUploadUri (parameters: GetContentBlockUploadUriParameters) =
+        task {
+            try
+                match Current().ObjectStorageProvider with
+                | ObjectStorageProvider.Unknown -> return Error(GraceError.Create (getErrorMessage StorageError.NotImplemented) parameters.CorrelationId)
+                | ObjectStorageProvider.AzureBlobStorage ->
+                    let httpClient = getHttpClient parameters.CorrelationId
+                    do! Auth.addAuthorizationHeader httpClient
+                    let serviceUrl = $"{Current().ServerUri}/storage/getContentBlockUploadUri"
+                    let jsonContent = createJsonContent parameters
+                    let! response = httpClient.PostAsync(serviceUrl, jsonContent)
+                    let! blobUriWithSasToken = response.Content.ReadAsStringAsync()
+                    return Ok(GraceReturnValue.Create blobUriWithSasToken parameters.CorrelationId)
+                | ObjectStorageProvider.AWSS3 -> return Error(GraceError.Create (getErrorMessage StorageError.NotImplemented) parameters.CorrelationId)
+                | ObjectStorageProvider.GoogleCloudStorage ->
+                    return Error(GraceError.Create (getErrorMessage StorageError.NotImplemented) parameters.CorrelationId)
+            with
+            | ex ->
+                let exceptionResponse = ExceptionResponse.Create ex
+                logToConsole $"exception: {exceptionResponse.ToString()}"
+                return Error(GraceError.Create (exceptionResponse.ToString()) parameters.CorrelationId)
+        }
+
+    /// Gets a download URI with a SAS token for downloading a ContentBlock payload from object storage.
+    let GetContentBlockDownloadUri (parameters: GetContentBlockDownloadUriParameters) =
+        task {
+            try
+                match Current().ObjectStorageProvider with
+                | ObjectStorageProvider.Unknown -> return Error(GraceError.Create (getErrorMessage StorageError.NotImplemented) parameters.CorrelationId)
+                | ObjectStorageProvider.AzureBlobStorage ->
+                    let httpClient = getHttpClient parameters.CorrelationId
+                    do! Auth.addAuthorizationHeader httpClient
+                    let serviceUrl = $"{Current().ServerUri}/storage/getContentBlockDownloadUri"
+                    let jsonContent = createJsonContent parameters
+                    let! response = httpClient.PostAsync(serviceUrl, jsonContent)
+                    let! blobUriWithSasToken = response.Content.ReadAsStringAsync()
+                    return Ok(GraceReturnValue.Create blobUriWithSasToken parameters.CorrelationId)
+                | ObjectStorageProvider.AWSS3 -> return Error(GraceError.Create (getErrorMessage StorageError.NotImplemented) parameters.CorrelationId)
+                | ObjectStorageProvider.GoogleCloudStorage ->
+                    return Error(GraceError.Create (getErrorMessage StorageError.NotImplemented) parameters.CorrelationId)
+            with
+            | ex ->
+                let exceptionResponse = ExceptionResponse.Create ex
+                logToConsole $"exception: {exceptionResponse.ToString()}"
+                return Error(GraceError.Create (exceptionResponse.ToString()) parameters.CorrelationId)
+        }

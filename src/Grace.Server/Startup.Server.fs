@@ -192,6 +192,44 @@ module Application =
                 return Resource.Path(graceIds.OwnerId, graceIds.OrganizationId, graceIds.RepositoryId, parameters.FileVersion.RelativePath)
             }
 
+        let contentBlockUploadPathResourceFromContext (context: HttpContext) =
+            task {
+                context.Request.EnableBuffering()
+                let! parameters = context.BindJsonAsync<Storage.GetContentBlockUploadUriParameters>()
+
+                context.Request.Body.Seek(0L, IO.SeekOrigin.Begin)
+                |> ignore
+
+                let graceIds = Services.getGraceIds context
+
+                return
+                    Resource.Path(
+                        graceIds.OwnerId,
+                        graceIds.OrganizationId,
+                        graceIds.RepositoryId,
+                        StorageKeys.contentBlockObjectKey parameters.ContentBlockAddress
+                    )
+            }
+
+        let contentBlockDownloadPathResourceFromContext (context: HttpContext) =
+            task {
+                context.Request.EnableBuffering()
+                let! parameters = context.BindJsonAsync<Storage.GetContentBlockDownloadUriParameters>()
+
+                context.Request.Body.Seek(0L, IO.SeekOrigin.Begin)
+                |> ignore
+
+                let graceIds = Services.getGraceIds context
+
+                return
+                    Resource.Path(
+                        graceIds.OwnerId,
+                        graceIds.OrganizationId,
+                        graceIds.RepositoryId,
+                        StorageKeys.contentBlockObjectKey parameters.ContentBlockAddress
+                    )
+            }
+
         let composeHandlers (first: HttpHandler) (second: HttpHandler) : HttpHandler = fun next context -> first (second next) context
 
         let requireSystemAdmin: HttpHandler = AuthorizationMiddleware.requiresPermission Operation.SystemAdmin (fun _ -> task { return Resource.System })
@@ -221,6 +259,12 @@ module Application =
         let requirePathWriteForUploadUri: HttpHandler = AuthorizationMiddleware.requiresPermissions Operation.PathWrite uploadUriResourcesFromContext
 
         let requirePathRead: HttpHandler = AuthorizationMiddleware.requiresPermission Operation.PathRead downloadPathResourceFromContext
+
+        let requirePathWriteForContentBlockUploadUri: HttpHandler =
+            AuthorizationMiddleware.requiresPermission Operation.PathWrite contentBlockUploadPathResourceFromContext
+
+        let requirePathReadForContentBlockDownloadUri: HttpHandler =
+            AuthorizationMiddleware.requiresPermission Operation.PathRead contentBlockDownloadPathResourceFromContext
 
         let activeAgentSessionsByAgentKey = ConcurrentDictionary<string, AgentSessionInfo>()
         let activeAgentSessionsBySessionId = ConcurrentDictionary<string, string>()
@@ -1217,6 +1261,14 @@ module Application =
 
                                route "/getDownloadUri" (composeHandlers requirePathRead Storage.GetDownloadUri)
                                |> addMetadata typeof<Storage.GetDownloadUriParameters>
+
+                               route "/getContentBlockUploadUri" (composeHandlers requirePathWriteForContentBlockUploadUri Storage.GetContentBlockUploadUri)
+                               |> addMetadata typeof<Storage.GetContentBlockUploadUriParameters>
+
+                               route
+                                   "/getContentBlockDownloadUri"
+                                   (composeHandlers requirePathReadForContentBlockDownloadUri Storage.GetContentBlockDownloadUri)
+                               |> addMetadata typeof<Storage.GetContentBlockDownloadUriParameters>
 
                                route "/getUploadUri" (composeHandlers requirePathWriteForUploadUri Storage.GetUploadUris)
                                |> addMetadata typeof<Storage.GetUploadUriParameters> ]
