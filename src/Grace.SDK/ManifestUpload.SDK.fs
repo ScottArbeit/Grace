@@ -149,13 +149,16 @@ module ManifestUpload =
                 match plan.ReferenceType, createManifest plan with
                 | FileContentReferenceType.FileManifest, Some manifest ->
                     let encodedBlocks = ResizeArray<ContentBlockFormat.EncodedContentBlock>()
+                    let encodedBlocksByAddress = Dictionary<ContentBlockAddress, ContentBlockFormat.EncodedContentBlock>()
                     let mutable encodeError = None
 
                     let mutable uploadPlanIndex = 0
 
                     while uploadPlanIndex < plan.ContentBlockUploads.Length do
                         match encodeBlock request.CorrelationId plan.ContentBlockUploads[uploadPlanIndex] with
-                        | Ok encodedBlock -> encodedBlocks.Add encodedBlock
+                        | Ok encodedBlock ->
+                            encodedBlocks.Add encodedBlock
+                            encodedBlocksByAddress[encodedBlock.Address] <- encodedBlock
                         | Error error -> encodeError <- Some error
 
                         uploadPlanIndex <- uploadPlanIndex + 1
@@ -169,28 +172,50 @@ module ManifestUpload =
                         | Error error -> return Error error
                         | Ok _ ->
                             let errors = ResizeArray<GraceError>()
+                            let mutable registerIndex = 0
+
+                            while registerIndex < plan.Blocks.Length do
+                                let logicalBlockPlan = plan.Blocks[registerIndex]
+
+                                match encodedBlocksByAddress.TryGetValue logicalBlockPlan.Address with
+                                | false, _ ->
+                                    errors.Add(
+                                        GraceError.Create
+                                            $"Missing encoded ContentBlock payload for manifest block {logicalBlockPlan.Address}."
+                                            request.CorrelationId
+                                    )
+                                | true, encodedBlock ->
+                                    match!
+                                        client.RegisterBlockUpload
+                                            (
+                                                buildRegisterParameters
+                                                    request
+                                                    uploadSessionId
+                                                    registerIndex
+                                                    encodedBlock
+                                                    logicalBlockPlan.Offset
+                                                    logicalBlockPlan.Size
+                                            )
+                                        with
+                                    | Error error -> errors.Add error
+                                    | Ok _ -> ()
+
+                                registerIndex <- registerIndex + 1
+
                             let mutable index = 0
 
                             while index < encodedBlocks.Count do
                                 let encodedBlock = encodedBlocks[index]
-                                let blockPlan = plan.ContentBlockUploads[index]
-                                let logicalBlockPlan = plan.Blocks[blockPlan.BlockIndex]
 
-                                match!
-                                    client.RegisterBlockUpload
-                                        (buildRegisterParameters request uploadSessionId index encodedBlock logicalBlockPlan.Offset logicalBlockPlan.Size)
-                                    with
+                                match! client.UploadContentBlock (buildUploadUriParameters request encodedBlock.Address) encodedBlock.Payload with
                                 | Error error -> errors.Add error
-                                | Ok _ ->
-                                    match! client.UploadContentBlock (buildUploadUriParameters request encodedBlock.Address) encodedBlock.Payload with
+                                | Ok placementResult ->
+                                    match!
+                                        client.ConfirmBlockUploaded
+                                            (buildConfirmParameters request uploadSessionId index encodedBlock placementResult.ReturnValue)
+                                        with
                                     | Error error -> errors.Add error
-                                    | Ok placementResult ->
-                                        match!
-                                            client.ConfirmBlockUploaded
-                                                (buildConfirmParameters request uploadSessionId index encodedBlock placementResult.ReturnValue)
-                                            with
-                                        | Error error -> errors.Add error
-                                        | Ok _ -> ()
+                                    | Ok _ -> ()
 
                                 index <- index + 1
 

@@ -139,6 +139,74 @@ type ManifestUploadSdkTests() =
         }
 
     [<Test>]
+    member _.ManifestUploadRegistersEveryDuplicateBlockOccurrenceButUploadsPayloadOnce() =
+        task {
+            let payload = Array.zeroCreate<byte> (RabinChunking.MaximumChunkSize * 2)
+            let tempPath = Path.Combine(Path.GetTempPath(), $"grace-manifest-upload-duplicates-{Guid.NewGuid():N}.bin")
+            let correlationId = "corr-sdk-manifest-upload-duplicates"
+            let registeredRanges = ResizeArray<ContentBlockAddress * int64 * int64>()
+            let uploadedBlocks = Dictionary<ContentBlockAddress, byte array>()
+            let confirmedBlocks = Dictionary<ContentBlockAddress, byte array>()
+            let mutable manifestBlockCount = 0
+
+            try
+                File.WriteAllBytes(tempPath, payload)
+
+                let fileVersion =
+                    FileVersion.Create "duplicate-large.bin" (ManifestUploadSdkTests.ComputeSha256Hash payload) String.Empty true (int64 payload.Length)
+
+                let client: ManifestUpload.ManifestUploadClient =
+                    {
+                        StartSession = fun parameters -> ManifestUploadSdkTests.Decision correlationId parameters.UploadSessionId parameters.OperationId
+                        RegisterBlockUpload =
+                            fun parameters ->
+                                registeredRanges.Add(parameters.ContentBlockAddress, parameters.LogicalOffset, parameters.LogicalLength)
+                                ManifestUploadSdkTests.Decision correlationId parameters.UploadSessionId parameters.OperationId
+                        UploadContentBlock =
+                            fun parameters payload ->
+                                uploadedBlocks[parameters.ContentBlockAddress] <- payload
+
+                                let placement =
+                                    { ObjectKey = $"cas/content-blocks/{parameters.ContentBlockAddress}"; ETag = Some $"etag-{uploadedBlocks.Count}" }
+
+                                Task.FromResult(Ok(GraceReturnValue.Create placement correlationId))
+                        ConfirmBlockUploaded =
+                            fun parameters ->
+                                confirmedBlocks[parameters.ContentBlockAddress] <- parameters.Payload
+                                ManifestUploadSdkTests.Decision correlationId parameters.UploadSessionId parameters.OperationId
+                        FinalizeManifest =
+                            fun parameters ->
+                                manifestBlockCount <- parameters.Manifest.Blocks.Count
+                                Assert.That(parameters.BlockPayloads, Has.Length.EqualTo(uploadedBlocks.Count))
+                                ManifestUploadSdkTests.Decision correlationId parameters.UploadSessionId parameters.OperationId
+                    }
+
+                let! result = ManifestUpload.uploadFileWithClient client (ManifestUploadSdkTests.CreateRequest tempPath fileVersion correlationId)
+
+                match result with
+                | Error error -> Assert.Fail(error.Error)
+                | Ok returnValue ->
+                    Assert.That(returnValue.ReturnValue.UsedManifestUpload, Is.True)
+                    Assert.That(manifestBlockCount, Is.GreaterThan(uploadedBlocks.Count))
+                    Assert.That(registeredRanges, Has.Count.EqualTo(manifestBlockCount))
+                    Assert.That(uploadedBlocks, Has.Count.EqualTo(1))
+                    Assert.That(confirmedBlocks, Has.Count.EqualTo(1))
+
+                    Assert.That(
+                        registeredRanges
+                        |> Seq.map (fun (_, offset, length) -> offset, length),
+                        Is.EquivalentTo(
+                            [|
+                                0L, int64 RabinChunking.MaximumChunkSize
+                                int64 RabinChunking.MaximumChunkSize, int64 RabinChunking.MaximumChunkSize
+                            |]
+                        )
+                    )
+            finally
+                if File.Exists(tempPath) then File.Delete(tempPath)
+        }
+
+    [<Test>]
     member _.ManifestUploadsAreDisabledUnlessEnvironmentOptInIsOne() =
         let previous = Environment.GetEnvironmentVariable(ManifestUpload.OptInEnvironmentVariable)
 
