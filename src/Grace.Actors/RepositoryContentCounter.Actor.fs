@@ -66,7 +66,13 @@ module RepositoryContentCounter =
         || (not (String.IsNullOrWhiteSpace counter.ManifestAddress)
             && counter.ManifestAddress <> manifestAddress)
 
-    let decideCommand
+    let private expectedPrimaryKeyMismatch expectedPrimaryKey repositoryId manifestAddress =
+        match expectedPrimaryKey with
+        | Some expectedPrimaryKey -> not (String.Equals(expectedPrimaryKey, primaryKey repositoryId manifestAddress, StringComparison.Ordinal))
+        | None -> false
+
+    let decideCommandForKey
+        (expectedPrimaryKey: string option)
         (events: seq<RepositoryContentCounterEvent>)
         (counter: RepositoryContentCounterDto)
         (command: RepositoryContentCounterCommand)
@@ -82,10 +88,12 @@ module RepositoryContentCounter =
             Error(graceError metadata.CorrelationId "RepositoryContentCounter command requires a non-empty RepositoryId.")
         elif String.IsNullOrWhiteSpace manifestAddress then
             Error(graceError metadata.CorrelationId "RepositoryContentCounter command requires a non-empty ManifestAddress.")
-        elif hasAppliedOperationId events operationId then
-            okDecision counter operationId [] [] true "Repository content counter command replayed."
+        elif expectedPrimaryKeyMismatch expectedPrimaryKey repositoryId manifestAddress then
+            Error(graceError metadata.CorrelationId "RepositoryContentCounter command target does not match the grain key.")
         elif targetMismatch counter repositoryId manifestAddress then
             Error(graceError metadata.CorrelationId "RepositoryContentCounter command target does not match the initialized counter.")
+        elif hasAppliedOperationId events operationId then
+            okDecision counter operationId [] [] true "Repository content counter command replayed."
         else
             match command with
             | RepositoryContentCounterCommand.AddReference _ ->
@@ -115,6 +123,8 @@ module RepositoryContentCounter =
                             []
 
                     okDecision counter operationId [ counterEvent ] intents false "Repository content reference removed."
+
+    let decideCommand events counter command metadata = decideCommandForKey None events counter command metadata
 
     type RepositoryContentCounterActor
         (
@@ -166,7 +176,7 @@ module RepositoryContentCounter =
                     this.correlationId <- metadata.CorrelationId
                     RequestContext.Set(Grace.Shared.Constants.CurrentCommandProperty, commandName command)
 
-                    match decideCommand state.State counter command metadata with
+                    match decideCommandForKey (Some(this.GetPrimaryKeyString())) state.State counter command metadata with
                     | Ok decision ->
                         if not decision.Events.IsEmpty then do! this.ApplyEvents decision.Events
 

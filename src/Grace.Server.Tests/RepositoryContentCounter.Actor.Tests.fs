@@ -14,7 +14,9 @@ type RepositoryContentCounterActorTests() =
 
     let timestamp = Instant.FromUtc(2026, 5, 24, 13, 0)
     let repositoryId = Guid.Parse("75ce5e36-25f6-4da0-afdd-ad4ad56540d5")
+    let otherRepositoryId = Guid.Parse("41ff01d0-8f4c-41e7-875d-1c4f7b519c11")
     let manifestAddress = "manifest:blake3:alpha"
+    let otherManifestAddress = "manifest:blake3:beta"
 
     let metadata correlationId = { Timestamp = timestamp; CorrelationId = correlationId; Principal = "tester"; Properties = Dictionary<string, string>() }
 
@@ -127,3 +129,32 @@ type RepositoryContentCounterActorTests() =
             Assert.That(decision.Counter.ReferenceCount, Is.EqualTo(0L))
             Assert.That(decision.Counter.LifecycleState, Is.EqualTo(RepositoryContentCounterLifecycleState.NotReferenced))
         | Error error -> Assert.Fail($"Expected remove replay to be idempotent, got {error.Error}.")
+
+    [<Test>]
+    member _.FirstWriteRejectsCommandTargetThatDoesNotMatchGrainKey() =
+        let wrongKey = RepositoryContentCounterActor.primaryKey otherRepositoryId manifestAddress
+
+        let result =
+            RepositoryContentCounterActor.decideCommandForKey (Some wrongKey) [] RepositoryContentCounterDto.Default (add "op-add-1") (metadata "corr-key")
+
+        match result with
+        | Ok _ -> Assert.Fail("Expected target mismatch to reject the first write.")
+        | Error error -> Assert.That(error.Error, Is.EqualTo("RepositoryContentCounter command target does not match the grain key."))
+
+    [<Test>]
+    member _.ReusedOperationIdWithDifferentTargetRejectsInsteadOfReplaying() =
+        let first = RepositoryContentCounterActor.decideCommand [] RepositoryContentCounterDto.Default (add "op-add-1") (metadata "corr-add-1")
+
+        let afterFirst, firstEvents =
+            match first with
+            | Ok decision -> decision.Counter, decision.Events
+            | Error error ->
+                Assert.Fail($"Expected add to succeed, got {error.Error}.")
+                RepositoryContentCounterDto.Default, []
+
+        let mismatchedCommand = RepositoryContentCounterCommand.AddReference("op-add-1", repositoryId, otherManifestAddress)
+        let replay = RepositoryContentCounterActor.decideCommand firstEvents afterFirst mismatchedCommand (metadata "corr-add-reused")
+
+        match replay with
+        | Ok _ -> Assert.Fail("Expected reused operation id with a different target to reject.")
+        | Error error -> Assert.That(error.Error, Is.EqualTo("RepositoryContentCounter command target does not match the initialized counter."))
