@@ -203,15 +203,9 @@ module UploadSession =
             | UploadSessionEventType.PhysicalStateDeleted operationId ->
                 { current with LifecycleState = UploadSessionLifecycleState.StateDeleted; LastOperationId = Some operationId }
             | UploadSessionEventType.BlockUploadIntentRegistered (operationId, intent) ->
-                let existing =
-                    current.BlockUploadIntents
-                    |> Array.filter (fun existingIntent ->
-                        existingIntent.ContentBlockAddress
-                        <> intent.ContentBlockAddress)
-
                 { current with
                     LifecycleState = UploadSessionLifecycleState.UploadingBlocks
-                    BlockUploadIntents = Array.append existing [| intent |]
+                    BlockUploadIntents = Array.append current.BlockUploadIntents [| intent |]
                     LastOperationId = Some operationId
                 }
             | UploadSessionEventType.BlockUploadConfirmed (operationId, confirmedBlock) ->

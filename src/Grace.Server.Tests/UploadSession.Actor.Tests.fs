@@ -45,8 +45,16 @@ type UploadSessionActorTests() =
             Assert.Fail($"Expected test content block to encode, got {error}.")
             Unchecked.defaultof<ContentBlockFormat.EncodedContentBlock>
 
-    let intent operationId blockAddress payloadLength : RegisterBlockUploadIntent =
-        { OperationId = operationId; ContentBlockAddress = blockAddress; LogicalOffset = 0L; LogicalLength = 11L; ExpectedPayloadLength = payloadLength }
+    let intentAt operationId blockAddress payloadLength logicalOffset : RegisterBlockUploadIntent =
+        {
+            OperationId = operationId
+            ContentBlockAddress = blockAddress
+            LogicalOffset = logicalOffset
+            LogicalLength = 11L
+            ExpectedPayloadLength = payloadLength
+        }
+
+    let intent operationId blockAddress payloadLength = intentAt operationId blockAddress payloadLength 0L
 
     let confirm operationId blockAddress payload : ConfirmBlockUploaded =
         {
@@ -207,6 +215,49 @@ type UploadSessionActorTests() =
                 Is.EqualTo(block.Address)
             )
         | Error error -> Assert.Fail($"Expected block upload intent to succeed, got {error.Error}.")
+
+    [<Test>]
+    member _.BlockUploadIntentPreservesRepeatedBlockAddressAtDifferentLogicalOffsets() =
+        let block = encodedBlock (Text.Encoding.UTF8.GetBytes("hello world"))
+        let startedDto, startEvents = startedSession ()
+
+        let first =
+            UploadSessionActor.decideCommand
+                startEvents
+                startedDto
+                (UploadSessionCommand.RegisterBlockUploadIntent(intentAt "op-block-intent-1" block.Address block.Payload.LongLength 0L))
+                (metadata "corr-block-intent-1")
+
+        let firstDto, firstEvents =
+            match first with
+            | Ok decision -> decision.Session, startEvents @ decision.Events
+            | Error error ->
+                Assert.Fail($"Expected first intent to succeed, got {error.Error}.")
+                UploadSessionDto.Default, []
+
+        let second =
+            UploadSessionActor.decideCommand
+                firstEvents
+                firstDto
+                (UploadSessionCommand.RegisterBlockUploadIntent(intentAt "op-block-intent-2" block.Address block.Payload.LongLength 4096L))
+                (metadata "corr-block-intent-2")
+
+        match second with
+        | Ok decision ->
+            Assert.That(decision.Session.BlockUploadIntents.Length, Is.EqualTo(2))
+
+            Assert.That(
+                decision.Session.BlockUploadIntents[0]
+                    .LogicalOffset,
+                Is.EqualTo(0L)
+            )
+
+            Assert.That(
+                decision.Session.BlockUploadIntents[1]
+                    .LogicalOffset,
+                Is.EqualTo(4096L)
+            )
+        | Error error -> Assert.Fail($"Expected repeated block address intent to succeed, got {error.Error}.")
 
     [<Test>]
     member _.ConfirmBlockUploadedValidatesPayloadAndRecordsPhysicalRanges() =
