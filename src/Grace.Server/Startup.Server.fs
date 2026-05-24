@@ -230,6 +230,19 @@ module Application =
                     )
             }
 
+        let uploadSessionPathResourceFromContext (context: HttpContext) =
+            task {
+                context.Request.EnableBuffering()
+                let! parameters = context.BindJsonAsync<Storage.UploadSessionStorageParameters>()
+
+                context.Request.Body.Seek(0L, IO.SeekOrigin.Begin)
+                |> ignore
+
+                let graceIds = Services.getGraceIds context
+
+                return Resource.Path(graceIds.OwnerId, graceIds.OrganizationId, graceIds.RepositoryId, parameters.AuthorizedScope)
+            }
+
         let composeHandlers (first: HttpHandler) (second: HttpHandler) : HttpHandler = fun next context -> first (second next) context
 
         let requireSystemAdmin: HttpHandler = AuthorizationMiddleware.requiresPermission Operation.SystemAdmin (fun _ -> task { return Resource.System })
@@ -265,6 +278,8 @@ module Application =
 
         let requirePathReadForContentBlockDownloadUri: HttpHandler =
             AuthorizationMiddleware.requiresPermission Operation.PathRead contentBlockDownloadPathResourceFromContext
+
+        let requirePathWriteForUploadSession: HttpHandler = AuthorizationMiddleware.requiresPermission Operation.PathWrite uploadSessionPathResourceFromContext
 
         let activeAgentSessionsByAgentKey = ConcurrentDictionary<string, AgentSessionInfo>()
         let activeAgentSessionsBySessionId = ConcurrentDictionary<string, string>()
@@ -1262,16 +1277,16 @@ module Application =
                                route "/discoverContentBlocks" (composeHandlers requireRepoRead Storage.DiscoverContentBlocks)
                                |> addMetadata typeof<Storage.DiscoverContentBlocksParameters>
 
-                               route "/startManifestUploadSession" (composeHandlers requireRepoWrite Storage.StartManifestUploadSession)
+                               route "/startManifestUploadSession" (composeHandlers requirePathWriteForUploadSession Storage.StartManifestUploadSession)
                                |> addMetadata typeof<Storage.StartManifestUploadSessionParameters>
 
-                               route "/registerContentBlockUpload" (composeHandlers requireRepoWrite Storage.RegisterContentBlockUpload)
+                               route "/registerContentBlockUpload" (composeHandlers requirePathWriteForUploadSession Storage.RegisterContentBlockUpload)
                                |> addMetadata typeof<Storage.RegisterContentBlockUploadParameters>
 
-                               route "/confirmContentBlockUpload" (composeHandlers requireRepoWrite Storage.ConfirmContentBlockUpload)
+                               route "/confirmContentBlockUpload" (composeHandlers requirePathWriteForUploadSession Storage.ConfirmContentBlockUpload)
                                |> addMetadata typeof<Storage.ConfirmContentBlockUploadParameters>
 
-                               route "/finalizeManifestUpload" (composeHandlers requireRepoWrite Storage.FinalizeManifestUpload)
+                               route "/finalizeManifestUpload" (composeHandlers requirePathWriteForUploadSession Storage.FinalizeManifestUpload)
                                |> addMetadata typeof<Storage.FinalizeManifestUploadParameters>
 
                                route "/getDownloadUri" (composeHandlers requirePathRead Storage.GetDownloadUri)

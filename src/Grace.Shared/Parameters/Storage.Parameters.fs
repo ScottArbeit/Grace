@@ -54,10 +54,10 @@ module Storage =
     type UploadSessionStorageParameters() =
         inherit StorageParameters()
         member val public UploadSessionId: UploadSessionId = Guid.Empty with get, set
+        member val public AuthorizedScope: RelativePath = String.Empty with get, set
 
     type StartManifestUploadSessionParameters() =
         inherit UploadSessionStorageParameters()
-        member val public AuthorizedScope: RelativePath = String.Empty with get, set
         member val public FileContentHash: FileContentHash = String.Empty with get, set
         member val public ExpectedSize: int64 = 0L with get, set
         member val public ChunkingSuiteId: ChunkingSuiteId = String.Empty with get, set

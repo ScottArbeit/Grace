@@ -97,6 +97,7 @@ module ManifestUpload =
         let parameters = RegisterContentBlockUploadParameters()
         setStorageParameters request parameters |> ignore
         parameters.UploadSessionId <- uploadSessionId
+        parameters.AuthorizedScope <- request.AuthorizedScope
         parameters.OperationId <- $"manifest-upload-{uploadSessionId:N}-register-{operationIndex}"
         parameters.ContentBlockAddress <- block.Address
         parameters.LogicalOffset <- logicalOffset
@@ -114,6 +115,7 @@ module ManifestUpload =
         let parameters = ConfirmContentBlockUploadParameters()
         setStorageParameters request parameters |> ignore
         parameters.UploadSessionId <- uploadSessionId
+        parameters.AuthorizedScope <- request.AuthorizedScope
         parameters.OperationId <- $"manifest-upload-{uploadSessionId:N}-confirm-{operationIndex}"
         parameters.ContentBlockAddress <- block.Address
         parameters.Payload <- block.Payload
@@ -124,6 +126,7 @@ module ManifestUpload =
         let parameters = FinalizeManifestUploadParameters()
         setStorageParameters request parameters |> ignore
         parameters.UploadSessionId <- uploadSessionId
+        parameters.AuthorizedScope <- request.AuthorizedScope
         parameters.OperationId <- $"manifest-upload-{uploadSessionId:N}-finalize"
         parameters.Manifest <- manifest
         parameters

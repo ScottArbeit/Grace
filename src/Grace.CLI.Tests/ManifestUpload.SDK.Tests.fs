@@ -83,11 +83,13 @@ type ManifestUploadSdkTests() =
                     {
                         StartSession =
                             fun parameters ->
+                                Assert.That(parameters.AuthorizedScope, Is.EqualTo("/"))
                                 calls.Add("start")
                                 sessionIds.Add(parameters.UploadSessionId)
                                 ManifestUploadSdkTests.Decision correlationId parameters.UploadSessionId parameters.OperationId
                         RegisterBlockUpload =
                             fun parameters ->
+                                Assert.That(parameters.AuthorizedScope, Is.EqualTo("/"))
                                 calls.Add($"register:{parameters.ContentBlockAddress}")
                                 Assert.That(parameters.ExpectedPayloadLength, Is.GreaterThan(0L))
                                 ManifestUploadSdkTests.Decision correlationId parameters.UploadSessionId parameters.OperationId
@@ -102,11 +104,13 @@ type ManifestUploadSdkTests() =
                                 Task.FromResult(Ok(GraceReturnValue.Create placement correlationId))
                         ConfirmBlockUploaded =
                             fun parameters ->
+                                Assert.That(parameters.AuthorizedScope, Is.EqualTo("/"))
                                 calls.Add($"confirm:{parameters.ContentBlockAddress}")
                                 confirmedBlocks[parameters.ContentBlockAddress] <- parameters.Payload
                                 ManifestUploadSdkTests.Decision correlationId parameters.UploadSessionId parameters.OperationId
                         FinalizeManifest =
                             fun parameters ->
+                                Assert.That(parameters.AuthorizedScope, Is.EqualTo("/"))
                                 calls.Add("finalize")
                                 finalizedManifest <- Some parameters.Manifest
                                 Assert.That(parameters.BlockPayloads, Is.Empty)
@@ -157,9 +161,13 @@ type ManifestUploadSdkTests() =
 
                 let client: ManifestUpload.ManifestUploadClient =
                     {
-                        StartSession = fun parameters -> ManifestUploadSdkTests.Decision correlationId parameters.UploadSessionId parameters.OperationId
+                        StartSession =
+                            fun parameters ->
+                                Assert.That(parameters.AuthorizedScope, Is.EqualTo("/"))
+                                ManifestUploadSdkTests.Decision correlationId parameters.UploadSessionId parameters.OperationId
                         RegisterBlockUpload =
                             fun parameters ->
+                                Assert.That(parameters.AuthorizedScope, Is.EqualTo("/"))
                                 registeredRanges.Add(parameters.ContentBlockAddress, parameters.LogicalOffset, parameters.LogicalLength)
                                 ManifestUploadSdkTests.Decision correlationId parameters.UploadSessionId parameters.OperationId
                         UploadContentBlock =
@@ -172,10 +180,12 @@ type ManifestUploadSdkTests() =
                                 Task.FromResult(Ok(GraceReturnValue.Create placement correlationId))
                         ConfirmBlockUploaded =
                             fun parameters ->
+                                Assert.That(parameters.AuthorizedScope, Is.EqualTo("/"))
                                 confirmedBlocks[parameters.ContentBlockAddress] <- parameters.Payload
                                 ManifestUploadSdkTests.Decision correlationId parameters.UploadSessionId parameters.OperationId
                         FinalizeManifest =
                             fun parameters ->
+                                Assert.That(parameters.AuthorizedScope, Is.EqualTo("/"))
                                 manifestBlockCount <- parameters.Manifest.Blocks.Count
                                 Assert.That(parameters.BlockPayloads, Is.Empty)
                                 ManifestUploadSdkTests.Decision correlationId parameters.UploadSessionId parameters.OperationId

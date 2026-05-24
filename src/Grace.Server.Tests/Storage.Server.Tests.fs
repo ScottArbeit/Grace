@@ -520,6 +520,7 @@ type StorageManifestUploadSessionRoutes() =
             let register = Parameters.Storage.RegisterContentBlockUploadParameters()
             setStorageParameters register repositoryId correlationId
             register.UploadSessionId <- sessionId
+            register.AuthorizedScope <- "/"
             register.OperationId <- "register-0"
             register.ContentBlockAddress <- block.Address
             register.LogicalOffset <- 0L
@@ -539,6 +540,7 @@ type StorageManifestUploadSessionRoutes() =
             let confirm = Parameters.Storage.ConfirmContentBlockUploadParameters()
             setStorageParameters confirm repositoryId correlationId
             confirm.UploadSessionId <- sessionId
+            confirm.AuthorizedScope <- "/"
             confirm.OperationId <- "confirm-0"
             confirm.ContentBlockAddress <- block.Address
             confirm.Payload <- block.Payload
@@ -549,6 +551,7 @@ type StorageManifestUploadSessionRoutes() =
             let finalize = Parameters.Storage.FinalizeManifestUploadParameters()
             setStorageParameters finalize repositoryId correlationId
             finalize.UploadSessionId <- sessionId
+            finalize.AuthorizedScope <- "/"
             finalize.OperationId <- "finalize"
             finalize.Manifest <- manifest
 
