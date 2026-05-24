@@ -78,7 +78,14 @@ module LocalPlanner =
             FallbackUpload = Some { Bytes = Array.copy bytes }
         }
 
+    let private ensureSupportedChunkingSuite (options: Options) =
+        if options.ChunkingSuiteId
+           <> ChunkingSuiteId RabinChunking.SuiteName then
+            invalidArg "ChunkingSuiteId" $"Only {RabinChunking.SuiteName} is supported by the local planner."
+
     let private planManifest (options: Options) (fileContentHash: FileContentHash) expectedSize (bytes: byte array) =
+        ensureSupportedChunkingSuite options
+
         let firstChunkIndexesByAddress = Dictionary<ChunkAddress, int>()
         let firstBlockIndexesByAddress = Dictionary<ContentBlockAddress, int>()
         let uploadPlans = ResizeArray<ContentBlockUploadPlan>()

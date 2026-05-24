@@ -55,6 +55,23 @@ type LocalPlannerSdkTests() =
         Assert.That(plan.ContentBlockUploads, Is.Empty)
 
     [<Test>]
+    member _.ManifestPlanningRejectsUnsupportedChunkingSuite() =
+        let payload = LocalPlannerSdkTests.PseudoRandomBytes 160000
+        payload[0] <- 0uy
+
+        let options =
+            { LocalPlanner.Options.Default with EligibilityPolicy = LocalPlannerSdkTests.BinaryPolicy 1024L; ChunkingSuiteId = ChunkingSuiteId "other-suite" }
+
+        let ex =
+            Assert.Throws<ArgumentException>(
+                Action (fun () ->
+                    LocalPlanner.analyzeBytes options payload
+                    |> ignore)
+            )
+
+        Assert.That(ex.ParamName, Is.EqualTo("ChunkingSuiteId"))
+
+    [<Test>]
     member _.EligibleBinaryPayloadPlansDeterministicChunksBlocksAndManifest() =
         let payload = LocalPlannerSdkTests.PseudoRandomBytes 220000
         payload[0] <- 0uy
