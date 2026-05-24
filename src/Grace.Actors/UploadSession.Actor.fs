@@ -417,6 +417,7 @@ module UploadSession =
                         [
                             { Event = UploadSessionEventType.Finalized(finalize.OperationId, finalize.Manifest.ManifestAddress); Metadata = metadata }
                         ]
+                        @ cleanupEvents session finalize.OperationId metadata
 
                     okDecision session finalize.OperationId events false "Upload session manifest finalized."
                 | Error error -> Error(graceError metadata.CorrelationId (manifestValidationErrorMessage error)))
@@ -731,6 +732,21 @@ module UploadSession =
                         | UploadSessionCommand.Expire operationId when not decision.WasIdempotentReplay ->
                             let reminderState =
                                 createCleanupReminderState decision.Session.UploadSessionId decision.Session.RepositoryId operationId metadata.CorrelationId
+
+                            do!
+                                (this :> IGraceReminderWithGuidKey)
+                                    .ScheduleReminderAsync
+                                    ReminderTypes.PhysicalDeletion
+                                    DefaultPhysicalDeletionReminderDuration
+                                    (ReminderState.UploadSessionPhysicalDeletion reminderState)
+                                    metadata.CorrelationId
+                        | UploadSessionCommand.FinalizeManifest finalize when not decision.WasIdempotentReplay ->
+                            let reminderState =
+                                createCleanupReminderState
+                                    decision.Session.UploadSessionId
+                                    decision.Session.RepositoryId
+                                    finalize.OperationId
+                                    metadata.CorrelationId
 
                             do!
                                 (this :> IGraceReminderWithGuidKey)

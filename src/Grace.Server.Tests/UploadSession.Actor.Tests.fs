@@ -643,9 +643,10 @@ type UploadSessionActorTests() =
         match result with
         | Ok decision ->
             Assert.That(decision.WasIdempotentReplay, Is.False)
-            Assert.That(decision.Events.Length, Is.EqualTo(1))
-            Assert.That(decision.Session.LifecycleState, Is.EqualTo(UploadSessionLifecycleState.Finalized))
+            Assert.That(decision.Events.Length, Is.EqualTo(2))
+            Assert.That(decision.Session.LifecycleState, Is.EqualTo(UploadSessionLifecycleState.RetentionPending))
             Assert.That(decision.Session.FinalizedManifestAddress, Is.EqualTo(Some manifest.ManifestAddress))
+            Assert.That(decision.Session.CleanupReminderOperationId, Is.EqualTo(Some "op-finalize:cleanup"))
         | Error error -> Assert.Fail($"Expected finalize to succeed, got {error.Error}.")
 
     [<Test>]
@@ -697,8 +698,9 @@ type UploadSessionActorTests() =
 
         match result with
         | Ok decision ->
-            Assert.That(decision.Session.LifecycleState, Is.EqualTo(UploadSessionLifecycleState.Finalized))
+            Assert.That(decision.Session.LifecycleState, Is.EqualTo(UploadSessionLifecycleState.RetentionPending))
             Assert.That(decision.Session.FinalizedManifestAddress, Is.EqualTo(Some manifest.ManifestAddress))
+            Assert.That(decision.Session.CleanupReminderOperationId, Is.EqualTo(Some "op-finalize:cleanup"))
         | Error error -> Assert.Fail($"Expected finalize from claimed range to succeed, got {error.Error}.")
 
     [<Test>]
@@ -764,7 +766,7 @@ type UploadSessionActorTests() =
                 (metadata "corr-finalize-retry")
 
         match retry with
-        | Ok decision -> Assert.That(decision.Session.LifecycleState, Is.EqualTo(UploadSessionLifecycleState.Finalized))
+        | Ok decision -> Assert.That(decision.Session.LifecycleState, Is.EqualTo(UploadSessionLifecycleState.RetentionPending))
         | Error error -> Assert.Fail($"Expected retry after failed finalize to succeed, got {error.Error}.")
 
     [<Test>]
@@ -833,7 +835,7 @@ type UploadSessionActorTests() =
                 (metadata "corr-finalize-retry")
 
         match retry with
-        | Ok decision -> Assert.That(decision.Session.LifecycleState, Is.EqualTo(UploadSessionLifecycleState.Finalized))
+        | Ok decision -> Assert.That(decision.Session.LifecycleState, Is.EqualTo(UploadSessionLifecycleState.RetentionPending))
         | Error error -> Assert.Fail($"Expected retry after failed hash validation to succeed, got {error.Error}.")
 
     [<Test>]
@@ -912,6 +914,7 @@ type UploadSessionActorTests() =
                 Assert.That(replayDecision.WasIdempotentReplay, Is.True)
                 Assert.That(replayDecision.Events, Is.Empty)
                 Assert.That(replayDecision.Session.FinalizedManifestAddress, Is.EqualTo(Some manifest.ManifestAddress))
+                Assert.That(replayDecision.Session.CleanupReminderOperationId, Is.EqualTo(Some "op-finalize:cleanup"))
             | Error error -> Assert.Fail($"Expected idempotent finalize replay, got {error.Error}.")
         | Error error -> Assert.Fail($"Expected first finalize to succeed, got {error.Error}.")
 
