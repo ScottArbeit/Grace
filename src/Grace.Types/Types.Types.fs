@@ -140,6 +140,12 @@ module Types =
     /// Caller-supplied retry identity for upload-session commands.
     type UploadSessionOperationId = string
 
+    /// Caller-supplied retry identity for repository-content-counter commands.
+    type RepositoryContentCounterOperationId = string
+
+    /// Repository-local count of live references to a manifest-backed file.
+    type ReferenceCount = int64
+
     /// The content-derived hash for a complete manifest-backed file.
     type FileContentHash = string
 

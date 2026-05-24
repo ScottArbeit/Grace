@@ -52,6 +52,7 @@
         <Compile Include="Artifact.Actor.fs" />
         <Compile Include="ContentBlockMetadata.Actor.fs" />
         <Compile Include="UploadSession.Actor.fs" />
+        <Compile Include="RepositoryContentCounter.Actor.fs" />
         <Compile Include="PromotionQueue.Actor.fs" />
         <Compile Include="Repository.Actor.fs" />
         <Compile Include="RepositoryName.Actor.fs" />

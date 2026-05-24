@@ -107,6 +107,9 @@ module Constants =
         let RepositoryPermission = "RepositoryPermissionActor"
 
         [<Literal>]
+        let RepositoryContentCounter = "RepositoryContentCounterActor"
+
+        [<Literal>]
         let User = "UserActor"
 
         [<Literal>]
@@ -187,6 +190,9 @@ module Constants =
 
         [<Literal>]
         let RepositoryPermission = "RepoPermission"
+
+        [<Literal>]
+        let RepositoryContentCounter = "RepoContentCounter"
 
         [<Literal>]
         let User = "User"
