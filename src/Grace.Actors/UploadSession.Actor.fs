@@ -158,6 +158,9 @@ module UploadSession =
         && left.OrdinalCount = right.OrdinalCount
         && left.MetadataVersion = right.MetadataVersion
 
+    let private claimedRangeKey (range: ClaimedReuseRange) =
+        $"{range.StoragePoolId}|{range.ContentBlockAddress}|{range.OrdinalStart}|{range.OrdinalCount}|{range.MetadataVersion}"
+
     let private issueDedupeDiscovery (session: UploadSessionDto) (discovery: IssueDedupeDiscovery) (metadata: EventMetadata) =
         if discovery.MinimumReuseRunLength <= 0 then
             Error(graceError metadata.CorrelationId "MinimumReuseRunLength must be greater than zero.")
@@ -252,14 +255,21 @@ module UploadSession =
                 Error(graceError metadata.CorrelationId "At least one reuse range claim is required.")
             else
                 let claimedRanges = ResizeArray<ClaimedReuseRange>()
+
+                let claimedRangeKeys =
+                    session.ClaimedReuseRanges
+                    |> Array.map claimedRangeKey
+                    |> HashSet<string>
+
                 let mutable error = None
                 let mutable index = 0
 
                 while error.IsNone && index < claim.Ranges.Length do
                     match claimReuseRange metadata.CorrelationId metadata.Timestamp discovery claim.Ranges[index] with
-                    | Ok claimedRange ->
+                    | Ok claimedRange when claimedRangeKeys.Add(claimedRangeKey claimedRange) ->
                         claimedRanges.Add(claimedRange)
                         index <- index + 1
+                    | Ok _ -> error <- Some(graceError metadata.CorrelationId "Reuse range hint has already been claimed.")
                     | Error claimError -> error <- Some claimError
 
                 match error with

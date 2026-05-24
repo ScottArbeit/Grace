@@ -722,3 +722,70 @@ type UploadSessionActorTests() =
                 Assert.That(replayDecision.Session.ClaimedReuseRanges[0], Is.EqualTo(decision.Session.ClaimedReuseRanges[0]))
             | Error error -> Assert.Fail($"Expected idempotent claim replay, got {error.Error}.")
         | Error error -> Assert.Fail($"Expected claim to succeed, got {error.Error}.")
+
+    [<Test>]
+    member _.ClaimReuseRangesRejectsDuplicateHintsInSameCommand() =
+        let startedDto, startEvents = startedSession ()
+
+        let issued = UploadSessionActor.decideCommand startEvents startedDto (discovery "op-discovery" [| reuseHint |]) (metadata "corr-discovery")
+
+        let discoveredDto, discoveryEvents =
+            match issued with
+            | Ok decision -> decision.Session, startEvents @ decision.Events
+            | Error error ->
+                Assert.Fail($"Expected discovery to succeed, got {error.Error}.")
+                UploadSessionDto.Default, []
+
+        let authoritativeMetadata = reuseMetadata 7L [| reusableMetadataRange |]
+
+        let duplicateClaim =
+            UploadSessionCommand.ClaimReuseRanges
+                {
+                    OperationId = "op-claim"
+                    DiscoveryOperationId = "op-discovery"
+                    Ranges =
+                        [|
+                            { Hint = reuseHint; Metadata = authoritativeMetadata }
+                            { Hint = reuseHint; Metadata = authoritativeMetadata }
+                        |]
+                }
+
+        let result = UploadSessionActor.decideCommand discoveryEvents discoveredDto duplicateClaim (metadata "corr-claim")
+
+        match result with
+        | Ok _ -> Assert.Fail("Expected duplicate reuse hint claims to be rejected.")
+        | Error error -> Assert.That(error.Error, Does.Contain("already been claimed"))
+
+    [<Test>]
+    member _.ClaimReuseRangesRejectsAlreadyClaimedHintWithNewOperationId() =
+        let startedDto, startEvents = startedSession ()
+
+        let issued = UploadSessionActor.decideCommand startEvents startedDto (discovery "op-discovery" [| reuseHint |]) (metadata "corr-discovery")
+
+        let discoveredDto, discoveryEvents =
+            match issued with
+            | Ok decision -> decision.Session, startEvents @ decision.Events
+            | Error error ->
+                Assert.Fail($"Expected discovery to succeed, got {error.Error}.")
+                UploadSessionDto.Default, []
+
+        let command = claim "op-claim" reuseHint (reuseMetadata 7L [| reusableMetadataRange |])
+        let first = UploadSessionActor.decideCommand discoveryEvents discoveredDto command (metadata "corr-claim")
+
+        let claimedDto, claimedEvents =
+            match first with
+            | Ok decision -> decision.Session, discoveryEvents @ decision.Events
+            | Error error ->
+                Assert.Fail($"Expected first claim to succeed, got {error.Error}.")
+                UploadSessionDto.Default, []
+
+        let second =
+            UploadSessionActor.decideCommand
+                claimedEvents
+                claimedDto
+                (claim "op-claim-again" reuseHint (reuseMetadata 7L [| reusableMetadataRange |]))
+                (metadata "corr-claim-again")
+
+        match second with
+        | Ok _ -> Assert.Fail("Expected already claimed reuse hint to be rejected.")
+        | Error error -> Assert.That(error.Error, Does.Contain("already been claimed"))

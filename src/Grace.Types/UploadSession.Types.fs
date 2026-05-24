@@ -281,7 +281,7 @@ module UploadSession =
             | UploadSessionEventType.ReuseRangesClaimed (operationId, claimedRanges) ->
                 { current with
                     LifecycleState = UploadSessionLifecycleState.ClaimingRanges
-                    ClaimedReuseRanges = claimedRanges
+                    ClaimedReuseRanges = Array.append current.ClaimedReuseRanges claimedRanges
                     LastOperationId = Some operationId
                 }
 
