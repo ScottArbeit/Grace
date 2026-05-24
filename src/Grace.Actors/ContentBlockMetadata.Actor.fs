@@ -57,6 +57,8 @@ module ContentBlockMetadata =
             Some(graceError correlationId "ContentBlockMetadataRange.PhysicalOffset must be zero or greater.")
         elif range.PhysicalLength <= 0L then
             Some(graceError correlationId "ContentBlockMetadataRange.PhysicalLength must be greater than zero.")
+        elif range.PhysicalOffset > Int64.MaxValue - range.PhysicalLength then
+            Some(graceError correlationId "ContentBlockMetadataRange.PhysicalOffset plus PhysicalLength must not exceed Int64.MaxValue.")
         else
             None
 
@@ -82,6 +84,14 @@ module ContentBlockMetadata =
             Some(graceError correlationId "StoragePlacement is required.")
         elif String.IsNullOrWhiteSpace placement.ObjectKey then
             Some(graceError correlationId "StoragePlacement.ObjectKey is required.")
+        else
+            None
+
+    let private validateExistingStoragePlacement correlationId (placement: ContentBlockStoragePlacement) =
+        if isNull (box placement) then
+            Some(graceError correlationId "Existing StoragePlacement is required.")
+        elif String.IsNullOrWhiteSpace placement.ObjectKey then
+            Some(graceError correlationId "Existing StoragePlacement.ObjectKey is required.")
         else
             None
 
@@ -176,6 +186,14 @@ module ContentBlockMetadata =
                     graceError
                         correlationId
                         $"ContentBlockMetadata BlockFormatVersion mismatch. Existing {existing.BlockFormatVersion}, requested {merge.BlockFormatVersion}."
+                )
+            | Some existing when
+                validateExistingStoragePlacement correlationId existing.StoragePlacement
+                |> Option.isSome
+                ->
+                Error(
+                    validateExistingStoragePlacement correlationId existing.StoragePlacement
+                    |> Option.get
                 )
             | Some existing when
                 existing.StoragePlacement.ObjectKey

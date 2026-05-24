@@ -168,6 +168,34 @@ type ContentBlockMetadataActorTests() =
         | Error error -> Assert.That(error.Error, Is.EqualTo("StoragePlacement is required."))
 
     [<Test>]
+    member _.MergePhysicalRangesRejectsExistingNullStoragePlacementAsGraceError() =
+        let existing =
+            { ContentBlockMetadataDto.Empty with
+                Metadata = Some { record [| activeRange |] with StoragePlacement = Unchecked.defaultof<ContentBlockStoragePlacement> }
+            }
+
+        let result = ContentBlockMetadataActor.decideCommand [] existing (merge "op-merge" [| reclaimableRange |]) (metadata "corr-merge")
+
+        match result with
+        | Ok _ -> Assert.Fail("Expected null existing storage placement to be rejected.")
+        | Error error -> Assert.That(error.Error, Is.EqualTo("Existing StoragePlacement is required."))
+
+    [<Test>]
+    member _.MergePhysicalRangesRejectsPhysicalEndOverflow() =
+        let overflowingRange = { reclaimableRange with PhysicalOffset = Int64.MaxValue - 5L; PhysicalLength = 10L }
+
+        let result =
+            ContentBlockMetadataActor.decideCommand
+                []
+                ContentBlockMetadataDto.Empty
+                (merge "op-merge-overflow" [| overflowingRange |])
+                (metadata "corr-merge-overflow")
+
+        match result with
+        | Ok _ -> Assert.Fail("Expected physical range overflow to be rejected.")
+        | Error error -> Assert.That(error.Error, Is.EqualTo("ContentBlockMetadataRange.PhysicalOffset plus PhysicalLength must not exceed Int64.MaxValue."))
+
+    [<Test>]
     member _.MergePhysicalRangesAddsMissingRangesWithoutDuplicatingExistingOnReplay() =
         let created =
             match ContentBlockMetadataActor.decideCommand [] ContentBlockMetadataDto.Empty (merge "op-create" [| activeRange |]) (metadata "corr-create") with
