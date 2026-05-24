@@ -26,6 +26,7 @@
         <Compile Include="Utilities.Shared.fs" />
         <Compile Include="StorageKeys.Shared.fs" />
         <Compile Include="ContentAddress.Shared.fs" />
+        <Compile Include="ContentBlockFormat.Shared.fs" />
         <Compile Include="RabinChunking.Shared.fs" />
         <Compile Include="BuildInfo.Shared.fs" />
         <Compile Include="Authorization.Shared.fs" />
