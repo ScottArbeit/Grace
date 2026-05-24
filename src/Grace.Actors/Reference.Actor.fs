@@ -13,8 +13,10 @@ open Grace.Shared.Constants
 open Grace.Shared.Utilities
 open Grace.Shared.Validation.Errors
 open Grace.Types.Events
+open Grace.Types.ManifestContributionWorkflow
 open Grace.Types.Reference
 open Grace.Types.Reminder
+open Grace.Types.RepositoryContentCounter
 open Grace.Types.Types
 open Microsoft.Extensions.Logging
 open NodaTime
@@ -26,6 +28,102 @@ open System.Globalization
 open System.Threading.Tasks
 
 module Reference =
+
+    [<Literal>]
+    let private DefaultStoragePoolId = "default"
+
+    type ManifestSaveContributionPlan =
+        {
+            RepositoryId: RepositoryId
+            ReferenceId: ReferenceId
+            Manifest: FileManifest
+            CounterCommand: RepositoryContentCounterCommand
+            WorkflowRanges: ManifestContributionWorkflowRange array
+        }
+
+    let private manifestContributionOperationId (referenceId: ReferenceId) (manifestAddress: ManifestAddress) =
+        RepositoryContentCounterOperationId $"save:{referenceId:N}:{manifestAddress}"
+
+    let private workflowOperationId (referenceId: ReferenceId) (manifestAddress: ManifestAddress) =
+        ManifestContributionWorkflowOperationId $"save:{referenceId:N}:{manifestAddress}:fanout"
+
+    let private repositoryContentCounterPrimaryKey (repositoryId: RepositoryId) (manifestAddress: ManifestAddress) = $"{repositoryId:N}|{manifestAddress}"
+
+    let private manifestContributionWorkflowPrimaryKey (repositoryId: RepositoryId) (manifestAddress: ManifestAddress) = $"{repositoryId:N}|{manifestAddress}"
+
+    let private workflowRangesForManifest (manifest: FileManifest) =
+        let ranges = ResizeArray<ManifestContributionWorkflowRange>()
+        let mutable index = 0
+
+        while index < manifest.Blocks.Count do
+            let block = manifest.Blocks[index]
+
+            ranges.Add({ StoragePoolId = StoragePoolId DefaultStoragePoolId; ContentBlockAddress = block.Address; OrdinalStart = 0; OrdinalCount = 1 })
+
+            index <- index + 1
+
+        ranges.ToArray()
+
+    let planManifestSaveBoundary repositoryId referenceId (directoryVersion: DirectoryVersion) correlationId =
+        match DirectoryVersion.getManifestReferencesForSaveBoundary directoryVersion correlationId with
+        | Error graceError -> Error graceError
+        | Ok manifests ->
+            manifests
+            |> List.map (fun manifest ->
+                let operationId = manifestContributionOperationId referenceId manifest.ManifestAddress
+
+                {
+                    RepositoryId = repositoryId
+                    ReferenceId = referenceId
+                    Manifest = manifest
+                    CounterCommand = RepositoryContentCounterCommand.AddReference(operationId, repositoryId, manifest.ManifestAddress)
+                    WorkflowRanges = workflowRangesForManifest manifest
+                })
+            |> Ok
+
+    let tryCreateManifestContributionStart plan intent =
+        match intent with
+        | RepositoryContentCounterIntent.IncrementManifestReferenceCount (repositoryId, manifestAddress) when
+            repositoryId = plan.RepositoryId
+            && manifestAddress = plan.Manifest.ManifestAddress
+            ->
+            Some(
+                ManifestContributionWorkflowCommand.Start
+                    {
+                        OperationId = workflowOperationId plan.ReferenceId plan.Manifest.ManifestAddress
+                        RepositoryId = plan.RepositoryId
+                        ManifestAddress = plan.Manifest.ManifestAddress
+                        Direction = ManifestContributionDirection.Increment
+                        Ranges = plan.WorkflowRanges
+                    }
+            )
+        | _ -> None
+
+    let private createRepositoryContentCounterActor repositoryId manifestAddress correlationId =
+        let grain =
+            orleansClient.CreateActorProxyWithCorrelationId<IRepositoryContentCounterActor>(
+                repositoryContentCounterPrimaryKey repositoryId manifestAddress,
+                correlationId
+            )
+
+        let orleansContext = Dictionary<string, obj>()
+        orleansContext.Add(nameof RepositoryId, repositoryId)
+        orleansContext.Add(Constants.ActorNameProperty, ActorName.RepositoryContentCounter)
+        memoryCache.CreateOrleansContextEntry(grain.GetGrainId(), orleansContext)
+        grain
+
+    let private createManifestContributionWorkflowActor repositoryId manifestAddress correlationId =
+        let grain =
+            orleansClient.CreateActorProxyWithCorrelationId<IManifestContributionWorkflowActor>(
+                manifestContributionWorkflowPrimaryKey repositoryId manifestAddress,
+                correlationId
+            )
+
+        let orleansContext = Dictionary<string, obj>()
+        orleansContext.Add(nameof RepositoryId, repositoryId)
+        orleansContext.Add(Constants.ActorNameProperty, ActorName.ManifestContributionWorkflow)
+        memoryCache.CreateOrleansContextEntry(grain.GetGrainId(), orleansContext)
+        grain
 
     type ReferenceActor([<PersistentState(StateName.Reference, Constants.GraceActorStorage)>] state: IPersistentState<List<ReferenceEvent>>) =
         inherit Grain()
@@ -265,8 +363,61 @@ module Reference =
                     }
 
                 let processCommand (command: ReferenceCommand) (metadata: EventMetadata) =
+                    let applySaveManifestBoundary referenceId repositoryId directoryId referenceType =
+                        task {
+                            if referenceType <> ReferenceType.Save then
+                                return Ok()
+                            else
+                                let directoryVersionActorProxy = DirectoryVersion.CreateActorProxy directoryId repositoryId metadata.CorrelationId
+                                let! directoryVersionDto = directoryVersionActorProxy.Get metadata.CorrelationId
+
+                                match planManifestSaveBoundary repositoryId referenceId directoryVersionDto.DirectoryVersion metadata.CorrelationId with
+                                | Error graceError -> return Error graceError
+                                | Ok plans ->
+                                    let planArray = plans |> List.toArray
+                                    let mutable planIndex = 0
+                                    let mutable error: GraceError option = None
+
+                                    while planIndex < planArray.Length && error.IsNone do
+                                        let plan = planArray[planIndex]
+
+                                        let counterActor =
+                                            createRepositoryContentCounterActor plan.RepositoryId plan.Manifest.ManifestAddress metadata.CorrelationId
+
+                                        match! counterActor.Handle plan.CounterCommand metadata with
+                                        | Error graceError -> error <- Some graceError
+                                        | Ok counterReturnValue ->
+                                            let intents =
+                                                counterReturnValue.ReturnValue.Intents
+                                                |> List.toArray
+
+                                            let mutable intentIndex = 0
+
+                                            while intentIndex < intents.Length && error.IsNone do
+                                                match tryCreateManifestContributionStart plan intents[intentIndex] with
+                                                | None -> ()
+                                                | Some startCommand ->
+                                                    let workflowActor =
+                                                        createManifestContributionWorkflowActor
+                                                            plan.RepositoryId
+                                                            plan.Manifest.ManifestAddress
+                                                            metadata.CorrelationId
+
+                                                    match! workflowActor.Handle startCommand metadata with
+                                                    | Ok _ -> ()
+                                                    | Error graceError -> error <- Some graceError
+
+                                                intentIndex <- intentIndex + 1
+
+                                        planIndex <- planIndex + 1
+
+                                    match error with
+                                    | Some graceError -> return Error graceError
+                                    | None -> return Ok()
+                        }
+
                     task {
-                        let! referenceEventType =
+                        let! (referenceEventTypeResult: Result<ReferenceEventType, GraceError>) =
                             task {
                                 match command with
                                 | Create (referenceId,
@@ -279,21 +430,26 @@ module Reference =
                                           referenceType,
                                           referenceText,
                                           links) ->
-                                    return
-                                        Created(
-                                            referenceId,
-                                            ownerId,
-                                            organizationId,
-                                            repositoryId,
-                                            branchId,
-                                            directoryId,
-                                            sha256Hash,
-                                            referenceType,
-                                            referenceText,
-                                            links
-                                        )
-                                | AddLink link -> return LinkAdded link
-                                | RemoveLink link -> return LinkRemoved link
+                                    match! applySaveManifestBoundary referenceId repositoryId directoryId referenceType with
+                                    | Ok () ->
+                                        return
+                                            Ok(
+                                                Created(
+                                                    referenceId,
+                                                    ownerId,
+                                                    organizationId,
+                                                    repositoryId,
+                                                    branchId,
+                                                    directoryId,
+                                                    sha256Hash,
+                                                    referenceType,
+                                                    referenceText,
+                                                    links
+                                                )
+                                            )
+                                    | Error graceError -> return Error graceError
+                                | AddLink link -> return Ok(LinkAdded link)
+                                | RemoveLink link -> return Ok(LinkRemoved link)
                                 | DeleteLogical (force, deleteReason) ->
                                     let tryGetLogicalDeleteDaysFromMetadata () =
                                         match metadata.Properties.TryGetValue("RepositoryLogicalDeleteDays") with
@@ -336,19 +492,21 @@ module Reference =
                                             (ReminderState.ReferencePhysicalDeletion reminderState)
                                             metadata.CorrelationId
 
-                                    return LogicalDeleted(force, deleteReason)
+                                    return Ok(LogicalDeleted(force, deleteReason))
                                 | DeletePhysical ->
                                     // Delete the actor state and mark the actor as deactivated.
                                     do! state.ClearStateAsync()
                                     this.DeactivateOnIdle()
-                                    return PhysicalDeleted
-                                | Undelete -> return Undeleted
+                                    return Ok PhysicalDeleted
+                                | Undelete -> return Ok Undeleted
                             }
 
-                        let referenceEvent = { Event = referenceEventType; Metadata = metadata }
-                        let! returnValue = this.ApplyEvent referenceEvent
-
-                        return returnValue
+                        match referenceEventTypeResult with
+                        | Ok referenceEventType ->
+                            let referenceEvent: ReferenceEvent = { Event = referenceEventType; Metadata = metadata }
+                            let! returnValue = this.ApplyEvent referenceEvent
+                            return returnValue
+                        | Error graceError -> return Error graceError
                     }
 
                 task {
