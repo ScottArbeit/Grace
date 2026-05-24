@@ -67,7 +67,7 @@ module UploadSession =
         | UploadSessionEventType.Abandoned operationId -> operationId
         | UploadSessionEventType.Expired operationId -> operationId
         | UploadSessionEventType.Finalized (operationId, _) -> operationId
-        | UploadSessionEventType.CleanupReminderScheduled (operationId, _) -> operationId
+        | UploadSessionEventType.CleanupReminderScheduled _ -> String.Empty
         | UploadSessionEventType.PhysicalStateDeleted operationId -> operationId
         | UploadSessionEventType.BlockUploadIntentRegistered (operationId, _) -> operationId
         | UploadSessionEventType.BlockUploadConfirmed (operationId, _) -> operationId
@@ -81,6 +81,22 @@ module UploadSession =
     let private applyEvents (events: UploadSessionEvent list) (session: UploadSessionDto) =
         events
         |> List.fold (fun current event -> UploadSessionDto.UpdateDto event current) session
+
+    let compactEventsForPhysicalStateCleanup (events: seq<UploadSessionEvent>) =
+        events
+        |> Seq.filter (fun uploadSessionEvent ->
+            match uploadSessionEvent.Event with
+            | UploadSessionEventType.Started _
+            | UploadSessionEventType.Abandoned _
+            | UploadSessionEventType.Expired _
+            | UploadSessionEventType.Finalized _
+            | UploadSessionEventType.CleanupReminderScheduled _
+            | UploadSessionEventType.PhysicalStateDeleted _ -> true
+            | UploadSessionEventType.BlockUploadIntentRegistered _
+            | UploadSessionEventType.BlockUploadConfirmed _
+            | UploadSessionEventType.DedupeDiscoveryIssued _
+            | UploadSessionEventType.ReuseRangesClaimed _ -> false)
+        |> Seq.toList
 
     let private okDecision (session: UploadSessionDto) operationId (events: UploadSessionEvent list) wasReplay message =
         Ok { Session = applyEvents events session; OperationId = operationId; Events = events; WasIdempotentReplay = wasReplay; Message = message }
@@ -643,6 +659,28 @@ module UploadSession =
                 uploadSessionDto <- applyEvents events uploadSessionDto
             }
 
+        member private this.CompactPhysicalStateEvents() =
+            task {
+                let retainedEvents =
+                    state.State
+                    |> compactEventsForPhysicalStateCleanup
+                    |> List.toArray
+
+                state.State.Clear()
+
+                let mutable index = 0
+
+                while index < retainedEvents.Length do
+                    state.State.Add(retainedEvents[index])
+                    index <- index + 1
+
+                do! state.WriteStateAsync()
+
+                uploadSessionDto <-
+                    state.State
+                    |> Seq.fold (fun dto event -> UploadSessionDto.UpdateDto event dto) UploadSessionDto.Default
+            }
+
         interface IGraceReminderWithGuidKey with
             member this.ScheduleReminderAsync reminderType delay reminderState correlationId =
                 task {
@@ -677,7 +715,7 @@ module UploadSession =
                         | Ok decision ->
                             if not decision.Events.IsEmpty then do! this.ApplyEvents decision.Events
 
-                            do! state.ClearStateAsync()
+                            do! this.CompactPhysicalStateEvents()
                             this.DeactivateOnIdle()
                             return Ok()
                         | Error error -> return Error error
@@ -755,8 +793,8 @@ module UploadSession =
                                     DefaultPhysicalDeletionReminderDuration
                                     (ReminderState.UploadSessionPhysicalDeletion reminderState)
                                     metadata.CorrelationId
-                        | UploadSessionCommand.DeletePhysicalState _ when not decision.WasIdempotentReplay ->
-                            do! state.ClearStateAsync()
+                        | UploadSessionCommand.DeletePhysicalState _ ->
+                            do! this.CompactPhysicalStateEvents()
                             this.DeactivateOnIdle()
                         | _ -> ()
 
