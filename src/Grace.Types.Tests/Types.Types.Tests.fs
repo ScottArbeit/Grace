@@ -3,8 +3,11 @@ namespace Grace.Types.Tests
 open Grace.Shared
 open Grace.Shared.Utilities
 open Grace.Types.Types
+open Grace.Types.Repository
 open MessagePack
 open NUnit.Framework
+open System.IO
+open System.IO.Compression
 
 [<MessagePackObject>]
 type LegacyFileVersion =
@@ -25,8 +28,96 @@ type LegacyFileVersion =
         BlobUri: string
     }
 
+module ManifestEligibilityTestData =
+    let thresholdBytes = 1024 * 1024
+
+    let private gzipSize (content: byte array) =
+        use compressed = new MemoryStream()
+
+        use gzipStream = new GZipStream(compressed, CompressionLevel.SmallestSize, leaveOpen = true)
+
+        gzipStream.Write(content, 0, content.Length)
+        gzipStream.Dispose()
+        compressed.Length
+
+    let private pseudoRandomTextBytes length =
+        let mutable state = 0x6C8E9CF5u
+
+        Array.init length (fun _ ->
+            state <- (state * 1664525u) + 1013904223u
+            byte ((state >>> 16) % 255u + 1u))
+
+    let binaryBelowThreshold =
+        let bytes = Array.create (thresholdBytes - 1) 0xFFuy
+        bytes[0] <- 0uy
+        bytes
+
+    let binaryAtThreshold =
+        let bytes = Array.create thresholdBytes 0xFFuy
+        bytes[0] <- 0uy
+        bytes
+
+    let textCompressesBelowThreshold = Array.create thresholdBytes (byte 'a')
+
+    let textCompressesAtOrAboveThreshold =
+        let bytes = pseudoRandomTextBytes thresholdBytes
+        Assert.That(gzipSize bytes, Is.GreaterThanOrEqualTo(int64 thresholdBytes))
+        bytes
+
+    let nulAtLastScannedByte =
+        let bytes = Array.create (thresholdBytes - 1) 0xFFuy
+        bytes[8191] <- 0uy
+        bytes
+
+    let nulAfterScanWindow =
+        let bytes = Array.create thresholdBytes (byte 'a')
+        bytes[8192] <- 0uy
+        bytes
+
+    let eligibilityCases =
+        [|
+            "binary below threshold stays whole-file", binaryBelowThreshold, FileContentReferenceType.WholeFileContent
+            "binary at threshold becomes manifest-backed", binaryAtThreshold, FileContentReferenceType.FileManifest
+            "text at uncompressed threshold stays whole-file when Grace gzip size is below threshold",
+            textCompressesBelowThreshold,
+            FileContentReferenceType.WholeFileContent
+            "text becomes manifest-backed when Grace gzip size reaches threshold", textCompressesAtOrAboveThreshold, FileContentReferenceType.FileManifest
+        |]
+
+    let binaryDetectionCases =
+        [|
+            "NUL at byte 8191 is binary", nulAtLastScannedByte, true
+            "NUL at byte 8192 is outside the scan window", nulAfterScanWindow, false
+        |]
+
 [<Parallelizable(ParallelScope.All)>]
 type TypesTypesTests() =
+    [<Test>]
+    member _.ManifestEligibilityPolicyDefaultUsesOneMiBThresholdAndEightKiBScanWindow() =
+        let policy = ManifestEligibilityPolicy.Default
+
+        Assert.That(policy.ThresholdBytes, Is.EqualTo(int64 ManifestEligibilityTestData.thresholdBytes))
+        Assert.That(policy.BinaryScanBytes, Is.EqualTo(8 * 1024))
+        Assert.That(RepositoryDto.Default.ManifestEligibilityPolicy, Is.EqualTo(policy))
+
+    [<Test>]
+    member _.ManifestEligibilityEvaluatorUsesThresholdAndCompressionPolicyTable() =
+        let policy = ManifestEligibilityPolicy.Default
+
+        for caseName, content, expectedReferenceType in ManifestEligibilityTestData.eligibilityCases do
+            let actualReferenceType = ManifestEligibility.evaluateContentReferenceType policy content
+
+            Assert.That(actualReferenceType, Is.EqualTo(expectedReferenceType), caseName)
+
+    [<Test>]
+    member _.ManifestEligibilityBinaryDetectorScansOnlyTheFirstEightKiBForNul() =
+        let policy = ManifestEligibilityPolicy.Default
+
+        for caseName, content, expectedIsBinary in ManifestEligibilityTestData.binaryDetectionCases do
+            let actualIsBinary = ManifestEligibility.detectBinaryContent policy content
+
+            Assert.That(actualIsBinary, Is.EqualTo(expectedIsBinary), caseName)
+
     [<Test>]
     member _.FileVersionCreateDefaultsContentReferenceToWholeFileContent() =
         let fileVersion = FileVersion.Create "src/app.fs" "abc123" "https://example.test/blob" false 123L

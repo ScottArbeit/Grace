@@ -226,6 +226,23 @@ module Types =
         static member New correlationId principal =
             { Timestamp = getCurrentInstant (); CorrelationId = correlationId; Principal = principal; Properties = Dictionary<string, string>() }
 
+    /// Repository-level creation policy for choosing whole-file content or manifest-backed content.
+    ///
+    /// The policy is a creation-time gate. Grace stores the resulting content reference shape rather than a separate
+    /// mutable eligibility decision.
+    [<CLIMutable; MessagePackObject; GenerateSerializer>]
+    type ManifestEligibilityPolicy =
+        {
+            [<Key(0)>]
+            Class: string
+            [<Key(1)>]
+            ThresholdBytes: int64
+            [<Key(2)>]
+            BinaryScanBytes: int
+        }
+
+        static member Default = { Class = nameof ManifestEligibilityPolicy; ThresholdBytes = 1024L * 1024L; BinaryScanBytes = 8 * 1024 }
+
     /// A content block is an inert CAS contract shell for a contiguous byte range inside manifest-backed file content.
     [<CLIMutable; MessagePackObject; GenerateSerializer>]
     type ContentBlock =

@@ -115,6 +115,7 @@ module Repository =
             Description: string
             RecordSaves: bool
             ConflictResolutionPolicy: ConflictResolutionPolicy
+            ManifestEligibilityPolicy: ManifestEligibilityPolicy
             CreatedAt: Instant
             InitializedAt: Instant option
             UpdatedAt: Instant option
@@ -146,6 +147,7 @@ module Repository =
                 Description = String.Empty
                 RecordSaves = true
                 ConflictResolutionPolicy = ConflictResolutionPolicy.ConflictsAllowed 0.8f
+                ManifestEligibilityPolicy = ManifestEligibilityPolicy.Default
                 CreatedAt = Constants.DefaultTimestamp
                 InitializedAt = None
                 UpdatedAt = None
