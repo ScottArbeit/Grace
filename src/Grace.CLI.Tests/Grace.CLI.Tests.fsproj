@@ -28,6 +28,7 @@
     <Compile Include="Queue.CLI.Tests.fs" />
     <Compile Include="PromotionSet.CLI.Tests.fs" />
     <Compile Include="Watch.Tests.fs" />
+    <Compile Include="LocalPlanner.SDK.Tests.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
 
@@ -51,6 +52,7 @@
 	<ItemGroup>
 		<ProjectReference Include="..\Grace.CLI\Grace.CLI.fsproj" />
 		<ProjectReference Include="..\Grace.CLI.LocalStateDb.Worker\Grace.CLI.LocalStateDb.Worker.fsproj" ReferenceOutputAssembly="false" />
+		<ProjectReference Include="..\Grace.SDK\Grace.SDK.fsproj" />
 		<ProjectReference Include="..\Grace.Shared\Grace.Shared.fsproj" />
 	</ItemGroup>
 

@@ -19,6 +19,7 @@
     <Compile Include="StorageKeys.Shared.Tests.fs" />
     <Compile Include="ContentAddress.Types.Tests.fs" />
     <Compile Include="ContentBlockFormat.Shared.Tests.fs" />
+    <Compile Include="ManifestValidation.Shared.Tests.fs" />
     <Compile Include="RabinChunking.Shared.Tests.fs" />
     <Compile Include="Queue.Types.Tests.fs" />
     <Compile Include="WorkItem.Types.Tests.fs" />

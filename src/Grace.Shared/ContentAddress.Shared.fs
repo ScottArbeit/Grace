@@ -83,14 +83,21 @@ module ContentAddress =
         |> computeBlake3Hex
         |> ContentBlockAddress
 
-    /// Builds the path-independent preimage for a manifest from its ordered logical blocks.
-    let manifestPreimage (size: int64) (blocks: ContentBlock seq) =
+    /// Builds the path-independent preimage for a manifest from its content hash and ordered logical blocks.
+    let manifestPreimage (chunkingSuiteId: ChunkingSuiteId) (fileContentHash: FileContentHash) (size: int64) (blocks: ContentBlock seq) =
+        if String.IsNullOrWhiteSpace(chunkingSuiteId) then
+            invalidArg (nameof chunkingSuiteId) "Chunking suite id is required."
+
+        let fileContentHash = requireValidAddress (nameof fileContentHash) fileContentHash
+
         ensureNonNegative (nameof size) size
 
         let blockArray = requireNonEmptySequence (nameof blocks) blocks
         let builder = StringBuilder()
 
         appendLine builder FileManifestPreimageHeader
+        appendLine builder $"chunking-suite:{chunkingSuiteId}"
+        appendLine builder $"file-content-hash:{fileContentHash}"
         appendLine builder $"size:{size}"
         appendLine builder $"block-count:{blockArray.Length}"
 
@@ -107,8 +114,14 @@ module ContentAddress =
         builder.ToString()
 
     /// Computes the manifest address from its path-independent logical block preimage.
-    let computeManifestAddress size blocks : ManifestAddress =
-        manifestPreimage size blocks
+    let computeManifestAddress chunkingSuiteId fileContentHash size blocks : ManifestAddress =
+        manifestPreimage chunkingSuiteId fileContentHash size blocks
         |> System.Text.Encoding.UTF8.GetBytes
         |> computeBlake3Hex
         |> ManifestAddress
+
+    /// Computes the manifest address from the stable fields carried by a FileManifest.
+    let computeManifestAddressForManifest (manifest: FileManifest) : ManifestAddress =
+        if isNull (box manifest) then nullArg (nameof manifest)
+
+        computeManifestAddress manifest.ChunkingSuiteId manifest.FileContentHash manifest.Size manifest.Blocks

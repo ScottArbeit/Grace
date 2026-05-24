@@ -277,7 +277,11 @@ module Types =
 
         static member Default = ContentBlock.Create(String.Empty, 0L, 0L)
 
-    /// A file manifest is an inert CAS contract shell for content assembled from one or more content blocks.
+    /// A file manifest is a CAS contract shell for content assembled from one or more content blocks.
+    ///
+    /// Validation reconstructs bytes by reading `Blocks` in order. Each block range must be positive, contiguous from
+    /// offset zero, and cover exactly `Size`. `ChunkingSuiteId`, `FileContentHash`, and the ordered block ranges are
+    /// included in the stable manifest address preimage.
     [<CLIMutable; MessagePackObject; GenerateSerializer; CustomEquality; NoComparison>]
     type FileManifest =
         {
@@ -289,10 +293,31 @@ module Types =
             Size: int64
             [<Key(3)>]
             Blocks: List<ContentBlock>
+            [<Key(4)>]
+            ChunkingSuiteId: ChunkingSuiteId
+            [<Key(5)>]
+            FileContentHash: FileContentHash
         }
 
+        static member Create
+            (
+                manifestAddress: ManifestAddress,
+                chunkingSuiteId: ChunkingSuiteId,
+                fileContentHash: FileContentHash,
+                size: int64,
+                blocks: ContentBlock list
+            ) =
+            {
+                Class = "FileManifest"
+                ManifestAddress = manifestAddress
+                Size = size
+                Blocks = List<ContentBlock>(blocks)
+                ChunkingSuiteId = chunkingSuiteId
+                FileContentHash = fileContentHash
+            }
+
         static member Create(manifestAddress: ManifestAddress, size: int64, blocks: ContentBlock list) =
-            { Class = "FileManifest"; ManifestAddress = manifestAddress; Size = size; Blocks = List<ContentBlock>(blocks) }
+            FileManifest.Create(manifestAddress, ChunkingSuiteId String.Empty, FileContentHash String.Empty, size, blocks)
 
         static member Default = FileManifest.Create(String.Empty, 0L, [])
 
@@ -302,6 +327,8 @@ module Types =
                 this.Class = otherManifest.Class
                 && this.ManifestAddress = otherManifest.ManifestAddress
                 && this.Size = otherManifest.Size
+                && this.ChunkingSuiteId = otherManifest.ChunkingSuiteId
+                && this.FileContentHash = otherManifest.FileContentHash
                 && this.Blocks.Count = otherManifest.Blocks.Count
                 && Seq.forall2 (=) this.Blocks otherManifest.Blocks
             | _ -> false
@@ -311,6 +338,8 @@ module Types =
             hashCode.Add(this.Class)
             hashCode.Add(this.ManifestAddress)
             hashCode.Add(this.Size)
+            hashCode.Add(this.ChunkingSuiteId)
+            hashCode.Add(this.FileContentHash)
 
             for block in this.Blocks do
                 hashCode.Add(block)
