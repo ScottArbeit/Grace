@@ -44,7 +44,8 @@ module UploadSession =
         | UploadSessionCommand.ConfirmBlockUploaded confirmation -> confirmation.OperationId
         | UploadSessionCommand.ClaimReuseRanges claim when isNull (box claim) -> String.Empty
         | UploadSessionCommand.ClaimReuseRanges claim -> claim.OperationId
-        | UploadSessionCommand.FinalizeManifest (operationId, _) -> operationId
+        | UploadSessionCommand.FinalizeManifest finalize when isNull (box finalize) -> String.Empty
+        | UploadSessionCommand.FinalizeManifest finalize -> finalize.OperationId
         | UploadSessionCommand.Abandon operationId -> operationId
         | UploadSessionCommand.Expire operationId -> operationId
         | UploadSessionCommand.DeletePhysicalState operationId -> operationId
@@ -299,6 +300,127 @@ module UploadSession =
         decodedBlock.Chunks
         |> Array.sumBy (fun chunk -> int64 chunk.Length)
 
+    let private manifestValidationErrorMessage error =
+        match error with
+        | ManifestValidation.NullManifest -> "FileManifest is required."
+        | ManifestValidation.NullBlockPayloadSequence -> "FinalizeManifest BlockPayloads are required."
+        | ManifestValidation.NullBlockPayload index -> $"FinalizeManifest BlockPayloads[{index}] is required."
+        | ManifestValidation.NullBlockPayloadBytes address -> $"FinalizeManifest BlockPayloads for ContentBlockAddress {address} must include payload bytes."
+        | ManifestValidation.EmptyManifest -> "FileManifest must include at least one ContentBlock."
+        | ManifestValidation.InvalidManifestSize -> "FileManifest Size must be greater than zero."
+        | ManifestValidation.InvalidChunkingSuiteId chunkingSuiteId -> $"FileManifest ChunkingSuiteId is invalid: {chunkingSuiteId}."
+        | ManifestValidation.InvalidFileContentHash fileContentHash -> $"FileManifest FileContentHash is invalid: {fileContentHash}."
+        | ManifestValidation.InvalidManifestAddress manifestAddress -> $"FileManifest ManifestAddress is invalid: {manifestAddress}."
+        | ManifestValidation.NullContentBlock index -> $"FileManifest Blocks[{index}] is required."
+        | ManifestValidation.InvalidContentBlockAddress (index, address) -> $"FileManifest Blocks[{index}] ContentBlockAddress is invalid: {address}."
+        | ManifestValidation.ChunkingSuiteMismatch (expected, actual) -> $"FileManifest ChunkingSuiteId mismatch. Expected {expected}, actual {actual}."
+        | ManifestValidation.ManifestAddressMismatch (expected, actual) -> $"FileManifest ManifestAddress mismatch. Expected {expected}, actual {actual}."
+        | ManifestValidation.BlockRangeOutOfOrder index -> $"FileManifest Blocks[{index}] must be contiguous and ordered by logical offset."
+        | ManifestValidation.BlockRangeNotPositive index -> $"FileManifest Blocks[{index}] Size must be greater than zero."
+        | ManifestValidation.MissingContentBlockPayload (index, address) -> $"FileManifest Blocks[{index}] ContentBlockAddress {address} is missing a payload."
+        | ManifestValidation.ContentBlockPayloadInvalid (address, payloadError) -> $"ContentBlock payload for {address} is invalid: {payloadError}."
+        | ManifestValidation.ContentBlockPayloadSizeMismatch (index, expected, actual) ->
+            $"FileManifest Blocks[{index}] payload size mismatch. Expected {expected}, actual {actual}."
+        | ManifestValidation.FileContentHashMismatch (expected, actual) -> $"FileManifest FileContentHash mismatch. Expected {expected}, actual {actual}."
+        | ManifestValidation.ManifestSizeMismatch (expected, actual) -> $"FileManifest Size mismatch. Expected {expected}, actual {actual}."
+
+    let private blockWasUploaded (session: UploadSessionDto) (block: ContentBlock) =
+        session.ConfirmedBlockUploads
+        |> Array.exists (fun confirmedBlock -> confirmedBlock.ContentBlockAddress = block.Address)
+        && session.BlockUploadIntents
+           |> Array.exists (fun intent ->
+               intent.ContentBlockAddress = block.Address
+               && intent.LogicalOffset = block.Offset
+               && intent.LogicalLength = block.Size)
+
+    let private blockWasClaimed (session: UploadSessionDto) (block: ContentBlock) =
+        session.ClaimedReuseRanges
+        |> Array.exists (fun claimedRange ->
+            claimedRange.ContentBlockAddress = block.Address
+            && claimedRange.PhysicalLength = block.Size)
+
+    let private validateManifestBlockPresence correlationId (session: UploadSessionDto) (manifest: FileManifest) =
+        if isNull (box manifest) then
+            Error(graceError correlationId "FileManifest is required.")
+        elif isNull manifest.Blocks then
+            Error(graceError correlationId "FileManifest must include at least one ContentBlock.")
+        else
+            let mutable error = None
+            let mutable index = 0
+
+            while index < manifest.Blocks.Count
+                  && Option.isNone error do
+                let block = manifest.Blocks[index]
+
+                if isNull (box block) then
+                    error <- Some(graceError correlationId $"FileManifest Blocks[{index}] is required.")
+                elif blockWasUploaded session block
+                     || blockWasClaimed session block then
+                    index <- index + 1
+                else
+                    error <-
+                        Some(
+                            graceError
+                                correlationId
+                                $"FileManifest Blocks[{index}] ContentBlockAddress {block.Address} was not uploaded or claimed by this UploadSession."
+                        )
+
+            match error with
+            | Some error -> Error error
+            | None -> Ok()
+
+    let private validateFinalizeSessionFields correlationId (session: UploadSessionDto) (manifest: FileManifest) =
+        if isNull (box manifest) then
+            Error(graceError correlationId "FileManifest is required.")
+        elif manifest.Size <> session.ExpectedSize then
+            Error(graceError correlationId $"FileManifest Size must match UploadSession ExpectedSize. Expected {session.ExpectedSize}, actual {manifest.Size}.")
+        elif manifest.FileContentHash
+             <> session.FileContentHash then
+            Error(
+                graceError
+                    correlationId
+                    $"FileManifest FileContentHash must match UploadSession FileContentHash. Expected {session.FileContentHash}, actual {manifest.FileContentHash}."
+            )
+        elif manifest.ChunkingSuiteId
+             <> session.ChunkingSuiteId then
+            Error(
+                graceError
+                    correlationId
+                    $"FileManifest ChunkingSuiteId must match UploadSession ChunkingSuiteId. Expected {session.ChunkingSuiteId}, actual {manifest.ChunkingSuiteId}."
+            )
+        else
+            Ok()
+
+    let private finalizeBlockPayload (payload: FinalizeManifestBlockPayload) =
+        if isNull (box payload) then
+            Unchecked.defaultof<ManifestValidation.ManifestBlockPayload>
+        else
+            ManifestValidation.createBlockPayload payload.Address payload.Payload
+
+    let private finalizeManifest (session: UploadSessionDto) (finalize: FinalizeManifest) (metadata: EventMetadata) =
+        if isNull (box finalize) then
+            Error(graceError metadata.CorrelationId "FinalizeManifest payload is required.")
+        else
+            validateFinalizeSessionFields metadata.CorrelationId session finalize.Manifest
+            |> Result.bind (fun () -> validateManifestBlockPresence metadata.CorrelationId session finalize.Manifest)
+            |> Result.bind (fun () ->
+                let blockPayloads =
+                    if isNull finalize.BlockPayloads then
+                        Unchecked.defaultof<ManifestValidation.ManifestBlockPayload array>
+                    else
+                        finalize.BlockPayloads
+                        |> Array.map finalizeBlockPayload
+
+                match ManifestValidation.validate session.ChunkingSuiteId finalize.Manifest blockPayloads with
+                | Ok _ ->
+                    let events =
+                        [
+                            { Event = UploadSessionEventType.Finalized(finalize.OperationId, finalize.Manifest.ManifestAddress); Metadata = metadata }
+                        ]
+
+                    okDecision session finalize.OperationId events false "Upload session manifest finalized."
+                | Error error -> Error(graceError metadata.CorrelationId (manifestValidationErrorMessage error)))
+
     let private confirmBlockUpload (session: UploadSessionDto) (confirmation: ConfirmBlockUploaded) (metadata: EventMetadata) =
         if String.IsNullOrWhiteSpace confirmation.ContentBlockAddress then
             Error(graceError metadata.CorrelationId "ContentBlockAddress is required.")
@@ -479,10 +601,18 @@ module UploadSession =
                 match requireStartedSession session command metadata.CorrelationId with
                 | Some error -> Error error
                 | None -> claimReuseRanges session claim metadata
-            | UploadSessionCommand.FinalizeManifest _ ->
+            | UploadSessionCommand.FinalizeManifest finalize ->
                 match terminalMutationError session command metadata.CorrelationId with
                 | Some error -> Error error
-                | None -> Error(graceError metadata.CorrelationId $"UploadSession command {commandName command} is not implemented in this skeleton.")
+                | None ->
+                    match session.LifecycleState with
+                    | UploadSessionLifecycleState.Started
+                    | UploadSessionLifecycleState.Discovering
+                    | UploadSessionLifecycleState.UploadingBlocks
+                    | UploadSessionLifecycleState.ClaimingRanges -> finalizeManifest session finalize metadata
+                    | UploadSessionLifecycleState.NotStarted ->
+                        Error(graceError metadata.CorrelationId "UploadSession must be started before FinalizeManifest.")
+                    | _ -> Error(graceError metadata.CorrelationId $"UploadSession cannot FinalizeManifest from {session.LifecycleState}.")
 
     type UploadSessionActor([<PersistentState(StateName.UploadSession, Constants.GraceActorStorage)>] state: IPersistentState<List<UploadSessionEvent>>) =
         inherit Grain()

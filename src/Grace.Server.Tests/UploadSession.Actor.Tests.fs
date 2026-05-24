@@ -33,10 +33,13 @@ type UploadSessionActorTests() =
             AuthorizedScope = "/src"
             FileContentHash = "blake3:file"
             ExpectedSize = 1_048_576L
-            ChunkingSuiteId = "rabin-blake3-v1"
+            ChunkingSuiteId = RabinChunking.SuiteName
             SamplingPolicySnapshot = "sparse-key-v1"
             OperationId = operationId
         }
+
+    let startForManifest operationId (fileBytes: byte array) =
+        { start operationId with FileContentHash = FileContentHash(ContentAddress.computeBlake3Hex fileBytes); ExpectedSize = int64 fileBytes.Length }
 
     let encodedBlock bytes =
         match ContentBlockFormat.encode [ { PhysicalOffset = 0L; Bytes = bytes } ] with
@@ -45,16 +48,25 @@ type UploadSessionActorTests() =
             Assert.Fail($"Expected test content block to encode, got {error}.")
             Unchecked.defaultof<ContentBlockFormat.EncodedContentBlock>
 
-    let intentAt operationId blockAddress payloadLength logicalOffset : RegisterBlockUploadIntent =
+    let intentAtWithLength operationId blockAddress payloadLength logicalOffset logicalLength : RegisterBlockUploadIntent =
         {
             OperationId = operationId
             ContentBlockAddress = blockAddress
             LogicalOffset = logicalOffset
-            LogicalLength = 11L
+            LogicalLength = logicalLength
             ExpectedPayloadLength = payloadLength
         }
 
+    let intentAt operationId blockAddress payloadLength logicalOffset = intentAtWithLength operationId blockAddress payloadLength logicalOffset 11L
+
     let intent operationId blockAddress payloadLength = intentAt operationId blockAddress payloadLength 0L
+
+    let intentForBlock operationId (block: ContentBlockFormat.EncodedContentBlock) logicalOffset =
+        let logicalLength =
+            block.Chunks
+            |> Array.sumBy (fun chunk -> int64 chunk.Length)
+
+        intentAtWithLength operationId block.Address block.Payload.LongLength logicalOffset logicalLength
 
     let confirm operationId blockAddress payload : ConfirmBlockUploaded =
         {
@@ -66,6 +78,30 @@ type UploadSessionActorTests() =
 
     let confirmWithPlacement operationId blockAddress payload placement : ConfirmBlockUploaded =
         { OperationId = operationId; ContentBlockAddress = blockAddress; Payload = payload; StoragePlacement = placement }
+
+    let manifestFor (fileBytes: byte array) (blocks: ContentBlockFormat.EncodedContentBlock array) =
+        let contentBlocks = ResizeArray<ContentBlock>()
+        let mutable offset = 0L
+
+        for block in blocks do
+            let size =
+                block.Chunks
+                |> Array.sumBy (fun chunk -> int64 chunk.Length)
+
+            contentBlocks.Add(ContentBlock.Create(block.Address, offset, size))
+            offset <- offset + size
+
+        let fileContentHash = FileContentHash(ContentAddress.computeBlake3Hex fileBytes)
+
+        let manifest =
+            FileManifest.Create(ManifestAddress String.Empty, RabinChunking.SuiteName, fileContentHash, int64 fileBytes.Length, List.ofSeq contentBlocks)
+
+        { manifest with ManifestAddress = ContentAddress.computeManifestAddressForManifest manifest }
+
+    let payloadFor (block: ContentBlockFormat.EncodedContentBlock) : FinalizeManifestBlockPayload = { Address = block.Address; Payload = block.Payload }
+
+    let finalize operationId manifest payloads =
+        UploadSessionCommand.FinalizeManifest { OperationId = operationId; Manifest = manifest; BlockPayloads = payloads }
 
     let storagePoolId = StoragePoolId "pool-main"
     let reuseBlockAddress = ContentBlockAddress "block-blake3-reuse"
@@ -86,6 +122,12 @@ type UploadSessionActorTests() =
             ActivePhysicalBytes = 0L
             MetadataVersion = metadataVersion
             UpdatedAt = timestamp
+        }
+
+    let reuseMetadataFor contentBlockAddress metadataVersion ranges : ContentBlockMetadata =
+        { reuseMetadata metadataVersion ranges with
+            ContentBlockAddress = contentBlockAddress
+            StoragePlacement = { ObjectKey = $"cas/content-blocks/{contentBlockAddress}"; ETag = Some "etag-reuse" }
         }
 
     let reuseHint =
@@ -548,19 +590,330 @@ type UploadSessionActorTests() =
         | Error error -> Assert.Fail($"Expected first confirmation to succeed, got {error.Error}.")
 
     [<Test>]
-    member _.FinalizeCommandRemainsUnimplementedForSkeleton() =
+    member _.FinalizeManifestFromUploadedBlockValidatesReconstructionAndFinalizes() =
+        let fileBytes = Text.Encoding.UTF8.GetBytes("hello world")
+        let block = encodedBlock fileBytes
+        let manifest = manifestFor fileBytes [| block |]
+
+        let startDecision =
+            UploadSessionActor.decideCommand
+                []
+                UploadSessionDto.Default
+                (UploadSessionCommand.Start(startForManifest "op-start" fileBytes))
+                (metadata "corr-start")
+
+        let startedDto, startEvents =
+            match startDecision with
+            | Ok decision -> decision.Session, decision.Events
+            | Error error ->
+                Assert.Fail($"Expected start to succeed, got {error.Error}.")
+                UploadSessionDto.Default, []
+
+        let intentDecision =
+            UploadSessionActor.decideCommand
+                startEvents
+                startedDto
+                (UploadSessionCommand.RegisterBlockUploadIntent(intentForBlock "op-block-intent" block 0L))
+                (metadata "corr-block-intent")
+
+        let intentDto, intentEvents =
+            match intentDecision with
+            | Ok decision -> decision.Session, startEvents @ decision.Events
+            | Error error ->
+                Assert.Fail($"Expected intent to succeed, got {error.Error}.")
+                UploadSessionDto.Default, []
+
+        let confirmDecision =
+            UploadSessionActor.decideCommand
+                intentEvents
+                intentDto
+                (UploadSessionCommand.ConfirmBlockUploaded(confirm "op-block-confirm" block.Address block.Payload))
+                (metadata "corr-block-confirm")
+
+        let confirmedDto, confirmedEvents =
+            match confirmDecision with
+            | Ok decision -> decision.Session, intentEvents @ decision.Events
+            | Error error ->
+                Assert.Fail($"Expected confirmation to succeed, got {error.Error}.")
+                UploadSessionDto.Default, []
+
+        let result =
+            UploadSessionActor.decideCommand confirmedEvents confirmedDto (finalize "op-finalize" manifest [| payloadFor block |]) (metadata "corr-finalize")
+
+        match result with
+        | Ok decision ->
+            Assert.That(decision.WasIdempotentReplay, Is.False)
+            Assert.That(decision.Events.Length, Is.EqualTo(1))
+            Assert.That(decision.Session.LifecycleState, Is.EqualTo(UploadSessionLifecycleState.Finalized))
+            Assert.That(decision.Session.FinalizedManifestAddress, Is.EqualTo(Some manifest.ManifestAddress))
+        | Error error -> Assert.Fail($"Expected finalize to succeed, got {error.Error}.")
+
+    [<Test>]
+    member _.FinalizeManifestFromClaimedReuseRangeValidatesReconstructionAndFinalizes() =
+        let fileBytes = Text.Encoding.UTF8.GetBytes("reuse range bytes")
+        let block = encodedBlock fileBytes
+        let manifest = manifestFor fileBytes [| block |]
+
+        let claimedRange =
+            { StoragePoolId = storagePoolId; ContentBlockAddress = block.Address; OrdinalStart = 0; OrdinalCount = minimumReuseRunLength; MetadataVersion = 7L }
+
+        let metadataRange = { reusableMetadataRange with OrdinalStart = 0; OrdinalCount = minimumReuseRunLength; PhysicalLength = int64 fileBytes.Length }
+
+        let startDecision =
+            UploadSessionActor.decideCommand
+                []
+                UploadSessionDto.Default
+                (UploadSessionCommand.Start(startForManifest "op-start" fileBytes))
+                (metadata "corr-start")
+
+        let startedDto, startEvents =
+            match startDecision with
+            | Ok decision -> decision.Session, decision.Events
+            | Error error ->
+                Assert.Fail($"Expected start to succeed, got {error.Error}.")
+                UploadSessionDto.Default, []
+
+        let issued = UploadSessionActor.decideCommand startEvents startedDto (discovery "op-discovery" [| claimedRange |]) (metadata "corr-discovery")
+
+        let discoveredDto, discoveryEvents =
+            match issued with
+            | Ok decision -> decision.Session, startEvents @ decision.Events
+            | Error error ->
+                Assert.Fail($"Expected discovery to succeed, got {error.Error}.")
+                UploadSessionDto.Default, []
+
+        let claimCommand = claim "op-claim" claimedRange (reuseMetadataFor block.Address 7L [| metadataRange |])
+        let claimed = UploadSessionActor.decideCommand discoveryEvents discoveredDto claimCommand (metadata "corr-claim")
+
+        let claimedDto, claimedEvents =
+            match claimed with
+            | Ok decision -> decision.Session, discoveryEvents @ decision.Events
+            | Error error ->
+                Assert.Fail($"Expected range claim to succeed, got {error.Error}.")
+                UploadSessionDto.Default, []
+
+        let result =
+            UploadSessionActor.decideCommand claimedEvents claimedDto (finalize "op-finalize" manifest [| payloadFor block |]) (metadata "corr-finalize")
+
+        match result with
+        | Ok decision ->
+            Assert.That(decision.Session.LifecycleState, Is.EqualTo(UploadSessionLifecycleState.Finalized))
+            Assert.That(decision.Session.FinalizedManifestAddress, Is.EqualTo(Some manifest.ManifestAddress))
+        | Error error -> Assert.Fail($"Expected finalize from claimed range to succeed, got {error.Error}.")
+
+    [<Test>]
+    member _.FinalizeManifestRejectsMissingConfirmedOrClaimedBlockWithoutConsumingOperationId() =
+        let fileBytes = Text.Encoding.UTF8.GetBytes("hello world")
+        let block = encodedBlock fileBytes
+        let manifest = manifestFor fileBytes [| block |]
+
+        let startDecision =
+            UploadSessionActor.decideCommand
+                []
+                UploadSessionDto.Default
+                (UploadSessionCommand.Start(startForManifest "op-start" fileBytes))
+                (metadata "corr-start")
+
+        let startedDto, startEvents =
+            match startDecision with
+            | Ok decision -> decision.Session, decision.Events
+            | Error error ->
+                Assert.Fail($"Expected start to succeed, got {error.Error}.")
+                UploadSessionDto.Default, []
+
+        let missing =
+            UploadSessionActor.decideCommand startEvents startedDto (finalize "op-finalize" manifest [| payloadFor block |]) (metadata "corr-finalize-missing")
+
+        match missing with
+        | Ok _ -> Assert.Fail("Expected finalize to reject a manifest block that was not uploaded or claimed.")
+        | Error error -> Assert.That(error.Error, Does.Contain("not uploaded or claimed"))
+
+        let intentDecision =
+            UploadSessionActor.decideCommand
+                startEvents
+                startedDto
+                (UploadSessionCommand.RegisterBlockUploadIntent(intentForBlock "op-block-intent" block 0L))
+                (metadata "corr-block-intent")
+
+        let intentDto, intentEvents =
+            match intentDecision with
+            | Ok decision -> decision.Session, startEvents @ decision.Events
+            | Error error ->
+                Assert.Fail($"Expected intent to succeed, got {error.Error}.")
+                UploadSessionDto.Default, []
+
+        let confirmDecision =
+            UploadSessionActor.decideCommand
+                intentEvents
+                intentDto
+                (UploadSessionCommand.ConfirmBlockUploaded(confirm "op-block-confirm" block.Address block.Payload))
+                (metadata "corr-block-confirm")
+
+        let confirmedDto, confirmedEvents =
+            match confirmDecision with
+            | Ok decision -> decision.Session, intentEvents @ decision.Events
+            | Error error ->
+                Assert.Fail($"Expected confirmation to succeed, got {error.Error}.")
+                UploadSessionDto.Default, []
+
+        let retry =
+            UploadSessionActor.decideCommand
+                confirmedEvents
+                confirmedDto
+                (finalize "op-finalize" manifest [| payloadFor block |])
+                (metadata "corr-finalize-retry")
+
+        match retry with
+        | Ok decision -> Assert.That(decision.Session.LifecycleState, Is.EqualTo(UploadSessionLifecycleState.Finalized))
+        | Error error -> Assert.Fail($"Expected retry after failed finalize to succeed, got {error.Error}.")
+
+    [<Test>]
+    member _.FinalizeManifestRejectsFileHashMismatchWithoutConsumingOperationId() =
+        let fileBytes = Text.Encoding.UTF8.GetBytes("hello world")
+        let wrongBytes = Text.Encoding.UTF8.GetBytes("wrong bytes")
+        let block = encodedBlock fileBytes
+        let validManifest = manifestFor fileBytes [| block |]
+        let wrongHashManifest = { validManifest with FileContentHash = FileContentHash(ContentAddress.computeBlake3Hex wrongBytes) }
+
+        let startedDto, startEvents =
+            match
+                UploadSessionActor.decideCommand
+                    []
+                    UploadSessionDto.Default
+                    (UploadSessionCommand.Start(startForManifest "op-start" fileBytes))
+                    (metadata "corr-start")
+                with
+            | Ok decision -> decision.Session, decision.Events
+            | Error error ->
+                Assert.Fail($"Expected start to succeed, got {error.Error}.")
+                UploadSessionDto.Default, []
+
+        let intentDto, intentEvents =
+            match
+                UploadSessionActor.decideCommand
+                    startEvents
+                    startedDto
+                    (UploadSessionCommand.RegisterBlockUploadIntent(intentForBlock "op-block-intent" block 0L))
+                    (metadata "corr-block-intent")
+                with
+            | Ok decision -> decision.Session, startEvents @ decision.Events
+            | Error error ->
+                Assert.Fail($"Expected intent to succeed, got {error.Error}.")
+                UploadSessionDto.Default, []
+
+        let confirmedDto, confirmedEvents =
+            match
+                UploadSessionActor.decideCommand
+                    intentEvents
+                    intentDto
+                    (UploadSessionCommand.ConfirmBlockUploaded(confirm "op-block-confirm" block.Address block.Payload))
+                    (metadata "corr-block-confirm")
+                with
+            | Ok decision -> decision.Session, intentEvents @ decision.Events
+            | Error error ->
+                Assert.Fail($"Expected confirmation to succeed, got {error.Error}.")
+                UploadSessionDto.Default, []
+
+        let mismatch =
+            UploadSessionActor.decideCommand
+                confirmedEvents
+                confirmedDto
+                (finalize "op-finalize" wrongHashManifest [| payloadFor block |])
+                (metadata "corr-finalize-mismatch")
+
+        match mismatch with
+        | Ok _ -> Assert.Fail("Expected file content hash mismatch to be rejected.")
+        | Error error -> Assert.That(error.Error, Does.Contain("FileContentHash"))
+
+        let retry =
+            UploadSessionActor.decideCommand
+                confirmedEvents
+                confirmedDto
+                (finalize "op-finalize" validManifest [| payloadFor block |])
+                (metadata "corr-finalize-retry")
+
+        match retry with
+        | Ok decision -> Assert.That(decision.Session.LifecycleState, Is.EqualTo(UploadSessionLifecycleState.Finalized))
+        | Error error -> Assert.Fail($"Expected retry after failed hash validation to succeed, got {error.Error}.")
+
+    [<Test>]
+    member _.FinalizeManifestRejectsTotalSizeMismatch() =
+        let fileBytes = Text.Encoding.UTF8.GetBytes("hello world")
+        let block = encodedBlock fileBytes
+        let manifest = { manifestFor fileBytes [| block |] with Size = int64 fileBytes.Length + 1L }
         let startedDto, existingEvents = startedSession ()
 
         let result =
-            UploadSessionActor.decideCommand
-                existingEvents
-                startedDto
-                (UploadSessionCommand.FinalizeManifest("op-finalize", "manifest-blake3"))
-                (metadata "corr-finalize")
+            UploadSessionActor.decideCommand existingEvents startedDto (finalize "op-finalize" manifest [| payloadFor block |]) (metadata "corr-finalize-size")
 
         match result with
-        | Ok _ -> Assert.Fail("Expected finalize to remain unimplemented in this slice.")
-        | Error error -> Assert.That(error.Error, Is.EqualTo("UploadSession command FinalizeManifest is not implemented in this skeleton."))
+        | Ok _ -> Assert.Fail("Expected total size mismatch to be rejected.")
+        | Error error -> Assert.That(error.Error, Does.Contain("ExpectedSize"))
+
+    [<Test>]
+    member _.FinalizeManifestWithSameOperationIdIsIdempotentReplay() =
+        let fileBytes = Text.Encoding.UTF8.GetBytes("hello world")
+        let block = encodedBlock fileBytes
+        let manifest = manifestFor fileBytes [| block |]
+
+        let startedDto, startEvents =
+            match
+                UploadSessionActor.decideCommand
+                    []
+                    UploadSessionDto.Default
+                    (UploadSessionCommand.Start(startForManifest "op-start" fileBytes))
+                    (metadata "corr-start")
+                with
+            | Ok decision -> decision.Session, decision.Events
+            | Error error ->
+                Assert.Fail($"Expected start to succeed, got {error.Error}.")
+                UploadSessionDto.Default, []
+
+        let intentDto, intentEvents =
+            match
+                UploadSessionActor.decideCommand
+                    startEvents
+                    startedDto
+                    (UploadSessionCommand.RegisterBlockUploadIntent(intentForBlock "op-block-intent" block 0L))
+                    (metadata "corr-block-intent")
+                with
+            | Ok decision -> decision.Session, startEvents @ decision.Events
+            | Error error ->
+                Assert.Fail($"Expected intent to succeed, got {error.Error}.")
+                UploadSessionDto.Default, []
+
+        let confirmedDto, confirmedEvents =
+            match
+                UploadSessionActor.decideCommand
+                    intentEvents
+                    intentDto
+                    (UploadSessionCommand.ConfirmBlockUploaded(confirm "op-block-confirm" block.Address block.Payload))
+                    (metadata "corr-block-confirm")
+                with
+            | Ok decision -> decision.Session, intentEvents @ decision.Events
+            | Error error ->
+                Assert.Fail($"Expected confirmation to succeed, got {error.Error}.")
+                UploadSessionDto.Default, []
+
+        let first =
+            UploadSessionActor.decideCommand confirmedEvents confirmedDto (finalize "op-finalize" manifest [| payloadFor block |]) (metadata "corr-finalize")
+
+        match first with
+        | Ok decision ->
+            let replay =
+                UploadSessionActor.decideCommand
+                    (confirmedEvents @ decision.Events)
+                    decision.Session
+                    (finalize "op-finalize" manifest [| payloadFor block |])
+                    (metadata "corr-finalize-replay")
+
+            match replay with
+            | Ok replayDecision ->
+                Assert.That(replayDecision.WasIdempotentReplay, Is.True)
+                Assert.That(replayDecision.Events, Is.Empty)
+                Assert.That(replayDecision.Session.FinalizedManifestAddress, Is.EqualTo(Some manifest.ManifestAddress))
+            | Error error -> Assert.Fail($"Expected idempotent finalize replay, got {error.Error}.")
+        | Error error -> Assert.Fail($"Expected first finalize to succeed, got {error.Error}.")
 
     [<Test>]
     member _.CleanupReminderStateCarriesDeletePhysicalStateOperationId() =
