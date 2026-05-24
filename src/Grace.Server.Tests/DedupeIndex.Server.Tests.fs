@@ -100,10 +100,10 @@ type DedupeIndexServerTests() =
             UpdatedAt = timestamp
         }
 
-    let sourceFor session manifest (block: ContentBlockFormat.EncodedContentBlock) metadata : DedupeIndex.FinalizedManifestIndexSource =
-        let blockPayload: FinalizeManifestBlockPayload = { Address = block.Address; Payload = block.Payload }
+    let payloadFor (block: ContentBlockFormat.EncodedContentBlock) : FinalizeManifestBlockPayload = { Address = block.Address; Payload = block.Payload }
 
-        { StoragePoolId = storagePoolId; Session = session; Manifest = manifest; BlockPayloads = [| blockPayload |]; Metadata = [| metadata |] }
+    let sourceFor session manifest (block: ContentBlockFormat.EncodedContentBlock) metadata : DedupeIndex.FinalizedManifestIndexSource =
+        { StoragePoolId = storagePoolId; Session = session; Manifest = manifest; BlockPayloads = [| payloadFor block |]; Metadata = [| metadata |] }
 
     let discover records requested = DedupeIndex.discover storagePoolId requested timestamp records
 
@@ -278,3 +278,21 @@ type DedupeIndexServerTests() =
 
         for index in 0 .. rebuiltCandidates.Length - 1 do
             Assert.That(rebuiltCandidates[index], Is.EqualTo(incrementalCandidates[index]))
+
+    [<Test>]
+    member _.FinalizeRegistrationPublishesWhenAuthoritativeMetadataArrives() =
+        let block = encodedBlock "actor-publish" 12
+        let manifest = manifestFor block
+        let metadata = metadataFor 1 17L block
+
+        let registration: DedupeIndex.FinalizedManifestRegistration =
+            { Session = finalizedSession manifest; Manifest = manifest; BlockPayloads = [| payloadFor block |] }
+
+        let beforeMetadata = DedupeIndex.registerFinalizedManifest registration
+        let afterMetadata = DedupeIndex.writeAfterAuthoritativeMetadata metadata
+        let result = DedupeIndex.discover storagePoolId [| (decodedChunkAddresses block)[0] |] timestamp (DedupeIndex.snapshot ())
+
+        Assert.That(beforeMetadata, Is.Empty, "Finalization alone must not expose candidates before authoritative metadata is available.")
+        Assert.That(afterMetadata, Is.Not.Empty, "Authoritative metadata should publish candidates for an already-finalized manifest.")
+        Assert.That(result.CandidateContentBlocks, Has.Length.GreaterThanOrEqualTo(1))
+        Assert.That(result.CandidateContentBlocks[0].ManifestAddress, Is.EqualTo(manifest.ManifestAddress))

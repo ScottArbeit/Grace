@@ -86,9 +86,8 @@
                 <Compile Include="Artifact.Server.fs" />
                 <Compile Include="ReviewAnalysis.Server.fs" />
                 <Compile Include="Eventing.Server.fs" />
-                <Compile Include="DirectoryVersion.Server.fs" />
+		<Compile Include="DirectoryVersion.Server.fs" />
 		<Compile Include="Diff.Server.fs" />
-		<Compile Include="DedupeIndex.Server.fs" />
 		<Compile Include="Storage.Server.fs" />
 		<Compile Include="Access.Server.fs" />
 		<Compile Include="Auth.Server.fs" />

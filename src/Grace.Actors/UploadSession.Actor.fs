@@ -779,6 +779,10 @@ module UploadSession =
                                     (ReminderState.UploadSessionPhysicalDeletion reminderState)
                                     metadata.CorrelationId
                         | UploadSessionCommand.FinalizeManifest finalize when not decision.WasIdempotentReplay ->
+                            DedupeIndex.registerFinalizedManifest
+                                { Session = decision.Session; Manifest = finalize.Manifest; BlockPayloads = finalize.BlockPayloads }
+                            |> ignore
+
                             let reminderState =
                                 createCleanupReminderState
                                     decision.Session.UploadSessionId

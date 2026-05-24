@@ -52,6 +52,7 @@
         <Compile Include="Parameters\Directory.Parameters.fs" />
         <Compile Include="Parameters\Diff.Parameters.fs" />
         <Compile Include="Parameters\Storage.Parameters.fs" />
+        <Compile Include="DedupeIndex.Shared.fs" />
         
         <Compile Include="Parameters\Reminder.Parameters.fs" />
         <Compile Include="Parameters\WorkItem.Parameters.fs" />

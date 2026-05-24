@@ -1,6 +1,5 @@
-namespace Grace.Server
+namespace Grace.Shared
 
-open Grace.Shared
 open Grace.Shared.Parameters.Storage
 open Grace.Types.ContentBlockMetadata
 open Grace.Types.Repository
@@ -35,7 +34,11 @@ module DedupeIndex =
             ProtectedChunkAddresses: string array
         }
 
+    type FinalizedManifestRegistration = { Session: UploadSessionDto; Manifest: FileManifest; BlockPayloads: FinalizeManifestBlockPayload array }
+
     let private records = ConcurrentDictionary<string, DedupeIndexRecord>()
+    let private finalizedManifests = ConcurrentDictionary<string, FinalizedManifestRegistration>()
+    let private metadataRecords = ConcurrentDictionary<string, ContentBlockMetadata>()
 
     let discoveryPolicy () : ContentBlockDiscoveryPolicy =
         {
@@ -59,6 +62,19 @@ module DedupeIndex =
 
     let private recordKey (record: DedupeIndexRecord) =
         $"{record.StoragePoolId}|{record.ManifestAddress}|{record.ContentBlockAddress}|{record.OrdinalStart}|{record.OrdinalCount}|{record.MetadataVersion}"
+
+    let private finalizedManifestKey (registration: FinalizedManifestRegistration) =
+        $"{registration.Session.UploadSessionId}|{registration.Manifest.ManifestAddress}"
+
+    let private metadataKey (metadata: ContentBlockMetadata) = $"{metadata.StoragePoolId}|{metadata.ContentBlockAddress}"
+
+    let private manifestContainsBlock contentBlockAddress (manifest: FileManifest) =
+        not (isNull (box manifest))
+        && not (isNull manifest.Blocks)
+        && manifest.Blocks
+           |> Seq.exists (fun block ->
+               not (isNull (box block))
+               && block.Address = contentBlockAddress)
 
     let private metadataByAddress (metadata: ContentBlockMetadata array) =
         let map = Dictionary<ContentBlockAddress, ContentBlockMetadata>()
@@ -142,7 +158,7 @@ module DedupeIndex =
                         ProtectedChunkAddresses = protectedChunkAddresses
                     }
 
-    let recordsAfterFinalize source =
+    let recordsAfterFinalize (source: FinalizedManifestIndexSource) =
         if not (isFinalizedForManifest source) then
             Array.empty
         else
@@ -178,13 +194,13 @@ module DedupeIndex =
         else
             sources |> Array.collect recordsAfterFinalize
 
-    let replaceAll newRecords =
+    let replaceAll (newRecords: DedupeIndexRecord array) =
         records.Clear()
 
         for record in newRecords do
             records[recordKey record] <- record
 
-    let writeAfterFinalize source =
+    let writeAfterFinalize (source: FinalizedManifestIndexSource) =
         let newRecords = recordsAfterFinalize source
 
         for record in newRecords do
@@ -192,9 +208,58 @@ module DedupeIndex =
 
         newRecords
 
+    let private writeForRegistrationWithMetadata (registration: FinalizedManifestRegistration) (metadata: ContentBlockMetadata) =
+        writeAfterFinalize
+            {
+                StoragePoolId = metadata.StoragePoolId
+                Session = registration.Session
+                Manifest = registration.Manifest
+                BlockPayloads = registration.BlockPayloads
+                Metadata = [| metadata |]
+            }
+
+    let writeAfterAuthoritativeMetadata (metadata: ContentBlockMetadata) =
+        if
+            isNull (box metadata)
+            || String.IsNullOrWhiteSpace metadata.ContentBlockAddress
+        then
+            Array.empty
+        else
+            metadataRecords[metadataKey metadata] <- metadata
+
+            finalizedManifests.Values
+            |> Seq.filter (fun registration -> manifestContainsBlock metadata.ContentBlockAddress registration.Manifest)
+            |> Seq.collect (fun registration -> writeForRegistrationWithMetadata registration metadata)
+            |> Seq.toArray
+
+    let registerFinalizedManifest (registration: FinalizedManifestRegistration) =
+        if
+            isNull (box registration.Session)
+            || isNull (box registration.Manifest)
+            || not
+                (
+                    isFinalizedForManifest
+                        {
+                            StoragePoolId = StoragePoolId String.Empty
+                            Session = registration.Session
+                            Manifest = registration.Manifest
+                            BlockPayloads = registration.BlockPayloads
+                            Metadata = Array.empty
+                        }
+                )
+        then
+            Array.empty
+        else
+            finalizedManifests[finalizedManifestKey registration] <- registration
+
+            metadataRecords.Values
+            |> Seq.filter (fun metadata -> manifestContainsBlock metadata.ContentBlockAddress registration.Manifest)
+            |> Seq.collect (fun metadata -> writeForRegistrationWithMetadata registration metadata)
+            |> Seq.toArray
+
     let snapshot () = records.Values |> Seq.toArray
 
-    let private candidateFromRecord matchingKeyChunkCount record =
+    let private candidateFromRecord matchingKeyChunkCount (record: DedupeIndexRecord) =
         {
             StoragePoolId = record.StoragePoolId
             ManifestAddress = record.ManifestAddress

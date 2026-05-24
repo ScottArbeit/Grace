@@ -375,6 +375,9 @@ module ContentBlockMetadata =
                     | Ok decision ->
                         if not decision.Events.IsEmpty then do! this.ApplyEvents decision.Events
 
+                        DedupeIndex.writeAfterAuthoritativeMetadata decision.Metadata
+                        |> ignore
+
                         let returnValue =
                             (GraceReturnValue.Create decision eventMetadata.CorrelationId)
                                 .enhance(nameof StoragePoolId, decision.Metadata.StoragePoolId)
