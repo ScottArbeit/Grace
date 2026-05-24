@@ -789,3 +789,33 @@ type UploadSessionActorTests() =
         match second with
         | Ok _ -> Assert.Fail("Expected already claimed reuse hint to be rejected.")
         | Error error -> Assert.That(error.Error, Does.Contain("already been claimed"))
+
+    [<Test>]
+    member _.IssueDedupeDiscoveryNullPayloadReturnsGraceError() =
+        let startedDto, startEvents = startedSession ()
+
+        let result =
+            UploadSessionActor.decideCommand
+                startEvents
+                startedDto
+                (UploadSessionCommand.IssueDedupeDiscovery Unchecked.defaultof<IssueDedupeDiscovery>)
+                (metadata "corr-null-discovery")
+
+        match result with
+        | Ok _ -> Assert.Fail("Expected null discovery payload to be rejected.")
+        | Error error -> Assert.That(error.Error, Does.Contain("requires a non-empty operation id"))
+
+    [<Test>]
+    member _.ClaimReuseRangesNullPayloadReturnsGraceError() =
+        let startedDto, startEvents = startedSession ()
+
+        let result =
+            UploadSessionActor.decideCommand
+                startEvents
+                startedDto
+                (UploadSessionCommand.ClaimReuseRanges Unchecked.defaultof<ClaimReuseRanges>)
+                (metadata "corr-null-claim")
+
+        match result with
+        | Ok _ -> Assert.Fail("Expected null claim payload to be rejected.")
+        | Error error -> Assert.That(error.Error, Does.Contain("requires a non-empty operation id"))

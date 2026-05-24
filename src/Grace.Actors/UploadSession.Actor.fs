@@ -38,9 +38,11 @@ module UploadSession =
     let operationId command =
         match command with
         | UploadSessionCommand.Start start -> start.OperationId
+        | UploadSessionCommand.IssueDedupeDiscovery discovery when isNull (box discovery) -> String.Empty
         | UploadSessionCommand.IssueDedupeDiscovery discovery -> discovery.OperationId
         | UploadSessionCommand.RegisterBlockUploadIntent intent -> intent.OperationId
         | UploadSessionCommand.ConfirmBlockUploaded confirmation -> confirmation.OperationId
+        | UploadSessionCommand.ClaimReuseRanges claim when isNull (box claim) -> String.Empty
         | UploadSessionCommand.ClaimReuseRanges claim -> claim.OperationId
         | UploadSessionCommand.FinalizeManifest (operationId, _) -> operationId
         | UploadSessionCommand.Abandon operationId -> operationId
