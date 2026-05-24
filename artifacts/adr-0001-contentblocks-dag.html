@@ -1,0 +1,650 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ADR-0001 ContentBlock CAS Implementation DAG</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #16212f;
+      --muted: #53606f;
+      --line: #c9d3df;
+      --panel: #ffffff;
+      --soft: #f4f7fb;
+      --accent: #0f766e;
+      --accent-ink: #073b36;
+      --wait: #a16207;
+      --done: #1d4ed8;
+      --danger: #b42318;
+      --shadow: 0 10px 30px rgba(22, 33, 47, 0.08);
+      font-family: "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: #eef3f8;
+      color: var(--ink);
+      line-height: 1.45;
+    }
+
+    a {
+      color: #075985;
+      text-decoration-thickness: 0.08em;
+      text-underline-offset: 0.18em;
+    }
+
+    header {
+      background: #0f172a;
+      color: #f8fafc;
+      padding: 32px clamp(18px, 4vw, 56px);
+    }
+
+    header h1 {
+      max-width: 1080px;
+      margin: 0 auto 10px;
+      font-size: clamp(2rem, 4vw, 3.4rem);
+      line-height: 1.02;
+      letter-spacing: 0;
+    }
+
+    header p {
+      max-width: 1080px;
+      margin: 0 auto;
+      color: #cbd5e1;
+      font-size: 1.05rem;
+    }
+
+    main {
+      width: min(1480px, calc(100% - 32px));
+      margin: 24px auto 48px;
+    }
+
+    section {
+      margin-block: 24px;
+    }
+
+    h2 {
+      margin: 0 0 12px;
+      font-size: 1.4rem;
+      letter-spacing: 0;
+    }
+
+    h3 {
+      margin: 0 0 8px;
+      font-size: 1rem;
+      letter-spacing: 0;
+    }
+
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .metric,
+    .note,
+    .lane,
+    .table-wrap {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+    }
+
+    .metric {
+      padding: 16px;
+    }
+
+    .metric strong {
+      display: block;
+      font-size: 1.8rem;
+      line-height: 1;
+    }
+
+    .metric span {
+      color: var(--muted);
+      font-size: 0.92rem;
+    }
+
+    .note {
+      padding: 18px;
+    }
+
+    .note p,
+    .note ul {
+      margin-block: 8px 0;
+    }
+
+    .dag-shell {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+      overflow: auto;
+    }
+
+    .dag-shell svg {
+      display: block;
+      min-width: 1320px;
+      width: 100%;
+      height: auto;
+    }
+
+    .edge {
+      fill: none;
+      stroke: #667085;
+      stroke-width: 2;
+      marker-end: url(#arrow);
+    }
+
+    .node rect {
+      fill: #ffffff;
+      stroke: #334155;
+      stroke-width: 2;
+      rx: 8;
+    }
+
+    .node text {
+      fill: #0f172a;
+      font-size: 14px;
+      font-weight: 650;
+      text-anchor: middle;
+      dominant-baseline: middle;
+    }
+
+    .node.docs rect {
+      fill: #ecfdf5;
+      stroke: var(--accent);
+    }
+
+    .node.contract rect {
+      fill: #eff6ff;
+      stroke: #1d4ed8;
+    }
+
+    .node.server rect,
+    .node.actor rect {
+      fill: #fff7ed;
+      stroke: #c2410c;
+    }
+
+    .node.client rect {
+      fill: #f5f3ff;
+      stroke: #6d28d9;
+    }
+
+    .node.gc rect {
+      fill: #fef2f2;
+      stroke: var(--danger);
+    }
+
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      padding: 12px;
+      border-top: 1px solid var(--line);
+      background: var(--soft);
+    }
+
+    .legend span {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
+
+    .swatch {
+      width: 14px;
+      height: 14px;
+      border-radius: 4px;
+      border: 2px solid currentColor;
+      background: #fff;
+    }
+
+    .lanes {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .lane {
+      padding: 16px;
+    }
+
+    .lane ol,
+    .lane ul {
+      padding-left: 1.4rem;
+      margin: 8px 0 0;
+    }
+
+    .lane li + li {
+      margin-top: 6px;
+    }
+
+    .pill {
+      display: inline-block;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 2px 8px;
+      background: var(--soft);
+      color: var(--muted);
+      font-size: 0.82rem;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+
+    .table-wrap {
+      overflow: auto;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 1160px;
+    }
+
+    caption {
+      text-align: left;
+      padding: 16px;
+      font-weight: 700;
+      font-size: 1.05rem;
+    }
+
+    th,
+    td {
+      padding: 10px 12px;
+      border-top: 1px solid var(--line);
+      vertical-align: top;
+      text-align: left;
+      font-size: 0.92rem;
+    }
+
+    th {
+      background: #f8fafc;
+      color: #334155;
+      font-size: 0.82rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    td:first-child,
+    td:nth-child(2) {
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .validation-list {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    code {
+      background: #e2e8f0;
+      border-radius: 4px;
+      padding: 0.1rem 0.3rem;
+      font-family: Consolas, "Cascadia Code", monospace;
+      font-size: 0.92em;
+    }
+
+    @media (max-width: 900px) {
+      .summary-grid,
+      .lanes,
+      .validation-list {
+        grid-template-columns: 1fr;
+      }
+
+      main {
+        width: min(100% - 20px, 1480px);
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>ADR-0001 ContentBlock CAS Implementation DAG</h1>
+    <p>
+      Browser-readable execution map for the Grace ContentBlock content-addressed storage rollout.
+      Agents should claim and merge leaf issues in dependency order, keeping every PR independently reviewable.
+    </p>
+  </header>
+
+  <main>
+    <section class="summary-grid" aria-label="DAG summary">
+      <div class="metric">
+        <strong>30</strong>
+        <span>issue-owned nodes</span>
+      </div>
+      <div class="metric">
+        <strong>1</strong>
+        <span>current unblocked start node: P0 #78</span>
+      </div>
+      <div class="metric">
+        <strong>6</strong>
+        <span>validation profiles across the rollout</span>
+      </div>
+      <div class="metric">
+        <strong>0</strong>
+        <span>draft PRs expected</span>
+      </div>
+    </section>
+
+    <section class="note">
+      <h2>Coordination Rules</h2>
+      <ul>
+        <li>Use GitHub leaf issues as the active task records; epic <a href="https://github.com/ScottArbeit/Grace/issues/108">#108</a> tracks order and completion.</li>
+        <li>Do not start a node until every dependency issue has merged into <code>main</code>.</li>
+        <li>Parallel work is allowed only after dependencies are merged and owned paths do not conflict.</li>
+        <li>Each implementation PR must be ready for review, linked to its issue, validated, approved, merged, and cleaned up before the task is complete.</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>Dependency Graph</h2>
+      <div class="dag-shell" role="img" aria-label="ADR-0001 implementation dependency graph">
+        <svg viewBox="0 0 1320 1740" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+              <path d="M0,0 L0,6 L9,3 z" fill="#667085"></path>
+            </marker>
+          </defs>
+
+          <path class="edge" d="M660 80 V130"></path>
+          <path class="edge" d="M660 200 V250"></path>
+          <path class="edge" d="M660 320 V370"></path>
+          <path class="edge" d="M660 440 V490"></path>
+          <path class="edge" d="M660 560 V610"></path>
+          <path class="edge" d="M610 660 C360 700 270 740 210 810"></path>
+          <path class="edge" d="M640 200 C585 340 585 570 610 730"></path>
+          <path class="edge" d="M710 660 C960 700 1050 740 1110 810"></path>
+
+          <path class="edge" d="M250 880 C350 920 430 960 500 1030"></path>
+          <path class="edge" d="M610 800 C560 850 530 930 500 1030"></path>
+          <path class="edge" d="M710 800 C950 850 1020 930 1040 1030"></path>
+          <path class="edge" d="M1040 880 V1030"></path>
+          <path class="edge" d="M1110 880 C860 930 770 970 720 1030"></path>
+          <path class="edge" d="M500 1100 C430 1140 360 1180 300 1250"></path>
+          <path class="edge" d="M720 1100 C650 1140 620 1180 600 1250"></path>
+          <path class="edge" d="M1040 1100 C930 1140 900 1180 900 1250"></path>
+
+          <path class="edge" d="M300 1320 C420 1370 500 1400 600 1470"></path>
+          <path class="edge" d="M600 1320 V1470"></path>
+          <path class="edge" d="M900 1320 C780 1370 700 1400 600 1470"></path>
+          <path class="edge" d="M600 1540 C560 1580 500 1605 420 1650"></path>
+          <path class="edge" d="M600 1540 C660 1580 710 1605 780 1650"></path>
+          <path class="edge" d="M690 1685 H510"></path>
+
+          <path class="edge" d="M610 200 C330 245 220 335 190 490"></path>
+          <path class="edge" d="M250 560 V610"></path>
+          <path class="edge" d="M300 680 C410 720 460 760 500 810"></path>
+          <path class="edge" d="M500 880 C410 930 350 980 300 1030"></path>
+          <path class="edge" d="M300 1100 V1250"></path>
+          <path class="edge" d="M300 1320 C360 1380 400 1430 420 1500"></path>
+
+          <path class="edge" d="M710 200 C1000 245 1130 335 1130 490"></path>
+          <path class="edge" d="M1110 560 C980 620 900 680 780 730"></path>
+          <path class="edge" d="M780 800 C850 855 900 920 920 1030"></path>
+          <path class="edge" d="M920 1100 C990 1160 1030 1210 1040 1250"></path>
+          <path class="edge" d="M1040 1320 C1000 1380 950 1430 900 1500"></path>
+
+          <g class="node docs" transform="translate(570 10)">
+            <rect width="180" height="70"></rect>
+            <text x="90" y="27">P0 #78</text>
+            <text x="90" y="47">docs-dag-html</text>
+          </g>
+          <g class="node contract" transform="translate(570 130)">
+            <rect width="180" height="70"></rect>
+            <text x="90" y="27">C1 #79</text>
+            <text x="90" y="47">contracts-shell</text>
+          </g>
+          <g class="node contract" transform="translate(570 250)">
+            <rect width="180" height="70"></rect>
+            <text x="90" y="27">C2 #80</text>
+            <text x="90" y="47">blake3-addresses</text>
+          </g>
+          <g class="node contract" transform="translate(570 370)">
+            <rect width="180" height="70"></rect>
+            <text x="90" y="27">C3 #81</text>
+            <text x="90" y="47">rabin-chunking</text>
+          </g>
+          <g class="node contract" transform="translate(570 490)">
+            <rect width="180" height="70"></rect>
+            <text x="90" y="27">C4 #82</text>
+            <text x="90" y="47">contentblock-format</text>
+          </g>
+          <g class="node contract" transform="translate(120 490)">
+            <rect width="180" height="70"></rect>
+            <text x="90" y="27">C6 #84</text>
+            <text x="90" y="47">eligibility-policy</text>
+          </g>
+          <g class="node contract" transform="translate(1040 490)">
+            <rect width="180" height="70"></rect>
+            <text x="90" y="27">S1 #85</text>
+            <text x="90" y="47">storage-keys</text>
+          </g>
+          <g class="node contract" transform="translate(570 610)">
+            <rect width="180" height="70"></rect>
+            <text x="90" y="27">C5 #83</text>
+            <text x="90" y="47">manifest-validation</text>
+          </g>
+          <g class="node server" transform="translate(160 610)">
+            <rect width="180" height="70"></rect>
+            <text x="90" y="27">S2 #86</text>
+            <text x="90" y="47">wholefile-compat</text>
+          </g>
+          <g class="node server" transform="translate(690 730)">
+            <rect width="180" height="70"></rect>
+            <text x="90" y="27">S3 #87</text>
+            <text x="90" y="47">blob-uris</text>
+          </g>
+          <g class="node actor" transform="translate(950 810)">
+            <rect width="180" height="70"></rect>
+            <text x="90" y="27">M1 #88</text>
+            <text x="90" y="47">metadata-actor</text>
+          </g>
+          <g class="node actor" transform="translate(520 730)">
+            <rect width="180" height="70"></rect>
+            <text x="90" y="27">U1 #89</text>
+            <text x="90" y="47">upload-skeleton</text>
+          </g>
+          <g class="node actor" transform="translate(410 1030)">
+            <rect width="180" height="70"></rect>
+            <text x="90" y="27">U2 #90</text>
+            <text x="90" y="47">intents-confirm</text>
+          </g>
+          <g class="node server" transform="translate(630 1030)">
+            <rect width="180" height="70"></rect>
+            <text x="90" y="27">U3 #91</text>
+            <text x="90" y="47">discovery-empty</text>
+          </g>
+          <g class="node actor" transform="translate(210 1030)">
+            <rect width="180" height="70"></rect>
+            <text x="90" y="27">U4 #92</text>
+            <text x="90" y="47">range-claims</text>
+          </g>
+          <g class="node actor" transform="translate(210 1250)">
+            <rect width="180" height="70"></rect>
+            <text x="90" y="27">U5 #93</text>
+            <text x="90" y="47">finalize-manifest</text>
+          </g>
+          <g class="node server" transform="translate(510 1250)">
+            <rect width="180" height="70"></rect>
+            <text x="90" y="27">U6 #94</text>
+            <text x="90" y="47">dedupe-index</text>
+          </g>
+          <g class="node actor" transform="translate(810 1250)">
+            <rect width="180" height="70"></rect>
+            <text x="90" y="27">R1 #95</text>
+            <text x="90" y="47">content-counter</text>
+          </g>
+          <g class="node actor" transform="translate(330 1500)">
+            <rect width="180" height="70"></rect>
+            <text x="90" y="27">R2 #96</text>
+            <text x="90" y="47">contribution-flow</text>
+          </g>
+          <g class="node actor" transform="translate(510 1470)">
+            <rect width="180" height="70"></rect>
+            <text x="90" y="27">R3 #97</text>
+            <text x="90" y="47">save-boundary</text>
+          </g>
+          <g class="node actor" transform="translate(810 1500)">
+            <rect width="180" height="70"></rect>
+            <text x="90" y="27">R4 #98</text>
+            <text x="90" y="47">expiry-decrement</text>
+          </g>
+          <g class="node client" transform="translate(830 1030)">
+            <rect width="180" height="70"></rect>
+            <text x="90" y="27">CL1 #99</text>
+            <text x="90" y="47">local-planner</text>
+          </g>
+          <g class="node client" transform="translate(950 1250)">
+            <rect width="180" height="70"></rect>
+            <text x="90" y="27">CL2 #100</text>
+            <text x="90" y="47">manifest-upload</text>
+          </g>
+          <g class="node client" transform="translate(950 1500)">
+            <rect width="180" height="70"></rect>
+            <text x="90" y="27">CL3 #101</text>
+            <text x="90" y="47">discovery-claim</text>
+          </g>
+          <g class="node client" transform="translate(690 1650)">
+            <rect width="180" height="70"></rect>
+            <text x="90" y="27">CL4 #102</text>
+            <text x="90" y="47">download-rebuild</text>
+          </g>
+          <g class="node client" transform="translate(330 1650)">
+            <rect width="180" height="70"></rect>
+            <text x="90" y="27">CL5 #103</text>
+            <text x="90" y="47">manifest-default</text>
+          </g>
+          <g class="node gc" transform="translate(1110 810)">
+            <rect width="180" height="70"></rect>
+            <text x="90" y="27">G1 #104</text>
+            <text x="90" y="47">retention-cleanup</text>
+          </g>
+          <g class="node gc" transform="translate(1110 1030)">
+            <rect width="180" height="70"></rect>
+            <text x="90" y="27">G2 #105</text>
+            <text x="90" y="47">safe-ranges</text>
+          </g>
+          <g class="node gc" transform="translate(1110 1250)">
+            <rect width="180" height="70"></rect>
+            <text x="90" y="27">G3 #106</text>
+            <text x="90" y="47">compaction-v1</text>
+          </g>
+          <g class="node docs" transform="translate(570 1650)">
+            <rect width="180" height="70"></rect>
+            <text x="90" y="27">D1 #107</text>
+            <text x="90" y="47">final-audit</text>
+          </g>
+        </svg>
+        <div class="legend" aria-label="Validation profile legend">
+          <span><i class="swatch" style="color:#0f766e;background:#ecfdf5"></i>docs-only</span>
+          <span><i class="swatch" style="color:#1d4ed8;background:#eff6ff"></i>domain-contract</span>
+          <span><i class="swatch" style="color:#c2410c;background:#fff7ed"></i>server-api or actor-workflow</span>
+          <span><i class="swatch" style="color:#6d28d9;background:#f5f3ff"></i>sdk-client</span>
+          <span><i class="swatch" style="color:#b42318;background:#fef2f2"></i>cleanup, GC, and compaction</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="lanes" aria-label="Execution lanes">
+      <div class="lane">
+        <h2>Current Start</h2>
+        <p><span class="pill">Unblocked</span> P0 <a href="https://github.com/ScottArbeit/Grace/issues/78">#78 docs-dag-html</a></p>
+        <p>P0 has no dependencies. Once merged, C1 is the only newly unblocked node.</p>
+      </div>
+      <div class="lane">
+        <h2>Next Gates</h2>
+        <ol>
+          <li>P0 merges to unblock C1.</li>
+          <li>C1 merges to split C2, C6, S1, and U1.</li>
+          <li>Parallel branches stay blocked by their listed issue dependencies, not by the epic alone.</li>
+        </ol>
+      </div>
+      <div class="lane">
+        <h2>Parallel Guidance</h2>
+        <ul>
+          <li>After C1, C6, S1, and U1 may proceed in parallel when owned paths do not overlap.</li>
+          <li>After C4, C5, S3, and M1 can split across contract, server, and actor surfaces.</li>
+          <li>Client, repository, and GC lanes reconverge at D1 for final docs and API audit.</li>
+        </ul>
+      </div>
+    </section>
+
+    <section class="validation-list" aria-label="Validation gates">
+      <div class="note">
+        <h2>Validation Gates</h2>
+        <ul>
+          <li>Every leaf issue records RED, GREEN, refactor, focused validation, and repo validation evidence.</li>
+          <li>Every leaf issue runs <code>pwsh ./scripts/validate.ps1 -Fast</code> unless the PR records a justified skip.</li>
+          <li>Full validation is required for Aspire, emulators, storage, Service Bus, Cosmos DB, Redis, SDK end-to-end behavior, GC, and compaction.</li>
+        </ul>
+      </div>
+      <div class="note">
+        <h2>Review And Cleanup</h2>
+        <ul>
+          <li>Open a normal ready-for-review PR; do not use draft PRs.</li>
+          <li>Address every Codex Code Review comment, reply with evidence, and resolve the conversation.</li>
+          <li>After merge, delete the issue branch and worktree, then fetch, prune, and fast-forward local <code>main</code>.</li>
+        </ul>
+      </div>
+    </section>
+
+    <section class="table-wrap">
+      <table>
+        <caption>Issue Table</caption>
+        <thead>
+          <tr>
+            <th>Node</th>
+            <th>Issue</th>
+            <th>Slice</th>
+            <th>Depends on</th>
+            <th>Unblocks</th>
+            <th>Validation profile</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td>P0</td><td><a href="https://github.com/ScottArbeit/Grace/issues/78">#78</a></td><td>docs-dag-html</td><td>None</td><td>#79 C1</td><td>docs-only</td></tr>
+          <tr><td>C1</td><td><a href="https://github.com/ScottArbeit/Grace/issues/79">#79</a></td><td>contracts-shell</td><td>#78 P0</td><td>#80 C2, #84 C6, #85 S1, #89 U1</td><td>domain-contract</td></tr>
+          <tr><td>C2</td><td><a href="https://github.com/ScottArbeit/Grace/issues/80">#80</a></td><td>blake3-addresses</td><td>#79 C1</td><td>#81 C3</td><td>domain-contract</td></tr>
+          <tr><td>C3</td><td><a href="https://github.com/ScottArbeit/Grace/issues/81">#81</a></td><td>rabin-chunking</td><td>#80 C2</td><td>#82 C4, #99 CL1</td><td>domain-contract</td></tr>
+          <tr><td>C4</td><td><a href="https://github.com/ScottArbeit/Grace/issues/82">#82</a></td><td>contentblock-format</td><td>#81 C3</td><td>#83 C5, #87 S3, #88 M1</td><td>domain-contract</td></tr>
+          <tr><td>C5</td><td><a href="https://github.com/ScottArbeit/Grace/issues/83">#83</a></td><td>manifest-validation</td><td>#82 C4</td><td>#93 U5, #95 R1</td><td>domain-contract</td></tr>
+          <tr><td>C6</td><td><a href="https://github.com/ScottArbeit/Grace/issues/84">#84</a></td><td>eligibility-policy</td><td>#79 C1</td><td>#86 S2, #99 CL1</td><td>domain-contract</td></tr>
+          <tr><td>S1</td><td><a href="https://github.com/ScottArbeit/Grace/issues/85">#85</a></td><td>storage-key-builders</td><td>#79 C1</td><td>#86 S2</td><td>domain-contract</td></tr>
+          <tr><td>S2</td><td><a href="https://github.com/ScottArbeit/Grace/issues/86">#86</a></td><td>wholefile-compatibility</td><td>#79 C1, #84 C6, #85 S1</td><td>#97 R3, #103 CL5</td><td>server-api</td></tr>
+          <tr><td>S3</td><td><a href="https://github.com/ScottArbeit/Grace/issues/87">#87</a></td><td>contentblock-blob-uris</td><td>#82 C4, #85 S1</td><td>#90 U2</td><td>server-api</td></tr>
+          <tr><td>M1</td><td><a href="https://github.com/ScottArbeit/Grace/issues/88">#88</a></td><td>contentblock-metadata-actor</td><td>#82 C4</td><td>#90 U2, #96 R2</td><td>actor-workflow</td></tr>
+          <tr><td>U1</td><td><a href="https://github.com/ScottArbeit/Grace/issues/89">#89</a></td><td>uploadsession-skeleton</td><td>#79 C1</td><td>#90 U2, #91 U3, #104 G1</td><td>actor-workflow</td></tr>
+          <tr><td>U2</td><td><a href="https://github.com/ScottArbeit/Grace/issues/90">#90</a></td><td>block-intents-confirm</td><td>#89 U1, #87 S3, #88 M1</td><td>#92 U4, #93 U5</td><td>actor-workflow</td></tr>
+          <tr><td>U3</td><td><a href="https://github.com/ScottArbeit/Grace/issues/91">#91</a></td><td>discovery-empty-safe</td><td>#89 U1, #81 C3</td><td>#92 U4, #94 U6</td><td>server-api</td></tr>
+          <tr><td>U4</td><td><a href="https://github.com/ScottArbeit/Grace/issues/92">#92</a></td><td>range-claims</td><td>#90 U2, #91 U3</td><td>#93 U5</td><td>actor-workflow</td></tr>
+          <tr><td>U5</td><td><a href="https://github.com/ScottArbeit/Grace/issues/93">#93</a></td><td>finalize-manifest-no-dedupe</td><td>#83 C5, #90 U2, #92 U4</td><td>#94 U6, #100 CL2, #104 G1</td><td>actor-workflow</td></tr>
+          <tr><td>U6</td><td><a href="https://github.com/ScottArbeit/Grace/issues/94">#94</a></td><td>dedupe-index-after-finalize</td><td>#93 U5</td><td>#101 CL3</td><td>server-api</td></tr>
+          <tr><td>R1</td><td><a href="https://github.com/ScottArbeit/Grace/issues/95">#95</a></td><td>repository-content-counter</td><td>#83 C5</td><td>#96 R2</td><td>actor-workflow</td></tr>
+          <tr><td>R2</td><td><a href="https://github.com/ScottArbeit/Grace/issues/96">#96</a></td><td>manifest-contribution-workflow</td><td>#95 R1, #88 M1</td><td>#97 R3</td><td>actor-workflow</td></tr>
+          <tr><td>R3</td><td><a href="https://github.com/ScottArbeit/Grace/issues/97">#97</a></td><td>save-boundary-integration</td><td>#93 U5, #96 R2, #86 S2</td><td>#98 R4, #103 CL5</td><td>actor-workflow</td></tr>
+          <tr><td>R4</td><td><a href="https://github.com/ScottArbeit/Grace/issues/98">#98</a></td><td>expiry-decrement-integration</td><td>#97 R3</td><td>#105 G2</td><td>actor-workflow</td></tr>
+          <tr><td>CL1</td><td><a href="https://github.com/ScottArbeit/Grace/issues/99">#99</a></td><td>sdk-local-planner</td><td>#81 C3, #84 C6</td><td>#100 CL2</td><td>sdk-client</td></tr>
+          <tr><td>CL2</td><td><a href="https://github.com/ScottArbeit/Grace/issues/100">#100</a></td><td>sdk-manifest-upload-no-global-dedupe</td><td>#99 CL1, #93 U5, #87 S3</td><td>#101 CL3, #102 CL4</td><td>sdk-client</td></tr>
+          <tr><td>CL3</td><td><a href="https://github.com/ScottArbeit/Grace/issues/101">#101</a></td><td>sdk-dedupe-discovery-claim</td><td>#100 CL2, #94 U6</td><td>#103 CL5</td><td>sdk-client</td></tr>
+          <tr><td>CL4</td><td><a href="https://github.com/ScottArbeit/Grace/issues/102">#102</a></td><td>manifest-download-reconstruction</td><td>#100 CL2</td><td>#103 CL5</td><td>sdk-client</td></tr>
+          <tr><td>CL5</td><td><a href="https://github.com/ScottArbeit/Grace/issues/103">#103</a></td><td>enable-manifest-default</td><td>#101 CL3, #102 CL4, #97 R3</td><td>#107 D1</td><td>sdk-client</td></tr>
+          <tr><td>G1</td><td><a href="https://github.com/ScottArbeit/Grace/issues/104">#104</a></td><td>uploadsession-retention-cleanup</td><td>#89 U1, #93 U5</td><td>#105 G2</td><td>actor-workflow</td></tr>
+          <tr><td>G2</td><td><a href="https://github.com/ScottArbeit/Grace/issues/105">#105</a></td><td>gc-safe-manifest-ranges</td><td>#98 R4, #104 G1</td><td>#106 G3</td><td>actor-workflow</td></tr>
+          <tr><td>G3</td><td><a href="https://github.com/ScottArbeit/Grace/issues/106">#106</a></td><td>compaction-v1</td><td>#105 G2</td><td>#107 D1</td><td>actor-workflow</td></tr>
+          <tr><td>D1</td><td><a href="https://github.com/ScottArbeit/Grace/issues/107">#107</a></td><td>docs-openapi-final-audit</td><td>#103 CL5, #106 G3</td><td>None</td><td>docs-only</td></tr>
+        </tbody>
+      </table>
+    </section>
+  </main>
+</body>
+</html>
