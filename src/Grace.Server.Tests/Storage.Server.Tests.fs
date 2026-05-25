@@ -753,6 +753,30 @@ type StorageManifestUploadSessionRoutes() =
         }
 
     [<Test>]
+    member _.IssueDedupeDiscoveryRejectsMissingSessionBeforeDedupeIndexLookup() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let correlationId = generateCorrelationId ()
+
+            let issue = Parameters.Storage.IssueDedupeDiscoveryParameters()
+            setStorageParameters issue repositoryId correlationId
+            issue.UploadSessionId <- Guid.NewGuid()
+            issue.AuthorizedScope <- "/"
+            issue.OperationId <- "discovery"
+
+            issue.ExpiresAt <-
+                getCurrentInstant()
+                    .Plus(NodaTime.Duration.FromMinutes 5L)
+
+            issue.MinimumReuseRunLength <- Parameters.Storage.MinimumAcceptedReuseRunLength
+            issue.Hints <- [| reuseHint 0 |]
+
+            let! body = postUploadSessionBadRequest "/storage/issueDedupeDiscovery" issue
+            Assert.That(body, Does.Contain("UploadSession must be started"))
+            Assert.That(body, Does.Not.Contain("server discovery candidates"))
+        }
+
+    [<Test>]
     member _.IssueDedupeDiscoveryRejectsHintsNotBackedByServerDiscovery() =
         task {
             let repositoryId = repositoryIds[0]

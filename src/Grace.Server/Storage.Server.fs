@@ -122,8 +122,9 @@ module Storage =
             let! sessionForScope = loadSessionForScope requestContext.UploadSessionActor correlationId
 
             if requireExistingSession
-               && sessionForScope.UploadSessionId = UploadSessionId.Empty then
-                return Error(GraceError.Create "UploadSession must be started before ClaimReuseRanges." correlationId)
+               && (sessionForScope.UploadSessionId = UploadSessionId.Empty
+                   || sessionForScope.LifecycleState = UploadSessionLifecycleState.NotStarted) then
+                return Error(GraceError.Create "UploadSession must be started before this operation." correlationId)
             elif sessionForScope.UploadSessionId
                  <> UploadSessionId.Empty
                  && sessionForScope.AuthorizedScope
@@ -576,27 +577,40 @@ module Storage =
                                     correlationId
                             )
                     else
-                        let graceIds = getGraceIds context
-                        let organizationId, repositoryId = resolveStorageIds graceIds parameters
-                        let repositoryActor = Repository.CreateActorProxy organizationId repositoryId correlationId
-                        let! repositoryDto = repositoryActor.Get correlationId
-                        let storagePoolId = DedupeIndex.storagePoolIdForRepository repositoryDto
-                        let dedupeIndexActor = DedupeIndexActor.CreateActorProxy correlationId
-                        let! records = dedupeIndexActor.Snapshot correlationId
+                        let! requestContext = createUploadSessionRequestContext context parameters correlationId
+                        let! scopeValidation = validateUploadSessionScope requestContext parameters correlationId true
 
-                        match validateIssuedDedupeDiscoveryHints correlationId storagePoolId hints records with
+                        match scopeValidation with
                         | Error error -> return! context |> result400BadRequest error
-                        | Ok boundHints ->
-                            let command =
-                                UploadSessionCommand.IssueDedupeDiscovery
-                                    {
-                                        OperationId = parameters.OperationId
-                                        ExpiresAt = parameters.ExpiresAt
-                                        MinimumReuseRunLength = parameters.MinimumReuseRunLength
-                                        Hints = boundHints
-                                    }
+                        | Ok requestContext ->
+                            let repositoryActor =
+                                Repository.CreateActorProxy
+                                    requestContext.SessionForScope.OrganizationId
+                                    requestContext.SessionForScope.RepositoryId
+                                    correlationId
 
-                            return! handleUploadSessionCommand context parameters command correlationId
+                            let! repositoryDto = repositoryActor.Get correlationId
+                            let storagePoolId = DedupeIndex.storagePoolIdForRepository repositoryDto
+                            let dedupeIndexActor = DedupeIndexActor.CreateActorProxy correlationId
+                            let! records = dedupeIndexActor.Snapshot correlationId
+
+                            match validateIssuedDedupeDiscoveryHints correlationId storagePoolId hints records with
+                            | Error error -> return! context |> result400BadRequest error
+                            | Ok boundHints ->
+                                let command =
+                                    UploadSessionCommand.IssueDedupeDiscovery
+                                        {
+                                            OperationId = parameters.OperationId
+                                            ExpiresAt = parameters.ExpiresAt
+                                            MinimumReuseRunLength = parameters.MinimumReuseRunLength
+                                            Hints = boundHints
+                                        }
+
+                                let! result = requestContext.UploadSessionActor.Handle command requestContext.Metadata
+
+                                match result with
+                                | Ok returnValue -> return! context |> result200Ok returnValue
+                                | Error error -> return! context |> result400BadRequest error
                 with
                 | ex ->
                     let exceptionResponse = ExceptionResponse.Create ex
