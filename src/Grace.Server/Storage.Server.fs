@@ -101,11 +101,48 @@ module Storage =
             let _, repositoryId = resolveStorageIds graceIds parameters
             let uploadSessionActor = Grace.Actors.Extensions.ActorProxy.UploadSession.CreateActorProxy parameters.UploadSessionId repositoryId correlationId
             let metadata = createEventMetadata context correlationId
-            let! result = uploadSessionActor.Handle command metadata
 
-            match result with
-            | Ok returnValue -> return! context |> result200Ok returnValue
+            let! scopeValidation =
+                task {
+                    match command with
+                    | UploadSessionCommand.Start _ -> return Ok()
+                    | _ ->
+                        let! session = uploadSessionActor.Get correlationId
+
+                        let! sessionForScope =
+                            task {
+                                if session.UploadSessionId = UploadSessionId.Empty then
+                                    let! events = uploadSessionActor.GetEvents correlationId
+
+                                    return
+                                        events
+                                        |> Seq.fold (fun dto event -> UploadSessionDto.UpdateDto event dto) UploadSessionDto.Default
+                                else
+                                    return session
+                            }
+
+                        if sessionForScope.UploadSessionId = UploadSessionId.Empty then
+                            return Ok()
+                        elif sessionForScope.AuthorizedScope
+                             <> parameters.AuthorizedScope then
+                            return
+                                Error(
+                                    GraceError.Create
+                                        $"UploadSession AuthorizedScope must match the scope recorded when the session was started. Expected '{sessionForScope.AuthorizedScope}', actual '{parameters.AuthorizedScope}'."
+                                        correlationId
+                                )
+                        else
+                            return Ok()
+                }
+
+            match scopeValidation with
             | Error error -> return! context |> result400BadRequest error
+            | Ok _ ->
+                let! result = uploadSessionActor.Handle command metadata
+
+                match result with
+                | Ok returnValue -> return! context |> result200Ok returnValue
+                | Error error -> return! context |> result400BadRequest error
         }
 
     let private downloadContentBlockPayload (repositoryDto: RepositoryDto) (confirmedBlock: ConfirmedBlockUpload) correlationId =
@@ -282,7 +319,7 @@ module Storage =
                     let! repositoryDto = repositoryActor.Get correlationId
 
                     let blobName = getContentBlockObjectKey parameters.ContentBlockAddress
-                    let! uploadUri = getUriWithWriteSharedAccessSignature repositoryDto blobName correlationId
+                    let! uploadUri = getUriWithCreateSharedAccessSignature repositoryDto blobName correlationId
                     context.SetStatusCode StatusCodes.Status200OK
                     return! context.WriteStringAsync uploadUri.AbsoluteUri
                 with

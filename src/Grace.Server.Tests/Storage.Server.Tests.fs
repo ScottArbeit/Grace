@@ -501,6 +501,22 @@ type StorageManifestUploadSessionRoutes() =
             return body
         }
 
+    let queryParameter (name: string) (uri: Uri) =
+        uri
+            .Query
+            .TrimStart('?')
+            .Split('&', StringSplitOptions.RemoveEmptyEntries)
+        |> Array.tryPick (fun part ->
+            let pieces = part.Split('=', 2)
+
+            if pieces.Length = 2
+               && pieces[0]
+                   .Equals(name, StringComparison.OrdinalIgnoreCase) then
+                Some(Uri.UnescapeDataString pieces[1])
+            else
+                None)
+        |> Option.defaultValue String.Empty
+
     [<Test>]
     member _.LargeManifestUploadCanStartUploadConfirmAndFinalizeUsingNewBlocksOnly() =
         task {
@@ -540,10 +556,16 @@ type StorageManifestUploadSessionRoutes() =
             let uploadUriParameters = Parameters.Storage.GetContentBlockUploadUriParameters()
             setStorageParameters uploadUriParameters repositoryId correlationId
             uploadUriParameters.ContentBlockAddress <- block.Address
+            uploadUriParameters.AuthorizedScope <- "/"
 
             let! uploadUriResponse = Client.PostAsync("/storage/getContentBlockUploadUri", createJsonContent uploadUriParameters)
             let! uploadUriBody = uploadUriResponse.Content.ReadAsStringAsync()
             Assert.That(uploadUriResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), uploadUriBody)
+
+            let uploadUri = Uri uploadUriBody
+            let sasPermissions = queryParameter "sp" uploadUri
+            Assert.That(sasPermissions, Does.Contain("c"))
+            Assert.That(sasPermissions, Does.Not.Contain("w"))
 
             let confirm = Parameters.Storage.ConfirmContentBlockUploadParameters()
             setStorageParameters confirm repositoryId correlationId
@@ -571,6 +593,43 @@ type StorageManifestUploadSessionRoutes() =
             let! finalizeResult = postUploadSessionDecision "/storage/finalizeManifestUpload" finalize
             Assert.That(finalizeResult.ReturnValue.Session.FinalizedManifestAddress, Is.EqualTo(Some manifest.ManifestAddress))
             Assert.That(finalizeResult.ReturnValue.Session.LifecycleState, Is.EqualTo(UploadSessionLifecycleState.RetentionPending))
+        }
+
+    [<Test>]
+    member _.UploadSessionMutationsRejectAuthorizedScopeMismatch() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let correlationId = generateCorrelationId ()
+            let sessionId = Guid.NewGuid()
+            let payload = pseudoRandomBytes 220000
+            payload[0] <- 2uy
+            let block = encodeBlock payload
+            let manifest = manifestFor payload block
+
+            let start = Parameters.Storage.StartManifestUploadSessionParameters()
+            setStorageParameters start repositoryId correlationId
+            start.UploadSessionId <- sessionId
+            start.AuthorizedScope <- "/allowed/file.bin"
+            start.FileContentHash <- manifest.FileContentHash
+            start.ExpectedSize <- manifest.Size
+            start.ChunkingSuiteId <- manifest.ChunkingSuiteId
+            start.SamplingPolicySnapshot <- "sdk-no-global-dedupe-v1"
+            start.OperationId <- "start"
+
+            let! _ = postUploadSessionDecision "/storage/startManifestUploadSession" start
+
+            let register = Parameters.Storage.RegisterContentBlockUploadParameters()
+            setStorageParameters register repositoryId correlationId
+            register.UploadSessionId <- sessionId
+            register.AuthorizedScope <- "/other/file.bin"
+            register.OperationId <- "register-0"
+            register.ContentBlockAddress <- block.Address
+            register.LogicalOffset <- 0L
+            register.LogicalLength <- int64 payload.Length
+            register.ExpectedPayloadLength <- int64 block.Payload.Length
+
+            let! body = postUploadSessionBadRequest "/storage/registerContentBlockUpload" register
+            Assert.That(body, Does.Contain("AuthorizedScope must match"))
         }
 
     [<Test>]
