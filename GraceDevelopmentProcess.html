@@ -625,6 +625,10 @@ Definition of done:
 - Tests or docs updated
 - Fresh local review-only sibling subagent completed with no issues remaining; implementation subagents return a Ready
   For Review handoff instead of running nested <code>codex review</code>
+- Review-only sibling subagents are allowed up to 10 minutes before stalled-progress analysis and must report back when
+  complete so the parent/orchestrator can continue
+- Review reports include brief Reviewed And OK notes for plausible issues checked and found safe, so later reviewers do
+  not repeat the same checks without a clear reason
 - Validation recorded
 - Standalone pull request comments use a well-templated Markdown Review/Fix format with clear headers, bold labels, a
   short high-level summary, detailed issue/fix text, and validation; do not put review-fix notes in the pull request
