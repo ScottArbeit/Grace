@@ -288,6 +288,24 @@ type UploadSessionActorTests() =
         | Error error -> Assert.That(error.Error, Is.EqualTo("UploadSession is finalized and cannot be changed by Abandon."))
 
     [<Test>]
+    member _.FinalizedSessionRetainsLiveManifestForGcSafety() =
+        let manifestAddress = ManifestAddress "manifest-blake3-final"
+
+        let finalized =
+            { UploadSessionDto.Default with
+                UploadSessionId = sessionId
+                RepositoryId = repositoryId
+                LifecycleState = UploadSessionLifecycleState.StateDeleted
+                FinalizedManifestAddress = Some manifestAddress
+            }
+
+        let abandoned = { finalized with LifecycleState = UploadSessionLifecycleState.StateDeleted; FinalizedManifestAddress = None }
+
+        Assert.That(retainsFinalizedManifest manifestAddress finalized, Is.True)
+        Assert.That(retainsFinalizedManifest manifestAddress abandoned, Is.False)
+        Assert.That(retainsFinalizedManifest (ManifestAddress String.Empty) finalized, Is.False)
+
+    [<Test>]
     member _.BlockUploadIntentMovesStartedSessionToUploadingBlocks() =
         let block = encodedBlock (Text.Encoding.UTF8.GetBytes("hello world"))
         let startedDto, existingEvents = startedSession ()

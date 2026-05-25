@@ -310,6 +310,10 @@ module UploadSession =
             Message: string
         }
 
+    let retainsFinalizedManifest manifestAddress (session: UploadSessionDto) =
+        not (String.IsNullOrWhiteSpace manifestAddress)
+        && session.FinalizedManifestAddress = Some manifestAddress
+
     [<GenerateSerializer>]
     type PhysicalDeletionReminderState =
         {

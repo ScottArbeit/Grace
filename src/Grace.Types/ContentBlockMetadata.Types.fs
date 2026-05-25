@@ -34,6 +34,19 @@ module ContentBlockMetadata =
 
         static member GetKnownTypes() = GetKnownTypes<ContentBlockRangePresence>()
 
+    [<KnownType("GetKnownTypes"); GenerateSerializer>]
+    type ContentBlockRangeGcSafety =
+        | RetainActiveRange
+        | RetainPendingContributionWorkflow
+        | RetainActiveReuseClaim
+        | Reclaimable
+        | Absent
+
+        static member GetKnownTypes() = GetKnownTypes<ContentBlockRangeGcSafety>()
+
+    [<CLIMutable; GenerateSerializer>]
+    type ContentBlockRangeGcSafetyContext = { Presence: ContentBlockRangePresence; HasPendingContributionWorkflow: bool; HasActiveReuseClaim: bool }
+
     [<CLIMutable; GenerateSerializer>]
     type ContentBlockMetadata =
         {
@@ -142,3 +155,11 @@ module ContentBlockMetadata =
             ContentBlockRangePresence.Reclaimable
         else
             ContentBlockRangePresence.Absent
+
+    let rangeGcSafety context =
+        match context.Presence with
+        | ContentBlockRangePresence.Absent -> ContentBlockRangeGcSafety.Absent
+        | ContentBlockRangePresence.Active -> ContentBlockRangeGcSafety.RetainActiveRange
+        | ContentBlockRangePresence.Reclaimable when context.HasPendingContributionWorkflow -> ContentBlockRangeGcSafety.RetainPendingContributionWorkflow
+        | ContentBlockRangePresence.Reclaimable when context.HasActiveReuseClaim -> ContentBlockRangeGcSafety.RetainActiveReuseClaim
+        | ContentBlockRangePresence.Reclaimable -> ContentBlockRangeGcSafety.Reclaimable

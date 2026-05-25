@@ -109,6 +109,34 @@ type ContentBlockMetadataActorTests() =
         Assert.That(ContentBlockMetadataTypes.rangePresence metadata { OrdinalStart = 12; OrdinalCount = 4 }, Is.EqualTo(ContentBlockRangePresence.Absent))
 
     [<Test>]
+    member _.RangeGcSafetyRetainsActiveOrClaimedRangesAndReclaimsOnlyUnclaimedZeroActiveRanges() =
+        let retainActive =
+            ContentBlockMetadataTypes.rangeGcSafety
+                { Presence = ContentBlockRangePresence.Active; HasPendingContributionWorkflow = false; HasActiveReuseClaim = false }
+
+        let retainPendingWorkflow =
+            ContentBlockMetadataTypes.rangeGcSafety
+                { Presence = ContentBlockRangePresence.Reclaimable; HasPendingContributionWorkflow = true; HasActiveReuseClaim = false }
+
+        let retainActiveClaim =
+            ContentBlockMetadataTypes.rangeGcSafety
+                { Presence = ContentBlockRangePresence.Reclaimable; HasPendingContributionWorkflow = false; HasActiveReuseClaim = true }
+
+        let reclaimZeroActive =
+            ContentBlockMetadataTypes.rangeGcSafety
+                { Presence = ContentBlockRangePresence.Reclaimable; HasPendingContributionWorkflow = false; HasActiveReuseClaim = false }
+
+        let absent =
+            ContentBlockMetadataTypes.rangeGcSafety
+                { Presence = ContentBlockRangePresence.Absent; HasPendingContributionWorkflow = false; HasActiveReuseClaim = false }
+
+        Assert.That(retainActive, Is.EqualTo(ContentBlockRangeGcSafety.RetainActiveRange))
+        Assert.That(retainPendingWorkflow, Is.EqualTo(ContentBlockRangeGcSafety.RetainPendingContributionWorkflow))
+        Assert.That(retainActiveClaim, Is.EqualTo(ContentBlockRangeGcSafety.RetainActiveReuseClaim))
+        Assert.That(reclaimZeroActive, Is.EqualTo(ContentBlockRangeGcSafety.Reclaimable))
+        Assert.That(absent, Is.EqualTo(ContentBlockRangeGcSafety.Absent))
+
+    [<Test>]
     member _.RangePresenceAggregatesDuplicateOrdinalRangesAsActiveWhenAnyPhysicalCopyIsActive() =
         let activePhysicalCopy = { reclaimableRange with ActiveManifestCount = 1; PhysicalOffset = 2048L }
 
