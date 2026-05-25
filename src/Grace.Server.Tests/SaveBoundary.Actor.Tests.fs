@@ -275,8 +275,7 @@ type SaveBoundaryActorTests() =
                     )
             }
 
-        let removeDecision =
-            RepositoryContentCounterActor.decideCommand addEvents addedDto decrementPlan.CounterCommand (metadata "corr-expiry-remove")
+        let removeDecision = RepositoryContentCounterActor.decideCommand addEvents addedDto decrementPlan.CounterCommand (metadata "corr-expiry-remove")
 
         let removedDto, allEvents =
             match removeDecision with
@@ -288,8 +287,7 @@ type SaveBoundaryActorTests() =
                 Assert.Fail($"Expected save expiry counter decrement to succeed, got {error.Error}.")
                 RepositoryContentCounterDto.Default, []
 
-        let replayDecision =
-            RepositoryContentCounterActor.decideCommand allEvents removedDto decrementPlan.CounterCommand (metadata "corr-expiry-retry")
+        let replayDecision = RepositoryContentCounterActor.decideCommand allEvents removedDto decrementPlan.CounterCommand (metadata "corr-expiry-retry")
 
         match replayDecision with
         | Ok decision ->
@@ -336,7 +334,7 @@ type SaveBoundaryActorTests() =
                 ReferenceActor.tryCreateManifestContributionStart
                     decrementPlan
                     (RepositoryContentCounterIntent.DecrementManifestReferenceCount(repositoryId, manifest.ManifestAddress))
-            with
+                with
             | Some command -> command
             | None ->
                 Assert.Fail("Expected decrement intent to start manifest contribution workflow fan-out.")
@@ -367,7 +365,7 @@ type SaveBoundaryActorTests() =
                     started
                     (ManifestContributionWorkflowCommand.RecordRangeSucceeded progress)
                     (metadata "corr-expiry-gc-range")
-            with
+                with
             | Ok decision -> decision.Workflow
             | Error error ->
                 Assert.Fail($"Expected decrement range completion to succeed, got {error.Error}.")
