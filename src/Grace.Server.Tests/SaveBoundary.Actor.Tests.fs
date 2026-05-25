@@ -124,6 +124,48 @@ type SaveBoundaryActorTests() =
         | Error error -> Assert.Fail($"Expected repository content counter increment to succeed, got {error.Error}.")
 
     [<Test>]
+    member _.SaveBoundaryRestartsContributionWorkflowAfterCounterReplay() =
+        let manifest = finalizedManifest ()
+        let directoryVersion = directoryWith [ manifestFile manifest ]
+
+        let plan =
+            ReferenceActor.planManifestSaveBoundary repositoryId referenceId directoryVersion "corr-replay"
+            |> expectPlan
+
+        let firstCounterDecision =
+            match RepositoryContentCounterActor.decideCommand [] RepositoryContentCounterDto.Default plan.CounterCommand (metadata "corr-counter-first") with
+            | Ok decision -> decision
+            | Error error ->
+                Assert.Fail($"Expected first repository content counter increment to succeed, got {error.Error}.")
+                Unchecked.defaultof<RepositoryContentCounterDecision>
+
+        let replayDecision =
+            match
+                RepositoryContentCounterActor.decideCommand
+                    firstCounterDecision.Events
+                    firstCounterDecision.Counter
+                    plan.CounterCommand
+                    (metadata "corr-counter-replay")
+                with
+            | Ok decision -> decision
+            | Error error ->
+                Assert.Fail($"Expected repository content counter replay to succeed, got {error.Error}.")
+                Unchecked.defaultof<RepositoryContentCounterDecision>
+
+        Assert.That(replayDecision.WasIdempotentReplay, Is.True)
+        Assert.That(replayDecision.Intents, Is.Empty)
+
+        match ReferenceActor.tryCreateManifestContributionStartForCounterDecision plan replayDecision firstCounterDecision.Events with
+        | Some startCommand ->
+            let workflowDecision =
+                ManifestContributionWorkflowActor.decideCommand [] ManifestContributionWorkflowDto.Default startCommand (metadata "corr-workflow-replay")
+
+            match workflowDecision with
+            | Ok decision -> Assert.That(decision.Workflow.LifecycleState, Is.EqualTo(ManifestContributionWorkflowLifecycleState.InProgress))
+            | Error error -> Assert.Fail($"Expected replayed counter boundary to restart contribution workflow, got {error.Error}.")
+        | None -> Assert.Fail("Expected replayed zero-crossing counter operation to restart manifest contribution workflow fan-out.")
+
+    [<Test>]
     member _.SaveBoundaryStartsPendingContributionWorkflowWithoutWaitingForRangeCompletion() =
         let manifest = finalizedManifest ()
         let directoryVersion = directoryWith [ manifestFile manifest ]

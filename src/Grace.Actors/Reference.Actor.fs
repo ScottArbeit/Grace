@@ -64,6 +64,16 @@ module Reference =
 
         ranges.ToArray()
 
+    let private workflowStartCommandForPlan plan =
+        ManifestContributionWorkflowCommand.Start
+            {
+                OperationId = workflowOperationId plan.ReferenceId plan.Manifest.ManifestAddress
+                RepositoryId = plan.RepositoryId
+                ManifestAddress = plan.Manifest.ManifestAddress
+                Direction = ManifestContributionDirection.Increment
+                Ranges = plan.WorkflowRanges
+            }
+
     let planManifestSaveBoundary repositoryId referenceId (directoryVersion: DirectoryVersion) correlationId =
         match DirectoryVersion.getManifestReferencesForSaveBoundary directoryVersion correlationId with
         | Error graceError -> Error graceError
@@ -87,17 +97,42 @@ module Reference =
             repositoryId = plan.RepositoryId
             && manifestAddress = plan.Manifest.ManifestAddress
             ->
-            Some(
-                ManifestContributionWorkflowCommand.Start
-                    {
-                        OperationId = workflowOperationId plan.ReferenceId plan.Manifest.ManifestAddress
-                        RepositoryId = plan.RepositoryId
-                        ManifestAddress = plan.Manifest.ManifestAddress
-                        Direction = ManifestContributionDirection.Increment
-                        Ranges = plan.WorkflowRanges
-                    }
-            )
+            Some(workflowStartCommandForPlan plan)
         | _ -> None
+
+    let private addReferenceOperationId command =
+        match command with
+        | RepositoryContentCounterCommand.AddReference (operationId, _, _) -> Some operationId
+        | _ -> None
+
+    let private referenceAddedFromZero operationId events =
+        let mutable referenceCount = 0L
+        let mutable addedFromZero = false
+
+        for counterEvent in events do
+            match counterEvent.Event with
+            | RepositoryContentCounterEventType.ReferenceAdded (eventOperationId, _, _) ->
+                if eventOperationId = operationId
+                   && referenceCount = 0L then
+                    addedFromZero <- true
+
+                referenceCount <- referenceCount + 1L
+            | RepositoryContentCounterEventType.ReferenceRemoved _ -> referenceCount <- max 0L (referenceCount - 1L)
+
+        addedFromZero
+
+    let tryCreateManifestContributionStartForCounterDecision plan (decision: RepositoryContentCounterDecision) events =
+        let startFromIntent =
+            decision.Intents
+            |> List.tryPick (tryCreateManifestContributionStart plan)
+
+        match startFromIntent with
+        | Some startCommand -> Some startCommand
+        | None when decision.WasIdempotentReplay ->
+            match addReferenceOperationId plan.CounterCommand with
+            | Some operationId when referenceAddedFromZero operationId events -> Some(workflowStartCommandForPlan plan)
+            | _ -> None
+        | None -> None
 
     let private createRepositoryContentCounterActor repositoryId manifestAddress correlationId =
         let grain =
@@ -387,27 +422,20 @@ module Reference =
                                         match! counterActor.Handle plan.CounterCommand metadata with
                                         | Error graceError -> error <- Some graceError
                                         | Ok counterReturnValue ->
-                                            let intents =
-                                                counterReturnValue.ReturnValue.Intents
-                                                |> List.toArray
+                                            let! counterEvents = counterActor.GetEvents metadata.CorrelationId
 
-                                            let mutable intentIndex = 0
+                                            match tryCreateManifestContributionStartForCounterDecision plan counterReturnValue.ReturnValue counterEvents with
+                                            | None -> ()
+                                            | Some startCommand ->
+                                                let workflowActor =
+                                                    createManifestContributionWorkflowActor
+                                                        plan.RepositoryId
+                                                        plan.Manifest.ManifestAddress
+                                                        metadata.CorrelationId
 
-                                            while intentIndex < intents.Length && error.IsNone do
-                                                match tryCreateManifestContributionStart plan intents[intentIndex] with
-                                                | None -> ()
-                                                | Some startCommand ->
-                                                    let workflowActor =
-                                                        createManifestContributionWorkflowActor
-                                                            plan.RepositoryId
-                                                            plan.Manifest.ManifestAddress
-                                                            metadata.CorrelationId
-
-                                                    match! workflowActor.Handle startCommand metadata with
-                                                    | Ok _ -> ()
-                                                    | Error graceError -> error <- Some graceError
-
-                                                intentIndex <- intentIndex + 1
+                                                match! workflowActor.Handle startCommand metadata with
+                                                | Ok _ -> ()
+                                                | Error graceError -> error <- Some graceError
 
                                         planIndex <- planIndex + 1
 
