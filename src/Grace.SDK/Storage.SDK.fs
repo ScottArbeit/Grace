@@ -33,6 +33,14 @@ open Azure
 
 module Storage =
 
+    let internal blobAlreadyExistsErrorCode = "BlobAlreadyExists"
+
+    let internal isExistingContentBlockUploadConflict (ex: RequestFailedException) =
+        ex.Status = int HttpStatusCode.Conflict
+        && String.Equals(ex.ErrorCode, blobAlreadyExistsErrorCode, StringComparison.OrdinalIgnoreCase)
+
+    let private contentBlockPlacement contentBlockAddress etag = { ObjectKey = StorageKeys.contentBlockObjectKey contentBlockAddress; ETag = etag }
+
     /// Gets a file from object storage and saves it to the local object directory.
     let GetFileFromObjectStorage (getDownloadUriParameters: GetDownloadUriParameters) correlationId =
         task {
@@ -317,13 +325,12 @@ module Storage =
                     use payloadStream = new MemoryStream(payload, writable = false)
                     let! response = blockBlobClient.UploadAsync(payloadStream)
 
-                    let placement: ContentBlockStoragePlacement =
-                        { ObjectKey = StorageKeys.contentBlockObjectKey contentBlockAddress; ETag = Some(response.Value.ETag.ToString()) }
-
-                    return Ok(GraceReturnValue.Create placement correlationId)
+                    return Ok(GraceReturnValue.Create (contentBlockPlacement contentBlockAddress (Some(response.Value.ETag.ToString()))) correlationId)
                 | ObjectStorageProvider.AWSS3 -> return Error(GraceError.Create (getErrorMessage StorageError.NotImplemented) correlationId)
                 | ObjectStorageProvider.GoogleCloudStorage -> return Error(GraceError.Create (getErrorMessage StorageError.NotImplemented) correlationId)
             with
+            | :? RequestFailedException as ex when isExistingContentBlockUploadConflict ex ->
+                return Ok(GraceReturnValue.Create (contentBlockPlacement contentBlockAddress None) correlationId)
             | ex ->
                 let exceptionResponse = ExceptionResponse.Create ex
                 return Error(GraceError.Create (exceptionResponse.ToString()) correlationId)

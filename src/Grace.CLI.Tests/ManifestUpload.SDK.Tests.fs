@@ -1,5 +1,6 @@
 namespace Grace.CLI.Tests
 
+open Azure
 open Grace.SDK
 open Grace.Shared
 open Grace.Shared.Parameters.Storage
@@ -59,6 +60,16 @@ type ManifestUploadSdkTests() =
             CorrelationId = correlationId
             PlannerOptions = { LocalPlanner.Options.Default with EligibilityPolicy = ManifestUploadSdkTests.BinaryPolicy 1024L }
         }
+
+    [<Test>]
+    member _.ContentBlockUploadConflictDetectionOnlyAcceptsAzureBlobAlreadyExistsConflict() =
+        let existingBlob = RequestFailedException(409, "The specified blob already exists.", "BlobAlreadyExists", null)
+        let leaseConflict = RequestFailedException(409, "There is a lease conflict.", "LeaseAlreadyPresent", null)
+        let forbidden = RequestFailedException(403, "Forbidden.", "BlobAlreadyExists", null)
+
+        Assert.That(Storage.isExistingContentBlockUploadConflict existingBlob, Is.True)
+        Assert.That(Storage.isExistingContentBlockUploadConflict leaseConflict, Is.False)
+        Assert.That(Storage.isExistingContentBlockUploadConflict forbidden, Is.False)
 
     [<Test>]
     member _.ManifestUploadFlowStartsUploadsConfirmsAndFinalizesNewBlocksOnly() =
@@ -139,6 +150,68 @@ type ManifestUploadSdkTests() =
                     )
 
                     Assert.That(uploadedBlocks.Keys, Is.EquivalentTo(confirmedBlocks.Keys))
+            finally
+                if File.Exists(tempPath) then File.Delete(tempPath)
+        }
+
+    [<Test>]
+    member _.ManifestUploadCanConfirmExistingContentBlockPlacementWithoutNewEtag() =
+        task {
+            let payload = ManifestUploadSdkTests.PseudoRandomBytes 220000
+            payload[0] <- 2uy
+
+            let tempPath = Path.Combine(Path.GetTempPath(), $"grace-manifest-upload-existing-block-{Guid.NewGuid():N}.bin")
+            let correlationId = "corr-sdk-manifest-upload-existing-block"
+            let existingPlacements = ResizeArray<ContentBlockStoragePlacement>()
+            let confirmedBlocks = Dictionary<ContentBlockAddress, ContentBlockStoragePlacement>()
+            let mutable manifestBlockCount = 0
+
+            try
+                File.WriteAllBytes(tempPath, payload)
+
+                let fileVersion =
+                    FileVersion.Create "existing-block-large.bin" (ManifestUploadSdkTests.ComputeSha256Hash payload) String.Empty true (int64 payload.Length)
+
+                let client: ManifestUpload.ManifestUploadClient =
+                    {
+                        StartSession =
+                            fun parameters ->
+                                Assert.That(parameters.AuthorizedScope, Is.EqualTo(fileVersion.RelativePath))
+                                ManifestUploadSdkTests.Decision correlationId parameters.UploadSessionId parameters.OperationId
+                        RegisterBlockUpload =
+                            fun parameters ->
+                                Assert.That(parameters.AuthorizedScope, Is.EqualTo(fileVersion.RelativePath))
+                                ManifestUploadSdkTests.Decision correlationId parameters.UploadSessionId parameters.OperationId
+                        UploadContentBlock =
+                            fun parameters _payload ->
+                                Assert.That(parameters.AuthorizedScope, Is.EqualTo(fileVersion.RelativePath))
+
+                                let placement = { ObjectKey = $"cas/content-blocks/{parameters.ContentBlockAddress}"; ETag = None }
+
+                                existingPlacements.Add(placement)
+                                Task.FromResult(Ok(GraceReturnValue.Create placement correlationId))
+                        ConfirmBlockUploaded =
+                            fun parameters ->
+                                Assert.That(parameters.AuthorizedScope, Is.EqualTo(fileVersion.RelativePath))
+                                confirmedBlocks[parameters.ContentBlockAddress] <- parameters.StoragePlacement
+                                ManifestUploadSdkTests.Decision correlationId parameters.UploadSessionId parameters.OperationId
+                        FinalizeManifest =
+                            fun parameters ->
+                                Assert.That(parameters.AuthorizedScope, Is.EqualTo(fileVersion.RelativePath))
+                                manifestBlockCount <- parameters.Manifest.Blocks.Count
+                                Assert.That(parameters.BlockPayloads, Is.Empty)
+                                ManifestUploadSdkTests.Decision correlationId parameters.UploadSessionId parameters.OperationId
+                    }
+
+                let! result = ManifestUpload.uploadFileWithClient client (ManifestUploadSdkTests.CreateRequest tempPath fileVersion correlationId)
+
+                match result with
+                | Error error -> Assert.Fail(error.Error)
+                | Ok returnValue ->
+                    Assert.That(returnValue.ReturnValue.UsedManifestUpload, Is.True)
+                    Assert.That(existingPlacements, Is.Not.Empty)
+                    Assert.That(confirmedBlocks.Values, Is.EquivalentTo(existingPlacements))
+                    Assert.That(manifestBlockCount, Is.GreaterThanOrEqualTo(confirmedBlocks.Count))
             finally
                 if File.Exists(tempPath) then File.Delete(tempPath)
         }

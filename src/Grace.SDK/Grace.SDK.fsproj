@@ -49,6 +49,10 @@
 	</ItemGroup>
 
 	<ItemGroup>
+		<InternalsVisibleTo Include="Grace.CLI.Tests" />
+	</ItemGroup>
+
+	<ItemGroup>
 		<ProjectReference Include="..\Grace.Types\Grace.Types.fsproj" />
 		<ProjectReference Include="..\Grace.Shared\Grace.Shared.fsproj" />
 	</ItemGroup>
