@@ -214,6 +214,28 @@ module ManifestUpload =
 
             hints.ToArray()
 
+    let private addFullyClaimedBlockAddresses
+        (plan: LocalPlanner.LocalFilePlan)
+        (claimedBlockAddresses: HashSet<ContentBlockAddress>)
+        (session: UploadSessionDto)
+        =
+        if
+            not (isNull (box session))
+            && not (isNull session.ClaimedReuseRanges)
+        then
+            let mutable claimedRangeIndex = 0
+
+            while claimedRangeIndex < session.ClaimedReuseRanges.Length do
+                let claimedRange = session.ClaimedReuseRanges[claimedRangeIndex]
+
+                plan.Blocks
+                |> Array.tryFind (fun block ->
+                    block.Address = claimedRange.ContentBlockAddress
+                    && block.Size = claimedRange.PhysicalLength)
+                |> Option.iter (fun block -> claimedBlockAddresses.Add block.Address |> ignore)
+
+                claimedRangeIndex <- claimedRangeIndex + 1
+
     let uploadFileWithClient (client: ManifestUploadClient) (request: ManifestUploadRequest) : Task<GraceResult<ManifestUploadResult>> =
         task {
             if isNull (box request.FileVersion) then
@@ -275,11 +297,7 @@ module ManifestUpload =
                                         let claimParameters = buildClaimReuseRangesParameters request uploadSessionId 0 issueParameters.OperationId reuseHints
 
                                         match! client.ClaimReuseRanges claimParameters with
-                                        | Ok _ ->
-                                            reuseHints
-                                            |> Array.iter (fun hint ->
-                                                claimedBlockAddresses.Add hint.ContentBlockAddress
-                                                |> ignore)
+                                        | Ok claimResult -> addFullyClaimedBlockAddresses plan claimedBlockAddresses claimResult.ReturnValue.Session
                                         | Error _ -> ()
                                     | Error _ -> ()
                             | _ -> ()

@@ -47,6 +47,19 @@ type ManifestUploadSdkTests() =
 
         Task.FromResult(Ok(GraceReturnValue.Create decision correlationId))
 
+    static member private ClaimDecision correlationId sessionId operationId claimedRanges =
+        let session =
+            { UploadSessionDto.Default with
+                UploadSessionId = sessionId
+                RepositoryId = Guid.Parse("11111111-1111-1111-1111-111111111111")
+                ClaimedReuseRanges = claimedRanges
+                LastOperationId = Some operationId
+            }
+
+        let decision = { Session = session; OperationId = operationId; Events = []; WasIdempotentReplay = false; Message = "accepted" }
+
+        Task.FromResult(Ok(GraceReturnValue.Create decision correlationId))
+
     static member private DiscoveryPolicy minimumReuseRunLength =
         {
             MaxKeyChunkAddresses = 256
@@ -260,7 +273,20 @@ type ManifestUploadSdkTests() =
                             fun parameters ->
                                 Assert.That(parameters.Hints, Has.Length.EqualTo(1))
                                 claimedHints.AddRange(parameters.Hints)
-                                ManifestUploadSdkTests.Decision correlationId parameters.UploadSessionId parameters.OperationId
+
+                                let claimedRange =
+                                    {
+                                        StoragePoolId = storagePoolId
+                                        ContentBlockAddress = claimedBlock.Address
+                                        OrdinalStart = parameters.Hints[0].OrdinalStart
+                                        OrdinalCount = parameters.Hints[0].OrdinalCount
+                                        PhysicalOffset = 0L
+                                        PhysicalLength = claimedBlock.Size
+                                        MetadataVersion = parameters.Hints[0].MetadataVersion
+                                        ClaimedAt = getCurrentInstant ()
+                                    }
+
+                                ManifestUploadSdkTests.ClaimDecision correlationId parameters.UploadSessionId parameters.OperationId [| claimedRange |]
                         RegisterBlockUpload =
                             fun parameters ->
                                 Assert.That(parameters.ContentBlockAddress, Is.Not.EqualTo(claimedBlock.Address))
@@ -292,6 +318,109 @@ type ManifestUploadSdkTests() =
                     Assert.That(uploadedBlocks.ContainsKey claimedBlock.Address, Is.False)
                     Assert.That(confirmedBlocks.ContainsKey claimedBlock.Address, Is.False)
                     Assert.That(uploadedBlocks.Count, Is.EqualTo(plan.ContentBlockUploads.Length - 1))
+                    Assert.That(returnValue.ReturnValue.UploadedBlockCount, Is.EqualTo(uploadedBlocks.Count))
+            finally
+                if File.Exists(tempPath) then File.Delete(tempPath)
+        }
+
+    [<Test>]
+    member _.ManifestUploadUploadsBlockWhenReuseClaimCoversOnlyPartialWindow() =
+        task {
+            let payload = ManifestUploadSdkTests.PseudoRandomBytes 220000
+            payload[0] <- 6uy
+
+            let tempPath = Path.Combine(Path.GetTempPath(), $"grace-manifest-upload-partial-reuse-{Guid.NewGuid():N}.bin")
+            let correlationId = "corr-sdk-manifest-upload-partial-reuse"
+            let uploadedBlocks = Dictionary<ContentBlockAddress, byte array>()
+            let confirmedBlocks = Dictionary<ContentBlockAddress, byte array>()
+            let mutable attemptedClaim = false
+
+            try
+                File.WriteAllBytes(tempPath, payload)
+
+                let fileVersion =
+                    FileVersion.Create "partial-reuse-large.bin" (ManifestUploadSdkTests.ComputeSha256Hash payload) String.Empty true (int64 payload.Length)
+
+                let request = ManifestUploadSdkTests.CreateRequest tempPath fileVersion correlationId
+                let plan = LocalPlanner.analyzeFile request.PlannerOptions tempPath
+                let partiallyClaimedBlock = plan.Blocks[0]
+                let storagePoolId = StoragePoolId $"{request.RepositoryId}"
+
+                let client: ManifestUpload.ManifestUploadClient =
+                    {
+                        StartSession = fun parameters -> ManifestUploadSdkTests.Decision correlationId parameters.UploadSessionId parameters.OperationId
+                        DiscoverContentBlocks =
+                            fun parameters ->
+                                let candidate =
+                                    {
+                                        StoragePoolId = storagePoolId
+                                        ManifestAddress = ManifestAddress "manifest-partial-candidate"
+                                        ContentBlockAddress = partiallyClaimedBlock.Address
+                                        OrdinalStart = 0
+                                        OrdinalCount = 8
+                                        MetadataVersion = 7L
+                                        MatchingKeyChunkCount = 1
+                                        ProtectedChunkAddresses =
+                                            [|
+                                                ManifestUploadSdkTests.ProtectedChunkAddress storagePoolId partiallyClaimedBlock.KeyChunkAddress
+                                            |]
+                                    }
+
+                                let discovery =
+                                    {
+                                        RequestedKeyChunkCount = parameters.KeyChunkAddresses.Length
+                                        AcceptedKeyChunkCount = parameters.KeyChunkAddresses.Length
+                                        Policy = ManifestUploadSdkTests.DiscoveryPolicy 8
+                                        CandidateContentBlocks = [| candidate |]
+                                        IsPartial = false
+                                        Message = "partial candidate"
+                                    }
+
+                                Task.FromResult(Ok(GraceReturnValue.Create discovery correlationId))
+                        IssueDedupeDiscovery = fun parameters -> ManifestUploadSdkTests.Decision correlationId parameters.UploadSessionId parameters.OperationId
+                        ClaimReuseRanges =
+                            fun parameters ->
+                                attemptedClaim <- true
+
+                                let partialRange =
+                                    {
+                                        StoragePoolId = storagePoolId
+                                        ContentBlockAddress = partiallyClaimedBlock.Address
+                                        OrdinalStart = parameters.Hints[0].OrdinalStart
+                                        OrdinalCount = parameters.Hints[0].OrdinalCount
+                                        PhysicalOffset = 0L
+                                        PhysicalLength = partiallyClaimedBlock.Size - 1L
+                                        MetadataVersion = parameters.Hints[0].MetadataVersion
+                                        ClaimedAt = getCurrentInstant ()
+                                    }
+
+                                ManifestUploadSdkTests.ClaimDecision correlationId parameters.UploadSessionId parameters.OperationId [| partialRange |]
+                        RegisterBlockUpload = fun parameters -> ManifestUploadSdkTests.Decision correlationId parameters.UploadSessionId parameters.OperationId
+                        UploadContentBlock =
+                            fun parameters payload ->
+                                uploadedBlocks[parameters.ContentBlockAddress] <- payload
+
+                                let placement =
+                                    { ObjectKey = $"cas/content-blocks/{parameters.ContentBlockAddress}"; ETag = Some $"etag-{uploadedBlocks.Count}" }
+
+                                Task.FromResult(Ok(GraceReturnValue.Create placement correlationId))
+                        ConfirmBlockUploaded =
+                            fun parameters ->
+                                confirmedBlocks[parameters.ContentBlockAddress] <- parameters.Payload
+                                ManifestUploadSdkTests.Decision correlationId parameters.UploadSessionId parameters.OperationId
+                        FinalizeManifest = fun parameters -> ManifestUploadSdkTests.Decision correlationId parameters.UploadSessionId parameters.OperationId
+                    }
+
+                let! result = ManifestUpload.uploadFileWithClient client request
+
+                match result with
+                | Error error -> Assert.Fail(error.Error)
+                | Ok returnValue ->
+                    Assert.That(returnValue.ReturnValue.UsedManifestUpload, Is.True)
+                    Assert.That(attemptedClaim, Is.True)
+                    Assert.That(uploadedBlocks.ContainsKey partiallyClaimedBlock.Address, Is.True)
+                    Assert.That(confirmedBlocks.ContainsKey partiallyClaimedBlock.Address, Is.True)
+                    Assert.That(uploadedBlocks.Count, Is.EqualTo(plan.ContentBlockUploads.Length))
                     Assert.That(returnValue.ReturnValue.UploadedBlockCount, Is.EqualTo(uploadedBlocks.Count))
             finally
                 if File.Exists(tempPath) then File.Delete(tempPath)
