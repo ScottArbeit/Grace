@@ -192,10 +192,10 @@ The review loop is blocking:
 3. Re-run focused validation for the changed behavior or docs, and broader validation when the fix touches shared or
    risky surfaces.
 4. Commit the review fix.
-5. If a pull request already exists, add a new standalone pull request comment that summarizes each review issue
-   addressed, the fix that resolved it, the fix commit, and the validation run. Do not add review-fix notes to the pull
-   request body. If the pull request does not exist yet, add the standalone comment immediately after opening the pull
-   request.
+5. If a pull request already exists, add a new standalone pull request comment for the review fix using the
+   [Review/Fix comment template](#reviewfix-comment-template). The comment must make the high-level outcome easy to
+   scan before the detailed issue and fix text. Do not add review-fix notes to the pull request body. If the pull
+   request does not exist yet, add the standalone comment immediately after opening the pull request.
 6. Run another local review-only subagent pass against the updated committed diff, again using the dedicated Code Review
    capability when the subagent environment exposes one.
 7. Repeat the loop until the review reports no issues.
@@ -203,6 +203,36 @@ The review loop is blocking:
 Only after the local review-only subagent reports no issues can the task continue toward pull request creation, handoff,
 merge readiness, or any other completion step. Record whether a dedicated subagent Code Review capability was available,
 the final no-issues review result, and validation evidence in the task record or pull request.
+
+### Review/Fix Comment Template
+
+Use this Markdown structure for each standalone pull request comment created after a review issue is fixed. Keep the
+top section short and scannable; put detailed evidence below it.
+
+```markdown
+## Review/Fix: <short issue title>
+
+**Status:** Fixed in `<commit-sha>`
+**Review source:** Local review-only subagent
+**Validation:** <command or check result>
+
+### Summary
+
+_One or two sentences explaining the review issue and the fix at a high level._
+
+### Review Issue
+
+<Describe the actionable issue the reviewer found. Include file/line references when available.>
+
+### Fix
+
+<Describe the code or docs change that addressed the issue. Include the fix commit and important files changed.>
+
+### Validation
+
+- `<focused command>`: <result>
+- `<broader command, if any>`: <result or skipped reason>
+```
 
 ## Validation Commands
 
@@ -259,8 +289,8 @@ Before opening or updating a pull request, include:
 - broader validation run, or skipped-validation reason
 - review path used: local review-only subagent, including whether a dedicated Code Review capability was available
 - final no-issues code review result
-- standalone pull request comments for each review issue that required a fix, including the issue, fix, fix commit, and
-  validation; do not put review-fix notes in the pull request body
+- standalone, templated Markdown pull request comments for each review issue that required a fix, including the issue,
+  fix, fix commit, and validation; do not put review-fix notes in the pull request body
 - docs impact
 - residual risk
 - rollback or recovery notes when the change touches runtime or data
