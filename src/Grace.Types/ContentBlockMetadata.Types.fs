@@ -202,10 +202,15 @@ module ContentBlockMetadata =
 
     let private minimumCompactionAge = Duration.FromHours(24.0)
 
+    let private addSaturatingPhysicalBytes total length =
+        if length <= 0L then total
+        elif total > Int64.MaxValue - length then Int64.MaxValue
+        else total + length
+
     let private reclaimablePhysicalBytes (metadata: ContentBlockMetadata) =
         metadata.Ranges
         |> Array.filter (fun range -> range.ActiveManifestCount = 0)
-        |> Array.sumBy (fun range -> range.PhysicalLength)
+        |> Array.fold (fun total range -> addSaturatingPhysicalBytes total range.PhysicalLength) 0L
 
     let private requiredReclaimableBytes (metadata: ContentBlockMetadata) =
         let tenPercent =

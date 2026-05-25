@@ -202,6 +202,23 @@ type ContentBlockMetadataActorTests() =
         Assert.That(churn, Is.EqualTo(ContentBlockCompactionSelection.RetainChurn))
         Assert.That(stale, Is.EqualTo(ContentBlockCompactionSelection.RetainStaleMetadata))
 
+        let overflowReclaimable = { reclaimable with PhysicalLength = Int64.MaxValue }
+
+        let overflowMetadata =
+            recordWithTotals
+                [|
+                    overflowReclaimable
+                    { reclaimable with PhysicalLength = 1L }
+                |]
+                Int64.MaxValue
+                0L
+                oldEnough
+                7L
+
+        let overflowSelection = ContentBlockMetadataTypes.selectCompactionCandidate baseContext overflowMetadata
+
+        Assert.That(overflowSelection, Is.EqualTo(ContentBlockCompactionSelection.Selected))
+
     [<Test>]
     member _.CompactPhysicalRangesRemovesReclaimableBytesWithoutChangingLogicalReconstructionIdentity() =
         let oldEnough = timestamp.Plus(Duration.FromHours(-25.0))
