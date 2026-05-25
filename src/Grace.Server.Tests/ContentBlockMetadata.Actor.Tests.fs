@@ -344,6 +344,41 @@ type ContentBlockMetadataActorTests() =
         | Error error -> Assert.That(error.Error, Does.Contain("Stale ContentBlockMetadata compaction rejected"))
 
     [<Test>]
+    member _.CompactPhysicalRangesRejectsRewriteThatDoesNotReducePhysicalBytes() =
+        let oldEnough = timestamp.Plus(Duration.FromHours(-25.0))
+        let minimumReclaimableBytes = 64L * 1024L * 1024L
+        let active = { activeRange with PhysicalLength = 8192L; ActiveManifestCount = 1 }
+        let reclaimable = { reclaimableRange with PhysicalOffset = 8192L; PhysicalLength = minimumReclaimableBytes; ActiveManifestCount = 0 }
+
+        let currentMetadata = recordWithTotals [| active; reclaimable |] (8192L + minimumReclaimableBytes) 8192L oldEnough 7L
+
+        let currentDto = { ContentBlockMetadataDto.Empty with Metadata = Some currentMetadata }
+
+        let context =
+            {
+                Now = timestamp
+                ExpectedMetadataVersion = 7L
+                HasActiveUpload = false
+                HasActiveFinalization = false
+                HasActiveRangeClaim = false
+                HasActiveCompaction = false
+            }
+
+        let placement = { ObjectKey = "cas/content-blocks/block-blake3-0001.compacted"; ETag = Some "etag-compact" }
+        let nonCompactingRange = { active with PhysicalOffset = minimumReclaimableBytes; PhysicalLength = 8192L }
+
+        let result =
+            ContentBlockMetadataActor.decideCommand
+                []
+                currentDto
+                (compact "op-compact-non-reducing" 7L placement [| nonCompactingRange |] context)
+                (metadata "corr-compact-non-reducing")
+
+        match result with
+        | Ok _ -> Assert.Fail("Expected non-reducing compaction rewrite to be rejected.")
+        | Error error -> Assert.That(error.Error, Is.EqualTo("Compacted ContentBlockMetadata must reduce TotalPhysicalBytes."))
+
+    [<Test>]
     member _.CompactPhysicalRangesUsesActorTimestampForAgeGateAndRejectsMissingCandidateContext() =
         let tooYoung = timestamp.Plus(Duration.FromHours(-23.0))
         let callerSuppliedFuture = timestamp.Plus(Duration.FromDays(30.0))

@@ -235,6 +235,8 @@ module ContentBlockMetadata =
 
                             if activePhysicalBytes > totalPhysicalBytes then
                                 Error(graceError correlationId "ActivePhysicalBytes cannot exceed TotalPhysicalBytes.")
+                            elif totalPhysicalBytes >= existing.TotalPhysicalBytes then
+                                Error(graceError correlationId "Compacted ContentBlockMetadata must reduce TotalPhysicalBytes.")
                             else
                                 Ok
                                     { existing with
