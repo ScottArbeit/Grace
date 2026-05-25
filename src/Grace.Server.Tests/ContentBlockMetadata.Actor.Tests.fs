@@ -76,6 +76,8 @@ type ContentBlockMetadataActorTests() =
                 CandidateContext = context
             }
 
+    let setChurnState operationId churnState = ContentBlockMetadataCommand.SetCompactionChurnState { OperationId = operationId; ChurnState = churnState }
+
     let applyAll events current =
         events
         |> List.fold (fun state event -> ContentBlockMetadataDto.UpdateDto event state) current
@@ -466,7 +468,20 @@ type ContentBlockMetadataActorTests() =
 
         let churnState = { ContentBlockCompactionChurnState.NoChurn with HasActiveRangeClaim = true }
 
-        let currentDto = { ContentBlockMetadataDto.Empty with Metadata = Some currentMetadata; CompactionChurnState = churnState }
+        let noChurnDto = { ContentBlockMetadataDto.Empty with Metadata = Some currentMetadata }
+
+        let churnDecision = ContentBlockMetadataActor.decideCommand [] noChurnDto (setChurnState "op-set-churn" churnState) (metadata "corr-set-churn")
+
+        let currentDto =
+            match churnDecision with
+            | Ok decision ->
+                Assert.That(decision.Events.Length, Is.EqualTo(1))
+                applyAll decision.Events noChurnDto
+            | Error error ->
+                Assert.Fail($"Expected actor churn state event to be accepted, got {error.Error}.")
+                noChurnDto
+
+        Assert.That(currentDto.CompactionChurnState.HasActiveRangeClaim, Is.True)
 
         let callerSuppliedNoChurn =
             {

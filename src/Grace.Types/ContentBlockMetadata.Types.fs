@@ -132,11 +132,15 @@ module ContentBlockMetadata =
             CandidateContext: ContentBlockCompactionCandidateContext
         }
 
+    [<GenerateSerializer>]
+    type SetContentBlockCompactionChurnState = { OperationId: string; ChurnState: ContentBlockCompactionChurnState }
+
     [<KnownType("GetKnownTypes"); GenerateSerializer>]
     type ContentBlockMetadataCommand =
         | ReplaceWholeRecord of replace: ReplaceContentBlockMetadata
         | MergePhysicalRanges of merge: MergeContentBlockPhysicalRanges
         | CompactPhysicalRanges of compact: CompactContentBlockPhysicalRanges
+        | SetCompactionChurnState of setChurnState: SetContentBlockCompactionChurnState
 
         static member GetKnownTypes() = GetKnownTypes<ContentBlockMetadataCommand>()
 
@@ -145,6 +149,7 @@ module ContentBlockMetadata =
         | WholeRecordReplaced of operationId: string * metadata: ContentBlockMetadata
         | PhysicalRangesMerged of operationId: string * metadata: ContentBlockMetadata
         | PhysicalRangesCompacted of operationId: string * metadata: ContentBlockMetadata
+        | CompactionChurnStateSet of operationId: string * churnState: ContentBlockCompactionChurnState
 
         static member GetKnownTypes() = GetKnownTypes<ContentBlockMetadataEventType>()
 
@@ -169,6 +174,8 @@ module ContentBlockMetadata =
                 { _current with Metadata = Some metadata; LastOperationId = Some operationId }
             | ContentBlockMetadataEventType.PhysicalRangesCompacted (operationId, metadata) ->
                 { _current with Metadata = Some metadata; LastOperationId = Some operationId }
+            | ContentBlockMetadataEventType.CompactionChurnStateSet (operationId, churnState) ->
+                { _current with CompactionChurnState = churnState; LastOperationId = Some operationId }
 
     [<GenerateSerializer>]
     type ContentBlockMetadataDecision =

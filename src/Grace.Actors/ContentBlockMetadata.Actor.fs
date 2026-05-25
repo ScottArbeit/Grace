@@ -26,6 +26,7 @@ module ContentBlockMetadata =
         | ContentBlockMetadataCommand.ReplaceWholeRecord _ -> "ReplaceWholeRecord"
         | ContentBlockMetadataCommand.MergePhysicalRanges _ -> "MergePhysicalRanges"
         | ContentBlockMetadataCommand.CompactPhysicalRanges _ -> "CompactPhysicalRanges"
+        | ContentBlockMetadataCommand.SetCompactionChurnState _ -> "SetCompactionChurnState"
 
     let operationId command =
         match command with
@@ -33,12 +34,15 @@ module ContentBlockMetadata =
         | ContentBlockMetadataCommand.MergePhysicalRanges merge -> merge.OperationId
         | ContentBlockMetadataCommand.CompactPhysicalRanges compact when isNull (box compact) -> String.Empty
         | ContentBlockMetadataCommand.CompactPhysicalRanges compact -> compact.OperationId
+        | ContentBlockMetadataCommand.SetCompactionChurnState setChurnState when isNull (box setChurnState) -> String.Empty
+        | ContentBlockMetadataCommand.SetCompactionChurnState setChurnState -> setChurnState.OperationId
 
     let private eventOperationId metadataEvent =
         match metadataEvent.Event with
         | ContentBlockMetadataEventType.WholeRecordReplaced (operationId, _) -> operationId
         | ContentBlockMetadataEventType.PhysicalRangesMerged (operationId, _) -> operationId
         | ContentBlockMetadataEventType.PhysicalRangesCompacted (operationId, _) -> operationId
+        | ContentBlockMetadataEventType.CompactionChurnStateSet (operationId, _) -> operationId
 
     let private hasAppliedOperationId (events: seq<ContentBlockMetadataEvent>) operationId =
         events
@@ -418,6 +422,22 @@ module ContentBlockMetadata =
                         ]
 
                     okDecision metadata operationId events false "ContentBlockMetadata physical ranges compacted."
+            | ContentBlockMetadataCommand.SetCompactionChurnState setChurnState ->
+                if isNull (box setChurnState) then
+                    Error(graceError eventMetadata.CorrelationId "Compaction ChurnState payload is required.")
+                elif isNull (box setChurnState.ChurnState) then
+                    Error(graceError eventMetadata.CorrelationId "Compaction ChurnState is required.")
+                else
+                    let events =
+                        [
+                            { Event = ContentBlockMetadataEventType.CompactionChurnStateSet(operationId, setChurnState.ChurnState); Metadata = eventMetadata }
+                        ]
+
+                    let metadata =
+                        current.Metadata
+                        |> Option.defaultValue ContentBlockMetadata.Empty
+
+                    okDecision metadata operationId events false "ContentBlockMetadata compaction churn state set."
 
     type ContentBlockMetadataActor
         (
