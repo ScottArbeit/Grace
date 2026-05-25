@@ -369,15 +369,13 @@ UploadSessionDecision:
   type: object
   properties:
     Session:
-      type: object
-      additionalProperties: true
+      $ref: '#/UploadSessionDto'
     OperationId:
       $ref: '#/UploadSessionOperationId'
     Events:
       type: array
       items:
-        type: object
-        additionalProperties: true
+        $ref: '#/UploadSessionEvent'
     WasIdempotentReplay:
       type: boolean
     Message:
@@ -388,6 +386,377 @@ UploadSessionDecision:
     - Events
     - WasIdempotentReplay
     - Message
+
+UploadSessionDto:
+  description: Server state snapshot for a manifest upload session.
+  type: object
+  properties:
+    Class:
+      type: string
+      enum:
+        - UploadSessionDto
+    UploadSessionId:
+      type: string
+      format: uuid
+    OwnerId:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/OwnerId'
+    OrganizationId:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/OrganizationId'
+    RepositoryId:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/RepositoryId'
+    AuthorizedScope:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/RelativePath'
+    FileContentHash:
+      $ref: '#/FileContentHash'
+    ExpectedSize:
+      type: integer
+      format: int64
+    ChunkingSuiteId:
+      $ref: '#/ChunkingSuiteId'
+    SamplingPolicySnapshot:
+      type: string
+    LifecycleState:
+      $ref: '#/UploadSessionLifecycleState'
+    StartedAt:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant'
+    CompletedAt:
+      nullable: true
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant'
+    FinalizedManifestAddress:
+      nullable: true
+      $ref: '#/ManifestAddress'
+    BlockUploadIntents:
+      type: array
+      items:
+        $ref: '#/BlockUploadIntent'
+    ConfirmedBlockUploads:
+      type: array
+      items:
+        $ref: '#/ConfirmedBlockUpload'
+    DedupeDiscovery:
+      nullable: true
+      $ref: '#/DedupeDiscoverySnapshot'
+    ClaimedReuseRanges:
+      type: array
+      items:
+        $ref: '#/ClaimedReuseRange'
+    CleanupReminderScheduledAt:
+      nullable: true
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant'
+    CleanupReminderOperationId:
+      nullable: true
+      $ref: '#/UploadSessionOperationId'
+    LastOperationId:
+      nullable: true
+      $ref: '#/UploadSessionOperationId'
+  required:
+    - Class
+    - UploadSessionId
+    - OwnerId
+    - OrganizationId
+    - RepositoryId
+    - AuthorizedScope
+    - FileContentHash
+    - ExpectedSize
+    - ChunkingSuiteId
+    - SamplingPolicySnapshot
+    - LifecycleState
+    - StartedAt
+    - CompletedAt
+    - FinalizedManifestAddress
+    - BlockUploadIntents
+    - ConfirmedBlockUploads
+    - DedupeDiscovery
+    - ClaimedReuseRanges
+    - CleanupReminderScheduledAt
+    - CleanupReminderOperationId
+    - LastOperationId
+
+UploadSessionLifecycleState:
+  description: Lifecycle state for a manifest upload session.
+  type: string
+  enum:
+    - NotStarted
+    - Started
+    - Discovering
+    - UploadingBlocks
+    - ClaimingRanges
+    - FinalizingManifest
+    - Finalized
+    - Abandoned
+    - Expired
+    - RetentionPending
+    - StateDeleted
+
+BlockUploadIntent:
+  description: Registered intent to upload a logical ContentBlock range.
+  type: object
+  properties:
+    ContentBlockAddress:
+      $ref: '#/ContentBlockAddress'
+    LogicalOffset:
+      type: integer
+      format: int64
+    LogicalLength:
+      type: integer
+      format: int64
+    ExpectedPayloadLength:
+      type: integer
+      format: int64
+    RegisteredAt:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant'
+  required:
+    - ContentBlockAddress
+    - LogicalOffset
+    - LogicalLength
+    - ExpectedPayloadLength
+    - RegisteredAt
+
+ConfirmedBlockUpload:
+  description: Confirmed object-storage placement for an uploaded ContentBlock.
+  type: object
+  properties:
+    ContentBlockAddress:
+      $ref: '#/ContentBlockAddress'
+    PayloadLength:
+      type: integer
+      format: int64
+    StoragePlacement:
+      $ref: '#/ContentBlockStoragePlacement'
+    Ranges:
+      type: array
+      items:
+        $ref: '#/ContentBlockMetadataRange'
+    ConfirmedAt:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant'
+  required:
+    - ContentBlockAddress
+    - PayloadLength
+    - StoragePlacement
+    - Ranges
+    - ConfirmedAt
+
+DedupeDiscoverySnapshot:
+  description: Server-issued dedupe discovery snapshot retained by an upload session.
+  type: object
+  properties:
+    OperationId:
+      $ref: '#/UploadSessionOperationId'
+    ExpiresAt:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant'
+    MinimumReuseRunLength:
+      type: integer
+    Hints:
+      type: array
+      items:
+        $ref: '#/ContentBlockReuseRangeHint'
+  required:
+    - OperationId
+    - ExpiresAt
+    - MinimumReuseRunLength
+    - Hints
+
+ClaimedReuseRange:
+  description: Reuse range accepted by the upload-session workflow.
+  type: object
+  properties:
+    StoragePoolId:
+      $ref: '#/StoragePoolId'
+    ContentBlockAddress:
+      $ref: '#/ContentBlockAddress'
+    OrdinalStart:
+      type: integer
+    OrdinalCount:
+      type: integer
+    PhysicalOffset:
+      type: integer
+      format: int64
+    PhysicalLength:
+      type: integer
+      format: int64
+    MetadataVersion:
+      type: integer
+      format: int64
+    ClaimedAt:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant'
+  required:
+    - StoragePoolId
+    - ContentBlockAddress
+    - OrdinalStart
+    - OrdinalCount
+    - PhysicalOffset
+    - PhysicalLength
+    - MetadataVersion
+    - ClaimedAt
+
+ContentBlockMetadataRange:
+  description: Physical range metadata for ContentBlock reconstruction, reuse, and compaction.
+  type: object
+  properties:
+    OrdinalStart:
+      type: integer
+    OrdinalCount:
+      type: integer
+    ActiveManifestCount:
+      type: integer
+    PhysicalOffset:
+      type: integer
+      format: int64
+    PhysicalLength:
+      type: integer
+      format: int64
+  required:
+    - OrdinalStart
+    - OrdinalCount
+    - ActiveManifestCount
+    - PhysicalOffset
+    - PhysicalLength
+
+UploadSessionEvent:
+  description: Event emitted by the upload-session actor, paired with event metadata.
+  type: object
+  properties:
+    Event:
+      $ref: '#/UploadSessionEventType'
+    Metadata:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/EventMetadata'
+  required:
+    - Event
+    - Metadata
+
+UploadSessionEventType:
+  description: Upload-session event union payload. Event objects contain the fields for one emitted union case.
+  oneOf:
+    - $ref: '#/UploadSessionStartedEvent'
+    - $ref: '#/UploadSessionOperationEvent'
+    - $ref: '#/UploadSessionFinalizedEvent'
+    - $ref: '#/UploadSessionCleanupReminderScheduledEvent'
+    - $ref: '#/UploadSessionBlockUploadIntentRegisteredEvent'
+    - $ref: '#/UploadSessionBlockUploadConfirmedEvent'
+    - $ref: '#/UploadSessionDedupeDiscoveryIssuedEvent'
+    - $ref: '#/UploadSessionReuseRangesClaimedEvent'
+
+UploadSessionStartedEvent:
+  type: object
+  properties:
+    Started:
+      $ref: '#/StartManifestUploadSessionParameters'
+  required:
+    - Started
+
+UploadSessionOperationEvent:
+  type: object
+  description: Event cases whose payload is only an operation id.
+  properties:
+    EventCase:
+      type: string
+      enum:
+        - Abandoned
+        - Expired
+        - PhysicalStateDeleted
+    OperationId:
+      $ref: '#/UploadSessionOperationId'
+  required:
+    - EventCase
+    - OperationId
+
+UploadSessionFinalizedEvent:
+  type: object
+  properties:
+    Finalized:
+      type: object
+      properties:
+        OperationId:
+          $ref: '#/UploadSessionOperationId'
+        ManifestAddress:
+          $ref: '#/ManifestAddress'
+      required:
+        - OperationId
+        - ManifestAddress
+  required:
+    - Finalized
+
+UploadSessionCleanupReminderScheduledEvent:
+  type: object
+  properties:
+    CleanupReminderScheduled:
+      type: object
+      properties:
+        OperationId:
+          $ref: '#/UploadSessionOperationId'
+        ReminderTime:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant'
+      required:
+        - OperationId
+        - ReminderTime
+  required:
+    - CleanupReminderScheduled
+
+UploadSessionBlockUploadIntentRegisteredEvent:
+  type: object
+  properties:
+    BlockUploadIntentRegistered:
+      type: object
+      properties:
+        OperationId:
+          $ref: '#/UploadSessionOperationId'
+        Intent:
+          $ref: '#/BlockUploadIntent'
+      required:
+        - OperationId
+        - Intent
+  required:
+    - BlockUploadIntentRegistered
+
+UploadSessionBlockUploadConfirmedEvent:
+  type: object
+  properties:
+    BlockUploadConfirmed:
+      type: object
+      properties:
+        OperationId:
+          $ref: '#/UploadSessionOperationId'
+        ConfirmedBlock:
+          $ref: '#/ConfirmedBlockUpload'
+      required:
+        - OperationId
+        - ConfirmedBlock
+  required:
+    - BlockUploadConfirmed
+
+UploadSessionDedupeDiscoveryIssuedEvent:
+  type: object
+  properties:
+    DedupeDiscoveryIssued:
+      type: object
+      properties:
+        OperationId:
+          $ref: '#/UploadSessionOperationId'
+        Discovery:
+          $ref: '#/DedupeDiscoverySnapshot'
+      required:
+        - OperationId
+        - Discovery
+  required:
+    - DedupeDiscoveryIssued
+
+UploadSessionReuseRangesClaimedEvent:
+  type: object
+  properties:
+    ReuseRangesClaimed:
+      type: object
+      properties:
+        OperationId:
+          $ref: '#/UploadSessionOperationId'
+        ClaimedRanges:
+          type: array
+          items:
+            $ref: '#/ClaimedReuseRange'
+      required:
+        - OperationId
+        - ClaimedRanges
+  required:
+    - ReuseRangesClaimed
 
 ContentBlockReuseRangeHint:
   description: Server-issued hint used to claim a reusable ContentBlock range.
