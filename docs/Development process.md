@@ -192,9 +192,13 @@ The review loop is blocking:
 3. Re-run focused validation for the changed behavior or docs, and broader validation when the fix touches shared or
    risky surfaces.
 4. Commit the review fix.
-5. Run another local review-only subagent pass against the updated committed diff, again using the dedicated Code Review
+5. If a pull request already exists, add a new standalone pull request comment that summarizes each review issue
+   addressed, the fix that resolved it, the fix commit, and the validation run. Do not add review-fix notes to the pull
+   request body. If the pull request does not exist yet, add the standalone comment immediately after opening the pull
+   request.
+6. Run another local review-only subagent pass against the updated committed diff, again using the dedicated Code Review
    capability when the subagent environment exposes one.
-6. Repeat the loop until the review reports no issues.
+7. Repeat the loop until the review reports no issues.
 
 Only after the local review-only subagent reports no issues can the task continue toward pull request creation, handoff,
 merge readiness, or any other completion step. Record whether a dedicated subagent Code Review capability was available,
@@ -255,6 +259,8 @@ Before opening or updating a pull request, include:
 - broader validation run, or skipped-validation reason
 - review path used: local review-only subagent, including whether a dedicated Code Review capability was available
 - final no-issues code review result
+- standalone pull request comments for each review issue that required a fix, including the issue, fix, fix commit, and
+  validation; do not put review-fix notes in the pull request body
 - docs impact
 - residual risk
 - rollback or recovery notes when the change touches runtime or data

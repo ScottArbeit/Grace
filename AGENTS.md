@@ -52,8 +52,9 @@ impact and skipped validation.
   reviewer prompt activates it. Do not use GitHub `@codex review`, automatic Codex pull request review, or another
   external pull-request review bot for this completion gate. The review subagent must use a medium-sized, lower-cost
   model with high reasoning effort, such as `gpt-5.4-mini` or the nearest equivalent available in the active model
-  provider. Address every issue identified, validate and commit the fixes, then repeat the local subagent review until
-  the reviewer reports no issues.
+  provider. Address every issue identified, validate and commit the fixes, add a standalone pull request comment
+  explaining the review issue and the fix that addressed it, and do not put review-fix notes in the pull request body.
+  Then repeat the local subagent review until the reviewer reports no issues.
 - Open normal ready-for-review pull requests. Do not open draft pull requests unless the user explicitly asks for a
   draft.
 - When the user says a PR is merged, verify the merge, delete the issue branch and worktree, run `git fetch --prune`,
