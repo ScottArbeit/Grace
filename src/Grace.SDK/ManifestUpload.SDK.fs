@@ -55,7 +55,7 @@ module ManifestUpload =
             FinalizeManifest: FinalizeManifestUploadParameters -> Task<GraceResult<UploadSessionDecision>>
         }
 
-    let isOptedIn () = String.Equals(Environment.GetEnvironmentVariable(OptInEnvironmentVariable), "1", StringComparison.OrdinalIgnoreCase)
+    let isOptedIn () = true
 
     let private setStorageParameters (request: ManifestUploadRequest) (parameters: StorageParameters) =
         parameters.OwnerId <- $"{request.OwnerId}"
