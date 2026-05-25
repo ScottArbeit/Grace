@@ -192,21 +192,30 @@ comparable to `gpt-5.4-mini` with high reasoning, or the nearest equivalent avai
 subagent prompt must say to act strictly as a code reviewer, not edit files, inspect the committed diff and relevant
 surrounding code/tests, report only actionable issues, and clearly say when there are no issues.
 
+Code review turns can legitimately take several minutes. After spawning a review-only sibling subagent, allow it to run
+for up to 10 minutes before analyzing whether it is stalled or still making useful progress. Do not interrupt or replace
+the review just because it is quiet for a few minutes. The review subagent must report back when it is done so the
+parent/orchestrator can continue the workflow without guessing about the review state.
+
 The review loop is blocking:
 
 1. From the parent/orchestrator thread, spawn a fresh local review-only sibling subagent against the committed task diff,
    using a dedicated Code Review capability when the subagent launcher directly exposes one.
-2. If the review finds issues, address them in the issue-owned branch/worktree.
-3. Re-run focused validation for the changed behavior or docs, and broader validation when the fix touches shared or
+2. Give the review subagent up to 10 minutes to complete before deciding whether to inspect progress, redirect it, or
+   replace it. If it is still making useful progress, continue waiting.
+3. Require the review subagent to send a final report when it is done: either actionable findings with file/line
+   references where possible, or a clear no-issues result.
+4. If the review finds issues, address them in the issue-owned branch/worktree.
+5. Re-run focused validation for the changed behavior or docs, and broader validation when the fix touches shared or
    risky surfaces.
-4. Commit the review fix.
-5. If a pull request already exists, add a new standalone pull request comment for the review fix using the
+6. Commit the review fix.
+7. If a pull request already exists, add a new standalone pull request comment for the review fix using the
    [Review/Fix comment template](#reviewfix-comment-template). The comment must make the high-level outcome easy to
    scan before the detailed issue and fix text. Do not add review-fix notes to the pull request body. If the pull
    request does not exist yet, add the standalone comment immediately after opening the pull request.
-6. From the parent/orchestrator thread, spawn another fresh review-only sibling subagent pass against the updated
+8. From the parent/orchestrator thread, spawn another fresh review-only sibling subagent pass against the updated
    committed diff, again using a dedicated Code Review capability when the subagent launcher directly exposes one.
-7. Repeat the loop until the review reports no issues.
+9. Repeat the loop until the review reports no issues.
 
 Only after a fresh local review-only sibling subagent reports no issues can the task continue toward pull request
 creation, handoff, merge readiness, or any other completion step. Record whether a dedicated subagent Code Review
@@ -234,7 +243,8 @@ or spawning nested review work. Instead, it must return this handoff to the pare
 
 Please spawn a fresh local review-only sibling subagent using a medium-sized, lower-cost model with high reasoning.
 Use the subagent launcher's dedicated Code Review capability if it is directly exposed. Do not run `codex review`
-through the shell.
+through the shell. Allow the review subagent to run for up to 10 minutes before analyzing whether it is stalled. The
+review subagent must report back when complete with either actionable findings or a clear no-issues result.
 ```
 
 If the sibling review finds issues, the parent/orchestrator sends those findings back to the implementation agent. The

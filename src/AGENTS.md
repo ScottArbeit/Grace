@@ -37,10 +37,12 @@ update the issue before editing the new paths.
   a generic reviewer prompt activates it. Do not use GitHub `@codex review`, automatic Codex pull request review, or
   another external pull-request review bot for this completion gate. The review subagent must use a medium-sized,
   lower-cost model with high reasoning effort, such as `gpt-5.4-mini` or the nearest equivalent available in the active
-  model provider. Address every issue identified, validate and commit the fixes, add a standalone, well-templated
-  Markdown pull request comment explaining the review issue and the fix that addressed it, and do not put review-fix
-  notes in the pull request body. Use clear headers, bold labels, and a short high-level summary before detailed
-  issue/fix text. Then repeat the sibling subagent review loop until the reviewer reports no issues.
+  model provider. Allow review turns to run for up to 10 minutes before analyzing whether they are stalled or still
+  making useful progress, and require the review subagent to report back when complete so the parent/orchestrator can
+  continue. Address every issue identified, validate and commit the fixes, add a standalone, well-templated Markdown
+  pull request comment explaining the review issue and the fix that addressed it, and do not put review-fix notes in the
+  pull request body. Use clear headers, bold labels, and a short high-level summary before detailed issue/fix text. Then
+  repeat the sibling subagent review loop until the reviewer reports no issues.
 - When the user asks to address a code review comment, review comment, PR feedback, or similar, complete the full
   review-thread workflow: evaluate the comment, make the appropriate fix or explicitly explain why no code change is
   needed, validate the result, commit and push the branch, reply to the GitHub review comment with the outcome and
