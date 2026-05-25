@@ -109,6 +109,7 @@ module ManifestUpload =
         let parameters = GetContentBlockUploadUriParameters()
         setStorageParameters request parameters |> ignore
         parameters.ContentBlockAddress <- contentBlockAddress
+        parameters.AuthorizedScope <- request.AuthorizedScope
         parameters
 
     let private buildConfirmParameters request uploadSessionId operationIndex (block: ContentBlockFormat.EncodedContentBlock) placement =

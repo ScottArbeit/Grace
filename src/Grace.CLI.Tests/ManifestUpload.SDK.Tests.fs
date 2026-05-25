@@ -95,6 +95,7 @@ type ManifestUploadSdkTests() =
                                 ManifestUploadSdkTests.Decision correlationId parameters.UploadSessionId parameters.OperationId
                         UploadContentBlock =
                             fun parameters payload ->
+                                Assert.That(parameters.AuthorizedScope, Is.EqualTo(fileVersion.RelativePath))
                                 calls.Add($"upload:{parameters.ContentBlockAddress}")
                                 uploadedBlocks[parameters.ContentBlockAddress] <- payload
 
@@ -172,6 +173,7 @@ type ManifestUploadSdkTests() =
                                 ManifestUploadSdkTests.Decision correlationId parameters.UploadSessionId parameters.OperationId
                         UploadContentBlock =
                             fun parameters payload ->
+                                Assert.That(parameters.AuthorizedScope, Is.EqualTo(fileVersion.RelativePath))
                                 uploadedBlocks[parameters.ContentBlockAddress] <- payload
 
                                 let placement =

@@ -38,6 +38,7 @@ module Storage =
     type GetContentBlockUploadUriParameters() =
         inherit StorageParameters()
         member val public ContentBlockAddress: ContentBlockAddress = String.Empty with get, set
+        member val public AuthorizedScope: RelativePath = String.Empty with get, set
 
     type GetContentBlockDownloadUriParameters() =
         inherit StorageParameters()

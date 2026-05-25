@@ -202,13 +202,13 @@ module Application =
 
                 let graceIds = Services.getGraceIds context
 
-                return
-                    Resource.Path(
-                        graceIds.OwnerId,
-                        graceIds.OrganizationId,
-                        graceIds.RepositoryId,
+                let path =
+                    if String.IsNullOrWhiteSpace parameters.AuthorizedScope then
                         StorageKeys.contentBlockObjectKey parameters.ContentBlockAddress
-                    )
+                    else
+                        parameters.AuthorizedScope
+
+                return Resource.Path(graceIds.OwnerId, graceIds.OrganizationId, graceIds.RepositoryId, path)
             }
 
         let contentBlockDownloadPathResourceFromContext (context: HttpContext) =
