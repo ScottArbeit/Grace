@@ -342,7 +342,7 @@ type StorageContentBlockDiscoveryRoutes() =
             Assert.That(
                 (requireJsonProperty "PositiveCandidatesEnabled" policy)
                     .GetBoolean(),
-                Is.False
+                Is.True
             )
 
             Assert.That(

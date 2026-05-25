@@ -493,6 +493,22 @@ module Interfaces =
         /// Validates whole-record metadata updates and converts them to persisted events.
         abstract member Handle: command: ContentBlockMetadataCommand -> eventMetadata: EventMetadata -> Task<GraceResult<ContentBlockMetadataDecision>>
 
+    /// Defines the operations for the cluster-scoped dedupe discovery index actor.
+    [<Interface>]
+    type IDedupeIndexActor =
+        inherit IGrainWithStringKey
+
+        /// Registers a finalized manifest after upload-session state has been persisted.
+        abstract member RegisterFinalizedManifest:
+            registration: DedupeIndex.FinalizedManifestRegistration -> correlationId: CorrelationId -> Task<DedupeIndex.DedupeIndexRecord array>
+
+        /// Publishes dedupe index candidates after authoritative ContentBlock metadata has been persisted.
+        abstract member WriteAfterAuthoritativeMetadata:
+            metadata: ContentBlockMetadata -> correlationId: CorrelationId -> Task<DedupeIndex.DedupeIndexRecord array>
+
+        /// Returns the current dedupe index snapshot for bounded discovery.
+        abstract member Snapshot: correlationId: CorrelationId -> Task<DedupeIndex.DedupeIndexRecord array>
+
     /// Defines the operations for the UploadSession actor.
     [<Interface>]
     type IUploadSessionActor =

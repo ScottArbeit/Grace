@@ -340,9 +340,18 @@ module Storage =
                                     correlationId
                             )
                     else
+                        let graceIds = getGraceIds context
+                        let organizationId, repositoryId = resolveStorageIds graceIds parameters
+                        let repositoryActor = Repository.CreateActorProxy organizationId repositoryId correlationId
+                        let! repositoryDto = repositoryActor.Get correlationId
+                        let storagePoolId = DedupeIndex.storagePoolIdForRepository repositoryDto
+                        let dedupeIndexActor = DedupeIndexActor.CreateActorProxy correlationId
+                        let! snapshot = dedupeIndexActor.Snapshot correlationId
+                        let result = DedupeIndex.discover storagePoolId keyChunkAddresses (getCurrentInstant ()) snapshot
+
                         return!
                             context
-                            |> result200Ok (GraceReturnValue.Create (createEmptyDiscoveryResult keyChunkAddresses.Length) correlationId)
+                            |> result200Ok (GraceReturnValue.Create result correlationId)
                 with
                 | ex ->
                     logToConsole $"Exception in DiscoverContentBlocks: {(ExceptionResponse.Create ex)}"
