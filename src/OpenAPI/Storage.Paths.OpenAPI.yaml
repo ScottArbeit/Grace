@@ -1,7 +1,7 @@
 /storage/getUploadMetadataForFiles:
   post:
     summary: Gets upload metadata for files.
-    description: Gets upload URLs and content-reference metadata for whole-file and manifest-backed uploads.
+    description: Gets upload URLs and content-reference metadata for whole-file compatibility uploads.
     operationId: GetUploadMetadataForFiles
     requestBody:
       required: true
@@ -11,7 +11,11 @@
             $ref: 'Storage.Components.OpenAPI.yaml#/GetUploadMetadataForFilesParameters'
     responses:
       '200':
-        $ref: './Responses.OpenAPI.yaml#/200'
+        description: OK
+        content:
+          application/json:
+            schema:
+              $ref: 'Storage.Components.OpenAPI.yaml#/UploadMetadataArrayReturnValue'
       '400':
         $ref: './Responses.OpenAPI.yaml#/400'
       '500':
@@ -110,7 +114,7 @@
         content:
           application/json:
             schema:
-              $ref: 'Storage.Components.OpenAPI.yaml#/DiscoverContentBlocksResult'
+              $ref: 'Storage.Components.OpenAPI.yaml#/DiscoverContentBlocksReturnValue'
       '400':
         $ref: './Responses.OpenAPI.yaml#/400'
       '500':
@@ -129,7 +133,11 @@
             $ref: 'Storage.Components.OpenAPI.yaml#/StartManifestUploadSessionParameters'
     responses:
       '200':
-        $ref: './Responses.OpenAPI.yaml#/200'
+        description: OK
+        content:
+          application/json:
+            schema:
+              $ref: 'Storage.Components.OpenAPI.yaml#/UploadSessionDecisionReturnValue'
       '400':
         $ref: './Responses.OpenAPI.yaml#/400'
       '500':
@@ -148,7 +156,11 @@
             $ref: 'Storage.Components.OpenAPI.yaml#/IssueDedupeDiscoveryParameters'
     responses:
       '200':
-        $ref: './Responses.OpenAPI.yaml#/200'
+        description: OK
+        content:
+          application/json:
+            schema:
+              $ref: 'Storage.Components.OpenAPI.yaml#/UploadSessionDecisionReturnValue'
       '400':
         $ref: './Responses.OpenAPI.yaml#/400'
       '500':
@@ -167,7 +179,11 @@
             $ref: 'Storage.Components.OpenAPI.yaml#/ClaimReuseRangesParameters'
     responses:
       '200':
-        $ref: './Responses.OpenAPI.yaml#/200'
+        description: OK
+        content:
+          application/json:
+            schema:
+              $ref: 'Storage.Components.OpenAPI.yaml#/UploadSessionDecisionReturnValue'
       '400':
         $ref: './Responses.OpenAPI.yaml#/400'
       '500':
@@ -186,7 +202,11 @@
             $ref: 'Storage.Components.OpenAPI.yaml#/RegisterContentBlockUploadParameters'
     responses:
       '200':
-        $ref: './Responses.OpenAPI.yaml#/200'
+        description: OK
+        content:
+          application/json:
+            schema:
+              $ref: 'Storage.Components.OpenAPI.yaml#/UploadSessionDecisionReturnValue'
       '400':
         $ref: './Responses.OpenAPI.yaml#/400'
       '500':
@@ -205,7 +225,11 @@
             $ref: 'Storage.Components.OpenAPI.yaml#/ConfirmContentBlockUploadParameters'
     responses:
       '200':
-        $ref: './Responses.OpenAPI.yaml#/200'
+        description: OK
+        content:
+          application/json:
+            schema:
+              $ref: 'Storage.Components.OpenAPI.yaml#/UploadSessionDecisionReturnValue'
       '400':
         $ref: './Responses.OpenAPI.yaml#/400'
       '500':
@@ -224,7 +248,11 @@
             $ref: 'Storage.Components.OpenAPI.yaml#/FinalizeManifestUploadParameters'
     responses:
       '200':
-        $ref: './Responses.OpenAPI.yaml#/200'
+        description: OK
+        content:
+          application/json:
+            schema:
+              $ref: 'Storage.Components.OpenAPI.yaml#/UploadSessionDecisionReturnValue'
       '400':
         $ref: './Responses.OpenAPI.yaml#/400'
       '500':
