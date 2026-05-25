@@ -61,8 +61,8 @@ Validation:
 Definition of done:
 - Behavior changed
 - Tests or docs updated
-- Coding work reviewed by a local review-only subagent, using its dedicated Code Review capability when available, with
-  no issues remaining
+- Coding work reviewed by a fresh local review-only sibling subagent, orchestrated outside any implementation subagent,
+  with no issues remaining
 - Ready-for-review pull request opened and linked
 - Validation recorded
 - Review evidence prepared
@@ -170,24 +170,32 @@ YAML parsing, or `git diff --check`.
 
 ## Required Agent Code Review
 
-A coding task is not complete until the implementing agent runs a local review-only subagent after the implementation
-slice has been validated and committed. If the subagent launcher exposes a dedicated Code Review mode, skill, command,
-or capability, select it explicitly for that subagent. Do not assume that a generic prompt asking a model to act like a
+A coding task is not complete until a parent/orchestrator thread runs a fresh local review-only sibling subagent after
+the implementation slice has been validated and committed. The review agent must be a sibling of the implementation
+agent, not a nested `codex review` process launched from inside an existing agent or subagent.
+
+If implementation work is already running inside a delegated subagent, that implementation subagent must stop after
+committing and validating the slice and return a [Ready For Review handoff](#ready-for-review-handoff) to the
+parent/orchestrator thread. The parent/orchestrator is responsible for spawning the fresh review-only sibling subagent,
+collecting its findings, and sending actionable issues back to the implementation agent for fixes.
+
+If the subagent launcher directly exposes a dedicated Code Review mode, skill, command, or capability, select it
+explicitly for the review-only sibling subagent. Do not assume that a generic prompt asking a model to act like a
 reviewer automatically activates the dedicated Code Review capability.
 
-Do not use GitHub `@codex review`, automatic Codex pull request review, or another external pull-request review bot for
-this completion gate. Those flows are intentionally outside the Grace development loop because they are too slow for
-each review-fix turn.
+Do not run `codex review` through the shell from inside an agent or subagent. Do not use GitHub `@codex review`,
+automatic Codex pull request review, or another external pull-request review bot for this completion gate. Those flows
+are intentionally outside the Grace development loop because they are too slow for each review-fix turn.
 
-The review subagent must use a medium-sized, lower-cost model with high reasoning effort. Use a model class comparable
-to `gpt-5.4-mini` with high reasoning, or the nearest equivalent available in the active model provider. The subagent
-prompt must say to act strictly as a code reviewer, not edit files, inspect the committed diff and relevant surrounding
-code/tests, report only actionable issues, and clearly say when there are no issues.
+The review-only sibling subagent must use a medium-sized, lower-cost model with high reasoning effort. Use a model class
+comparable to `gpt-5.4-mini` with high reasoning, or the nearest equivalent available in the active model provider. The
+subagent prompt must say to act strictly as a code reviewer, not edit files, inspect the committed diff and relevant
+surrounding code/tests, report only actionable issues, and clearly say when there are no issues.
 
 The review loop is blocking:
 
-1. Run the local review-only subagent against the committed task diff, using its dedicated Code Review capability when
-   the subagent environment exposes one.
+1. From the parent/orchestrator thread, spawn a fresh local review-only sibling subagent against the committed task diff,
+   using a dedicated Code Review capability when the subagent launcher directly exposes one.
 2. If the review finds issues, address them in the issue-owned branch/worktree.
 3. Re-run focused validation for the changed behavior or docs, and broader validation when the fix touches shared or
    risky surfaces.
@@ -196,13 +204,43 @@ The review loop is blocking:
    [Review/Fix comment template](#reviewfix-comment-template). The comment must make the high-level outcome easy to
    scan before the detailed issue and fix text. Do not add review-fix notes to the pull request body. If the pull
    request does not exist yet, add the standalone comment immediately after opening the pull request.
-6. Run another local review-only subagent pass against the updated committed diff, again using the dedicated Code Review
-   capability when the subagent environment exposes one.
+6. From the parent/orchestrator thread, spawn another fresh review-only sibling subagent pass against the updated
+   committed diff, again using a dedicated Code Review capability when the subagent launcher directly exposes one.
 7. Repeat the loop until the review reports no issues.
 
-Only after the local review-only subagent reports no issues can the task continue toward pull request creation, handoff,
-merge readiness, or any other completion step. Record whether a dedicated subagent Code Review capability was available,
-the final no-issues review result, and validation evidence in the task record or pull request.
+Only after a fresh local review-only sibling subagent reports no issues can the task continue toward pull request
+creation, handoff, merge readiness, or any other completion step. Record whether a dedicated subagent Code Review
+capability was available, the final no-issues review result, and validation evidence in the task record or pull request.
+
+### Ready For Review Handoff
+
+When the implementation agent is itself a subagent, it must not attempt to satisfy the review gate by running `codex`
+or spawning nested review work. Instead, it must return this handoff to the parent/orchestrator thread:
+
+```markdown
+## Ready For Review
+
+**Worktree:** `<absolute path>`
+**Branch:** `<branch-name>`
+**Commit:** `<commit-sha> <commit subject>`
+**Diff:** `<base>..<head>`
+
+### Validation
+
+- `<focused command>`: <result>
+- `<broader command, if any>`: <result or skipped reason>
+
+### Review Request
+
+Please spawn a fresh local review-only sibling subagent using a medium-sized, lower-cost model with high reasoning.
+Use the subagent launcher's dedicated Code Review capability if it is directly exposed. Do not run `codex review`
+through the shell.
+```
+
+If the sibling review finds issues, the parent/orchestrator sends those findings back to the implementation agent. The
+implementation agent addresses the findings, validates, commits the fixes, posts any required standalone pull request
+comments, and returns a new Ready For Review handoff. The parent/orchestrator then spawns another fresh review-only
+sibling subagent.
 
 ### Review/Fix Comment Template
 
@@ -287,7 +325,8 @@ Before opening or updating a pull request, include:
 - touched paths and any write-set expansion
 - focused validation run
 - broader validation run, or skipped-validation reason
-- review path used: local review-only subagent, including whether a dedicated Code Review capability was available
+- review path used: fresh local review-only sibling subagent spawned by the parent/orchestrator, including whether a
+  dedicated Code Review capability was available
 - final no-issues code review result
 - standalone, templated Markdown pull request comments for each review issue that required a fix, including the issue,
   fix, fix commit, and validation; do not put review-fix notes in the pull request body

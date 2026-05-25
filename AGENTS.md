@@ -47,15 +47,18 @@ impact and skipped validation.
 - Use `pwsh ./scripts/validate.ps1 -Full` when Aspire, emulators, storage, Service Bus, Cosmos DB, Redis,
   deployment/runtime behavior, or cross-service integration is affected.
 - Commit after each completed slice and keep pull requests focused and reviewable.
-- Before treating coding work as complete, run a local review-only subagent. If the subagent launcher exposes a
-  dedicated Code Review mode, skill, command, or capability, select it explicitly; do not assume that a generic
-  reviewer prompt activates it. Do not use GitHub `@codex review`, automatic Codex pull request review, or another
-  external pull-request review bot for this completion gate. The review subagent must use a medium-sized, lower-cost
-  model with high reasoning effort, such as `gpt-5.4-mini` or the nearest equivalent available in the active model
-  provider. Address every issue identified, validate and commit the fixes, add a standalone, well-templated Markdown
-  pull request comment explaining the review issue and the fix that addressed it, and do not put review-fix notes in the
-  pull request body. Use clear headers, bold labels, and a short high-level summary before detailed issue/fix text. Then
-  repeat the local subagent review until the reviewer reports no issues.
+- Before treating coding work as complete, the parent/orchestrator thread must run a fresh local review-only sibling
+  subagent. If implementation work is already running inside a delegated subagent, that subagent must stop after
+  committing and validating, return a Ready For Review handoff, and let the parent/orchestrator spawn the sibling
+  reviewer. Do not run `codex review` through the shell from inside an agent or subagent. If the subagent launcher
+  directly exposes a dedicated Code Review mode, skill, command, or capability, select it explicitly; do not assume that
+  a generic reviewer prompt activates it. Do not use GitHub `@codex review`, automatic Codex pull request review, or
+  another external pull-request review bot for this completion gate. The review subagent must use a medium-sized,
+  lower-cost model with high reasoning effort, such as `gpt-5.4-mini` or the nearest equivalent available in the active
+  model provider. Address every issue identified, validate and commit the fixes, add a standalone, well-templated
+  Markdown pull request comment explaining the review issue and the fix that addressed it, and do not put review-fix
+  notes in the pull request body. Use clear headers, bold labels, and a short high-level summary before detailed
+  issue/fix text. Then repeat the sibling subagent review loop until the reviewer reports no issues.
 - Open normal ready-for-review pull requests. Do not open draft pull requests unless the user explicitly asks for a
   draft.
 - When the user says a PR is merged, verify the merge, delete the issue branch and worktree, run `git fetch --prune`,
