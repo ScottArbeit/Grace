@@ -31,6 +31,7 @@ module ContentBlockMetadata =
         match command with
         | ContentBlockMetadataCommand.ReplaceWholeRecord replace -> replace.OperationId
         | ContentBlockMetadataCommand.MergePhysicalRanges merge -> merge.OperationId
+        | ContentBlockMetadataCommand.CompactPhysicalRanges compact when isNull (box compact) -> String.Empty
         | ContentBlockMetadataCommand.CompactPhysicalRanges compact -> compact.OperationId
 
     let private eventOperationId metadataEvent =

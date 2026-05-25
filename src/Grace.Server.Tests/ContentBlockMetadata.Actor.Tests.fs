@@ -393,6 +393,13 @@ type ContentBlockMetadataActorTests() =
                     Unchecked.defaultof<ContentBlockCompactionCandidateContext>)
                 (metadata "corr-compact-missing-context")
 
+        let missingPayloadResult =
+            ContentBlockMetadataActor.decideCommand
+                []
+                currentDto
+                (ContentBlockMetadataCommand.CompactPhysicalRanges Unchecked.defaultof<CompactContentBlockPhysicalRanges>)
+                (metadata "corr-compact-missing-payload")
+
         match futureBypassResult with
         | Ok _ -> Assert.Fail("Expected actor timestamp to enforce the 24-hour compaction age gate.")
         | Error error -> Assert.That(error.Error, Does.Contain("at least 24 hours old"))
@@ -400,6 +407,10 @@ type ContentBlockMetadataActorTests() =
         match missingContextResult with
         | Ok _ -> Assert.Fail("Expected missing CandidateContext to be rejected.")
         | Error error -> Assert.That(error.Error, Is.EqualTo("Compaction CandidateContext is required."))
+
+        match missingPayloadResult with
+        | Ok _ -> Assert.Fail("Expected missing CompactPhysicalRanges payload to be rejected.")
+        | Error error -> Assert.That(error.Error, Does.Contain("requires a non-empty operation id"))
 
     [<Test>]
     member _.RangePresenceAggregatesDuplicateOrdinalRangesAsActiveWhenAnyPhysicalCopyIsActive() =
