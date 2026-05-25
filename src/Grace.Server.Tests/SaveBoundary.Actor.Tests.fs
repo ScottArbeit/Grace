@@ -61,6 +61,14 @@ type SaveBoundaryActorTests() =
 
     let wholeFile () = FileVersion.Create "/small.txt" "abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd" String.Empty false 42L
 
+    let referenceDto referenceType =
+        { Grace.Types.Reference.ReferenceDto.Default with
+            ReferenceId = referenceId
+            RepositoryId = repositoryId
+            DirectoryId = directoryVersionId
+            ReferenceType = referenceType
+        }
+
     let directoryWith (files: FileVersion seq) =
         let fileList = List<FileVersion>(files)
 
@@ -439,3 +447,9 @@ type SaveBoundaryActorTests() =
         match ReferenceActor.planManifestSaveBoundary repositoryId referenceId directoryVersion "corr-whole-file-expiry" with
         | Ok plans -> Assert.That(plans, Is.Empty)
         | Error error -> Assert.Fail($"Expected whole-file save expiry planning to remain a no-op, got {error.Error}.")
+
+    [<Test>]
+    member _.PhysicalDeletionReminderAppliesExpiryBoundaryOnlyForLiveSaveReferences() =
+        Assert.That(ReferenceActor.shouldApplySaveExpiryBoundary (referenceDto ReferenceType.Save), Is.True)
+        Assert.That(ReferenceActor.shouldApplySaveExpiryBoundary (referenceDto ReferenceType.Checkpoint), Is.False)
+        Assert.That(ReferenceActor.shouldApplySaveExpiryBoundary Grace.Types.Reference.ReferenceDto.Default, Is.False)

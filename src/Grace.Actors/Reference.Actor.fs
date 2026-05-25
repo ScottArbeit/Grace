@@ -109,6 +109,10 @@ module Reference =
 
                 { plan with CounterCommand = RepositoryContentCounterCommand.RemoveReference(operationId, repositoryId, plan.Manifest.ManifestAddress) }))
 
+    let shouldApplySaveExpiryBoundary (referenceDto: ReferenceDto) =
+        referenceDto.ReferenceId <> ReferenceId.Empty
+        && referenceDto.ReferenceType = ReferenceType.Save
+
     let tryCreateManifestContributionStart plan intent =
         match intent with
         | RepositoryContentCounterIntent.IncrementManifestReferenceCount (repositoryId, manifestAddress) when
@@ -295,15 +299,18 @@ module Reference =
 
                         let! boundaryResult =
                             task {
-                                match
-                                    planManifestSaveExpiryBoundary
-                                        physicalDeletionReminderState.RepositoryId
-                                        referenceId
-                                        directoryVersionDto.DirectoryVersion
-                                        this.correlationId
-                                    with
-                                | Error graceError -> return Error graceError
-                                | Ok plans -> return! applyManifestContributionBoundary plans (EventMetadata.New this.correlationId "GraceSystem")
+                                if shouldApplySaveExpiryBoundary referenceDto then
+                                    match
+                                        planManifestSaveExpiryBoundary
+                                            physicalDeletionReminderState.RepositoryId
+                                            referenceId
+                                            directoryVersionDto.DirectoryVersion
+                                            this.correlationId
+                                        with
+                                    | Error graceError -> return Error graceError
+                                    | Ok plans -> return! applyManifestContributionBoundary plans (EventMetadata.New this.correlationId "GraceSystem")
+                                else
+                                    return Ok()
                             }
 
                         match boundaryResult with
