@@ -8,26 +8,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  fast:
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    env:
-      GraceBuildKind: ci
-      GraceBuildNumber: ${{ github.run_number }}
-      GraceSourceRevisionId: ${{ github.sha }}
-    steps:
-      - uses: actions/checkout@v6
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v5
-        with:
-          global-json-file: global.json
-      - name: Install .NET Aspire workload
-        run: dotnet workload install aspire
-      - name: Validate (Fast)
-        run: pwsh ./scripts/validate.ps1 -Fast
-
   full:
-    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     env:
       GraceBuildKind: ci
@@ -44,11 +25,38 @@ jobs:
       - name: Docker info
         run: docker info
       - name: Pre-pull Aspire images
+        shell: bash
         run: |
-          docker pull redis:latest
-          docker pull mcr.microsoft.com/azure-storage/azurite:latest
-          docker pull mcr.microsoft.com/mssql/server:2022-latest
-          docker pull mcr.microsoft.com/azure-messaging/servicebus-emulator:latest
-          docker pull mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator:latest
+          set -euo pipefail
+
+          images=(
+            "redis:latest"
+            "mcr.microsoft.com/azure-storage/azurite:latest"
+            "mcr.microsoft.com/mssql/server:2022-latest"
+            "mcr.microsoft.com/azure-messaging/servicebus-emulator:latest"
+            "mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator:latest"
+          )
+
+          pids=()
+          for image in "${images[@]}"; do
+            echo "Starting pull for ${image}"
+            docker pull "${image}" &
+            pids+=("$!")
+          done
+
+          failed=0
+          for index in "${!pids[@]}"; do
+            image="${images[$index]}"
+            pid="${pids[$index]}"
+
+            if wait "${pid}"; then
+              echo "Completed pull for ${image}"
+            else
+              echo "Failed pull for ${image}" >&2
+              failed=1
+            fi
+          done
+
+          exit "${failed}"
       - name: Validate (Full)
         run: pwsh ./scripts/validate.ps1 -Full
