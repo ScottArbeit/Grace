@@ -14,6 +14,7 @@ open System
 open System.Collections.Generic
 open System.IO
 open System.Security.Cryptography
+open System.Text
 open System.Threading.Tasks
 
 [<NonParallelizable>]
@@ -70,7 +71,10 @@ type ManifestUploadSdkTests() =
         }
         |> fun discovery -> Task.FromResult(Ok(GraceReturnValue.Create discovery correlationId))
 
-    static member private ProtectedChunkAddress storagePoolId chunkAddress = $"{storagePoolId}|{chunkAddress}"
+    static member private ProtectedChunkAddress storagePoolId chunkAddress =
+        let preimage = $"grace.dedupe-index.v1.protected-window\n{storagePoolId}\n{chunkAddress}"
+        let hash = SHA256.HashData(Encoding.UTF8.GetBytes(preimage))
+        $"protected-sha256:{Convert.ToHexString(hash).ToLowerInvariant()}"
 
     static member private CreateRequest tempPath (fileVersion: FileVersion) correlationId : ManifestUpload.ManifestUploadRequest =
         {
@@ -212,6 +216,10 @@ type ManifestUploadSdkTests() =
                 let plan = LocalPlanner.analyzeFile request.PlannerOptions tempPath
                 let claimedBlock = plan.Blocks[0]
                 let storagePoolId = StoragePoolId $"{request.RepositoryId}"
+                let protectedKeyChunkAddress = ManifestUploadSdkTests.ProtectedChunkAddress storagePoolId claimedBlock.KeyChunkAddress
+
+                Assert.That(protectedKeyChunkAddress, Does.StartWith("protected-sha256:"))
+                Assert.That(protectedKeyChunkAddress, Is.Not.EqualTo($"{storagePoolId}|{claimedBlock.KeyChunkAddress}"))
 
                 let client: ManifestUpload.ManifestUploadClient =
                     {
@@ -229,10 +237,7 @@ type ManifestUploadSdkTests() =
                                         OrdinalCount = 8
                                         MetadataVersion = 7L
                                         MatchingKeyChunkCount = 1
-                                        ProtectedChunkAddresses =
-                                            [|
-                                                ManifestUploadSdkTests.ProtectedChunkAddress storagePoolId claimedBlock.KeyChunkAddress
-                                            |]
+                                        ProtectedChunkAddresses = [| protectedKeyChunkAddress |]
                                     }
 
                                 let discovery =

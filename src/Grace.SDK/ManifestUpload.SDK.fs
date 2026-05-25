@@ -11,6 +11,8 @@ open NodaTime
 open System
 open System.Collections.Generic
 open System.IO
+open System.Security.Cryptography
+open System.Text
 open System.Threading.Tasks
 
 module ManifestUpload =
@@ -173,7 +175,10 @@ module ManifestUpload =
         manifestVersion.ContentReference <- FileContentReference.FileManifest manifest
         manifestVersion
 
-    let private protectedChunkAddress storagePoolId chunkAddress = $"{storagePoolId}|{chunkAddress}"
+    let private protectedChunkAddress storagePoolId chunkAddress =
+        let preimage = $"grace.dedupe-index.v1.protected-window\n{storagePoolId}\n{chunkAddress}"
+        let hash = SHA256.HashData(Encoding.UTF8.GetBytes(preimage))
+        $"protected-sha256:{Convert.ToHexString(hash).ToLowerInvariant()}"
 
     let private candidateMatchesBlock (block: LocalPlanner.ContentBlockPlan) (candidate: ContentBlockDiscoveryCandidate) =
         candidate.ContentBlockAddress = block.Address
