@@ -33,6 +33,10 @@ module Storage =
     [<Literal>]
     let MinimumAcceptedReuseRunLength = 8
 
+    /// Maximum reuse range hints accepted by one claim request.
+    [<Literal>]
+    let MaxReuseRangeClaims = 1024
+
     /// Parameters used by multiple endpoints in the /diff path.
     type StorageParameters() =
         inherit CommonParameters()

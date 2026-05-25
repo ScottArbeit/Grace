@@ -485,6 +485,15 @@ type StorageManifestUploadSessionRoutes() =
         parameters.RepositoryId <- repositoryId
         parameters.CorrelationId <- correlationId
 
+    let reuseHint index =
+        {
+            StoragePoolId = StoragePoolId $"storage-pool-{Guid.NewGuid():N}"
+            ContentBlockAddress = ContentBlockAddress $"content-block-{index}-{Guid.NewGuid():N}"
+            OrdinalStart = 0
+            OrdinalCount = Parameters.Storage.MinimumAcceptedReuseRunLength
+            MetadataVersion = 1L
+        }
+
     let postUploadSessionDecision (route: string) parameters =
         task {
             let! response = Client.PostAsync(route, createJsonContent parameters)
@@ -630,6 +639,62 @@ type StorageManifestUploadSessionRoutes() =
 
             let! body = postUploadSessionBadRequest "/storage/registerContentBlockUpload" register
             Assert.That(body, Does.Contain("AuthorizedScope must match"))
+        }
+
+    [<Test>]
+    member _.ClaimReuseRangesRejectsAuthorizedScopeMismatchBeforeMetadataLookup() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let correlationId = generateCorrelationId ()
+            let sessionId = Guid.NewGuid()
+            let payload = pseudoRandomBytes 220000
+            payload[0] <- 3uy
+            let block = encodeBlock payload
+            let manifest = manifestFor payload block
+
+            let start = Parameters.Storage.StartManifestUploadSessionParameters()
+            setStorageParameters start repositoryId correlationId
+            start.UploadSessionId <- sessionId
+            start.AuthorizedScope <- "/allowed/file.bin"
+            start.FileContentHash <- manifest.FileContentHash
+            start.ExpectedSize <- manifest.Size
+            start.ChunkingSuiteId <- manifest.ChunkingSuiteId
+            start.SamplingPolicySnapshot <- "sdk-dedupe-discovery-claim-test"
+            start.OperationId <- "start"
+
+            let! _ = postUploadSessionDecision "/storage/startManifestUploadSession" start
+
+            let claim = Parameters.Storage.ClaimReuseRangesParameters()
+            setStorageParameters claim repositoryId correlationId
+            claim.UploadSessionId <- sessionId
+            claim.AuthorizedScope <- "/other/file.bin"
+            claim.OperationId <- "claim"
+            claim.DiscoveryOperationId <- "discovery"
+            claim.Hints <- [| reuseHint 0 |]
+
+            let! body = postUploadSessionBadRequest "/storage/claimReuseRanges" claim
+            Assert.That(body, Does.Contain("AuthorizedScope must match"))
+            Assert.That(body, Does.Not.Contain("Authoritative ContentBlockMetadata is absent"))
+        }
+
+    [<Test>]
+    member _.ClaimReuseRangesRejectsOversizedHintArraysBeforeMetadataLookup() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let correlationId = generateCorrelationId ()
+
+            let claim = Parameters.Storage.ClaimReuseRangesParameters()
+            setStorageParameters claim repositoryId correlationId
+            claim.UploadSessionId <- Guid.NewGuid()
+            claim.AuthorizedScope <- "/"
+            claim.OperationId <- "claim"
+            claim.DiscoveryOperationId <- "discovery"
+            claim.Hints <- Array.init (Parameters.Storage.MaxReuseRangeClaims + 1) reuseHint
+
+            let! body = postUploadSessionBadRequest "/storage/claimReuseRanges" claim
+            Assert.That(body, Does.Contain("ClaimReuseRanges Hints"))
+            Assert.That(body, Does.Contain($"{Parameters.Storage.MaxReuseRangeClaims}"))
+            Assert.That(body, Does.Not.Contain("Authoritative ContentBlockMetadata is absent"))
         }
 
     [<Test>]
