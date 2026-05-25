@@ -1,6 +1,7 @@
 namespace Grace.CLI.Tests
 
 open Azure
+open Grace.CLI
 open Grace.SDK
 open Grace.Shared
 open Grace.Shared.Parameters.Storage
@@ -38,6 +39,18 @@ type ManifestUploadSdkTests() =
     static member private BinaryPolicy thresholdBytes = { ManifestEligibilityPolicy.Default with ThresholdBytes = thresholdBytes; BinaryScanBytes = 16 }
 
     static member private ComputeSha256Hash(bytes: byte array) = Sha256Hash(byteArrayToString (SHA256.HashData(bytes).AsSpan()))
+
+    static member private UploadParameters correlationId fileVersions =
+        let parameters = GetUploadMetadataForFilesParameters()
+        parameters.OwnerId <- "22222222-2222-2222-2222-222222222222"
+        parameters.OwnerName <- "owner"
+        parameters.OrganizationId <- "33333333-3333-3333-3333-333333333333"
+        parameters.OrganizationName <- "org"
+        parameters.RepositoryId <- "11111111-1111-1111-1111-111111111111"
+        parameters.RepositoryName <- "repo"
+        parameters.CorrelationId <- correlationId
+        parameters.FileVersions <- fileVersions
+        parameters
 
     static member private Decision correlationId sessionId operationId =
         let session =
@@ -300,6 +313,61 @@ type ManifestUploadSdkTests() =
                     Assert.That(uploadResult.UploadSessionId, Is.Not.EqualTo(None))
             finally
                 if File.Exists(tempPath) then File.Delete(tempPath)
+        }
+
+    [<Test>]
+    member _.UploadFilesToObjectStorageFallsBackOnlyForNonManifestResults() =
+        task {
+            let correlationId = "corr-cli-manifest-fallback-routing"
+            let manifestFile = FileVersion.Create "large.bin" (Sha256Hash "manifest-sha") String.Empty true 2048L
+            let ineligibleFile = FileVersion.Create "small.fs" (Sha256Hash "ineligible-sha") String.Empty false 128L
+            let manifestAttempts = ResizeArray<string>()
+            let wholeFileFallbacks = ResizeArray<FileVersion array>()
+
+            let manifestUpload (fileVersion: FileVersion) : Task<GraceResult<ManifestUpload.ManifestUploadResult>> =
+                task {
+                    manifestAttempts.Add(fileVersion.RelativePath)
+
+                    let result: ManifestUpload.ManifestUploadResult =
+                        {
+                            FileVersion = fileVersion
+                            Manifest = None
+                            UploadSessionId = None
+                            UploadedBlockCount = if fileVersion.RelativePath = manifestFile.RelativePath then 1 else 0
+                            UsedManifestUpload = fileVersion.RelativePath = manifestFile.RelativePath
+                        }
+
+                    return Ok(GraceReturnValue.Create result correlationId)
+                }
+
+            let wholeFileUpload (parameters: GetUploadMetadataForFilesParameters) =
+                task {
+                    wholeFileFallbacks.Add(parameters.FileVersions)
+                    return Ok(GraceReturnValue.Create true correlationId)
+                }
+
+            let parameters = ManifestUploadSdkTests.UploadParameters correlationId [| manifestFile; ineligibleFile |]
+
+            let! result = Services.uploadFilesToObjectStorageWithClients manifestUpload wholeFileUpload parameters
+
+            match result with
+            | Error error -> Assert.Fail($"{error.Error}{Environment.NewLine}{serialize error.Properties}")
+            | Ok returnValue ->
+                Assert.That(returnValue.ReturnValue, Is.True)
+
+                Assert.That(
+                    manifestAttempts,
+                    Is.EquivalentTo(
+                        [|
+                            manifestFile.RelativePath
+                            ineligibleFile.RelativePath
+                        |]
+                    )
+                )
+
+                Assert.That(wholeFileFallbacks.Count, Is.EqualTo(1))
+                Assert.That(wholeFileFallbacks[0].Length, Is.EqualTo(1))
+                Assert.That(wholeFileFallbacks[0][0], Is.EqualTo(ineligibleFile))
         }
 
     [<Test>]

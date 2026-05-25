@@ -910,8 +910,11 @@ module Services =
 
         request
 
-    /// Uploads all new or changed files from a directory to object storage.
-    let uploadFilesToObjectStorage (parameters: GetUploadMetadataForFilesParameters) =
+    let internal uploadFilesToObjectStorageWithClients
+        (manifestUpload: FileVersion -> Task<GraceResult<ManifestUpload.ManifestUploadResult>>)
+        (wholeFileUpload: GetUploadMetadataForFilesParameters -> Task<GraceResult<bool>>)
+        (parameters: GetUploadMetadataForFilesParameters)
+        =
         task {
             if parameters.FileVersions.Count() = 0 then
                 return Ok(GraceReturnValue.Create true parameters.CorrelationId)
@@ -923,8 +926,9 @@ module Services =
                 while fileVersionIndex < parameters.FileVersions.Length do
                     let fileVersion = parameters.FileVersions[fileVersionIndex]
 
-                    match! ManifestUpload.uploadFile (createManifestUploadRequest parameters fileVersion) with
-                    | Ok _ -> fallbackFileVersions.Enqueue(fileVersion)
+                    match! manifestUpload fileVersion with
+                    | Ok result when not result.ReturnValue.UsedManifestUpload -> fallbackFileVersions.Enqueue(fileVersion)
+                    | Ok _ -> ()
                     | Error error -> errors.Enqueue(error)
 
                     fileVersionIndex <- fileVersionIndex + 1
@@ -942,8 +946,15 @@ module Services =
                     if fallback.Length = 0 then
                         return Ok(GraceReturnValue.Create true parameters.CorrelationId)
                     else
-                        return! uploadWholeFilesToObjectStorage (copyStorageParameters parameters fallback)
+                        return! wholeFileUpload (copyStorageParameters parameters fallback)
         }
+
+    /// Uploads all new or changed files from a directory to object storage.
+    let uploadFilesToObjectStorage (parameters: GetUploadMetadataForFilesParameters) =
+        uploadFilesToObjectStorageWithClients
+            (fun fileVersion -> ManifestUpload.uploadFile (createManifestUploadRequest parameters fileVersion))
+            uploadWholeFilesToObjectStorage
+            parameters
 
     /// Creates an updated LocalDirectoryVersion instance, with a new DirectoryId, based on changes to an existing one.
     ///
