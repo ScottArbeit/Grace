@@ -25,16 +25,24 @@ module ContentBlockMetadata =
         match command with
         | ContentBlockMetadataCommand.ReplaceWholeRecord _ -> "ReplaceWholeRecord"
         | ContentBlockMetadataCommand.MergePhysicalRanges _ -> "MergePhysicalRanges"
+        | ContentBlockMetadataCommand.CompactPhysicalRanges _ -> "CompactPhysicalRanges"
+        | ContentBlockMetadataCommand.SetCompactionChurnState _ -> "SetCompactionChurnState"
 
     let operationId command =
         match command with
         | ContentBlockMetadataCommand.ReplaceWholeRecord replace -> replace.OperationId
         | ContentBlockMetadataCommand.MergePhysicalRanges merge -> merge.OperationId
+        | ContentBlockMetadataCommand.CompactPhysicalRanges compact when isNull (box compact) -> String.Empty
+        | ContentBlockMetadataCommand.CompactPhysicalRanges compact -> compact.OperationId
+        | ContentBlockMetadataCommand.SetCompactionChurnState setChurnState when isNull (box setChurnState) -> String.Empty
+        | ContentBlockMetadataCommand.SetCompactionChurnState setChurnState -> setChurnState.OperationId
 
     let private eventOperationId metadataEvent =
         match metadataEvent.Event with
         | ContentBlockMetadataEventType.WholeRecordReplaced (operationId, _) -> operationId
         | ContentBlockMetadataEventType.PhysicalRangesMerged (operationId, _) -> operationId
+        | ContentBlockMetadataEventType.PhysicalRangesCompacted (operationId, _) -> operationId
+        | ContentBlockMetadataEventType.CompactionChurnStateSet (operationId, _) -> operationId
 
     let private hasAppliedOperationId (events: seq<ContentBlockMetadataEvent>) operationId =
         events
@@ -111,6 +119,24 @@ module ContentBlockMetadata =
                 merge.Ranges
                 |> Array.tryPick (validateRange correlationId)
 
+    let private validateCompactPhysicalRanges correlationId (compact: CompactContentBlockPhysicalRanges) =
+        if isNull (box compact) then
+            Some(graceError correlationId "CompactPhysicalRanges payload is required.")
+        elif isNull (box compact.CandidateContext) then
+            Some(graceError correlationId "Compaction CandidateContext is required.")
+        elif isNull compact.Ranges || compact.Ranges.Length = 0 then
+            Some(graceError correlationId "At least one compacted ContentBlockMetadataRange is required.")
+        else
+            match validateStoragePlacement correlationId compact.StoragePlacement with
+            | Some error -> Some error
+            | None ->
+                compact.Ranges
+                |> Array.tryPick (fun range ->
+                    match validateRange correlationId range with
+                    | Some error -> Some error
+                    | None when range.ActiveManifestCount <= 0 -> Some(graceError correlationId "Compacted ContentBlockMetadataRange must be active.")
+                    | None -> None)
+
     let private physicalEnd (range: ContentBlockMetadataRange) = range.PhysicalOffset + range.PhysicalLength
 
     let private totalPhysicalBytes ranges =
@@ -160,6 +186,85 @@ module ContentBlockMetadata =
         |> Seq.sortBy (fun range -> range.OrdinalStart, range.OrdinalCount, range.PhysicalOffset, range.PhysicalLength)
         |> Seq.toArray
         |> Ok
+
+    let private activeLogicalRangeKey (range: ContentBlockMetadataRange) = range.OrdinalStart, range.OrdinalCount, range.ActiveManifestCount
+
+    let private activeLogicalRanges ranges =
+        ranges
+        |> Array.filter (fun range -> range.ActiveManifestCount > 0)
+        |> Array.map activeLogicalRangeKey
+        |> Array.sort
+
+    let private compactionCandidateContext timestamp expectedMetadataVersion (churnState: ContentBlockCompactionChurnState) =
+        {
+            Now = timestamp
+            ExpectedMetadataVersion = expectedMetadataVersion
+            HasActiveUpload = churnState.HasActiveUpload
+            HasActiveFinalization = churnState.HasActiveFinalization
+            HasActiveRangeClaim = churnState.HasActiveRangeClaim
+            HasActiveCompaction = churnState.HasActiveCompaction
+        }
+
+    let private createCompactedMetadata
+        correlationId
+        (current: ContentBlockMetadataDto)
+        (compact: CompactContentBlockPhysicalRanges)
+        timestamp
+        : Result<ContentBlockMetadata, GraceError>
+        =
+        match current.Metadata with
+        | None -> Error(graceError correlationId "ContentBlockMetadata does not exist; compaction requires current metadata.")
+        | Some existing ->
+            match validateCompactPhysicalRanges correlationId compact with
+            | Some error -> Error error
+            | None ->
+                let candidateContext = compactionCandidateContext timestamp compact.ExpectedMetadataVersion current.CompactionChurnState
+
+                match Grace.Types.ContentBlockMetadata.selectCompactionCandidate candidateContext existing with
+                | ContentBlockCompactionSelection.Selected ->
+                    let existingActiveRanges = activeLogicalRanges existing.Ranges
+                    let compactedActiveRanges = activeLogicalRanges compact.Ranges
+
+                    if existingActiveRanges <> compactedActiveRanges then
+                        Error(graceError correlationId "Compacted ContentBlockMetadata ranges must preserve active logical reconstruction ranges.")
+                    else
+                        match activePhysicalBytes correlationId compact.Ranges with
+                        | Error error -> Error error
+                        | Ok activePhysicalBytes ->
+                            let totalPhysicalBytes = totalPhysicalBytes compact.Ranges
+
+                            if activePhysicalBytes > totalPhysicalBytes then
+                                Error(graceError correlationId "ActivePhysicalBytes cannot exceed TotalPhysicalBytes.")
+                            elif totalPhysicalBytes >= existing.TotalPhysicalBytes then
+                                Error(graceError correlationId "Compacted ContentBlockMetadata must reduce TotalPhysicalBytes.")
+                            else
+                                Ok
+                                    { existing with
+                                        StoragePlacement = compact.StoragePlacement
+                                        Ranges =
+                                            compact.Ranges
+                                            |> Array.sortBy (fun range -> range.OrdinalStart, range.OrdinalCount, range.PhysicalOffset, range.PhysicalLength)
+                                        TotalPhysicalBytes = totalPhysicalBytes
+                                        ActivePhysicalBytes = activePhysicalBytes
+                                        MetadataVersion = existing.MetadataVersion + 1L
+                                        UpdatedAt = timestamp
+                                    }
+                | ContentBlockCompactionSelection.RetainInsufficientReclaimableBytes ->
+                    Error(graceError correlationId "ContentBlockMetadata compaction requires reclaimable bytes >= max(64 MiB, 10% of TotalPhysicalBytes).")
+                | ContentBlockCompactionSelection.RetainTooYoung ->
+                    Error(graceError correlationId "ContentBlockMetadata compaction requires reclaimable ranges to be at least 24 hours old.")
+                | ContentBlockCompactionSelection.RetainChurn ->
+                    Error(
+                        graceError
+                            correlationId
+                            "ContentBlockMetadata compaction rejected while upload, finalization, range-claim, or compaction churn is active."
+                    )
+                | ContentBlockCompactionSelection.RetainStaleMetadata ->
+                    Error(
+                        graceError
+                            correlationId
+                            $"Stale ContentBlockMetadata compaction rejected. Expected MetadataVersion {compact.ExpectedMetadataVersion}, current MetadataVersion {existing.MetadataVersion}."
+                    )
 
     let private createMergedMetadata
         correlationId
@@ -309,6 +414,35 @@ module ContentBlockMetadata =
                         ]
 
                     okDecision metadata operationId events false "ContentBlockMetadata physical ranges merged."
+            | ContentBlockMetadataCommand.CompactPhysicalRanges compact ->
+                match createCompactedMetadata eventMetadata.CorrelationId current compact eventMetadata.Timestamp with
+                | Error error -> Error error
+                | Ok metadata ->
+                    let events =
+                        [
+                            { Event = ContentBlockMetadataEventType.PhysicalRangesCompacted(operationId, metadata); Metadata = eventMetadata }
+                        ]
+
+                    okDecision metadata operationId events false "ContentBlockMetadata physical ranges compacted."
+            | ContentBlockMetadataCommand.SetCompactionChurnState setChurnState ->
+                if isNull (box setChurnState) then
+                    Error(graceError eventMetadata.CorrelationId "Compaction ChurnState payload is required.")
+                elif isNull (box setChurnState.ChurnState) then
+                    Error(graceError eventMetadata.CorrelationId "Compaction ChurnState is required.")
+                else
+                    match current.Metadata with
+                    | None ->
+                        Error(graceError eventMetadata.CorrelationId "ContentBlockMetadata does not exist; compaction churn state requires current metadata.")
+                    | Some metadata ->
+                        let events =
+                            [
+                                {
+                                    Event = ContentBlockMetadataEventType.CompactionChurnStateSet(operationId, setChurnState.ChurnState)
+                                    Metadata = eventMetadata
+                                }
+                            ]
+
+                        okDecision metadata operationId events false "ContentBlockMetadata compaction churn state set."
 
     type ContentBlockMetadataActor
         (

@@ -25,6 +25,9 @@ Start with `../AGENTS.md` for global rules before working on Orleans code.
    expiration. They must not delete accepted manifests, content blocks, block metadata, or contribution accounting.
 5. `ContentBlockMetadataActor` is keyed by the StoragePoolId and ContentBlockAddress composite key. Preserve whole-record
    MetadataVersion concurrency and exact range presence semantics; do not introduce per-chunk actor or grain state.
+   Compaction is a whole-record metadata rewrite: keep the `ContentBlockAddress`, preserve active logical ordinal
+   windows, remove reclaimed physical ranges, and require fresh `MetadataVersion` evidence plus no active upload,
+   finalization, range-claim, or compaction churn.
 6. `ManifestContributionWorkflowActor` is keyed by RepositoryId and ManifestAddress. It owns only durable fan-out progress
    for active range-count contribution; repository-local reference counts stay in `RepositoryContentCounterActor`, and
    physical range metadata stays in `ContentBlockMetadataActor`.
