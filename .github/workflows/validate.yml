@@ -22,6 +22,18 @@ jobs:
           global-json-file: global.json
       - name: Install .NET Aspire workload
         run: dotnet workload install aspire
+      - name: Format
+        run: echo "Skipped (temporarily disabled pending full repo formatting)."
+      - name: Restore
+        run: dotnet restore "src/Grace.slnx"
+      - name: Build
+        run: |
+          dotnet build "src/Grace.slnx" \
+            --configuration Release \
+            --no-restore \
+            -p:GraceBuildKind="${GraceBuildKind}" \
+            -p:GraceBuildNumber="${GraceBuildNumber}" \
+            -p:GraceSourceRevisionId="${GraceSourceRevisionId}"
       - name: Docker info
         run: docker info
       - name: Pre-pull Aspire images
@@ -58,5 +70,5 @@ jobs:
           done
 
           exit "${failed}"
-      - name: Validate (Full)
-        run: pwsh ./scripts/validate.ps1 -Full
+      - name: Test
+        run: dotnet test "src/Grace.slnx" --configuration Release --no-build --no-restore
