@@ -794,6 +794,149 @@ type StorageManifestUploadSessionRoutes() =
         }
 
     [<Test>]
+    member _.IssueDedupeDiscoveryNormalizesNullHintArrayToEmptySnapshot() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let correlationId = generateCorrelationId ()
+            let sessionId = Guid.NewGuid()
+            let payload = pseudoRandomBytes 220000
+            payload[0] <- 6uy
+            let block = encodeBlock payload
+            let manifest = manifestFor payload block
+
+            let start = Parameters.Storage.StartManifestUploadSessionParameters()
+            setStorageParameters start repositoryId correlationId
+            start.UploadSessionId <- sessionId
+            start.AuthorizedScope <- "/"
+            start.FileContentHash <- manifest.FileContentHash
+            start.ExpectedSize <- manifest.Size
+            start.ChunkingSuiteId <- manifest.ChunkingSuiteId
+            start.SamplingPolicySnapshot <- "sdk-dedupe-discovery-claim-test"
+            start.OperationId <- "start"
+
+            let! _ = postUploadSessionDecision "/storage/startManifestUploadSession" start
+
+            let issue = Parameters.Storage.IssueDedupeDiscoveryParameters()
+            setStorageParameters issue repositoryId correlationId
+            issue.UploadSessionId <- sessionId
+            issue.AuthorizedScope <- "/"
+            issue.OperationId <- "discovery"
+
+            issue.ExpiresAt <-
+                getCurrentInstant()
+                    .Plus(NodaTime.Duration.FromMinutes 5L)
+
+            issue.MinimumReuseRunLength <- Parameters.Storage.MinimumAcceptedReuseRunLength
+            issue.Hints <- null
+
+            let! result = postUploadSessionDecision "/storage/issueDedupeDiscovery" issue
+            Assert.That(result.ReturnValue.Session.DedupeDiscovery, Is.Not.EqualTo(None))
+            Assert.That(result.ReturnValue.Session.DedupeDiscovery.Value.Hints, Is.Empty)
+        }
+
+    [<Test>]
+    member _.ClaimReuseRangesTreatsNullHintArrayAsEmptyBeforeMetadataLookup() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let correlationId = generateCorrelationId ()
+            let sessionId = Guid.NewGuid()
+            let payload = pseudoRandomBytes 220000
+            payload[0] <- 7uy
+            let block = encodeBlock payload
+            let manifest = manifestFor payload block
+
+            let start = Parameters.Storage.StartManifestUploadSessionParameters()
+            setStorageParameters start repositoryId correlationId
+            start.UploadSessionId <- sessionId
+            start.AuthorizedScope <- "/"
+            start.FileContentHash <- manifest.FileContentHash
+            start.ExpectedSize <- manifest.Size
+            start.ChunkingSuiteId <- manifest.ChunkingSuiteId
+            start.SamplingPolicySnapshot <- "sdk-dedupe-discovery-claim-test"
+            start.OperationId <- "start"
+
+            let! _ = postUploadSessionDecision "/storage/startManifestUploadSession" start
+
+            let issue = Parameters.Storage.IssueDedupeDiscoveryParameters()
+            setStorageParameters issue repositoryId correlationId
+            issue.UploadSessionId <- sessionId
+            issue.AuthorizedScope <- "/"
+            issue.OperationId <- "discovery-active"
+
+            issue.ExpiresAt <-
+                getCurrentInstant()
+                    .Plus(NodaTime.Duration.FromMinutes 5L)
+
+            issue.MinimumReuseRunLength <- Parameters.Storage.MinimumAcceptedReuseRunLength
+            issue.Hints <- Array.empty
+
+            let! _ = postUploadSessionDecision "/storage/issueDedupeDiscovery" issue
+
+            let claim = Parameters.Storage.ClaimReuseRangesParameters()
+            setStorageParameters claim repositoryId correlationId
+            claim.UploadSessionId <- sessionId
+            claim.AuthorizedScope <- "/"
+            claim.OperationId <- "claim"
+            claim.DiscoveryOperationId <- "discovery-active"
+            claim.Hints <- null
+
+            let! body = postUploadSessionBadRequest "/storage/claimReuseRanges" claim
+            Assert.That(body, Does.Contain("At least one reuse range claim is required"))
+            Assert.That(body, Does.Not.Contain("Authoritative ContentBlockMetadata is absent"))
+        }
+
+    [<Test>]
+    member _.ClaimReuseRangesRejectsWrongStoragePoolBeforeMetadataLookup() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let correlationId = generateCorrelationId ()
+            let sessionId = Guid.NewGuid()
+            let payload = pseudoRandomBytes 220000
+            payload[0] <- 9uy
+            let block = encodeBlock payload
+            let manifest = manifestFor payload block
+
+            let start = Parameters.Storage.StartManifestUploadSessionParameters()
+            setStorageParameters start repositoryId correlationId
+            start.UploadSessionId <- sessionId
+            start.AuthorizedScope <- "/"
+            start.FileContentHash <- manifest.FileContentHash
+            start.ExpectedSize <- manifest.Size
+            start.ChunkingSuiteId <- manifest.ChunkingSuiteId
+            start.SamplingPolicySnapshot <- "sdk-dedupe-discovery-claim-test"
+            start.OperationId <- "start"
+
+            let! _ = postUploadSessionDecision "/storage/startManifestUploadSession" start
+
+            let issue = Parameters.Storage.IssueDedupeDiscoveryParameters()
+            setStorageParameters issue repositoryId correlationId
+            issue.UploadSessionId <- sessionId
+            issue.AuthorizedScope <- "/"
+            issue.OperationId <- "discovery-active"
+
+            issue.ExpiresAt <-
+                getCurrentInstant()
+                    .Plus(NodaTime.Duration.FromMinutes 5L)
+
+            issue.MinimumReuseRunLength <- Parameters.Storage.MinimumAcceptedReuseRunLength
+            issue.Hints <- Array.empty
+
+            let! _ = postUploadSessionDecision "/storage/issueDedupeDiscovery" issue
+
+            let claim = Parameters.Storage.ClaimReuseRangesParameters()
+            setStorageParameters claim repositoryId correlationId
+            claim.UploadSessionId <- sessionId
+            claim.AuthorizedScope <- "/"
+            claim.OperationId <- "claim"
+            claim.DiscoveryOperationId <- "discovery-active"
+            claim.Hints <- [| reuseHint 2 |]
+
+            let! body = postUploadSessionBadRequest "/storage/claimReuseRanges" claim
+            Assert.That(body, Does.Contain("upload session repository storage pool"))
+            Assert.That(body, Does.Not.Contain("Authoritative ContentBlockMetadata is absent"))
+        }
+
+    [<Test>]
     member _.ClaimReuseRangesRejectsOversizedHintArraysBeforeMetadataLookup() =
         task {
             let repositoryId = repositoryIds[0]

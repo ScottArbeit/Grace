@@ -151,7 +151,7 @@ module Storage =
             >= discovery.ExpiresAt
             ->
             Error(GraceError.Create "Dedupe discovery has expired; reuse ranges cannot be claimed." correlationId)
-        | Some _ -> Ok()
+        | Some discovery -> Ok discovery
 
     let private hintMatchesDedupeIndexRecord (hint: ContentBlockReuseRangeHint) (record: DedupeIndex.DedupeIndexRecord) =
         record.StoragePoolId = hint.StoragePoolId
@@ -182,7 +182,9 @@ module Storage =
         while error.IsNone && index < hints.Length do
             let hint = hints[index]
 
-            if hint.StoragePoolId <> storagePoolId then
+            if isNull (box hint) then
+                error <- Some(GraceError.Create "IssueDedupeDiscovery Hints must not contain null entries." correlationId)
+            elif hint.StoragePoolId <> storagePoolId then
                 error <- Some(GraceError.Create "IssueDedupeDiscovery Hints must come from server discovery candidates for this repository." correlationId)
             else
                 match
@@ -191,6 +193,42 @@ module Storage =
                     with
                 | Some record -> boundHints.Add(reuseRangeHintFromDedupeIndexRecord record)
                 | None -> error <- Some(GraceError.Create "IssueDedupeDiscovery Hints must come from server discovery candidates." correlationId)
+
+            index <- index + 1
+
+        match error with
+        | Some error -> Error error
+        | None -> Ok(boundHints.ToArray())
+
+    let private hintMatchesIssuedHint (hint: ContentBlockReuseRangeHint) (issued: ContentBlockReuseRangeHint) =
+        not (isNull (box issued))
+        && issued.StoragePoolId = hint.StoragePoolId
+        && issued.ContentBlockAddress = hint.ContentBlockAddress
+        && issued.OrdinalStart = hint.OrdinalStart
+        && issued.OrdinalCount = hint.OrdinalCount
+        && issued.MetadataVersion = hint.MetadataVersion
+
+    let private validateClaimReuseHints correlationId storagePoolId (discovery: DedupeDiscoverySnapshot) (hints: ContentBlockReuseRangeHint array) =
+        let boundHints = ResizeArray<ContentBlockReuseRangeHint>()
+        let issuedHints = if isNull discovery.Hints then Array.empty else discovery.Hints
+
+        let mutable error = None
+        let mutable index = 0
+
+        while error.IsNone && index < hints.Length do
+            let hint = hints[index]
+
+            if isNull (box hint) then
+                error <- Some(GraceError.Create "ClaimReuseRanges Hints must not contain null entries." correlationId)
+            elif hint.StoragePoolId <> storagePoolId then
+                error <- Some(GraceError.Create "ClaimReuseRanges Hints must belong to the upload session repository storage pool." correlationId)
+            else
+                match
+                    issuedHints
+                    |> Array.tryFind (hintMatchesIssuedHint hint)
+                    with
+                | Some issuedHint -> boundHints.Add(issuedHint)
+                | None -> error <- Some(GraceError.Create "ClaimReuseRanges Hints must have been issued by the active dedupe discovery." correlationId)
 
             index <- index + 1
 
@@ -562,11 +600,17 @@ module Storage =
                 with
                 | ex ->
                     let exceptionResponse = ExceptionResponse.Create ex
+                    let exceptionText = $"{exceptionResponse}"
                     logToConsole $"Exception in IssueDedupeDiscovery: {exceptionResponse}"
 
-                    return!
-                        context
-                        |> result500ServerError (GraceError.Create $"{exceptionResponse}" correlationId)
+                    if exceptionText.Contains("expected JSON object, found Null", StringComparison.OrdinalIgnoreCase) then
+                        return!
+                            context
+                            |> result400BadRequest (GraceError.Create "IssueDedupeDiscovery Hints must not contain null entries." correlationId)
+                    else
+                        return!
+                            context
+                            |> result500ServerError (GraceError.Create exceptionText correlationId)
             }
 
     let ClaimReuseRanges: HttpHandler =
@@ -599,58 +643,76 @@ module Storage =
                         | Ok requestContext ->
                             match validateActiveDedupeDiscoveryForClaim requestContext parameters correlationId with
                             | Error error -> return! context |> result400BadRequest error
-                            | Ok _ ->
-                                let ranges = ResizeArray<ClaimReuseRange>()
-                                let mutable error = None
-                                let mutable index = 0
+                            | Ok discovery ->
+                                let repositoryActor =
+                                    Repository.CreateActorProxy
+                                        requestContext.SessionForScope.OrganizationId
+                                        requestContext.SessionForScope.RepositoryId
+                                        correlationId
 
-                                while error.IsNone && index < hints.Length do
-                                    let hint = hints[index]
+                                let! repositoryDto = repositoryActor.Get correlationId
+                                let storagePoolId = DedupeIndex.storagePoolIdForRepository repositoryDto
 
-                                    let metadataActor =
-                                        grainFactory.CreateActorProxyWithCorrelationId<IContentBlockMetadataActor>(
-                                            Grace.Actors.ContentBlockMetadataActorKey.Create hint.StoragePoolId hint.ContentBlockAddress,
-                                            correlationId
-                                        )
+                                match validateClaimReuseHints correlationId storagePoolId discovery hints with
+                                | Error error -> return! context |> result400BadRequest error
+                                | Ok hints ->
+                                    let ranges = ResizeArray<ClaimReuseRange>()
+                                    let mutable error = None
+                                    let mutable index = 0
 
-                                    let! metadata = metadataActor.Get correlationId
+                                    while error.IsNone && index < hints.Length do
+                                        let hint = hints[index]
 
-                                    match metadata with
-                                    | Some metadata -> ranges.Add({ Hint = hint; Metadata = metadata })
-                                    | None ->
-                                        error <-
-                                            Some(
-                                                GraceError.Create
-                                                    $"Authoritative ContentBlockMetadata is absent for {hint.ContentBlockAddress}; reuse range cannot be claimed."
-                                                    correlationId
+                                        let metadataActor =
+                                            grainFactory.CreateActorProxyWithCorrelationId<IContentBlockMetadataActor>(
+                                                Grace.Actors.ContentBlockMetadataActorKey.Create hint.StoragePoolId hint.ContentBlockAddress,
+                                                correlationId
                                             )
 
-                                    index <- index + 1
+                                        let! metadata = metadataActor.Get correlationId
 
-                                match error with
-                                | Some error -> return! context |> result400BadRequest error
-                                | None ->
-                                    let command =
-                                        UploadSessionCommand.ClaimReuseRanges
-                                            {
-                                                OperationId = parameters.OperationId
-                                                DiscoveryOperationId = parameters.DiscoveryOperationId
-                                                Ranges = ranges.ToArray()
-                                            }
+                                        match metadata with
+                                        | Some metadata -> ranges.Add({ Hint = hint; Metadata = metadata })
+                                        | None ->
+                                            error <-
+                                                Some(
+                                                    GraceError.Create
+                                                        $"Authoritative ContentBlockMetadata is absent for {hint.ContentBlockAddress}; reuse range cannot be claimed."
+                                                        correlationId
+                                                )
 
-                                    let! result = requestContext.UploadSessionActor.Handle command requestContext.Metadata
+                                        index <- index + 1
 
-                                    match result with
-                                    | Ok returnValue -> return! context |> result200Ok returnValue
-                                    | Error error -> return! context |> result400BadRequest error
+                                    match error with
+                                    | Some error -> return! context |> result400BadRequest error
+                                    | None ->
+                                        let command =
+                                            UploadSessionCommand.ClaimReuseRanges
+                                                {
+                                                    OperationId = parameters.OperationId
+                                                    DiscoveryOperationId = parameters.DiscoveryOperationId
+                                                    Ranges = ranges.ToArray()
+                                                }
+
+                                        let! result = requestContext.UploadSessionActor.Handle command requestContext.Metadata
+
+                                        match result with
+                                        | Ok returnValue -> return! context |> result200Ok returnValue
+                                        | Error error -> return! context |> result400BadRequest error
                 with
                 | ex ->
                     let exceptionResponse = ExceptionResponse.Create ex
+                    let exceptionText = $"{exceptionResponse}"
                     logToConsole $"Exception in ClaimReuseRanges: {exceptionResponse}"
 
-                    return!
-                        context
-                        |> result500ServerError (GraceError.Create $"{exceptionResponse}" correlationId)
+                    if exceptionText.Contains("expected JSON object, found Null", StringComparison.OrdinalIgnoreCase) then
+                        return!
+                            context
+                            |> result400BadRequest (GraceError.Create "ClaimReuseRanges Hints must not contain null entries." correlationId)
+                    else
+                        return!
+                            context
+                            |> result500ServerError (GraceError.Create exceptionText correlationId)
             }
 
     let RegisterContentBlockUpload: HttpHandler =
