@@ -44,9 +44,6 @@ module Reference =
     let private manifestContributionOperationId (referenceId: ReferenceId) (manifestAddress: ManifestAddress) =
         RepositoryContentCounterOperationId $"save:{referenceId:N}:{manifestAddress}"
 
-    let private workflowOperationId (referenceId: ReferenceId) (manifestAddress: ManifestAddress) =
-        ManifestContributionWorkflowOperationId $"save:{referenceId:N}:{manifestAddress}:fanout"
-
     let private repositoryContentCounterPrimaryKey (repositoryId: RepositoryId) (manifestAddress: ManifestAddress) = $"{repositoryId:N}|{manifestAddress}"
 
     let private manifestContributionWorkflowPrimaryKey (repositoryId: RepositoryId) (manifestAddress: ManifestAddress) = $"{repositoryId:N}|{manifestAddress}"
@@ -55,6 +52,11 @@ module Reference =
         match command with
         | RepositoryContentCounterCommand.AddReference _ -> ManifestContributionDirection.Increment
         | RepositoryContentCounterCommand.RemoveReference _ -> ManifestContributionDirection.Decrement
+
+    let private workflowOperationId (referenceId: ReferenceId) (manifestAddress: ManifestAddress) direction =
+        match direction with
+        | ManifestContributionDirection.Increment -> ManifestContributionWorkflowOperationId $"save:{referenceId:N}:{manifestAddress}:fanout"
+        | ManifestContributionDirection.Decrement -> ManifestContributionWorkflowOperationId $"save-expiry:{referenceId:N}:{manifestAddress}:fanout"
 
     let private workflowRangesForManifest (manifest: FileManifest) =
         let ranges = ResizeArray<ManifestContributionWorkflowRange>()
@@ -70,12 +72,14 @@ module Reference =
         ranges.ToArray()
 
     let private workflowStartCommandForPlan plan =
+        let direction = counterCommandDirection plan.CounterCommand
+
         ManifestContributionWorkflowCommand.Start
             {
-                OperationId = workflowOperationId plan.ReferenceId plan.Manifest.ManifestAddress
+                OperationId = workflowOperationId plan.ReferenceId plan.Manifest.ManifestAddress direction
                 RepositoryId = plan.RepositoryId
                 ManifestAddress = plan.Manifest.ManifestAddress
-                Direction = counterCommandDirection plan.CounterCommand
+                Direction = direction
                 Ranges = plan.WorkflowRanges
             }
 

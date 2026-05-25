@@ -247,6 +247,65 @@ type SaveBoundaryActorTests() =
         | None -> Assert.Fail("Expected decrement intent to start manifest contribution workflow fan-out.")
 
     [<Test>]
+    member _.SaveExpiryDecrementWorkflowUsesDistinctOperationIdAfterIncrementWorkflow() =
+        let manifest = finalizedManifest ()
+        let directoryVersion = directoryWith [ manifestFile manifest ]
+
+        let savePlan =
+            ReferenceActor.planManifestSaveBoundary repositoryId referenceId directoryVersion "corr-expiry-operation-plan"
+            |> expectPlan
+
+        let incrementStart =
+            match
+                ReferenceActor.tryCreateManifestContributionStart
+                    savePlan
+                    (RepositoryContentCounterIntent.IncrementManifestReferenceCount(repositoryId, manifest.ManifestAddress))
+                with
+            | Some command -> command
+            | None ->
+                Assert.Fail("Expected increment intent to start manifest contribution workflow fan-out.")
+                Unchecked.defaultof<ManifestContributionWorkflowCommand>
+
+        let incrementDecision =
+            match ManifestContributionWorkflowActor.decideCommand [] ManifestContributionWorkflowDto.Default incrementStart (metadata "corr-increment-start")
+                with
+            | Ok decision -> decision
+            | Error error ->
+                Assert.Fail($"Expected increment workflow to start, got {error.Error}.")
+                Unchecked.defaultof<ManifestContributionWorkflowDecision>
+
+        let decrementPlan =
+            { savePlan with
+                CounterCommand =
+                    RepositoryContentCounterCommand.RemoveReference(
+                        RepositoryContentCounterOperationId $"save-expiry:{referenceId:N}:{manifest.ManifestAddress}",
+                        repositoryId,
+                        manifest.ManifestAddress
+                    )
+            }
+
+        let decrementStart =
+            match
+                ReferenceActor.tryCreateManifestContributionStart
+                    decrementPlan
+                    (RepositoryContentCounterIntent.DecrementManifestReferenceCount(repositoryId, manifest.ManifestAddress))
+                with
+            | Some command -> command
+            | None ->
+                Assert.Fail("Expected decrement intent to start manifest contribution workflow fan-out.")
+                Unchecked.defaultof<ManifestContributionWorkflowCommand>
+
+        let completedIncrementWorkflow = { incrementDecision.Workflow with LifecycleState = ManifestContributionWorkflowLifecycleState.Completed }
+
+        match
+            ManifestContributionWorkflowActor.decideCommand incrementDecision.Events completedIncrementWorkflow decrementStart (metadata "corr-decrement-start")
+            with
+        | Ok decision ->
+            Assert.That(decision.Workflow.Direction, Is.EqualTo(ManifestContributionDirection.Decrement))
+            Assert.That(decision.OperationId, Is.Not.EqualTo(incrementDecision.OperationId))
+        | Error error -> Assert.Fail($"Expected decrement workflow to start after increment workflow, got {error.Error}.")
+
+    [<Test>]
     member _.SaveExpiryCounterReplayRestartsDecrementWorkflowWithoutSecondCounterEvent() =
         let manifest = finalizedManifest ()
         let directoryVersion = directoryWith [ manifestFile manifest ]
