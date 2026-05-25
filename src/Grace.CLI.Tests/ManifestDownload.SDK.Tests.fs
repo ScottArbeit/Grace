@@ -358,6 +358,58 @@ type ManifestDownloadSdkTests() =
             })
 
     [<Test>]
+    member _.CliManifestDownloadDeletesPartialObjectCacheFileOnFailure() =
+        ManifestDownloadSdkTests.WithTempConfiguration (fun _ ->
+            task {
+                let payload = ManifestDownloadSdkTests.PseudoRandomBytes 220000
+                payload[0] <- 8uy
+
+                let plan =
+                    LocalPlanner.analyzeBytes { LocalPlanner.Options.Default with EligibilityPolicy = ManifestDownloadSdkTests.BinaryPolicy 1024L } payload
+
+                let manifest = ManifestDownloadSdkTests.ManifestFor plan
+                let fileVersion = ManifestDownloadSdkTests.CreateManifestFileVersion "cli-partial-cache.bin" payload manifest
+                let downloadFile = Services.objectStorageDownloadFileFromFileVersion fileVersion
+                let localFileVersion = downloadFile.LocalFileVersion
+
+                let getDownloadUriParameters =
+                    GetDownloadUriParameters(
+                        OwnerId = String.Empty,
+                        OwnerName = Current().OwnerName,
+                        OrganizationId = String.Empty,
+                        OrganizationName = Current().OrganizationName,
+                        RepositoryId = String.Empty,
+                        RepositoryName = Current().RepositoryName,
+                        CorrelationId = "corr-cli-manifest-partial-cache"
+                    )
+
+                let manifestDownload (request: ManifestDownload.ManifestDownloadRequest) =
+                    match request.OutputStream with
+                    | None -> Assert.Fail("Manifest-backed CLI downloads must provide an output stream.")
+                    | Some outputStream -> outputStream.Write(payload, 0, 4096)
+
+                    Task.FromResult(Error(GraceError.Create "simulated manifest reconstruction failure" request.CorrelationId))
+
+                let wholeFileDownload _ _ =
+                    Assert.Fail("Manifest reconstruction failures must not fall back to WholeFileContent downloads.")
+                    Task.FromResult(Error(GraceError.Create "unexpected whole-file download" getDownloadUriParameters.CorrelationId))
+
+                let! result =
+                    Services.downloadFilesFromObjectStorageWithClients
+                        manifestDownload
+                        wholeFileDownload
+                        getDownloadUriParameters
+                        [| downloadFile |]
+                        getDownloadUriParameters.CorrelationId
+
+                match result with
+                | Ok () -> Assert.Fail("Expected manifest reconstruction failure to be returned as GraceError.")
+                | Error error ->
+                    Assert.That(error, Does.Contain("simulated manifest reconstruction failure"))
+                    Assert.That(File.Exists localFileVersion.FullObjectPath, Is.False)
+            })
+
+    [<Test>]
     member _.ManifestDownloadRejectsOutOfOrderManifestRanges() =
         task {
             let payload = Array.zeroCreate<byte> (RabinChunking.MaximumChunkSize * 2)

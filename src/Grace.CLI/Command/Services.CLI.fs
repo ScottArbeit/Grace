@@ -701,8 +701,19 @@ module Services =
                             parameters.CorrelationId <- getDownloadUriParameters.CorrelationId
 
                             if fileVersion.ContentReference.ReferenceType = FileContentReferenceType.FileManifest then
+                                let objectFilePath = localFileVersion.FullObjectPath
+
+                                let deletePartialManifestCacheFile () =
+                                    try
+                                        if File.Exists objectFilePath then File.Delete objectFilePath
+                                    with
+                                    | ex ->
+                                        logToAnsiConsole
+                                            Colors.Verbose
+                                            $"Failed to delete partial manifest cache file {objectFilePath}: {ExceptionResponse.Create ex}"
+
                                 try
-                                    let objectFileInfo = FileInfo(localFileVersion.FullObjectPath)
+                                    let objectFileInfo = FileInfo(objectFilePath)
 
                                     Directory.CreateDirectory(objectFileInfo.Directory.FullName)
                                     |> ignore
@@ -724,12 +735,20 @@ module Services =
                                         }
 
                                     match! manifestDownload manifestRequest with
-                                    | Error error -> return Error error
+                                    | Error error ->
+                                        outputStream.Dispose()
+                                        deletePartialManifestCacheFile ()
+                                        return Error error
                                     | Ok returnValue when returnValue.ReturnValue.UsedManifestDownload ->
                                         return Ok(GraceReturnValue.Create "Retrieved manifest-backed file from object storage." correlationId)
-                                    | Ok _ -> return! wholeFileDownload parameters correlationId
+                                    | Ok _ ->
+                                        outputStream.Dispose()
+                                        deletePartialManifestCacheFile ()
+                                        return! wholeFileDownload parameters correlationId
                                 with
                                 | ex ->
+                                    deletePartialManifestCacheFile ()
+
                                     return
                                         Error(
                                             GraceError.Create
