@@ -204,7 +204,15 @@ module ContentBlockMetadata =
             match validateCompactPhysicalRanges correlationId compact with
             | Some error -> Error error
             | None ->
-                let candidateContext = { compact.CandidateContext with ExpectedMetadataVersion = compact.ExpectedMetadataVersion; Now = timestamp }
+                let candidateContext: ContentBlockCompactionCandidateContext =
+                    {
+                        Now = timestamp
+                        ExpectedMetadataVersion = compact.ExpectedMetadataVersion
+                        HasActiveUpload = false
+                        HasActiveFinalization = false
+                        HasActiveRangeClaim = false
+                        HasActiveCompaction = false
+                    }
 
                 match Grace.Types.ContentBlockMetadata.selectCompactionCandidate candidateContext existing with
                 | ContentBlockCompactionSelection.Selected ->

@@ -413,6 +413,49 @@ type ContentBlockMetadataActorTests() =
         | Error error -> Assert.That(error.Error, Does.Contain("requires a non-empty operation id"))
 
     [<Test>]
+    member _.CompactPhysicalRangesIgnoresCallerSuppliedChurnFlags() =
+        let oldEnough = timestamp.Plus(Duration.FromHours(-25.0))
+        let minimumReclaimableBytes = 64L * 1024L * 1024L
+        let active = { activeRange with PhysicalLength = 8192L; ActiveManifestCount = 1 }
+        let reclaimable = { reclaimableRange with PhysicalOffset = 8192L; PhysicalLength = minimumReclaimableBytes; ActiveManifestCount = 0 }
+
+        let currentMetadata = recordWithTotals [| active; reclaimable |] (8192L + minimumReclaimableBytes) 8192L oldEnough 7L
+
+        let currentDto = { ContentBlockMetadataDto.Empty with Metadata = Some currentMetadata }
+
+        let callerSuppliedChurn =
+            {
+                Now = timestamp
+                ExpectedMetadataVersion = 0L
+                HasActiveUpload = true
+                HasActiveFinalization = true
+                HasActiveRangeClaim = true
+                HasActiveCompaction = true
+            }
+
+        let placement = { ObjectKey = "cas/content-blocks/block-blake3-0001.compacted"; ETag = Some "etag-compact" }
+
+        let result =
+            ContentBlockMetadataActor.decideCommand
+                []
+                currentDto
+                (compact
+                    "op-compact-ignore-caller-churn"
+                    7L
+                    placement
+                    [|
+                        { active with PhysicalOffset = 0L }
+                    |]
+                    callerSuppliedChurn)
+                (metadata "corr-compact-ignore-caller-churn")
+
+        match result with
+        | Ok decision ->
+            Assert.That(decision.Metadata.MetadataVersion, Is.EqualTo(8L))
+            Assert.That(decision.Metadata.StoragePlacement, Is.EqualTo(placement))
+        | Error error -> Assert.Fail($"Expected caller-supplied churn flags to be ignored by actor compaction, got {error.Error}.")
+
+    [<Test>]
     member _.RangePresenceAggregatesDuplicateOrdinalRangesAsActiveWhenAnyPhysicalCopyIsActive() =
         let activePhysicalCopy = { reclaimableRange with ActiveManifestCount = 1; PhysicalOffset = 2048L }
 
