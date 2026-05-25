@@ -195,6 +195,19 @@ module DedupeIndex =
         | Ok decodedBlock -> Some decodedBlock
         | Error _ -> None
 
+    let private manifestBlocks (manifest: FileManifest) =
+        if isNull (box manifest) || isNull manifest.Blocks then
+            None
+        else
+            let blocks = manifest.Blocks |> Seq.toArray
+
+            if blocks.Length = 0
+               || blocks
+                  |> Array.exists (fun block -> isNull (box block)) then
+                None
+            else
+                Some blocks
+
     let private tryCreateRuntimeRegistration (registration: FinalizedManifestRegistration) =
         if isNull (box registration.Session)
            || isNull (box registration.Manifest)
@@ -202,33 +215,37 @@ module DedupeIndex =
               <> Some registration.Manifest.ManifestAddress then
             None
         else
-            let payloads = payloadByAddress registration.BlockPayloads
-            let blocks = ResizeArray<RegisteredContentBlock>()
+            match manifestBlocks registration.Manifest with
+            | None -> None
+            | Some manifestBlocks ->
+                let payloads = payloadByAddress registration.BlockPayloads
+                let blocks = ResizeArray<RegisteredContentBlock>()
 
-            if not (isNull registration.Manifest.Blocks) then
-                for block in registration.Manifest.Blocks do
-                    if not (isNull (box block)) then
-                        match payloads.TryGetValue block.Address with
-                        | true, payload ->
-                            match tryDecodeBlock payload with
-                            | Some decodedBlock when decodedBlock.Address = block.Address ->
-                                blocks.Add
-                                    {
-                                        Address = block.Address
-                                        ChunkAddresses =
-                                            decodedBlock.Chunks
-                                            |> Array.map (fun chunk -> chunk.Address)
-                                    }
-                            | _ -> ()
+                for block in manifestBlocks do
+                    match payloads.TryGetValue block.Address with
+                    | true, payload ->
+                        match tryDecodeBlock payload with
+                        | Some decodedBlock when decodedBlock.Address = block.Address ->
+                            blocks.Add
+                                {
+                                    Address = block.Address
+                                    ChunkAddresses =
+                                        decodedBlock.Chunks
+                                        |> Array.map (fun chunk -> chunk.Address)
+                                }
                         | _ -> ()
+                    | _ -> ()
 
-            Some
-                {
-                    StoragePoolId = registration.StoragePoolId
-                    Session = registration.Session
-                    ManifestAddress = registration.Manifest.ManifestAddress
-                    Blocks = blocks.ToArray()
-                }
+                if blocks.Count <> manifestBlocks.Length then
+                    None
+                else
+                    Some
+                        {
+                            StoragePoolId = registration.StoragePoolId
+                            Session = registration.Session
+                            ManifestAddress = registration.Manifest.ManifestAddress
+                            Blocks = blocks.ToArray()
+                        }
 
     let private rangeEnd (range: ContentBlockMetadataRange) =
         if range.OrdinalCount > Int32.MaxValue - range.OrdinalStart then

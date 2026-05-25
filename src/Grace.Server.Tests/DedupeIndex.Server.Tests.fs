@@ -429,6 +429,45 @@ type DedupeIndexServerTests() =
         )
 
     [<Test>]
+    member _.IncompleteReplayRegistrationDoesNotReplaceFinalizedRegistration() =
+        let block = encodedBlock "replay-preserve" 12
+        let manifest = manifestFor block
+        let firstMetadata = metadataFor 1 30L block
+        let secondMetadata = metadataFor 1 31L block
+
+        let registration: DedupeIndex.FinalizedManifestRegistration =
+            { StoragePoolId = storagePoolId; Session = finalizedSession manifest; Manifest = manifest; BlockPayloads = [| payloadFor block |] }
+
+        let stateAfterRegistration, _ = DedupeIndex.registerFinalizedManifestInState DedupeIndex.DedupeIndexState.Empty registration
+        let stateAfterFirstMetadata, firstRecords = DedupeIndex.writeAfterAuthoritativeMetadataInState stateAfterRegistration firstMetadata
+
+        let incompleteReplayRegistration = { registration with BlockPayloads = Array.empty }
+        let stateAfterIncompleteReplay, replayRecords = DedupeIndex.registerFinalizedManifestInState stateAfterFirstMetadata incompleteReplayRegistration
+        let stateAfterSecondMetadata, secondRecords = DedupeIndex.writeAfterAuthoritativeMetadataInState stateAfterIncompleteReplay secondMetadata
+
+        let matchingSnapshot =
+            stateAfterSecondMetadata.Records
+            |> Array.filter (fun record ->
+                record.ManifestAddress = manifest.ManifestAddress
+                && record.ContentBlockAddress = block.Address)
+
+        Assert.That(firstRecords, Is.Not.Empty)
+        Assert.That(replayRecords, Is.Empty, "Incomplete replay payloads should not replace an existing decoded registration.")
+        Assert.That(secondRecords, Is.Not.Empty, "Later metadata must still rebuild from the preserved finalized registration.")
+
+        Assert.That(
+            matchingSnapshot
+            |> Array.exists (fun record -> record.MetadataVersion = firstMetadata.MetadataVersion),
+            Is.False
+        )
+
+        Assert.That(
+            matchingSnapshot
+            |> Array.exists (fun record -> record.MetadataVersion = secondMetadata.MetadataVersion),
+            Is.True
+        )
+
+    [<Test>]
     member _.NewerMetadataVersionsReplaceOlderCandidateWindows() =
         let block = encodedBlock "newer-metadata" 12
         let manifest = manifestFor block
