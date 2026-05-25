@@ -32,6 +32,7 @@
     <Compile Include="ContentBlockMetadata.Actor.Tests.fs" />
     <Compile Include="RepositoryContentCounter.Actor.Tests.fs" />
     <Compile Include="ManifestContributionWorkflow.Actor.Tests.fs" />
+    <Compile Include="SaveBoundary.Actor.Tests.fs" />
     <Compile Include="Services.EffectivePromotion.Tests.fs" />
     <Compile Include="Validation.Artifact.Contract.Tests.fs" />
     <Compile Include="Policy.Determinism.Tests.fs" />

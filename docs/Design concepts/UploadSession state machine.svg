@@ -1,0 +1,263 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1400 980" role="img" aria-labelledby="title desc">
+  <title id="title">Grace UploadSession command state machine</title>
+  <desc id="desc">
+    State machine showing how UploadSessionCommand values move a manifest-backed file upload through discovery, block
+    upload, range claiming, manifest finalization, retention, expiration, and physical state deletion.
+  </desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" class="arrow-fill" />
+    </marker>
+    <marker id="arrow-muted" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" class="arrow-muted-fill" />
+    </marker>
+    <marker id="arrow-warning-marker" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" class="arrow-warning-fill" />
+    </marker>
+    <style>
+      :root {
+        color-scheme: light;
+      }
+
+      .page {
+        fill: #f5f7f4;
+      }
+
+      .title {
+        fill: #1f2b30;
+        font: 700 34px "Segoe UI", system-ui, sans-serif;
+      }
+
+      .subtitle {
+        fill: #59676c;
+        font: 17px "Segoe UI", system-ui, sans-serif;
+      }
+
+      .section-label {
+        fill: #59676c;
+        font: 700 13px "Segoe UI", system-ui, sans-serif;
+        letter-spacing: 0.8px;
+        text-transform: uppercase;
+      }
+
+      .state {
+        fill: #ffffff;
+        stroke: #2468a8;
+        stroke-width: 2;
+        rx: 8;
+      }
+
+      .state-final {
+        fill: #eff8f1;
+        stroke: #287447;
+      }
+
+      .state-warning {
+        fill: #fff8eb;
+        stroke: #a46600;
+      }
+
+      .state-muted {
+        fill: #f0f3f4;
+        stroke: #879499;
+      }
+
+      .external {
+        fill: #f7f3ff;
+        stroke: #6746a3;
+        stroke-width: 2;
+        rx: 8;
+      }
+
+      .command {
+        fill: #eef5fb;
+        stroke: #c8d2d4;
+        stroke-width: 1.4;
+        rx: 14;
+      }
+
+      .note {
+        fill: #ffffff;
+        stroke: #c8d2d4;
+        stroke-width: 1.5;
+        rx: 8;
+      }
+
+      .state-text {
+        fill: #1f2b30;
+        font: 700 17px "Segoe UI", system-ui, sans-serif;
+      }
+
+      .small {
+        fill: #59676c;
+        font: 13px "Segoe UI", system-ui, sans-serif;
+      }
+
+      .command-text {
+        fill: #1f2b30;
+        font: 600 12.5px "Segoe UI", system-ui, sans-serif;
+      }
+
+      .arrow {
+        fill: none;
+        stroke: #2468a8;
+        stroke-width: 2.2;
+        marker-end: url(#arrow);
+      }
+
+      .arrow-muted {
+        fill: none;
+        stroke: #879499;
+        stroke-width: 2;
+        stroke-dasharray: 6 6;
+        marker-end: url(#arrow-muted);
+      }
+
+      .arrow-warning {
+        fill: none;
+        stroke: #a46600;
+        stroke-width: 2.2;
+        stroke-dasharray: 6 5;
+        marker-end: url(#arrow-warning-marker);
+      }
+
+      .arrow-fill {
+        fill: #2468a8;
+      }
+
+      .arrow-muted-fill {
+        fill: #879499;
+      }
+
+      .arrow-warning-fill {
+        fill: #a46600;
+      }
+    </style>
+  </defs>
+
+  <rect class="page" width="1400" height="980" />
+
+  <text x="60" y="68" class="title">UploadSession command state machine</text>
+  <text x="60" y="102" class="subtitle">
+    One UploadSession coordinates one manifest-backed file upload until the FileManifest is finalized or the session is
+    abandoned.
+  </text>
+
+  <text x="60" y="154" class="section-label">Happy path</text>
+  <text x="60" y="518" class="section-label">Abort, expiration, and retention cleanup</text>
+
+  <rect x="72" y="190" width="160" height="82" class="state" />
+  <text x="152" y="222" class="state-text" text-anchor="middle">Started</text>
+  <text x="152" y="246" class="small" text-anchor="middle">scope and policy</text>
+
+  <rect x="292" y="190" width="160" height="82" class="state" />
+  <text x="372" y="222" class="state-text" text-anchor="middle">Discovering</text>
+  <text x="372" y="246" class="small" text-anchor="middle">candidate windows</text>
+
+  <rect x="512" y="190" width="170" height="82" class="state" />
+  <text x="597" y="222" class="state-text" text-anchor="middle">UploadingBlocks</text>
+  <text x="597" y="246" class="small" text-anchor="middle">new block payloads</text>
+
+  <rect x="742" y="190" width="160" height="82" class="state" />
+  <text x="822" y="222" class="state-text" text-anchor="middle">ClaimingRanges</text>
+  <text x="822" y="246" class="small" text-anchor="middle">reuse proposals</text>
+
+  <rect x="962" y="190" width="180" height="82" class="state" />
+  <text x="1052" y="222" class="state-text" text-anchor="middle">FinalizingManifest</text>
+  <text x="1052" y="246" class="small" text-anchor="middle">validate coverage</text>
+
+  <rect x="1202" y="190" width="148" height="82" class="state state-final" />
+  <text x="1276" y="222" class="state-text" text-anchor="middle">Finalized</text>
+  <text x="1276" y="246" class="small" text-anchor="middle">manifest durable</text>
+
+  <rect x="68" y="316" width="166" height="34" class="command" />
+  <text x="151" y="338" class="command-text" text-anchor="middle">Start</text>
+  <path d="M 60 231 H 72" class="arrow" />
+
+  <rect x="252" y="316" width="240" height="34" class="command" />
+  <text x="372" y="338" class="command-text" text-anchor="middle">IssueDedupeDiscovery</text>
+  <path d="M 232 231 H 292" class="arrow" />
+
+  <rect x="480" y="316" width="234" height="34" class="command" />
+  <text x="597" y="338" class="command-text" text-anchor="middle">RegisterBlockUploadIntent</text>
+  <path d="M 452 231 H 512" class="arrow" />
+
+  <path d="M 552 190 C 512 128 682 128 642 190" class="arrow" />
+  <rect x="504" y="128" width="186" height="34" class="command" />
+  <text x="597" y="150" class="command-text" text-anchor="middle">ConfirmBlockUploaded</text>
+
+  <rect x="718" y="316" width="208" height="34" class="command" />
+  <text x="822" y="338" class="command-text" text-anchor="middle">ClaimReuseRanges</text>
+  <path d="M 682 231 H 742" class="arrow" />
+
+  <rect x="956" y="316" width="192" height="34" class="command" />
+  <text x="1052" y="338" class="command-text" text-anchor="middle">FinalizeManifest</text>
+  <path d="M 902 231 H 962" class="arrow" />
+  <path d="M 1142 231 H 1202" class="arrow" />
+
+  <rect x="722" y="386" width="200" height="70" class="external" />
+  <text x="822" y="414" class="state-text" text-anchor="middle">ContentBlockMetadata</text>
+  <text x="822" y="438" class="small" text-anchor="middle">versioned range claims</text>
+  <path d="M 822 272 V 386" class="arrow-muted" />
+
+  <rect x="505" y="386" width="184" height="70" class="external" />
+  <text x="597" y="414" class="state-text" text-anchor="middle">Object storage</text>
+  <text x="597" y="438" class="small" text-anchor="middle">block payload bytes</text>
+  <path d="M 597 272 V 386" class="arrow-muted" />
+
+  <rect x="268" y="560" width="165" height="82" class="state state-warning" />
+  <text x="350" y="592" class="state-text" text-anchor="middle">Abandoned</text>
+  <text x="350" y="616" class="small" text-anchor="middle">client stopped</text>
+
+  <rect x="492" y="560" width="165" height="82" class="state state-warning" />
+  <text x="575" y="592" class="state-text" text-anchor="middle">Expired</text>
+  <text x="575" y="616" class="small" text-anchor="middle">reminder fired</text>
+
+  <rect x="716" y="560" width="190" height="82" class="state state-warning" />
+  <text x="811" y="588" class="state-text" text-anchor="middle">ReleaseClaims</text>
+  <text x="811" y="612" class="small" text-anchor="middle">unclaim provisional ranges</text>
+
+  <rect x="966" y="560" width="174" height="82" class="state state-muted" />
+  <text x="1053" y="588" class="state-text" text-anchor="middle">RetentionPending</text>
+  <text x="1053" y="612" class="small" text-anchor="middle">diagnostics window</text>
+
+  <rect x="1202" y="560" width="148" height="82" class="state state-muted" />
+  <text x="1276" y="588" class="state-text" text-anchor="middle">StateDeleted</text>
+  <text x="1276" y="612" class="small" text-anchor="middle">actor state clear</text>
+
+  <rect x="260" y="686" width="180" height="34" class="command" />
+  <text x="350" y="708" class="command-text" text-anchor="middle">Abandon</text>
+
+  <rect x="486" y="686" width="178" height="34" class="command" />
+  <text x="575" y="708" class="command-text" text-anchor="middle">Expire reminder</text>
+
+  <rect x="958" y="686" width="190" height="34" class="command" />
+  <text x="1053" y="708" class="command-text" text-anchor="middle">retention reminder</text>
+
+  <path d="M 152 272 C 152 486 350 486 350 560" class="arrow-warning" />
+  <path d="M 372 272 C 372 486 350 486 350 560" class="arrow-warning" />
+  <path d="M 597 272 C 597 486 350 486 350 560" class="arrow-warning" />
+  <path d="M 822 272 C 822 486 350 486 350 560" class="arrow-warning" />
+
+  <path d="M 152 272 C 152 506 575 506 575 560" class="arrow-muted" />
+  <path d="M 372 272 C 372 506 575 506 575 560" class="arrow-muted" />
+  <path d="M 597 272 C 597 506 575 506 575 560" class="arrow-muted" />
+  <path d="M 822 272 C 822 506 575 506 575 560" class="arrow-muted" />
+
+  <path d="M 433 601 H 492" class="arrow-warning" />
+  <path d="M 657 601 H 716" class="arrow-warning" />
+  <path d="M 906 601 H 966" class="arrow" />
+  <path d="M 1140 601 H 1202" class="arrow-muted" />
+  <path d="M 1276 272 C 1276 424 1053 424 1053 560" class="arrow-muted" />
+
+  <rect x="66" y="790" width="1268" height="118" class="note" />
+  <text x="92" y="825" class="state-text">Retention rule</text>
+  <text x="92" y="854" class="small">
+    Finalized, abandoned, and expired sessions schedule a repository-configured cleanup reminder. The reminder clears
+    only UploadSession actor state after the diagnostic/retry window.
+  </text>
+  <text x="92" y="884" class="small">
+    FileManifest, ContentBlocks, ContentBlockMetadata, and repository contribution accounting remain durable content
+    state and are not deleted by UploadSession cleanup.
+  </text>
+</svg>
