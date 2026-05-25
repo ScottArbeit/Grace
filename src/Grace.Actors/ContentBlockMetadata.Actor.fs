@@ -428,16 +428,19 @@ module ContentBlockMetadata =
                 elif isNull (box setChurnState.ChurnState) then
                     Error(graceError eventMetadata.CorrelationId "Compaction ChurnState is required.")
                 else
-                    let events =
-                        [
-                            { Event = ContentBlockMetadataEventType.CompactionChurnStateSet(operationId, setChurnState.ChurnState); Metadata = eventMetadata }
-                        ]
+                    match current.Metadata with
+                    | None ->
+                        Error(graceError eventMetadata.CorrelationId "ContentBlockMetadata does not exist; compaction churn state requires current metadata.")
+                    | Some metadata ->
+                        let events =
+                            [
+                                {
+                                    Event = ContentBlockMetadataEventType.CompactionChurnStateSet(operationId, setChurnState.ChurnState)
+                                    Metadata = eventMetadata
+                                }
+                            ]
 
-                    let metadata =
-                        current.Metadata
-                        |> Option.defaultValue ContentBlockMetadata.Empty
-
-                    okDecision metadata operationId events false "ContentBlockMetadata compaction churn state set."
+                        okDecision metadata operationId events false "ContentBlockMetadata compaction churn state set."
 
     type ContentBlockMetadataActor
         (

@@ -514,6 +514,35 @@ type ContentBlockMetadataActorTests() =
         | Error error -> Assert.That(error.Error, Does.Contain("churn is active"))
 
     [<Test>]
+    member _.SetCompactionChurnStateRequiresMetadataAndReplaysIdempotently() =
+        let churnState = { ContentBlockCompactionChurnState.NoChurn with HasActiveUpload = true }
+        let command = setChurnState "op-set-churn-replay" churnState
+
+        let missingMetadataResult = ContentBlockMetadataActor.decideCommand [] ContentBlockMetadataDto.Empty command (metadata "corr-set-churn-missing")
+
+        match missingMetadataResult with
+        | Ok _ -> Assert.Fail("Expected churn state command to require current metadata.")
+        | Error error -> Assert.That(error.Error, Does.Contain("requires current metadata"))
+
+        let currentMetadata = recordWithTotals [| activeRange |] activeRange.PhysicalLength activeRange.PhysicalLength timestamp 7L
+        let currentDto = { ContentBlockMetadataDto.Empty with Metadata = Some currentMetadata }
+        let first = ContentBlockMetadataActor.decideCommand [] currentDto command (metadata "corr-set-churn")
+
+        match first with
+        | Error error -> Assert.Fail($"Expected churn state command to succeed with metadata, got {error.Error}.")
+        | Ok decision ->
+            let updated = applyAll decision.Events currentDto
+            let replay = ContentBlockMetadataActor.decideCommand decision.Events updated command (metadata "corr-set-churn-replay")
+
+            Assert.That(updated.CompactionChurnState.HasActiveUpload, Is.True)
+
+            match replay with
+            | Ok replayDecision ->
+                Assert.That(replayDecision.WasIdempotentReplay, Is.True)
+                Assert.That(replayDecision.Metadata.MetadataVersion, Is.EqualTo(currentMetadata.MetadataVersion))
+            | Error error -> Assert.Fail($"Expected churn state replay to succeed, got {error.Error}.")
+
+    [<Test>]
     member _.RangePresenceAggregatesDuplicateOrdinalRangesAsActiveWhenAnyPhysicalCopyIsActive() =
         let activePhysicalCopy = { reclaimableRange with ActiveManifestCount = 1; PhysicalOffset = 2048L }
 
