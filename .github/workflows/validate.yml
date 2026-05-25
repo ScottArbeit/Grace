@@ -3,6 +3,8 @@ name: Validate
 on:
   pull_request:
     branches: [ main ]
+  push:
+    branches: [ main, agent/** ]
   schedule:
     - cron: "0 3 * * *"
   workflow_dispatch:
@@ -27,7 +29,7 @@ jobs:
         run: pwsh ./scripts/validate.ps1 -Fast
 
   full:
-    if: github.event_name == 'pull_request'
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     env:
       GraceBuildKind: ci
