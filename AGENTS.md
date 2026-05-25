@@ -47,10 +47,13 @@ impact and skipped validation.
 - Use `pwsh ./scripts/validate.ps1 -Full` when Aspire, emulators, storage, Service Bus, Cosmos DB, Redis,
   deployment/runtime behavior, or cross-service integration is affected.
 - Commit after each completed slice and keep pull requests focused and reviewable.
-- Before treating coding work as complete, run a Code Review session in a subagent using a medium-sized, lower-cost
+- Before treating coding work as complete, run a local review-only subagent. If the subagent launcher exposes a
+  dedicated Code Review mode, skill, command, or capability, select it explicitly; do not assume that a generic
+  reviewer prompt activates it. Do not use GitHub `@codex review`, automatic Codex pull request review, or another
+  external pull-request review bot for this completion gate. The review subagent must use a medium-sized, lower-cost
   model with high reasoning effort, such as `gpt-5.4-mini` or the nearest equivalent available in the active model
-  provider. Address every issue it identifies, validate and commit the fixes, then run another review subagent session
-  with the same model class. Continue this loop until the reviewer reports no issues.
+  provider. Address every issue identified, validate and commit the fixes, then repeat the local subagent review until
+  the reviewer reports no issues.
 - Open normal ready-for-review pull requests. Do not open draft pull requests unless the user explicitly asks for a
   draft.
 - When the user says a PR is merged, verify the merge, delete the issue branch and worktree, run `git fetch --prune`,

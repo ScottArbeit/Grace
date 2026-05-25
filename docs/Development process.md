@@ -61,7 +61,8 @@ Validation:
 Definition of done:
 - Behavior changed
 - Tests or docs updated
-- Coding work reviewed by a medium-sized, lower-cost high-reasoning subagent with no issues remaining
+- Coding work reviewed by a local review-only subagent, using its dedicated Code Review capability when available, with
+  no issues remaining
 - Ready-for-review pull request opened and linked
 - Validation recorded
 - Review evidence prepared
@@ -169,26 +170,35 @@ YAML parsing, or `git diff --check`.
 
 ## Required Agent Code Review
 
-A coding task is not complete until the implementing agent runs a dedicated Code Review session in a subagent using a
-medium-sized, lower-cost model with high reasoning effort. Use a model class comparable to `gpt-5.4-mini` with high
-reasoning, or the nearest equivalent available in the active model provider. Run this review after the implementation
-slice has been validated and committed, so the reviewer can inspect the actual committed diff that would move forward.
+A coding task is not complete until the implementing agent runs a local review-only subagent after the implementation
+slice has been validated and committed. If the subagent launcher exposes a dedicated Code Review mode, skill, command,
+or capability, select it explicitly for that subagent. Do not assume that a generic prompt asking a model to act like a
+reviewer automatically activates the dedicated Code Review capability.
+
+Do not use GitHub `@codex review`, automatic Codex pull request review, or another external pull-request review bot for
+this completion gate. Those flows are intentionally outside the Grace development loop because they are too slow for
+each review-fix turn.
+
+The review subagent must use a medium-sized, lower-cost model with high reasoning effort. Use a model class comparable
+to `gpt-5.4-mini` with high reasoning, or the nearest equivalent available in the active model provider. The subagent
+prompt must say to act strictly as a code reviewer, not edit files, inspect the committed diff and relevant surrounding
+code/tests, report only actionable issues, and clearly say when there are no issues.
 
 The review loop is blocking:
 
-1. Run the Code Review subagent against the committed task diff and ask it to report only actionable issues, risks,
-   regressions, or missing tests.
+1. Run the local review-only subagent against the committed task diff, using its dedicated Code Review capability when
+   the subagent environment exposes one.
 2. If the review finds issues, address them in the issue-owned branch/worktree.
 3. Re-run focused validation for the changed behavior or docs, and broader validation when the fix touches shared or
    risky surfaces.
 4. Commit the review fix.
-5. Run another Code Review subagent session with the same medium-sized, lower-cost high-reasoning model class against
-   the updated committed diff.
-6. Repeat the loop until the Code Review subagent reports no issues.
+5. Run another local review-only subagent pass against the updated committed diff, again using the dedicated Code Review
+   capability when the subagent environment exposes one.
+6. Repeat the loop until the review reports no issues.
 
-Only after the Code Review subagent reports no issues can the task continue toward pull request creation, handoff,
-merge readiness, or any other completion step. Record the final no-issues review result and validation evidence in the
-task record or pull request.
+Only after the local review-only subagent reports no issues can the task continue toward pull request creation, handoff,
+merge readiness, or any other completion step. Record whether a dedicated subagent Code Review capability was available,
+the final no-issues review result, and validation evidence in the task record or pull request.
 
 ## Validation Commands
 
@@ -243,7 +253,8 @@ Before opening or updating a pull request, include:
 - touched paths and any write-set expansion
 - focused validation run
 - broader validation run, or skipped-validation reason
-- final medium-sized, lower-cost high-reasoning Code Review subagent result
+- review path used: local review-only subagent, including whether a dedicated Code Review capability was available
+- final no-issues code review result
 - docs impact
 - residual risk
 - rollback or recovery notes when the change touches runtime or data

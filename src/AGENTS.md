@@ -29,10 +29,13 @@ update the issue before editing the new paths.
 - Resolve all compilation errors before considering a task complete.
 - Run impacted tests for each task and fix failures introduced by your changes.
 - Create a new git commit after each completed task to keep review scope clear.
-- Before treating coding work as complete, run a Code Review session in a subagent using a medium-sized, lower-cost
+- Before treating coding work as complete, run a local review-only subagent. If the subagent launcher exposes a
+  dedicated Code Review mode, skill, command, or capability, select it explicitly; do not assume that a generic
+  reviewer prompt activates it. Do not use GitHub `@codex review`, automatic Codex pull request review, or another
+  external pull-request review bot for this completion gate. The review subagent must use a medium-sized, lower-cost
   model with high reasoning effort, such as `gpt-5.4-mini` or the nearest equivalent available in the active model
-  provider. Address every issue it identifies, validate and commit the fixes, then run another review subagent session
-  with the same model class. Continue this loop until the reviewer reports no issues.
+  provider. Address every issue identified, validate and commit the fixes, then repeat the local subagent review until
+  the reviewer reports no issues.
 - When the user asks to address a code review comment, review comment, PR feedback, or similar, complete the full
   review-thread workflow: evaluate the comment, make the appropriate fix or explicitly explain why no code change is
   needed, validate the result, commit and push the branch, reply to the GitHub review comment with the outcome and
