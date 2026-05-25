@@ -112,10 +112,19 @@ module Storage =
         task {
             match repositoryDto.ObjectStorageProvider with
             | AzureBlobStorage ->
-                let! blobClient = getAzureBlobClient repositoryDto confirmedBlock.StoragePlacement.ObjectKey correlationId
-                let! downloadResult = blobClient.DownloadContentAsync()
+                try
+                    let! blobClient = getAzureBlobClient repositoryDto confirmedBlock.StoragePlacement.ObjectKey correlationId
+                    let! downloadResult = blobClient.DownloadContentAsync()
 
-                return Ok({ Address = confirmedBlock.ContentBlockAddress; Payload = downloadResult.Value.Content.ToArray() })
+                    return Ok({ Address = confirmedBlock.ContentBlockAddress; Payload = downloadResult.Value.Content.ToArray() })
+                with
+                | :? Azure.RequestFailedException as ex ->
+                    return
+                        Error(
+                            GraceError.Create
+                                $"Confirmed ContentBlock payload {confirmedBlock.ContentBlockAddress} could not be read from object storage: {ex.Message}"
+                                correlationId
+                        )
             | AWSS3 -> return Error(GraceError.Create (getErrorMessage StorageError.NotImplemented) correlationId)
             | GoogleCloudStorage -> return Error(GraceError.Create (getErrorMessage StorageError.NotImplemented) correlationId)
             | ObjectStorageProvider.Unknown -> return Error(GraceError.Create (getErrorMessage StorageError.UnknownObjectStorageProvider) correlationId)
@@ -139,6 +148,26 @@ module Storage =
                 let uploadSessionActor = Grace.Actors.Extensions.ActorProxy.UploadSession.CreateActorProxy parameters.UploadSessionId repositoryId correlationId
                 let! session = uploadSessionActor.Get correlationId
 
+                let! confirmedBlockUploads =
+                    task {
+                        if
+                            isNull (box session)
+                            || isNull session.ConfirmedBlockUploads
+                        then
+                            let! events = uploadSessionActor.GetEvents correlationId
+
+                            return
+                                events
+                                |> Seq.fold (fun dto event -> UploadSessionDto.UpdateDto event dto) UploadSessionDto.Default
+                                |> fun dto ->
+                                    if isNull dto.ConfirmedBlockUploads then
+                                        Array.empty
+                                    else
+                                        dto.ConfirmedBlockUploads
+                        else
+                            return session.ConfirmedBlockUploads
+                    }
+
                 let payloads = ResizeArray<FinalizeManifestBlockPayload>()
                 let mutable error = None
                 let mutable index = 0
@@ -156,7 +185,7 @@ module Storage =
                       && Option.isNone error do
                     let address = blockAddresses[index]
 
-                    match session.ConfirmedBlockUploads
+                    match confirmedBlockUploads
                           |> Array.tryFind (fun confirmedBlock -> confirmedBlock.ContentBlockAddress = address)
                         with
                     | None -> ()

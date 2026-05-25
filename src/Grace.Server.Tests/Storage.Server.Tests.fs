@@ -493,6 +493,14 @@ type StorageManifestUploadSessionRoutes() =
             return deserialize<GraceReturnValue<UploadSessionDecision>> body
         }
 
+    let postUploadSessionBadRequest (route: string) parameters =
+        task {
+            let! response = Client.PostAsync(route, createJsonContent parameters)
+            let! body = response.Content.ReadAsStringAsync()
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), body)
+            return body
+        }
+
     [<Test>]
     member _.LargeManifestUploadCanStartUploadConfirmAndFinalizeUsingNewBlocksOnly() =
         task {
@@ -563,4 +571,62 @@ type StorageManifestUploadSessionRoutes() =
             let! finalizeResult = postUploadSessionDecision "/storage/finalizeManifestUpload" finalize
             Assert.That(finalizeResult.ReturnValue.Session.FinalizedManifestAddress, Is.EqualTo(Some manifest.ManifestAddress))
             Assert.That(finalizeResult.ReturnValue.Session.LifecycleState, Is.EqualTo(UploadSessionLifecycleState.RetentionPending))
+        }
+
+    [<Test>]
+    member _.FinalizeManifestUploadReturnsBadRequestWhenConfirmedBlockBlobIsMissing() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let correlationId = generateCorrelationId ()
+            let sessionId = Guid.NewGuid()
+            let payload = pseudoRandomBytes 220000
+            payload[0] <- 1uy
+            let block = encodeBlock payload
+            let manifest = manifestFor payload block
+
+            let start = Parameters.Storage.StartManifestUploadSessionParameters()
+            setStorageParameters start repositoryId correlationId
+            start.UploadSessionId <- sessionId
+            start.AuthorizedScope <- "/"
+            start.FileContentHash <- manifest.FileContentHash
+            start.ExpectedSize <- manifest.Size
+            start.ChunkingSuiteId <- manifest.ChunkingSuiteId
+            start.SamplingPolicySnapshot <- "sdk-no-global-dedupe-v1"
+            start.OperationId <- "start"
+
+            let! _ = postUploadSessionDecision "/storage/startManifestUploadSession" start
+
+            let register = Parameters.Storage.RegisterContentBlockUploadParameters()
+            setStorageParameters register repositoryId correlationId
+            register.UploadSessionId <- sessionId
+            register.AuthorizedScope <- "/"
+            register.OperationId <- "register-0"
+            register.ContentBlockAddress <- block.Address
+            register.LogicalOffset <- 0L
+            register.LogicalLength <- int64 payload.Length
+            register.ExpectedPayloadLength <- int64 block.Payload.Length
+
+            let! _ = postUploadSessionDecision "/storage/registerContentBlockUpload" register
+
+            let confirm = Parameters.Storage.ConfirmContentBlockUploadParameters()
+            setStorageParameters confirm repositoryId correlationId
+            confirm.UploadSessionId <- sessionId
+            confirm.AuthorizedScope <- "/"
+            confirm.OperationId <- "confirm-0"
+            confirm.ContentBlockAddress <- block.Address
+            confirm.Payload <- block.Payload
+
+            confirm.StoragePlacement <- { ObjectKey = $"cas/content-blocks/missing-{Guid.NewGuid():N}"; ETag = Some "etag-missing-block" }
+
+            let! _ = postUploadSessionDecision "/storage/confirmContentBlockUpload" confirm
+
+            let finalize = Parameters.Storage.FinalizeManifestUploadParameters()
+            setStorageParameters finalize repositoryId correlationId
+            finalize.UploadSessionId <- sessionId
+            finalize.AuthorizedScope <- "/"
+            finalize.OperationId <- "finalize"
+            finalize.Manifest <- manifest
+
+            let! body = postUploadSessionBadRequest "/storage/finalizeManifestUpload" finalize
+            Assert.That(body, Does.Contain("could not be read from object storage"))
         }
