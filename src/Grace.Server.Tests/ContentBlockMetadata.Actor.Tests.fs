@@ -40,6 +40,14 @@ type ContentBlockMetadataActorTests() =
             UpdatedAt = timestamp
         }
 
+    let recordWithTotals ranges totalPhysicalBytes activePhysicalBytes updatedAt metadataVersion =
+        { record ranges with
+            TotalPhysicalBytes = totalPhysicalBytes
+            ActivePhysicalBytes = activePhysicalBytes
+            UpdatedAt = updatedAt
+            MetadataVersion = metadataVersion
+        }
+
     let replace operationId expectedVersion ranges =
         ContentBlockMetadataCommand.ReplaceWholeRecord { OperationId = operationId; ExpectedMetadataVersion = expectedVersion; Metadata = record ranges }
 
@@ -57,6 +65,16 @@ type ContentBlockMetadataActorTests() =
     let mergeWithObjectKey operationId objectKey ranges = mergeWithPlacement operationId { ObjectKey = objectKey; ETag = Some "etag-1" } ranges
 
     let merge operationId ranges = mergeWithObjectKey operationId "cas/content-blocks/block-blake3-0001" ranges
+
+    let compact operationId expectedMetadataVersion placement ranges context =
+        ContentBlockMetadataCommand.CompactPhysicalRanges
+            {
+                OperationId = operationId
+                ExpectedMetadataVersion = expectedMetadataVersion
+                StoragePlacement = placement
+                Ranges = ranges
+                CandidateContext = context
+            }
 
     let applyAll events current =
         events
@@ -135,6 +153,176 @@ type ContentBlockMetadataActorTests() =
         Assert.That(retainActiveClaim, Is.EqualTo(ContentBlockRangeGcSafety.RetainActiveReuseClaim))
         Assert.That(reclaimZeroActive, Is.EqualTo(ContentBlockRangeGcSafety.Reclaimable))
         Assert.That(absent, Is.EqualTo(ContentBlockRangeGcSafety.Absent))
+
+    [<Test>]
+    member _.CompactionCandidateSelectionRequiresThresholdAgeNoChurnAndCurrentMetadataVersion() =
+        let oldEnough = timestamp.Plus(Duration.FromHours(-25.0))
+        let tooYoung = timestamp.Plus(Duration.FromHours(-23.0))
+        let minimumReclaimableBytes = 64L * 1024L * 1024L
+        let active = { activeRange with PhysicalLength = minimumReclaimableBytes; ActiveManifestCount = 1 }
+        let reclaimable = { reclaimableRange with PhysicalOffset = minimumReclaimableBytes; PhysicalLength = minimumReclaimableBytes; ActiveManifestCount = 0 }
+
+        let candidateMetadata = recordWithTotals [| active; reclaimable |] (minimumReclaimableBytes * 2L) minimumReclaimableBytes oldEnough 7L
+
+        let baseContext =
+            {
+                Now = timestamp
+                ExpectedMetadataVersion = 7L
+                HasActiveUpload = false
+                HasActiveFinalization = false
+                HasActiveRangeClaim = false
+                HasActiveCompaction = false
+            }
+
+        let candidate = ContentBlockMetadataTypes.selectCompactionCandidate baseContext candidateMetadata
+
+        Assert.That(candidate, Is.EqualTo(ContentBlockCompactionSelection.Selected))
+
+        let tooSmall =
+            ContentBlockMetadataTypes.selectCompactionCandidate
+                baseContext
+                { candidateMetadata with
+                    Ranges =
+                        [|
+                            active
+                            { reclaimable with PhysicalLength = minimumReclaimableBytes - 1L }
+                        |]
+                    TotalPhysicalBytes = (minimumReclaimableBytes * 2L) - 1L
+                    ActivePhysicalBytes = minimumReclaimableBytes
+                }
+
+        let tooNew = ContentBlockMetadataTypes.selectCompactionCandidate baseContext { candidateMetadata with UpdatedAt = tooYoung }
+
+        let churn = ContentBlockMetadataTypes.selectCompactionCandidate { baseContext with HasActiveRangeClaim = true } candidateMetadata
+
+        let stale = ContentBlockMetadataTypes.selectCompactionCandidate { baseContext with ExpectedMetadataVersion = 6L } candidateMetadata
+
+        Assert.That(tooSmall, Is.EqualTo(ContentBlockCompactionSelection.RetainInsufficientReclaimableBytes))
+        Assert.That(tooNew, Is.EqualTo(ContentBlockCompactionSelection.RetainTooYoung))
+        Assert.That(churn, Is.EqualTo(ContentBlockCompactionSelection.RetainChurn))
+        Assert.That(stale, Is.EqualTo(ContentBlockCompactionSelection.RetainStaleMetadata))
+
+    [<Test>]
+    member _.CompactPhysicalRangesRemovesReclaimableBytesWithoutChangingLogicalReconstructionIdentity() =
+        let oldEnough = timestamp.Plus(Duration.FromHours(-25.0))
+        let minimumReclaimableBytes = 64L * 1024L * 1024L
+
+        let active = { OrdinalStart = 0; OrdinalCount = 4; ActiveManifestCount = 3; PhysicalOffset = minimumReclaimableBytes; PhysicalLength = 8192L }
+
+        let reclaimable =
+            {
+                OrdinalStart = 4
+                OrdinalCount = 8
+                ActiveManifestCount = 0
+                PhysicalOffset = minimumReclaimableBytes + 8192L
+                PhysicalLength = minimumReclaimableBytes
+            }
+
+        let currentMetadata =
+            recordWithTotals
+                [| active; reclaimable |]
+                (minimumReclaimableBytes
+                 + 8192L
+                 + minimumReclaimableBytes)
+                8192L
+                oldEnough
+                7L
+
+        let currentDto = { ContentBlockMetadataDto.Empty with Metadata = Some currentMetadata }
+
+        let context =
+            {
+                Now = timestamp
+                ExpectedMetadataVersion = 7L
+                HasActiveUpload = false
+                HasActiveFinalization = false
+                HasActiveRangeClaim = false
+                HasActiveCompaction = false
+            }
+
+        let compactedRange = { active with PhysicalOffset = 0L }
+        let compactedPlacement = { ObjectKey = "cas/content-blocks/block-blake3-0001.compacted"; ETag = Some "etag-compact" }
+
+        let result =
+            ContentBlockMetadataActor.decideCommand
+                []
+                currentDto
+                (compact "op-compact" 7L compactedPlacement [| compactedRange |] context)
+                (metadata "corr-compact")
+
+        match result with
+        | Ok decision ->
+            Assert.That(decision.Metadata.ContentBlockAddress, Is.EqualTo(contentBlockAddress))
+            Assert.That(decision.Metadata.MetadataVersion, Is.EqualTo(8L))
+            Assert.That(decision.Metadata.StoragePlacement, Is.EqualTo(compactedPlacement))
+            Assert.That(decision.Metadata.TotalPhysicalBytes, Is.EqualTo(8192L))
+            Assert.That(decision.Metadata.ActivePhysicalBytes, Is.EqualTo(8192L))
+            Assert.That(decision.Metadata.Ranges.Length, Is.EqualTo(1))
+            Assert.That(decision.Metadata.Ranges[0], Is.EqualTo(compactedRange))
+
+            Assert.That(
+                ContentBlockMetadataTypes.rangePresence decision.Metadata { OrdinalStart = 0; OrdinalCount = 4 },
+                Is.EqualTo(ContentBlockRangePresence.Active)
+            )
+
+            Assert.That(
+                ContentBlockMetadataTypes.rangePresence decision.Metadata { OrdinalStart = 4; OrdinalCount = 8 },
+                Is.EqualTo(ContentBlockRangePresence.Absent)
+            )
+        | Error error -> Assert.Fail($"Expected compaction to succeed, got {error.Error}.")
+
+    [<Test>]
+    member _.CompactPhysicalRangesRejectsChangedLogicalRangesAndStaleMetadataVersion() =
+        let oldEnough = timestamp.Plus(Duration.FromHours(-25.0))
+        let minimumReclaimableBytes = 64L * 1024L * 1024L
+        let active = { activeRange with PhysicalLength = 8192L; ActiveManifestCount = 1 }
+        let reclaimable = { reclaimableRange with PhysicalOffset = 8192L; PhysicalLength = minimumReclaimableBytes; ActiveManifestCount = 0 }
+
+        let currentMetadata = recordWithTotals [| active; reclaimable |] (8192L + minimumReclaimableBytes) 8192L oldEnough 7L
+
+        let currentDto = { ContentBlockMetadataDto.Empty with Metadata = Some currentMetadata }
+
+        let context =
+            {
+                Now = timestamp
+                ExpectedMetadataVersion = 7L
+                HasActiveUpload = false
+                HasActiveFinalization = false
+                HasActiveRangeClaim = false
+                HasActiveCompaction = false
+            }
+
+        let placement = { ObjectKey = "cas/content-blocks/block-blake3-0001.compacted"; ETag = Some "etag-compact" }
+        let changedLogicalRange = { active with OrdinalCount = active.OrdinalCount + 1; PhysicalOffset = 0L }
+
+        let changedLogicalResult =
+            ContentBlockMetadataActor.decideCommand
+                []
+                currentDto
+                (compact "op-compact-changed-logical" 7L placement [| changedLogicalRange |] context)
+                (metadata "corr-compact-changed-logical")
+
+        let staleResult =
+            ContentBlockMetadataActor.decideCommand
+                []
+                currentDto
+                (compact
+                    "op-compact-stale"
+                    6L
+                    placement
+                    [|
+                        { active with PhysicalOffset = 0L }
+                    |]
+                    context)
+                (metadata "corr-compact-stale")
+
+        match changedLogicalResult with
+        | Ok _ -> Assert.Fail("Expected changed logical reconstruction ranges to be rejected.")
+        | Error error -> Assert.That(error.Error, Does.Contain("preserve active logical reconstruction ranges"))
+
+        match staleResult with
+        | Ok _ -> Assert.Fail("Expected stale compaction to be rejected.")
+        | Error error -> Assert.That(error.Error, Does.Contain("Stale ContentBlockMetadata compaction rejected"))
 
     [<Test>]
     member _.RangePresenceAggregatesDuplicateOrdinalRangesAsActiveWhenAnyPhysicalCopyIsActive() =

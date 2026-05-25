@@ -47,6 +47,27 @@ module ContentBlockMetadata =
     [<CLIMutable; GenerateSerializer>]
     type ContentBlockRangeGcSafetyContext = { Presence: ContentBlockRangePresence; HasPendingContributionWorkflow: bool; HasActiveReuseClaim: bool }
 
+    [<KnownType("GetKnownTypes"); GenerateSerializer>]
+    type ContentBlockCompactionSelection =
+        | Selected
+        | RetainInsufficientReclaimableBytes
+        | RetainTooYoung
+        | RetainChurn
+        | RetainStaleMetadata
+
+        static member GetKnownTypes() = GetKnownTypes<ContentBlockCompactionSelection>()
+
+    [<CLIMutable; GenerateSerializer>]
+    type ContentBlockCompactionCandidateContext =
+        {
+            Now: Instant
+            ExpectedMetadataVersion: MetadataVersion
+            HasActiveUpload: bool
+            HasActiveFinalization: bool
+            HasActiveRangeClaim: bool
+            HasActiveCompaction: bool
+        }
+
     [<CLIMutable; GenerateSerializer>]
     type ContentBlockMetadata =
         {
@@ -90,10 +111,21 @@ module ContentBlockMetadata =
             Ranges: ContentBlockMetadataRange array
         }
 
+    [<GenerateSerializer>]
+    type CompactContentBlockPhysicalRanges =
+        {
+            OperationId: string
+            ExpectedMetadataVersion: MetadataVersion
+            StoragePlacement: ContentBlockStoragePlacement
+            Ranges: ContentBlockMetadataRange array
+            CandidateContext: ContentBlockCompactionCandidateContext
+        }
+
     [<KnownType("GetKnownTypes"); GenerateSerializer>]
     type ContentBlockMetadataCommand =
         | ReplaceWholeRecord of replace: ReplaceContentBlockMetadata
         | MergePhysicalRanges of merge: MergeContentBlockPhysicalRanges
+        | CompactPhysicalRanges of compact: CompactContentBlockPhysicalRanges
 
         static member GetKnownTypes() = GetKnownTypes<ContentBlockMetadataCommand>()
 
@@ -101,6 +133,7 @@ module ContentBlockMetadata =
     type ContentBlockMetadataEventType =
         | WholeRecordReplaced of operationId: string * metadata: ContentBlockMetadata
         | PhysicalRangesMerged of operationId: string * metadata: ContentBlockMetadata
+        | PhysicalRangesCompacted of operationId: string * metadata: ContentBlockMetadata
 
         static member GetKnownTypes() = GetKnownTypes<ContentBlockMetadataEventType>()
 
@@ -120,6 +153,7 @@ module ContentBlockMetadata =
             match event.Event with
             | ContentBlockMetadataEventType.WholeRecordReplaced (operationId, metadata) -> { Metadata = Some metadata; LastOperationId = Some operationId }
             | ContentBlockMetadataEventType.PhysicalRangesMerged (operationId, metadata) -> { Metadata = Some metadata; LastOperationId = Some operationId }
+            | ContentBlockMetadataEventType.PhysicalRangesCompacted (operationId, metadata) -> { Metadata = Some metadata; LastOperationId = Some operationId }
 
     [<GenerateSerializer>]
     type ContentBlockMetadataDecision =
@@ -163,3 +197,38 @@ module ContentBlockMetadata =
         | ContentBlockRangePresence.Reclaimable when context.HasPendingContributionWorkflow -> ContentBlockRangeGcSafety.RetainPendingContributionWorkflow
         | ContentBlockRangePresence.Reclaimable when context.HasActiveReuseClaim -> ContentBlockRangeGcSafety.RetainActiveReuseClaim
         | ContentBlockRangePresence.Reclaimable -> ContentBlockRangeGcSafety.Reclaimable
+
+    let private minimumCompactionReclaimableBytes = 64L * 1024L * 1024L
+
+    let private minimumCompactionAge = Duration.FromHours(24.0)
+
+    let private reclaimablePhysicalBytes (metadata: ContentBlockMetadata) =
+        metadata.Ranges
+        |> Array.filter (fun range -> range.ActiveManifestCount = 0)
+        |> Array.sumBy (fun range -> range.PhysicalLength)
+
+    let private requiredReclaimableBytes (metadata: ContentBlockMetadata) =
+        let tenPercent =
+            metadata.TotalPhysicalBytes / 10L
+            + if metadata.TotalPhysicalBytes % 10L = 0L then 0L else 1L
+
+        max minimumCompactionReclaimableBytes tenPercent
+
+    let private hasCompactionChurn (context: ContentBlockCompactionCandidateContext) =
+        context.HasActiveUpload
+        || context.HasActiveFinalization
+        || context.HasActiveRangeClaim
+        || context.HasActiveCompaction
+
+    let selectCompactionCandidate (context: ContentBlockCompactionCandidateContext) (metadata: ContentBlockMetadata) =
+        if metadata.MetadataVersion
+           <> context.ExpectedMetadataVersion then
+            ContentBlockCompactionSelection.RetainStaleMetadata
+        elif hasCompactionChurn context then
+            ContentBlockCompactionSelection.RetainChurn
+        elif context.Now - metadata.UpdatedAt < minimumCompactionAge then
+            ContentBlockCompactionSelection.RetainTooYoung
+        elif reclaimablePhysicalBytes metadata < requiredReclaimableBytes metadata then
+            ContentBlockCompactionSelection.RetainInsufficientReclaimableBytes
+        else
+            ContentBlockCompactionSelection.Selected
