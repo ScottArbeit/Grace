@@ -16,6 +16,7 @@ open Grace.Shared.Utilities
 open Grace.Shared
 open Grace.Shared.Client.Configuration
 open Grace.Shared.Validation.Errors
+open Grace.Types.UploadSession
 open Grace.Types.Repository
 open Grace.Types.Types
 open Microsoft.AspNetCore.Http
@@ -70,6 +71,195 @@ module Storage =
                 RepositoryId.Parse parameters.RepositoryId
 
         organizationId, repositoryId
+
+    let private resolveOwnerId (graceIds: GraceIds) (parameters: StorageParameters) =
+        if graceIds.OwnerId <> OwnerId.Empty then
+            graceIds.OwnerId
+        else
+            OwnerId.Parse parameters.OwnerId
+
+    let private createEventMetadata (context: HttpContext) correlationId =
+        let principal =
+            if isNull context.User.Identity
+               || String.IsNullOrWhiteSpace context.User.Identity.Name then
+                "http"
+            else
+                context.User.Identity.Name
+
+        let metadata = EventMetadata.New correlationId principal
+        metadata.Properties[ "Path" ] <- $"{context.Request.Path}"
+        metadata
+
+    let private handleUploadSessionCommand
+        (context: HttpContext)
+        (parameters: UploadSessionStorageParameters)
+        (command: UploadSessionCommand)
+        (correlationId: CorrelationId)
+        =
+        task {
+            let graceIds = getGraceIds context
+            let _, repositoryId = resolveStorageIds graceIds parameters
+            let uploadSessionActor = Grace.Actors.Extensions.ActorProxy.UploadSession.CreateActorProxy parameters.UploadSessionId repositoryId correlationId
+            let metadata = createEventMetadata context correlationId
+
+            let! scopeValidation =
+                task {
+                    match command with
+                    | UploadSessionCommand.Start _ -> return Ok()
+                    | _ ->
+                        let! session = uploadSessionActor.Get correlationId
+
+                        let! sessionForScope =
+                            task {
+                                if session.UploadSessionId = UploadSessionId.Empty then
+                                    let! events = uploadSessionActor.GetEvents correlationId
+
+                                    return
+                                        events
+                                        |> Seq.fold (fun dto event -> UploadSessionDto.UpdateDto event dto) UploadSessionDto.Default
+                                else
+                                    return session
+                            }
+
+                        if sessionForScope.UploadSessionId = UploadSessionId.Empty then
+                            return Ok()
+                        elif sessionForScope.AuthorizedScope
+                             <> parameters.AuthorizedScope then
+                            return
+                                Error(
+                                    GraceError.Create
+                                        $"UploadSession AuthorizedScope must match the scope recorded when the session was started. Expected '{sessionForScope.AuthorizedScope}', actual '{parameters.AuthorizedScope}'."
+                                        correlationId
+                                )
+                        else
+                            return Ok()
+                }
+
+            match scopeValidation with
+            | Error error -> return! context |> result400BadRequest error
+            | Ok _ ->
+                let! result = uploadSessionActor.Handle command metadata
+
+                match result with
+                | Ok returnValue -> return! context |> result200Ok returnValue
+                | Error error -> return! context |> result400BadRequest error
+        }
+
+    let private downloadContentBlockPayload (repositoryDto: RepositoryDto) (confirmedBlock: ConfirmedBlockUpload) correlationId =
+        task {
+            match repositoryDto.ObjectStorageProvider with
+            | AzureBlobStorage ->
+                try
+                    let! blobClient = getAzureBlobClient repositoryDto confirmedBlock.StoragePlacement.ObjectKey correlationId
+                    let! downloadResult = blobClient.DownloadContentAsync()
+
+                    return Ok({ Address = confirmedBlock.ContentBlockAddress; Payload = downloadResult.Value.Content.ToArray() })
+                with
+                | :? Azure.RequestFailedException as ex ->
+                    return
+                        Error(
+                            GraceError.Create
+                                $"Confirmed ContentBlock payload {confirmedBlock.ContentBlockAddress} could not be read from object storage: {ex.Message}"
+                                correlationId
+                        )
+            | AWSS3 -> return Error(GraceError.Create (getErrorMessage StorageError.NotImplemented) correlationId)
+            | GoogleCloudStorage -> return Error(GraceError.Create (getErrorMessage StorageError.NotImplemented) correlationId)
+            | ObjectStorageProvider.Unknown -> return Error(GraceError.Create (getErrorMessage StorageError.UnknownObjectStorageProvider) correlationId)
+        }
+
+    let private hydrateFinalizeBlockPayloads
+        (context: HttpContext)
+        (parameters: FinalizeManifestUploadParameters)
+        (manifest: FileManifest)
+        (correlationId: CorrelationId)
+        =
+        task {
+            if isNull parameters.BlockPayloads |> not
+               && parameters.BlockPayloads.Length > 0 then
+                return Ok parameters.BlockPayloads
+            else
+                let graceIds = getGraceIds context
+                let organizationId, repositoryId = resolveStorageIds graceIds parameters
+                let repositoryActor = Repository.CreateActorProxy organizationId repositoryId correlationId
+                let! repositoryDto = repositoryActor.Get correlationId
+                let uploadSessionActor = Grace.Actors.Extensions.ActorProxy.UploadSession.CreateActorProxy parameters.UploadSessionId repositoryId correlationId
+                let! session = uploadSessionActor.Get correlationId
+
+                let! confirmedBlockUploads =
+                    task {
+                        if
+                            isNull (box session)
+                            || isNull session.ConfirmedBlockUploads
+                        then
+                            let! events = uploadSessionActor.GetEvents correlationId
+
+                            return
+                                events
+                                |> Seq.fold (fun dto event -> UploadSessionDto.UpdateDto event dto) UploadSessionDto.Default
+                                |> fun dto ->
+                                    if isNull dto.ConfirmedBlockUploads then
+                                        Array.empty
+                                    else
+                                        dto.ConfirmedBlockUploads
+                        else
+                            return session.ConfirmedBlockUploads
+                    }
+
+                let payloads = ResizeArray<FinalizeManifestBlockPayload>()
+                let mutable error = None
+                let mutable index = 0
+
+                let blockAddresses =
+                    if isNull (box manifest) || isNull manifest.Blocks then
+                        Array.empty
+                    else
+                        manifest.Blocks
+                        |> Seq.map (fun block -> block.Address)
+                        |> Seq.distinct
+                        |> Seq.toArray
+
+                while index < blockAddresses.Length
+                      && Option.isNone error do
+                    let address = blockAddresses[index]
+
+                    match confirmedBlockUploads
+                          |> Array.tryFind (fun confirmedBlock -> confirmedBlock.ContentBlockAddress = address)
+                        with
+                    | None -> ()
+                    | Some confirmedBlock ->
+                        match! downloadContentBlockPayload repositoryDto confirmedBlock correlationId with
+                        | Ok payload -> payloads.Add payload
+                        | Error downloadError -> error <- Some downloadError
+
+                    index <- index + 1
+
+                match error with
+                | Some error -> return Error error
+                | None -> return Ok(payloads.ToArray())
+        }
+
+    let private createDiscoveryPolicy () : StorageParameterContracts.ContentBlockDiscoveryPolicy =
+        {
+            MaxKeyChunkAddresses = StorageParameterContracts.MaxDiscoveryKeyChunkAddresses
+            MaxCandidateWindowsPerKeyChunk = StorageParameterContracts.MaxCandidateWindowsPerKeyChunk
+            MaxWindowChunks = StorageParameterContracts.MaxWindowChunks
+            MaxResponseProtectedChunks = StorageParameterContracts.MaxResponseProtectedChunks
+            ResponseTtlSeconds = StorageParameterContracts.ResponseTtlSeconds
+            MinimumAcceptedReuseRunLength = StorageParameterContracts.MinimumAcceptedReuseRunLength
+            PositiveCandidatesEnabled = false
+            EmptyResponseMeansAbsent = false
+            IsAuthoritative = false
+        }
+
+    let private createEmptyDiscoveryResult requestedKeyChunkCount : StorageParameterContracts.DiscoverContentBlocksResult =
+        {
+            RequestedKeyChunkCount = requestedKeyChunkCount
+            AcceptedKeyChunkCount = requestedKeyChunkCount
+            Policy = createDiscoveryPolicy ()
+            CandidateContentBlocks = Array.empty
+            IsPartial = true
+            Message = "No positive ContentBlock candidates are returned yet. Empty discovery results are non-authoritative and do not prove absence."
+        }
 
     /// Gets the metadata stored in the object storage provider for the specified file.
     let getFileMetadata (repositoryDto: RepositoryDto) (fileVersion: FileVersion) (context: HttpContext) =
@@ -129,9 +319,9 @@ module Storage =
                     let! repositoryDto = repositoryActor.Get correlationId
 
                     let blobName = getContentBlockObjectKey parameters.ContentBlockAddress
-                    let! uploadUri = getUriWithWriteSharedAccessSignature repositoryDto blobName correlationId
+                    let! uploadUri = getUriWithCreateSharedAccessSignature repositoryDto blobName correlationId
                     context.SetStatusCode StatusCodes.Status200OK
-                    return! context.WriteStringAsync $"{uploadUri}"
+                    return! context.WriteStringAsync uploadUri.AbsoluteUri
                 with
                 | ex ->
                     context.SetStatusCode StatusCodes.Status500InternalServerError
@@ -156,7 +346,7 @@ module Storage =
                     let blobName = getContentBlockObjectKey parameters.ContentBlockAddress
                     let! downloadUri = getUriWithReadSharedAccessSignature repositoryDto blobName correlationId
                     context.SetStatusCode StatusCodes.Status200OK
-                    return! context.WriteStringAsync $"{downloadUri}"
+                    return! context.WriteStringAsync downloadUri.AbsoluteUri
                 with
                 | ex ->
                     context.SetStatusCode StatusCodes.Status500InternalServerError
@@ -211,6 +401,127 @@ module Storage =
                     return!
                         context
                         |> result500ServerError (GraceError.Create (getErrorMessage StorageError.ObjectStorageException) correlationId)
+            }
+
+    let StartManifestUploadSession: HttpHandler =
+        fun (next: HttpFunc) (context: HttpContext) ->
+            task {
+                let correlationId = getCorrelationId context
+                let graceIds = getGraceIds context
+
+                try
+                    let! parameters = context.BindJsonAsync<StartManifestUploadSessionParameters>()
+                    let ownerId = resolveOwnerId graceIds parameters
+                    let organizationId, repositoryId = resolveStorageIds graceIds parameters
+
+                    let command =
+                        UploadSessionCommand.Start
+                            {
+                                UploadSessionId = parameters.UploadSessionId
+                                OwnerId = ownerId
+                                OrganizationId = organizationId
+                                RepositoryId = repositoryId
+                                AuthorizedScope = parameters.AuthorizedScope
+                                FileContentHash = parameters.FileContentHash
+                                ExpectedSize = parameters.ExpectedSize
+                                ChunkingSuiteId = parameters.ChunkingSuiteId
+                                SamplingPolicySnapshot = parameters.SamplingPolicySnapshot
+                                OperationId = parameters.OperationId
+                            }
+
+                    return! handleUploadSessionCommand context parameters command correlationId
+                with
+                | ex ->
+                    let exceptionResponse = ExceptionResponse.Create ex
+                    logToConsole $"Exception in StartManifestUploadSession: {exceptionResponse}"
+
+                    return!
+                        context
+                        |> result500ServerError (GraceError.Create $"{exceptionResponse}" correlationId)
+            }
+
+    let RegisterContentBlockUpload: HttpHandler =
+        fun (next: HttpFunc) (context: HttpContext) ->
+            task {
+                let correlationId = getCorrelationId context
+
+                try
+                    let! parameters = context.BindJsonAsync<RegisterContentBlockUploadParameters>()
+
+                    let command =
+                        UploadSessionCommand.RegisterBlockUploadIntent
+                            {
+                                OperationId = parameters.OperationId
+                                ContentBlockAddress = parameters.ContentBlockAddress
+                                LogicalOffset = parameters.LogicalOffset
+                                LogicalLength = parameters.LogicalLength
+                                ExpectedPayloadLength = parameters.ExpectedPayloadLength
+                            }
+
+                    return! handleUploadSessionCommand context parameters command correlationId
+                with
+                | ex ->
+                    let exceptionResponse = ExceptionResponse.Create ex
+                    logToConsole $"Exception in RegisterContentBlockUpload: {exceptionResponse}"
+
+                    return!
+                        context
+                        |> result500ServerError (GraceError.Create $"{exceptionResponse}" correlationId)
+            }
+
+    let ConfirmContentBlockUpload: HttpHandler =
+        fun (next: HttpFunc) (context: HttpContext) ->
+            task {
+                let correlationId = getCorrelationId context
+
+                try
+                    let! parameters = context.BindJsonAsync<ConfirmContentBlockUploadParameters>()
+
+                    let command =
+                        UploadSessionCommand.ConfirmBlockUploaded
+                            {
+                                OperationId = parameters.OperationId
+                                ContentBlockAddress = parameters.ContentBlockAddress
+                                Payload = parameters.Payload
+                                StoragePlacement = parameters.StoragePlacement
+                            }
+
+                    return! handleUploadSessionCommand context parameters command correlationId
+                with
+                | ex ->
+                    let exceptionResponse = ExceptionResponse.Create ex
+                    logToConsole $"Exception in ConfirmContentBlockUpload: {exceptionResponse}"
+
+                    return!
+                        context
+                        |> result500ServerError (GraceError.Create $"{exceptionResponse}" correlationId)
+            }
+
+    let FinalizeManifestUpload: HttpHandler =
+        fun (next: HttpFunc) (context: HttpContext) ->
+            task {
+                let correlationId = getCorrelationId context
+
+                try
+                    let! parameters = context.BindJsonAsync<FinalizeManifestUploadParameters>()
+                    let! blockPayloadsResult = hydrateFinalizeBlockPayloads context parameters parameters.Manifest correlationId
+
+                    match blockPayloadsResult with
+                    | Error error -> return! context |> result400BadRequest error
+                    | Ok blockPayloads ->
+                        let command =
+                            UploadSessionCommand.FinalizeManifest
+                                { OperationId = parameters.OperationId; Manifest = parameters.Manifest; BlockPayloads = blockPayloads }
+
+                        return! handleUploadSessionCommand context parameters command correlationId
+                with
+                | ex ->
+                    let exceptionResponse = ExceptionResponse.Create ex
+                    logToConsole $"Exception in FinalizeManifestUpload: {exceptionResponse}"
+
+                    return!
+                        context
+                        |> result500ServerError (GraceError.Create $"{exceptionResponse}" correlationId)
             }
 
     /// Gets an upload URI for the specified file version that can be used by a Grace client.

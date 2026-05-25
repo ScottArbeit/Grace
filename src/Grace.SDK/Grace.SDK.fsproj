@@ -22,6 +22,7 @@
         <Compile Include="PersonalAccessToken.SDK.fs" />
         <Compile Include="LocalPlanner.SDK.fs" />
         <Compile Include="Storage.SDK.fs" />
+        <Compile Include="ManifestUpload.SDK.fs" />
 		<Compile Include="Branch.SDK.fs" />
 		<Compile Include="Owner.SDK.fs" />
 		<Compile Include="Organization.SDK.fs" />
@@ -45,6 +46,10 @@
 		<PackageReference Include="Azure.Storage.Blobs" Version="12.28.0" />
 		<PackageReference Include="Ben.Demystifier" Version="0.4.1" />
 		<PackageReference Include="Polly" Version="8.6.6" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<InternalsVisibleTo Include="Grace.CLI.Tests" />
 	</ItemGroup>
 
 	<ItemGroup>

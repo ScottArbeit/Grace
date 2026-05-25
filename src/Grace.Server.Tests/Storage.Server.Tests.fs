@@ -3,6 +3,7 @@ namespace Grace.Server.Tests
 open Grace.Server.Tests.Services
 open Grace.Shared
 open Grace.Shared.Utilities
+open Grace.Types.UploadSession
 open Grace.Types.Types
 open NUnit.Framework
 open System
@@ -441,3 +442,250 @@ type StorageContentBlockSdkContract() =
         Assert.That(parameterType.GetProperty("KeyChunkAddresses"), Is.Not.Null)
         Assert.That(parameterType.GetProperty("ContentBlockAddress"), Is.Null)
         assertSdkMethod "DiscoverContentBlocks" "DiscoverContentBlocksParameters"
+
+[<NonParallelizable>]
+type StorageManifestUploadSessionRoutes() =
+
+    let pseudoRandomBytes length =
+        let bytes = Array.zeroCreate<byte> length
+        let mutable state = 0x78123456u
+
+        for index in 0 .. length - 1 do
+            state <- state ^^^ (state <<< 13)
+            state <- state ^^^ (state >>> 17)
+            state <- state ^^^ (state <<< 5)
+            bytes[index] <- byte (state &&& 0xffu)
+
+        bytes
+
+    let encodeBlock bytes =
+        match ContentBlockFormat.encode [ { PhysicalOffset = 0L; Bytes = bytes } ] with
+        | Ok block -> block
+        | Error error ->
+            Assert.Fail($"Expected test ContentBlock to encode, got {error}.")
+            Unchecked.defaultof<ContentBlockFormat.EncodedContentBlock>
+
+    let manifestFor (bytes: byte array) (block: ContentBlockFormat.EncodedContentBlock) =
+        let contentBlock = ContentBlock.Create(block.Address, 0L, int64 bytes.Length)
+
+        let manifest =
+            FileManifest.Create(
+                ManifestAddress String.Empty,
+                ChunkingSuiteId RabinChunking.SuiteName,
+                FileContentHash(ContentAddress.computeBlake3Hex bytes),
+                int64 bytes.Length,
+                [ contentBlock ]
+            )
+
+        { manifest with ManifestAddress = ContentAddress.computeManifestAddressForManifest manifest }
+
+    let setStorageParameters (parameters: Parameters.Storage.StorageParameters) repositoryId correlationId =
+        parameters.OwnerId <- ownerId
+        parameters.OrganizationId <- organizationId
+        parameters.RepositoryId <- repositoryId
+        parameters.CorrelationId <- correlationId
+
+    let postUploadSessionDecision (route: string) parameters =
+        task {
+            let! response = Client.PostAsync(route, createJsonContent parameters)
+            let! body = response.Content.ReadAsStringAsync()
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK), body)
+            return deserialize<GraceReturnValue<UploadSessionDecision>> body
+        }
+
+    let postUploadSessionBadRequest (route: string) parameters =
+        task {
+            let! response = Client.PostAsync(route, createJsonContent parameters)
+            let! body = response.Content.ReadAsStringAsync()
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), body)
+            return body
+        }
+
+    let queryParameter (name: string) (uri: Uri) =
+        uri
+            .Query
+            .TrimStart('?')
+            .Split('&', StringSplitOptions.RemoveEmptyEntries)
+        |> Array.tryPick (fun part ->
+            let pieces = part.Split('=', 2)
+
+            if pieces.Length = 2
+               && pieces[0]
+                   .Equals(name, StringComparison.OrdinalIgnoreCase) then
+                Some(Uri.UnescapeDataString pieces[1])
+            else
+                None)
+        |> Option.defaultValue String.Empty
+
+    [<Test>]
+    member _.LargeManifestUploadCanStartUploadConfirmAndFinalizeUsingNewBlocksOnly() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let correlationId = generateCorrelationId ()
+            let sessionId = Guid.NewGuid()
+            let payload = pseudoRandomBytes 220000
+            payload[0] <- 0uy
+            let block = encodeBlock payload
+            let manifest = manifestFor payload block
+
+            let start = Parameters.Storage.StartManifestUploadSessionParameters()
+            setStorageParameters start repositoryId correlationId
+            start.UploadSessionId <- sessionId
+            start.AuthorizedScope <- "/"
+            start.FileContentHash <- manifest.FileContentHash
+            start.ExpectedSize <- manifest.Size
+            start.ChunkingSuiteId <- manifest.ChunkingSuiteId
+            start.SamplingPolicySnapshot <- "sdk-no-global-dedupe-v1"
+            start.OperationId <- "start"
+
+            let! startResult = postUploadSessionDecision "/storage/startManifestUploadSession" start
+            Assert.That(startResult.ReturnValue.Session.UploadSessionId, Is.EqualTo(sessionId))
+
+            let register = Parameters.Storage.RegisterContentBlockUploadParameters()
+            setStorageParameters register repositoryId correlationId
+            register.UploadSessionId <- sessionId
+            register.AuthorizedScope <- "/"
+            register.OperationId <- "register-0"
+            register.ContentBlockAddress <- block.Address
+            register.LogicalOffset <- 0L
+            register.LogicalLength <- int64 payload.Length
+            register.ExpectedPayloadLength <- int64 block.Payload.Length
+
+            let! _ = postUploadSessionDecision "/storage/registerContentBlockUpload" register
+
+            let uploadUriParameters = Parameters.Storage.GetContentBlockUploadUriParameters()
+            setStorageParameters uploadUriParameters repositoryId correlationId
+            uploadUriParameters.ContentBlockAddress <- block.Address
+            uploadUriParameters.AuthorizedScope <- "/"
+
+            let! uploadUriResponse = Client.PostAsync("/storage/getContentBlockUploadUri", createJsonContent uploadUriParameters)
+            let! uploadUriBody = uploadUriResponse.Content.ReadAsStringAsync()
+            Assert.That(uploadUriResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), uploadUriBody)
+
+            let uploadUri = Uri uploadUriBody
+            let sasPermissions = queryParameter "sp" uploadUri
+            Assert.That(sasPermissions, Does.Contain("c"))
+            Assert.That(sasPermissions, Does.Not.Contain("w"))
+
+            let confirm = Parameters.Storage.ConfirmContentBlockUploadParameters()
+            setStorageParameters confirm repositoryId correlationId
+            confirm.UploadSessionId <- sessionId
+            confirm.AuthorizedScope <- "/"
+            confirm.OperationId <- "confirm-0"
+            confirm.ContentBlockAddress <- block.Address
+            confirm.Payload <- block.Payload
+            confirm.StoragePlacement <- { ObjectKey = $"cas/content-blocks/{block.Address}"; ETag = Some "etag-new-block" }
+
+            let! _ = postUploadSessionDecision "/storage/confirmContentBlockUpload" confirm
+
+            let finalize = Parameters.Storage.FinalizeManifestUploadParameters()
+            setStorageParameters finalize repositoryId correlationId
+            finalize.UploadSessionId <- sessionId
+            finalize.AuthorizedScope <- "/"
+            finalize.OperationId <- "finalize"
+            finalize.Manifest <- manifest
+
+            finalize.BlockPayloads <-
+                [|
+                    { Address = block.Address; Payload = block.Payload }
+                |]
+
+            let! finalizeResult = postUploadSessionDecision "/storage/finalizeManifestUpload" finalize
+            Assert.That(finalizeResult.ReturnValue.Session.FinalizedManifestAddress, Is.EqualTo(Some manifest.ManifestAddress))
+            Assert.That(finalizeResult.ReturnValue.Session.LifecycleState, Is.EqualTo(UploadSessionLifecycleState.RetentionPending))
+        }
+
+    [<Test>]
+    member _.UploadSessionMutationsRejectAuthorizedScopeMismatch() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let correlationId = generateCorrelationId ()
+            let sessionId = Guid.NewGuid()
+            let payload = pseudoRandomBytes 220000
+            payload[0] <- 2uy
+            let block = encodeBlock payload
+            let manifest = manifestFor payload block
+
+            let start = Parameters.Storage.StartManifestUploadSessionParameters()
+            setStorageParameters start repositoryId correlationId
+            start.UploadSessionId <- sessionId
+            start.AuthorizedScope <- "/allowed/file.bin"
+            start.FileContentHash <- manifest.FileContentHash
+            start.ExpectedSize <- manifest.Size
+            start.ChunkingSuiteId <- manifest.ChunkingSuiteId
+            start.SamplingPolicySnapshot <- "sdk-no-global-dedupe-v1"
+            start.OperationId <- "start"
+
+            let! _ = postUploadSessionDecision "/storage/startManifestUploadSession" start
+
+            let register = Parameters.Storage.RegisterContentBlockUploadParameters()
+            setStorageParameters register repositoryId correlationId
+            register.UploadSessionId <- sessionId
+            register.AuthorizedScope <- "/other/file.bin"
+            register.OperationId <- "register-0"
+            register.ContentBlockAddress <- block.Address
+            register.LogicalOffset <- 0L
+            register.LogicalLength <- int64 payload.Length
+            register.ExpectedPayloadLength <- int64 block.Payload.Length
+
+            let! body = postUploadSessionBadRequest "/storage/registerContentBlockUpload" register
+            Assert.That(body, Does.Contain("AuthorizedScope must match"))
+        }
+
+    [<Test>]
+    member _.FinalizeManifestUploadReturnsBadRequestWhenConfirmedBlockBlobIsMissing() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let correlationId = generateCorrelationId ()
+            let sessionId = Guid.NewGuid()
+            let payload = pseudoRandomBytes 220000
+            payload[0] <- 1uy
+            let block = encodeBlock payload
+            let manifest = manifestFor payload block
+
+            let start = Parameters.Storage.StartManifestUploadSessionParameters()
+            setStorageParameters start repositoryId correlationId
+            start.UploadSessionId <- sessionId
+            start.AuthorizedScope <- "/"
+            start.FileContentHash <- manifest.FileContentHash
+            start.ExpectedSize <- manifest.Size
+            start.ChunkingSuiteId <- manifest.ChunkingSuiteId
+            start.SamplingPolicySnapshot <- "sdk-no-global-dedupe-v1"
+            start.OperationId <- "start"
+
+            let! _ = postUploadSessionDecision "/storage/startManifestUploadSession" start
+
+            let register = Parameters.Storage.RegisterContentBlockUploadParameters()
+            setStorageParameters register repositoryId correlationId
+            register.UploadSessionId <- sessionId
+            register.AuthorizedScope <- "/"
+            register.OperationId <- "register-0"
+            register.ContentBlockAddress <- block.Address
+            register.LogicalOffset <- 0L
+            register.LogicalLength <- int64 payload.Length
+            register.ExpectedPayloadLength <- int64 block.Payload.Length
+
+            let! _ = postUploadSessionDecision "/storage/registerContentBlockUpload" register
+
+            let confirm = Parameters.Storage.ConfirmContentBlockUploadParameters()
+            setStorageParameters confirm repositoryId correlationId
+            confirm.UploadSessionId <- sessionId
+            confirm.AuthorizedScope <- "/"
+            confirm.OperationId <- "confirm-0"
+            confirm.ContentBlockAddress <- block.Address
+            confirm.Payload <- block.Payload
+
+            confirm.StoragePlacement <- { ObjectKey = $"cas/content-blocks/missing-{Guid.NewGuid():N}"; ETag = Some "etag-missing-block" }
+
+            let! _ = postUploadSessionDecision "/storage/confirmContentBlockUpload" confirm
+
+            let finalize = Parameters.Storage.FinalizeManifestUploadParameters()
+            setStorageParameters finalize repositoryId correlationId
+            finalize.UploadSessionId <- sessionId
+            finalize.AuthorizedScope <- "/"
+            finalize.OperationId <- "finalize"
+            finalize.Manifest <- manifest
+
+            let! body = postUploadSessionBadRequest "/storage/finalizeManifestUpload" finalize
+            Assert.That(body, Does.Contain("could not be read from object storage"))
+        }

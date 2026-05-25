@@ -364,6 +364,8 @@ module Services =
          ||| BlobSasPermissions.Tag
          ||| BlobSasPermissions.Read)
 
+    let azureBlobCreatePermissions = BlobSasPermissions.Create
+
     /// Gets a full Uri, including shared access signature, for writing from the object storage provider.
     let getUriWithWriteSharedAccessSignature (repositoryDto: RepositoryDto) (blobName: string) (correlationId: CorrelationId) =
         task {
@@ -371,6 +373,18 @@ module Services =
             | AWSS3 -> return UriWithSharedAccessSignature(String.Empty)
             | AzureBlobStorage ->
                 let! sas = createAzureBlobSasUri repositoryDto blobName azureBlobWritePermissions correlationId
+                return sas
+            | GoogleCloudStorage -> return UriWithSharedAccessSignature(String.Empty)
+            | ObjectStorageProvider.Unknown -> return UriWithSharedAccessSignature(String.Empty)
+        }
+
+    /// Gets a full Uri, including shared access signature, for creating a new blob without granting overwrite permission.
+    let getUriWithCreateSharedAccessSignature (repositoryDto: RepositoryDto) (blobName: string) (correlationId: CorrelationId) =
+        task {
+            match repositoryDto.ObjectStorageProvider with
+            | AWSS3 -> return UriWithSharedAccessSignature(String.Empty)
+            | AzureBlobStorage ->
+                let! sas = createAzureBlobSasUri repositoryDto blobName azureBlobCreatePermissions correlationId
                 return sas
             | GoogleCloudStorage -> return UriWithSharedAccessSignature(String.Empty)
             | ObjectStorageProvider.Unknown -> return UriWithSharedAccessSignature(String.Empty)

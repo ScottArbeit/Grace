@@ -296,13 +296,13 @@ module Services =
     let readGraceStatusMeta () =
         task {
             let! meta = LocalStateDb.readStatusMeta (getLocalStateDbPath ())
+
             return
-                {
-                    GraceStatus.Default with
-                        RootDirectoryId = meta.RootDirectoryId
-                        RootDirectorySha256Hash = meta.RootDirectorySha256Hash
-                        LastSuccessfulFileUpload = meta.LastSuccessfulFileUpload
-                        LastSuccessfulDirectoryVersionUpload = meta.LastSuccessfulDirectoryVersionUpload
+                { GraceStatus.Default with
+                    RootDirectoryId = meta.RootDirectoryId
+                    RootDirectorySha256Hash = meta.RootDirectorySha256Hash
+                    LastSuccessfulFileUpload = meta.LastSuccessfulFileUpload
+                    LastSuccessfulDirectoryVersionUpload = meta.LastSuccessfulDirectoryVersionUpload
                 }
         }
 
@@ -313,8 +313,7 @@ module Services =
     let readGraceStatusFile () = readGraceStatusSnapshot ()
 
     /// Writes the full Grace status snapshot to disk.
-    let writeGraceStatusFile (graceStatus: GraceStatus) =
-        LocalStateDb.replaceStatusSnapshot (getLocalStateDbPath ()) graceStatus
+    let writeGraceStatusFile (graceStatus: GraceStatus) = LocalStateDb.replaceStatusSnapshot (getLocalStateDbPath ()) graceStatus
 
     /// Applies incremental Grace status updates to the local DB.
     let applyGraceStatusIncremental
@@ -639,10 +638,7 @@ module Services =
     /// Adds a LocalDirectoryVersion to the local object cache.
     let addDirectoryToObjectCache (localDirectoryVersion: LocalDirectoryVersion) =
         task {
-            let! exists =
-                LocalStateDb.isDirectoryVersionInObjectCache
-                    (getLocalStateDbPath ())
-                    localDirectoryVersion.DirectoryVersionId
+            let! exists = LocalStateDb.isDirectoryVersionInObjectCache (getLocalStateDbPath ()) localDirectoryVersion.DirectoryVersionId
 
             if not exists then
                 let allFilesExist =
@@ -660,9 +656,7 @@ module Services =
 
     /// Removes a directory from the local object cache.
     let removeDirectoryFromObjectCache (directoryId: DirectoryVersionId) =
-        task {
-            do! LocalStateDb.removeObjectCacheDirectory (getLocalStateDbPath ()) directoryId
-        }
+        task { do! LocalStateDb.removeObjectCacheDirectory (getLocalStateDbPath ()) directoryId }
 
     /// Downloads files from object storage that aren't already present in the local object cache.
     let downloadFilesFromObjectStorage (getDownloadUriParameters: GetDownloadUriParameters) (files: IEnumerable<LocalFileVersion>) (correlationId: string) =
@@ -720,8 +714,7 @@ module Services =
             | GoogleCloudStorage -> return Ok()
         }
 
-    /// Uploads all new or changed files from a directory to object storage.
-    let uploadFilesToObjectStorage (parameters: GetUploadMetadataForFilesParameters) =
+    let private uploadWholeFilesToObjectStorage (parameters: GetUploadMetadataForFilesParameters) =
         task {
             match Current().ObjectStorageProvider with
             | ObjectStorageProvider.Unknown -> return Error(GraceError.Create (getErrorMessage StorageError.NotImplemented) parameters.CorrelationId)
@@ -778,6 +771,78 @@ module Services =
                     return Ok(GraceReturnValue.Create true parameters.CorrelationId)
             | AWSS3 -> return Error(GraceError.Create (getErrorMessage StorageError.NotImplemented) parameters.CorrelationId)
             | GoogleCloudStorage -> return Error(GraceError.Create (getErrorMessage StorageError.NotImplemented) parameters.CorrelationId)
+        }
+
+    let private copyStorageParameters (source: GetUploadMetadataForFilesParameters) (fileVersions: FileVersion array) =
+        let copy = GetUploadMetadataForFilesParameters()
+        copy.OwnerId <- source.OwnerId
+        copy.OwnerName <- source.OwnerName
+        copy.OrganizationId <- source.OrganizationId
+        copy.OrganizationName <- source.OrganizationName
+        copy.RepositoryId <- source.RepositoryId
+        copy.RepositoryName <- source.RepositoryName
+        copy.CorrelationId <- source.CorrelationId
+        copy.FileVersions <- fileVersions
+        copy
+
+    let private storageIdOrCurrent<'Id> (rawValue: string) (currentValue: 'Id) (parse: string -> 'Id) =
+        if String.IsNullOrWhiteSpace rawValue then currentValue else parse rawValue
+
+    let private createManifestUploadRequest (parameters: GetUploadMetadataForFilesParameters) (fileVersion: FileVersion) =
+        let current = Current()
+
+        let request: ManifestUpload.ManifestUploadRequest =
+            {
+                OwnerId = storageIdOrCurrent parameters.OwnerId current.OwnerId OwnerId.Parse
+                OwnerName = parameters.OwnerName
+                OrganizationId = storageIdOrCurrent parameters.OrganizationId current.OrganizationId OrganizationId.Parse
+                OrganizationName = parameters.OrganizationName
+                RepositoryId = storageIdOrCurrent parameters.RepositoryId current.RepositoryId RepositoryId.Parse
+                RepositoryName = parameters.RepositoryName
+                AuthorizedScope = fileVersion.RelativePath
+                FileVersion = fileVersion
+                LocalFilePath = Path.Combine(current.ObjectDirectory, fileVersion.RelativePath, fileVersion.GetObjectFileName)
+                CorrelationId = parameters.CorrelationId
+                PlannerOptions = LocalPlanner.Options.Default
+            }
+
+        request
+
+    /// Uploads all new or changed files from a directory to object storage.
+    let uploadFilesToObjectStorage (parameters: GetUploadMetadataForFilesParameters) =
+        task {
+            if not (ManifestUpload.isOptedIn ()) then
+                return! uploadWholeFilesToObjectStorage parameters
+            elif parameters.FileVersions.Count() = 0 then
+                return Ok(GraceReturnValue.Create true parameters.CorrelationId)
+            else
+                let fallbackFileVersions = ConcurrentQueue<FileVersion>()
+                let errors = ConcurrentQueue<GraceError>()
+                let mutable fileVersionIndex = 0
+
+                while fileVersionIndex < parameters.FileVersions.Length do
+                    let fileVersion = parameters.FileVersions[fileVersionIndex]
+
+                    match! ManifestUpload.uploadFile (createManifestUploadRequest parameters fileVersion) with
+                    | Ok _ -> fallbackFileVersions.Enqueue(fileVersion)
+                    | Error error -> errors.Enqueue(error)
+
+                    fileVersionIndex <- fileVersionIndex + 1
+
+                if errors |> Seq.isEmpty |> not then
+                    let errorMessage =
+                        errors
+                        |> Seq.fold (fun acc error -> $"{acc}\n{error.Error}") ""
+
+                    let graceError = GraceError.Create (getErrorMessage StorageError.FailedUploadingFilesToObjectStorage) parameters.CorrelationId
+                    return Error graceError |> enhance "Errors" errorMessage
+                else
+                    let fallback = fallbackFileVersions.ToArray()
+
+                    if fallback.Length = 0 then
+                        return Ok(GraceReturnValue.Create true parameters.CorrelationId)
+                    else
+                        return! uploadWholeFilesToObjectStorage (copyStorageParameters parameters fallback)
         }
 
     /// Creates an updated LocalDirectoryVersion instance, with a new DirectoryId, based on changes to an existing one.
@@ -1131,10 +1196,7 @@ module Services =
     let IpcFileName () = Path.Combine(Path.GetTempPath(), "Grace", Current().BranchName, Constants.IpcFileName)
 
     /// Updates the contents of the `grace watch` status inter-process communication file.
-    let updateGraceWatchInterprocessFile
-        (graceStatus: GraceStatus)
-        (directoryIdsOverride: HashSet<DirectoryVersionId> option)
-        =
+    let updateGraceWatchInterprocessFile (graceStatus: GraceStatus) (directoryIdsOverride: HashSet<DirectoryVersionId> option) =
         task {
             try
                 let directoryIds =

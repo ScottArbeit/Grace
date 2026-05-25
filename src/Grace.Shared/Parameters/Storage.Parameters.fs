@@ -1,7 +1,9 @@
 namespace Grace.Shared.Parameters
 
 open Grace.Shared.Parameters.Common
+open Grace.Types.ContentBlockMetadata
 open Grace.Types.Types
+open Grace.Types.UploadSession
 open System
 
 module Storage =
@@ -56,6 +58,7 @@ module Storage =
     type GetContentBlockUploadUriParameters() =
         inherit StorageParameters()
         member val public ContentBlockAddress: ContentBlockAddress = String.Empty with get, set
+        member val public AuthorizedScope: RelativePath = String.Empty with get, set
 
     type GetContentBlockDownloadUriParameters() =
         inherit StorageParameters()
@@ -68,6 +71,40 @@ module Storage =
     type DiscoverContentBlocksParameters() =
         inherit StorageParameters()
         member val public KeyChunkAddresses = Array.empty<ChunkAddress> with get, set
+
+    type UploadSessionStorageParameters() =
+        inherit StorageParameters()
+        member val public UploadSessionId: UploadSessionId = Guid.Empty with get, set
+        member val public AuthorizedScope: RelativePath = String.Empty with get, set
+
+    type StartManifestUploadSessionParameters() =
+        inherit UploadSessionStorageParameters()
+        member val public FileContentHash: FileContentHash = String.Empty with get, set
+        member val public ExpectedSize: int64 = 0L with get, set
+        member val public ChunkingSuiteId: ChunkingSuiteId = String.Empty with get, set
+        member val public SamplingPolicySnapshot: string = String.Empty with get, set
+        member val public OperationId: UploadSessionOperationId = String.Empty with get, set
+
+    type RegisterContentBlockUploadParameters() =
+        inherit UploadSessionStorageParameters()
+        member val public OperationId: UploadSessionOperationId = String.Empty with get, set
+        member val public ContentBlockAddress: ContentBlockAddress = String.Empty with get, set
+        member val public LogicalOffset: int64 = 0L with get, set
+        member val public LogicalLength: int64 = 0L with get, set
+        member val public ExpectedPayloadLength: int64 = 0L with get, set
+
+    type ConfirmContentBlockUploadParameters() =
+        inherit UploadSessionStorageParameters()
+        member val public OperationId: UploadSessionOperationId = String.Empty with get, set
+        member val public ContentBlockAddress: ContentBlockAddress = String.Empty with get, set
+        member val public Payload: byte array = Array.empty with get, set
+        member val public StoragePlacement: ContentBlockStoragePlacement = Unchecked.defaultof<ContentBlockStoragePlacement> with get, set
+
+    type FinalizeManifestUploadParameters() =
+        inherit UploadSessionStorageParameters()
+        member val public OperationId: UploadSessionOperationId = String.Empty with get, set
+        member val public Manifest: FileManifest = FileManifest.Default with get, set
+        member val public BlockPayloads: FinalizeManifestBlockPayload array = Array.empty with get, set
 
     /// Policy returned with ContentBlock discovery results so clients know the bounded, non-authoritative semantics.
     type ContentBlockDiscoveryPolicy =

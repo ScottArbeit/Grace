@@ -8,8 +8,7 @@ open System.IO
 
 /// Pure local planning for manifest-backed file uploads.
 module LocalPlanner =
-    [<Literal>]
-    let DefaultBlockFormat = "grace-content-block-v1"
+    let DefaultBlockFormat = ContentBlockFormat.FormatName
 
     type Options =
         {
