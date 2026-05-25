@@ -676,10 +676,37 @@ module Services =
                             parameters.OrganizationName <- getDownloadUriParameters.OrganizationName
                             parameters.RepositoryId <- getDownloadUriParameters.RepositoryId
                             parameters.RepositoryName <- getDownloadUriParameters.RepositoryName
-                            parameters.FileVersion <- f.ToFileVersion
+                            let fileVersion = f.ToFileVersion
+                            parameters.FileVersion <- fileVersion
                             parameters.CorrelationId <- getDownloadUriParameters.CorrelationId
 
-                            return! Storage.GetFileFromObjectStorage parameters correlationId
+                            if fileVersion.ContentReference.ReferenceType = FileContentReferenceType.FileManifest then
+                                let manifestRequest: ManifestDownload.ManifestDownloadRequest =
+                                    {
+                                        OwnerId = Guid.Parse(getDownloadUriParameters.OwnerId)
+                                        OwnerName = getDownloadUriParameters.OwnerName
+                                        OrganizationId = Guid.Parse(getDownloadUriParameters.OrganizationId)
+                                        OrganizationName = getDownloadUriParameters.OrganizationName
+                                        RepositoryId = Guid.Parse(getDownloadUriParameters.RepositoryId)
+                                        RepositoryName = getDownloadUriParameters.RepositoryName
+                                        FileVersion = fileVersion
+                                        CorrelationId = getDownloadUriParameters.CorrelationId
+                                        ExpectedChunkingSuiteId = ChunkingSuiteId RabinChunking.SuiteName
+                                    }
+
+                                match! ManifestDownload.downloadFile manifestRequest with
+                                | Error error -> return Error error
+                                | Ok returnValue when returnValue.ReturnValue.UsedManifestDownload ->
+                                    let objectFileInfo = FileInfo(f.FullObjectPath)
+
+                                    Directory.CreateDirectory(objectFileInfo.Directory.FullName)
+                                    |> ignore
+
+                                    do! File.WriteAllBytesAsync(objectFileInfo.FullName, returnValue.ReturnValue.Bytes)
+                                    return Ok(GraceReturnValue.Create "Retrieved manifest-backed file from object storage." correlationId)
+                                | Ok _ -> return! Storage.GetFileFromObjectStorage parameters correlationId
+                            else
+                                return! Storage.GetFileFromObjectStorage parameters correlationId
                         })
                             .Result)
 
