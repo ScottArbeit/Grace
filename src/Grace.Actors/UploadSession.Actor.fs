@@ -779,19 +779,6 @@ module UploadSession =
                                     (ReminderState.UploadSessionPhysicalDeletion reminderState)
                                     metadata.CorrelationId
                         | UploadSessionCommand.FinalizeManifest finalize ->
-                            let dedupeIndexActor = DedupeIndexActor.CreateActorProxy metadata.CorrelationId
-
-                            do!
-                                dedupeIndexActor.RegisterFinalizedManifest
-                                    {
-                                        StoragePoolId = DedupeIndex.storagePoolIdForRepositoryId decision.Session.RepositoryId
-                                        Session = decision.Session
-                                        Manifest = finalize.Manifest
-                                        BlockPayloads = finalize.BlockPayloads
-                                    }
-                                    metadata.CorrelationId
-                                :> Task
-
                             if not decision.WasIdempotentReplay then
                                 let reminderState =
                                     createCleanupReminderState
@@ -807,6 +794,19 @@ module UploadSession =
                                         DefaultPhysicalDeletionReminderDuration
                                         (ReminderState.UploadSessionPhysicalDeletion reminderState)
                                         metadata.CorrelationId
+
+                            let dedupeIndexActor = DedupeIndexActor.CreateActorProxy metadata.CorrelationId
+
+                            do!
+                                dedupeIndexActor.RegisterFinalizedManifest
+                                    {
+                                        StoragePoolId = DedupeIndex.storagePoolIdForRepositoryId decision.Session.RepositoryId
+                                        Session = decision.Session
+                                        Manifest = finalize.Manifest
+                                        BlockPayloads = finalize.BlockPayloads
+                                    }
+                                    metadata.CorrelationId
+                                :> Task
                         | UploadSessionCommand.DeletePhysicalState _ ->
                             do! this.CompactPhysicalStateEvents()
                             this.DeactivateOnIdle()
