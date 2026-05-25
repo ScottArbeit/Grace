@@ -138,6 +138,21 @@ module Storage =
                 return Ok { requestContext with SessionForScope = sessionForScope }
         }
 
+    let private validateActiveDedupeDiscoveryForClaim requestContext (parameters: ClaimReuseRangesParameters) correlationId =
+        match requestContext.SessionForScope.DedupeDiscovery with
+        | None -> Error(GraceError.Create "Dedupe discovery must be issued before reuse ranges can be claimed." correlationId)
+        | Some discovery when
+            discovery.OperationId
+            <> parameters.DiscoveryOperationId
+            ->
+            Error(GraceError.Create "ClaimReuseRanges DiscoveryOperationId does not match the active discovery." correlationId)
+        | Some discovery when
+            requestContext.Metadata.Timestamp
+            >= discovery.ExpiresAt
+            ->
+            Error(GraceError.Create "Dedupe discovery has expired; reuse ranges cannot be claimed." correlationId)
+        | Some _ -> Ok()
+
     let private handleUploadSessionCommand
         (context: HttpContext)
         (parameters: UploadSessionStorageParameters)
@@ -515,49 +530,52 @@ module Storage =
                         match scopeValidation with
                         | Error error -> return! context |> result400BadRequest error
                         | Ok requestContext ->
-                            let ranges = ResizeArray<ClaimReuseRange>()
-                            let mutable error = None
-                            let mutable index = 0
+                            match validateActiveDedupeDiscoveryForClaim requestContext parameters correlationId with
+                            | Error error -> return! context |> result400BadRequest error
+                            | Ok _ ->
+                                let ranges = ResizeArray<ClaimReuseRange>()
+                                let mutable error = None
+                                let mutable index = 0
 
-                            while error.IsNone && index < hints.Length do
-                                let hint = hints[index]
+                                while error.IsNone && index < hints.Length do
+                                    let hint = hints[index]
 
-                                let metadataActor =
-                                    grainFactory.CreateActorProxyWithCorrelationId<IContentBlockMetadataActor>(
-                                        Grace.Actors.ContentBlockMetadataActorKey.Create hint.StoragePoolId hint.ContentBlockAddress,
-                                        correlationId
-                                    )
-
-                                let! metadata = metadataActor.Get correlationId
-
-                                match metadata with
-                                | Some metadata -> ranges.Add({ Hint = hint; Metadata = metadata })
-                                | None ->
-                                    error <-
-                                        Some(
-                                            GraceError.Create
-                                                $"Authoritative ContentBlockMetadata is absent for {hint.ContentBlockAddress}; reuse range cannot be claimed."
-                                                correlationId
+                                    let metadataActor =
+                                        grainFactory.CreateActorProxyWithCorrelationId<IContentBlockMetadataActor>(
+                                            Grace.Actors.ContentBlockMetadataActorKey.Create hint.StoragePoolId hint.ContentBlockAddress,
+                                            correlationId
                                         )
 
-                                index <- index + 1
+                                    let! metadata = metadataActor.Get correlationId
 
-                            match error with
-                            | Some error -> return! context |> result400BadRequest error
-                            | None ->
-                                let command =
-                                    UploadSessionCommand.ClaimReuseRanges
-                                        {
-                                            OperationId = parameters.OperationId
-                                            DiscoveryOperationId = parameters.DiscoveryOperationId
-                                            Ranges = ranges.ToArray()
-                                        }
+                                    match metadata with
+                                    | Some metadata -> ranges.Add({ Hint = hint; Metadata = metadata })
+                                    | None ->
+                                        error <-
+                                            Some(
+                                                GraceError.Create
+                                                    $"Authoritative ContentBlockMetadata is absent for {hint.ContentBlockAddress}; reuse range cannot be claimed."
+                                                    correlationId
+                                            )
 
-                                let! result = requestContext.UploadSessionActor.Handle command requestContext.Metadata
+                                    index <- index + 1
 
-                                match result with
-                                | Ok returnValue -> return! context |> result200Ok returnValue
-                                | Error error -> return! context |> result400BadRequest error
+                                match error with
+                                | Some error -> return! context |> result400BadRequest error
+                                | None ->
+                                    let command =
+                                        UploadSessionCommand.ClaimReuseRanges
+                                            {
+                                                OperationId = parameters.OperationId
+                                                DiscoveryOperationId = parameters.DiscoveryOperationId
+                                                Ranges = ranges.ToArray()
+                                            }
+
+                                    let! result = requestContext.UploadSessionActor.Handle command requestContext.Metadata
+
+                                    match result with
+                                    | Ok returnValue -> return! context |> result200Ok returnValue
+                                    | Error error -> return! context |> result400BadRequest error
                 with
                 | ex ->
                     let exceptionResponse = ExceptionResponse.Create ex
