@@ -2915,8 +2915,12 @@ module Branch =
                                         CorrelationId = graceIds.CorrelationId
                                     )
 
-                                for directoryVersion in graceStatusWithNewDirectoryVersionsFromServer.Index.Values do
-                                    match! (downloadFilesFromObjectStorage getDownloadUriParameters directoryVersion.Files (getCorrelationId parseResult)) with
+                                for directoryVersionDto in newDirectoryVersionDtos do
+                                    match! (downloadFileVersionsFromObjectStorage
+                                                getDownloadUriParameters
+                                                directoryVersionDto.DirectoryVersion.Files
+                                                (getCorrelationId parseResult))
+                                        with
                                     | Ok _ ->
                                         try
                                             //logToAnsiConsole Colors.Verbose $"Succeeded downloading files from object storage for {directoryVersion.RelativePath}."
@@ -2949,7 +2953,9 @@ module Branch =
 
                                     | Error error ->
                                         if parseResult |> verbose then
-                                            logToAnsiConsole Colors.Verbose $"Failed downloading files from object storage for {directoryVersion.RelativePath}."
+                                            logToAnsiConsole
+                                                Colors.Verbose
+                                                $"Failed downloading files from object storage for {directoryVersionDto.DirectoryVersion.RelativePath}."
 
                                         logToAnsiConsole Colors.Error $"{error}"
                                         isError <- true

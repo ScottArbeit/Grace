@@ -1,7 +1,10 @@
 namespace Grace.CLI.Tests
 
+open Grace.CLI
+open Grace.CLI.Services
 open Grace.SDK
 open Grace.Shared
+open Grace.Shared.Client.Configuration
 open Grace.Shared.Parameters.Storage
 open Grace.Shared.Utilities
 open Grace.Shared.Validation.Errors
@@ -9,6 +12,7 @@ open Grace.Types.Types
 open NUnit.Framework
 open System
 open System.Collections.Generic
+open System.IO
 open System.Security.Cryptography
 open System.Threading.Tasks
 
@@ -67,6 +71,64 @@ type ManifestDownloadSdkTests() =
             FileVersion = fileVersion
             CorrelationId = correlationId
             ExpectedChunkingSuiteId = ChunkingSuiteId RabinChunking.SuiteName
+        }
+
+    static member private ConfigureForRoot root =
+        let graceDirectory = System.IO.Path.Combine(root, Constants.GraceConfigDirectory)
+
+        System.IO.Directory.CreateDirectory(graceDirectory)
+        |> ignore
+
+        let graceConfigPath = System.IO.Path.Combine(graceDirectory, Constants.GraceConfigFileName)
+
+        if not (System.IO.File.Exists(graceConfigPath)) then
+            System.IO.File.WriteAllText(graceConfigPath, "{}")
+
+        let configuration = GraceConfiguration()
+        configuration.OwnerId <- Guid.Parse("22222222-2222-2222-2222-222222222222")
+        configuration.OwnerName <- "owner"
+        configuration.OrganizationId <- Guid.Parse("33333333-3333-3333-3333-333333333333")
+        configuration.OrganizationName <- "org"
+        configuration.RepositoryId <- Guid.Parse("11111111-1111-1111-1111-111111111111")
+        configuration.RepositoryName <- "repo"
+        configuration.RootDirectory <- root
+        configuration.StandardizedRootDirectory <- normalizeFilePath root
+        configuration.GraceDirectory <- graceDirectory
+        configuration.ObjectDirectory <- System.IO.Path.Combine(configuration.GraceDirectory, Constants.GraceObjectsDirectory)
+        configuration.ConfigurationDirectory <- configuration.GraceDirectory
+        configuration.ObjectStorageProvider <- ObjectStorageProvider.AzureBlobStorage
+        configuration.IsPopulated <- true
+        updateConfiguration configuration
+        configuration
+
+    static member private WithTempConfiguration(action: string -> Task<'T>) =
+        task {
+            let root = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"grace-manifest-download-{Guid.NewGuid():N}")
+            let previousDirectory = Environment.CurrentDirectory
+            let previousConfiguration = if configurationFileExists () then Some(Current()) else None
+
+            try
+                System.IO.Directory.CreateDirectory(root)
+                |> ignore
+
+                Environment.CurrentDirectory <- root
+
+                ManifestDownloadSdkTests.ConfigureForRoot root
+                |> ignore
+
+                return! action root
+            finally
+                Environment.CurrentDirectory <- previousDirectory
+
+                match previousConfiguration with
+                | Some configuration -> updateConfiguration configuration
+                | None -> resetConfiguration ()
+
+                if System.IO.Directory.Exists(root) then
+                    try
+                        System.IO.Directory.Delete(root, true)
+                    with
+                    | _ -> ()
         }
 
     [<Test>]
@@ -146,6 +208,81 @@ type ManifestDownloadSdkTests() =
                 Assert.That(returnValue.ReturnValue.Bytes, Is.Empty)
                 Assert.That(returnValue.ReturnValue.DownloadedBlockCount, Is.EqualTo(0))
         }
+
+    [<Test>]
+    member _.CliObjectDownloadPreservesManifestReferenceBeforeChoosingDownloadPath() =
+        ManifestDownloadSdkTests.WithTempConfiguration (fun _ ->
+            task {
+                let payload = ManifestDownloadSdkTests.PseudoRandomBytes 220000
+                payload[0] <- 6uy
+
+                let plan =
+                    LocalPlanner.analyzeBytes { LocalPlanner.Options.Default with EligibilityPolicy = ManifestDownloadSdkTests.BinaryPolicy 1024L } payload
+
+                let manifest = ManifestDownloadSdkTests.ManifestFor plan
+                let fileVersion = ManifestDownloadSdkTests.CreateManifestFileVersion "cli-large.bin" payload manifest
+                let localFileVersion = fileVersion.ToLocalFileVersion DateTime.UtcNow
+                let downloadFile = Services.objectStorageDownloadFileFromFileVersion fileVersion
+
+                Assert.That(localFileVersion.ToFileVersion.ContentReference.ReferenceType, Is.EqualTo(FileContentReferenceType.WholeFileContent))
+
+                Assert.That(
+                    (Services.fileVersionForObjectStorageDownload downloadFile)
+                        .ContentReference
+                        .ReferenceType,
+                    Is.EqualTo(FileContentReferenceType.FileManifest)
+                )
+
+                let getDownloadUriParameters =
+                    GetDownloadUriParameters(
+                        OwnerId = $"{Current().OwnerId}",
+                        OwnerName = Current().OwnerName,
+                        OrganizationId = $"{Current().OrganizationId}",
+                        OrganizationName = Current().OrganizationName,
+                        RepositoryId = $"{Current().RepositoryId}",
+                        RepositoryName = Current().RepositoryName,
+                        CorrelationId = "corr-cli-manifest-download"
+                    )
+
+                let mutable manifestPathTaken = false
+
+                let manifestDownload (request: ManifestDownload.ManifestDownloadRequest) =
+                    manifestPathTaken <- true
+                    Assert.That(request.FileVersion.ContentReference.ReferenceType, Is.EqualTo(FileContentReferenceType.FileManifest))
+                    Assert.That(request.FileVersion.ContentReference.Manifest, Is.EqualTo(Some manifest))
+
+                    let result: ManifestDownload.ManifestDownloadResult =
+                        {
+                            FileVersion = request.FileVersion
+                            Manifest = Some manifest
+                            Bytes = payload
+                            DownloadedBlockCount = manifest.Blocks.Count
+                            UsedManifestDownload = true
+                        }
+
+                    Task.FromResult(Ok(GraceReturnValue.Create result request.CorrelationId))
+
+                let wholeFileDownload _ _ =
+                    Assert.Fail("Manifest-backed CLI downloads must not use the WholeFileContent object-storage path.")
+                    Task.FromResult(Error(GraceError.Create "unexpected whole-file download" getDownloadUriParameters.CorrelationId))
+
+                let! result =
+                    Services.downloadFilesFromObjectStorageWithClients
+                        manifestDownload
+                        wholeFileDownload
+                        getDownloadUriParameters
+                        [| downloadFile |]
+                        getDownloadUriParameters.CorrelationId
+
+                match result with
+                | Error error -> Assert.Fail(error)
+                | Ok () ->
+                    Assert.That(manifestPathTaken, Is.True)
+                    Assert.That(System.IO.File.Exists(localFileVersion.FullObjectPath), Is.True)
+                    let downloadedBytes = System.IO.File.ReadAllBytes(localFileVersion.FullObjectPath)
+                    Assert.That(downloadedBytes.Length, Is.EqualTo(payload.Length))
+                    Assert.That(Array.forall2 (=) downloadedBytes payload, Is.True)
+            })
 
     [<Test>]
     member _.ManifestDownloadRejectsOutOfOrderManifestRanges() =

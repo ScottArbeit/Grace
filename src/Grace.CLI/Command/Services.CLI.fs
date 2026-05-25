@@ -658,17 +658,37 @@ module Services =
     let removeDirectoryFromObjectCache (directoryId: DirectoryVersionId) =
         task { do! LocalStateDb.removeObjectCacheDirectory (getLocalStateDbPath ()) directoryId }
 
-    /// Downloads files from object storage that aren't already present in the local object cache.
-    let downloadFilesFromObjectStorage (getDownloadUriParameters: GetDownloadUriParameters) (files: IEnumerable<LocalFileVersion>) (correlationId: string) =
+    type internal ObjectStorageDownloadFile = { LocalFileVersion: LocalFileVersion; SourceFileVersion: FileVersion option }
+
+    let internal objectStorageDownloadFileFromLocal localFileVersion = { LocalFileVersion = localFileVersion; SourceFileVersion = None }
+
+    let internal objectStorageDownloadFileFromFileVersion (fileVersion: FileVersion) =
+        { LocalFileVersion = fileVersion.ToLocalFileVersion DateTime.UtcNow; SourceFileVersion = Some fileVersion }
+
+    let internal fileVersionForObjectStorageDownload downloadFile =
+        match downloadFile.SourceFileVersion with
+        | Some fileVersion -> fileVersion
+        | None -> downloadFile.LocalFileVersion.ToFileVersion
+
+    let internal downloadFilesFromObjectStorageWithClients
+        (manifestDownload: ManifestDownload.ManifestDownloadRequest -> Task<GraceResult<ManifestDownload.ManifestDownloadResult>>)
+        (wholeFileDownload: GetDownloadUriParameters -> string -> Task<GraceResult<string>>)
+        (getDownloadUriParameters: GetDownloadUriParameters)
+        (files: IEnumerable<ObjectStorageDownloadFile>)
+        (correlationId: string)
+        =
         task {
             match Current().ObjectStorageProvider with
             | ObjectStorageProvider.Unknown -> return Ok()
             | AzureBlobStorage ->
                 let results =
                     files.ToArray()
-                    |> Array.where (fun f -> not <| File.Exists(f.FullObjectPath))
-                    |> Array.Parallel.map (fun f ->
+                    |> Array.where (fun f ->
+                        not
+                        <| File.Exists(f.LocalFileVersion.FullObjectPath))
+                    |> Array.Parallel.map (fun downloadFile ->
                         (task {
+                            let localFileVersion = downloadFile.LocalFileVersion
                             let parameters = GetDownloadUriParameters()
                             parameters.OwnerId <- getDownloadUriParameters.OwnerId
                             parameters.OwnerName <- getDownloadUriParameters.OwnerName
@@ -676,7 +696,7 @@ module Services =
                             parameters.OrganizationName <- getDownloadUriParameters.OrganizationName
                             parameters.RepositoryId <- getDownloadUriParameters.RepositoryId
                             parameters.RepositoryName <- getDownloadUriParameters.RepositoryName
-                            let fileVersion = f.ToFileVersion
+                            let fileVersion = fileVersionForObjectStorageDownload downloadFile
                             parameters.FileVersion <- fileVersion
                             parameters.CorrelationId <- getDownloadUriParameters.CorrelationId
 
@@ -694,19 +714,19 @@ module Services =
                                         ExpectedChunkingSuiteId = ChunkingSuiteId RabinChunking.SuiteName
                                     }
 
-                                match! ManifestDownload.downloadFile manifestRequest with
+                                match! manifestDownload manifestRequest with
                                 | Error error -> return Error error
                                 | Ok returnValue when returnValue.ReturnValue.UsedManifestDownload ->
-                                    let objectFileInfo = FileInfo(f.FullObjectPath)
+                                    let objectFileInfo = FileInfo(localFileVersion.FullObjectPath)
 
                                     Directory.CreateDirectory(objectFileInfo.Directory.FullName)
                                     |> ignore
 
                                     do! File.WriteAllBytesAsync(objectFileInfo.FullName, returnValue.ReturnValue.Bytes)
                                     return Ok(GraceReturnValue.Create "Retrieved manifest-backed file from object storage." correlationId)
-                                | Ok _ -> return! Storage.GetFileFromObjectStorage parameters correlationId
+                                | Ok _ -> return! wholeFileDownload parameters correlationId
                             else
-                                return! Storage.GetFileFromObjectStorage parameters correlationId
+                                return! wholeFileDownload parameters correlationId
                         })
                             .Result)
 
@@ -740,6 +760,31 @@ module Services =
             | AWSS3 -> return Ok()
             | GoogleCloudStorage -> return Ok()
         }
+
+    /// Downloads files from object storage that aren't already present in the local object cache.
+    let downloadFilesFromObjectStorage (getDownloadUriParameters: GetDownloadUriParameters) (files: IEnumerable<LocalFileVersion>) (correlationId: string) =
+        let downloadFiles =
+            files
+            |> Seq.map objectStorageDownloadFileFromLocal
+
+        downloadFilesFromObjectStorageWithClients
+            ManifestDownload.downloadFile
+            Storage.GetFileFromObjectStorage
+            getDownloadUriParameters
+            downloadFiles
+            correlationId
+
+    let downloadFileVersionsFromObjectStorage (getDownloadUriParameters: GetDownloadUriParameters) (files: IEnumerable<FileVersion>) (correlationId: string) =
+        let downloadFiles =
+            files
+            |> Seq.map objectStorageDownloadFileFromFileVersion
+
+        downloadFilesFromObjectStorageWithClients
+            ManifestDownload.downloadFile
+            Storage.GetFileFromObjectStorage
+            getDownloadUriParameters
+            downloadFiles
+            correlationId
 
     let private uploadWholeFilesToObjectStorage (parameters: GetUploadMetadataForFilesParameters) =
         task {
@@ -1429,9 +1474,15 @@ module Services =
                 let directoryInfo = Directory.CreateDirectory(newDirectoryVersion.FullName)
 
                 // Copy new and existing files into place.
-                let newLocalFileVersions = newDirectoryVersion.Files.Select(fun file -> file.ToLocalFileVersion DateTime.UtcNow)
+                let sourceFileVersions = newDirectoryVersion.Files.ToArray()
 
-                for fileVersion in newLocalFileVersions do
+                let newLocalFileVersions =
+                    sourceFileVersions
+                    |> Array.map (fun file -> file.ToLocalFileVersion DateTime.UtcNow)
+
+                for index in 0 .. newLocalFileVersions.Length - 1 do
+                    let sourceFileVersion = sourceFileVersions[index]
+                    let fileVersion = newLocalFileVersions[index]
                     let existingFileOnDisk = FileInfo(fileVersion.FullName)
                     let objectFile = FileInfo(fileVersion.FullObjectPath)
 
@@ -1449,7 +1500,7 @@ module Services =
                                 CorrelationId = correlationId
                             )
 
-                        match! downloadFilesFromObjectStorage getDownloadUriParameters [| fileVersion |] correlationId with
+                        match! downloadFileVersionsFromObjectStorage getDownloadUriParameters [| sourceFileVersion |] correlationId with
                         | Ok _ ->
                             logToAnsiConsole Colors.Verbose $"Downloaded {fileVersion.FullObjectPath} from the object storage provider."
 
