@@ -69,6 +69,17 @@ module ContentBlockMetadata =
         }
 
     [<CLIMutable; GenerateSerializer>]
+    type ContentBlockCompactionChurnState =
+        {
+            HasActiveUpload: bool
+            HasActiveFinalization: bool
+            HasActiveRangeClaim: bool
+            HasActiveCompaction: bool
+        }
+
+        static member NoChurn = { HasActiveUpload = false; HasActiveFinalization = false; HasActiveRangeClaim = false; HasActiveCompaction = false }
+
+    [<CLIMutable; GenerateSerializer>]
     type ContentBlockMetadata =
         {
             Class: string
@@ -144,16 +155,20 @@ module ContentBlockMetadata =
     type ContentBlockMetadataDto =
         {
             Metadata: ContentBlockMetadata option
+            CompactionChurnState: ContentBlockCompactionChurnState
             LastOperationId: string option
         }
 
-        static member Empty = { Metadata = None; LastOperationId = None }
+        static member Empty = { Metadata = None; CompactionChurnState = ContentBlockCompactionChurnState.NoChurn; LastOperationId = None }
 
         static member UpdateDto event _current =
             match event.Event with
-            | ContentBlockMetadataEventType.WholeRecordReplaced (operationId, metadata) -> { Metadata = Some metadata; LastOperationId = Some operationId }
-            | ContentBlockMetadataEventType.PhysicalRangesMerged (operationId, metadata) -> { Metadata = Some metadata; LastOperationId = Some operationId }
-            | ContentBlockMetadataEventType.PhysicalRangesCompacted (operationId, metadata) -> { Metadata = Some metadata; LastOperationId = Some operationId }
+            | ContentBlockMetadataEventType.WholeRecordReplaced (operationId, metadata) ->
+                { _current with Metadata = Some metadata; LastOperationId = Some operationId }
+            | ContentBlockMetadataEventType.PhysicalRangesMerged (operationId, metadata) ->
+                { _current with Metadata = Some metadata; LastOperationId = Some operationId }
+            | ContentBlockMetadataEventType.PhysicalRangesCompacted (operationId, metadata) ->
+                { _current with Metadata = Some metadata; LastOperationId = Some operationId }
 
     [<GenerateSerializer>]
     type ContentBlockMetadataDecision =

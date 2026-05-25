@@ -191,28 +191,30 @@ module ContentBlockMetadata =
         |> Array.map activeLogicalRangeKey
         |> Array.sort
 
+    let private compactionCandidateContext timestamp expectedMetadataVersion (churnState: ContentBlockCompactionChurnState) =
+        {
+            Now = timestamp
+            ExpectedMetadataVersion = expectedMetadataVersion
+            HasActiveUpload = churnState.HasActiveUpload
+            HasActiveFinalization = churnState.HasActiveFinalization
+            HasActiveRangeClaim = churnState.HasActiveRangeClaim
+            HasActiveCompaction = churnState.HasActiveCompaction
+        }
+
     let private createCompactedMetadata
         correlationId
-        (currentMetadata: ContentBlockMetadata option)
+        (current: ContentBlockMetadataDto)
         (compact: CompactContentBlockPhysicalRanges)
         timestamp
         : Result<ContentBlockMetadata, GraceError>
         =
-        match currentMetadata with
+        match current.Metadata with
         | None -> Error(graceError correlationId "ContentBlockMetadata does not exist; compaction requires current metadata.")
         | Some existing ->
             match validateCompactPhysicalRanges correlationId compact with
             | Some error -> Error error
             | None ->
-                let candidateContext: ContentBlockCompactionCandidateContext =
-                    {
-                        Now = timestamp
-                        ExpectedMetadataVersion = compact.ExpectedMetadataVersion
-                        HasActiveUpload = false
-                        HasActiveFinalization = false
-                        HasActiveRangeClaim = false
-                        HasActiveCompaction = false
-                    }
+                let candidateContext = compactionCandidateContext timestamp compact.ExpectedMetadataVersion current.CompactionChurnState
 
                 match Grace.Types.ContentBlockMetadata.selectCompactionCandidate candidateContext existing with
                 | ContentBlockCompactionSelection.Selected ->
@@ -407,7 +409,7 @@ module ContentBlockMetadata =
 
                     okDecision metadata operationId events false "ContentBlockMetadata physical ranges merged."
             | ContentBlockMetadataCommand.CompactPhysicalRanges compact ->
-                match createCompactedMetadata eventMetadata.CorrelationId current.Metadata compact eventMetadata.Timestamp with
+                match createCompactedMetadata eventMetadata.CorrelationId current compact eventMetadata.Timestamp with
                 | Error error -> Error error
                 | Ok metadata ->
                     let events =

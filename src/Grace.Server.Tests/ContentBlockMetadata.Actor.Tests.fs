@@ -456,6 +456,49 @@ type ContentBlockMetadataActorTests() =
         | Error error -> Assert.Fail($"Expected caller-supplied churn flags to be ignored by actor compaction, got {error.Error}.")
 
     [<Test>]
+    member _.CompactPhysicalRangesRejectsActorOwnedChurnState() =
+        let oldEnough = timestamp.Plus(Duration.FromHours(-25.0))
+        let minimumReclaimableBytes = 64L * 1024L * 1024L
+        let active = { activeRange with PhysicalLength = 8192L; ActiveManifestCount = 1 }
+        let reclaimable = { reclaimableRange with PhysicalOffset = 8192L; PhysicalLength = minimumReclaimableBytes; ActiveManifestCount = 0 }
+
+        let currentMetadata = recordWithTotals [| active; reclaimable |] (8192L + minimumReclaimableBytes) 8192L oldEnough 7L
+
+        let churnState = { ContentBlockCompactionChurnState.NoChurn with HasActiveRangeClaim = true }
+
+        let currentDto = { ContentBlockMetadataDto.Empty with Metadata = Some currentMetadata; CompactionChurnState = churnState }
+
+        let callerSuppliedNoChurn =
+            {
+                Now = timestamp
+                ExpectedMetadataVersion = 7L
+                HasActiveUpload = false
+                HasActiveFinalization = false
+                HasActiveRangeClaim = false
+                HasActiveCompaction = false
+            }
+
+        let placement = { ObjectKey = "cas/content-blocks/block-blake3-0001.compacted"; ETag = Some "etag-compact" }
+
+        let result =
+            ContentBlockMetadataActor.decideCommand
+                []
+                currentDto
+                (compact
+                    "op-compact-actor-churn"
+                    7L
+                    placement
+                    [|
+                        { active with PhysicalOffset = 0L }
+                    |]
+                    callerSuppliedNoChurn)
+                (metadata "corr-compact-actor-churn")
+
+        match result with
+        | Ok _ -> Assert.Fail("Expected actor-owned churn state to reject compaction.")
+        | Error error -> Assert.That(error.Error, Does.Contain("churn is active"))
+
+    [<Test>]
     member _.RangePresenceAggregatesDuplicateOrdinalRangesAsActiveWhenAnyPhysicalCopyIsActive() =
         let activePhysicalCopy = { reclaimableRange with ActiveManifestCount = 1; PhysicalOffset = 2048L }
 
