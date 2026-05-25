@@ -204,6 +204,11 @@ module Storage =
     let private createDiscoveryPolicy () : StorageParameterContracts.ContentBlockDiscoveryPolicy =
         {
             MaxKeyChunkAddresses = StorageParameterContracts.MaxDiscoveryKeyChunkAddresses
+            MaxCandidateWindowsPerKeyChunk = StorageParameterContracts.MaxCandidateWindowsPerKeyChunk
+            MaxWindowChunks = StorageParameterContracts.MaxWindowChunks
+            MaxResponseProtectedChunks = StorageParameterContracts.MaxResponseProtectedChunks
+            ResponseTtlSeconds = StorageParameterContracts.ResponseTtlSeconds
+            MinimumAcceptedReuseRunLength = StorageParameterContracts.MinimumAcceptedReuseRunLength
             PositiveCandidatesEnabled = false
             EmptyResponseMeansAbsent = false
             IsAuthoritative = false
