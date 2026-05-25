@@ -8,6 +8,7 @@ open Giraffe
 open Grace.Actors
 open Grace.Actors.Constants
 open Grace.Actors.Extensions.ActorProxy
+open Grace.Actors.Interfaces
 open Grace.Actors.Services
 open Grace.Server.ApplicationContext
 open Grace.Server.Services
@@ -90,6 +91,152 @@ module Storage =
         metadata.Properties[ "Path" ] <- $"{context.Request.Path}"
         metadata
 
+    type private UploadSessionRequestContext = { UploadSessionActor: IUploadSessionActor; Metadata: EventMetadata; SessionForScope: UploadSessionDto }
+
+    let private createUploadSessionRequestContext (context: HttpContext) (parameters: UploadSessionStorageParameters) correlationId =
+        task {
+            let graceIds = getGraceIds context
+            let _, repositoryId = resolveStorageIds graceIds parameters
+
+            let uploadSessionActor = Grace.Actors.Extensions.ActorProxy.UploadSession.CreateActorProxy parameters.UploadSessionId repositoryId correlationId
+
+            return { UploadSessionActor = uploadSessionActor; Metadata = createEventMetadata context correlationId; SessionForScope = UploadSessionDto.Default }
+        }
+
+    let private loadSessionForScope (uploadSessionActor: IUploadSessionActor) correlationId =
+        task {
+            let! session = uploadSessionActor.Get correlationId
+
+            if session.UploadSessionId = UploadSessionId.Empty then
+                let! events = uploadSessionActor.GetEvents correlationId
+
+                return
+                    events
+                    |> Seq.fold (fun dto event -> UploadSessionDto.UpdateDto event dto) UploadSessionDto.Default
+            else
+                return session
+        }
+
+    let private validateUploadSessionScope requestContext (parameters: UploadSessionStorageParameters) correlationId requireExistingSession =
+        task {
+            let! sessionForScope = loadSessionForScope requestContext.UploadSessionActor correlationId
+
+            if requireExistingSession
+               && (sessionForScope.UploadSessionId = UploadSessionId.Empty
+                   || sessionForScope.LifecycleState = UploadSessionLifecycleState.NotStarted) then
+                return Error(GraceError.Create "UploadSession must be started before this operation." correlationId)
+            elif sessionForScope.UploadSessionId
+                 <> UploadSessionId.Empty
+                 && sessionForScope.AuthorizedScope
+                    <> parameters.AuthorizedScope then
+                return
+                    Error(
+                        GraceError.Create
+                            $"UploadSession AuthorizedScope must match the scope recorded when the session was started. Expected '{sessionForScope.AuthorizedScope}', actual '{parameters.AuthorizedScope}'."
+                            correlationId
+                    )
+            else
+                return Ok { requestContext with SessionForScope = sessionForScope }
+        }
+
+    let private validateActiveDedupeDiscoveryForClaim requestContext (parameters: ClaimReuseRangesParameters) correlationId =
+        match requestContext.SessionForScope.DedupeDiscovery with
+        | None -> Error(GraceError.Create "Dedupe discovery must be issued before reuse ranges can be claimed." correlationId)
+        | Some discovery when
+            discovery.OperationId
+            <> parameters.DiscoveryOperationId
+            ->
+            Error(GraceError.Create "ClaimReuseRanges DiscoveryOperationId does not match the active discovery." correlationId)
+        | Some discovery when
+            requestContext.Metadata.Timestamp
+            >= discovery.ExpiresAt
+            ->
+            Error(GraceError.Create "Dedupe discovery has expired; reuse ranges cannot be claimed." correlationId)
+        | Some discovery -> Ok discovery
+
+    let private hintMatchesDedupeIndexRecord (hint: ContentBlockReuseRangeHint) (record: DedupeIndex.DedupeIndexRecord) =
+        record.StoragePoolId = hint.StoragePoolId
+        && record.ContentBlockAddress = hint.ContentBlockAddress
+        && record.OrdinalStart = hint.OrdinalStart
+        && record.OrdinalCount = hint.OrdinalCount
+        && record.MetadataVersion = hint.MetadataVersion
+
+    let private reuseRangeHintFromDedupeIndexRecord (record: DedupeIndex.DedupeIndexRecord) : ContentBlockReuseRangeHint =
+        {
+            StoragePoolId = record.StoragePoolId
+            ContentBlockAddress = record.ContentBlockAddress
+            OrdinalStart = record.OrdinalStart
+            OrdinalCount = record.OrdinalCount
+            MetadataVersion = record.MetadataVersion
+        }
+
+    let private validateIssuedDedupeDiscoveryHints
+        correlationId
+        storagePoolId
+        (hints: ContentBlockReuseRangeHint array)
+        (records: DedupeIndex.DedupeIndexRecord array)
+        =
+        let boundHints = ResizeArray<ContentBlockReuseRangeHint>()
+        let mutable error = None
+        let mutable index = 0
+
+        while error.IsNone && index < hints.Length do
+            let hint = hints[index]
+
+            if isNull (box hint) then
+                error <- Some(GraceError.Create "IssueDedupeDiscovery Hints must not contain null entries." correlationId)
+            elif hint.StoragePoolId <> storagePoolId then
+                error <- Some(GraceError.Create "IssueDedupeDiscovery Hints must come from server discovery candidates for this repository." correlationId)
+            else
+                match
+                    records
+                    |> Array.tryFind (hintMatchesDedupeIndexRecord hint)
+                    with
+                | Some record -> boundHints.Add(reuseRangeHintFromDedupeIndexRecord record)
+                | None -> error <- Some(GraceError.Create "IssueDedupeDiscovery Hints must come from server discovery candidates." correlationId)
+
+            index <- index + 1
+
+        match error with
+        | Some error -> Error error
+        | None -> Ok(boundHints.ToArray())
+
+    let private hintMatchesIssuedHint (hint: ContentBlockReuseRangeHint) (issued: ContentBlockReuseRangeHint) =
+        not (isNull (box issued))
+        && issued.StoragePoolId = hint.StoragePoolId
+        && issued.ContentBlockAddress = hint.ContentBlockAddress
+        && issued.OrdinalStart = hint.OrdinalStart
+        && issued.OrdinalCount = hint.OrdinalCount
+        && issued.MetadataVersion = hint.MetadataVersion
+
+    let private validateClaimReuseHints correlationId storagePoolId (discovery: DedupeDiscoverySnapshot) (hints: ContentBlockReuseRangeHint array) =
+        let boundHints = ResizeArray<ContentBlockReuseRangeHint>()
+        let issuedHints = if isNull discovery.Hints then Array.empty else discovery.Hints
+
+        let mutable error = None
+        let mutable index = 0
+
+        while error.IsNone && index < hints.Length do
+            let hint = hints[index]
+
+            if isNull (box hint) then
+                error <- Some(GraceError.Create "ClaimReuseRanges Hints must not contain null entries." correlationId)
+            elif hint.StoragePoolId <> storagePoolId then
+                error <- Some(GraceError.Create "ClaimReuseRanges Hints must belong to the upload session repository storage pool." correlationId)
+            else
+                match
+                    issuedHints
+                    |> Array.tryFind (hintMatchesIssuedHint hint)
+                    with
+                | Some issuedHint -> boundHints.Add(issuedHint)
+                | None -> error <- Some(GraceError.Create "ClaimReuseRanges Hints must have been issued by the active dedupe discovery." correlationId)
+
+            index <- index + 1
+
+        match error with
+        | Some error -> Error error
+        | None -> Ok(boundHints.ToArray())
+
     let private handleUploadSessionCommand
         (context: HttpContext)
         (parameters: UploadSessionStorageParameters)
@@ -97,48 +244,19 @@ module Storage =
         (correlationId: CorrelationId)
         =
         task {
-            let graceIds = getGraceIds context
-            let _, repositoryId = resolveStorageIds graceIds parameters
-            let uploadSessionActor = Grace.Actors.Extensions.ActorProxy.UploadSession.CreateActorProxy parameters.UploadSessionId repositoryId correlationId
-            let metadata = createEventMetadata context correlationId
-
             let! scopeValidation =
                 task {
+                    let! requestContext = createUploadSessionRequestContext context parameters correlationId
+
                     match command with
-                    | UploadSessionCommand.Start _ -> return Ok()
-                    | _ ->
-                        let! session = uploadSessionActor.Get correlationId
-
-                        let! sessionForScope =
-                            task {
-                                if session.UploadSessionId = UploadSessionId.Empty then
-                                    let! events = uploadSessionActor.GetEvents correlationId
-
-                                    return
-                                        events
-                                        |> Seq.fold (fun dto event -> UploadSessionDto.UpdateDto event dto) UploadSessionDto.Default
-                                else
-                                    return session
-                            }
-
-                        if sessionForScope.UploadSessionId = UploadSessionId.Empty then
-                            return Ok()
-                        elif sessionForScope.AuthorizedScope
-                             <> parameters.AuthorizedScope then
-                            return
-                                Error(
-                                    GraceError.Create
-                                        $"UploadSession AuthorizedScope must match the scope recorded when the session was started. Expected '{sessionForScope.AuthorizedScope}', actual '{parameters.AuthorizedScope}'."
-                                        correlationId
-                                )
-                        else
-                            return Ok()
+                    | UploadSessionCommand.Start _ -> return Ok requestContext
+                    | _ -> return! validateUploadSessionScope requestContext parameters correlationId false
                 }
 
             match scopeValidation with
             | Error error -> return! context |> result400BadRequest error
-            | Ok _ ->
-                let! result = uploadSessionActor.Handle command metadata
+            | Ok requestContext ->
+                let! result = requestContext.UploadSessionActor.Handle command requestContext.Metadata
 
                 match result with
                 | Ok returnValue -> return! context |> result200Ok returnValue
@@ -438,6 +556,177 @@ module Storage =
                     return!
                         context
                         |> result500ServerError (GraceError.Create $"{exceptionResponse}" correlationId)
+            }
+
+    let IssueDedupeDiscovery: HttpHandler =
+        fun (next: HttpFunc) (context: HttpContext) ->
+            task {
+                let correlationId = getCorrelationId context
+
+                try
+                    let! parameters = context.BindJsonAsync<IssueDedupeDiscoveryParameters>()
+
+                    let hints = if isNull parameters.Hints then Array.empty else parameters.Hints
+
+                    if hints.Length > StorageParameterContracts.MaxReuseRangeClaims then
+                        return!
+                            context
+                            |> result400BadRequest (
+                                GraceError.Create
+                                    $"IssueDedupeDiscovery Hints must contain no more than {StorageParameterContracts.MaxReuseRangeClaims} items."
+                                    correlationId
+                            )
+                    else
+                        let! requestContext = createUploadSessionRequestContext context parameters correlationId
+                        let! scopeValidation = validateUploadSessionScope requestContext parameters correlationId true
+
+                        match scopeValidation with
+                        | Error error -> return! context |> result400BadRequest error
+                        | Ok requestContext ->
+                            let repositoryActor =
+                                Repository.CreateActorProxy
+                                    requestContext.SessionForScope.OrganizationId
+                                    requestContext.SessionForScope.RepositoryId
+                                    correlationId
+
+                            let! repositoryDto = repositoryActor.Get correlationId
+                            let storagePoolId = DedupeIndex.storagePoolIdForRepository repositoryDto
+                            let dedupeIndexActor = DedupeIndexActor.CreateActorProxy correlationId
+                            let! records = dedupeIndexActor.Snapshot correlationId
+
+                            match validateIssuedDedupeDiscoveryHints correlationId storagePoolId hints records with
+                            | Error error -> return! context |> result400BadRequest error
+                            | Ok boundHints ->
+                                let command =
+                                    UploadSessionCommand.IssueDedupeDiscovery
+                                        {
+                                            OperationId = parameters.OperationId
+                                            ExpiresAt = parameters.ExpiresAt
+                                            MinimumReuseRunLength = parameters.MinimumReuseRunLength
+                                            Hints = boundHints
+                                        }
+
+                                let! result = requestContext.UploadSessionActor.Handle command requestContext.Metadata
+
+                                match result with
+                                | Ok returnValue -> return! context |> result200Ok returnValue
+                                | Error error -> return! context |> result400BadRequest error
+                with
+                | ex ->
+                    let exceptionResponse = ExceptionResponse.Create ex
+                    let exceptionText = $"{exceptionResponse}"
+                    logToConsole $"Exception in IssueDedupeDiscovery: {exceptionResponse}"
+
+                    if exceptionText.Contains("expected JSON object, found Null", StringComparison.OrdinalIgnoreCase) then
+                        return!
+                            context
+                            |> result400BadRequest (GraceError.Create "IssueDedupeDiscovery Hints must not contain null entries." correlationId)
+                    else
+                        return!
+                            context
+                            |> result500ServerError (GraceError.Create exceptionText correlationId)
+            }
+
+    let ClaimReuseRanges: HttpHandler =
+        fun (next: HttpFunc) (context: HttpContext) ->
+            task {
+                let correlationId = getCorrelationId context
+
+                try
+                    let! parameters = context.BindJsonAsync<ClaimReuseRangesParameters>()
+                    let hints = if isNull parameters.Hints then Array.empty else parameters.Hints
+
+                    if hints.Length = 0 then
+                        return!
+                            context
+                            |> result400BadRequest (GraceError.Create "At least one reuse range claim is required." correlationId)
+                    elif hints.Length > StorageParameterContracts.MaxReuseRangeClaims then
+                        return!
+                            context
+                            |> result400BadRequest (
+                                GraceError.Create
+                                    $"ClaimReuseRanges Hints must contain no more than {StorageParameterContracts.MaxReuseRangeClaims} items."
+                                    correlationId
+                            )
+                    else
+                        let! requestContext = createUploadSessionRequestContext context parameters correlationId
+                        let! scopeValidation = validateUploadSessionScope requestContext parameters correlationId true
+
+                        match scopeValidation with
+                        | Error error -> return! context |> result400BadRequest error
+                        | Ok requestContext ->
+                            match validateActiveDedupeDiscoveryForClaim requestContext parameters correlationId with
+                            | Error error -> return! context |> result400BadRequest error
+                            | Ok discovery ->
+                                let repositoryActor =
+                                    Repository.CreateActorProxy
+                                        requestContext.SessionForScope.OrganizationId
+                                        requestContext.SessionForScope.RepositoryId
+                                        correlationId
+
+                                let! repositoryDto = repositoryActor.Get correlationId
+                                let storagePoolId = DedupeIndex.storagePoolIdForRepository repositoryDto
+
+                                match validateClaimReuseHints correlationId storagePoolId discovery hints with
+                                | Error error -> return! context |> result400BadRequest error
+                                | Ok hints ->
+                                    let ranges = ResizeArray<ClaimReuseRange>()
+                                    let mutable error = None
+                                    let mutable index = 0
+
+                                    while error.IsNone && index < hints.Length do
+                                        let hint = hints[index]
+
+                                        let metadataActor =
+                                            grainFactory.CreateActorProxyWithCorrelationId<IContentBlockMetadataActor>(
+                                                Grace.Actors.ContentBlockMetadataActorKey.Create hint.StoragePoolId hint.ContentBlockAddress,
+                                                correlationId
+                                            )
+
+                                        let! metadata = metadataActor.Get correlationId
+
+                                        match metadata with
+                                        | Some metadata -> ranges.Add({ Hint = hint; Metadata = metadata })
+                                        | None ->
+                                            error <-
+                                                Some(
+                                                    GraceError.Create
+                                                        $"Authoritative ContentBlockMetadata is absent for {hint.ContentBlockAddress}; reuse range cannot be claimed."
+                                                        correlationId
+                                                )
+
+                                        index <- index + 1
+
+                                    match error with
+                                    | Some error -> return! context |> result400BadRequest error
+                                    | None ->
+                                        let command =
+                                            UploadSessionCommand.ClaimReuseRanges
+                                                {
+                                                    OperationId = parameters.OperationId
+                                                    DiscoveryOperationId = parameters.DiscoveryOperationId
+                                                    Ranges = ranges.ToArray()
+                                                }
+
+                                        let! result = requestContext.UploadSessionActor.Handle command requestContext.Metadata
+
+                                        match result with
+                                        | Ok returnValue -> return! context |> result200Ok returnValue
+                                        | Error error -> return! context |> result400BadRequest error
+                with
+                | ex ->
+                    let exceptionResponse = ExceptionResponse.Create ex
+                    let exceptionText = $"{exceptionResponse}"
+                    logToConsole $"Exception in ClaimReuseRanges: {exceptionResponse}"
+
+                    if exceptionText.Contains("expected JSON object, found Null", StringComparison.OrdinalIgnoreCase) then
+                        return!
+                            context
+                            |> result400BadRequest (GraceError.Create "ClaimReuseRanges Hints must not contain null entries." correlationId)
+                    else
+                        return!
+                            context
+                            |> result500ServerError (GraceError.Create exceptionText correlationId)
             }
 
     let RegisterContentBlockUpload: HttpHandler =

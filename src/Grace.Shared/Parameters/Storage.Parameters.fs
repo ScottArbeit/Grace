@@ -4,6 +4,7 @@ open Grace.Shared.Parameters.Common
 open Grace.Types.ContentBlockMetadata
 open Grace.Types.Types
 open Grace.Types.UploadSession
+open NodaTime
 open System
 
 module Storage =
@@ -31,6 +32,10 @@ module Storage =
     /// Minimum contiguous run length accepted for reuse claims.
     [<Literal>]
     let MinimumAcceptedReuseRunLength = 8
+
+    /// Maximum reuse range hints accepted by one claim request.
+    [<Literal>]
+    let MaxReuseRangeClaims = 1024
 
     /// Parameters used by multiple endpoints in the /diff path.
     type StorageParameters() =
@@ -84,6 +89,19 @@ module Storage =
         member val public ChunkingSuiteId: ChunkingSuiteId = String.Empty with get, set
         member val public SamplingPolicySnapshot: string = String.Empty with get, set
         member val public OperationId: UploadSessionOperationId = String.Empty with get, set
+
+    type IssueDedupeDiscoveryParameters() =
+        inherit UploadSessionStorageParameters()
+        member val public OperationId: UploadSessionOperationId = String.Empty with get, set
+        member val public ExpiresAt: Instant = Instant.MinValue with get, set
+        member val public MinimumReuseRunLength: int = 0 with get, set
+        member val public Hints = Array.empty<ContentBlockReuseRangeHint> with get, set
+
+    type ClaimReuseRangesParameters() =
+        inherit UploadSessionStorageParameters()
+        member val public OperationId: UploadSessionOperationId = String.Empty with get, set
+        member val public DiscoveryOperationId: UploadSessionOperationId = String.Empty with get, set
+        member val public Hints = Array.empty<ContentBlockReuseRangeHint> with get, set
 
     type RegisterContentBlockUploadParameters() =
         inherit UploadSessionStorageParameters()

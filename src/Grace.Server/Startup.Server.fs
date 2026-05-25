@@ -1280,6 +1280,12 @@ module Application =
                                route "/startManifestUploadSession" (composeHandlers requirePathWriteForUploadSession Storage.StartManifestUploadSession)
                                |> addMetadata typeof<Storage.StartManifestUploadSessionParameters>
 
+                               route "/issueDedupeDiscovery" (composeHandlers requirePathWriteForUploadSession Storage.IssueDedupeDiscovery)
+                               |> addMetadata typeof<Storage.IssueDedupeDiscoveryParameters>
+
+                               route "/claimReuseRanges" (composeHandlers requirePathWriteForUploadSession Storage.ClaimReuseRanges)
+                               |> addMetadata typeof<Storage.ClaimReuseRangesParameters>
+
                                route "/registerContentBlockUpload" (composeHandlers requirePathWriteForUploadSession Storage.RegisterContentBlockUpload)
                                |> addMetadata typeof<Storage.RegisterContentBlockUploadParameters>
 
