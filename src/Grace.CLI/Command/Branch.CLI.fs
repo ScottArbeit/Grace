@@ -2915,46 +2915,53 @@ module Branch =
                                         CorrelationId = graceIds.CorrelationId
                                     )
 
-                                for directoryVersion in graceStatusWithNewDirectoryVersionsFromServer.Index.Values do
-                                    match! (downloadFilesFromObjectStorage getDownloadUriParameters directoryVersion.Files (getCorrelationId parseResult)) with
-                                    | Ok _ ->
-                                        try
-                                            //logToAnsiConsole Colors.Verbose $"Succeeded downloading files from object storage for {directoryVersion.RelativePath}."
-
-                                            // Write the UpdatesInProgress file to let grace watch know to ignore these changes.
-                                            // This file is deleted in the finally clause.
-                                            do! File.WriteAllTextAsync(updateInProgressFileName (), "`grace switch` is in progress.")
-
-                                            // Update working directory based on new GraceStatus.Index
-                                            do!
-                                                updateWorkingDirectory
-                                                    newGraceStatus
-                                                    graceStatusWithNewDirectoryVersionsFromServer
-                                                    newDirectoryVersionDtos
-                                                    (getCorrelationId parseResult)
-                                            //logToAnsiConsole Colors.Verbose $"Succeeded calling updateWorkingDirectory."
-
-                                            // Save the new Grace Status.
-                                            do! writeGraceStatusFile graceStatusWithNewDirectoryVersionsFromServer
-
-                                            // Update graceconfig.json.
-                                            let configuration = Current()
-                                            configuration.BranchId <- newBranch.BranchId
-                                            configuration.BranchName <- newBranch.BranchName
-                                            updateConfiguration configuration
-                                            t |> setProgressTaskValue showOutput 100.0
-                                        finally
-                                            // Delete the UpdatesInProgress file.
-                                            File.Delete(updateInProgressFileName ())
-
+                                for directoryVersionDto in newDirectoryVersionDtos do
+                                    match! (downloadFileVersionsFromObjectStorage
+                                                getDownloadUriParameters
+                                                directoryVersionDto.DirectoryVersion.Files
+                                                (getCorrelationId parseResult))
+                                        with
+                                    | Ok _ -> ()
                                     | Error error ->
                                         if parseResult |> verbose then
-                                            logToAnsiConsole Colors.Verbose $"Failed downloading files from object storage for {directoryVersion.RelativePath}."
+                                            logToAnsiConsole
+                                                Colors.Verbose
+                                                $"Failed downloading files from object storage for {directoryVersionDto.DirectoryVersion.RelativePath}."
 
                                         logToAnsiConsole Colors.Error $"{error}"
                                         isError <- true
 
                                 if not <| isError then
+                                    try
+                                        //logToAnsiConsole Colors.Verbose $"Succeeded downloading files from object storage for {directoryVersion.RelativePath}."
+
+                                        // Write the UpdatesInProgress file to let grace watch know to ignore these changes.
+                                        // This file is deleted in the finally clause.
+                                        do! File.WriteAllTextAsync(updateInProgressFileName (), "`grace switch` is in progress.")
+
+                                        // Update working directory based on new GraceStatus.Index
+                                        do!
+                                            updateWorkingDirectory
+                                                newGraceStatus
+                                                graceStatusWithNewDirectoryVersionsFromServer
+                                                newDirectoryVersionDtos
+                                                (getCorrelationId parseResult)
+                                        //logToAnsiConsole Colors.Verbose $"Succeeded calling updateWorkingDirectory."
+
+                                        // Save the new Grace Status.
+                                        do! writeGraceStatusFile graceStatusWithNewDirectoryVersionsFromServer
+
+                                        // Update graceconfig.json.
+                                        let configuration = Current()
+                                        configuration.BranchId <- newBranch.BranchId
+                                        configuration.BranchName <- newBranch.BranchName
+                                        updateConfiguration configuration
+                                        t |> setProgressTaskValue showOutput 100.0
+                                    finally
+                                        // Delete the UpdatesInProgress file.
+                                        if File.Exists(updateInProgressFileName ()) then
+                                            File.Delete(updateInProgressFileName ())
+
                                     newGraceStatus <- graceStatusWithNewDirectoryVersionsFromServer
                                     rootDirectoryId <- newGraceStatus.RootDirectoryId
                                     rootDirectorySha256Hash <- newGraceStatus.RootDirectorySha256Hash

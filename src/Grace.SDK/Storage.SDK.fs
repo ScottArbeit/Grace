@@ -336,6 +336,29 @@ module Storage =
                 return Error(GraceError.Create (exceptionResponse.ToString()) correlationId)
         }
 
+    let DownloadContentBlockFromObjectStorage (contentBlockAddress: ContentBlockAddress) (blobUriWithSasToken: Uri) correlationId =
+        task {
+            try
+                match Current().ObjectStorageProvider with
+                | ObjectStorageProvider.Unknown -> return Error(GraceError.Create (getErrorMessage StorageError.NotImplemented) correlationId)
+                | ObjectStorageProvider.AzureBlobStorage ->
+                    use transport = new HttpClientTransport(getHttpClient correlationId)
+
+                    let blobClientOptions = BlobClientOptions(Transport = transport)
+                    blobClientOptions.Retry.NetworkTimeout <- TimeSpan.FromMinutes(60.0)
+
+                    let blobClient = BlobClient(blobUriWithSasToken, blobClientOptions)
+                    let! response = blobClient.DownloadContentAsync()
+
+                    return Ok(GraceReturnValue.Create (response.Value.Content.ToArray()) correlationId)
+                | ObjectStorageProvider.AWSS3 -> return Error(GraceError.Create (getErrorMessage StorageError.NotImplemented) correlationId)
+                | ObjectStorageProvider.GoogleCloudStorage -> return Error(GraceError.Create (getErrorMessage StorageError.NotImplemented) correlationId)
+            with
+            | ex ->
+                let exceptionResponse = ExceptionResponse.Create ex
+                return Error(GraceError.Create $"Failed to download ContentBlock {contentBlockAddress}: {exceptionResponse.ToString()}" correlationId)
+        }
+
     /// Gets an upload URI with a SAS token for uploading a file to object storage.
     let GetUploadUri (parameters: GetUploadUriParameters) =
         task {

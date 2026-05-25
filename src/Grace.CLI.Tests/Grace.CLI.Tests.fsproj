@@ -30,6 +30,7 @@
     <Compile Include="Watch.Tests.fs" />
     <Compile Include="LocalPlanner.SDK.Tests.fs" />
     <Compile Include="ManifestUpload.SDK.Tests.fs" />
+    <Compile Include="ManifestDownload.SDK.Tests.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
 
