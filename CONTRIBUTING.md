@@ -15,11 +15,11 @@ This repo is primarily **F#** and targets **.NET 10**.
 
 3. Build:
 
-   - `dotnet build ./src/Grace.sln`
+   - `dotnet build ./src/Grace.slnx`
 
 4. Test:
 
-   - `dotnet test ./src/Grace.sln` (optionally add `-c Release`)
+   - `dotnet test ./src/Grace.slnx` (optionally add `-c Release`)
    - Or run the repo validator: `pwsh ./scripts/validate.ps1 -Full`
 
 5. Format F#:
@@ -35,6 +35,9 @@ This repo is primarily **F#** and targets **.NET 10**.
   editing.
 - Use a focused branch for each issue. Maintainers and agents should use issue-owned worktrees for repo-local work.
 - Prefer vertical slices with focused validation and a commit after each completed slice.
+- Before treating coding work as complete, run the local review-only subagent loop described in
+  `docs/Development process.md`; use the dedicated Code Review capability when available, address every issue, and stop
+  only after the reviewer reports no issues.
 - Open normal ready-for-review pull requests unless a maintainer explicitly asks for a draft pull request.
 - Add or update tests when changing behavior.
 - Please add any useful AI prompts you used for diagnosis or implementation to the PR description.
@@ -54,13 +57,13 @@ and `dotnet restore`.
 
 From the repo root:
 
-- `dotnet build ./src/Grace.sln`
+- `dotnet build ./src/Grace.slnx`
 
 ## Tests
 
 From the repo root:
 
-- `dotnet test ./src/Grace.sln` (optionally `-c Release`)
+- `dotnet test ./src/Grace.slnx` (optionally `-c Release`)
 
 This repo also includes a validation script:
 
@@ -317,10 +320,11 @@ Prometheus:
 
 ## Pull request checklist
 
-- [ ] Builds: `dotnet build ./src/Grace.sln`
-- [ ] Tests: `dotnet test ./src/Grace.sln`
+- [ ] Builds: `dotnet build ./src/Grace.slnx`
+- [ ] Tests: `dotnet test ./src/Grace.slnx`
 - [ ] Formatting: run `dotnet tool run fantomas --recurse .` from `./src`
 - [ ] Focused validation for the touched behavior is listed in the PR
+- [ ] Local review-only subagent loop completed with no remaining issues
 - [ ] Skipped validation is listed with a reason
 - [ ] Documentation updated (if behavior changed)
 - [ ] Docs impact, residual risk, and rollback or recovery notes are recorded when relevant

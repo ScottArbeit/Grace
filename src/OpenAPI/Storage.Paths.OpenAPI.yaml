@@ -1,0 +1,275 @@
+/storage/getUploadMetadataForFiles:
+  post:
+    summary: Gets upload metadata for files.
+    description: Gets upload URLs and content-reference metadata for whole-file compatibility uploads.
+    operationId: GetUploadMetadataForFiles
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: 'Storage.Components.OpenAPI.yaml#/GetUploadMetadataForFilesParameters'
+    responses:
+      '200':
+        description: OK
+        content:
+          application/json:
+            schema:
+              $ref: 'Storage.Components.OpenAPI.yaml#/UploadMetadataArrayReturnValue'
+      '400':
+        $ref: './Responses.OpenAPI.yaml#/400'
+      '500':
+        $ref: './Responses.OpenAPI.yaml#/500'
+
+/storage/getUploadUri:
+  post:
+    summary: Gets upload URIs for whole-file content.
+    description: Compatibility endpoint for uploading repository-scoped WholeFileContent.
+    operationId: GetUploadUri
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: 'Storage.Components.OpenAPI.yaml#/GetUploadUriParameters'
+    responses:
+      '200':
+        description: OK
+        content:
+          application/json:
+            schema:
+              $ref: 'Storage.Components.OpenAPI.yaml#/UploadUriMap'
+      '400':
+        $ref: './Responses.OpenAPI.yaml#/400'
+      '500':
+        $ref: './Responses.OpenAPI.yaml#/500'
+
+/storage/getDownloadUri:
+  post:
+    summary: Gets a download URI for whole-file content.
+    description: Compatibility endpoint for downloading repository-scoped WholeFileContent.
+    operationId: GetDownloadUri
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: 'Storage.Components.OpenAPI.yaml#/GetDownloadUriParameters'
+    responses:
+      '200':
+        description: OK
+        content:
+          text/plain:
+            schema:
+              $ref: 'Storage.Components.OpenAPI.yaml#/UriString'
+      '400':
+        $ref: './Responses.OpenAPI.yaml#/400'
+      '500':
+        $ref: './Responses.OpenAPI.yaml#/500'
+
+/storage/getContentBlockUploadUri:
+  post:
+    summary: Gets an upload URI for a ContentBlock payload.
+    description: Gets an object-storage upload URI without probing whether the ContentBlock already exists.
+    operationId: GetContentBlockUploadUri
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: 'Storage.Components.OpenAPI.yaml#/GetContentBlockUploadUriParameters'
+    responses:
+      '200':
+        description: OK
+        content:
+          text/plain:
+            schema:
+              $ref: 'Storage.Components.OpenAPI.yaml#/UriString'
+      '400':
+        $ref: './Responses.OpenAPI.yaml#/400'
+      '500':
+        $ref: './Responses.OpenAPI.yaml#/500'
+
+/storage/getContentBlockDownloadUri:
+  post:
+    summary: Gets a download URI for a ContentBlock payload.
+    description: Gets an object-storage download URI for an authorized manifest-backed reconstruction path.
+    operationId: GetContentBlockDownloadUri
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: 'Storage.Components.OpenAPI.yaml#/GetContentBlockDownloadUriParameters'
+    responses:
+      '200':
+        description: OK
+        content:
+          text/plain:
+            schema:
+              $ref: 'Storage.Components.OpenAPI.yaml#/UriString'
+      '400':
+        $ref: './Responses.OpenAPI.yaml#/400'
+      '500':
+        $ref: './Responses.OpenAPI.yaml#/500'
+
+/storage/discoverContentBlocks:
+  post:
+    summary: Discovers reusable ContentBlock candidates.
+    description: Returns bounded, non-authoritative candidate windows for key chunks; empty results do not prove absence.
+    operationId: DiscoverContentBlocks
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: 'Storage.Components.OpenAPI.yaml#/DiscoverContentBlocksParameters'
+    responses:
+      '200':
+        description: OK
+        content:
+          application/json:
+            schema:
+              $ref: 'Storage.Components.OpenAPI.yaml#/DiscoverContentBlocksReturnValue'
+      '400':
+        $ref: './Responses.OpenAPI.yaml#/400'
+      '500':
+        $ref: './Responses.OpenAPI.yaml#/500'
+
+/storage/startManifestUploadSession:
+  post:
+    summary: Starts a manifest upload session.
+    description: Starts the server-authoritative workflow for one manifest-backed file.
+    operationId: StartManifestUploadSession
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: 'Storage.Components.OpenAPI.yaml#/StartManifestUploadSessionParameters'
+    responses:
+      '200':
+        description: OK
+        content:
+          application/json:
+            schema:
+              $ref: 'Storage.Components.OpenAPI.yaml#/UploadSessionDecisionReturnValue'
+      '400':
+        $ref: './Responses.OpenAPI.yaml#/400'
+      '500':
+        $ref: './Responses.OpenAPI.yaml#/500'
+
+/storage/issueDedupeDiscovery:
+  post:
+    summary: Issues upload-session dedupe discovery hints.
+    description: Records server-issued discovery hints for a started upload session before reuse claims.
+    operationId: IssueDedupeDiscovery
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: 'Storage.Components.OpenAPI.yaml#/IssueDedupeDiscoveryParameters'
+    responses:
+      '200':
+        description: OK
+        content:
+          application/json:
+            schema:
+              $ref: 'Storage.Components.OpenAPI.yaml#/UploadSessionDecisionReturnValue'
+      '400':
+        $ref: './Responses.OpenAPI.yaml#/400'
+      '500':
+        $ref: './Responses.OpenAPI.yaml#/500'
+
+/storage/claimReuseRanges:
+  post:
+    summary: Claims reusable ContentBlock ranges.
+    description: Claims server-issued candidate ranges after authoritative ContentBlockMetadata validation.
+    operationId: ClaimReuseRanges
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: 'Storage.Components.OpenAPI.yaml#/ClaimReuseRangesParameters'
+    responses:
+      '200':
+        description: OK
+        content:
+          application/json:
+            schema:
+              $ref: 'Storage.Components.OpenAPI.yaml#/UploadSessionDecisionReturnValue'
+      '400':
+        $ref: './Responses.OpenAPI.yaml#/400'
+      '500':
+        $ref: './Responses.OpenAPI.yaml#/500'
+
+/storage/registerContentBlockUpload:
+  post:
+    summary: Registers a ContentBlock upload intent.
+    description: Records the expected logical range and payload size before uploading a new ContentBlock.
+    operationId: RegisterContentBlockUpload
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: 'Storage.Components.OpenAPI.yaml#/RegisterContentBlockUploadParameters'
+    responses:
+      '200':
+        description: OK
+        content:
+          application/json:
+            schema:
+              $ref: 'Storage.Components.OpenAPI.yaml#/UploadSessionDecisionReturnValue'
+      '400':
+        $ref: './Responses.OpenAPI.yaml#/400'
+      '500':
+        $ref: './Responses.OpenAPI.yaml#/500'
+
+/storage/confirmContentBlockUpload:
+  post:
+    summary: Confirms a ContentBlock upload.
+    description: Confirms object-storage placement for a ContentBlock that was uploaded for this manifest session.
+    operationId: ConfirmContentBlockUpload
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: 'Storage.Components.OpenAPI.yaml#/ConfirmContentBlockUploadParameters'
+    responses:
+      '200':
+        description: OK
+        content:
+          application/json:
+            schema:
+              $ref: 'Storage.Components.OpenAPI.yaml#/UploadSessionDecisionReturnValue'
+      '400':
+        $ref: './Responses.OpenAPI.yaml#/400'
+      '500':
+        $ref: './Responses.OpenAPI.yaml#/500'
+
+/storage/finalizeManifestUpload:
+  post:
+    summary: Finalizes a manifest upload.
+    description: Finalizes the manifest after validating reconstruction, range claims, block presence, file hash, and size.
+    operationId: FinalizeManifestUpload
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: 'Storage.Components.OpenAPI.yaml#/FinalizeManifestUploadParameters'
+    responses:
+      '200':
+        description: OK
+        content:
+          application/json:
+            schema:
+              $ref: 'Storage.Components.OpenAPI.yaml#/UploadSessionDecisionReturnValue'
+      '400':
+        $ref: './Responses.OpenAPI.yaml#/400'
+      '500':
+        $ref: './Responses.OpenAPI.yaml#/500'

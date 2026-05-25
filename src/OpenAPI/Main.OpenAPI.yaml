@@ -186,6 +186,31 @@ paths:
   /repository/getBranchesByBranchId:
     $ref: './Repository.Paths.OpenAPI.yaml#/~1repository~1getBranchesByBranchId'
 
+  /storage/getUploadMetadataForFiles:
+    $ref: './Storage.Paths.OpenAPI.yaml#/~1storage~1getUploadMetadataForFiles'
+  /storage/getUploadUri:
+    $ref: './Storage.Paths.OpenAPI.yaml#/~1storage~1getUploadUri'
+  /storage/getDownloadUri:
+    $ref: './Storage.Paths.OpenAPI.yaml#/~1storage~1getDownloadUri'
+  /storage/getContentBlockUploadUri:
+    $ref: './Storage.Paths.OpenAPI.yaml#/~1storage~1getContentBlockUploadUri'
+  /storage/getContentBlockDownloadUri:
+    $ref: './Storage.Paths.OpenAPI.yaml#/~1storage~1getContentBlockDownloadUri'
+  /storage/discoverContentBlocks:
+    $ref: './Storage.Paths.OpenAPI.yaml#/~1storage~1discoverContentBlocks'
+  /storage/startManifestUploadSession:
+    $ref: './Storage.Paths.OpenAPI.yaml#/~1storage~1startManifestUploadSession'
+  /storage/issueDedupeDiscovery:
+    $ref: './Storage.Paths.OpenAPI.yaml#/~1storage~1issueDedupeDiscovery'
+  /storage/claimReuseRanges:
+    $ref: './Storage.Paths.OpenAPI.yaml#/~1storage~1claimReuseRanges'
+  /storage/registerContentBlockUpload:
+    $ref: './Storage.Paths.OpenAPI.yaml#/~1storage~1registerContentBlockUpload'
+  /storage/confirmContentBlockUpload:
+    $ref: './Storage.Paths.OpenAPI.yaml#/~1storage~1confirmContentBlockUpload'
+  /storage/finalizeManifestUpload:
+    $ref: './Storage.Paths.OpenAPI.yaml#/~1storage~1finalizeManifestUpload'
+
 components:
   schemas:
     BranchParameters:
@@ -338,6 +363,55 @@ components:
       $ref: 'Repository.Components.OpenAPI.yaml#/GetBranchesByBranchIdParameters'
     UndeleteRepositoryParameters:
       $ref: 'Repository.Components.OpenAPI.yaml#/UndeleteRepositoryParameters'
+
+    StorageParameters:
+      $ref: 'Storage.Components.OpenAPI.yaml#/StorageParameters'
+    GetUploadMetadataForFilesParameters:
+      $ref: 'Storage.Components.OpenAPI.yaml#/GetUploadMetadataForFilesParameters'
+    GetUploadUriParameters:
+      $ref: 'Storage.Components.OpenAPI.yaml#/GetUploadUriParameters'
+    GetDownloadUriParameters:
+      $ref: 'Storage.Components.OpenAPI.yaml#/GetDownloadUriParameters'
+    GetContentBlockUploadUriParameters:
+      $ref: 'Storage.Components.OpenAPI.yaml#/GetContentBlockUploadUriParameters'
+    GetContentBlockDownloadUriParameters:
+      $ref: 'Storage.Components.OpenAPI.yaml#/GetContentBlockDownloadUriParameters'
+    DiscoverContentBlocksParameters:
+      $ref: 'Storage.Components.OpenAPI.yaml#/DiscoverContentBlocksParameters'
+    StartManifestUploadSessionParameters:
+      $ref: 'Storage.Components.OpenAPI.yaml#/StartManifestUploadSessionParameters'
+    IssueDedupeDiscoveryParameters:
+      $ref: 'Storage.Components.OpenAPI.yaml#/IssueDedupeDiscoveryParameters'
+    ClaimReuseRangesParameters:
+      $ref: 'Storage.Components.OpenAPI.yaml#/ClaimReuseRangesParameters'
+    RegisterContentBlockUploadParameters:
+      $ref: 'Storage.Components.OpenAPI.yaml#/RegisterContentBlockUploadParameters'
+    ConfirmContentBlockUploadParameters:
+      $ref: 'Storage.Components.OpenAPI.yaml#/ConfirmContentBlockUploadParameters'
+    FinalizeManifestUploadParameters:
+      $ref: 'Storage.Components.OpenAPI.yaml#/FinalizeManifestUploadParameters'
+    DiscoverContentBlocksResult:
+      $ref: 'Storage.Components.OpenAPI.yaml#/DiscoverContentBlocksResult'
+    UploadSessionDecision:
+      $ref: 'Storage.Components.OpenAPI.yaml#/UploadSessionDecision'
+    FileManifest:
+      $ref: 'Storage.Components.OpenAPI.yaml#/FileManifest'
+    ContentBlock:
+      $ref: 'Storage.Components.OpenAPI.yaml#/ContentBlock'
+    ContentBlockAddress:
+      $ref: 'Storage.Components.OpenAPI.yaml#/ContentBlockAddress'
+    ManifestAddress:
+      $ref: 'Storage.Components.OpenAPI.yaml#/ManifestAddress'
+    FileContentHash:
+      $ref: 'Storage.Components.OpenAPI.yaml#/FileContentHash'
+    ChunkAddress:
+      $ref: 'Storage.Components.OpenAPI.yaml#/ChunkAddress'
+    StoragePoolId:
+      $ref: 'Storage.Components.OpenAPI.yaml#/StoragePoolId'
+    ChunkingSuiteId:
+      $ref: 'Storage.Components.OpenAPI.yaml#/ChunkingSuiteId'
+    UploadSessionOperationId:
+      $ref: 'Storage.Components.OpenAPI.yaml#/UploadSessionOperationId'
 
     Instant:
       $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant'

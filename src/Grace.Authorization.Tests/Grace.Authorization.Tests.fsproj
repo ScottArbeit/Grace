@@ -18,6 +18,7 @@
     <Compile Include="PersonalAccessToken.Tests.fs" />
     <Compile Include="PermissionEvaluator.Tests.fs" />
     <Compile Include="EndpointAuthorizationManifest.Tests.fs" />
+    <Compile Include="OpenApiRouteCoverage.Tests.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
 

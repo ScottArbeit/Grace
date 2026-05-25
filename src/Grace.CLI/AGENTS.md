@@ -50,6 +50,9 @@ Read `../AGENTS.md` for global expectations before updating CLI code.
 - `grace connect` accepts a positional shortcut in the form
   `owner/organization/repository`; do not combine it with explicit owner,
   organization, or repository options.
+- Manifest-backed uploads are default-on for eligible large files. Keep whole-file
+  fallback limited to ineligible files or recoverable manifest-upload failures so
+  eligible files are not uploaded twice.
 
 ## Continuous Review Commands
 
