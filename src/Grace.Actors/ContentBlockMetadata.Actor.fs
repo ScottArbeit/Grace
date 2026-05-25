@@ -115,7 +115,11 @@ module ContentBlockMetadata =
                 |> Array.tryPick (validateRange correlationId)
 
     let private validateCompactPhysicalRanges correlationId (compact: CompactContentBlockPhysicalRanges) =
-        if isNull compact.Ranges || compact.Ranges.Length = 0 then
+        if isNull (box compact) then
+            Some(graceError correlationId "CompactPhysicalRanges payload is required.")
+        elif isNull (box compact.CandidateContext) then
+            Some(graceError correlationId "Compaction CandidateContext is required.")
+        elif isNull compact.Ranges || compact.Ranges.Length = 0 then
             Some(graceError correlationId "At least one compacted ContentBlockMetadataRange is required.")
         else
             match validateStoragePlacement correlationId compact.StoragePlacement with
@@ -199,7 +203,7 @@ module ContentBlockMetadata =
             match validateCompactPhysicalRanges correlationId compact with
             | Some error -> Error error
             | None ->
-                let candidateContext = { compact.CandidateContext with ExpectedMetadataVersion = compact.ExpectedMetadataVersion }
+                let candidateContext = { compact.CandidateContext with ExpectedMetadataVersion = compact.ExpectedMetadataVersion; Now = timestamp }
 
                 match Grace.Types.ContentBlockMetadata.selectCompactionCandidate candidateContext existing with
                 | ContentBlockCompactionSelection.Selected ->

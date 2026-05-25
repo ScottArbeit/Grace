@@ -342,6 +342,66 @@ type ContentBlockMetadataActorTests() =
         | Error error -> Assert.That(error.Error, Does.Contain("Stale ContentBlockMetadata compaction rejected"))
 
     [<Test>]
+    member _.CompactPhysicalRangesUsesActorTimestampForAgeGateAndRejectsMissingCandidateContext() =
+        let tooYoung = timestamp.Plus(Duration.FromHours(-23.0))
+        let callerSuppliedFuture = timestamp.Plus(Duration.FromDays(30.0))
+        let minimumReclaimableBytes = 64L * 1024L * 1024L
+        let active = { activeRange with PhysicalLength = 8192L; ActiveManifestCount = 1 }
+        let reclaimable = { reclaimableRange with PhysicalOffset = 8192L; PhysicalLength = minimumReclaimableBytes; ActiveManifestCount = 0 }
+
+        let currentMetadata = recordWithTotals [| active; reclaimable |] (8192L + minimumReclaimableBytes) 8192L tooYoung 7L
+
+        let currentDto = { ContentBlockMetadataDto.Empty with Metadata = Some currentMetadata }
+
+        let futureContext =
+            {
+                Now = callerSuppliedFuture
+                ExpectedMetadataVersion = 7L
+                HasActiveUpload = false
+                HasActiveFinalization = false
+                HasActiveRangeClaim = false
+                HasActiveCompaction = false
+            }
+
+        let placement = { ObjectKey = "cas/content-blocks/block-blake3-0001.compacted"; ETag = Some "etag-compact" }
+
+        let futureBypassResult =
+            ContentBlockMetadataActor.decideCommand
+                []
+                currentDto
+                (compact
+                    "op-compact-future-now"
+                    7L
+                    placement
+                    [|
+                        { active with PhysicalOffset = 0L }
+                    |]
+                    futureContext)
+                (metadata "corr-compact-future-now")
+
+        let missingContextResult =
+            ContentBlockMetadataActor.decideCommand
+                []
+                currentDto
+                (compact
+                    "op-compact-missing-context"
+                    7L
+                    placement
+                    [|
+                        { active with PhysicalOffset = 0L }
+                    |]
+                    Unchecked.defaultof<ContentBlockCompactionCandidateContext>)
+                (metadata "corr-compact-missing-context")
+
+        match futureBypassResult with
+        | Ok _ -> Assert.Fail("Expected actor timestamp to enforce the 24-hour compaction age gate.")
+        | Error error -> Assert.That(error.Error, Does.Contain("at least 24 hours old"))
+
+        match missingContextResult with
+        | Ok _ -> Assert.Fail("Expected missing CandidateContext to be rejected.")
+        | Error error -> Assert.That(error.Error, Is.EqualTo("Compaction CandidateContext is required."))
+
+    [<Test>]
     member _.RangePresenceAggregatesDuplicateOrdinalRangesAsActiveWhenAnyPhysicalCopyIsActive() =
         let activePhysicalCopy = { reclaimableRange with ActiveManifestCount = 1; PhysicalOffset = 2048L }
 
