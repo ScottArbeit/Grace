@@ -34,7 +34,11 @@
             $ref: 'Storage.Components.OpenAPI.yaml#/GetUploadUriParameters'
     responses:
       '200':
-        $ref: './Responses.OpenAPI.yaml#/200'
+        description: OK
+        content:
+          application/json:
+            schema:
+              $ref: 'Storage.Components.OpenAPI.yaml#/UploadUriMap'
       '400':
         $ref: './Responses.OpenAPI.yaml#/400'
       '500':
@@ -53,7 +57,11 @@
             $ref: 'Storage.Components.OpenAPI.yaml#/GetDownloadUriParameters'
     responses:
       '200':
-        $ref: './Responses.OpenAPI.yaml#/200'
+        description: OK
+        content:
+          text/plain:
+            schema:
+              $ref: 'Storage.Components.OpenAPI.yaml#/UriString'
       '400':
         $ref: './Responses.OpenAPI.yaml#/400'
       '500':
@@ -72,7 +80,11 @@
             $ref: 'Storage.Components.OpenAPI.yaml#/GetContentBlockUploadUriParameters'
     responses:
       '200':
-        $ref: './Responses.OpenAPI.yaml#/200'
+        description: OK
+        content:
+          text/plain:
+            schema:
+              $ref: 'Storage.Components.OpenAPI.yaml#/UriString'
       '400':
         $ref: './Responses.OpenAPI.yaml#/400'
       '500':
@@ -91,7 +103,11 @@
             $ref: 'Storage.Components.OpenAPI.yaml#/GetContentBlockDownloadUriParameters'
     responses:
       '200':
-        $ref: './Responses.OpenAPI.yaml#/200'
+        description: OK
+        content:
+          text/plain:
+            schema:
+              $ref: 'Storage.Components.OpenAPI.yaml#/UriString'
       '400':
         $ref: './Responses.OpenAPI.yaml#/400'
       '500':

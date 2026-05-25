@@ -39,6 +39,17 @@ GetUploadUriParameters:
       items:
         $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/FileVersion'
 
+UploadUriMap:
+  description: Upload URI response keyed by file relative path for whole-file compatibility uploads.
+  type: object
+  additionalProperties:
+    $ref: '#/UriString'
+
+UriString:
+  description: Absolute URI string.
+  type: string
+  format: uri
+
 GetDownloadUriParameters:
   description: Parameters for /storage/getDownloadUri.
   allOf:
@@ -111,6 +122,44 @@ StartManifestUploadSessionParameters:
       type: string
     OperationId:
       $ref: '#/UploadSessionOperationId'
+
+StartUploadSession:
+  description: Event payload recorded when a manifest upload session starts.
+  type: object
+  properties:
+    UploadSessionId:
+      type: string
+      format: uuid
+    OwnerId:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/OwnerId'
+    OrganizationId:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/OrganizationId'
+    RepositoryId:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/RepositoryId'
+    AuthorizedScope:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/RelativePath'
+    FileContentHash:
+      $ref: '#/FileContentHash'
+    ExpectedSize:
+      type: integer
+      format: int64
+    ChunkingSuiteId:
+      $ref: '#/ChunkingSuiteId'
+    SamplingPolicySnapshot:
+      type: string
+    OperationId:
+      $ref: '#/UploadSessionOperationId'
+  required:
+    - UploadSessionId
+    - OwnerId
+    - OrganizationId
+    - RepositoryId
+    - AuthorizedScope
+    - FileContentHash
+    - ExpectedSize
+    - ChunkingSuiteId
+    - SamplingPolicySnapshot
+    - OperationId
 
 IssueDedupeDiscoveryParameters:
   description: Parameters for /storage/issueDedupeDiscovery.
@@ -640,7 +689,7 @@ UploadSessionStartedEvent:
   type: object
   properties:
     Started:
-      $ref: '#/StartManifestUploadSessionParameters'
+      $ref: '#/StartUploadSession'
   required:
     - Started
 
