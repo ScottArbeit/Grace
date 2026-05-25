@@ -185,7 +185,10 @@ module Storage =
             if hint.StoragePoolId <> storagePoolId then
                 error <- Some(GraceError.Create "IssueDedupeDiscovery Hints must come from server discovery candidates for this repository." correlationId)
             else
-                match records |> Array.tryFind (hintMatchesDedupeIndexRecord hint) with
+                match
+                    records
+                    |> Array.tryFind (hintMatchesDedupeIndexRecord hint)
+                    with
                 | Some record -> boundHints.Add(reuseRangeHintFromDedupeIndexRecord record)
                 | None -> error <- Some(GraceError.Create "IssueDedupeDiscovery Hints must come from server discovery candidates." correlationId)
 
