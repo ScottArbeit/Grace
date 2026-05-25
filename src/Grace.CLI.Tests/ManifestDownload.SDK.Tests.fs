@@ -69,6 +69,7 @@ type ManifestDownloadSdkTests() =
             RepositoryId = "11111111-1111-1111-1111-111111111111"
             RepositoryName = "repo"
             FileVersion = fileVersion
+            OutputStream = None
             CorrelationId = correlationId
             ExpectedChunkingSuiteId = ChunkingSuiteId RabinChunking.SuiteName
         }
@@ -145,6 +146,7 @@ type ManifestDownloadSdkTests() =
             let requestedBlocks = ResizeArray<ContentBlockAddress>()
             let downloadedBlocks = ResizeArray<ContentBlockAddress>()
             let correlationId = "corr-sdk-manifest-download"
+            use outputStream = new MemoryStream()
 
             let client: ManifestDownload.ManifestDownloadClient =
                 {
@@ -159,25 +161,26 @@ type ManifestDownloadSdkTests() =
                             Task.FromResult(Ok(GraceReturnValue.Create blockPayloads[contentBlockAddress] correlationId))
                 }
 
-            let! result = ManifestDownload.downloadFileWithClient client (ManifestDownloadSdkTests.CreateRequest fileVersion correlationId)
+            let request = { ManifestDownloadSdkTests.CreateRequest fileVersion correlationId with OutputStream = Some outputStream }
+
+            let! result = ManifestDownload.downloadFileWithClient client request
 
             match result with
             | Error error -> Assert.Fail(error.Error)
             | Ok returnValue ->
                 Assert.That(returnValue.ReturnValue.UsedManifestDownload, Is.True)
-                Assert.That(returnValue.ReturnValue.Bytes.Length, Is.EqualTo(payload.Length))
-                Assert.That(Array.forall2 (=) returnValue.ReturnValue.Bytes payload, Is.True)
+                Assert.That(returnValue.ReturnValue.BytesWritten, Is.EqualTo(payload.LongLength))
+                let downloadedBytes = outputStream.ToArray()
+                Assert.That(downloadedBytes.Length, Is.EqualTo(payload.Length))
+                Assert.That(Array.forall2 (=) downloadedBytes payload, Is.True)
 
-                Assert.That(
-                    requestedBlocks,
-                    Is.EquivalentTo(
-                        manifest.Blocks
-                        |> Seq.map (fun block -> block.Address)
-                        |> Seq.distinct
-                    )
-                )
+                let expectedBlocks =
+                    manifest.Blocks
+                    |> Seq.map (fun block -> block.Address)
+                    |> Seq.toArray
 
-                Assert.That(downloadedBlocks, Is.EquivalentTo(requestedBlocks))
+                Assert.That(requestedBlocks.ToArray() = expectedBlocks, Is.True)
+                Assert.That(downloadedBlocks.ToArray() = expectedBlocks, Is.True)
         }
 
     [<Test>]
@@ -205,7 +208,7 @@ type ManifestDownloadSdkTests() =
             | Error error -> Assert.Fail(error.Error)
             | Ok returnValue ->
                 Assert.That(returnValue.ReturnValue.UsedManifestDownload, Is.False)
-                Assert.That(returnValue.ReturnValue.Bytes, Is.Empty)
+                Assert.That(returnValue.ReturnValue.BytesWritten, Is.EqualTo(0L))
                 Assert.That(returnValue.ReturnValue.DownloadedBlockCount, Is.EqualTo(0))
         }
 
@@ -254,11 +257,15 @@ type ManifestDownloadSdkTests() =
                     Assert.That(request.FileVersion.ContentReference.ReferenceType, Is.EqualTo(FileContentReferenceType.FileManifest))
                     Assert.That(request.FileVersion.ContentReference.Manifest, Is.EqualTo(Some manifest))
 
+                    match request.OutputStream with
+                    | None -> Assert.Fail("Manifest-backed CLI downloads must provide an output stream.")
+                    | Some outputStream -> outputStream.Write(payload, 0, payload.Length)
+
                     let result: ManifestDownload.ManifestDownloadResult =
                         {
                             FileVersion = request.FileVersion
                             Manifest = Some manifest
-                            Bytes = payload
+                            BytesWritten = payload.LongLength
                             DownloadedBlockCount = manifest.Blocks.Count
                             UsedManifestDownload = true
                         }
@@ -288,6 +295,69 @@ type ManifestDownloadSdkTests() =
             })
 
     [<Test>]
+    member _.CliManifestDownloadReportsObjectCacheWriteFailuresAsGraceErrors() =
+        ManifestDownloadSdkTests.WithTempConfiguration (fun root ->
+            task {
+                let payload = ManifestDownloadSdkTests.PseudoRandomBytes 220000
+                payload[0] <- 7uy
+
+                let plan =
+                    LocalPlanner.analyzeBytes { LocalPlanner.Options.Default with EligibilityPolicy = ManifestDownloadSdkTests.BinaryPolicy 1024L } payload
+
+                let manifest = ManifestDownloadSdkTests.ManifestFor plan
+                let fileVersion = ManifestDownloadSdkTests.CreateManifestFileVersion "cli-cache-write.bin" payload manifest
+                let downloadFile = Services.objectStorageDownloadFileFromFileVersion fileVersion
+
+                let objectCacheFile = Path.Combine(root, "object-cache-file")
+                File.WriteAllText(objectCacheFile, "not a directory")
+
+                let configuration = Current()
+                configuration.ObjectDirectory <- objectCacheFile
+                updateConfiguration configuration
+
+                let getDownloadUriParameters =
+                    GetDownloadUriParameters(
+                        OwnerId = String.Empty,
+                        OwnerName = Current().OwnerName,
+                        OrganizationId = String.Empty,
+                        OrganizationName = Current().OrganizationName,
+                        RepositoryId = String.Empty,
+                        RepositoryName = Current().RepositoryName,
+                        CorrelationId = "corr-cli-manifest-cache-write"
+                    )
+
+                let manifestDownload (request: ManifestDownload.ManifestDownloadRequest) =
+                    let result: ManifestDownload.ManifestDownloadResult =
+                        {
+                            FileVersion = request.FileVersion
+                            Manifest = Some manifest
+                            BytesWritten = payload.LongLength
+                            DownloadedBlockCount = manifest.Blocks.Count
+                            UsedManifestDownload = true
+                        }
+
+                    Task.FromResult(Ok(GraceReturnValue.Create result request.CorrelationId))
+
+                let wholeFileDownload _ _ =
+                    Assert.Fail("Manifest cache write failures must not fall back to WholeFileContent downloads.")
+                    Task.FromResult(Error(GraceError.Create "unexpected whole-file download" getDownloadUriParameters.CorrelationId))
+
+                let! result =
+                    Services.downloadFilesFromObjectStorageWithClients
+                        manifestDownload
+                        wholeFileDownload
+                        getDownloadUriParameters
+                        [| downloadFile |]
+                        getDownloadUriParameters.CorrelationId
+
+                match result with
+                | Ok () -> Assert.Fail("Expected object-cache write failure to be returned as GraceError.")
+                | Error error ->
+                    Assert.That(error, Does.Contain("Some files could not be downloaded from object storage."))
+                    Assert.That(error, Does.Contain("Failed writing manifest-backed file to object cache"))
+            })
+
+    [<Test>]
     member _.ManifestDownloadRejectsOutOfOrderManifestRanges() =
         task {
             let payload = Array.zeroCreate<byte> (RabinChunking.MaximumChunkSize * 2)
@@ -310,6 +380,7 @@ type ManifestDownloadSdkTests() =
 
             let fileVersion = ManifestDownloadSdkTests.CreateManifestFileVersion "out-of-order-large.bin" payload invalidManifest
             let correlationId = "corr-sdk-manifest-download-ranges"
+            use outputStream = new MemoryStream()
 
             let client: ManifestDownload.ManifestDownloadClient =
                 {
@@ -319,7 +390,9 @@ type ManifestDownloadSdkTests() =
                         fun contentBlockAddress _ -> Task.FromResult(Ok(GraceReturnValue.Create blockPayloads[contentBlockAddress] correlationId))
                 }
 
-            let! result = ManifestDownload.downloadFileWithClient client (ManifestDownloadSdkTests.CreateRequest fileVersion correlationId)
+            let request = { ManifestDownloadSdkTests.CreateRequest fileVersion correlationId with OutputStream = Some outputStream }
+
+            let! result = ManifestDownload.downloadFileWithClient client request
 
             match result with
             | Error error ->
@@ -345,6 +418,7 @@ type ManifestDownloadSdkTests() =
 
             let fileVersion = ManifestDownloadSdkTests.CreateManifestFileVersion "corrupt-large.bin" payload manifest
             let correlationId = "corr-sdk-manifest-download-corrupt"
+            use outputStream = new MemoryStream()
 
             let client: ManifestDownload.ManifestDownloadClient =
                 {
@@ -354,7 +428,9 @@ type ManifestDownloadSdkTests() =
                         fun contentBlockAddress _ -> Task.FromResult(Ok(GraceReturnValue.Create blockPayloads[contentBlockAddress] correlationId))
                 }
 
-            let! result = ManifestDownload.downloadFileWithClient client (ManifestDownloadSdkTests.CreateRequest fileVersion correlationId)
+            let request = { ManifestDownloadSdkTests.CreateRequest fileVersion correlationId with OutputStream = Some outputStream }
+
+            let! result = ManifestDownload.downloadFileWithClient client request
 
             match result with
             | Error error ->

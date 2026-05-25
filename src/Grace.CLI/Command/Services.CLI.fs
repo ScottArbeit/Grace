@@ -701,30 +701,41 @@ module Services =
                             parameters.CorrelationId <- getDownloadUriParameters.CorrelationId
 
                             if fileVersion.ContentReference.ReferenceType = FileContentReferenceType.FileManifest then
-                                let manifestRequest: ManifestDownload.ManifestDownloadRequest =
-                                    {
-                                        OwnerId = getDownloadUriParameters.OwnerId
-                                        OwnerName = getDownloadUriParameters.OwnerName
-                                        OrganizationId = getDownloadUriParameters.OrganizationId
-                                        OrganizationName = getDownloadUriParameters.OrganizationName
-                                        RepositoryId = getDownloadUriParameters.RepositoryId
-                                        RepositoryName = getDownloadUriParameters.RepositoryName
-                                        FileVersion = fileVersion
-                                        CorrelationId = getDownloadUriParameters.CorrelationId
-                                        ExpectedChunkingSuiteId = ChunkingSuiteId RabinChunking.SuiteName
-                                    }
-
-                                match! manifestDownload manifestRequest with
-                                | Error error -> return Error error
-                                | Ok returnValue when returnValue.ReturnValue.UsedManifestDownload ->
+                                try
                                     let objectFileInfo = FileInfo(localFileVersion.FullObjectPath)
 
                                     Directory.CreateDirectory(objectFileInfo.Directory.FullName)
                                     |> ignore
 
-                                    do! File.WriteAllBytesAsync(objectFileInfo.FullName, returnValue.ReturnValue.Bytes)
-                                    return Ok(GraceReturnValue.Create "Retrieved manifest-backed file from object storage." correlationId)
-                                | Ok _ -> return! wholeFileDownload parameters correlationId
+                                    use outputStream = File.Open(objectFileInfo.FullName, fileStreamOptionsWrite)
+
+                                    let manifestRequest: ManifestDownload.ManifestDownloadRequest =
+                                        {
+                                            OwnerId = getDownloadUriParameters.OwnerId
+                                            OwnerName = getDownloadUriParameters.OwnerName
+                                            OrganizationId = getDownloadUriParameters.OrganizationId
+                                            OrganizationName = getDownloadUriParameters.OrganizationName
+                                            RepositoryId = getDownloadUriParameters.RepositoryId
+                                            RepositoryName = getDownloadUriParameters.RepositoryName
+                                            FileVersion = fileVersion
+                                            OutputStream = Some outputStream
+                                            CorrelationId = getDownloadUriParameters.CorrelationId
+                                            ExpectedChunkingSuiteId = ChunkingSuiteId RabinChunking.SuiteName
+                                        }
+
+                                    match! manifestDownload manifestRequest with
+                                    | Error error -> return Error error
+                                    | Ok returnValue when returnValue.ReturnValue.UsedManifestDownload ->
+                                        return Ok(GraceReturnValue.Create "Retrieved manifest-backed file from object storage." correlationId)
+                                    | Ok _ -> return! wholeFileDownload parameters correlationId
+                                with
+                                | ex ->
+                                    return
+                                        Error(
+                                            GraceError.Create
+                                                $"Failed writing manifest-backed file to object cache: {ExceptionResponse.Create ex}"
+                                                correlationId
+                                        )
                             else
                                 return! wholeFileDownload parameters correlationId
                         })
