@@ -481,6 +481,8 @@ module Branch =
             }
 
     /// Creates a save reference pointing to the current root directory version in the branch.
+    /// Manifest-backed files are accepted only after repository-local manifest accounting is durably incremented;
+    /// WholeFileContent save behavior continues to use the existing directory-version validation path.
     let Save: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
