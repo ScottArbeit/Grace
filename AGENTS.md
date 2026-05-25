@@ -57,10 +57,12 @@ impact and skipped validation.
   lower-cost model with high reasoning effort, such as `gpt-5.4-mini` or the nearest equivalent available in the active
   model provider. Allow review turns to run for up to 10 minutes before analyzing whether they are stalled or still
   making useful progress, and require the review subagent to report back when complete so the parent/orchestrator can
-  continue. Address every issue identified, validate and commit the fixes, add a standalone, well-templated Markdown
-  pull request comment explaining the review issue and the fix that addressed it, and do not put review-fix notes in the
-  pull request body. Use clear headers, bold labels, and a short high-level summary before detailed issue/fix text. Then
-  repeat the sibling subagent review loop until the reviewer reports no issues.
+  continue. The review report must include brief "Reviewed And OK" notes for plausible issues that were checked and
+  found not to be problems, especially concerns raised by prior review passes. Address every issue identified, validate
+  and commit the fixes, add a standalone, well-templated Markdown pull request comment explaining the review issue and
+  the fix that addressed it, and do not put review-fix notes in the pull request body. Use clear headers, bold labels,
+  and a short high-level summary before detailed issue/fix text. Then repeat the sibling subagent review loop until the
+  reviewer reports no issues.
 - Open normal ready-for-review pull requests. Do not open draft pull requests unless the user explicitly asks for a
   draft.
 - When the user says a PR is merged, verify the merge, delete the issue branch and worktree, run `git fetch --prune`,

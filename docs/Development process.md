@@ -195,7 +195,9 @@ surrounding code/tests, report only actionable issues, and clearly say when ther
 Code review turns can legitimately take several minutes. After spawning a review-only sibling subagent, allow it to run
 for up to 10 minutes before analyzing whether it is stalled or still making useful progress. Do not interrupt or replace
 the review just because it is quiet for a few minutes. The review subagent must report back when it is done so the
-parent/orchestrator can continue the workflow without guessing about the review state.
+parent/orchestrator can continue the workflow without guessing about the review state. That final report must also name
+the plausible issues the reviewer checked and found not to be problems, so the next review subagent does not re-check
+the same concern without a clear reason.
 
 The review loop is blocking:
 
@@ -204,7 +206,9 @@ The review loop is blocking:
 2. Give the review subagent up to 10 minutes to complete before deciding whether to inspect progress, redirect it, or
    replace it. If it is still making useful progress, continue waiting.
 3. Require the review subagent to send a final report when it is done: either actionable findings with file/line
-   references where possible, or a clear no-issues result.
+   references where possible, or a clear no-issues result. The final report must include a short "Reviewed And OK"
+   section with brief bullets for non-issues the reviewer explicitly checked, especially concerns raised by prior
+   review passes.
 4. If the review finds issues, address them in the issue-owned branch/worktree.
 5. Re-run focused validation for the changed behavior or docs, and broader validation when the fix touches shared or
    risky surfaces.
@@ -244,7 +248,9 @@ or spawning nested review work. Instead, it must return this handoff to the pare
 Please spawn a fresh local review-only sibling subagent using a medium-sized, lower-cost model with high reasoning.
 Use the subagent launcher's dedicated Code Review capability if it is directly exposed. Do not run `codex review`
 through the shell. Allow the review subagent to run for up to 10 minutes before analyzing whether it is stalled. The
-review subagent must report back when complete with either actionable findings or a clear no-issues result.
+review subagent must report back when complete with either actionable findings or a clear no-issues result. The report
+must include a short "Reviewed And OK" section naming plausible concerns it checked that were not problems, especially
+anything checked by prior review passes.
 ```
 
 If the sibling review finds issues, the parent/orchestrator sends those findings back to the implementation agent. The
@@ -280,6 +286,27 @@ _One or two sentences explaining the review issue and the fix at a high level._
 
 - `<focused command>`: <result>
 - `<broader command, if any>`: <result or skipped reason>
+```
+
+### Review Report Shape
+
+Review-only subagents should keep final reports concise and use this shape. The "Reviewed And OK" section is required
+even when issues are found; it should prevent repeated re-checking, not pad the report.
+
+```markdown
+## Code Review Result
+
+**Status:** <No issues | Issues found>
+**Diff reviewed:** `<base>..<head>`
+
+### Findings
+
+- <Actionable issue with file/line reference, or "No actionable issues.">
+
+### Reviewed And OK
+
+- <Concern checked and why it is not a problem.>
+- <Prior-review concern checked and still OK, if applicable.>
 ```
 
 ## Validation Commands
@@ -338,6 +365,7 @@ Before opening or updating a pull request, include:
 - review path used: fresh local review-only sibling subagent spawned by the parent/orchestrator, including whether a
   dedicated Code Review capability was available
 - final no-issues code review result
+- "Reviewed And OK" notes from the final review pass, especially prior concerns that were rechecked and found safe
 - standalone, templated Markdown pull request comments for each review issue that required a fix, including the issue,
   fix, fix commit, and validation; do not put review-fix notes in the pull request body
 - docs impact
