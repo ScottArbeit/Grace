@@ -315,12 +315,6 @@ module DedupeIndex =
 
             output.ToArray()
 
-    let rebuild sources =
-        if isNull sources then
-            Array.empty
-        else
-            sources |> Array.collect recordsAfterFinalize
-
     let private isSameCandidateWindow (left: DedupeIndexRecord) (right: DedupeIndexRecord) =
         left.StoragePoolId = right.StoragePoolId
         && left.ManifestAddress = right.ManifestAddress
@@ -356,6 +350,16 @@ module DedupeIndex =
         |> Seq.map recordKey
         |> Seq.toArray
         |> Array.iter (fun key -> records.Remove key |> ignore)
+
+    let rebuild sources =
+        let records = Dictionary<string, DedupeIndexRecord>()
+
+        if not (isNull sources) then
+            sources
+            |> Array.collect recordsAfterFinalize
+            |> writeRecords records
+
+        records.Values |> Seq.toArray
 
     let private runtimeRegistrationMatchesMetadata (metadata: ContentBlockMetadata) (registration: RuntimeFinalizedManifestRegistration) =
         registration.StoragePoolId = metadata.StoragePoolId

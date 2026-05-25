@@ -297,6 +297,27 @@ type DedupeIndexServerTests() =
             Assert.That(rebuiltCandidates[index], Is.EqualTo(incrementalCandidates[index]))
 
     [<Test>]
+    member _.RebuildDeduplicatesCandidateWindowsWithNewestMetadataVersion() =
+        let block = encodedBlock "rebuild-newest" 12
+        let manifest = manifestFor block
+        let olderMetadata = metadataFor 1 10L block
+        let newerMetadata = metadataFor 1 11L block
+
+        let rebuilt =
+            DedupeIndex.rebuild [| sourceFor (finalizedSession manifest) manifest block olderMetadata
+                                   sourceFor (finalizedSession manifest) manifest block newerMetadata |]
+
+        let matchingRecords =
+            rebuilt
+            |> Array.filter (fun record ->
+                record.ManifestAddress = manifest.ManifestAddress
+                && record.ContentBlockAddress = block.Address
+                && record.OrdinalStart = 0)
+
+        Assert.That(matchingRecords, Has.Length.EqualTo(1))
+        Assert.That(matchingRecords[0].MetadataVersion, Is.EqualTo(newerMetadata.MetadataVersion))
+
+    [<Test>]
     member _.FinalizeRegistrationPublishesWhenAuthoritativeMetadataArrives() =
         let block = encodedBlock "actor-publish" 12
         let manifest = manifestFor block
