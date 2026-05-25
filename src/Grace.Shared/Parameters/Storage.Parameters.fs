@@ -10,6 +10,26 @@ module Storage =
     [<Literal>]
     let MaxDiscoveryKeyChunkAddresses = 256
 
+    /// Maximum candidate windows returned for each accepted key chunk.
+    [<Literal>]
+    let MaxCandidateWindowsPerKeyChunk = 4
+
+    /// Maximum protected chunks returned in one candidate window.
+    [<Literal>]
+    let MaxWindowChunks = 256
+
+    /// Maximum protected chunks returned across one discovery response.
+    [<Literal>]
+    let MaxResponseProtectedChunks = 16384
+
+    /// Discovery responses expire quickly because the dedupe index is non-authoritative.
+    [<Literal>]
+    let ResponseTtlSeconds = 300
+
+    /// Minimum contiguous run length accepted for reuse claims.
+    [<Literal>]
+    let MinimumAcceptedReuseRunLength = 8
+
     /// Parameters used by multiple endpoints in the /diff path.
     type StorageParameters() =
         inherit CommonParameters()
@@ -50,13 +70,34 @@ module Storage =
         member val public KeyChunkAddresses = Array.empty<ChunkAddress> with get, set
 
     /// Policy returned with ContentBlock discovery results so clients know the bounded, non-authoritative semantics.
-    type ContentBlockDiscoveryPolicy = { MaxKeyChunkAddresses: int; PositiveCandidatesEnabled: bool; EmptyResponseMeansAbsent: bool; IsAuthoritative: bool }
+    type ContentBlockDiscoveryPolicy =
+        {
+            MaxKeyChunkAddresses: int
+            MaxCandidateWindowsPerKeyChunk: int
+            MaxWindowChunks: int
+            MaxResponseProtectedChunks: int
+            ResponseTtlSeconds: int
+            MinimumAcceptedReuseRunLength: int
+            PositiveCandidatesEnabled: bool
+            EmptyResponseMeansAbsent: bool
+            IsAuthoritative: bool
+        }
 
     /// A possible ContentBlock reuse candidate.
     ///
     /// The initial discovery implementation returns no positive candidates yet; this DTO is reserved for later
     /// index-backed discovery without changing the endpoint shape.
-    type ContentBlockDiscoveryCandidate = { ContentBlockAddress: ContentBlockAddress; MatchingKeyChunkCount: int }
+    type ContentBlockDiscoveryCandidate =
+        {
+            StoragePoolId: StoragePoolId
+            ManifestAddress: ManifestAddress
+            ContentBlockAddress: ContentBlockAddress
+            OrdinalStart: int
+            OrdinalCount: int
+            MetadataVersion: MetadataVersion
+            MatchingKeyChunkCount: int
+            ProtectedChunkAddresses: string array
+        }
 
     /// Result for /storage/discoverContentBlocks.
     ///

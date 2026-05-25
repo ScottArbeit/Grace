@@ -375,6 +375,10 @@ module ContentBlockMetadata =
                     | Ok decision ->
                         if not decision.Events.IsEmpty then do! this.ApplyEvents decision.Events
 
+                        let dedupeIndexActor = DedupeIndexActor.CreateActorProxy eventMetadata.CorrelationId
+
+                        do! dedupeIndexActor.WriteAfterAuthoritativeMetadata decision.Metadata eventMetadata.CorrelationId :> Task
+
                         let returnValue =
                             (GraceReturnValue.Create decision eventMetadata.CorrelationId)
                                 .enhance(nameof StoragePoolId, decision.Metadata.StoragePoolId)

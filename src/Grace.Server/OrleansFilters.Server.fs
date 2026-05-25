@@ -52,6 +52,7 @@ module Orleans =
                             | StateName.Diff -> repositoryId ()
                             | StateName.DirectoryAppearance -> repositoryId ()
                             | StateName.DirectoryVersion -> repositoryId ()
+                            | StateName.DedupeIndex -> StateName.DedupeIndex
                             | StateName.FileAppearance -> repositoryId ()
                             | StateName.NamedSection -> repositoryId ()
                             | StateName.Organization -> StateName.Organization
