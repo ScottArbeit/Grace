@@ -31,6 +31,10 @@ type ManifestUploadSdkTests() =
 
         bytes
 
+    static member private TextLikePseudoRandomBytes length =
+        ManifestUploadSdkTests.PseudoRandomBytes length
+        |> Array.map (fun value -> if value = 0uy then 1uy else value)
+
     static member private BinaryPolicy thresholdBytes = { ManifestEligibilityPolicy.Default with ThresholdBytes = thresholdBytes; BinaryScanBytes = 16 }
 
     static member private ComputeSha256Hash(bytes: byte array) = Sha256Hash(byteArrayToString (SHA256.HashData(bytes).AsSpan()))
@@ -203,6 +207,97 @@ type ManifestUploadSdkTests() =
                     Assert.That(calls, Does.Not.Contain("claim"))
 
                     Assert.That(uploadedBlocks.Keys, Is.EquivalentTo(confirmedBlocks.Keys))
+            finally
+                if File.Exists(tempPath) then File.Delete(tempPath)
+        }
+
+    [<Test>]
+    member _.SmallSourceFileUsesWholeFileContentWithoutStartingManifestSession() =
+        task {
+            let payload = Encoding.UTF8.GetBytes("module Tiny\n\nlet answer = 42\n")
+            let tempPath = Path.Combine(Path.GetTempPath(), $"grace-manifest-small-source-{Guid.NewGuid():N}.fs")
+            let correlationId = "corr-sdk-manifest-small-source"
+
+            try
+                File.WriteAllBytes(tempPath, payload)
+
+                let fileVersion = FileVersion.Create "Tiny.fs" (ManifestUploadSdkTests.ComputeSha256Hash payload) String.Empty false (int64 payload.Length)
+
+                let client: ManifestUpload.ManifestUploadClient =
+                    {
+                        StartSession = fun _ -> failwith "Small source files must not start manifest upload sessions."
+                        DiscoverContentBlocks = fun _ -> failwith "Small source files must not discover manifest blocks."
+                        IssueDedupeDiscovery = fun _ -> failwith "Small source files must not issue dedupe discovery."
+                        ClaimReuseRanges = fun _ -> failwith "Small source files must not claim manifest ranges."
+                        RegisterBlockUpload = fun _ -> failwith "Small source files must not register manifest blocks."
+                        UploadContentBlock = fun _ _ -> failwith "Small source files must not upload manifest blocks."
+                        ConfirmBlockUploaded = fun _ -> failwith "Small source files must not confirm manifest blocks."
+                        FinalizeManifest = fun _ -> failwith "Small source files must not finalize manifests."
+                    }
+
+                let! result = ManifestUpload.uploadFileWithClient client (ManifestUploadSdkTests.CreateRequest tempPath fileVersion correlationId)
+
+                match result with
+                | Error error -> Assert.Fail(error.Error)
+                | Ok returnValue ->
+                    let uploadResult = returnValue.ReturnValue
+                    Assert.That(uploadResult.UsedManifestUpload, Is.False)
+                    Assert.That(uploadResult.UploadedBlockCount, Is.EqualTo(0))
+                    Assert.That(uploadResult.FileVersion.ContentReference.ReferenceType, Is.EqualTo(FileContentReferenceType.WholeFileContent))
+                    Assert.That(uploadResult.Manifest, Is.EqualTo(None))
+                    Assert.That(uploadResult.UploadSessionId, Is.EqualTo(None))
+            finally
+                if File.Exists(tempPath) then File.Delete(tempPath)
+        }
+
+    [<Test>]
+    member _.LargeCompressedTextUsesManifestUploadByDefaultPolicy() =
+        task {
+            let payload =
+                ManifestUploadSdkTests.TextLikePseudoRandomBytes(
+                    int ManifestEligibilityPolicy.Default.ThresholdBytes
+                    + 65536
+                )
+
+            let tempPath = Path.Combine(Path.GetTempPath(), $"grace-manifest-large-text-{Guid.NewGuid():N}.txt")
+            let correlationId = "corr-sdk-manifest-large-text"
+            let uploadedBlocks = Dictionary<ContentBlockAddress, byte array>()
+
+            try
+                File.WriteAllBytes(tempPath, payload)
+
+                let fileVersion = FileVersion.Create "large.txt" (ManifestUploadSdkTests.ComputeSha256Hash payload) String.Empty false (int64 payload.Length)
+
+                let client: ManifestUpload.ManifestUploadClient =
+                    {
+                        StartSession = fun parameters -> ManifestUploadSdkTests.Decision correlationId parameters.UploadSessionId parameters.OperationId
+                        DiscoverContentBlocks = fun parameters -> ManifestUploadSdkTests.EmptyDiscovery correlationId parameters.KeyChunkAddresses.Length
+                        IssueDedupeDiscovery = fun parameters -> ManifestUploadSdkTests.Decision correlationId parameters.UploadSessionId parameters.OperationId
+                        ClaimReuseRanges = fun parameters -> ManifestUploadSdkTests.Decision correlationId parameters.UploadSessionId parameters.OperationId
+                        RegisterBlockUpload = fun parameters -> ManifestUploadSdkTests.Decision correlationId parameters.UploadSessionId parameters.OperationId
+                        UploadContentBlock =
+                            fun parameters payload ->
+                                uploadedBlocks[parameters.ContentBlockAddress] <- payload
+
+                                let placement =
+                                    { ObjectKey = $"cas/content-blocks/{parameters.ContentBlockAddress}"; ETag = Some $"etag-{uploadedBlocks.Count}" }
+
+                                Task.FromResult(Ok(GraceReturnValue.Create placement correlationId))
+                        ConfirmBlockUploaded = fun parameters -> ManifestUploadSdkTests.Decision correlationId parameters.UploadSessionId parameters.OperationId
+                        FinalizeManifest = fun parameters -> ManifestUploadSdkTests.Decision correlationId parameters.UploadSessionId parameters.OperationId
+                    }
+
+                let! result = ManifestUpload.uploadFileWithClient client (ManifestUploadSdkTests.CreateRequest tempPath fileVersion correlationId)
+
+                match result with
+                | Error error -> Assert.Fail(error.Error)
+                | Ok returnValue ->
+                    let uploadResult = returnValue.ReturnValue
+                    Assert.That(uploadResult.UsedManifestUpload, Is.True)
+                    Assert.That(uploadResult.UploadedBlockCount, Is.EqualTo(uploadedBlocks.Count))
+                    Assert.That(uploadResult.FileVersion.ContentReference.ReferenceType, Is.EqualTo(FileContentReferenceType.FileManifest))
+                    Assert.That(uploadResult.Manifest, Is.Not.EqualTo(None))
+                    Assert.That(uploadResult.UploadSessionId, Is.Not.EqualTo(None))
             finally
                 if File.Exists(tempPath) then File.Delete(tempPath)
         }
@@ -807,15 +902,15 @@ type ManifestUploadSdkTests() =
         }
 
     [<Test>]
-    member _.ManifestUploadsAreDisabledUnlessEnvironmentOptInIsOne() =
+    member _.ManifestUploadsAreEnabledByDefaultAfterManifestDownloadReconstruction() =
         let previous = Environment.GetEnvironmentVariable(ManifestUpload.OptInEnvironmentVariable)
 
         try
             Environment.SetEnvironmentVariable(ManifestUpload.OptInEnvironmentVariable, null)
-            Assert.That(ManifestUpload.isOptedIn (), Is.False)
+            Assert.That(ManifestUpload.isOptedIn (), Is.True)
 
             Environment.SetEnvironmentVariable(ManifestUpload.OptInEnvironmentVariable, "0")
-            Assert.That(ManifestUpload.isOptedIn (), Is.False)
+            Assert.That(ManifestUpload.isOptedIn (), Is.True)
 
             Environment.SetEnvironmentVariable(ManifestUpload.OptInEnvironmentVariable, "1")
             Assert.That(ManifestUpload.isOptedIn (), Is.True)

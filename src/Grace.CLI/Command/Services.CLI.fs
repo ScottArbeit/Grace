@@ -913,9 +913,7 @@ module Services =
     /// Uploads all new or changed files from a directory to object storage.
     let uploadFilesToObjectStorage (parameters: GetUploadMetadataForFilesParameters) =
         task {
-            if not (ManifestUpload.isOptedIn ()) then
-                return! uploadWholeFilesToObjectStorage parameters
-            elif parameters.FileVersions.Count() = 0 then
+            if parameters.FileVersions.Count() = 0 then
                 return Ok(GraceReturnValue.Create true parameters.CorrelationId)
             else
                 let fallbackFileVersions = ConcurrentQueue<FileVersion>()
