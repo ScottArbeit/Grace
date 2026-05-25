@@ -711,7 +711,7 @@ type StorageManifestUploadSessionRoutes() =
                     .Plus(NodaTime.Duration.FromMinutes 5L)
 
             issue.MinimumReuseRunLength <- Parameters.Storage.MinimumAcceptedReuseRunLength
-            issue.Hints <- [| reuseHint 0 |]
+            issue.Hints <- Array.empty
 
             let! _ = postUploadSessionDecision "/storage/issueDedupeDiscovery" issue
 
@@ -726,6 +726,71 @@ type StorageManifestUploadSessionRoutes() =
             let! body = postUploadSessionBadRequest "/storage/claimReuseRanges" claim
             Assert.That(body, Does.Contain("DiscoveryOperationId does not match"))
             Assert.That(body, Does.Not.Contain("Authoritative ContentBlockMetadata is absent"))
+        }
+
+    [<Test>]
+    member _.IssueDedupeDiscoveryRejectsOversizedHintArraysBeforeDispatch() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let correlationId = generateCorrelationId ()
+
+            let issue = Parameters.Storage.IssueDedupeDiscoveryParameters()
+            setStorageParameters issue repositoryId correlationId
+            issue.UploadSessionId <- Guid.NewGuid()
+            issue.AuthorizedScope <- "/"
+            issue.OperationId <- "discovery"
+
+            issue.ExpiresAt <-
+                getCurrentInstant()
+                    .Plus(NodaTime.Duration.FromMinutes 5L)
+
+            issue.MinimumReuseRunLength <- Parameters.Storage.MinimumAcceptedReuseRunLength
+            issue.Hints <- Array.init (Parameters.Storage.MaxReuseRangeClaims + 1) reuseHint
+
+            let! body = postUploadSessionBadRequest "/storage/issueDedupeDiscovery" issue
+            Assert.That(body, Does.Contain("IssueDedupeDiscovery Hints"))
+            Assert.That(body, Does.Contain($"{Parameters.Storage.MaxReuseRangeClaims}"))
+        }
+
+    [<Test>]
+    member _.IssueDedupeDiscoveryRejectsHintsNotBackedByServerDiscovery() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let correlationId = generateCorrelationId ()
+            let sessionId = Guid.NewGuid()
+            let payload = pseudoRandomBytes 220000
+            payload[0] <- 5uy
+            let block = encodeBlock payload
+            let manifest = manifestFor payload block
+
+            let start = Parameters.Storage.StartManifestUploadSessionParameters()
+            setStorageParameters start repositoryId correlationId
+            start.UploadSessionId <- sessionId
+            start.AuthorizedScope <- "/"
+            start.FileContentHash <- manifest.FileContentHash
+            start.ExpectedSize <- manifest.Size
+            start.ChunkingSuiteId <- manifest.ChunkingSuiteId
+            start.SamplingPolicySnapshot <- "sdk-dedupe-discovery-claim-test"
+            start.OperationId <- "start"
+
+            let! _ = postUploadSessionDecision "/storage/startManifestUploadSession" start
+
+            let issue = Parameters.Storage.IssueDedupeDiscoveryParameters()
+            setStorageParameters issue repositoryId correlationId
+            issue.UploadSessionId <- sessionId
+            issue.AuthorizedScope <- "/"
+            issue.OperationId <- "discovery"
+
+            issue.ExpiresAt <-
+                getCurrentInstant()
+                    .Plus(NodaTime.Duration.FromMinutes 5L)
+
+            issue.MinimumReuseRunLength <- Parameters.Storage.MinimumAcceptedReuseRunLength
+            issue.Hints <- [| reuseHint 0 |]
+
+            let! body = postUploadSessionBadRequest "/storage/issueDedupeDiscovery" issue
+            Assert.That(body, Does.Contain("server discovery candidates"))
+            Assert.That(body, Does.Not.Contain("Dedupe discovery issued"))
         }
 
     [<Test>]

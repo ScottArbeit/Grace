@@ -153,6 +153,48 @@ module Storage =
             Error(GraceError.Create "Dedupe discovery has expired; reuse ranges cannot be claimed." correlationId)
         | Some _ -> Ok()
 
+    let private hintMatchesDedupeIndexRecord (hint: ContentBlockReuseRangeHint) (record: DedupeIndex.DedupeIndexRecord) =
+        record.StoragePoolId = hint.StoragePoolId
+        && record.ContentBlockAddress = hint.ContentBlockAddress
+        && record.OrdinalStart = hint.OrdinalStart
+        && record.OrdinalCount = hint.OrdinalCount
+        && record.MetadataVersion = hint.MetadataVersion
+
+    let private reuseRangeHintFromDedupeIndexRecord (record: DedupeIndex.DedupeIndexRecord) : ContentBlockReuseRangeHint =
+        {
+            StoragePoolId = record.StoragePoolId
+            ContentBlockAddress = record.ContentBlockAddress
+            OrdinalStart = record.OrdinalStart
+            OrdinalCount = record.OrdinalCount
+            MetadataVersion = record.MetadataVersion
+        }
+
+    let private validateIssuedDedupeDiscoveryHints
+        correlationId
+        storagePoolId
+        (hints: ContentBlockReuseRangeHint array)
+        (records: DedupeIndex.DedupeIndexRecord array)
+        =
+        let boundHints = ResizeArray<ContentBlockReuseRangeHint>()
+        let mutable error = None
+        let mutable index = 0
+
+        while error.IsNone && index < hints.Length do
+            let hint = hints[index]
+
+            if hint.StoragePoolId <> storagePoolId then
+                error <- Some(GraceError.Create "IssueDedupeDiscovery Hints must come from server discovery candidates for this repository." correlationId)
+            else
+                match records |> Array.tryFind (hintMatchesDedupeIndexRecord hint) with
+                | Some record -> boundHints.Add(reuseRangeHintFromDedupeIndexRecord record)
+                | None -> error <- Some(GraceError.Create "IssueDedupeDiscovery Hints must come from server discovery candidates." correlationId)
+
+            index <- index + 1
+
+        match error with
+        | Some error -> Error error
+        | None -> Ok(boundHints.ToArray())
+
     let private handleUploadSessionCommand
         (context: HttpContext)
         (parameters: UploadSessionStorageParameters)
@@ -482,16 +524,38 @@ module Storage =
                 try
                     let! parameters = context.BindJsonAsync<IssueDedupeDiscoveryParameters>()
 
-                    let command =
-                        UploadSessionCommand.IssueDedupeDiscovery
-                            {
-                                OperationId = parameters.OperationId
-                                ExpiresAt = parameters.ExpiresAt
-                                MinimumReuseRunLength = parameters.MinimumReuseRunLength
-                                Hints = parameters.Hints
-                            }
+                    let hints = if isNull parameters.Hints then Array.empty else parameters.Hints
 
-                    return! handleUploadSessionCommand context parameters command correlationId
+                    if hints.Length > StorageParameterContracts.MaxReuseRangeClaims then
+                        return!
+                            context
+                            |> result400BadRequest (
+                                GraceError.Create
+                                    $"IssueDedupeDiscovery Hints must contain no more than {StorageParameterContracts.MaxReuseRangeClaims} items."
+                                    correlationId
+                            )
+                    else
+                        let graceIds = getGraceIds context
+                        let organizationId, repositoryId = resolveStorageIds graceIds parameters
+                        let repositoryActor = Repository.CreateActorProxy organizationId repositoryId correlationId
+                        let! repositoryDto = repositoryActor.Get correlationId
+                        let storagePoolId = DedupeIndex.storagePoolIdForRepository repositoryDto
+                        let dedupeIndexActor = DedupeIndexActor.CreateActorProxy correlationId
+                        let! records = dedupeIndexActor.Snapshot correlationId
+
+                        match validateIssuedDedupeDiscoveryHints correlationId storagePoolId hints records with
+                        | Error error -> return! context |> result400BadRequest error
+                        | Ok boundHints ->
+                            let command =
+                                UploadSessionCommand.IssueDedupeDiscovery
+                                    {
+                                        OperationId = parameters.OperationId
+                                        ExpiresAt = parameters.ExpiresAt
+                                        MinimumReuseRunLength = parameters.MinimumReuseRunLength
+                                        Hints = boundHints
+                                    }
+
+                            return! handleUploadSessionCommand context parameters command correlationId
                 with
                 | ex ->
                     let exceptionResponse = ExceptionResponse.Create ex
