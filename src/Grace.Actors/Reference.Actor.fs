@@ -58,7 +58,7 @@ module Reference =
         while index < manifest.Blocks.Count do
             let block = manifest.Blocks[index]
 
-            ranges.Add({ StoragePoolId = StoragePoolId DefaultStoragePoolId; ContentBlockAddress = block.Address; OrdinalStart = 0; OrdinalCount = 1 })
+            ranges.Add({ StoragePoolId = StoragePoolId DefaultStoragePoolId; ContentBlockAddress = block.Address; OrdinalStart = index; OrdinalCount = 1 })
 
             index <- index + 1
 

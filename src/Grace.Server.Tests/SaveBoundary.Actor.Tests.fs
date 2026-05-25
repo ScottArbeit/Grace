@@ -27,8 +27,9 @@ type SaveBoundaryActorTests() =
 
     let metadata correlationId = { Timestamp = timestamp; CorrelationId = correlationId; Principal = "tester"; Properties = Dictionary<string, string>() }
 
-    let finalizedManifest () : FileManifest =
+    let finalizedManifestWithBlockCopies blockCopies : FileManifest =
         let bytes = Encoding.UTF8.GetBytes($"large manifest-backed file {Guid.NewGuid():N}")
+        let fileBytes = Array.concat (List.replicate blockCopies bytes)
 
         let block =
             match ContentBlockFormat.encode [ { PhysicalOffset = 0L; Bytes = bytes } ] with
@@ -41,14 +42,17 @@ type SaveBoundaryActorTests() =
             FileManifest.Create(
                 ManifestAddress String.Empty,
                 RabinChunking.SuiteName,
-                FileContentHash(ContentAddress.computeBlake3Hex bytes),
-                int64 bytes.Length,
+                FileContentHash(ContentAddress.computeBlake3Hex fileBytes),
+                int64 fileBytes.Length,
                 [
-                    ContentBlock.Create(block.Address, 0L, int64 bytes.Length)
+                    for index in 0 .. blockCopies - 1 do
+                        ContentBlock.Create(block.Address, int64 (index * bytes.Length), int64 bytes.Length)
                 ]
             )
 
         { manifest with ManifestAddress = ContentAddress.computeManifestAddressForManifest manifest }
+
+    let finalizedManifest () = finalizedManifestWithBlockCopies 1
 
     let manifestFile (manifest: FileManifest) =
         let fileVersion = FileVersion.Create "/large.bin" "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" String.Empty true manifest.Size
@@ -140,4 +144,29 @@ type SaveBoundaryActorTests() =
                 Assert.That(decision.Workflow.LifecycleState, Is.EqualTo(ManifestContributionWorkflowLifecycleState.InProgress))
                 Assert.That(ManifestContributionWorkflowActor.pendingRanges decision.Workflow, Has.Length.EqualTo(manifest.Blocks.Count))
             | Error error -> Assert.Fail($"Expected contribution workflow start to succeed, got {error.Error}.")
+        | None -> Assert.Fail("Expected increment intent to start manifest contribution workflow fan-out.")
+
+    [<Test>]
+    member _.SaveBoundaryStartsContributionWorkflowForRepeatedManifestBlockOccurrences() =
+        let manifest = finalizedManifestWithBlockCopies 2
+        let directoryVersion = directoryWith [ manifestFile manifest ]
+
+        let plan =
+            ReferenceActor.planManifestSaveBoundary repositoryId referenceId directoryVersion "corr-repeated-block"
+            |> expectPlan
+
+        Assert.That(plan.WorkflowRanges, Has.Length.EqualTo(2))
+        Assert.That(plan.WorkflowRanges[0].ContentBlockAddress, Is.EqualTo(plan.WorkflowRanges[1].ContentBlockAddress))
+        Assert.That(plan.WorkflowRanges[0].OrdinalStart, Is.Not.EqualTo(plan.WorkflowRanges[1].OrdinalStart))
+
+        let intent = RepositoryContentCounterIntent.IncrementManifestReferenceCount(repositoryId, manifest.ManifestAddress)
+
+        match ReferenceActor.tryCreateManifestContributionStart plan intent with
+        | Some startCommand ->
+            let workflowDecision =
+                ManifestContributionWorkflowActor.decideCommand [] ManifestContributionWorkflowDto.Default startCommand (metadata "corr-repeated-workflow")
+
+            match workflowDecision with
+            | Ok decision -> Assert.That(ManifestContributionWorkflowActor.pendingRanges decision.Workflow, Has.Length.EqualTo(2))
+            | Error error -> Assert.Fail($"Expected repeated block occurrences to start contribution workflow, got {error.Error}.")
         | None -> Assert.Fail("Expected increment intent to start manifest contribution workflow fan-out.")
