@@ -62,11 +62,11 @@ type ManifestDownloadSdkTests() =
 
     static member private CreateRequest fileVersion correlationId : ManifestDownload.ManifestDownloadRequest =
         {
-            OwnerId = Guid.Parse("22222222-2222-2222-2222-222222222222")
+            OwnerId = "22222222-2222-2222-2222-222222222222"
             OwnerName = "owner"
-            OrganizationId = Guid.Parse("33333333-3333-3333-3333-333333333333")
+            OrganizationId = "33333333-3333-3333-3333-333333333333"
             OrganizationName = "org"
-            RepositoryId = Guid.Parse("11111111-1111-1111-1111-111111111111")
+            RepositoryId = "11111111-1111-1111-1111-111111111111"
             RepositoryName = "repo"
             FileVersion = fileVersion
             CorrelationId = correlationId
@@ -235,11 +235,11 @@ type ManifestDownloadSdkTests() =
 
                 let getDownloadUriParameters =
                     GetDownloadUriParameters(
-                        OwnerId = $"{Current().OwnerId}",
+                        OwnerId = String.Empty,
                         OwnerName = Current().OwnerName,
-                        OrganizationId = $"{Current().OrganizationId}",
+                        OrganizationId = String.Empty,
                         OrganizationName = Current().OrganizationName,
-                        RepositoryId = $"{Current().RepositoryId}",
+                        RepositoryId = String.Empty,
                         RepositoryName = Current().RepositoryName,
                         CorrelationId = "corr-cli-manifest-download"
                     )
@@ -248,6 +248,9 @@ type ManifestDownloadSdkTests() =
 
                 let manifestDownload (request: ManifestDownload.ManifestDownloadRequest) =
                     manifestPathTaken <- true
+                    Assert.That(request.OwnerId, Is.EqualTo(String.Empty))
+                    Assert.That(request.OrganizationId, Is.EqualTo(String.Empty))
+                    Assert.That(request.RepositoryId, Is.EqualTo(String.Empty))
                     Assert.That(request.FileVersion.ContentReference.ReferenceType, Is.EqualTo(FileContentReferenceType.FileManifest))
                     Assert.That(request.FileVersion.ContentReference.Manifest, Is.EqualTo(Some manifest))
 

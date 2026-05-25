@@ -703,11 +703,11 @@ module Services =
                             if fileVersion.ContentReference.ReferenceType = FileContentReferenceType.FileManifest then
                                 let manifestRequest: ManifestDownload.ManifestDownloadRequest =
                                     {
-                                        OwnerId = Guid.Parse(getDownloadUriParameters.OwnerId)
+                                        OwnerId = getDownloadUriParameters.OwnerId
                                         OwnerName = getDownloadUriParameters.OwnerName
-                                        OrganizationId = Guid.Parse(getDownloadUriParameters.OrganizationId)
+                                        OrganizationId = getDownloadUriParameters.OrganizationId
                                         OrganizationName = getDownloadUriParameters.OrganizationName
-                                        RepositoryId = Guid.Parse(getDownloadUriParameters.RepositoryId)
+                                        RepositoryId = getDownloadUriParameters.RepositoryId
                                         RepositoryName = getDownloadUriParameters.RepositoryName
                                         FileVersion = fileVersion
                                         CorrelationId = getDownloadUriParameters.CorrelationId

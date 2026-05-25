@@ -12,11 +12,11 @@ open System.Threading.Tasks
 module ManifestDownload =
     type ManifestDownloadRequest =
         {
-            OwnerId: OwnerId
+            OwnerId: string
             OwnerName: OwnerName
-            OrganizationId: OrganizationId
+            OrganizationId: string
             OrganizationName: OrganizationName
-            RepositoryId: RepositoryId
+            RepositoryId: string
             RepositoryName: RepositoryName
             FileVersion: FileVersion
             CorrelationId: CorrelationId
@@ -39,11 +39,11 @@ module ManifestDownload =
         }
 
     let private setStorageParameters (request: ManifestDownloadRequest) (parameters: StorageParameters) =
-        parameters.OwnerId <- $"{request.OwnerId}"
+        parameters.OwnerId <- request.OwnerId
         parameters.OwnerName <- request.OwnerName
-        parameters.OrganizationId <- $"{request.OrganizationId}"
+        parameters.OrganizationId <- request.OrganizationId
         parameters.OrganizationName <- request.OrganizationName
-        parameters.RepositoryId <- $"{request.RepositoryId}"
+        parameters.RepositoryId <- request.RepositoryId
         parameters.RepositoryName <- request.RepositoryName
         parameters.CorrelationId <- request.CorrelationId
         parameters
