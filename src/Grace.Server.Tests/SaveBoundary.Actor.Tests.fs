@@ -61,6 +61,14 @@ type SaveBoundaryActorTests() =
 
     let wholeFile () = FileVersion.Create "/small.txt" "abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd" String.Empty false 42L
 
+    let referenceDto referenceType =
+        { Grace.Types.Reference.ReferenceDto.Default with
+            ReferenceId = referenceId
+            RepositoryId = repositoryId
+            DirectoryId = directoryVersionId
+            ReferenceType = referenceType
+        }
+
     let directoryWith (files: FileVersion seq) =
         let fileList = List<FileVersion>(files)
 
@@ -212,3 +220,236 @@ type SaveBoundaryActorTests() =
             | Ok decision -> Assert.That(ManifestContributionWorkflowActor.pendingRanges decision.Workflow, Has.Length.EqualTo(2))
             | Error error -> Assert.Fail($"Expected repeated block occurrences to start contribution workflow, got {error.Error}.")
         | None -> Assert.Fail("Expected increment intent to start manifest contribution workflow fan-out.")
+
+    [<Test>]
+    member _.SaveExpiryStartsDecrementContributionWorkflow() =
+        let manifest = finalizedManifest ()
+        let directoryVersion = directoryWith [ manifestFile manifest ]
+
+        let savePlan =
+            ReferenceActor.planManifestSaveBoundary repositoryId referenceId directoryVersion "corr-expiry-plan"
+            |> expectPlan
+
+        let decrementPlan =
+            { savePlan with
+                CounterCommand =
+                    RepositoryContentCounterCommand.RemoveReference(
+                        RepositoryContentCounterOperationId $"save-expiry:{referenceId:N}:{manifest.ManifestAddress}",
+                        repositoryId,
+                        manifest.ManifestAddress
+                    )
+            }
+
+        let intent = RepositoryContentCounterIntent.DecrementManifestReferenceCount(repositoryId, manifest.ManifestAddress)
+
+        match ReferenceActor.tryCreateManifestContributionStart decrementPlan intent with
+        | Some startCommand ->
+            let workflowDecision =
+                ManifestContributionWorkflowActor.decideCommand [] ManifestContributionWorkflowDto.Default startCommand (metadata "corr-expiry-workflow")
+
+            match workflowDecision with
+            | Ok decision ->
+                Assert.That(decision.Workflow.Direction, Is.EqualTo(ManifestContributionDirection.Decrement))
+                Assert.That(ManifestContributionWorkflowActor.pendingRanges decision.Workflow, Has.Length.EqualTo(manifest.Blocks.Count))
+            | Error error -> Assert.Fail($"Expected save expiry decrement workflow to start, got {error.Error}.")
+        | None -> Assert.Fail("Expected decrement intent to start manifest contribution workflow fan-out.")
+
+    [<Test>]
+    member _.SaveExpiryDecrementWorkflowUsesDistinctOperationIdAfterIncrementWorkflow() =
+        let manifest = finalizedManifest ()
+        let directoryVersion = directoryWith [ manifestFile manifest ]
+
+        let savePlan =
+            ReferenceActor.planManifestSaveBoundary repositoryId referenceId directoryVersion "corr-expiry-operation-plan"
+            |> expectPlan
+
+        let incrementStart =
+            match
+                ReferenceActor.tryCreateManifestContributionStart
+                    savePlan
+                    (RepositoryContentCounterIntent.IncrementManifestReferenceCount(repositoryId, manifest.ManifestAddress))
+                with
+            | Some command -> command
+            | None ->
+                Assert.Fail("Expected increment intent to start manifest contribution workflow fan-out.")
+                Unchecked.defaultof<ManifestContributionWorkflowCommand>
+
+        let incrementDecision =
+            match ManifestContributionWorkflowActor.decideCommand [] ManifestContributionWorkflowDto.Default incrementStart (metadata "corr-increment-start")
+                with
+            | Ok decision -> decision
+            | Error error ->
+                Assert.Fail($"Expected increment workflow to start, got {error.Error}.")
+                Unchecked.defaultof<ManifestContributionWorkflowDecision>
+
+        let decrementPlan =
+            { savePlan with
+                CounterCommand =
+                    RepositoryContentCounterCommand.RemoveReference(
+                        RepositoryContentCounterOperationId $"save-expiry:{referenceId:N}:{manifest.ManifestAddress}",
+                        repositoryId,
+                        manifest.ManifestAddress
+                    )
+            }
+
+        let decrementStart =
+            match
+                ReferenceActor.tryCreateManifestContributionStart
+                    decrementPlan
+                    (RepositoryContentCounterIntent.DecrementManifestReferenceCount(repositoryId, manifest.ManifestAddress))
+                with
+            | Some command -> command
+            | None ->
+                Assert.Fail("Expected decrement intent to start manifest contribution workflow fan-out.")
+                Unchecked.defaultof<ManifestContributionWorkflowCommand>
+
+        let completedIncrementWorkflow = { incrementDecision.Workflow with LifecycleState = ManifestContributionWorkflowLifecycleState.Completed }
+
+        match
+            ManifestContributionWorkflowActor.decideCommand incrementDecision.Events completedIncrementWorkflow decrementStart (metadata "corr-decrement-start")
+            with
+        | Ok decision ->
+            Assert.That(decision.Workflow.Direction, Is.EqualTo(ManifestContributionDirection.Decrement))
+            Assert.That(decision.OperationId, Is.Not.EqualTo(incrementDecision.OperationId))
+        | Error error -> Assert.Fail($"Expected decrement workflow to start after increment workflow, got {error.Error}.")
+
+    [<Test>]
+    member _.SaveExpiryCounterReplayRestartsDecrementWorkflowWithoutSecondCounterEvent() =
+        let manifest = finalizedManifest ()
+        let directoryVersion = directoryWith [ manifestFile manifest ]
+
+        let savePlan =
+            ReferenceActor.planManifestSaveBoundary repositoryId referenceId directoryVersion "corr-expiry-replay-plan"
+            |> expectPlan
+
+        let addDecision =
+            RepositoryContentCounterActor.decideCommand [] RepositoryContentCounterDto.Default savePlan.CounterCommand (metadata "corr-add-before-expiry")
+
+        let addedDto, addEvents =
+            match addDecision with
+            | Ok decision -> decision.Counter, decision.Events
+            | Error error ->
+                Assert.Fail($"Expected save counter increment to succeed, got {error.Error}.")
+                RepositoryContentCounterDto.Default, []
+
+        let decrementPlan =
+            { savePlan with
+                CounterCommand =
+                    RepositoryContentCounterCommand.RemoveReference(
+                        RepositoryContentCounterOperationId $"save-expiry:{referenceId:N}:{manifest.ManifestAddress}",
+                        repositoryId,
+                        manifest.ManifestAddress
+                    )
+            }
+
+        let removeDecision = RepositoryContentCounterActor.decideCommand addEvents addedDto decrementPlan.CounterCommand (metadata "corr-expiry-remove")
+
+        let removedDto, allEvents =
+            match removeDecision with
+            | Ok decision ->
+                Assert.That(decision.Counter.ReferenceCount, Is.EqualTo(0L))
+                Assert.That(decision.Intents, Has.Length.EqualTo(1))
+                decision.Counter, addEvents @ decision.Events
+            | Error error ->
+                Assert.Fail($"Expected save expiry counter decrement to succeed, got {error.Error}.")
+                RepositoryContentCounterDto.Default, []
+
+        let replayDecision = RepositoryContentCounterActor.decideCommand allEvents removedDto decrementPlan.CounterCommand (metadata "corr-expiry-retry")
+
+        match replayDecision with
+        | Ok decision ->
+            Assert.That(decision.WasIdempotentReplay, Is.True)
+            Assert.That(decision.Events, Is.Empty)
+            Assert.That(decision.Intents, Is.Empty)
+
+            match ReferenceActor.tryCreateManifestContributionStartForCounterDecision decrementPlan decision allEvents with
+            | Some startCommand ->
+                let workflowDecision =
+                    ManifestContributionWorkflowActor.decideCommand
+                        []
+                        ManifestContributionWorkflowDto.Default
+                        startCommand
+                        (metadata "corr-expiry-retry-workflow")
+
+                match workflowDecision with
+                | Ok workflowDecision -> Assert.That(workflowDecision.Workflow.Direction, Is.EqualTo(ManifestContributionDirection.Decrement))
+                | Error error -> Assert.Fail($"Expected replayed expiry decrement to restart workflow, got {error.Error}.")
+            | None -> Assert.Fail("Expected replayed zero-crossing counter removal to restart decrement workflow fan-out.")
+        | Error error -> Assert.Fail($"Expected save expiry counter retry to be idempotent, got {error.Error}.")
+
+    [<Test>]
+    member _.PendingSaveExpiryDecrementBlocksUnsafeGcUntilRangeCompletes() =
+        let manifest = finalizedManifest ()
+        let directoryVersion = directoryWith [ manifestFile manifest ]
+
+        let savePlan =
+            ReferenceActor.planManifestSaveBoundary repositoryId referenceId directoryVersion "corr-expiry-gc-plan"
+            |> expectPlan
+
+        let decrementPlan =
+            { savePlan with
+                CounterCommand =
+                    RepositoryContentCounterCommand.RemoveReference(
+                        RepositoryContentCounterOperationId $"save-expiry:{referenceId:N}:{manifest.ManifestAddress}",
+                        repositoryId,
+                        manifest.ManifestAddress
+                    )
+            }
+
+        let startCommand =
+            match
+                ReferenceActor.tryCreateManifestContributionStart
+                    decrementPlan
+                    (RepositoryContentCounterIntent.DecrementManifestReferenceCount(repositoryId, manifest.ManifestAddress))
+                with
+            | Some command -> command
+            | None ->
+                Assert.Fail("Expected decrement intent to start manifest contribution workflow fan-out.")
+                Unchecked.defaultof<ManifestContributionWorkflowCommand>
+
+        let started =
+            match ManifestContributionWorkflowActor.decideCommand [] ManifestContributionWorkflowDto.Default startCommand (metadata "corr-expiry-gc-start") with
+            | Ok decision -> decision.Workflow
+            | Error error ->
+                Assert.Fail($"Expected decrement workflow start to succeed, got {error.Error}.")
+                ManifestContributionWorkflowDto.Default
+
+        let range = decrementPlan.WorkflowRanges[0]
+        Assert.That(ManifestContributionWorkflowActor.blocksUnsafeDeletion started range, Is.True)
+
+        let progress =
+            {
+                OperationId = ManifestContributionWorkflowOperationId "range-expiry-done"
+                RepositoryId = repositoryId
+                ManifestAddress = manifest.ManifestAddress
+                Range = range
+            }
+
+        let completed =
+            match
+                ManifestContributionWorkflowActor.decideCommand
+                    []
+                    started
+                    (ManifestContributionWorkflowCommand.RecordRangeSucceeded progress)
+                    (metadata "corr-expiry-gc-range")
+                with
+            | Ok decision -> decision.Workflow
+            | Error error ->
+                Assert.Fail($"Expected decrement range completion to succeed, got {error.Error}.")
+                started
+
+        Assert.That(ManifestContributionWorkflowActor.blocksUnsafeDeletion completed range, Is.False)
+
+    [<Test>]
+    member _.SaveExpiryPlanningKeepsWholeFileCleanupAsNoOp() =
+        let directoryVersion = directoryWith [ wholeFile () ]
+
+        match ReferenceActor.planManifestSaveBoundary repositoryId referenceId directoryVersion "corr-whole-file-expiry" with
+        | Ok plans -> Assert.That(plans, Is.Empty)
+        | Error error -> Assert.Fail($"Expected whole-file save expiry planning to remain a no-op, got {error.Error}.")
+
+    [<Test>]
+    member _.PhysicalDeletionReminderAppliesExpiryBoundaryOnlyForLiveSaveReferences() =
+        Assert.That(ReferenceActor.shouldApplySaveExpiryBoundary (referenceDto ReferenceType.Save), Is.True)
+        Assert.That(ReferenceActor.shouldApplySaveExpiryBoundary (referenceDto ReferenceType.Checkpoint), Is.False)
+        Assert.That(ReferenceActor.shouldApplySaveExpiryBoundary Grace.Types.Reference.ReferenceDto.Default, Is.False)
