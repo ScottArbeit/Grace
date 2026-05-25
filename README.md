@@ -217,7 +217,11 @@ A version control system is \<waves hands\> just a series of modifications to fi
 
 ### 3) Files are stored in object storage
 
-Grace relies on cloud object storage systems to provide a safe and infinitely scalable storage layer. Grace currently uses Azure Blob Storage, with the intention of adding the ability to run it on AWS S3 and others. Currently, all files are stored as single blobs in Azure; soon Grace will shift to a content-addressible storage construct that will enable efficient handling of changes to large binary files.
+Grace relies on cloud object storage systems to provide a safe and infinitely scalable storage layer. Grace currently
+uses Azure Blob Storage, with the intention of adding the ability to run it on AWS S3 and others. Small and regular
+files use the repository-scoped whole-file path. Eligible large files use ADR-0001 manifest-backed content-addressed
+storage: clients split content into ContentBlocks, upload only missing payloads, and finalize a FileManifest that lets
+Grace reconstruct the file without tying content identity to a repository path.
 
 ### 4) `grace watch` for effortless, background update tracking
 
@@ -254,10 +258,10 @@ Grace is evolving quickly. Strap in....
 - Native GUI for Windows, MacOS, Linux Desktop, Android, iOS, and WASM.
 - Not Electron.
 
-### Full rewrite of object storage layer
+### Continue the object storage layer rewrite
 
-- Switch to content-addressable storage for more efficient object storage and network transfer
-- Automatic chunking of large binary files
+- Keep hardening manifest-backed content-addressable storage for efficient object storage and network transfer
+- Expand automatic chunking, dedupe discovery, rebuild, garbage collection, and compaction coverage for large files
 
 ### Multi-hash semantics
 

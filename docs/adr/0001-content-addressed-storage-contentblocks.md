@@ -481,6 +481,35 @@ Tests should include:
 - Repository contribution zero-crossing tests.
 - Compaction concurrency tests.
 
+## Implementation Status
+
+As of May 25, 2026, ADR-0001 has landed as a first implementation wave rather than only a future design. The current
+repository includes these implemented surfaces:
+
+- Domain contracts for `FileContentReference`, `WholeFileContent`, `FileManifest`, `ContentBlock`, manifest eligibility,
+  content addresses, storage keys, upload sessions, repository content counters, manifest contribution workflows,
+  dedupe index records, and `ContentBlockMetadata`.
+- Manifest validation and physical ContentBlock payload helpers that validate stable addresses, reconstruction order,
+  file hash, chunking suite, and payload integrity before manifest finalization.
+- Server storage endpoints for manifest upload sessions, bounded dedupe discovery, range claims, ContentBlock upload
+  registration and confirmation, manifest finalization, ContentBlock upload/download URIs, and whole-file compatibility
+  paths.
+- SDK and CLI upload/download paths that enable manifest-backed uploads by default for eligible large files while
+  keeping whole-file upload as the compatibility path for ineligible files or recoverable fallback cases.
+- Repository save-boundary validation that accepts finalized manifest references without re-uploading whole-file
+  content.
+- Repository contribution and ContentBlock metadata behavior for zero-crossing contribution fan-out, authoritative
+  range presence, stale-hint safety, and compaction candidate/churn guards.
+- OpenAPI source files for the ADR-0001 storage routes and CAS DTO shapes, plus route coverage validation for those
+  documented paths.
+
+Remaining follow-ups after this wave should stay narrow and tracked separately:
+
+- Broaden the static OpenAPI source to cover every non-ADR route that predates this audit.
+- Keep hardening Aspire-backed integration coverage for end-to-end manifest upload/download, rebuild, GC, and
+  compaction operations as those runtime flows mature.
+- Add operator-facing rebuild and compaction runbooks when the operational commands and schedules are finalized.
+
 ## Supporting Design Artifacts
 
 The detailed design report and diagram that led to this ADR are:

@@ -1,0 +1,379 @@
+StorageParameters:
+  description: Parameters common to storage endpoints.
+  allOf:
+    - $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/CommonParameters'
+  type: object
+  properties:
+    OwnerId:
+      type: string
+    OwnerName:
+      type: string
+    OrganizationId:
+      type: string
+    OrganizationName:
+      type: string
+    RepositoryId:
+      type: string
+    RepositoryName:
+      type: string
+
+GetUploadMetadataForFilesParameters:
+  description: Parameters for /storage/getUploadMetadataForFiles.
+  allOf:
+    - $ref: '#/StorageParameters'
+  type: object
+  properties:
+    FileVersions:
+      type: array
+      items:
+        $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/FileVersion'
+
+GetUploadUriParameters:
+  description: Parameters for /storage/getUploadUri.
+  allOf:
+    - $ref: '#/StorageParameters'
+  type: object
+  properties:
+    FileVersions:
+      type: array
+      items:
+        $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/FileVersion'
+
+GetDownloadUriParameters:
+  description: Parameters for /storage/getDownloadUri.
+  allOf:
+    - $ref: '#/StorageParameters'
+  type: object
+  properties:
+    FileVersion:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/FileVersion'
+
+GetContentBlockUploadUriParameters:
+  description: Parameters for /storage/getContentBlockUploadUri.
+  allOf:
+    - $ref: '#/StorageParameters'
+  type: object
+  properties:
+    ContentBlockAddress:
+      $ref: '#/ContentBlockAddress'
+    AuthorizedScope:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/RelativePath'
+
+GetContentBlockDownloadUriParameters:
+  description: Parameters for /storage/getContentBlockDownloadUri.
+  allOf:
+    - $ref: '#/StorageParameters'
+  type: object
+  properties:
+    ContentBlockAddress:
+      $ref: '#/ContentBlockAddress'
+
+DiscoverContentBlocksParameters:
+  description: >-
+    Parameters for /storage/discoverContentBlocks. Discovery is bounded and non-authoritative; empty results do not
+    prove that chunks or future ContentBlocks are absent.
+  allOf:
+    - $ref: '#/StorageParameters'
+  type: object
+  properties:
+    KeyChunkAddresses:
+      type: array
+      maxItems: 256
+      items:
+        $ref: '#/ChunkAddress'
+
+UploadSessionStorageParameters:
+  description: Parameters common to manifest upload-session endpoints.
+  allOf:
+    - $ref: '#/StorageParameters'
+  type: object
+  properties:
+    UploadSessionId:
+      type: string
+      format: uuid
+    AuthorizedScope:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/RelativePath'
+
+StartManifestUploadSessionParameters:
+  description: Parameters for /storage/startManifestUploadSession.
+  allOf:
+    - $ref: '#/UploadSessionStorageParameters'
+  type: object
+  properties:
+    FileContentHash:
+      $ref: '#/FileContentHash'
+    ExpectedSize:
+      type: integer
+      format: int64
+    ChunkingSuiteId:
+      $ref: '#/ChunkingSuiteId'
+    SamplingPolicySnapshot:
+      type: string
+    OperationId:
+      $ref: '#/UploadSessionOperationId'
+
+IssueDedupeDiscoveryParameters:
+  description: Parameters for /storage/issueDedupeDiscovery.
+  allOf:
+    - $ref: '#/UploadSessionStorageParameters'
+  type: object
+  properties:
+    OperationId:
+      $ref: '#/UploadSessionOperationId'
+    ExpiresAt:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant'
+    MinimumReuseRunLength:
+      type: integer
+      minimum: 8
+    Hints:
+      type: array
+      maxItems: 1024
+      items:
+        $ref: '#/ContentBlockReuseRangeHint'
+
+ClaimReuseRangesParameters:
+  description: Parameters for /storage/claimReuseRanges.
+  allOf:
+    - $ref: '#/UploadSessionStorageParameters'
+  type: object
+  properties:
+    OperationId:
+      $ref: '#/UploadSessionOperationId'
+    DiscoveryOperationId:
+      $ref: '#/UploadSessionOperationId'
+    Hints:
+      type: array
+      maxItems: 1024
+      items:
+        $ref: '#/ContentBlockReuseRangeHint'
+
+RegisterContentBlockUploadParameters:
+  description: Parameters for /storage/registerContentBlockUpload.
+  allOf:
+    - $ref: '#/UploadSessionStorageParameters'
+  type: object
+  properties:
+    OperationId:
+      $ref: '#/UploadSessionOperationId'
+    ContentBlockAddress:
+      $ref: '#/ContentBlockAddress'
+    LogicalOffset:
+      type: integer
+      format: int64
+    LogicalLength:
+      type: integer
+      format: int64
+    ExpectedPayloadLength:
+      type: integer
+      format: int64
+
+ConfirmContentBlockUploadParameters:
+  description: Parameters for /storage/confirmContentBlockUpload.
+  allOf:
+    - $ref: '#/UploadSessionStorageParameters'
+  type: object
+  properties:
+    OperationId:
+      $ref: '#/UploadSessionOperationId'
+    ContentBlockAddress:
+      $ref: '#/ContentBlockAddress'
+    Payload:
+      type: string
+      format: byte
+    StoragePlacement:
+      $ref: '#/ContentBlockStoragePlacement'
+
+FinalizeManifestUploadParameters:
+  description: Parameters for /storage/finalizeManifestUpload.
+  allOf:
+    - $ref: '#/UploadSessionStorageParameters'
+  type: object
+  properties:
+    OperationId:
+      $ref: '#/UploadSessionOperationId'
+    Manifest:
+      $ref: '#/FileManifest'
+    BlockPayloads:
+      type: array
+      items:
+        $ref: '#/FinalizeManifestBlockPayload'
+
+ContentBlockDiscoveryPolicy:
+  description: Bounded, non-authoritative discovery policy returned by /storage/discoverContentBlocks.
+  type: object
+  properties:
+    MaxKeyChunkAddresses:
+      type: integer
+      example: 256
+    MaxCandidateWindowsPerKeyChunk:
+      type: integer
+      example: 4
+    MaxWindowChunks:
+      type: integer
+      example: 256
+    MaxResponseProtectedChunks:
+      type: integer
+      example: 16384
+    ResponseTtlSeconds:
+      type: integer
+      example: 300
+    MinimumAcceptedReuseRunLength:
+      type: integer
+      example: 8
+    PositiveCandidatesEnabled:
+      type: boolean
+    EmptyResponseMeansAbsent:
+      type: boolean
+      example: false
+    IsAuthoritative:
+      type: boolean
+      example: false
+
+ContentBlockDiscoveryCandidate:
+  description: A bounded, response-protected candidate window for possible ContentBlock reuse.
+  type: object
+  properties:
+    StoragePoolId:
+      $ref: '#/StoragePoolId'
+    ManifestAddress:
+      $ref: '#/ManifestAddress'
+    ContentBlockAddress:
+      $ref: '#/ContentBlockAddress'
+    OrdinalStart:
+      type: integer
+    OrdinalCount:
+      type: integer
+    MetadataVersion:
+      type: integer
+      format: int64
+    MatchingKeyChunkCount:
+      type: integer
+    ProtectedChunkAddresses:
+      type: array
+      items:
+        type: string
+
+DiscoverContentBlocksResult:
+  description: Non-authoritative ContentBlock discovery result.
+  type: object
+  properties:
+    RequestedKeyChunkCount:
+      type: integer
+    AcceptedKeyChunkCount:
+      type: integer
+    Policy:
+      $ref: '#/ContentBlockDiscoveryPolicy'
+    CandidateContentBlocks:
+      type: array
+      items:
+        $ref: '#/ContentBlockDiscoveryCandidate'
+    IsPartial:
+      type: boolean
+    Message:
+      type: string
+
+UploadSessionDecision:
+  description: UploadSession command decision returned by manifest upload-session endpoints.
+  type: object
+  additionalProperties: true
+
+ContentBlockReuseRangeHint:
+  description: Server-issued hint used to claim a reusable ContentBlock range.
+  type: object
+  properties:
+    StoragePoolId:
+      $ref: '#/StoragePoolId'
+    ManifestAddress:
+      $ref: '#/ManifestAddress'
+    ContentBlockAddress:
+      $ref: '#/ContentBlockAddress'
+    OrdinalStart:
+      type: integer
+    OrdinalCount:
+      type: integer
+    MetadataVersion:
+      type: integer
+      format: int64
+    ProtectedChunkAddresses:
+      type: array
+      items:
+        type: string
+
+ContentBlockStoragePlacement:
+  description: Object-storage placement metadata for a confirmed ContentBlock payload.
+  type: object
+  additionalProperties: true
+
+FinalizeManifestBlockPayload:
+  description: Optional inline payload used by manifest finalization compatibility paths.
+  type: object
+  properties:
+    Address:
+      $ref: '#/ContentBlockAddress'
+    Payload:
+      type: string
+      format: byte
+
+FileManifest:
+  description: Server-accepted reconstruction contract for one manifest-backed file.
+  type: object
+  properties:
+    ManifestAddress:
+      $ref: '#/ManifestAddress'
+    ChunkingSuiteId:
+      $ref: '#/ChunkingSuiteId'
+    FileContentHash:
+      $ref: '#/FileContentHash'
+    Size:
+      type: integer
+      format: int64
+    Blocks:
+      type: array
+      items:
+        $ref: '#/ContentBlock'
+
+ContentBlock:
+  description: Logical byte range inside a manifest-backed file.
+  type: object
+  properties:
+    Address:
+      $ref: '#/ContentBlockAddress'
+    Offset:
+      type: integer
+      format: int64
+    Size:
+      type: integer
+      format: int64
+
+ChunkAddress:
+  description: Lowercase 64-character BLAKE3 chunk address.
+  type: string
+  pattern: '^[a-f0-9]{64}$'
+
+ContentBlockAddress:
+  description: Lowercase 64-character BLAKE3-derived ContentBlock address.
+  type: string
+  pattern: '^[a-f0-9]{64}$'
+
+ManifestAddress:
+  description: Lowercase 64-character BLAKE3-derived FileManifest address.
+  type: string
+  pattern: '^[a-f0-9]{64}$'
+
+FileContentHash:
+  description: Lowercase 64-character BLAKE3 hash of the complete unencoded file bytes.
+  type: string
+  pattern: '^[a-f0-9]{64}$'
+
+StoragePoolId:
+  description: StoragePool-wide CAS scope identifier.
+  type: string
+
+ChunkingSuiteId:
+  description: Versioned chunking suite identifier.
+  type: string
+  example: rabin-v1
+
+UploadSessionOperationId:
+  description: Caller-supplied idempotency key for one upload-session operation.
+  type: string
