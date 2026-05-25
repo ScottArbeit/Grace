@@ -467,6 +467,12 @@ module Storage =
             "storage/startManifestUploadSession"
         )
 
+    let IssueDedupeDiscovery (parameters: IssueDedupeDiscoveryParameters) =
+        Common.postServer<IssueDedupeDiscoveryParameters, UploadSessionDecision> (parameters |> Common.ensureCorrelationIdIsSet, "storage/issueDedupeDiscovery")
+
+    let ClaimReuseRanges (parameters: ClaimReuseRangesParameters) =
+        Common.postServer<ClaimReuseRangesParameters, UploadSessionDecision> (parameters |> Common.ensureCorrelationIdIsSet, "storage/claimReuseRanges")
+
     let RegisterContentBlockUpload (parameters: RegisterContentBlockUploadParameters) =
         Common.postServer<RegisterContentBlockUploadParameters, UploadSessionDecision> (
             parameters |> Common.ensureCorrelationIdIsSet,

@@ -8,6 +8,7 @@ open Giraffe
 open Grace.Actors
 open Grace.Actors.Constants
 open Grace.Actors.Extensions.ActorProxy
+open Grace.Actors.Interfaces
 open Grace.Actors.Services
 open Grace.Server.ApplicationContext
 open Grace.Server.Services
@@ -434,6 +435,87 @@ module Storage =
                 | ex ->
                     let exceptionResponse = ExceptionResponse.Create ex
                     logToConsole $"Exception in StartManifestUploadSession: {exceptionResponse}"
+
+                    return!
+                        context
+                        |> result500ServerError (GraceError.Create $"{exceptionResponse}" correlationId)
+            }
+
+    let IssueDedupeDiscovery: HttpHandler =
+        fun (next: HttpFunc) (context: HttpContext) ->
+            task {
+                let correlationId = getCorrelationId context
+
+                try
+                    let! parameters = context.BindJsonAsync<IssueDedupeDiscoveryParameters>()
+
+                    let command =
+                        UploadSessionCommand.IssueDedupeDiscovery
+                            {
+                                OperationId = parameters.OperationId
+                                ExpiresAt = parameters.ExpiresAt
+                                MinimumReuseRunLength = parameters.MinimumReuseRunLength
+                                Hints = parameters.Hints
+                            }
+
+                    return! handleUploadSessionCommand context parameters command correlationId
+                with
+                | ex ->
+                    let exceptionResponse = ExceptionResponse.Create ex
+                    logToConsole $"Exception in IssueDedupeDiscovery: {exceptionResponse}"
+
+                    return!
+                        context
+                        |> result500ServerError (GraceError.Create $"{exceptionResponse}" correlationId)
+            }
+
+    let ClaimReuseRanges: HttpHandler =
+        fun (next: HttpFunc) (context: HttpContext) ->
+            task {
+                let correlationId = getCorrelationId context
+
+                try
+                    let! parameters = context.BindJsonAsync<ClaimReuseRangesParameters>()
+                    let hints = if isNull parameters.Hints then Array.empty else parameters.Hints
+                    let ranges = ResizeArray<ClaimReuseRange>()
+                    let mutable error = None
+                    let mutable index = 0
+
+                    while error.IsNone && index < hints.Length do
+                        let hint = hints[index]
+
+                        let metadataActor =
+                            grainFactory.CreateActorProxyWithCorrelationId<IContentBlockMetadataActor>(
+                                Grace.Actors.ContentBlockMetadataActorKey.Create hint.StoragePoolId hint.ContentBlockAddress,
+                                correlationId
+                            )
+
+                        let! metadata = metadataActor.Get correlationId
+
+                        match metadata with
+                        | Some metadata -> ranges.Add({ Hint = hint; Metadata = metadata })
+                        | None ->
+                            error <-
+                                Some(
+                                    GraceError.Create
+                                        $"Authoritative ContentBlockMetadata is absent for {hint.ContentBlockAddress}; reuse range cannot be claimed."
+                                        correlationId
+                                )
+
+                        index <- index + 1
+
+                    match error with
+                    | Some error -> return! context |> result400BadRequest error
+                    | None ->
+                        let command =
+                            UploadSessionCommand.ClaimReuseRanges
+                                { OperationId = parameters.OperationId; DiscoveryOperationId = parameters.DiscoveryOperationId; Ranges = ranges.ToArray() }
+
+                        return! handleUploadSessionCommand context parameters command correlationId
+                with
+                | ex ->
+                    let exceptionResponse = ExceptionResponse.Create ex
+                    logToConsole $"Exception in ClaimReuseRanges: {exceptionResponse}"
 
                     return!
                         context
