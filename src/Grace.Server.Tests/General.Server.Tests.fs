@@ -105,6 +105,15 @@ module MetadataCreationTests =
         Assert.That(metadata.ClientType, Is.EqualTo(Microsoft.FSharp.Core.Option.None))
 
     [<Test>]
+    let ``createMetadata uses http principal when identity name is absent`` () =
+        let context = createContext ()
+        context.User <- ClaimsPrincipal(ClaimsIdentity([||], "test"))
+
+        let metadata = Grace.Server.Services.createMetadata context
+
+        Assert.That(metadata.Principal, Is.EqualTo("http"))
+
+    [<Test>]
     let ``storage upload session metadata preserves client type headers`` () =
         let context = createContext ()
         context.Request.Path <- PathString("/storage/startManifestUploadSession")

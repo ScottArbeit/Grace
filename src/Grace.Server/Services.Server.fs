@@ -61,6 +61,13 @@ module Services =
             Some(ClientType.CLI clientVersion)
         | _ -> None
 
+    let private getPrincipalName (context: HttpContext) =
+        if isNull context.User.Identity
+           || String.IsNullOrWhiteSpace context.User.Identity.Name then
+            "http"
+        else
+            context.User.Identity.Name
+
     /// Creates common metadata for Grace events.
     let createMetadata (context: HttpContext) : EventMetadata =
         let metadata =
@@ -70,7 +77,7 @@ module Services =
                     context
                         .Items[ Constants.CorrelationId ]
                         .ToString()
-                Principal = context.User.Identity.Name
+                Principal = getPrincipalName context
                 ClientType = tryCreateClientType context
                 Properties = new Dictionary<string, string>()
             }
