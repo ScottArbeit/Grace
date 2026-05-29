@@ -104,6 +104,22 @@ module MetadataCreationTests =
 
         Assert.That(metadata.ClientType, Is.EqualTo(Microsoft.FSharp.Core.Option.None))
 
+    [<Test>]
+    let ``storage upload session metadata preserves client type headers`` () =
+        let context = createContext ()
+        context.Request.Path <- PathString("/storage/startManifestUploadSession")
+        context.Request.Headers[ Constants.ClientTypeHeaderKey ] <- "CLI"
+        context.Request.Headers[ Constants.ClientVersionHeaderKey ] <- "0.1.2.3"
+
+        let metadata = Grace.Server.Storage.createEventMetadata context "corr-upload-session"
+
+        Assert.That(metadata.CorrelationId, Is.EqualTo("corr-upload-session"))
+        Assert.That(metadata.Properties["Path"], Is.EqualTo("/storage/startManifestUploadSession"))
+
+        match metadata.ClientType with
+        | Some (ClientType.CLI version) -> Assert.That(version, Is.EqualTo("0.1.2.3"))
+        | other -> Assert.Fail($"Expected CLI client metadata, got {other}.")
+
 /// Defines the setup and teardown for all tests in the Grace.Server.Tests namespace.
 [<SetUpFixture>]
 type Setup() =

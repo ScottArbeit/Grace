@@ -79,15 +79,8 @@ module Storage =
         else
             OwnerId.Parse parameters.OwnerId
 
-    let private createEventMetadata (context: HttpContext) correlationId =
-        let principal =
-            if isNull context.User.Identity
-               || String.IsNullOrWhiteSpace context.User.Identity.Name then
-                "http"
-            else
-                context.User.Identity.Name
-
-        let metadata = EventMetadata.New correlationId principal
+    let internal createEventMetadata (context: HttpContext) correlationId =
+        let metadata = { createMetadata context with CorrelationId = correlationId }
         metadata.Properties[ "Path" ] <- $"{context.Request.Path}"
         metadata
 

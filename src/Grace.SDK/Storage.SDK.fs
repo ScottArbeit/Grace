@@ -189,8 +189,8 @@ module Storage =
                 | ObjectStorageProvider.Unknown -> return Error(GraceError.Create (getErrorMessage StorageError.NotImplemented) correlationId)
                 | ObjectStorageProvider.AzureBlobStorage ->
                     try
-                        // Creating an HttpClientTransport so we can use our custom HttpClientFactory here.
-                        use transport = new HttpClientTransport(ClientIdentity.getHttpClient correlationId)
+                        // This client talks directly to Azure Blob Storage, not the Grace API, so it intentionally omits Grace client identity headers.
+                        use transport = new HttpClientTransport(getHttpClient correlationId)
 
                         let blobClientOptions = BlobClientOptions(Transport = transport)
                         // I might regret this setting. Time will tell.
