@@ -244,7 +244,14 @@ type DedupeIndexServerTests() =
                 LifecycleState = UploadSessionLifecycleState.Started
             }
 
-        let eventMetadata = { Timestamp = timestamp; CorrelationId = "corr-stale-candidate"; Principal = "tester"; Properties = Dictionary<string, string>() }
+        let eventMetadata =
+            {
+                Timestamp = timestamp
+                CorrelationId = "corr-stale-candidate"
+                Principal = "tester"
+                ClientType = Microsoft.FSharp.Core.Option.None
+                Properties = Dictionary<string, string>()
+            }
 
         let issued =
             match Grace.Actors.UploadSession.decideCommand [] started discovery eventMetadata with

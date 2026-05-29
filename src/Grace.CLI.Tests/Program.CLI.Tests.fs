@@ -466,3 +466,55 @@ module RootHelpGroupingTests =
 
                 for heading in expectation.Headings do
                     output |> should contain heading)
+
+
+namespace Grace.CLI.Tests
+
+open FsUnit
+open Grace.CLI
+open Grace.Types.Types
+open NUnit.Framework
+open System
+
+[<NonParallelizable>]
+module ClientIdentityTests =
+
+    [<Test>]
+    let ``configureSdkClientIdentity stamps CLI client type with assembly file version`` () =
+        Grace.SDK.ClientIdentity.clear ()
+
+        try
+            Services.configureSdkClientIdentity ()
+
+            match Grace.SDK.ClientIdentity.tryGetConfiguredClientType () with
+            | Some (ClientType.CLI version) ->
+                String.IsNullOrWhiteSpace version
+                |> should equal false
+
+                version
+                |> should equal (Services.getCliAssemblyFileVersion ())
+            | other -> Assert.Fail($"Expected CLI client identity, got {other}.")
+        finally
+            Grace.SDK.ClientIdentity.clear ()
+
+    [<Test>]
+    let ``configured SDK client identity adds Grace client headers`` () =
+        Grace.SDK.ClientIdentity.clear ()
+
+        try
+            Grace.SDK.ClientIdentity.configure (ClientType.CLI "1.2.3")
+
+            use httpClient = Grace.SDK.ClientIdentity.getHttpClient "corr-client"
+
+            httpClient.DefaultRequestHeaders.Contains(Grace.Shared.Constants.ClientTypeHeaderKey)
+            |> should equal true
+
+            httpClient.DefaultRequestHeaders.GetValues(Grace.Shared.Constants.ClientTypeHeaderKey)
+            |> Seq.exactlyOne
+            |> should equal "CLI"
+
+            httpClient.DefaultRequestHeaders.GetValues(Grace.Shared.Constants.ClientVersionHeaderKey)
+            |> Seq.exactlyOne
+            |> should equal "1.2.3"
+        finally
+            Grace.SDK.ClientIdentity.clear ()

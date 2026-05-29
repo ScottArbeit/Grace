@@ -20,7 +20,14 @@ type ManifestContributionWorkflowActorTests() =
 
     let range1 = { StoragePoolId = StoragePoolId "pool-main"; ContentBlockAddress = ContentBlockAddress "block-b"; OrdinalStart = 8; OrdinalCount = 4 }
 
-    let metadata correlationId = { Timestamp = timestamp; CorrelationId = correlationId; Principal = "tester"; Properties = Dictionary<string, string>() }
+    let metadata correlationId =
+        {
+            Timestamp = timestamp
+            CorrelationId = correlationId
+            Principal = "tester"
+            ClientType = Microsoft.FSharp.Core.Option.None
+            Properties = Dictionary<string, string>()
+        }
 
     let startWithRanges direction ranges =
         ManifestContributionWorkflowCommand.Start

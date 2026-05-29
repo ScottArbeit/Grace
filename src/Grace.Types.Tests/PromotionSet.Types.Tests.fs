@@ -11,7 +11,13 @@ open System.Collections.Generic
 type PromotionSetDeterminismTests() =
 
     let createMetadata correlationId principal timestamp =
-        { Timestamp = timestamp; CorrelationId = correlationId; Principal = principal; Properties = Dictionary<string, string>() }
+        {
+            Timestamp = timestamp
+            CorrelationId = correlationId
+            Principal = principal
+            ClientType = Microsoft.FSharp.Core.Option.None
+            Properties = Dictionary<string, string>()
+        }
 
     let createPromotionSetDto timestamp =
         let createdEvent: PromotionSetEvent =

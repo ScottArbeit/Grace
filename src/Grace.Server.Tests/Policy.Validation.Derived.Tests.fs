@@ -14,7 +14,13 @@ open System.Collections.Generic
 [<Parallelizable(ParallelScope.All)>]
 type PolicyValidationDerivedTests() =
     let metadata correlationId timestamp =
-        { Timestamp = timestamp; CorrelationId = correlationId; Principal = "tester"; Properties = Dictionary<string, string>() }
+        {
+            Timestamp = timestamp
+            CorrelationId = correlationId
+            Principal = "tester"
+            ClientType = Microsoft.FSharp.Core.Option.None
+            Properties = Dictionary<string, string>()
+        }
 
     [<Test>]
     member _.ValidationResultRejectsDuplicateCorrelationIds() =

@@ -18,7 +18,14 @@ type RepositoryContentCounterActorTests() =
     let manifestAddress = "manifest:blake3:alpha"
     let otherManifestAddress = "manifest:blake3:beta"
 
-    let metadata correlationId = { Timestamp = timestamp; CorrelationId = correlationId; Principal = "tester"; Properties = Dictionary<string, string>() }
+    let metadata correlationId =
+        {
+            Timestamp = timestamp
+            CorrelationId = correlationId
+            Principal = "tester"
+            ClientType = Microsoft.FSharp.Core.Option.None
+            Properties = Dictionary<string, string>()
+        }
 
     let add operationId = RepositoryContentCounterCommand.AddReference(operationId, repositoryId, manifestAddress)
 

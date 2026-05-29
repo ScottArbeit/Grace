@@ -17,7 +17,14 @@ type UploadSessionActorTests() =
 
     let timestamp = Instant.FromUtc(2026, 5, 24, 12, 0)
 
-    let metadata correlationId = { Timestamp = timestamp; CorrelationId = correlationId; Principal = "tester"; Properties = Dictionary<string, string>() }
+    let metadata correlationId =
+        {
+            Timestamp = timestamp
+            CorrelationId = correlationId
+            Principal = "tester"
+            ClientType = Microsoft.FSharp.Core.Option.None
+            Properties = Dictionary<string, string>()
+        }
 
     let sessionId = Guid.Parse("ab6fd828-87a3-4b7a-9c2e-5a83f5e8b1b0")
     let ownerId = Guid.Parse("4f512f0d-d6b0-488a-934c-db16840d2a8d")

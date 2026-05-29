@@ -39,7 +39,7 @@ module Common =
         task {
             try
                 //checkMemoryCache ()
-                use httpClient = getHttpClient parameters.CorrelationId
+                use httpClient = ClientIdentity.getHttpClient parameters.CorrelationId
                 do! Auth.addAuthorizationHeader httpClient
                 let startTime = getCurrentInstant ()
 
@@ -81,7 +81,7 @@ module Common =
         task {
             try
                 //checkMemoryCache ()
-                use httpClient = getHttpClient parameters.CorrelationId
+                use httpClient = ClientIdentity.getHttpClient parameters.CorrelationId
                 do! Auth.addAuthorizationHeader httpClient
                 let serverUriWithRoute = Uri($"{Current().ServerUri}/{route}")
                 let startTime = getCurrentInstant ()

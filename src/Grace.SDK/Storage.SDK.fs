@@ -50,7 +50,7 @@ module Storage =
                 match Current().ObjectStorageProvider with
                 | AzureBlobStorage ->
                     // Get the URI to use when downloading the file. This includes a SAS token.
-                    let httpClient = getHttpClient correlationId
+                    let httpClient = ClientIdentity.getHttpClient correlationId
                     do! Auth.addAuthorizationHeader httpClient
                     let serviceUrl = $"{Current().ServerUri}/storage/getDownloadUri"
                     let jsonContent = createJsonContent getDownloadUriParameters
@@ -127,7 +127,7 @@ module Storage =
                 if parameters.FileVersions.Length > 0 then
                     match Current().ObjectStorageProvider with
                     | AzureBlobStorage ->
-                        let httpClient = getHttpClient correlationId
+                        let httpClient = ClientIdentity.getHttpClient correlationId
                         do! Auth.addAuthorizationHeader httpClient
                         let serviceUrl = $"{Current().ServerUri}/storage/getUploadMetadataForFiles"
                         let jsonContent = createJsonContent parameters
@@ -190,7 +190,7 @@ module Storage =
                 | ObjectStorageProvider.AzureBlobStorage ->
                     try
                         // Creating an HttpClientTransport so we can use our custom HttpClientFactory here.
-                        use transport = new HttpClientTransport(getHttpClient correlationId)
+                        use transport = new HttpClientTransport(ClientIdentity.getHttpClient correlationId)
 
                         let blobClientOptions = BlobClientOptions(Transport = transport)
                         // I might regret this setting. Time will tell.
@@ -366,7 +366,7 @@ module Storage =
                 match Current().ObjectStorageProvider with
                 | ObjectStorageProvider.Unknown -> return Error(GraceError.Create (getErrorMessage StorageError.NotImplemented) parameters.CorrelationId)
                 | ObjectStorageProvider.AzureBlobStorage ->
-                    let httpClient = getHttpClient parameters.CorrelationId
+                    let httpClient = ClientIdentity.getHttpClient parameters.CorrelationId
                     do! Auth.addAuthorizationHeader httpClient
                     let serviceUrl = $"{Current().ServerUri}/storage/getUploadUri"
                     let jsonContent = createJsonContent parameters
@@ -391,7 +391,7 @@ module Storage =
                 match Current().ObjectStorageProvider with
                 | ObjectStorageProvider.Unknown -> return Error(GraceError.Create (getErrorMessage StorageError.NotImplemented) parameters.CorrelationId)
                 | ObjectStorageProvider.AzureBlobStorage ->
-                    let httpClient = getHttpClient parameters.CorrelationId
+                    let httpClient = ClientIdentity.getHttpClient parameters.CorrelationId
                     do! Auth.addAuthorizationHeader httpClient
                     let serviceUrl = $"{Current().ServerUri}/storage/getDownloadUri"
                     let jsonContent = createJsonContent parameters
@@ -416,7 +416,7 @@ module Storage =
                 match Current().ObjectStorageProvider with
                 | ObjectStorageProvider.Unknown -> return Error(GraceError.Create (getErrorMessage StorageError.NotImplemented) parameters.CorrelationId)
                 | ObjectStorageProvider.AzureBlobStorage ->
-                    let httpClient = getHttpClient parameters.CorrelationId
+                    let httpClient = ClientIdentity.getHttpClient parameters.CorrelationId
                     do! Auth.addAuthorizationHeader httpClient
                     let serviceUrl = $"{Current().ServerUri}/storage/getContentBlockUploadUri"
                     let jsonContent = createJsonContent parameters
@@ -440,7 +440,7 @@ module Storage =
                 match Current().ObjectStorageProvider with
                 | ObjectStorageProvider.Unknown -> return Error(GraceError.Create (getErrorMessage StorageError.NotImplemented) parameters.CorrelationId)
                 | ObjectStorageProvider.AzureBlobStorage ->
-                    let httpClient = getHttpClient parameters.CorrelationId
+                    let httpClient = ClientIdentity.getHttpClient parameters.CorrelationId
                     do! Auth.addAuthorizationHeader httpClient
                     let serviceUrl = $"{Current().ServerUri}/storage/getContentBlockDownloadUri"
                     let jsonContent = createJsonContent parameters
@@ -463,7 +463,7 @@ module Storage =
             let correlationId = parameters.CorrelationId
 
             try
-                let httpClient = getHttpClient correlationId
+                let httpClient = ClientIdentity.getHttpClient correlationId
                 do! Auth.addAuthorizationHeader httpClient
                 let serviceUrl = $"{Current().ServerUri}/storage/discoverContentBlocks"
                 let jsonContent = createJsonContent parameters

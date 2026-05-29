@@ -17,7 +17,14 @@ type ContentBlockMetadataActorTests() =
 
     let timestamp = Instant.FromUtc(2026, 5, 24, 13, 0)
 
-    let metadata correlationId = { Timestamp = timestamp; CorrelationId = correlationId; Principal = "tester"; Properties = Dictionary<string, string>() }
+    let metadata correlationId =
+        {
+            Timestamp = timestamp
+            CorrelationId = correlationId
+            Principal = "tester"
+            ClientType = Microsoft.FSharp.Core.Option.None
+            Properties = Dictionary<string, string>()
+        }
 
     let storagePoolId = StoragePoolId "pool-main"
     let contentBlockAddress = ContentBlockAddress "block-blake3-0001"

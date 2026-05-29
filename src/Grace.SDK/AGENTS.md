@@ -51,3 +51,7 @@ Consult `../AGENTS.md` for global policies before modifying the SDK.
   only new local blocks, confirms them, finalizes the manifest without reposting
   block payload bytes, and returns `FileVersion.ContentReference = FileManifest`.
   Ineligible files still use the whole-file compatibility path.
+- `ClientIdentity.SDK.fs` owns the process-wide client identity headers
+  (`X-Grace-Client-Type` and `X-Grace-Client-Version`). CLI startup configures
+  it with `ClientType.CLI(<Grace CLI assembly file version>)`; other clients
+  should configure their own identity before making SDK API calls.

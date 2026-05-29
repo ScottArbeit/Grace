@@ -34,6 +34,15 @@ module Types =
     /// The CorrelationId used during a Grace operation.
     type CorrelationId = string
 
+    /// Identifies the Grace client that initiated an API request.
+    [<KnownType("GetKnownTypes"); GenerateSerializer>]
+    type ClientType =
+        | CLI of Version: string
+
+        override this.ToString() = getDiscriminatedUnionFullName this
+
+        static member GetKnownTypes() = GetKnownTypes<ClientType>()
+
     /// The reason given for deleting a branch or reference.
     type DeleteReason = string
 
@@ -248,13 +257,20 @@ module Types =
             Timestamp: Instant
             CorrelationId: CorrelationId
             Principal: string
+            ClientType: ClientType option
             Properties: Dictionary<string, string>
         }
 
         override this.ToString() = serialize this
 
         static member New correlationId principal =
-            { Timestamp = getCurrentInstant (); CorrelationId = correlationId; Principal = principal; Properties = Dictionary<string, string>() }
+            {
+                Timestamp = getCurrentInstant ()
+                CorrelationId = correlationId
+                Principal = principal
+                ClientType = Microsoft.FSharp.Core.Option.None
+                Properties = Dictionary<string, string>()
+            }
 
     /// Repository-level creation policy for choosing whole-file content or manifest-backed content.
     ///
