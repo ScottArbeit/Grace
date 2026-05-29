@@ -169,6 +169,75 @@ function Invoke-External([string]$Label, [scriptblock]$Command) {
     }
 }
 
+function Invoke-TestProjectsParallel([object[]]$Projects, [string]$Configuration) {
+    if ($null -eq $Projects -or $Projects.Count -eq 0) {
+        return
+    }
+
+    $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("grace-validation-tests-{0}" -f [guid]::NewGuid().ToString("N"))
+    $null = New-Item -ItemType Directory -Path $tempRoot -Force
+    $processes = @()
+
+    try {
+        foreach ($project in $Projects) {
+            $stdoutPath = Join-Path $tempRoot ("{0}.stdout.log" -f $project.Label)
+            $stderrPath = Join-Path $tempRoot ("{0}.stderr.log" -f $project.Label)
+
+            Write-Host ("Starting {0}..." -f $project.Label)
+            $processArguments = @{
+                FilePath = "dotnet"
+                ArgumentList = @("test", $project.Path, "-c", $Configuration, "--no-build")
+                NoNewWindow = $true
+                PassThru = $true
+                RedirectStandardOutput = $stdoutPath
+                RedirectStandardError = $stderrPath
+            }
+            $process = Start-Process @processArguments
+
+            $processes += [pscustomobject]@{
+                Label = $project.Label
+                Process = $process
+                StartedAt = Get-Date
+                StdOut = $stdoutPath
+                StdErr = $stderrPath
+            }
+        }
+
+        $failures = @()
+        foreach ($entry in $processes) {
+            $entry.Process.WaitForExit()
+            $elapsed = $entry.Process.ExitTime - $entry.StartedAt
+
+            Write-Host ""
+            Write-Host ("-- {0} ({1:c}) --" -f $entry.Label, $elapsed)
+
+            if (Test-Path $entry.StdOut) {
+                $stdout = Get-Content $entry.StdOut -Raw
+                if (-not [string]::IsNullOrWhiteSpace($stdout)) {
+                    Write-Host $stdout.TrimEnd()
+                }
+            }
+
+            if (Test-Path $entry.StdErr) {
+                $stderr = Get-Content $entry.StdErr -Raw
+                if (-not [string]::IsNullOrWhiteSpace($stderr)) {
+                    Write-Host $stderr.TrimEnd()
+                }
+            }
+
+            if ($entry.Process.ExitCode -ne 0) {
+                $failures += ("{0} failed with exit code {1}" -f $entry.Label, $entry.Process.ExitCode)
+            }
+        }
+
+        if ($failures.Count -gt 0) {
+            throw ("Test project failures: {0}." -f ($failures -join "; "))
+        }
+    } finally {
+        Remove-Item -Path $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
 try {
     if (-not $Fast -and -not $Full) {
         $Fast = $true
@@ -226,13 +295,29 @@ try {
 
     if (-not $SkipTests) {
         Write-Section "Test"
-        Invoke-External "Grace.Authorization.Tests" { dotnet test "src/Grace.Authorization.Tests/Grace.Authorization.Tests.fsproj" -c $Configuration --no-build }
-        Invoke-External "Grace.CLI.Tests" { dotnet test "src/Grace.CLI.Tests/Grace.CLI.Tests.fsproj" -c $Configuration --no-build }
-        Invoke-External "Grace.Types.Tests" { dotnet test "src/Grace.Types.Tests/Grace.Types.Tests.fsproj" -c $Configuration --no-build }
+        $testProjects = @(
+            [pscustomobject]@{
+                Label = "Grace.Authorization.Tests"
+                Path = "src/Grace.Authorization.Tests/Grace.Authorization.Tests.fsproj"
+            },
+            [pscustomobject]@{
+                Label = "Grace.CLI.Tests"
+                Path = "src/Grace.CLI.Tests/Grace.CLI.Tests.fsproj"
+            },
+            [pscustomobject]@{
+                Label = "Grace.Types.Tests"
+                Path = "src/Grace.Types.Tests/Grace.Types.Tests.fsproj"
+            }
+        )
 
         if ($Full) {
-            Invoke-External "Grace.Server.Tests" { dotnet test "src/Grace.Server.Tests/Grace.Server.Tests.fsproj" -c $Configuration --no-build }
+            $testProjects += [pscustomobject]@{
+                Label = "Grace.Server.Tests"
+                Path = "src/Grace.Server.Tests/Grace.Server.Tests.fsproj"
+            }
         }
+
+        Invoke-TestProjectsParallel $testProjects $Configuration
     } else {
         Write-Section "Test"
         Write-Host "Skipped (-SkipTests)."
