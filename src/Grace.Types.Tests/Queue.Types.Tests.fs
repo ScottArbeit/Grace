@@ -11,7 +11,13 @@ open System.Collections.Generic
 [<Parallelizable(ParallelScope.All)>]
 type QueueTypesTests() =
     let metadata (timestamp: Instant) : EventMetadata =
-        { Timestamp = timestamp; CorrelationId = "corr-queue"; Principal = "tester"; Properties = Dictionary<string, string>() }
+        {
+            Timestamp = timestamp
+            CorrelationId = "corr-queue"
+            Principal = "tester"
+            ClientType = Microsoft.FSharp.Core.Option.None
+            Properties = Dictionary<string, string>()
+        }
 
     [<Test>]
     member _.PromotionQueueDtoUpdatesDeterministically() =

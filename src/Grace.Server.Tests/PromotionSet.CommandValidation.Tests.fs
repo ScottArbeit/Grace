@@ -13,7 +13,13 @@ open System.Collections.Generic
 type PromotionSetCommandValidationTests() =
 
     let createMetadata correlationId =
-        { Timestamp = Instant.FromUtc(2026, 2, 21, 11, 0); CorrelationId = correlationId; Principal = "tester"; Properties = Dictionary<string, string>() }
+        {
+            Timestamp = Instant.FromUtc(2026, 2, 21, 11, 0)
+            CorrelationId = correlationId
+            Principal = "tester"
+            ClientType = Microsoft.FSharp.Core.Option.None
+            Properties = Dictionary<string, string>()
+        }
 
     let existingPromotionSet status computationStatus =
         { PromotionSetDto.Default with

@@ -9,7 +9,14 @@ open System.Collections.Generic
 
 [<Parallelizable(ParallelScope.All)>]
 type ValidationQuickScanDeterminism() =
-    let metadata timestamp = { Timestamp = timestamp; CorrelationId = "corr-1"; Principal = "tester"; Properties = Dictionary<string, string>() }
+    let metadata timestamp =
+        {
+            Timestamp = timestamp
+            CorrelationId = "corr-1"
+            Principal = "tester"
+            ClientType = Microsoft.FSharp.Core.Option.None
+            Properties = Dictionary<string, string>()
+        }
 
     [<Test>]
     member _.UpdateUsesEventPayloadAndTimestamp() =

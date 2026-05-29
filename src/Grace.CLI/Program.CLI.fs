@@ -720,6 +720,7 @@ module GraceCommand =
     let main args =
         let startTime = getCurrentInstant ()
         Auth.configureSdkAuth ()
+        Services.configureSdkClientIdentity ()
         Services.resetInvocationCorrelationId ()
 
         // Create a MemoryCache instance.

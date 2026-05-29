@@ -48,7 +48,7 @@ module Auth =
             parameters.CorrelationId <- correlationId
 
             try
-                use httpClient = getHttpClient correlationId
+                use httpClient = ClientIdentity.getHttpClient correlationId
                 let startTime = getCurrentInstant ()
 
                 let graceServerUri = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.GraceServerUri)

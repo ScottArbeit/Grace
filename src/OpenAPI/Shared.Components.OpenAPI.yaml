@@ -187,10 +187,16 @@ components:
           type: string
         Principal:
           type: string
+        ClientType:
+          $ref: '#/components/schemas/ClientType'
         Properties:
           type: object
           additionalProperties:
             type: string
+
+    ClientType:
+      description: The Grace client version string for the client that initiated an API request.
+      type: string
 
     GraceReturnValue:
       type: object

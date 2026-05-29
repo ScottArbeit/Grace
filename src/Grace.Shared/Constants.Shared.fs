@@ -188,6 +188,14 @@ module Constants =
     [<Literal>]
     let ServerApiVersionHeaderKey = "X-Api-Version"
 
+    /// The request header that identifies the Grace client type.
+    [<Literal>]
+    let ClientTypeHeaderKey = "X-Grace-Client-Type"
+
+    /// The request header that identifies the Grace client version.
+    [<Literal>]
+    let ClientVersionHeaderKey = "X-Grace-Client-Version"
+
     /// Environment variables used by Grace.
     module EnvironmentVariables =
         /// The environment variable that contains the Application Insights connection string.
