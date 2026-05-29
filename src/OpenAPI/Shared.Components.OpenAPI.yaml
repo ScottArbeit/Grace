@@ -195,13 +195,8 @@ components:
             type: string
 
     ClientType:
-      description: Identifies the Grace client that initiated an API request.
-      type: object
-      additionalProperties: false
-      properties:
-        CLI:
-          description: The Grace CLI assembly file version.
-          type: string
+      description: The Grace client version string for the client that initiated an API request.
+      type: string
 
     GraceReturnValue:
       type: object
