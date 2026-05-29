@@ -56,9 +56,9 @@ module Services =
         | _ -> None
 
     let private tryCreateClientType (context: HttpContext) =
-        match tryGetHeader context Constants.ClientTypeHeaderKey with
-        | Some clientType when clientType.Equals("CLI", StringComparison.OrdinalIgnoreCase) ->
-            Some(ClientType.CLI(defaultArg (tryGetHeader context Constants.ClientVersionHeaderKey) String.Empty))
+        match tryGetHeader context Constants.ClientTypeHeaderKey, tryGetHeader context Constants.ClientVersionHeaderKey with
+        | Some clientType, Some clientVersion when clientType.Equals("CLI", StringComparison.OrdinalIgnoreCase) ->
+            Some(ClientType.CLI clientVersion)
         | _ -> None
 
     /// Creates common metadata for Grace events.

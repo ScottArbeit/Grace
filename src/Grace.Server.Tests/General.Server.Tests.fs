@@ -95,6 +95,15 @@ module MetadataCreationTests =
 
         Assert.That(metadata.ClientType, Is.EqualTo(Microsoft.FSharp.Core.Option.None))
 
+    [<Test>]
+    let ``createMetadata leaves client type unset when CLI version header is missing`` () =
+        let context = createContext ()
+        context.Request.Headers[ Constants.ClientTypeHeaderKey ] <- "CLI"
+
+        let metadata = Grace.Server.Services.createMetadata context
+
+        Assert.That(metadata.ClientType, Is.EqualTo(Microsoft.FSharp.Core.Option.None))
+
 /// Defines the setup and teardown for all tests in the Grace.Server.Tests namespace.
 [<SetUpFixture>]
 type Setup() =
