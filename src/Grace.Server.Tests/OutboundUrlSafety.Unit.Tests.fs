@@ -252,6 +252,15 @@ type OutboundUrlSafetyUnit() =
             | Ok value -> Assert.Fail($"Expected redirect to be rejected but got {value.ScopedUrl.Url}.")
 
     [<Test>]
+    member _.RelativeRedirectsAreRejectedWithoutDereferencingAbsoluteUri() =
+        let original =
+            validatePublic (publicRequest "https://hooks.example.test/events")
+            |> assertAccepted
+
+        OutboundUrlPolicy.validateRedirect null emptyConfiguration original (Uri("/metadata", UriKind.Relative))
+        |> assertRejected ValidationFailure.InvalidUri
+
+    [<Test>]
     member _.RedactsUserInfoAndSensitiveQueryValues() =
         let redacted =
             OutboundUrlPolicy.Redaction.redactUri
@@ -274,6 +283,19 @@ type OutboundUrlSafetyUnit() =
             redacted,
             Is.EqualTo(
                 "https://hooks.example.test/path?refresh_token=REDACTED&id_token=REDACTED&State=REDACTED&NONCE=REDACTED&SAMLResponse=REDACTED&RelayState=REDACTED&X-Amz-Credential=REDACTED&X-Amz-Security-Token=REDACTED&Api_Key=REDACTED&oauth_token=REDACTED&x-api-key=REDACTED"
+            )
+        )
+
+    [<Test>]
+    member _.RedactsGoogleCloudSignedUrlQueryNamesCaseInsensitively() =
+        let redacted =
+            OutboundUrlPolicy.Redaction.redactUri
+                "https://storage.googleapis.com/bucket/object?X-Goog-Signature=sig&x-goog-credential=credential&X-GOOG-ALGORITHM=GOOG4-RSA-SHA256&x-goog-date=20260602T000000Z&X-Goog-Expires=3600&x-goog-signedheaders=host&keep=value"
+
+        Assert.That(
+            redacted,
+            Is.EqualTo(
+                "https://storage.googleapis.com/bucket/object?X-Goog-Signature=REDACTED&x-goog-credential=REDACTED&X-GOOG-ALGORITHM=REDACTED&x-goog-date=REDACTED&X-Goog-Expires=REDACTED&x-goog-signedheaders=REDACTED&keep=value"
             )
         )
 

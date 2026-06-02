@@ -435,14 +435,18 @@ module OutboundUrlSafety =
         validateWithResolver resolveHostAddresses (isDevelopmentHostEnvironment hostEnvironment) configuration request
 
     let validateRedirect (hostEnvironment: IHostEnvironment) (configuration: IConfiguration) (original: ValidatedOutboundUrl) (redirectUri: Uri) =
-        validate
-            hostEnvironment
-            configuration
-            {
-                Url = redirectUri.AbsoluteUri
-                RequestedSafety = original.ScopedUrl.Safety
-                AcknowledgeUnsafeLocalDevelopment = original.ScopedUrl.Safety = OutboundUrlSafety.LocalUnsafeDevOnly
-            }
+        if isNull redirectUri
+           || not redirectUri.IsAbsoluteUri then
+            Error InvalidUri
+        else
+            validate
+                hostEnvironment
+                configuration
+                {
+                    Url = redirectUri.AbsoluteUri
+                    RequestedSafety = original.ScopedUrl.Safety
+                    AcknowledgeUnsafeLocalDevelopment = original.ScopedUrl.Safety = OutboundUrlSafety.LocalUnsafeDevOnly
+                }
 
     module Redaction =
 
@@ -478,6 +482,12 @@ module OutboundUrlSafety =
                     "x-amz-signature"
                     "x-amz-credential"
                     "x-amz-security-token"
+                    "x-goog-signature"
+                    "x-goog-credential"
+                    "x-goog-algorithm"
+                    "x-goog-date"
+                    "x-goog-expires"
+                    "x-goog-signedheaders"
                     "sharedaccesssignature"
                     "se"
                     "sp"
