@@ -85,7 +85,7 @@ type OutboundUrlSafetyUnit() =
         validatePublic (publicRequest "http://hooks.example.test/events")
         |> assertRejected ValidationFailure.HttpsRequired
 
-        validatePublic (publicRequest "/relative")
+        validatePublic (publicRequest "relative/path")
         |> assertRejected ValidationFailure.InvalidUri
 
     [<Test>]
