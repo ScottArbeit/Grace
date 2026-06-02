@@ -19,6 +19,13 @@ module ApprovalRequest =
 
     open ApprovalCommon
 
+    let private requestSeedEnabled () =
+        let isDevelopment value = String.Equals(value, "Development", StringComparison.OrdinalIgnoreCase)
+
+        Environment.GetEnvironmentVariable("GRACE_TESTING") = "1"
+        || isDevelopment (Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT"))
+        || isDevelopment (Environment.GetEnvironmentVariable("DOTNET_ENVIRONMENT"))
+
     let private requestIdFromContext<'T when 'T :> ApprovalRequestParameters> (context: HttpContext) =
         task {
             context.Request.EnableBuffering()
@@ -29,12 +36,19 @@ module ApprovalRequest =
 
             return
                 tryParseGuid parameters.ApprovalRequestId
-                |> Option.bind ApprovalStore.tryGetRequest
+                |> Option.map (fun approvalRequestId ->
+                    let scope = scopeFromRequestParameters parameters
+                    ApprovalStore.tryGetRequestAsync approvalRequestId scope (Services.getCorrelationId context))
         }
 
     let resolveStoredRequestForRead<'T when 'T :> ApprovalRequestParameters> (context: HttpContext) =
         task {
-            let! request = requestIdFromContext<'T> context
+            let! requestTask = requestIdFromContext<'T> context
+
+            let! request =
+                match requestTask with
+                | Some getRequest -> getRequest
+                | None -> Task.FromResult None
 
             return
                 match request with
@@ -44,7 +58,12 @@ module ApprovalRequest =
 
     let resolveStoredRequestForRespond<'T when 'T :> ApprovalRequestParameters> (context: HttpContext) =
         task {
-            let! request = requestIdFromContext<'T> context
+            let! requestTask = requestIdFromContext<'T> context
+
+            let! request =
+                match requestTask with
+                | Some getRequest -> getRequest
+                | None -> Task.FromResult None
 
             return
                 match request with
@@ -91,45 +110,51 @@ module ApprovalRequest =
         else
             false
 
-    let private respond decision approvalRequestId reason clientDecisionId : HttpHandler =
+    let private respond decision approvalRequestId reason clientDecisionId fallbackScope : HttpHandler =
         fun _ context ->
             task {
-                match tryParseGuid approvalRequestId
-                      |> Option.bind ApprovalStore.tryGetRequest
-                    with
+                let correlationId = Services.getCorrelationId context
+
+                match tryParseGuid approvalRequestId with
                 | None -> return! Services.result404NotFound context
-                | Some request when request.Status.IsTerminal ->
-                    return!
-                        context
-                        |> Services.result400BadRequest (error context $"Approval request is already {request.Status}.")
-                | Some request when not (selectorMatches context request) ->
-                    return!
-                        context
-                        |> Services.result400BadRequest (error context "Caller does not match the stored approval responder selector.")
-                | Some request ->
-                    let status =
-                        match decision with
-                        | ApprovalDecision.Approve -> ApprovalRequestStatus.Approved
-                        | ApprovalDecision.Reject -> ApprovalRequestStatus.Rejected
+                | Some requestId ->
+                    match! ApprovalStore.tryGetRequestAsync requestId fallbackScope correlationId with
+                    | None -> return! Services.result404NotFound context
+                    | Some request when not (selectorMatches context request) ->
+                        return!
+                            context
+                            |> Services.result400BadRequest (error context "Caller does not match the stored approval responder selector.")
+                    | Some request ->
+                        let responder = currentUserId context
 
-                    let updated: Grace.Types.Webhooks.ApprovalRequest =
-                        { request with
-                            Status = status
-                            Decision =
-                                Some
-                                    { ApprovalRequestDecision.Default with
-                                        Decision = decision
-                                        DecidedBy = currentUserId context
-                                        DecidedAt = getCurrentInstant ()
-                                        Reason = if String.IsNullOrWhiteSpace reason then None else Some reason
-                                        ClientDecisionId = clientDecisionId
-                                    }
-                            UpdatedAt = Some(getCurrentInstant ())
-                        }
+                        let normalizedClientDecisionId =
+                            if String.IsNullOrWhiteSpace clientDecisionId then
+                                $"{requestId:N}:{decision}:{responder}"
+                            else
+                                clientDecisionId
 
-                    return!
-                        context
-                        |> Services.result200Ok (ApprovalStore.updateRequest updated)
+                        let requestDecision =
+                            { ApprovalRequestDecision.Default with
+                                Decision = decision
+                                DecidedBy = responder
+                                DecidedAt = getCurrentInstant ()
+                                Reason = if String.IsNullOrWhiteSpace reason then None else Some reason
+                                ClientDecisionId = normalizedClientDecisionId
+                            }
+
+                        match!
+                            ApprovalStore.handleRequestCommandAsync
+                                requestId
+                                request.Scope.RepositoryId
+                                (ApprovalRequestCommand.RecordDecision requestDecision)
+                                correlationId
+                                $"{responder}"
+                            with
+                        | Ok result ->
+                            return!
+                                context
+                                |> Services.result200Ok result.ReturnValue.Request
+                        | Error failure -> return! context |> Services.result400BadRequest failure
             }
 
     let List: HttpHandler =
@@ -138,9 +163,60 @@ module ApprovalRequest =
                 let! parameters = Services.parse<ListApprovalRequestsParameters> context
                 let scope = scopeFromRequestParameters parameters
 
-                return!
-                    context
-                    |> Services.result200Ok (ApprovalStore.listRequests scope parameters.IncludeTerminal)
+                let! requests = ApprovalStore.listRequestsAsync scope parameters.IncludeTerminal (Services.getCorrelationId context)
+                return! context |> Services.result200Ok requests
+            }
+
+    let SeedGenerated: HttpHandler =
+        fun _ context ->
+            task {
+                try
+                    if requestSeedEnabled () |> not then
+                        return! Services.result404NotFound context
+                    else
+                        let! parameters = Services.parse<SeedGeneratedApprovalRequestParameters> context
+
+                        let promotionSetId = tryParseGuid parameters.PromotionSetId
+
+                        let attempt =
+                            if parameters.StepsComputationAttempt.HasValue then
+                                Some parameters.StepsComputationAttempt.Value
+                            else
+                                None
+
+                        let request =
+                            { Grace.Types.Webhooks.ApprovalRequest.Default with
+                                ApprovalRequestId =
+                                    tryParseGuid parameters.ApprovalRequestId
+                                    |> Option.defaultValue ApprovalRequestId.Empty
+                                ApprovalPolicyId =
+                                    tryParseGuid parameters.ApprovalPolicyId
+                                    |> Option.defaultValue ApprovalPolicyId.Empty
+                                ApprovalPolicyVersion = parameters.ApprovalPolicyVersion
+                                Subject = parameters.Subject
+                                Scope =
+                                    { scopeFromRequestParameters parameters with
+                                        PromotionSetId = promotionSetId
+                                        StepsComputationAttempt = attempt
+                                        ApprovalPolicyId = tryParseGuid parameters.ApprovalPolicyId
+                                        ApprovalPolicyVersion = Some parameters.ApprovalPolicyVersion
+                                    }
+                                RequiredResponder = parameters.RequiredResponder
+                                Status = ApprovalRequestStatus.Pending
+                                CreatedBy = Grace.Types.Types.UserId parameters.CreatedBy
+                                CreatedAt = getCurrentInstant ()
+                            }
+
+                        match! ApprovalStore.seedGeneratedRequestAsync request (Services.getCorrelationId context) with
+                        | Ok stored -> return! context |> Services.result200Ok stored
+                        | Error failure -> return! context |> Services.result400BadRequest failure
+                with
+                | ex ->
+                    return!
+                        context
+                        |> Services.result400BadRequest (
+                            Grace.Types.Types.GraceError.CreateWithException ex "Approval request seed failed." (Services.getCorrelationId context)
+                        )
             }
 
     let Show: HttpHandler =
@@ -148,10 +224,13 @@ module ApprovalRequest =
             task {
                 let! parameters = Services.parse<ShowApprovalRequestParameters> context
 
-                match tryParseGuid parameters.ApprovalRequestId
-                      |> Option.bind ApprovalStore.tryGetRequest
-                    with
-                | Some request -> return! context |> Services.result200Ok request
+                match tryParseGuid parameters.ApprovalRequestId with
+                | Some requestId ->
+                    let scope = scopeFromRequestParameters parameters
+
+                    match! ApprovalStore.tryGetRequestAsync requestId scope (Services.getCorrelationId context) with
+                    | Some request -> return! context |> Services.result200Ok request
+                    | None -> return! Services.result404NotFound context
                 | None -> return! Services.result404NotFound context
             }
 
@@ -159,14 +238,16 @@ module ApprovalRequest =
         fun next context ->
             task {
                 let! parameters = Services.parse<ApproveApprovalRequestParameters> context
-                return! respond ApprovalDecision.Approve parameters.ApprovalRequestId parameters.Reason parameters.ClientDecisionId next context
+                let fallbackScope = scopeFromRequestParameters parameters
+                return! respond ApprovalDecision.Approve parameters.ApprovalRequestId parameters.Reason parameters.ClientDecisionId fallbackScope next context
             }
 
     let Reject: HttpHandler =
         fun next context ->
             task {
                 let! parameters = Services.parse<RejectApprovalRequestParameters> context
-                return! respond ApprovalDecision.Reject parameters.ApprovalRequestId parameters.Reason parameters.ClientDecisionId next context
+                let fallbackScope = scopeFromRequestParameters parameters
+                return! respond ApprovalDecision.Reject parameters.ApprovalRequestId parameters.Reason parameters.ClientDecisionId fallbackScope next context
             }
 
     let History: HttpHandler =
@@ -176,9 +257,9 @@ module ApprovalRequest =
 
                 match tryParseGuid parameters.ApprovalRequestId with
                 | Some requestId ->
-                    return!
-                        context
-                        |> Services.result200Ok (ApprovalStore.requestHistory requestId)
+                    let scope = scopeFromRequestParameters parameters
+                    let! history = ApprovalStore.requestHistoryAsync requestId scope (Services.getCorrelationId context)
+                    return! context |> Services.result200Ok history
                 | None ->
                     return!
                         context

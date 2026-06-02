@@ -946,6 +946,15 @@ module Notification =
                         getMachineName,
                         correlationId
                     )
+                | ApprovalRequestEvent approvalRequestEvent ->
+                    let correlationId = approvalRequestEvent.Metadata.CorrelationId
+
+                    log.LogInformation(
+                        "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Received ApprovalRequestEvent notification.",
+                        getCurrentInstantExtended (),
+                        getMachineName,
+                        correlationId
+                    )
 
                 match EventingPublisher.tryCreateEnvelope graceEvent with
                 | Some envelope ->

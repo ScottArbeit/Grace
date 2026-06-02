@@ -64,6 +64,8 @@ module Orleans =
                             | StateName.ValidationSet -> repositoryId ()
                             | StateName.ValidationResult -> repositoryId ()
                             | StateName.Artifact -> repositoryId ()
+                            | StateName.ApprovalRequest -> repositoryId ()
+                            | StateName.ApprovalRequestIndex -> repositoryId ()
                             | StateName.Reference -> repositoryId ()
                             | StateName.Reminder -> StateName.Reminder
                             | StateName.Repository -> organizationId ()

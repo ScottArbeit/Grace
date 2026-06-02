@@ -8,6 +8,7 @@ open Grace.Actors.Timing
 open Grace.Actors.Types
 open Grace.Shared
 open Grace.Types.Types
+open Grace.Types.Webhooks
 open Grace.Shared.Utilities
 open Orleans
 open Orleans.Runtime
@@ -286,6 +287,25 @@ module ActorProxy =
             let orleansContext = Dictionary<string, obj>()
             orleansContext.Add(nameof RepositoryId, repositoryId)
             orleansContext.Add(Constants.ActorNameProperty, ActorName.Artifact)
+            memoryCache.CreateOrleansContextEntry(grain.GetGrainId(), orleansContext)
+            grain
+
+    module ApprovalRequest =
+        let scopeKey (scope: ApprovalScope) = $"{scope.OwnerId:N}|{scope.OrganizationId:N}|{scope.RepositoryId:N}|{scope.TargetBranchId:N}"
+
+        let CreateActorProxy (approvalRequestId: ApprovalRequestId) (repositoryId: RepositoryId) (correlationId: string) =
+            let grain = orleansClient.CreateActorProxyWithCorrelationId<IApprovalRequestActor>(approvalRequestId, correlationId)
+            let orleansContext = Dictionary<string, obj>()
+            orleansContext.Add(nameof RepositoryId, repositoryId)
+            orleansContext.Add(Constants.ActorNameProperty, ActorName.ApprovalRequest)
+            memoryCache.CreateOrleansContextEntry(grain.GetGrainId(), orleansContext)
+            grain
+
+        let CreateIndexActorProxy (scope: ApprovalScope) (correlationId: string) =
+            let grain = orleansClient.CreateActorProxyWithCorrelationId<IApprovalRequestIndexActor>(scopeKey scope, correlationId)
+            let orleansContext = Dictionary<string, obj>()
+            orleansContext.Add(nameof RepositoryId, scope.RepositoryId)
+            orleansContext.Add(Constants.ActorNameProperty, ActorName.ApprovalRequestIndex)
             memoryCache.CreateOrleansContextEntry(grain.GetGrainId(), orleansContext)
             grain
 
