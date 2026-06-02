@@ -278,7 +278,7 @@ type WebhookDispatchUnitTests() =
             Assert.That(result.DeliveryCount, Is.EqualTo(0))
             Assert.That(transport.Requests, Is.Empty)
 
-            let referenceEvent =
+            let referenceEvent: ReferenceEvent =
                 {
                     Event =
                         ReferenceEventType.Created(
