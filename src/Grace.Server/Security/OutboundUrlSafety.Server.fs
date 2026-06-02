@@ -3,6 +3,7 @@ namespace Grace.Server.Security
 open Grace.Shared.Utilities
 open Grace.Types.Webhooks
 open Microsoft.Extensions.Configuration
+open Microsoft.Extensions.Hosting
 open System
 open System.Collections.Generic
 open System.Globalization
@@ -59,15 +60,7 @@ module OutboundUrlSafety =
             || String.Equals(value, "yes", StringComparison.OrdinalIgnoreCase)
         | None -> false
 
-    let isDevelopmentEnvironment (configuration: IConfiguration) =
-        let isDevelopment value = String.Equals(value, "Development", StringComparison.OrdinalIgnoreCase)
-
-        match tryGetConfigValue configuration "ASPNETCORE_ENVIRONMENT" with
-        | Some value when isDevelopment value -> true
-        | _ ->
-            match tryGetConfigValue configuration "DOTNET_ENVIRONMENT" with
-            | Some value -> isDevelopment value
-            | None -> false
+    let isDevelopmentHostEnvironment (hostEnvironment: IHostEnvironment) = if isNull hostEnvironment then false else hostEnvironment.IsDevelopment()
 
     let private isLocalhostName (host: string) = String.Equals(host, "localhost", StringComparison.OrdinalIgnoreCase)
 
@@ -318,11 +311,11 @@ module OutboundUrlSafety =
             | Some address -> Ok [| normalizeAddress address |]
             | None -> validateResolvedHost resolver uri.Host
 
-    let private validateLocalDevelopmentTarget (configuration: IConfiguration) (request: ValidationRequest) (uri: Uri) =
+    let private validateLocalDevelopmentTarget (isDevelopmentHostEnvironment: bool) (configuration: IConfiguration) (request: ValidationRequest) (uri: Uri) =
         if
             not
                 (
-                    isDevelopmentEnvironment configuration
+                    isDevelopmentHostEnvironment
                     && isUnsafeLocalDevelopmentEnabled configuration
                     && request.AcknowledgeUnsafeLocalDevelopment
                 )
@@ -340,7 +333,7 @@ module OutboundUrlSafety =
         else
             Error(UnsafeHostRejected uri.Host)
 
-    let validateWithResolver (resolver: HostAddressResolver) (configuration: IConfiguration) (request: ValidationRequest) =
+    let validateWithResolver (resolver: HostAddressResolver) (isDevelopmentHostEnvironment: bool) (configuration: IConfiguration) (request: ValidationRequest) =
         if String.IsNullOrWhiteSpace request.Url then
             Error MissingUrl
         else
@@ -360,7 +353,7 @@ module OutboundUrlSafety =
                 let validation =
                     match request.RequestedSafety with
                     | OutboundUrlSafety.PublicHttps -> validatePublicTarget resolver uri
-                    | OutboundUrlSafety.LocalUnsafeDevOnly -> validateLocalDevelopmentTarget configuration request uri
+                    | OutboundUrlSafety.LocalUnsafeDevOnly -> validateLocalDevelopmentTarget isDevelopmentHostEnvironment configuration request uri
 
                 validation
                 |> Result.map (fun resolvedAddresses ->
@@ -371,10 +364,12 @@ module OutboundUrlSafety =
                         ResolvedAddresses = resolvedAddresses
                     })
 
-    let validate (configuration: IConfiguration) (request: ValidationRequest) = validateWithResolver resolveHostAddresses configuration request
+    let validate (hostEnvironment: IHostEnvironment) (configuration: IConfiguration) (request: ValidationRequest) =
+        validateWithResolver resolveHostAddresses (isDevelopmentHostEnvironment hostEnvironment) configuration request
 
-    let validateRedirect (configuration: IConfiguration) (original: ValidatedOutboundUrl) (redirectUri: Uri) =
+    let validateRedirect (hostEnvironment: IHostEnvironment) (configuration: IConfiguration) (original: ValidatedOutboundUrl) (redirectUri: Uri) =
         validate
+            hostEnvironment
             configuration
             {
                 Url = redirectUri.AbsoluteUri
@@ -388,14 +383,17 @@ module OutboundUrlSafety =
             HashSet<string>(
                 [
                     "api_key"
+                    "apikey"
                     "sig"
                     "signature"
                     "token"
+                    "oauth_token"
                     "access_token"
                     "refresh_token"
                     "id_token"
                     "code"
                     "key"
+                    "x-api-key"
                     "secret"
                     "client_secret"
                     "password"
@@ -448,6 +446,7 @@ module OutboundUrlSafety =
                         builder.Password <- String.Empty
 
                     builder.Query <- redactQuery uri.Query
+                    builder.Fragment <- String.Empty
                     builder.Uri.AbsoluteUri
                 else
                     "[invalid-uri-redacted]"
