@@ -48,6 +48,16 @@ module EndpointAuthorizationManifest =
             endpoint "POST" "/approval/request/reject" (Authorized(ApprovalRequestRespond, Repository))
             endpoint "POST" "/approval/request/history" (Authorized(ApprovalRequestRead, Repository))
             endpoint "POST" "/approval/request/_seedGenerated" Authenticated
+            endpoint "POST" "/webhook/rule/create" (Authorized(WebhookManage, Repository))
+            endpoint "POST" "/webhook/rule/list" (Authorized(WebhookManage, Repository))
+            endpoint "POST" "/webhook/rule/show" (Authorized(WebhookManage, Repository))
+            endpoint "POST" "/webhook/rule/update" (Authorized(WebhookManage, Repository))
+            endpoint "POST" "/webhook/rule/enable" (Authorized(WebhookManage, Repository))
+            endpoint "POST" "/webhook/rule/disable" (Authorized(WebhookManage, Repository))
+            endpoint "POST" "/webhook/rule/delete" (Authorized(WebhookManage, Repository))
+            endpoint "POST" "/webhook/rule/test" (Authorized(WebhookManage, Repository))
+            endpoint "POST" "/webhook/delivery/list" (Authorized(WebhookDeliveryRead, Repository))
+            endpoint "POST" "/webhook/delivery/show" (Authorized(WebhookDeliveryRead, Repository))
             endpoint "GET" "/auth/login" AllowAnonymous
             endpoint "GET" "/auth/login/%s" AllowAnonymous
             endpoint "GET" "/auth/logout" Authenticated

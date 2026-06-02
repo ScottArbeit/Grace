@@ -291,6 +291,30 @@ module Application =
                 return ApprovalCommon.resourceFromApprovalScope scope
             }
 
+        let webhookRuleResourceFromContext (context: HttpContext) =
+            task {
+                context.Request.EnableBuffering()
+                let! parameters = context.BindJsonAsync<Webhook.WebhookRuleParameters>()
+
+                context.Request.Body.Seek(0L, IO.SeekOrigin.Begin)
+                |> ignore
+
+                let scope = WebhookCommon.scopeFromRuleParameters parameters
+                return WebhookCommon.resourceFromWebhookScope scope
+            }
+
+        let webhookDeliveryListResourceFromContext (context: HttpContext) =
+            task {
+                context.Request.EnableBuffering()
+                let! parameters = context.BindJsonAsync<Webhook.WebhookDeliveryParameters>()
+
+                context.Request.Body.Seek(0L, IO.SeekOrigin.Begin)
+                |> ignore
+
+                let scope = WebhookCommon.scopeFromDeliveryParameters parameters
+                return WebhookCommon.resourceFromWebhookScope scope
+            }
+
         let requireApprovalPolicyManage: HttpHandler =
             AuthorizationMiddleware.requiresPermission Operation.ApprovalPolicyManage approvalPolicyResourceFromContext
 
@@ -323,6 +347,32 @@ module Application =
 
         let requireApprovalRequestReject: HttpHandler =
             AuthorizationMiddleware.requiresPermissionResolved ApprovalRequest.resolveStoredRequestForRespond<Approval.RejectApprovalRequestParameters>
+
+        let requireWebhookRuleManage: HttpHandler = AuthorizationMiddleware.requiresPermission Operation.WebhookManage webhookRuleResourceFromContext
+
+        let requireWebhookRuleShow: HttpHandler =
+            AuthorizationMiddleware.requiresPermissionResolved WebhookRule.resolveStoredRuleForManage<Webhook.ShowWebhookRuleParameters>
+
+        let requireWebhookRuleUpdate: HttpHandler =
+            AuthorizationMiddleware.requiresPermissionResolved WebhookRule.resolveStoredRuleForManage<Webhook.UpdateWebhookRuleParameters>
+
+        let requireWebhookRuleEnable: HttpHandler =
+            AuthorizationMiddleware.requiresPermissionResolved WebhookRule.resolveStoredRuleForManage<Webhook.EnableWebhookRuleParameters>
+
+        let requireWebhookRuleDisable: HttpHandler =
+            AuthorizationMiddleware.requiresPermissionResolved WebhookRule.resolveStoredRuleForManage<Webhook.DisableWebhookRuleParameters>
+
+        let requireWebhookRuleDelete: HttpHandler =
+            AuthorizationMiddleware.requiresPermissionResolved WebhookRule.resolveStoredRuleForManage<Webhook.DeleteWebhookRuleParameters>
+
+        let requireWebhookRuleTest: HttpHandler =
+            AuthorizationMiddleware.requiresPermissionResolved WebhookRule.resolveStoredRuleForManage<Webhook.TestWebhookRuleParameters>
+
+        let requireWebhookDeliveryRead: HttpHandler =
+            AuthorizationMiddleware.requiresPermission Operation.WebhookDeliveryRead webhookDeliveryListResourceFromContext
+
+        let requireWebhookDeliveryShow: HttpHandler =
+            AuthorizationMiddleware.requiresPermissionResolved WebhookDelivery.resolveStoredDeliveryForRead<Webhook.ShowWebhookDeliveryParameters>
 
         let requirePathWrite: HttpHandler = AuthorizationMiddleware.requiresPermissions Operation.PathWrite uploadPathResourcesFromContext
 
@@ -907,6 +957,42 @@ module Application =
 
                                route "/history" (composeHandlers requireApprovalRequestHistory ApprovalRequest.History)
                                |> addMetadata typeof<Approval.ApprovalRequestHistoryParameters> ]
+                    ]
+                subRoute
+                    "/webhook/rule"
+                    [
+                        POST [ route "/create" (composeHandlers requireWebhookRuleManage WebhookRule.Create)
+                               |> addMetadata typeof<Webhook.CreateWebhookRuleParameters>
+
+                               route "/list" (composeHandlers requireWebhookRuleManage WebhookRule.List)
+                               |> addMetadata typeof<Webhook.ListWebhookRulesParameters>
+
+                               route "/show" (composeHandlers requireWebhookRuleShow WebhookRule.Show)
+                               |> addMetadata typeof<Webhook.ShowWebhookRuleParameters>
+
+                               route "/update" (composeHandlers requireWebhookRuleUpdate WebhookRule.Update)
+                               |> addMetadata typeof<Webhook.UpdateWebhookRuleParameters>
+
+                               route "/enable" (composeHandlers requireWebhookRuleEnable WebhookRule.Enable)
+                               |> addMetadata typeof<Webhook.EnableWebhookRuleParameters>
+
+                               route "/disable" (composeHandlers requireWebhookRuleDisable WebhookRule.Disable)
+                               |> addMetadata typeof<Webhook.DisableWebhookRuleParameters>
+
+                               route "/delete" (composeHandlers requireWebhookRuleDelete WebhookRule.Delete)
+                               |> addMetadata typeof<Webhook.DeleteWebhookRuleParameters>
+
+                               route "/test" (composeHandlers requireWebhookRuleTest WebhookRule.Test)
+                               |> addMetadata typeof<Webhook.TestWebhookRuleParameters> ]
+                    ]
+                subRoute
+                    "/webhook/delivery"
+                    [
+                        POST [ route "/list" (composeHandlers requireWebhookDeliveryRead WebhookDelivery.List)
+                               |> addMetadata typeof<Webhook.ListWebhookDeliveriesParameters>
+
+                               route "/show" (composeHandlers requireWebhookDeliveryShow WebhookDelivery.Show)
+                               |> addMetadata typeof<Webhook.ShowWebhookDeliveryParameters> ]
                     ]
                 subRoute
                     "/branch"

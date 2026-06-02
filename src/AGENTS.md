@@ -23,8 +23,12 @@ update the issue before editing the new paths.
 - When the user says `Plan <work item>`, plan the work in chat. Create a GitHub issue only when the user explicitly asks
   for one, asks to start tracked implementation, or otherwise requests tracker setup.
 - For tracked multi-step implementation, follow `docs/Development process.md`: create an epic parent issue, link
-  sub-issues for each implementation step, and include a DAG in the parent issue that shows dependencies and
-  parallelization opportunities.
+  sub-issues for each implementation step, assign each sub-issue's parent issue relationship to the epic in GitHub
+  Relationships, and include a DAG in the parent issue that shows dependencies and parallelization opportunities. As
+  each sub-issue completes, update the epic checklist.
+- Before assigning or starting a sub-issue, require the minimum detail gate: invariant tuple, forbidden implementation
+  shapes, expected tests, and high-risk adversarial examples. The issue should be contextual enough for a low-reasoning
+  implementation agent to succeed from the issue body alone, while actual coding and fix workers use GPT-5.5 Medium.
 - Create or switch to an issue-owned branch/worktree from latest `origin/main` before editing implementation files.
 - Prefer vertical slices that prove one public behavior at a time through the closest stable boundary.
 - Validate changes with `pwsh ./scripts/validate.ps1 -Fast` (use `-Full` for Aspire integration coverage).
@@ -32,9 +36,16 @@ update the issue before editing the new paths.
 - Resolve all compilation errors before considering a task complete.
 - Run impacted tests for each task and fix failures introduced by your changes.
 - Create a new git commit after each completed task to keep review scope clear.
-- When acting as the main implementation orchestrator, keep coding and code review work in subagents, including fixes in
-  response to review results. The main agent coordinates issues, subagents, pull requests, and final integration
-  evidence. Follow the required subagent review loop in `docs/Development process.md`.
+- When acting as the main implementation orchestrator, delegate all coding and fixing tasks to GPT-5.5 Medium worker
+  subagents and use GPT-5.4-mini xhigh review-only subagents for code review. The main orchestrator must not implement,
+  repair, inspect or validate code fixes as a substitute for the worker, or commit code changes locally. If an earlier
+  worker thread is lost, compacted away, leaves uncommitted work, or cannot be resumed, assign the continuation to a
+  fresh GPT-5.5 Medium worker subagent with the existing worktree/branch context and required validation. The main
+  agent coordinates issues, prompts, review ledgers, pull requests, CI/merge status, docs/process updates, and final
+  integration evidence. Follow the required subagent review loop in `docs/Development process.md`.
+- Persist each review-only subagent report, including "Reviewed And OK" notes, to the issue or pull request before
+  launching another review pass. Later review prompts should include prior OK notes and ask the reviewer to re-check
+  them only when the new diff affects those areas.
 - When the user asks to address a code review comment, review comment, PR feedback, or similar, complete the full
   review-thread workflow: evaluate the comment, make the appropriate fix or explicitly explain why no code change is
   needed, validate the result, commit and push the branch, reply to the GitHub review comment with the outcome and
