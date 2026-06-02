@@ -49,8 +49,8 @@ completed sub-issues are checked.
   check its box in the epic.
 - Before assigning or starting a sub-issue, apply the minimum detail gate: the issue body must include the invariant
   tuple, forbidden implementation shapes, expected tests, and high-risk adversarial examples. Keep each sub-issue small,
-  clear, and contextual enough that a low-reasoning implementation agent could reasonably implement it from the issue
-  body alone, while still assigning actual coding and fix work to GPT-5.5 Medium workers.
+  clear, and contextual enough that an implementation agent could reasonably implement it from the issue body alone
+  without hidden project context.
 - Declare owned paths, forbidden or sensitive paths, risk surfaces, validation, docs impact, and definition of done
   before editing.
 - After the issue exists, claim it and create an issue-owned branch/worktree from latest `origin/main` before editing.
@@ -58,16 +58,19 @@ completed sub-issues are checked.
 - Use `pwsh ./scripts/validate.ps1 -Full` when Aspire, emulators, storage, Service Bus, Cosmos DB, Redis,
   deployment/runtime behavior, or cross-service integration is affected.
 - Commit after each completed slice and keep pull requests focused and reviewable.
-- When acting as the main implementation orchestrator, delegate all coding and fixing tasks to GPT-5.5 Medium worker
-  subagents and use GPT-5.4-mini xhigh review-only subagents for code review. The main orchestrator must not implement,
-  repair, inspect or validate code fixes as a substitute for the worker, or commit code changes locally. If an earlier
-  worker thread is lost, compacted away, leaves uncommitted work, or cannot be resumed, assign the continuation to a
-  fresh GPT-5.5 Medium worker subagent with the existing worktree/branch context and required validation. The main
-  agent coordinates issues, prompts, review ledgers, pull requests, CI/merge status, docs/process updates, and final
-  integration evidence. Follow the required subagent review loop in `docs/Development process.md`.
-- After each review-only subagent pass, persist the findings and "Reviewed And OK" notes to the GitHub issue or pull
-  request before starting another review pass. Include prior "Reviewed And OK" notes in later review prompts so
-  reviewers can build on prior coverage instead of repeating it.
+- When acting as the main implementation orchestrator, delegate all coding and fixing tasks to worker subagents and use
+  fresh review-only subagents for code review. The main orchestrator must not implement, repair, inspect or validate
+  code fixes as a substitute for the worker, or commit code changes locally. If an earlier worker thread is lost,
+  compacted away, leaves uncommitted work, or cannot be resumed, assign the continuation to a fresh worker subagent with
+  the existing worktree/branch context and required validation. The main agent coordinates issues, prompts, review
+  ledgers, pull requests, CI/merge status, docs/process updates, and final integration evidence. Follow the required
+  subagent review loop in `docs/Development process.md`.
+- After the first coding subagent that works on an issue commits and pushes the new branch to origin, open a normal
+  ready-for-review pull request. Keep it open while the step is still in progress so subsequent code-review findings,
+  fixes, and "Reviewed And OK" notes can be recorded on the pull request instead of only on the issue.
+- After each review-only subagent pass, persist the findings and "Reviewed And OK" notes to the pull request when one
+  exists, or to the GitHub issue before the first pull request exists. Include prior "Reviewed And OK" notes in later
+  review prompts so reviewers can build on prior coverage instead of repeating it.
 - Open normal ready-for-review pull requests. Do not open draft pull requests unless the user explicitly asks for a
   draft.
 - When the user says a PR is merged, verify the merge, delete the issue branch and worktree, run `git fetch --prune`,
