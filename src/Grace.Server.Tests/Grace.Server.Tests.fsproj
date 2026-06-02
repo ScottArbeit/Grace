@@ -24,6 +24,7 @@
     <Compile Include="AuthMapping.Unit.Tests.fs" />
     <Compile Include="Authorization.Unit.Tests.fs" />
     <Compile Include="OutboundUrlSafety.Unit.Tests.fs" />
+    <Compile Include="Approval.Server.Tests.fs" />
     <Compile Include="Access.Server.Tests.fs" />
     <Compile Include="Storage.Server.Tests.fs" />
     <Compile Include="DedupeIndex.Server.Tests.fs" />

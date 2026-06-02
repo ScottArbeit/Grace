@@ -34,6 +34,19 @@ module EndpointAuthorizationManifest =
             endpoint "POST" "/access/upsertPathPermission" (Authorized(RepoAdmin, Repository))
             endpoint "POST" "/admin/deleteAllFromCosmosDB" (Authorized(SystemAdmin, System))
             endpoint "POST" "/admin/deleteAllRemindersFromCosmosDB" (Authorized(SystemAdmin, System))
+            endpoint "POST" "/approval/policy/create" (Authorized(ApprovalPolicyManage, Repository))
+            endpoint "POST" "/approval/policy/list" (Authorized(ApprovalPolicyManage, Repository))
+            endpoint "POST" "/approval/policy/show" (Authorized(ApprovalPolicyManage, Repository))
+            endpoint "POST" "/approval/policy/update" (Authorized(ApprovalPolicyManage, Repository))
+            endpoint "POST" "/approval/policy/enable" (Authorized(ApprovalPolicyManage, Repository))
+            endpoint "POST" "/approval/policy/disable" (Authorized(ApprovalPolicyManage, Repository))
+            endpoint "POST" "/approval/policy/delete" (Authorized(ApprovalPolicyManage, Repository))
+            endpoint "POST" "/approval/policy/evaluate" (Authorized(ApprovalPolicyManage, Repository))
+            endpoint "POST" "/approval/request/list" (Authorized(ApprovalRequestRead, Repository))
+            endpoint "POST" "/approval/request/show" (Authorized(ApprovalRequestRead, Repository))
+            endpoint "POST" "/approval/request/approve" (Authorized(ApprovalRequestRespond, Repository))
+            endpoint "POST" "/approval/request/reject" (Authorized(ApprovalRequestRespond, Repository))
+            endpoint "POST" "/approval/request/history" (Authorized(ApprovalRequestRead, Repository))
             endpoint "GET" "/auth/login" AllowAnonymous
             endpoint "GET" "/auth/login/%s" AllowAnonymous
             endpoint "GET" "/auth/logout" Authenticated

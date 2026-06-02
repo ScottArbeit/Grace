@@ -1,0 +1,247 @@
+namespace Grace.Server.Tests
+
+open Grace.Server
+open Grace.Server.Tests.Services
+open Grace.Shared
+open Grace.Shared.Utilities
+open Grace.Types
+open Grace.Types.Types
+open Grace.Types.Webhooks
+open NUnit.Framework
+open System
+open System.Net
+open System.Net.Http
+open System.Threading.Tasks
+
+module private ApprovalTestHelpers =
+
+    let createAuthenticatedClient (userId: string) =
+        let client = new HttpClient()
+        client.BaseAddress <- Client.BaseAddress
+        client.DefaultRequestHeaders.Add("x-grace-user-id", userId)
+        client
+
+    let createClientWithGroup (userId: string) (groupId: string) =
+        let client = createAuthenticatedClient userId
+        client.DefaultRequestHeaders.Add("x-grace-groups", groupId)
+        client
+
+    let createUnauthenticatedClient () =
+        let client = new HttpClient()
+        client.BaseAddress <- Client.BaseAddress
+        client
+
+    let grantRoleAsync
+        (client: HttpClient)
+        (scopeKind: string)
+        (ownerId: string)
+        (organizationId: string)
+        (repositoryId: string)
+        (branchId: string)
+        (principalId: string)
+        (roleId: string)
+        =
+        task {
+            let parameters = Parameters.Access.GrantRoleParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.BranchId <- branchId
+            parameters.PrincipalType <- "User"
+            parameters.PrincipalId <- principalId
+            parameters.ScopeKind <- scopeKind
+            parameters.RoleId <- roleId
+            parameters.Source <- "test"
+            parameters.CorrelationId <- generateCorrelationId ()
+
+            return! client.PostAsync("/access/grantRole", createJsonContent parameters)
+        }
+
+    let createPolicyParameters (repositoryId: string) (branchId: string) =
+        let parameters = Parameters.Approval.CreateApprovalPolicyParameters()
+        parameters.OwnerId <- ownerId
+        parameters.OrganizationId <- organizationId
+        parameters.RepositoryId <- repositoryId
+        parameters.TargetBranchId <- branchId
+        parameters.Name <- $"policy-{Guid.NewGuid():N}"
+        parameters.Subject <- "promotion"
+        parameters.RequiredResponder <- "role:ApprovalResponder"
+        parameters.CorrelationId <- generateCorrelationId ()
+        parameters
+
+    let showPolicyParameters (repositoryId: string) (branchId: string) (policyId: string) =
+        let parameters = Parameters.Approval.ShowApprovalPolicyParameters()
+        parameters.OwnerId <- ownerId
+        parameters.OrganizationId <- organizationId
+        parameters.RepositoryId <- repositoryId
+        parameters.TargetBranchId <- branchId
+        parameters.ApprovalPolicyId <- policyId
+        parameters.CorrelationId <- generateCorrelationId ()
+        parameters
+
+    let requestParameters<'T when 'T :> Parameters.Approval.ApprovalRequestParameters and 'T: (new: unit -> 'T)>
+        (repositoryId: string)
+        (branchId: string)
+        (requestId: string)
+        =
+        let parameters = new 'T()
+        parameters.OwnerId <- ownerId
+        parameters.OrganizationId <- organizationId
+        parameters.RepositoryId <- repositoryId
+        parameters.TargetBranchId <- branchId
+        parameters.ApprovalRequestId <- requestId
+        parameters.CorrelationId <- generateCorrelationId ()
+        parameters
+
+    let seedRequest (repositoryId: string) (branchId: string) (selector: string) =
+        let requestId = Guid.NewGuid()
+
+        ApprovalStore.seedGeneratedRequest
+            { ApprovalRequest.Default with
+                ApprovalRequestId = requestId
+                ApprovalPolicyId = Guid.NewGuid()
+                ApprovalPolicyVersion = 1
+                Subject = "promotion"
+                Scope =
+                    { ApprovalScope.Default with
+                        OwnerId = Guid.Parse ownerId
+                        OrganizationId = Guid.Parse organizationId
+                        RepositoryId = Guid.Parse repositoryId
+                        TargetBranchId = Guid.Parse branchId
+                    }
+                RequiredResponder = selector
+                Status = ApprovalRequestStatus.Pending
+                CreatedBy = UserId "workflow"
+                CreatedAt = getCurrentInstant ()
+            }
+        |> ignore
+
+        requestId.ToString()
+
+[<NonParallelizable>]
+type ApprovalApiIntegrationTests() =
+
+    [<SetUp>]
+    member _.SetUp() = ApprovalStore.clearForTests ()
+
+    [<Test>]
+    member _.PolicyLifecycleHappyPath() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let branchId = repositoryDefaultBranchIds[0]
+            let adminUser = $"{Guid.NewGuid()}"
+
+            let! grant = ApprovalTestHelpers.grantRoleAsync Client "repo" ownerId organizationId repositoryId "" adminUser "RepoAdmin"
+            Assert.That(grant.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+
+            use adminClient = ApprovalTestHelpers.createAuthenticatedClient adminUser
+
+            let! createResponse =
+                adminClient.PostAsync("/approval/policy/create", createJsonContent (ApprovalTestHelpers.createPolicyParameters repositoryId branchId))
+
+            Assert.That(createResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+
+            let! created = deserializeContent<ApprovalPolicy> createResponse
+            Assert.That(created.Status, Is.EqualTo(ApprovalPolicyStatus.Disabled))
+
+            let showParameters = ApprovalTestHelpers.showPolicyParameters repositoryId branchId (created.ApprovalPolicyId.ToString())
+            let! enableResponse = adminClient.PostAsync("/approval/policy/enable", createJsonContent showParameters)
+            Assert.That(enableResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+
+            let! showResponse = adminClient.PostAsync("/approval/policy/show", createJsonContent showParameters)
+            Assert.That(showResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+
+            let! evaluateResponse =
+                adminClient.PostAsync("/approval/policy/evaluate", createJsonContent (ApprovalTestHelpers.createPolicyParameters repositoryId branchId))
+
+            Assert.That(evaluateResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+
+            let! disableResponse = adminClient.PostAsync("/approval/policy/disable", createJsonContent showParameters)
+            Assert.That(disableResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+
+            let! deleteResponse = adminClient.PostAsync("/approval/policy/delete", createJsonContent showParameters)
+            Assert.That(deleteResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+        }
+
+    [<Test>]
+    member _.NoPublicApprovalRequestCreateRouteExists() =
+        task {
+            use client = ApprovalTestHelpers.createAuthenticatedClient $"{Guid.NewGuid()}"
+            let! response = client.PostAsync("/approval/request/create", createJsonContent (obj ()))
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.NotFound))
+        }
+
+    [<Test>]
+    member _.ResponseRejectsMissingRespondPermissionEvenWhenSelectorMatches() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let branchId = repositoryDefaultBranchIds[0]
+            let userId = $"{Guid.NewGuid()}"
+            let requestId = ApprovalTestHelpers.seedRequest repositoryId branchId $"user:{userId}"
+
+            let! grant = ApprovalTestHelpers.grantRoleAsync Client "repo" ownerId organizationId repositoryId "" userId "RepoReader"
+            Assert.That(grant.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+
+            use client = ApprovalTestHelpers.createAuthenticatedClient userId
+            let parameters = ApprovalTestHelpers.requestParameters<Parameters.Approval.ApproveApprovalRequestParameters> repositoryId branchId requestId
+            let! response = client.PostAsync("/approval/request/approve", createJsonContent parameters)
+
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden))
+        }
+
+    [<Test>]
+    member _.ResponseRejectsResponderRoleCallerWhenSelectorDoesNotMatch() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let branchId = repositoryDefaultBranchIds[0]
+            let userId = $"{Guid.NewGuid()}"
+            let requestId = ApprovalTestHelpers.seedRequest repositoryId branchId "group:release-managers"
+
+            let! grant = ApprovalTestHelpers.grantRoleAsync Client "branch" ownerId organizationId repositoryId branchId userId "ApprovalResponder"
+            Assert.That(grant.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+
+            use client = ApprovalTestHelpers.createAuthenticatedClient userId
+            let parameters = ApprovalTestHelpers.requestParameters<Parameters.Approval.RejectApprovalRequestParameters> repositoryId branchId requestId
+            let! response = client.PostAsync("/approval/request/reject", createJsonContent parameters)
+
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
+        }
+
+    [<Test>]
+    member _.BodySuppliedScopeEscalationDoesNotBypassStoredScope() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let allowedBranchId = repositoryDefaultBranchIds[0]
+            let storedBranchId = $"{Guid.NewGuid()}"
+            let userId = $"{Guid.NewGuid()}"
+            let requestId = ApprovalTestHelpers.seedRequest repositoryId storedBranchId $"user:{userId}"
+
+            let! grant = ApprovalTestHelpers.grantRoleAsync Client "branch" ownerId organizationId repositoryId allowedBranchId userId "ApprovalResponder"
+            Assert.That(grant.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+
+            use client = ApprovalTestHelpers.createAuthenticatedClient userId
+            let parameters = ApprovalTestHelpers.requestParameters<Parameters.Approval.ApproveApprovalRequestParameters> repositoryId allowedBranchId requestId
+            let! response = client.PostAsync("/approval/request/approve", createJsonContent parameters)
+
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden))
+        }
+
+    [<Test>]
+    member _.DuplicateResponseIsRejectedAfterTerminalDecision() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let branchId = repositoryDefaultBranchIds[0]
+            let userId = $"{Guid.NewGuid()}"
+            let requestId = ApprovalTestHelpers.seedRequest repositoryId branchId $"user:{userId}"
+
+            let! grant = ApprovalTestHelpers.grantRoleAsync Client "branch" ownerId organizationId repositoryId branchId userId "ApprovalResponder"
+            Assert.That(grant.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+
+            use client = ApprovalTestHelpers.createAuthenticatedClient userId
+            let parameters = ApprovalTestHelpers.requestParameters<Parameters.Approval.RejectApprovalRequestParameters> repositoryId branchId requestId
+            let! first = client.PostAsync("/approval/request/reject", createJsonContent parameters)
+            Assert.That(first.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+
+            let! duplicate = client.PostAsync("/approval/request/reject", createJsonContent parameters)
+            Assert.That(duplicate.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
+        }

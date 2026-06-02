@@ -104,6 +104,40 @@ type AuthorizationSemanticsTests() =
         Assert.That(repoAdmin.AllowedOperations.Contains BranchAdmin, Is.True)
 
     [<Test>]
+    member _.ApprovalOperationsUseConservativeRoleGrants() =
+        let repoAdmin =
+            roleCatalog
+            |> List.find (fun role -> role.RoleId.Equals("RepoAdmin", StringComparison.OrdinalIgnoreCase))
+
+        let repoReader =
+            roleCatalog
+            |> List.find (fun role -> role.RoleId.Equals("RepoReader", StringComparison.OrdinalIgnoreCase))
+
+        let repoContributor =
+            roleCatalog
+            |> List.find (fun role -> role.RoleId.Equals("RepoContributor", StringComparison.OrdinalIgnoreCase))
+
+        let responder =
+            roleCatalog
+            |> List.find (fun role -> role.RoleId.Equals("ApprovalResponder", StringComparison.OrdinalIgnoreCase))
+
+        Assert.That(repoAdmin.AllowedOperations.Contains ApprovalPolicyManage, Is.True)
+        Assert.That(repoAdmin.AllowedOperations.Contains ApprovalRequestRead, Is.True)
+        Assert.That(repoAdmin.AllowedOperations.Contains ApprovalRequestRespond, Is.True)
+        Assert.That(repoAdmin.AllowedOperations.Contains WebhookManage, Is.True)
+        Assert.That(repoAdmin.AllowedOperations.Contains WebhookDeliveryRead, Is.True)
+
+        Assert.That(repoReader.AllowedOperations.Contains ApprovalRequestRead, Is.True)
+        Assert.That(repoReader.AllowedOperations.Contains ApprovalRequestRespond, Is.False)
+        Assert.That(repoContributor.AllowedOperations.Contains ApprovalRequestRespond, Is.False)
+
+        Assert.That(responder.AppliesTo.Contains("repository"), Is.True)
+        Assert.That(responder.AppliesTo.Contains("branch"), Is.True)
+        Assert.That(responder.AllowedOperations.Count, Is.EqualTo(2))
+        Assert.That(responder.AllowedOperations.Contains ApprovalRequestRead, Is.True)
+        Assert.That(responder.AllowedOperations.Contains ApprovalRequestRespond, Is.True)
+
+    [<Test>]
     member _.IrrelevantAssignmentsDoNotAffectDecision() =
         let property (operation: Operation) =
             let scope = Scope.Repository(ownerId, organizationId, repositoryId)

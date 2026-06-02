@@ -35,6 +35,7 @@
                 <Compile Include="WorkItem.SDK.fs" />
                 <Compile Include="Policy.SDK.fs" />
                 <Compile Include="PromotionSet.SDK.fs" />
+                <Compile Include="Approval.SDK.fs" />
                 <Compile Include="Review.SDK.fs" />
                 <Compile Include="Queue.SDK.fs" />
                 <Compile Include="ValidationSet.SDK.fs" />

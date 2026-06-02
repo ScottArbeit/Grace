@@ -28,7 +28,12 @@ module Authorization =
                   BranchRead
                   BranchWrite
                   PathRead
-                  PathWrite ]
+                  PathWrite
+                  ApprovalPolicyManage
+                  ApprovalRequestRead
+                  ApprovalRequestRespond
+                  WebhookManage
+                  WebhookDeliveryRead ]
 
         let private ownerAdminOperations =
             set [ OwnerAdmin
@@ -42,7 +47,12 @@ module Authorization =
                   BranchRead
                   BranchWrite
                   PathRead
-                  PathWrite ]
+                  PathWrite
+                  ApprovalPolicyManage
+                  ApprovalRequestRead
+                  ApprovalRequestRespond
+                  WebhookManage
+                  WebhookDeliveryRead ]
 
         let private ownerReaderOperations =
             set [ OwnerRead
@@ -61,7 +71,12 @@ module Authorization =
                   PathRead
                   BranchAdmin
                   BranchWrite
-                  BranchRead ]
+                  BranchRead
+                  ApprovalPolicyManage
+                  ApprovalRequestRead
+                  ApprovalRequestRespond
+                  WebhookManage
+                  WebhookDeliveryRead ]
 
         let private orgReaderOperations =
             set [ OrgRead
@@ -77,7 +92,12 @@ module Authorization =
                   PathRead
                   BranchAdmin
                   BranchWrite
-                  BranchRead ]
+                  BranchRead
+                  ApprovalPolicyManage
+                  ApprovalRequestRead
+                  ApprovalRequestRespond
+                  WebhookManage
+                  WebhookDeliveryRead ]
 
         let private repoContributorOperations =
             set [ RepoWrite
@@ -87,19 +107,24 @@ module Authorization =
                   BranchWrite
                   BranchRead ]
 
-        let private repoReaderOperations = set [ RepoRead; PathRead; BranchRead ]
+        let private repoReaderOperations =
+            set [ RepoRead
+                  PathRead
+                  BranchRead
+                  ApprovalRequestRead ]
 
         let private branchAdminOperations =
             set [ BranchAdmin
                   BranchWrite
                   BranchRead ]
 
-        let private branchWriterOperations =
-            set [ BranchWrite
-                  BranchRead ]
+        let private branchWriterOperations = set [ BranchWrite; BranchRead ]
 
-        let private branchReaderOperations =
-            set [ BranchRead ]
+        let private branchReaderOperations = set [ BranchRead ]
+
+        let private approvalResponderOperations =
+            set [ ApprovalRequestRead
+                  ApprovalRequestRespond ]
 
         let private roles: RoleDefinition list =
             [
@@ -114,6 +139,13 @@ module Authorization =
                 { RoleId = "BranchAdmin"; AllowedOperations = branchAdminOperations; AppliesTo = Set.ofList [ scopeBranch ] }
                 { RoleId = "BranchWriter"; AllowedOperations = branchWriterOperations; AppliesTo = Set.ofList [ scopeBranch ] }
                 { RoleId = "BranchReader"; AllowedOperations = branchReaderOperations; AppliesTo = Set.ofList [ scopeBranch ] }
+                {
+                    RoleId = "ApprovalResponder"
+                    AllowedOperations = approvalResponderOperations
+                    AppliesTo =
+                        Set.ofList [ scopeRepository
+                                     scopeBranch ]
+                }
             ]
 
         let getAll () = roles
