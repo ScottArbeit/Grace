@@ -30,6 +30,7 @@
         <Compile Include="Branch.Types.fs" />
         
         <Compile Include="PromotionSet.Types.fs" />
+        <Compile Include="Webhooks.Types.fs" />
         <Compile Include="WorkItem.Types.fs" />
         <Compile Include="Policy.Types.fs" />
         <Compile Include="RequiredAction.Types.fs" />
