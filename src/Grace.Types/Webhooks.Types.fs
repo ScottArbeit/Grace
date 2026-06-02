@@ -443,20 +443,6 @@ module ExternalWebhookEventRegistry =
                 }
         }
 
-    let All = [ promotionSetApplied ]
-
-    let tryParse (eventName: string) =
-        if String.IsNullOrWhiteSpace eventName then
-            None
-        else
-            All
-            |> List.tryFind (fun definition -> String.Equals(definition.Name, eventName.Trim(), StringComparison.Ordinal))
-
-    let parse eventName =
-        match tryParse eventName with
-        | Some definition -> Ok definition
-        | None -> Error $"Unknown external webhook event '{eventName}'."
-
     let validateUniqueCanonicalSources definitions =
         let duplicates =
             definitions
@@ -485,3 +471,22 @@ module ExternalWebhookEventRegistry =
                 |> String.concat "; "
 
             Error $"External webhook event registry contains duplicate canonical sources: {duplicateText}."
+
+    let private registryDefinitions = [ promotionSetApplied ]
+
+    let All =
+        match validateUniqueCanonicalSources registryDefinitions with
+        | Ok () -> registryDefinitions
+        | Error errorText -> failwith errorText
+
+    let tryParse (eventName: string) =
+        if String.IsNullOrWhiteSpace eventName then
+            None
+        else
+            All
+            |> List.tryFind (fun definition -> String.Equals(definition.Name, eventName.Trim(), StringComparison.Ordinal))
+
+    let parse eventName =
+        match tryParse eventName with
+        | Some definition -> Ok definition
+        | None -> Error $"Unknown external webhook event '{eventName}'."

@@ -191,6 +191,12 @@ type ExternalWebhookEventRegistryTests() =
         )
 
     [<Test>]
+    member _.RegistryHasUniqueCanonicalSources() =
+        match validateUniqueCanonicalSources All with
+        | Ok () -> Assert.Pass()
+        | Error errorText -> Assert.Fail(errorText)
+
+    [<Test>]
     member _.RegistryRejectsDuplicateCanonicalSources() =
         let duplicate = { promotionSetApplied with Name = "promotion-set.applied.copy" }
 
