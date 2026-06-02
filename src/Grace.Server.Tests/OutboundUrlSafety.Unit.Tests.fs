@@ -260,6 +260,15 @@ type OutboundUrlSafetyUnit() =
         )
 
     [<Test>]
+    member _.RedactsSensitiveQueryValuesDelimitedWithSemicolons() =
+        let redacted = OutboundUrlPolicy.Redaction.redactUri "https://hooks.example.test/path?keep=value;access_token=secret;client_secret=also-secret"
+
+        Assert.That(redacted, Is.EqualTo("https://hooks.example.test/path?keep=value&access_token=REDACTED&client_secret=REDACTED"))
+
+        Assert.That(redacted, Does.Not.Contain("=secret"))
+        Assert.That(redacted, Does.Not.Contain("also-secret"))
+
+    [<Test>]
     member _.RedactionOmitsFragments() =
         let redacted = OutboundUrlPolicy.Redaction.redactUri "https://hooks.example.test/callback?keep=value#access_token=fragment-token&oauth_token=oauth"
 

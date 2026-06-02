@@ -421,7 +421,7 @@ module OutboundUrlSafety =
             else
                 query
                     .TrimStart('?')
-                    .Split('&', StringSplitOptions.None)
+                    .Split([| '&'; ';' |], StringSplitOptions.None)
                 |> Array.map (fun part ->
                     let separator = part.IndexOf('=')
                     let name = if separator < 0 then part else part.Substring(0, separator)
