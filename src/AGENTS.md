@@ -23,8 +23,9 @@ update the issue before editing the new paths.
 - When the user says `Plan <work item>`, plan the work in chat. Create a GitHub issue only when the user explicitly asks
   for one, asks to start tracked implementation, or otherwise requests tracker setup.
 - For tracked multi-step implementation, follow `docs/Development process.md`: create an epic parent issue, link
-  sub-issues for each implementation step, and include a DAG in the parent issue that shows dependencies and
-  parallelization opportunities.
+  sub-issues for each implementation step, assign each sub-issue's parent issue relationship to the epic in GitHub
+  Relationships, and include a DAG in the parent issue that shows dependencies and parallelization opportunities. As
+  each sub-issue completes, update the epic checklist.
 - Create or switch to an issue-owned branch/worktree from latest `origin/main` before editing implementation files.
 - Prefer vertical slices that prove one public behavior at a time through the closest stable boundary.
 - Validate changes with `pwsh ./scripts/validate.ps1 -Fast` (use `-Full` for Aspire integration coverage).

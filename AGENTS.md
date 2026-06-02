@@ -30,8 +30,10 @@ Use GitHub issues and pull requests as the active coordination surface for imple
 For non-trivial work, follow `docs/Development process.md`: create or confirm a GitHub issue, declare owned paths,
 create an issue-owned branch/worktree, validate in focused slices, commit after each completed slice, and record docs
 impact and skipped validation.
-For multi-step implementation plans, create an epic parent issue with linked sub-issues for each implementation step and
-include a DAG in the parent issue that shows dependencies and parallelization opportunities.
+For multi-step implementation plans, create an epic parent issue with linked sub-issues for each implementation step,
+assign each sub-issue's parent issue relationship to the epic in GitHub Relationships, and include a DAG in the parent
+issue that shows dependencies and parallelization opportunities. As sub-issues complete, update the epic checklist so
+completed sub-issues are checked.
 
 ## Development Process
 
@@ -42,9 +44,10 @@ include a DAG in the parent issue that shows dependencies and parallelization op
 - When the user asks to create a GitHub issue, use the Grace agent task template and stop before implementation edits
   unless they also ask you to implement.
 - For tracked implementation work, keep one visible task record: the GitHub issue.
-- For multi-step implementation plans, use an epic parent issue, linked sub-issues, and a DAG in the parent issue. Keep
-  each sub-issue small, clear, and contextual enough that a frontier reasoning model using low reasoning effort can
-  reasonably implement it from the issue body.
+- For multi-step implementation plans, use an epic parent issue, linked sub-issues, native GitHub parent relationships,
+  and a DAG in the parent issue. Keep each sub-issue small, clear, and contextual enough that a frontier reasoning model
+  using low reasoning effort can reasonably implement it from the issue body. As each sub-issue completes, check its box
+  in the epic.
 - Declare owned paths, forbidden or sensitive paths, risk surfaces, validation, docs impact, and definition of done
   before editing.
 - After the issue exists, claim it and create an issue-owned branch/worktree from latest `origin/main` before editing.

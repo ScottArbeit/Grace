@@ -30,7 +30,8 @@ contract for the branch, worktree, validation, and pull request.
 For single-slice implementation work, that issue can be the whole task record. For multi-step implementation plans, use
 an epic parent issue plus one linked sub-issue for each implementation step. The parent issue owns the overall goal,
 dependency map, and integration status. Each sub-issue owns one implementation slice, branch/worktree, validation path,
-review loop, and pull request.
+review loop, and pull request. When creating the epic and sub-issues, assign each sub-issue's parent issue relationship
+to the epic in GitHub Relationships.
 
 The parent issue for a multi-step implementation plan must include a DAG that shows:
 
@@ -38,6 +39,9 @@ The parent issue for a multi-step implementation plan must include a DAG that sh
 - dependencies between steps
 - steps that can run in parallel
 - the expected integration order when parallel branches converge
+
+The parent issue must also include a sub-issue checklist. As sub-issues complete, update that checklist so completed
+sub-issues are checked.
 
 Keep each sub-issue small and clear enough that a frontier reasoning model using low reasoning effort can reasonably
 succeed from the issue body alone. Include the behavior to change, relevant context and evidence, owned paths, forbidden
