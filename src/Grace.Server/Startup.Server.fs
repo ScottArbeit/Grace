@@ -267,6 +267,63 @@ module Application =
 
         let requireBranchWrite: HttpHandler = AuthorizationMiddleware.requiresPermission Operation.BranchWrite branchResourceFromContext
 
+        let approvalPolicyResourceFromContext (context: HttpContext) =
+            task {
+                context.Request.EnableBuffering()
+                let! parameters = context.BindJsonAsync<Approval.ApprovalPolicyParameters>()
+
+                context.Request.Body.Seek(0L, IO.SeekOrigin.Begin)
+                |> ignore
+
+                let scope = ApprovalCommon.scopeFromPolicyParameters parameters
+                return ApprovalCommon.resourceFromApprovalScope scope
+            }
+
+        let approvalRequestListResourceFromContext (context: HttpContext) =
+            task {
+                context.Request.EnableBuffering()
+                let! parameters = context.BindJsonAsync<Approval.ApprovalRequestParameters>()
+
+                context.Request.Body.Seek(0L, IO.SeekOrigin.Begin)
+                |> ignore
+
+                let scope = ApprovalCommon.scopeFromRequestParameters parameters
+                return ApprovalCommon.resourceFromApprovalScope scope
+            }
+
+        let requireApprovalPolicyManage: HttpHandler =
+            AuthorizationMiddleware.requiresPermission Operation.ApprovalPolicyManage approvalPolicyResourceFromContext
+
+        let requireApprovalPolicyShow: HttpHandler =
+            AuthorizationMiddleware.requiresPermissionResolved ApprovalPolicy.resolveStoredPolicyForManage<Approval.ShowApprovalPolicyParameters>
+
+        let requireApprovalPolicyUpdate: HttpHandler =
+            AuthorizationMiddleware.requiresPermissionResolved ApprovalPolicy.resolveStoredPolicyForManage<Approval.UpdateApprovalPolicyParameters>
+
+        let requireApprovalPolicyEnable: HttpHandler =
+            AuthorizationMiddleware.requiresPermissionResolved ApprovalPolicy.resolveStoredPolicyForManage<Approval.EnableApprovalPolicyParameters>
+
+        let requireApprovalPolicyDisable: HttpHandler =
+            AuthorizationMiddleware.requiresPermissionResolved ApprovalPolicy.resolveStoredPolicyForManage<Approval.DisableApprovalPolicyParameters>
+
+        let requireApprovalPolicyDelete: HttpHandler =
+            AuthorizationMiddleware.requiresPermissionResolved ApprovalPolicy.resolveStoredPolicyForManage<Approval.DeleteApprovalPolicyParameters>
+
+        let requireApprovalRequestRead: HttpHandler =
+            AuthorizationMiddleware.requiresPermission Operation.ApprovalRequestRead approvalRequestListResourceFromContext
+
+        let requireApprovalRequestShow: HttpHandler =
+            AuthorizationMiddleware.requiresPermissionResolved ApprovalRequest.resolveStoredRequestForRead<Approval.ShowApprovalRequestParameters>
+
+        let requireApprovalRequestHistory: HttpHandler =
+            AuthorizationMiddleware.requiresPermissionResolved ApprovalRequest.resolveStoredRequestForRead<Approval.ApprovalRequestHistoryParameters>
+
+        let requireApprovalRequestApprove: HttpHandler =
+            AuthorizationMiddleware.requiresPermissionResolved ApprovalRequest.resolveStoredRequestForRespond<Approval.ApproveApprovalRequestParameters>
+
+        let requireApprovalRequestReject: HttpHandler =
+            AuthorizationMiddleware.requiresPermissionResolved ApprovalRequest.resolveStoredRequestForRespond<Approval.RejectApprovalRequestParameters>
+
         let requirePathWrite: HttpHandler = AuthorizationMiddleware.requiresPermissions Operation.PathWrite uploadPathResourcesFromContext
 
         let requirePathWriteForUploadUri: HttpHandler = AuthorizationMiddleware.requiresPermissions Operation.PathWrite uploadUriResourcesFromContext
@@ -803,6 +860,51 @@ module Application =
                               htmlString $"<h1>Grace server seems healthy!</h1><br/><p>The current server time is: {getCurrentInstantExtended ()}.</p>"))
                       |> addMetadata (AllowAnonymousAttribute()) ]
                 PUT []
+                subRoute
+                    "/approval/policy"
+                    [
+                        POST [ route "/create" (composeHandlers requireApprovalPolicyManage ApprovalPolicy.Create)
+                               |> addMetadata typeof<Approval.CreateApprovalPolicyParameters>
+
+                               route "/list" (composeHandlers requireApprovalPolicyManage ApprovalPolicy.List)
+                               |> addMetadata typeof<Approval.ListApprovalPoliciesParameters>
+
+                               route "/show" (composeHandlers requireApprovalPolicyShow ApprovalPolicy.Show)
+                               |> addMetadata typeof<Approval.ShowApprovalPolicyParameters>
+
+                               route "/update" (composeHandlers requireApprovalPolicyUpdate ApprovalPolicy.Update)
+                               |> addMetadata typeof<Approval.UpdateApprovalPolicyParameters>
+
+                               route "/enable" (composeHandlers requireApprovalPolicyEnable ApprovalPolicy.Enable)
+                               |> addMetadata typeof<Approval.EnableApprovalPolicyParameters>
+
+                               route "/disable" (composeHandlers requireApprovalPolicyDisable ApprovalPolicy.Disable)
+                               |> addMetadata typeof<Approval.DisableApprovalPolicyParameters>
+
+                               route "/delete" (composeHandlers requireApprovalPolicyDelete ApprovalPolicy.Delete)
+                               |> addMetadata typeof<Approval.DeleteApprovalPolicyParameters>
+
+                               route "/evaluate" (composeHandlers requireApprovalPolicyManage ApprovalPolicy.Evaluate)
+                               |> addMetadata typeof<Approval.EvaluateApprovalPolicyParameters> ]
+                    ]
+                subRoute
+                    "/approval/request"
+                    [
+                        POST [ route "/list" (composeHandlers requireApprovalRequestRead ApprovalRequest.List)
+                               |> addMetadata typeof<Approval.ListApprovalRequestsParameters>
+
+                               route "/show" (composeHandlers requireApprovalRequestShow ApprovalRequest.Show)
+                               |> addMetadata typeof<Approval.ShowApprovalRequestParameters>
+
+                               route "/approve" (composeHandlers requireApprovalRequestApprove ApprovalRequest.Approve)
+                               |> addMetadata typeof<Approval.ApproveApprovalRequestParameters>
+
+                               route "/reject" (composeHandlers requireApprovalRequestReject ApprovalRequest.Reject)
+                               |> addMetadata typeof<Approval.RejectApprovalRequestParameters>
+
+                               route "/history" (composeHandlers requireApprovalRequestHistory ApprovalRequest.History)
+                               |> addMetadata typeof<Approval.ApprovalRequestHistoryParameters> ]
+                    ]
                 subRoute
                     "/branch"
                     [

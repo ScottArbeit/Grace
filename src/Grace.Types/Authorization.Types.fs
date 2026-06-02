@@ -69,6 +69,11 @@ module Authorization =
         | BranchWrite
         | PathRead
         | PathWrite
+        | ApprovalPolicyManage
+        | ApprovalRequestRead
+        | ApprovalRequestRespond
+        | WebhookManage
+        | WebhookDeliveryRead
 
         static member GetKnownTypes() = GetKnownTypes<Operation>()
 
