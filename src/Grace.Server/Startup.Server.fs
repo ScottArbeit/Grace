@@ -943,6 +943,9 @@ module Application =
                         POST [ route "/list" (composeHandlers requireApprovalRequestRead ApprovalRequest.List)
                                |> addMetadata typeof<Approval.ListApprovalRequestsParameters>
 
+                               route "/_seedGenerated" ApprovalRequest.SeedGenerated
+                               |> addMetadata typeof<Approval.SeedGeneratedApprovalRequestParameters>
+
                                route "/show" (composeHandlers requireApprovalRequestShow ApprovalRequest.Show)
                                |> addMetadata typeof<Approval.ShowApprovalRequestParameters>
 

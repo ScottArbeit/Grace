@@ -96,3 +96,14 @@ module Approval =
     /// Parameters for /approval/request/history.
     type ApprovalRequestHistoryParameters() =
         inherit ApprovalRequestParameters()
+
+    /// Internal workflow/test seam for generated approval requests. Not exposed through SDK create APIs.
+    type SeedGeneratedApprovalRequestParameters() =
+        inherit ApprovalRequestParameters()
+        member val public ApprovalPolicyId = String.Empty with get, set
+        member val public ApprovalPolicyVersion = 1 with get, set
+        member val public Subject = String.Empty with get, set
+        member val public RequiredResponder = String.Empty with get, set
+        member val public PromotionSetId = String.Empty with get, set
+        member val public StepsComputationAttempt = Nullable<int>() with get, set
+        member val public CreatedBy = "workflow" with get, set

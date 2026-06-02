@@ -66,7 +66,12 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
     let propertyLookup = ConcurrentDictionary<Type, EntityProperties>()
 
     /// Paths that we want to ignore, because they won't have Ids and Names in the body.
-    let ignorePaths = [ "/healthz"; "/notifications" ]
+    let ignorePaths =
+        [
+            "/healthz"
+            "/notifications"
+            "/approval/request/_seedGenerated"
+        ]
 
     /// Gets the parameter type for the endpoint from the endpoint metadata created in Startup.Server.fs.
     let getBodyType (context: HttpContext) =

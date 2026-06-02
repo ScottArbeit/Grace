@@ -47,6 +47,7 @@ module EndpointAuthorizationManifest =
             endpoint "POST" "/approval/request/approve" (Authorized(ApprovalRequestRespond, Repository))
             endpoint "POST" "/approval/request/reject" (Authorized(ApprovalRequestRespond, Repository))
             endpoint "POST" "/approval/request/history" (Authorized(ApprovalRequestRead, Repository))
+            endpoint "POST" "/approval/request/_seedGenerated" Authenticated
             endpoint "POST" "/webhook/rule/create" (Authorized(WebhookManage, Repository))
             endpoint "POST" "/webhook/rule/list" (Authorized(WebhookManage, Repository))
             endpoint "POST" "/webhook/rule/show" (Authorized(WebhookManage, Repository))

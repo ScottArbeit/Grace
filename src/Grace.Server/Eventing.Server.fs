@@ -24,8 +24,7 @@ module EventingPublisher =
             | _ -> Option.None
         | _ -> Option.None
 
-    let private tryGetRepositoryId (metadata: EventMetadata) =
-        tryGetGuidFromMetadata (nameof RepositoryId) metadata
+    let private tryGetRepositoryId (metadata: EventMetadata) = tryGetGuidFromMetadata (nameof RepositoryId) metadata
 
     let private tryGetOwnerId (metadata: EventMetadata) = tryGetGuidFromMetadata (nameof OwnerId) metadata
 
@@ -67,11 +66,7 @@ module EventingPublisher =
         | PromotionSetEventType.ApplyFailed _ -> AutomationEventType.PromotionSetApplyFailed
         | PromotionSetEventType.LogicalDeleted _ -> AutomationEventType.PromotionSetUpdated
 
-    let tryCreateAgentSessionEnvelope
-        (eventType: AutomationEventType)
-        (metadata: EventMetadata)
-        (operationResult: AgentSessionOperationResult)
-        =
+    let tryCreateAgentSessionEnvelope (eventType: AutomationEventType) (metadata: EventMetadata) (operationResult: AgentSessionOperationResult) =
         let actorId =
             if String.IsNullOrWhiteSpace operationResult.Session.AgentId then
                 tryGetActorId metadata "AgentSession"
@@ -220,6 +215,7 @@ module EventingPublisher =
                 (serialize workItemEvent)
             |> Some
         | PolicyEvent _
+        | ApprovalRequestEvent _
         | OwnerEvent _
         | BranchEvent _
         | DirectoryVersionEvent _

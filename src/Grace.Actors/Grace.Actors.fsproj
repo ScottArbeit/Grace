@@ -50,6 +50,7 @@
         <Compile Include="ValidationSet.Actor.fs" />
         <Compile Include="ValidationResult.Actor.fs" />
         <Compile Include="Artifact.Actor.fs" />
+        <Compile Include="ApprovalRequest.Actor.fs" />
         <Compile Include="DedupeIndex.Actor.fs" />
         <Compile Include="ContentBlockMetadata.Actor.fs" />
         <Compile Include="UploadSession.Actor.fs" />

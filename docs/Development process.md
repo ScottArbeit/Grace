@@ -43,10 +43,24 @@ The parent issue for a multi-step implementation plan must include a DAG that sh
 The parent issue must also include a sub-issue checklist. As sub-issues complete, update that checklist so completed
 sub-issues are checked.
 
-Keep each sub-issue small and clear enough that a frontier reasoning model using low reasoning effort can reasonably
-succeed from the issue body alone. Include the behavior to change, relevant context and evidence, owned paths, forbidden
-or sensitive paths, validation commands, docs impact, and the definition of done. If a step needs hidden project
+Keep each sub-issue small and clear enough that a low-reasoning implementation agent can reasonably succeed from the
+issue body alone. This detail standard does not lower the actual model requirement for coding and fix work; those
+workers still use GPT-5.5 Medium unless the maintainer explicitly changes the policy. If a step needs hidden project
 knowledge to succeed, split it smaller or add the missing context before assigning it.
+
+Before assigning or starting a sub-issue, apply this minimum detail gate:
+
+- Invariant tuple: the actor, route, command, DTO, stored object, or workflow state that must remain true; the identity
+  dimensions that define "same" versus "stale"; and the durable source of truth.
+- Forbidden implementation shapes: shortcuts that would satisfy the happy path while violating the design, security
+  boundary, durability model, or public contract.
+- Expected tests: focused positive, negative, regression, and boundary tests that must exist before the worker can call
+  the slice complete.
+- High-risk adversarial examples: stale IDs, cross-scope objects, reordered events, retries, duplicate requests, mutable
+  config, cancellation, redaction, or other edge cases likely to trick a shallow implementation.
+
+Include the behavior to change, relevant context and evidence, owned paths, forbidden or sensitive paths, validation
+commands, docs impact, and the definition of done.
 
 The issue should include this information:
 
@@ -193,9 +207,17 @@ YAML parsing, or `git diff --check`.
 ## Required Agent Orchestration And Review
 
 When acting as the main agent for a tracked implementation, stay in the orchestrator role. The main agent owns issue
-coordination, DAG sequencing, subagent assignment, pull request updates, review/fix routing, and final integration
-evidence. Coding work must be delegated to implementation subagents, including fixes made in response to code review
-results. Code review work must be delegated to fresh local review-only sibling subagents.
+coordination, DAG sequencing, prompts, review ledgers, pull request updates, CI/merge status, docs/process updates,
+review/fix routing, and final integration evidence. The main orchestrator must delegate all coding and fixing tasks to
+GPT-5.5 Medium worker subagents and must not implement, repair, inspect or validate code fixes as a substitute for the
+worker, or commit code changes locally. Code review work must be delegated to fresh local review-only sibling subagents
+using GPT-5.4-mini xhigh.
+
+If an earlier worker thread is lost, compacted away, leaves uncommitted work, or otherwise cannot be resumed, the main
+orchestrator must assign the continuation to a fresh GPT-5.5 Medium worker subagent. The continuation prompt must
+include the existing worktree and branch, current git status, prior objective, owned and forbidden paths, validation
+requirements, and any review findings or review-ledger notes already recorded. The main orchestrator may inspect enough
+metadata to route the work safely, but it must not take over code implementation or code-fix validation itself.
 
 A coding task is not complete until a parent/orchestrator thread runs a fresh local review-only sibling subagent after
 the implementation slice has been validated and committed. The review agent must be a sibling of the implementation
@@ -204,7 +226,9 @@ agent, not a nested `codex review` process launched from inside an existing agen
 The implementation subagent must stop after committing and validating the slice and return a
 [Ready For Review handoff](#ready-for-review-handoff) to the parent/orchestrator thread. The parent/orchestrator is
 responsible for spawning the fresh review-only sibling subagent, collecting its findings, and sending actionable issues
-back to an implementation subagent for fixes.
+back to an implementation subagent for fixes. After every review-only pass, the parent/orchestrator must persist the
+review report to the GitHub issue or pull request before starting the next implementation or review pass. The persisted
+report must include both actionable findings and the "Reviewed And OK" notes.
 
 If the subagent launcher directly exposes a dedicated Code Review mode, skill, command, or capability, select it
 explicitly for the review-only sibling subagent. Do not assume that a generic prompt asking a model to act like a
@@ -214,10 +238,9 @@ Do not run `codex review` through the shell from inside an agent or subagent. Do
 automatic Codex pull request review, or another external pull-request review bot for this completion gate. Those flows
 are intentionally outside the Grace development loop because they are too slow for each review-fix turn.
 
-The review-only sibling subagent must use a medium-sized, lower-cost model with high reasoning effort, or the nearest
-equivalent available in the active model provider. The subagent prompt must say to act strictly as a code reviewer, not
-edit files, inspect the committed diff and relevant surrounding code/tests, report only actionable issues, and clearly
-say when there are no issues.
+The review-only sibling subagent must use GPT-5.4-mini xhigh. The subagent prompt must say to act strictly as a code
+reviewer, not edit files, inspect the committed diff and relevant surrounding code/tests, report only actionable issues,
+and clearly say when there are no issues.
 
 Code review turns can legitimately take several minutes. After spawning a review-only sibling subagent, allow it to run
 for up to 10 minutes before analyzing whether it is stalled or still making useful progress. Do not interrupt or replace
@@ -236,17 +259,23 @@ The review loop is blocking:
    references where possible, or a clear no-issues result. The final report must include a short "Reviewed And OK"
    section with brief bullets for non-issues the reviewer explicitly checked, especially concerns raised by prior
    review passes.
-4. If the review finds issues, send them to an implementation subagent to address in the issue-owned branch/worktree.
-5. The implementation subagent re-runs focused validation for the changed behavior or docs, plus broader validation when
+4. Persist the full review report to the issue or pull request. If another review pass will run later, copy the prior
+   "Reviewed And OK" notes into that review prompt and tell the reviewer to treat them as already-reviewed unless the
+   new diff affects those areas.
+5. If the review finds a missing acceptance-criterion class, repeated trap, or issue-template gap that could affect
+   active future workers, amend the active future issues or templates before spawning parallel workers. Preserve issue
+   history by appending an addendum unless replacing stale text is clearer and safe.
+6. If the review finds issues, send them to an implementation subagent to address in the issue-owned branch/worktree.
+7. The implementation subagent re-runs focused validation for the changed behavior or docs, plus broader validation when
    the fix touches shared or risky surfaces.
-6. The implementation subagent commits the review fix and returns a new Ready For Review handoff.
-7. If a pull request already exists, add a new standalone pull request comment for the review fix using the
+8. The implementation subagent commits the review fix and returns a new Ready For Review handoff.
+9. If a pull request already exists, add a new standalone pull request comment for the review fix using the
    [Review/Fix comment template](#reviewfix-comment-template). The comment must make the high-level outcome easy to
    scan before the detailed issue and fix text. Do not add review-fix notes to the pull request body. If the pull
    request does not exist yet, add the standalone comment immediately after opening the pull request.
-8. From the parent/orchestrator thread, spawn another fresh review-only sibling subagent pass against the updated
+10. From the parent/orchestrator thread, spawn another fresh review-only sibling subagent pass against the updated
    committed diff, again using a dedicated Code Review capability when the subagent launcher directly exposes one.
-9. Repeat the loop until the review reports no issues.
+11. Repeat the loop until the review reports no issues.
 
 Only after a fresh local review-only sibling subagent reports no issues can the task continue toward pull request
 creation, handoff, merge readiness, or any other completion step. Record whether a dedicated subagent Code Review
@@ -272,12 +301,11 @@ or spawning nested review work. Instead, it must return this handoff to the pare
 
 ### Review Request
 
-Please spawn a fresh local review-only sibling subagent using a medium-sized, lower-cost model with high reasoning.
-Use the subagent launcher's dedicated Code Review capability if it is directly exposed. Do not run `codex review`
-through the shell. Allow the review subagent to run for up to 10 minutes before analyzing whether it is stalled. The
-review subagent must report back when complete with either actionable findings or a clear no-issues result. The report
-must include a short "Reviewed And OK" section naming plausible concerns it checked that were not problems, especially
-anything checked by prior review passes.
+Please spawn a fresh local review-only sibling subagent using GPT-5.4-mini xhigh. Use the subagent launcher's dedicated
+Code Review capability if it is directly exposed. Do not run `codex review` through the shell. Allow the review subagent
+to run for up to 10 minutes before analyzing whether it is stalled. The review subagent must report back when complete
+with either actionable findings or a clear no-issues result. The report must include a short "Reviewed And OK" section
+naming plausible concerns it checked that were not problems, especially anything checked by prior review passes.
 ```
 
 If the sibling review finds issues, the parent/orchestrator sends those findings to an implementation subagent. The
