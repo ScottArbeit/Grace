@@ -30,6 +30,8 @@ Use GitHub issues and pull requests as the active coordination surface for imple
 For non-trivial work, follow `docs/Development process.md`: create or confirm a GitHub issue, declare owned paths,
 create an issue-owned branch/worktree, validate in focused slices, commit after each completed slice, and record docs
 impact and skipped validation.
+For multi-step implementation plans, create an epic parent issue with linked sub-issues for each implementation step and
+include a DAG in the parent issue that shows dependencies and parallelization opportunities.
 
 ## Development Process
 
@@ -40,6 +42,9 @@ impact and skipped validation.
 - When the user asks to create a GitHub issue, use the Grace agent task template and stop before implementation edits
   unless they also ask you to implement.
 - For tracked implementation work, keep one visible task record: the GitHub issue.
+- For multi-step implementation plans, use an epic parent issue, linked sub-issues, and a DAG in the parent issue. Keep
+  each sub-issue small, clear, and contextual enough that a frontier reasoning model using low reasoning effort can
+  reasonably implement it from the issue body.
 - Declare owned paths, forbidden or sensitive paths, risk surfaces, validation, docs impact, and definition of done
   before editing.
 - After the issue exists, claim it and create an issue-owned branch/worktree from latest `origin/main` before editing.
@@ -47,22 +52,9 @@ impact and skipped validation.
 - Use `pwsh ./scripts/validate.ps1 -Full` when Aspire, emulators, storage, Service Bus, Cosmos DB, Redis,
   deployment/runtime behavior, or cross-service integration is affected.
 - Commit after each completed slice and keep pull requests focused and reviewable.
-- Before treating coding work as complete, the parent/orchestrator thread must run a fresh local review-only sibling
-  subagent. If implementation work is already running inside a delegated subagent, that subagent must stop after
-  committing and validating, return a Ready For Review handoff, and let the parent/orchestrator spawn the sibling
-  reviewer. Do not run `codex review` through the shell from inside an agent or subagent. If the subagent launcher
-  directly exposes a dedicated Code Review mode, skill, command, or capability, select it explicitly; do not assume that
-  a generic reviewer prompt activates it. Do not use GitHub `@codex review`, automatic Codex pull request review, or
-  another external pull-request review bot for this completion gate. The review subagent must use a medium-sized,
-  lower-cost model with high reasoning effort, such as `gpt-5.4-mini` or the nearest equivalent available in the active
-  model provider. Allow review turns to run for up to 10 minutes before analyzing whether they are stalled or still
-  making useful progress, and require the review subagent to report back when complete so the parent/orchestrator can
-  continue. The review report must include brief "Reviewed And OK" notes for plausible issues that were checked and
-  found not to be problems, especially concerns raised by prior review passes. Address every issue identified, validate
-  and commit the fixes, add a standalone, well-templated Markdown pull request comment explaining the review issue and
-  the fix that addressed it, and do not put review-fix notes in the pull request body. Use clear headers, bold labels,
-  and a short high-level summary before detailed issue/fix text. Then repeat the sibling subagent review loop until the
-  reviewer reports no issues.
+- When acting as the main implementation orchestrator, keep coding and code review work in subagents, including fixes in
+  response to review results. The main agent coordinates issues, subagents, pull requests, and final integration
+  evidence. Follow the required subagent review loop in `docs/Development process.md`.
 - Open normal ready-for-review pull requests. Do not open draft pull requests unless the user explicitly asks for a
   draft.
 - When the user says a PR is merged, verify the merge, delete the issue branch and worktree, run `git fetch --prune`,

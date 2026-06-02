@@ -250,6 +250,53 @@ The read behavior during StoragePool Migration where Grace reads from the target
 the source StoragePool for content that has not been copied yet.
 _Avoid_: Dual-write migration, source-primary migration
 
+**Webhook**:
+A post-event outbound HTTP notification rule for committed Grace facts. A Webhook includes its URL and is not an
+approval gate or a reusable destination object.
+_Avoid_: Hook, subscription, notification rule, webhook destination
+
+**Webhook Delivery**:
+The durable runtime delivery work for sending one Webhook notification after a committed Grace fact. Webhook Delivery is
+performed outside domain actors so external HTTP failures cannot block or roll back the source workflow.
+_Avoid_: Actor callback, source workflow step, synchronous event handler, approval notification delivery
+
+**External Webhook Event**:
+A stable public event contract that can trigger Webhook Delivery. External Webhook Events are mapped from selected
+committed Grace facts; they are not raw internal automation event names.
+_Avoid_: AutomationEventType, F# union case, SignalR event
+
+**Approval Policy**:
+A pre-transition gate that defines when a protected Grace operation requires approval. An Approval Policy creates or
+finds Approval Requests; it is not itself the runtime decision.
+_Avoid_: Webhook approval, hook policy, validation requirement
+
+**Approval Request**:
+A durable runtime yes/no decision created by Grace for one protected operation scope. Approval state belongs to the
+Approval Request, not to the PromotionSet lifecycle status.
+_Avoid_: Manual approval ticket, validation result, synchronous webhook response
+
+**Approval Notification Delivery**:
+The delivery and audit record for notifying an Approval Responder about an Approval Request. Approval Notification
+Delivery is not a Webhook Delivery, even when both use the same outbound HTTP machinery.
+_Avoid_: Webhook delivery, approval webhook, webhook rule
+
+**Unsafe Local Outbound Target**:
+An explicitly marked development-only outbound HTTP target for testing Webhooks or Approval Notification Delivery
+against a loopback URL. It is not a normal public notification target and must remain visible as unsafe local behavior
+in product surfaces.
+_Avoid_: Production webhook URL, private-network target, public callback endpoint
+
+**Approval Responder**:
+A principal or role selected by an Approval Policy as allowed to answer an Approval Request. Being selected as a
+responder is necessary but not sufficient; the responder must also have authority over the protected scope.
+_Avoid_: Approver-only permission, release-manager string, webhook callback identity
+
+**Promotion Set Approval Summary**:
+The approval readiness information Grace can show beside a PromotionSet, such as pending, approved, rejected, or
+expired approval state for the current apply scope. It is derived from Approval Requests and is not the persisted
+PromotionSet lifecycle status.
+_Avoid_: PromotionSet pending status, blocked status, compute status
+
 ## Flagged Ambiguities
 
 **File identity vs. storage identity**:
@@ -459,6 +506,19 @@ until reachable content has been copied and verified in the target.
 Repository state carries only the active storage routing summary needed for reads and writes. StoragePoolMigration holds
 the operational progress and audit history.
 
+**PromotionSet status vs. approval state**:
+PromotionSet status describes the PromotionSet lifecycle. Approval state describes the Approval Request that gates a
+protected operation, though list views may show a derived Promotion Set Approval Summary for usability.
+
+**Internal automation event vs. external webhook event**:
+Grace may have multiple internal automation signals for one workflow fact. A Webhook must use the External Webhook Event
+registry so one public event name has one canonical source or an explicit dedupe rule.
+
+**Public notification target vs. unsafe local target**:
+Normal Webhook and Approval Notification Delivery URLs target public HTTPS endpoints. Loopback targets are only for
+explicit local development testing and should be treated as unsafe local behavior, not as production notification
+configuration.
+
 ## Example Dialogue
 
 Developer: "If `src/app.fs` and `backup/app.fs` contain the same bytes, are they the same FileVersion?"
@@ -658,3 +718,8 @@ Domain expert: "No. New writes go to the target StoragePool, while reads can fal
 Developer: "Does the Repository record hold all migration progress?"
 
 Domain expert: "No. The Repository holds routing state; StoragePoolMigration holds progress and audit history."
+
+Developer: "If applying a PromotionSet is waiting for an Approval Responder, is the PromotionSet blocked?"
+
+Domain expert: "No. The Approval Request is pending. The PromotionSet can remain ready while list views show the
+derived Promotion Set Approval Summary."

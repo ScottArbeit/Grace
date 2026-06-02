@@ -22,6 +22,9 @@ update the issue before editing the new paths.
 - Make a multi-step plan for non-trivial work, keep edits focused, and leave code cleaner than you found it.
 - When the user says `Plan <work item>`, plan the work in chat. Create a GitHub issue only when the user explicitly asks
   for one, asks to start tracked implementation, or otherwise requests tracker setup.
+- For tracked multi-step implementation, follow `docs/Development process.md`: create an epic parent issue, link
+  sub-issues for each implementation step, and include a DAG in the parent issue that shows dependencies and
+  parallelization opportunities.
 - Create or switch to an issue-owned branch/worktree from latest `origin/main` before editing implementation files.
 - Prefer vertical slices that prove one public behavior at a time through the closest stable boundary.
 - Validate changes with `pwsh ./scripts/validate.ps1 -Fast` (use `-Full` for Aspire integration coverage).
@@ -29,22 +32,9 @@ update the issue before editing the new paths.
 - Resolve all compilation errors before considering a task complete.
 - Run impacted tests for each task and fix failures introduced by your changes.
 - Create a new git commit after each completed task to keep review scope clear.
-- Before treating coding work as complete, the parent/orchestrator thread must run a fresh local review-only sibling
-  subagent. If implementation work is already running inside a delegated subagent, that subagent must stop after
-  committing and validating, return a Ready For Review handoff, and let the parent/orchestrator spawn the sibling
-  reviewer. Do not run `codex review` through the shell from inside an agent or subagent. If the subagent launcher
-  directly exposes a dedicated Code Review mode, skill, command, or capability, select it explicitly; do not assume that
-  a generic reviewer prompt activates it. Do not use GitHub `@codex review`, automatic Codex pull request review, or
-  another external pull-request review bot for this completion gate. The review subagent must use a medium-sized,
-  lower-cost model with high reasoning effort, such as `gpt-5.4-mini` or the nearest equivalent available in the active
-  model provider. Allow review turns to run for up to 10 minutes before analyzing whether they are stalled or still
-  making useful progress, and require the review subagent to report back when complete so the parent/orchestrator can
-  continue. The review report must include brief "Reviewed And OK" notes for plausible issues that were checked and
-  found not to be problems, especially concerns raised by prior review passes. Address every issue identified, validate
-  and commit the fixes, add a standalone, well-templated Markdown pull request comment explaining the review issue and
-  the fix that addressed it, and do not put review-fix notes in the pull request body. Use clear headers, bold labels,
-  and a short high-level summary before detailed issue/fix text. Then repeat the sibling subagent review loop until the
-  reviewer reports no issues.
+- When acting as the main implementation orchestrator, keep coding and code review work in subagents, including fixes in
+  response to review results. The main agent coordinates issues, subagents, pull requests, and final integration
+  evidence. Follow the required subagent review loop in `docs/Development process.md`.
 - When the user asks to address a code review comment, review comment, PR feedback, or similar, complete the full
   review-thread workflow: evaluate the comment, make the appropriate fix or explicitly explain why no code change is
   needed, validate the result, commit and push the branch, reply to the GitHub review comment with the outcome and
