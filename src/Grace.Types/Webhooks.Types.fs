@@ -23,6 +23,7 @@ module Webhooks =
     type ApprovalSubject = string
     type ApprovalResponderSelector = string
     type ApprovalClientDecisionId = string
+    type ApprovalRequestAttempt = int option
 
     [<KnownType("GetKnownTypes"); GenerateSerializer>]
     type OutboundUrlSafety =
@@ -341,6 +342,65 @@ module Webhooks =
                 UpdatedAt = None
                 SupersededByApprovalRequestId = None
             }
+
+        static member UpdateDto (approvalRequestEvent: ApprovalRequestEvent) (current: ApprovalRequest) =
+            match approvalRequestEvent.Event with
+            | ApprovalRequestEventType.Created request -> request
+            | ApprovalRequestEventType.DecisionRecorded decision ->
+                let status =
+                    match decision.Decision with
+                    | ApprovalDecision.Approve -> ApprovalRequestStatus.Approved
+                    | ApprovalDecision.Reject -> ApprovalRequestStatus.Rejected
+
+                { current with Status = status; Decision = Some decision; UpdatedAt = Some approvalRequestEvent.Metadata.Timestamp }
+            | ApprovalRequestEventType.Expired ->
+                { current with Status = ApprovalRequestStatus.Expired; UpdatedAt = Some approvalRequestEvent.Metadata.Timestamp }
+            | ApprovalRequestEventType.Cancelled ->
+                { current with Status = ApprovalRequestStatus.Cancelled; UpdatedAt = Some approvalRequestEvent.Metadata.Timestamp }
+            | ApprovalRequestEventType.Superseded supersededByApprovalRequestId ->
+                { current with
+                    Status = ApprovalRequestStatus.Superseded
+                    UpdatedAt = Some approvalRequestEvent.Metadata.Timestamp
+                    SupersededByApprovalRequestId = Some supersededByApprovalRequestId
+                }
+
+    and [<KnownType("GetKnownTypes"); GenerateSerializer>] ApprovalRequestCommand =
+        | Create of request: ApprovalRequest
+        | RecordDecision of decision: ApprovalRequestDecision
+        | Expire
+        | Cancel
+        | Supersede of supersededByApprovalRequestId: ApprovalRequestId
+
+        static member GetKnownTypes() = GetKnownTypes<ApprovalRequestCommand>()
+
+    and [<KnownType("GetKnownTypes"); GenerateSerializer>] ApprovalRequestEventType =
+        | Created of request: ApprovalRequest
+        | DecisionRecorded of decision: ApprovalRequestDecision
+        | Expired
+        | Cancelled
+        | Superseded of supersededByApprovalRequestId: ApprovalRequestId
+
+        static member GetKnownTypes() = GetKnownTypes<ApprovalRequestEventType>()
+
+    and [<CLIMutable; GenerateSerializer>] ApprovalRequestEvent = { Event: ApprovalRequestEventType; Metadata: EventMetadata }
+
+    [<GenerateSerializer>]
+    type ApprovalRequestDecisionResult = { Request: ApprovalRequest; Events: ApprovalRequestEvent list; WasIdempotentReplay: bool; Message: string }
+
+    [<KnownType("GetKnownTypes"); GenerateSerializer>]
+    type ApprovalRequestIndexCommand =
+        | AddRequest of approvalRequestId: ApprovalRequestId
+
+        static member GetKnownTypes() = GetKnownTypes<ApprovalRequestIndexCommand>()
+
+    [<KnownType("GetKnownTypes"); GenerateSerializer>]
+    type ApprovalRequestIndexEventType =
+        | RequestAdded of approvalRequestId: ApprovalRequestId
+
+        static member GetKnownTypes() = GetKnownTypes<ApprovalRequestIndexEventType>()
+
+    [<CLIMutable; GenerateSerializer>]
+    type ApprovalRequestIndexEvent = { Event: ApprovalRequestIndexEventType; Metadata: EventMetadata }
 
     [<CLIMutable; GenerateSerializer>]
     type ApprovalNotificationDelivery =

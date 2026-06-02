@@ -47,6 +47,7 @@ module EndpointAuthorizationManifest =
             endpoint "POST" "/approval/request/approve" (Authorized(ApprovalRequestRespond, Repository))
             endpoint "POST" "/approval/request/reject" (Authorized(ApprovalRequestRespond, Repository))
             endpoint "POST" "/approval/request/history" (Authorized(ApprovalRequestRead, Repository))
+            endpoint "POST" "/approval/request/_seedGenerated" Authenticated
             endpoint "GET" "/auth/login" AllowAnonymous
             endpoint "GET" "/auth/login/%s" AllowAnonymous
             endpoint "GET" "/auth/logout" Authenticated

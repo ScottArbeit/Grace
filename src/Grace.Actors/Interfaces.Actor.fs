@@ -22,6 +22,7 @@ open Grace.Types.Queue
 open Grace.Types.Validation
 open Grace.Types.Artifact
 open Grace.Types.UploadSession
+open Grace.Types.Webhooks
 open Grace.Types.WorkItem
 open Grace.Types.Types
 open Grace.Shared.Utilities
@@ -472,6 +473,65 @@ module Interfaces =
 
         /// Validates incoming commands and converts them to events that are stored in the database.
         abstract member Handle: command: ArtifactCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
+
+    /// Defines the operations for the approval request actor.
+    [<Interface>]
+    type IApprovalRequestActor =
+        inherit IGrainWithGuidKey
+
+        /// Returns true if this approval request has been created.
+        abstract member Exists: correlationId: CorrelationId -> Task<bool>
+
+        /// Returns the current approval request state.
+        abstract member Get: correlationId: CorrelationId -> Task<ApprovalRequest option>
+
+        /// Returns the events handled by this approval request.
+        abstract member GetEvents: correlationId: CorrelationId -> Task<IReadOnlyList<ApprovalRequestEvent>>
+
+        /// Creates a workflow-generated approval request.
+        abstract member Create: request: ApprovalRequest -> eventMetadata: EventMetadata -> Task<GraceResult<ApprovalRequestDecisionResult>>
+
+        /// Creates a workflow-generated approval request from primitive fields across the Orleans boundary.
+        abstract member CreateGenerated:
+            approvalRequestId: ApprovalRequestId *
+            approvalPolicyId: ApprovalPolicyId *
+            approvalPolicyVersion: ApprovalPolicyVersion *
+            subject: ApprovalSubject *
+            ownerId: OwnerId *
+            organizationId: OrganizationId *
+            repositoryId: RepositoryId *
+            targetBranchId: BranchId *
+            promotionSetId: PromotionSetId option *
+            stepsComputationAttempt: int option *
+            requiredResponder: ApprovalResponderSelector *
+            createdBy: string *
+            eventMetadata: EventMetadata ->
+                Task<GraceResult<ApprovalRequestDecisionResult>>
+
+        /// Records an approval request decision.
+        abstract member RecordDecision: decision: ApprovalRequestDecision -> eventMetadata: EventMetadata -> Task<GraceResult<ApprovalRequestDecisionResult>>
+
+        /// Records an approval request decision from primitive fields across the Orleans boundary.
+        abstract member RecordDecisionGenerated:
+            decision: ApprovalDecision * decidedBy: string * reason: string option * clientDecisionId: ApprovalClientDecisionId * eventMetadata: EventMetadata ->
+                Task<GraceResult<ApprovalRequestDecisionResult>>
+
+        /// Validates incoming commands and converts them to persisted events.
+        abstract member Handle: command: ApprovalRequestCommand -> eventMetadata: EventMetadata -> Task<GraceResult<ApprovalRequestDecisionResult>>
+
+    /// Defines the operations for the approval request scope index actor.
+    [<Interface>]
+    type IApprovalRequestIndexActor =
+        inherit IGrainWithStringKey
+
+        /// Adds an approval request id to this scope index.
+        abstract member Handle: command: ApprovalRequestIndexCommand -> eventMetadata: EventMetadata -> Task<GraceResult<ApprovalRequestId array>>
+
+        /// Adds an approval request id to this scope index across the Orleans boundary.
+        abstract member AddRequest: approvalRequestId: ApprovalRequestId * eventMetadata: EventMetadata -> Task<GraceResult<ApprovalRequestId array>>
+
+        /// Returns the request ids currently indexed for the scope.
+        abstract member List: correlationId: CorrelationId -> Task<ApprovalRequestId array>
 
     /// Defines the operations for the StoragePool-scoped ContentBlock metadata actor.
     [<Interface>]

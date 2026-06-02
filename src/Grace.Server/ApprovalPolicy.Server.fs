@@ -1,6 +1,7 @@
 namespace Grace.Server
 
 open Giraffe
+open Grace.Actors.Extensions
 open Grace.Server.Security
 open Grace.Shared
 open Grace.Shared.Parameters.Approval
@@ -17,8 +18,6 @@ open NodaTime
 open System
 open System.Collections.Concurrent
 open System.Collections.Generic
-open System.IO
-open System.Text.Json
 open System.Threading.Tasks
 
 module ApprovalStore =
@@ -27,87 +26,18 @@ module ApprovalStore =
     type ApprovalRequestDto = Grace.Types.Webhooks.ApprovalRequest
 
     let private policies = ConcurrentDictionary<ApprovalPolicyId, ApprovalPolicyDto>()
-    let private requests = ConcurrentDictionary<ApprovalRequestId, ApprovalRequestDto>()
-    let private history = ConcurrentDictionary<ApprovalRequestId, ResizeArray<ApprovalRequestDto>>()
-
-    let private requestSeedEnabled () =
-        let isDevelopment value = String.Equals(value, "Development", StringComparison.OrdinalIgnoreCase)
-
-        Environment.GetEnvironmentVariable("GRACE_TESTING") = "1"
-        || isDevelopment (Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT"))
-        || isDevelopment (Environment.GetEnvironmentVariable("DOTNET_ENVIRONMENT"))
-
-    let private requestSeedDirectory () =
-        let runId = Environment.GetEnvironmentVariable("GRACE_TEST_RUN_ID")
-
-        let seedNamespace = if String.IsNullOrWhiteSpace runId then $"{Environment.ProcessId}" else runId
-
-        Path.Combine(Path.GetTempPath(), "Grace.ApprovalRequestSeeds", seedNamespace)
-
-    let private requestSeedPath approvalRequestId = Path.Combine(requestSeedDirectory (), $"{approvalRequestId:N}.json")
-
-    let private persistSeededRequest (request: ApprovalRequestDto) =
-        if requestSeedEnabled () then
-            Directory.CreateDirectory(requestSeedDirectory ())
-            |> ignore
-
-            File.WriteAllText(requestSeedPath request.ApprovalRequestId, JsonSerializer.Serialize(request, Constants.JsonSerializerOptions))
-
-    let private tryReadSeededRequest approvalRequestId =
-        if requestSeedEnabled () |> not then
-            None
-        else
-            let path = requestSeedPath approvalRequestId
-
-            if File.Exists path then
-                try
-                    let request = JsonSerializer.Deserialize<ApprovalRequestDto>(File.ReadAllText path, Constants.JsonSerializerOptions)
-
-                    if isNull (box request) then
-                        None
-                    else
-                        requests[approvalRequestId] <- request
-                        Some request
-                with
-                | _ -> None
-            else
-                None
-
-    let private hydrateSeededRequests () =
-        if requestSeedEnabled () then
-            let directory = requestSeedDirectory ()
-
-            if Directory.Exists directory then
-                Directory.EnumerateFiles(directory, "*.json")
-                |> Seq.iter (fun path ->
-                    try
-                        let request = JsonSerializer.Deserialize<ApprovalRequestDto>(File.ReadAllText path, Constants.JsonSerializerOptions)
-
-                        if isNull (box request) |> not then
-                            requests[request.ApprovalRequestId] <- request
-                    with
-                    | _ -> ())
+    let private requestSnapshots = ConcurrentDictionary<ApprovalRequestId, ApprovalRequestDto>()
 
     let private scopeMatches (expected: ApprovalScope) (actual: ApprovalScope) =
-        actual.OwnerId = expected.OwnerId
+        isNull (box actual) |> not
+        && actual.OwnerId = expected.OwnerId
         && actual.OrganizationId = expected.OrganizationId
         && actual.RepositoryId = expected.RepositoryId
         && actual.TargetBranchId = expected.TargetBranchId
 
-    let private tryDeleteDirectory path =
-        if Directory.Exists path then
-            try
-                Directory.Delete(path, true)
-            with
-            | _ -> ()
-
     let clearForTests () =
         policies.Clear()
-        requests.Clear()
-        history.Clear()
-
-        let root = Path.Combine(Path.GetTempPath(), "Grace.ApprovalRequestSeeds")
-        tryDeleteDirectory root
+        requestSnapshots.Clear()
 
     let upsertPolicy (policy: ApprovalPolicyDto) =
         policies[policy.ApprovalPolicyId] <- policy
@@ -127,39 +57,165 @@ module ApprovalStore =
         |> Seq.toArray
         :> IReadOnlyList<ApprovalPolicyDto>
 
-    let seedGeneratedRequest (request: ApprovalRequestDto) =
-        requests[request.ApprovalRequestId] <- request
-        persistSeededRequest request
-        let entries = history.GetOrAdd(request.ApprovalRequestId, (fun _ -> ResizeArray()))
-        entries.Add request
-        request
+    let private metadata correlationId principal =
+        let eventMetadata = EventMetadata.New correlationId principal
+        eventMetadata
 
-    let tryGetRequest approvalRequestId =
-        match requests.TryGetValue approvalRequestId with
-        | true, request -> Some request
-        | _ -> tryReadSeededRequest approvalRequestId
+    let seedGeneratedRequestAsync (request: ApprovalRequestDto) correlationId =
+        task {
+            let approvalRequestId =
+                if request.ApprovalRequestId = Guid.Empty then
+                    Guid.NewGuid()
+                else
+                    request.ApprovalRequestId
 
-    let updateRequest (request: ApprovalRequestDto) =
-        requests[request.ApprovalRequestId] <- request
-        persistSeededRequest request
-        let entries = history.GetOrAdd(request.ApprovalRequestId, (fun _ -> ResizeArray()))
-        entries.Add request
-        request
+            let requestToCreate = { request with ApprovalRequestId = approvalRequestId }
 
-    let listRequests scope includeTerminal =
-        hydrateSeededRequests ()
+            requestSnapshots[approvalRequestId] <- requestToCreate
 
-        requests.Values
-        |> Seq.filter (fun request ->
-            scopeMatches scope request.Scope
-            && (includeTerminal || not request.Status.IsTerminal))
-        |> Seq.toArray
-        :> IReadOnlyList<ApprovalRequestDto>
+            let actor = ActorProxy.ApprovalRequest.CreateActorProxy requestToCreate.ApprovalRequestId requestToCreate.Scope.RepositoryId correlationId
 
-    let requestHistory approvalRequestId =
-        match history.TryGetValue approvalRequestId with
-        | true, entries -> entries.ToArray() :> IReadOnlyList<ApprovalRequestDto>
-        | _ -> Array.empty<ApprovalRequestDto> :> IReadOnlyList<ApprovalRequestDto>
+            match!
+                actor.CreateGenerated
+                    (
+                        requestToCreate.ApprovalRequestId,
+                        requestToCreate.ApprovalPolicyId,
+                        requestToCreate.ApprovalPolicyVersion,
+                        requestToCreate.Subject,
+                        requestToCreate.Scope.OwnerId,
+                        requestToCreate.Scope.OrganizationId,
+                        requestToCreate.Scope.RepositoryId,
+                        requestToCreate.Scope.TargetBranchId,
+                        requestToCreate.Scope.PromotionSetId,
+                        requestToCreate.Scope.StepsComputationAttempt,
+                        requestToCreate.RequiredResponder,
+                        $"{requestToCreate.CreatedBy}",
+                        metadata correlationId $"{requestToCreate.CreatedBy}"
+                    )
+                with
+            | Error error -> return Error error
+            | Ok result ->
+                let indexActor = ActorProxy.ApprovalRequest.CreateIndexActorProxy requestToCreate.Scope correlationId
+
+                let storedRequest =
+                    if result.ReturnValue.Request.ApprovalRequestId = ApprovalRequestId.Empty then
+                        requestToCreate
+                    else
+                        result.ReturnValue.Request
+
+                let! indexResult = indexActor.AddRequest(approvalRequestId, metadata correlationId "system")
+
+                match indexResult with
+                | Error error -> return Error error
+                | Ok _ ->
+                    requestSnapshots[approvalRequestId] <- storedRequest
+                    return Ok storedRequest
+        }
+
+    let tryGetRequestAsync approvalRequestId fallbackScope correlationId =
+        task {
+            let actor = ActorProxy.ApprovalRequest.CreateActorProxy approvalRequestId fallbackScope.RepositoryId correlationId
+            let! request = actor.Get correlationId
+
+            return
+                match request, requestSnapshots.TryGetValue approvalRequestId with
+                | Some approvalRequest, (true, snapshot) when
+                    approvalRequest.ApprovalRequestId = ApprovalRequestId.Empty
+                    || isNull (box approvalRequest.Scope)
+                    || isNull (box approvalRequest.Status)
+                    || String.IsNullOrWhiteSpace approvalRequest.RequiredResponder
+                    ->
+                    Some snapshot
+                | Some approvalRequest, _ ->
+                    let scope =
+                        if isNull (box approvalRequest.Scope) then
+                            fallbackScope
+                        else
+                            approvalRequest.Scope
+
+                    let status =
+                        if isNull (box approvalRequest.Status) then
+                            ApprovalRequestStatus.Pending
+                        else
+                            approvalRequest.Status
+
+                    let storedApprovalRequestId =
+                        if approvalRequest.ApprovalRequestId = ApprovalRequestId.Empty then
+                            approvalRequestId
+                        else
+                            approvalRequest.ApprovalRequestId
+
+                    Some { approvalRequest with ApprovalRequestId = storedApprovalRequestId; Scope = scope; Status = status }
+                | None, (true, snapshot) -> Some snapshot
+                | None, _ -> None
+        }
+
+    let handleRequestCommandAsync approvalRequestId repositoryId command correlationId principal =
+        task {
+            let actor = ActorProxy.ApprovalRequest.CreateActorProxy approvalRequestId repositoryId correlationId
+
+            match command with
+            | ApprovalRequestCommand.RecordDecision decision ->
+                let! result =
+                    actor.RecordDecisionGenerated(
+                        decision.Decision,
+                        $"{decision.DecidedBy}",
+                        decision.Reason,
+                        decision.ClientDecisionId,
+                        metadata correlationId principal
+                    )
+
+                match result with
+                | Ok success -> requestSnapshots[approvalRequestId] <- success.ReturnValue.Request
+                | Error _ -> ()
+
+                return result
+            | _ ->
+                let! result = actor.Handle command (metadata correlationId principal)
+
+                match result with
+                | Ok success -> requestSnapshots[approvalRequestId] <- success.ReturnValue.Request
+                | Error _ -> ()
+
+                return result
+        }
+
+    let listRequestsAsync scope includeTerminal correlationId =
+        task {
+            let indexActor = ActorProxy.ApprovalRequest.CreateIndexActorProxy scope correlationId
+            let! requestIds = indexActor.List correlationId
+            let requests = ResizeArray<ApprovalRequestDto>()
+            let mutable index = 0
+
+            while index < requestIds.Length do
+                let! request = tryGetRequestAsync requestIds[index] scope correlationId
+
+                match request with
+                | Some approvalRequest when
+                    scopeMatches scope approvalRequest.Scope
+                    && (includeTerminal
+                        || not approvalRequest.Status.IsTerminal)
+                    ->
+                    requests.Add approvalRequest
+                | _ -> ()
+
+                index <- index + 1
+
+            return requests.ToArray() :> IReadOnlyList<ApprovalRequestDto>
+        }
+
+    let requestHistoryAsync approvalRequestId correlationId =
+        task {
+            let actor = ActorProxy.ApprovalRequest.CreateActorProxy approvalRequestId RepositoryId.Empty correlationId
+            let! events = actor.GetEvents correlationId
+
+            return
+                events
+                |> Seq.scan (fun current event -> ApprovalRequest.UpdateDto event current) ApprovalRequest.Default
+                |> Seq.skip 1
+                |> Seq.toArray
+                :> IReadOnlyList<ApprovalRequestDto>
+        }
 
 module ApprovalCommon =
 

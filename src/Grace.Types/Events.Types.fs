@@ -13,6 +13,7 @@ open Grace.Types.Queue
 open Grace.Types.PromotionSet
 open Grace.Types.Validation
 open Grace.Types.Artifact
+open Grace.Types.Webhooks
 
 module Events =
 
@@ -33,6 +34,7 @@ module Events =
         | ValidationSetEvent of Validation.ValidationSetEvent
         | ValidationResultEvent of Validation.ValidationResultEvent
         | ArtifactEvent of Artifact.ArtifactEvent
+        | ApprovalRequestEvent of Webhooks.ApprovalRequestEvent
 
         static member GetKnownTypes() = GetKnownTypes<GraceEvent>()
 
@@ -52,3 +54,4 @@ module Events =
             | ValidationSetEvent e -> serialize e
             | ValidationResultEvent e -> serialize e
             | ArtifactEvent e -> serialize e
+            | ApprovalRequestEvent e -> serialize e

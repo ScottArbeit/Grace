@@ -86,6 +86,12 @@ module Constants =
         let Artifact = "ArtifactActor"
 
         [<Literal>]
+        let ApprovalRequest = "ApprovalRequestActor"
+
+        [<Literal>]
+        let ApprovalRequestIndex = "ApprovalRequestIndexActor"
+
+        [<Literal>]
         let ContentBlockMetadata = "ContentBlockMetadataActor"
 
         [<Literal>]
@@ -175,6 +181,12 @@ module Constants =
 
         [<Literal>]
         let Artifact = "Artifact"
+
+        [<Literal>]
+        let ApprovalRequest = "ApprovalRequest"
+
+        [<Literal>]
+        let ApprovalRequestIndex = "ApprovalRequestIndex"
 
         [<Literal>]
         let ContentBlockMetadata = "ContentBlockMetadata"
