@@ -255,6 +255,11 @@ type OutboundUrlSafetyUnit() =
         |> assertRejected (ValidationFailure.UnsafeHostRejected "64:ff9b::7f00:1")
 
     [<Test>]
+    member _.DeprecatedOrchidIPv6LiteralIsRejected() =
+        validateOutsideDevelopment emptyConfiguration (publicRequest "https://[2001:10::1]/events")
+        |> assertRejected (ValidationFailure.UnsafeHostRejected "2001:10::1")
+
+    [<Test>]
     member _.DeprecatedSiteLocalIPv6LiteralIsRejected() =
         validateOutsideDevelopment emptyConfiguration (publicRequest "https://[fec0::1]/events")
         |> assertRejected (ValidationFailure.UnsafeHostRejected "fec0::1")

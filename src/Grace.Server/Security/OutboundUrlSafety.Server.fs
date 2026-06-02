@@ -136,6 +136,7 @@ module OutboundUrlSafety =
             "100:0:0:1::", 64, "Dummy IPv6 prefix"
             "2001::", 32, "Teredo"
             "2001:2::", 48, "Benchmarking"
+            "2001:10::", 28, "Deprecated ORCHID"
             "2001:db8::", 32, "Documentation"
             "2002::", 16, "6to4"
             "3fff::", 20, "Documentation"
