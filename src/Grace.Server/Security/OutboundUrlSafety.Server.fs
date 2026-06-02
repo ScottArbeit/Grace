@@ -277,6 +277,27 @@ module OutboundUrlSafety =
             address
             [|
                 0xFEuy
+                0xC0uy
+                0uy
+                0uy
+                0uy
+                0uy
+                0uy
+                0uy
+                0uy
+                0uy
+                0uy
+                0uy
+                0uy
+                0uy
+                0uy
+                0uy
+            |]
+            10
+        || isIPv6InRange
+            address
+            [|
+                0xFEuy
                 0x80uy
                 0uy
                 0uy
