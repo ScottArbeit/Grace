@@ -402,7 +402,8 @@ module WebhookDispatch =
                     CreatedAt = getCurrentInstant ()
                 }
 
-            if WebhookStore.tryClaimDeliveryByRuleAndDedupe delivery |> not then
+            if WebhookStore.tryClaimDeliveryByRuleAndDedupe delivery
+               |> not then
                 return Choice2Of2 true
             else
                 WebhookStore.addDeliveryPayload delivery.WebhookDeliveryId payloadJson
@@ -516,6 +517,8 @@ module WebhookDispatch =
                     let mutable index = 0
 
                     while index < rules.Count do
+                        cancellationToken.ThrowIfCancellationRequested()
+
                         let! result = deliverRule logger configuration hostEnvironment transport definition dedupeKey payloadJson rules[index] cancellationToken
 
                         match result with
