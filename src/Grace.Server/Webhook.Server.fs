@@ -26,6 +26,11 @@ module WebhookStore =
 
     let private rules = ConcurrentDictionary<WebhookRuleId, WebhookRuleDto>()
     let private deliveries = ConcurrentDictionary<WebhookDeliveryId, WebhookDeliveryDto>()
+    let private deliveryDedupeIndex = ConcurrentDictionary<string, WebhookDeliveryId>()
+    let private deliveryPayloads = ConcurrentDictionary<WebhookDeliveryId, string>()
+    let private deliveryRuleSnapshots = ConcurrentDictionary<WebhookDeliveryId, WebhookRuleDto>()
+
+    let private deliveryDedupeKey webhookRuleId dedupeKey = $"{webhookRuleId:N}:{dedupeKey}"
 
     let private scopeMatches (expected: WebhookScope) (actual: WebhookScope) =
         actual.OwnerId = expected.OwnerId
@@ -36,6 +41,9 @@ module WebhookStore =
     let clearForTests () =
         rules.Clear()
         deliveries.Clear()
+        deliveryDedupeIndex.Clear()
+        deliveryPayloads.Clear()
+        deliveryRuleSnapshots.Clear()
 
     let upsertRule (rule: WebhookRuleDto) =
         rules[rule.WebhookRuleId] <- rule
@@ -57,12 +65,65 @@ module WebhookStore =
 
     let addDelivery (delivery: WebhookDeliveryDto) =
         deliveries[delivery.WebhookDeliveryId] <- delivery
+        deliveryDedupeIndex[deliveryDedupeKey delivery.WebhookRuleId delivery.DedupeKey] <- delivery.WebhookDeliveryId
+        delivery
+
+    let tryClaimDeliveryByRuleAndDedupe (delivery: WebhookDeliveryDto) =
+        if deliveryDedupeIndex.TryAdd(deliveryDedupeKey delivery.WebhookRuleId delivery.DedupeKey, delivery.WebhookDeliveryId) then
+            deliveries[delivery.WebhookDeliveryId] <- delivery
+            true
+        else
+            false
+
+    let addDeliveryPayload webhookDeliveryId payloadJson =
+        deliveryPayloads[webhookDeliveryId] <- payloadJson
+        payloadJson
+
+    let tryGetDeliveryPayload webhookDeliveryId =
+        match deliveryPayloads.TryGetValue webhookDeliveryId with
+        | true, payloadJson -> Some payloadJson
+        | _ -> None
+
+    let addDeliveryRuleSnapshot webhookDeliveryId (rule: WebhookRuleDto) =
+        deliveryRuleSnapshots[webhookDeliveryId] <- rule
+        rule
+
+    let tryGetDeliveryRuleSnapshot webhookDeliveryId =
+        match deliveryRuleSnapshots.TryGetValue webhookDeliveryId with
+        | true, rule -> Some rule
+        | _ -> None
+
+    let upsertDelivery (delivery: WebhookDeliveryDto) =
+        deliveries[delivery.WebhookDeliveryId] <- delivery
         delivery
 
     let tryGetDelivery webhookDeliveryId =
         match deliveries.TryGetValue webhookDeliveryId with
         | true, delivery -> Some delivery
         | _ -> None
+
+    let tryGetDeliveryByRuleAndDedupe webhookRuleId dedupeKey =
+        match deliveryDedupeIndex.TryGetValue(deliveryDedupeKey webhookRuleId dedupeKey) with
+        | true, webhookDeliveryId -> tryGetDelivery webhookDeliveryId
+        | _ ->
+            deliveries.Values
+            |> Seq.tryFind (fun delivery ->
+                delivery.WebhookRuleId = webhookRuleId
+                && delivery.DedupeKey = dedupeKey)
+
+    let listEnabledRulesForEvent (scope: WebhookScope) eventName eventVersion =
+        rules.Values
+        |> Seq.filter (fun rule ->
+            rule.Status = WebhookRuleStatus.Enabled
+            && rule.EventName = eventName
+            && rule.EventVersion = eventVersion
+            && rule.Scope.OwnerId = scope.OwnerId
+            && rule.Scope.OrganizationId = scope.OrganizationId
+            && rule.Scope.RepositoryId = scope.RepositoryId
+            && (rule.Scope.TargetBranchId.IsNone
+                || rule.Scope.TargetBranchId = scope.TargetBranchId))
+        |> Seq.toArray
+        :> IReadOnlyList<WebhookRuleDto>
 
     let listDeliveries scope webhookRuleId includeTerminal =
         deliveries.Values
@@ -76,6 +137,18 @@ module WebhookStore =
                     || delivery.Status = WebhookDeliveryStatus.Pending
                     || delivery.Status = WebhookDeliveryStatus.RetryScheduled)
             | None -> false)
+        |> Seq.toArray
+        :> IReadOnlyList<WebhookDeliveryDto>
+
+    let listScheduledRetries dueAt maxCount =
+        deliveries.Values
+        |> Seq.filter (fun delivery ->
+            delivery.Status = WebhookDeliveryStatus.RetryScheduled
+            && match delivery.NextAttemptAt with
+               | Some nextAttemptAt -> nextAttemptAt <= dueAt
+               | None -> false)
+        |> Seq.sortBy (fun delivery -> delivery.NextAttemptAt)
+        |> Seq.truncate maxCount
         |> Seq.toArray
         :> IReadOnlyList<WebhookDeliveryDto>
 

@@ -960,6 +960,19 @@ module Notification =
                 | Some envelope ->
                     do! emitAutomationEvent hubContext envelope
 
+                    let configuration = serviceProvider.GetRequiredService<IConfiguration>()
+                    let hostEnvironment = serviceProvider.GetService<IHostEnvironment>()
+                    use transport = new WebhookDispatch.HttpOutboundWebhookTransport(configuration, hostEnvironment)
+
+                    let! _ =
+                        WebhookDispatch.dispatchCommittedEventAsync
+                            log
+                            configuration
+                            hostEnvironment
+                            (transport :> WebhookDispatch.IOutboundWebhookTransport)
+                            graceEvent
+                            CancellationToken.None
+
                     if envelope.EventType = AutomationEventType.PromotionSetStepsUpdated then
                         let recomputeSucceededEnvelope =
                             { envelope with
