@@ -59,10 +59,34 @@ module WebhookStore =
         deliveries[delivery.WebhookDeliveryId] <- delivery
         delivery
 
+    let upsertDelivery (delivery: WebhookDeliveryDto) =
+        deliveries[delivery.WebhookDeliveryId] <- delivery
+        delivery
+
     let tryGetDelivery webhookDeliveryId =
         match deliveries.TryGetValue webhookDeliveryId with
         | true, delivery -> Some delivery
         | _ -> None
+
+    let tryGetDeliveryByRuleAndDedupe webhookRuleId dedupeKey =
+        deliveries.Values
+        |> Seq.tryFind (fun delivery ->
+            delivery.WebhookRuleId = webhookRuleId
+            && delivery.DedupeKey = dedupeKey)
+
+    let listEnabledRulesForEvent (scope: WebhookScope) eventName eventVersion =
+        rules.Values
+        |> Seq.filter (fun rule ->
+            rule.Status = WebhookRuleStatus.Enabled
+            && rule.EventName = eventName
+            && rule.EventVersion = eventVersion
+            && rule.Scope.OwnerId = scope.OwnerId
+            && rule.Scope.OrganizationId = scope.OrganizationId
+            && rule.Scope.RepositoryId = scope.RepositoryId
+            && (rule.Scope.TargetBranchId.IsNone
+                || rule.Scope.TargetBranchId = scope.TargetBranchId))
+        |> Seq.toArray
+        :> IReadOnlyList<WebhookRuleDto>
 
     let listDeliveries scope webhookRuleId includeTerminal =
         deliveries.Values

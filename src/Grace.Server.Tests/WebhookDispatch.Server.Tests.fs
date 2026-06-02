@@ -1,0 +1,385 @@
+namespace Grace.Server.Tests
+
+open Grace.Server
+open Grace.Server.WebhookDispatch
+open Grace.Shared.Utilities
+open Grace.Types
+open Grace.Types.Events
+open Grace.Types.PromotionSet
+open Grace.Types.Reference
+open Grace.Types.Types
+open Grace.Types.Webhooks
+open Microsoft.Extensions.Configuration
+open Microsoft.Extensions.FileProviders
+open Microsoft.Extensions.Hosting
+open Microsoft.Extensions.Logging.Abstractions
+open NodaTime
+open NUnit.Framework
+open System
+open System.Collections.Generic
+open System.Threading
+open System.Threading.Tasks
+open System.Text.Json
+
+module private WebhookDispatchTestHelpers =
+
+    type TestHostEnvironment() =
+        interface IHostEnvironment with
+            member val ApplicationName = "Grace.Server.Tests" with get, set
+            member val EnvironmentName = Environments.Production with get, set
+            member val ContentRootPath = Environment.CurrentDirectory with get, set
+            member val ContentRootFileProvider = NullFileProvider() :> IFileProvider with get, set
+
+    type RecordingTransport(results: OutboundWebhookResult list) =
+        let requests = List<OutboundWebhookRequest>()
+        let mutable remainingResults = results
+
+        member _.Requests = requests |> Seq.toArray
+
+        interface IOutboundWebhookTransport with
+            member _.SendAsync(request, _) =
+                task {
+                    requests.Add request
+
+                    match remainingResults with
+                    | result :: tail ->
+                        remainingResults <- tail
+                        return result
+                    | [] -> return OutboundWebhookResult.Succeeded 200
+                }
+
+    type ThrowingTransport() =
+        interface IOutboundWebhookTransport with
+            member _.SendAsync(_, _) = task { return raise (InvalidOperationException("simulated outbound failure with secret")) }
+
+    let configuration: IConfiguration = ConfigurationBuilder().Build()
+
+    let hostEnvironment = TestHostEnvironment() :> IHostEnvironment
+
+    let logger = NullLogger.Instance
+
+    let metadata ownerId organizationId repositoryId targetBranchId promotionSetId correlationId =
+        let properties = Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        properties[nameof OwnerId] <- $"{ownerId}"
+        properties[nameof OrganizationId] <- $"{organizationId}"
+        properties[nameof RepositoryId] <- $"{repositoryId}"
+        properties[nameof BranchId] <- $"{targetBranchId}"
+        properties[nameof PromotionSetId] <- $"{promotionSetId}"
+        properties["ActorId"] <- $"{promotionSetId}"
+
+        {
+            Timestamp = Instant.FromUtc(2026, 6, 2, 12, 0)
+            CorrelationId = correlationId
+            Principal = "tester"
+            ClientType = Option.None
+            Properties = properties
+        }
+
+    let appliedEvent ownerId organizationId repositoryId targetBranchId promotionSetId terminalReferenceId =
+        let promotionSetEvent: PromotionSetEvent =
+            {
+                Event = PromotionSetEventType.Applied terminalReferenceId
+                Metadata = metadata ownerId organizationId repositoryId targetBranchId promotionSetId "corr-webhook"
+            }
+
+        GraceEvent.PromotionSetEvent promotionSetEvent
+
+    let rule ruleId ownerId organizationId repositoryId targetBranchId =
+        { WebhookRule.Default with
+            WebhookRuleId = ruleId
+            EventName = ExternalWebhookEventRegistry.PromotionSetAppliedName
+            EventVersion = 1
+            Scope = { OwnerId = ownerId; OrganizationId = organizationId; RepositoryId = repositoryId; TargetBranchId = targetBranchId }
+            Url = { Url = "https://8.8.8.8/grace?token=secret"; Safety = OutboundUrlSafety.PublicHttps }
+            SigningSecretVersion = "test-secret-v1"
+            RetryPolicy = { MaxAttempts = 3; InitialDelaySeconds = 1; MaxDelaySeconds = 8 }
+            Status = WebhookRuleStatus.Enabled
+            CreatedBy = UserId "tester"
+            CreatedAt = Instant.FromUtc(2026, 6, 2, 11, 0)
+        }
+
+    let dispatch transport graceEvent =
+        WebhookDispatch.dispatchCommittedEventAsync logger configuration hostEnvironment transport graceEvent CancellationToken.None
+
+[<NonParallelizable>]
+type WebhookDispatchUnitTests() =
+
+    [<SetUp>]
+    member _.SetUp() = WebhookStore.clearForTests ()
+
+    [<Test>]
+    member _.CommittedPromotionSetAppliedCreatesSignedVersionedDeliveryForMatchingRule() =
+        task {
+            let ownerId = Guid.NewGuid()
+            let organizationId = Guid.NewGuid()
+            let repositoryId = Guid.NewGuid()
+            let targetBranchId = Guid.NewGuid()
+            let promotionSetId = Guid.NewGuid()
+            let terminalReferenceId = Guid.NewGuid()
+            let rule = WebhookDispatchTestHelpers.rule (Guid.NewGuid()) ownerId organizationId repositoryId (Option.Some targetBranchId)
+            WebhookStore.upsertRule rule |> ignore
+
+            let transport = WebhookDispatchTestHelpers.RecordingTransport([ OutboundWebhookResult.Succeeded 202 ])
+
+            let! result =
+                WebhookDispatchTestHelpers.dispatch
+                    transport
+                    (WebhookDispatchTestHelpers.appliedEvent ownerId organizationId repositoryId targetBranchId promotionSetId terminalReferenceId)
+
+            Assert.That(result.DeliveryCount, Is.EqualTo(1))
+            Assert.That(result.DeliveredCount, Is.EqualTo(1))
+            Assert.That(transport.Requests, Has.Length.EqualTo(1))
+
+            let request = transport.Requests[0]
+            Assert.That(request.Headers["x-grace-webhook-event-name"], Is.EqualTo(ExternalWebhookEventRegistry.PromotionSetAppliedName))
+            Assert.That(request.Headers["x-grace-webhook-event-version"], Is.EqualTo("1"))
+            Assert.That(request.Headers["x-grace-webhook-signature"], Does.StartWith("sha256="))
+            Assert.That(request.Headers["x-grace-webhook-signature"], Does.Not.Contain(rule.SigningSecretVersion))
+            Assert.That(request.RedactedUrl, Does.Contain("token=REDACTED"))
+            Assert.That(request.RedactedUrl, Does.Not.Contain("secret"))
+
+            use payload = JsonDocument.Parse(request.PayloadJson)
+
+            Assert.That(
+                payload
+                    .RootElement
+                    .GetProperty("eventName")
+                    .GetString(),
+                Is.EqualTo(ExternalWebhookEventRegistry.PromotionSetAppliedName)
+            )
+
+            Assert.That(
+                payload
+                    .RootElement
+                    .GetProperty("eventVersion")
+                    .GetInt32(),
+                Is.EqualTo(1)
+            )
+
+            Assert.That(
+                payload
+                    .RootElement
+                    .GetProperty("promotionSetId")
+                    .GetGuid(),
+                Is.EqualTo(promotionSetId)
+            )
+
+            Assert.That(
+                payload
+                    .RootElement
+                    .GetProperty("terminalPromotionReferenceId")
+                    .GetGuid(),
+                Is.EqualTo(terminalReferenceId)
+            )
+
+            Assert.That(request.PayloadJson, Does.Not.Contain("DataJson"))
+            Assert.That(request.PayloadJson, Does.Not.Contain("AutomationEventEnvelope"))
+
+            let deliveries = WebhookStore.listDeliveries rule.Scope rule.WebhookRuleId true
+            Assert.That(deliveries, Has.Count.EqualTo(1))
+            Assert.That(deliveries[0].Status, Is.EqualTo(WebhookDeliveryStatus.Succeeded))
+            Assert.That(deliveries[0].AttemptCount, Is.EqualTo(1))
+            Assert.That(deliveries[0].LastStatusCode, Is.EqualTo(Option.Some 202))
+        }
+
+    [<Test>]
+    member _.NonMatchingRuleAndNonCanonicalReferenceSourceDoNotCreateDelivery() =
+        task {
+            let ownerId = Guid.NewGuid()
+            let organizationId = Guid.NewGuid()
+            let repositoryId = Guid.NewGuid()
+            let matchingBranchId = Guid.NewGuid()
+            let otherBranchId = Guid.NewGuid()
+            let promotionSetId = Guid.NewGuid()
+            let rule = WebhookDispatchTestHelpers.rule (Guid.NewGuid()) ownerId organizationId repositoryId (Option.Some otherBranchId)
+            WebhookStore.upsertRule rule |> ignore
+
+            let transport = WebhookDispatchTestHelpers.RecordingTransport([])
+
+            let! result =
+                WebhookDispatchTestHelpers.dispatch
+                    transport
+                    (WebhookDispatchTestHelpers.appliedEvent ownerId organizationId repositoryId matchingBranchId promotionSetId (Guid.NewGuid()))
+
+            Assert.That(result.DeliveryCount, Is.EqualTo(0))
+            Assert.That(transport.Requests, Is.Empty)
+
+            let referenceEvent =
+                {
+                    Event =
+                        ReferenceEventType.Created(
+                            Guid.NewGuid(),
+                            ownerId,
+                            organizationId,
+                            repositoryId,
+                            otherBranchId,
+                            Guid.NewGuid(),
+                            Sha256Hash String.Empty,
+                            ReferenceType.Promotion,
+                            "promotion",
+                            [
+                                ReferenceLinkType.PromotionSetTerminal promotionSetId
+                            ]
+                        )
+                    Metadata = WebhookDispatchTestHelpers.metadata ownerId organizationId repositoryId otherBranchId promotionSetId "corr-reference"
+                }
+
+            let! referenceResult = WebhookDispatchTestHelpers.dispatch transport (GraceEvent.ReferenceEvent referenceEvent)
+            Assert.That(referenceResult.DeliveryCount, Is.EqualTo(0))
+            Assert.That(transport.Requests, Is.Empty)
+        }
+
+    [<Test>]
+    member _.DuplicateCommittedEventSkipsExistingDedupeKey() =
+        task {
+            let ownerId = Guid.NewGuid()
+            let organizationId = Guid.NewGuid()
+            let repositoryId = Guid.NewGuid()
+            let targetBranchId = Guid.NewGuid()
+            let promotionSetId = Guid.NewGuid()
+            let terminalReferenceId = Guid.NewGuid()
+            let rule = WebhookDispatchTestHelpers.rule (Guid.NewGuid()) ownerId organizationId repositoryId Option.None
+            WebhookStore.upsertRule rule |> ignore
+
+            let transport =
+                WebhookDispatchTestHelpers.RecordingTransport(
+                    [
+                        OutboundWebhookResult.Succeeded 200
+                        OutboundWebhookResult.Succeeded 200
+                    ]
+                )
+
+            let graceEvent = WebhookDispatchTestHelpers.appliedEvent ownerId organizationId repositoryId targetBranchId promotionSetId terminalReferenceId
+            let! first = WebhookDispatchTestHelpers.dispatch transport graceEvent
+            let! second = WebhookDispatchTestHelpers.dispatch transport graceEvent
+
+            Assert.That(first.DeliveryCount, Is.EqualTo(1))
+            Assert.That(second.SkippedDuplicateCount, Is.EqualTo(1))
+            Assert.That(transport.Requests, Has.Length.EqualTo(1))
+
+            let deliveries = WebhookStore.listDeliveries rule.Scope rule.WebhookRuleId true
+            Assert.That(deliveries, Has.Count.EqualTo(1))
+        }
+
+    [<Test>]
+    member _.TransientFailuresRetryAndExhaustedAttemptsDeadLetter() =
+        task {
+            let ownerId = Guid.NewGuid()
+            let organizationId = Guid.NewGuid()
+            let repositoryId = Guid.NewGuid()
+            let targetBranchId = Guid.NewGuid()
+            let promotionSetId = Guid.NewGuid()
+
+            let transientRule =
+                { WebhookDispatchTestHelpers.rule (Guid.NewGuid()) ownerId organizationId repositoryId (Option.Some targetBranchId) with
+                    RetryPolicy = { MaxAttempts = 3; InitialDelaySeconds = 1; MaxDelaySeconds = 8 }
+                }
+
+            WebhookStore.upsertRule transientRule |> ignore
+
+            let transport =
+                WebhookDispatchTestHelpers.RecordingTransport(
+                    [
+                        OutboundWebhookResult.TransientFailure(Option.Some 503, "service unavailable")
+                        OutboundWebhookResult.TransientFailure(Option.Some 500, "server error")
+                        OutboundWebhookResult.Succeeded 200
+                    ]
+                )
+
+            let! result =
+                WebhookDispatchTestHelpers.dispatch
+                    transport
+                    (WebhookDispatchTestHelpers.appliedEvent ownerId organizationId repositoryId targetBranchId promotionSetId (Guid.NewGuid()))
+
+            Assert.That(result.DeliveredCount, Is.EqualTo(1))
+            Assert.That(transport.Requests, Has.Length.EqualTo(3))
+            let deliveries = WebhookStore.listDeliveries transientRule.Scope transientRule.WebhookRuleId true
+            let delivery = deliveries[0]
+            Assert.That(delivery.Status, Is.EqualTo(WebhookDeliveryStatus.Succeeded))
+            Assert.That(delivery.AttemptCount, Is.EqualTo(3))
+
+            WebhookStore.clearForTests ()
+
+            let exhaustedRule =
+                { transientRule with WebhookRuleId = Guid.NewGuid(); RetryPolicy = { MaxAttempts = 2; InitialDelaySeconds = 1; MaxDelaySeconds = 8 } }
+
+            WebhookStore.upsertRule exhaustedRule |> ignore
+
+            let exhaustedTransport =
+                WebhookDispatchTestHelpers.RecordingTransport(
+                    [
+                        OutboundWebhookResult.TransientFailure(Option.Some 503, "service unavailable")
+                        OutboundWebhookResult.TransientFailure(Option.Some 503, "service unavailable")
+                    ]
+                )
+
+            let! exhaustedResult =
+                WebhookDispatchTestHelpers.dispatch
+                    exhaustedTransport
+                    (WebhookDispatchTestHelpers.appliedEvent ownerId organizationId repositoryId targetBranchId promotionSetId (Guid.NewGuid()))
+
+            Assert.That(exhaustedResult.FailedCount, Is.EqualTo(1))
+            Assert.That(exhaustedTransport.Requests, Has.Length.EqualTo(2))
+            let exhaustedDeliveries = WebhookStore.listDeliveries exhaustedRule.Scope exhaustedRule.WebhookRuleId true
+            let exhaustedDelivery = exhaustedDeliveries[0]
+            Assert.That(exhaustedDelivery.Status, Is.EqualTo(WebhookDeliveryStatus.DeadLettered))
+            Assert.That(exhaustedDelivery.AttemptCount, Is.EqualTo(2))
+        }
+
+    [<Test>]
+    member _.DeliveryRejectsUnsafeUrlWithoutCallingTransportOrLeakingSecretUrl() =
+        task {
+            let ownerId = Guid.NewGuid()
+            let organizationId = Guid.NewGuid()
+            let repositoryId = Guid.NewGuid()
+            let targetBranchId = Guid.NewGuid()
+            let promotionSetId = Guid.NewGuid()
+
+            let rule =
+                { WebhookDispatchTestHelpers.rule (Guid.NewGuid()) ownerId organizationId repositoryId (Option.Some targetBranchId) with
+                    Url = { Url = "https://127.0.0.1/hook?token=secret"; Safety = OutboundUrlSafety.PublicHttps }
+                }
+
+            WebhookStore.upsertRule rule |> ignore
+
+            let transport = WebhookDispatchTestHelpers.RecordingTransport([])
+
+            let! result =
+                WebhookDispatchTestHelpers.dispatch
+                    transport
+                    (WebhookDispatchTestHelpers.appliedEvent ownerId organizationId repositoryId targetBranchId promotionSetId (Guid.NewGuid()))
+
+            Assert.That(result.FailedCount, Is.EqualTo(1))
+            Assert.That(transport.Requests, Is.Empty)
+            let deliveries = WebhookStore.listDeliveries rule.Scope rule.WebhookRuleId true
+            let delivery = deliveries[0]
+            Assert.That(delivery.Status, Is.EqualTo(WebhookDeliveryStatus.DeadLettered))
+            Assert.That(delivery.LastError.Value, Does.Contain("Outbound URL rejected"))
+            Assert.That(delivery.LastError.Value, Does.Not.Contain("secret"))
+        }
+
+    [<Test>]
+    member _.OutboundTransportExceptionDoesNotEscapeCommittedEventDispatch() =
+        task {
+            let ownerId = Guid.NewGuid()
+            let organizationId = Guid.NewGuid()
+            let repositoryId = Guid.NewGuid()
+            let targetBranchId = Guid.NewGuid()
+            let promotionSetId = Guid.NewGuid()
+
+            let rule = WebhookDispatchTestHelpers.rule (Guid.NewGuid()) ownerId organizationId repositoryId (Option.Some targetBranchId)
+
+            WebhookStore.upsertRule rule |> ignore
+
+            let! result =
+                WebhookDispatchTestHelpers.dispatch
+                    (WebhookDispatchTestHelpers.ThrowingTransport())
+                    (WebhookDispatchTestHelpers.appliedEvent ownerId organizationId repositoryId targetBranchId promotionSetId (Guid.NewGuid()))
+
+            Assert.That(result.FailedCount, Is.EqualTo(1))
+
+            let deliveries = WebhookStore.listDeliveries rule.Scope rule.WebhookRuleId true
+            Assert.That(deliveries, Has.Count.EqualTo(1))
+            Assert.That(deliveries[0].Status, Is.EqualTo(WebhookDeliveryStatus.DeadLettered))
+            Assert.That(deliveries[0].AttemptCount, Is.EqualTo(rule.RetryPolicy.MaxAttempts))
+        }
