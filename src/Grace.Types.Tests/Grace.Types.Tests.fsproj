@@ -15,6 +15,7 @@
     <Compile Include="Automation.Types.Tests.fs" />
     <Compile Include="PromotionSet.ConflictModel.Types.Tests.fs" />
     <Compile Include="PromotionSet.Types.Tests.fs" />
+    <Compile Include="Webhooks.Types.Tests.fs" />
     <Compile Include="Validation.Types.Tests.fs" />
     <Compile Include="Types.Types.Tests.fs" />
     <Compile Include="StorageKeys.Shared.Tests.fs" />
