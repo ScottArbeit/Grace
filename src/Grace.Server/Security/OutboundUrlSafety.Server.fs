@@ -42,6 +42,8 @@ module OutboundUrlSafety =
 
     type SigningInput = { RequestId: string; Timestamp: string; KeyId: string; PayloadSha256Hex: string; SignedMaterial: byte array }
 
+    type HostAddressResolver = string -> IPAddress array
+
     let private tryGetConfigValue (configuration: IConfiguration) (name: string) =
         if isNull configuration then
             None
@@ -101,10 +103,6 @@ module OutboundUrlSafety =
                 index <- index + 1
 
             matches
-
-    let private isExactPermittedLoopbackAddress (address: IPAddress) =
-        address.Equals(IPAddress.Parse("127.0.0.1"))
-        || address.Equals(IPAddress.IPv6Loopback)
 
     let private isUnsafeIPv4Address (address: IPAddress) =
         isIPv4InRange address [| 0uy; 0uy; 0uy; 0uy |] 8
@@ -250,26 +248,56 @@ module OutboundUrlSafety =
             |]
             8
 
+    let private normalizeAddress (address: IPAddress) = if address.IsIPv4MappedToIPv6 then address.MapToIPv4() else address
+
     let private isUnsafeAddress (address: IPAddress) =
-        match address.AddressFamily with
-        | Net.Sockets.AddressFamily.InterNetwork -> isUnsafeIPv4Address address
-        | Net.Sockets.AddressFamily.InterNetworkV6 -> isUnsafeIPv6Address address
+        let normalizedAddress = normalizeAddress address
+
+        match normalizedAddress.AddressFamily with
+        | Net.Sockets.AddressFamily.InterNetwork -> isUnsafeIPv4Address normalizedAddress
+        | Net.Sockets.AddressFamily.InterNetworkV6 -> isUnsafeIPv6Address normalizedAddress
         | _ -> true
+
+    let private addressForFailure (address: IPAddress) = (normalizeAddress address).ToString()
+
+    let private resolveHostAddresses: HostAddressResolver = fun host -> Dns.GetHostAddresses(host)
+
+    let private validateResolvedAddresses host (addresses: IPAddress array) =
+        if isNull addresses || addresses.Length = 0 then
+            Error(UnsafeHostRejected host)
+        else
+            match addresses |> Array.tryFind isUnsafeAddress with
+            | Some address -> Error(UnsafeHostRejected(addressForFailure address))
+            | None -> Ok()
+
+    let private validateResolvedHost (resolver: HostAddressResolver) host =
+        try
+            resolver host |> validateResolvedAddresses host
+        with
+        | :? Net.Sockets.SocketException -> Error(UnsafeHostRejected host)
+        | :? ArgumentException -> Error(UnsafeHostRejected host)
+
+    let private isExactPermittedLoopbackAddress (address: IPAddress) =
+        let normalizedAddress = normalizeAddress address
+
+        normalizedAddress.Equals(IPAddress.Parse("127.0.0.1"))
+        || normalizedAddress.Equals(IPAddress.IPv6Loopback)
 
     let private isPermittedUnsafeLocalHost (uri: Uri) =
         match tryParseIPAddress uri.Host with
         | Some address -> isExactPermittedLoopbackAddress address
         | None -> isLocalhostName uri.Host
 
-    let private validatePublicTarget (uri: Uri) =
+    let private validatePublicTarget (resolver: HostAddressResolver) (uri: Uri) =
         if uri.Scheme <> Uri.UriSchemeHttps then
             Error HttpsRequired
         elif isLocalhostName uri.Host then
             Error(UnsafeHostRejected "localhost")
         else
             match tryParseIPAddress uri.Host with
-            | Some address when isUnsafeAddress address -> Error(UnsafeHostRejected(address.ToString()))
-            | _ -> Ok()
+            | Some address when isUnsafeAddress address -> Error(UnsafeHostRejected(addressForFailure address))
+            | Some _ -> Ok()
+            | None -> validateResolvedHost resolver uri.Host
 
     let private validateLocalDevelopmentTarget (configuration: IConfiguration) (request: ValidationRequest) (uri: Uri) =
         if
@@ -288,7 +316,7 @@ module OutboundUrlSafety =
         else
             Error(UnsafeHostRejected uri.Host)
 
-    let validate (configuration: IConfiguration) (request: ValidationRequest) =
+    let validateWithResolver (resolver: HostAddressResolver) (configuration: IConfiguration) (request: ValidationRequest) =
         if String.IsNullOrWhiteSpace request.Url then
             Error MissingUrl
         else
@@ -307,7 +335,7 @@ module OutboundUrlSafety =
             else
                 let validation =
                     match request.RequestedSafety with
-                    | OutboundUrlSafety.PublicHttps -> validatePublicTarget uri
+                    | OutboundUrlSafety.PublicHttps -> validatePublicTarget resolver uri
                     | OutboundUrlSafety.LocalUnsafeDevOnly -> validateLocalDevelopmentTarget configuration request uri
 
                 validation
@@ -317,6 +345,8 @@ module OutboundUrlSafety =
                         ScopedUrl = { Url = uri.AbsoluteUri; Safety = request.RequestedSafety }
                         RedirectPolicy = RedirectPolicy.RevalidateEveryRedirect
                     })
+
+    let validate (configuration: IConfiguration) (request: ValidationRequest) = validateWithResolver resolveHostAddresses configuration request
 
     let validateRedirect (configuration: IConfiguration) (original: ValidatedOutboundUrl) (redirectUri: Uri) =
         validate
@@ -377,7 +407,7 @@ module OutboundUrlSafety =
                     builder.Query <- redactQuery uri.Query
                     builder.Uri.AbsoluteUri
                 else
-                    value
+                    "[invalid-uri-redacted]"
 
     module Signing =
 

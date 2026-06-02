@@ -4,6 +4,7 @@ open Microsoft.Extensions.Configuration
 open NUnit.Framework
 open System
 open System.Collections.Generic
+open System.Net
 open System.Text
 open Grace.Shared.Utilities
 
@@ -42,28 +43,37 @@ type OutboundUrlSafetyUnit() =
 
     let localRequest url : ValidationRequest = { Url = url; RequestedSafety = UrlSafety.LocalUnsafeDevOnly; AcknowledgeUnsafeLocalDevelopment = true }
 
+    let publicResolver host =
+        match host with
+        | "hooks.example.test" -> [| IPAddress.Parse("93.184.216.34") |]
+        | "private.example.test" -> [| IPAddress.Parse("10.1.2.3") |]
+        | "metadata.example.test" -> [| IPAddress.Parse("169.254.169.254") |]
+        | _ -> [| IPAddress.Parse("93.184.216.34") |]
+
+    let validatePublic request = OutboundUrlPolicy.validateWithResolver publicResolver emptyConfiguration request
+
     [<Test>]
     member _.PublicTargetsRequireAbsoluteHttps() =
         let validated =
-            OutboundUrlPolicy.validate emptyConfiguration (publicRequest "https://hooks.example.test/events")
+            validatePublic (publicRequest "https://hooks.example.test/events")
             |> assertAccepted
 
         Assert.That(validated.ScopedUrl.Safety, Is.EqualTo(UrlSafety.PublicHttps))
         Assert.That(validated.ScopedUrl.Url, Is.EqualTo("https://hooks.example.test/events"))
         Assert.That(validated.RedirectPolicy, Is.EqualTo(OutboundUrlPolicy.RevalidateEveryRedirect))
 
-        OutboundUrlPolicy.validate emptyConfiguration (publicRequest "http://hooks.example.test/events")
+        validatePublic (publicRequest "http://hooks.example.test/events")
         |> assertRejected ValidationFailure.HttpsRequired
 
-        OutboundUrlPolicy.validate emptyConfiguration (publicRequest "/relative")
+        validatePublic (publicRequest "/relative")
         |> assertRejected ValidationFailure.InvalidUri
 
     [<Test>]
     member _.RejectsUnsupportedSchemesAndEmbeddedCredentials() =
-        OutboundUrlPolicy.validate emptyConfiguration (publicRequest "ftp://hooks.example.test/events")
+        validatePublic (publicRequest "ftp://hooks.example.test/events")
         |> assertRejected (ValidationFailure.UnsupportedScheme "ftp")
 
-        OutboundUrlPolicy.validate emptyConfiguration (publicRequest "https://user:secret@hooks.example.test/events")
+        validatePublic (publicRequest "https://user:secret@hooks.example.test/events")
         |> assertRejected ValidationFailure.EmbeddedCredentialsRejected
 
     [<Test>]
@@ -77,6 +87,7 @@ type OutboundUrlSafetyUnit() =
                 "https://172.16.0.1/events"
                 "https://192.168.1.20/events"
                 "https://169.254.169.254/metadata"
+                "https://[::ffff:127.0.0.1]/events"
                 "https://224.0.0.1/events"
                 "https://0.0.0.0/events"
                 "https://[fc00::1]/events"
@@ -136,9 +147,22 @@ type OutboundUrlSafetyUnit() =
             | Ok value -> Assert.Fail($"Expected {url} to be rejected but got {value.ScopedUrl.Url}.")
 
     [<Test>]
+    member _.PublicHostnamesRejectUnsafeResolvedAddresses() =
+        OutboundUrlPolicy.validateWithResolver publicResolver emptyConfiguration (publicRequest "https://private.example.test/events")
+        |> assertRejected (ValidationFailure.UnsafeHostRejected "10.1.2.3")
+
+        OutboundUrlPolicy.validateWithResolver publicResolver emptyConfiguration (publicRequest "https://metadata.example.test/events")
+        |> assertRejected (ValidationFailure.UnsafeHostRejected "169.254.169.254")
+
+    [<Test>]
+    member _.IPv4MappedIPv6LoopbackLiteralIsRejected() =
+        OutboundUrlPolicy.validate emptyConfiguration (publicRequest "https://[::ffff:127.0.0.1]/events")
+        |> assertRejected (ValidationFailure.UnsafeHostRejected "127.0.0.1")
+
+    [<Test>]
     member _.RedirectsRequireRevalidation() =
         let original =
-            OutboundUrlPolicy.validate emptyConfiguration (publicRequest "https://hooks.example.test/events")
+            validatePublic (publicRequest "https://hooks.example.test/events")
             |> assertAccepted
 
         OutboundUrlPolicy.validateRedirect emptyConfiguration original (Uri("https://169.254.169.254/metadata"))
@@ -152,6 +176,15 @@ type OutboundUrlSafetyUnit() =
         let redacted = OutboundUrlPolicy.Redaction.redactUri "https://user:secret@hooks.example.test/path?sig=abc&keep=value&access_token=token&nested=key"
 
         Assert.That(redacted, Is.EqualTo("https://REDACTED@hooks.example.test/path?sig=REDACTED&keep=value&access_token=REDACTED&nested=key"))
+
+    [<Test>]
+    member _.MalformedSecretBearingUrlsAreNotReturnedDuringRedaction() =
+        let malformed = "https://[hooks.example.test/path?sig=abc&token=secret"
+        let redacted = OutboundUrlPolicy.Redaction.redactUri malformed
+
+        Assert.That(redacted, Is.EqualTo("[invalid-uri-redacted]"))
+        Assert.That(redacted, Does.Not.Contain("abc"))
+        Assert.That(redacted, Does.Not.Contain("secret"))
 
     [<Test>]
     member _.SigningInputIncludesIdentityTimestampKeyAndPayloadHash() =
