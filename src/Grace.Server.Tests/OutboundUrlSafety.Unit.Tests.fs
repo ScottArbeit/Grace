@@ -96,6 +96,20 @@ type OutboundUrlSafetyUnit() =
         |> assertRejected ValidationFailure.EmbeddedCredentialsRejected
 
     [<Test>]
+    member _.RejectsFragmentsBeforePersistingScopedUrls() =
+        validatePublic (publicRequest "https://hooks.example.test/events#access_token=fragment-secret")
+        |> assertRejected ValidationFailure.FragmentRejected
+
+        validatePublic (publicRequest "https://hooks.example.test/events?keep=value#nonce=fragment-secret")
+        |> assertRejected ValidationFailure.FragmentRejected
+
+        let validated =
+            validatePublic (publicRequest "https://hooks.example.test/events?keep=value")
+            |> assertAccepted
+
+        Assert.That(validated.ScopedUrl.Url, Does.Not.Contain("#"))
+
+    [<Test>]
     member _.RejectsLocalhostLoopbackAndPrivateTargetsByDefault() =
         let rejectedUrls =
             [
@@ -250,12 +264,12 @@ type OutboundUrlSafetyUnit() =
     member _.RedactsTokenAndCredentialQueryNamesCaseInsensitively() =
         let redacted =
             OutboundUrlPolicy.Redaction.redactUri
-                "https://hooks.example.test/path?refresh_token=refresh&id_token=id&X-Amz-Credential=credential&X-Amz-Security-Token=session&Api_Key=key&oauth_token=oauth&x-api-key=header"
+                "https://hooks.example.test/path?refresh_token=refresh&id_token=id&State=state&NONCE=nonce&SAMLResponse=saml&RelayState=relay&X-Amz-Credential=credential&X-Amz-Security-Token=session&Api_Key=key&oauth_token=oauth&x-api-key=header"
 
         Assert.That(
             redacted,
             Is.EqualTo(
-                "https://hooks.example.test/path?refresh_token=REDACTED&id_token=REDACTED&X-Amz-Credential=REDACTED&X-Amz-Security-Token=REDACTED&Api_Key=REDACTED&oauth_token=REDACTED&x-api-key=REDACTED"
+                "https://hooks.example.test/path?refresh_token=REDACTED&id_token=REDACTED&State=REDACTED&NONCE=REDACTED&SAMLResponse=REDACTED&RelayState=REDACTED&X-Amz-Credential=REDACTED&X-Amz-Security-Token=REDACTED&Api_Key=REDACTED&oauth_token=REDACTED&x-api-key=REDACTED"
             )
         )
 

@@ -26,6 +26,7 @@ module OutboundUrlSafety =
         | UnsupportedScheme of string
         | HttpsRequired
         | EmbeddedCredentialsRejected
+        | FragmentRejected
         | HostRequired
         | LocalTargetRequiresDevelopmentAcknowledgement
         | UnsafeHostRejected of string
@@ -347,6 +348,8 @@ module OutboundUrlSafety =
                 Error(UnsupportedScheme uri.Scheme)
             elif not (String.IsNullOrEmpty uri.UserInfo) then
                 Error EmbeddedCredentialsRejected
+            elif not (String.IsNullOrEmpty uri.Fragment) then
+                Error FragmentRejected
             elif String.IsNullOrWhiteSpace uri.Host then
                 Error HostRequired
             else
@@ -392,6 +395,17 @@ module OutboundUrlSafety =
                     "refresh_token"
                     "id_token"
                     "code"
+                    "state"
+                    "nonce"
+                    "samlrequest"
+                    "samlresponse"
+                    "relaystate"
+                    "session_state"
+                    "authenticity_token"
+                    "csrf_token"
+                    "xsrf_token"
+                    "request_token"
+                    "verification_token"
                     "key"
                     "x-api-key"
                     "secret"
