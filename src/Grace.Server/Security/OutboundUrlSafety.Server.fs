@@ -117,6 +117,7 @@ module OutboundUrlSafety =
         || isIPv4InRange address [| 172uy; 16uy; 0uy; 0uy |] 12
         || isIPv4InRange address [| 192uy; 0uy; 0uy; 0uy |] 24
         || isIPv4InRange address [| 192uy; 0uy; 2uy; 0uy |] 24
+        || isIPv4InRange address [| 192uy; 88uy; 99uy; 0uy |] 24
         || isIPv4InRange address [| 192uy; 168uy; 0uy; 0uy |] 16
         || isIPv4InRange address [| 198uy; 18uy; 0uy; 0uy |] 15
         || isIPv4InRange address [| 198uy; 51uy; 100uy; 0uy |] 24
@@ -170,6 +171,7 @@ module OutboundUrlSafety =
         || isIPv6InRange
             address
             [|
+                0uy
                 0x64uy
                 0xFFuy
                 0x9Buy
@@ -185,9 +187,71 @@ module OutboundUrlSafety =
                 0uy
                 0uy
                 0uy
-                0uy
             |]
             96
+        || isIPv6InRange
+            address
+            [|
+                0uy
+                0x64uy
+                0xFFuy
+                0x9Buy
+                0uy
+                1uy
+                0uy
+                0uy
+                0uy
+                0uy
+                0uy
+                0uy
+                0uy
+                0uy
+                0uy
+                0uy
+            |]
+            48
+        || isIPv6InRange
+            address
+            [|
+                0x20uy
+                0x01uy
+                0uy
+                0uy
+                0uy
+                0uy
+                0uy
+                0uy
+                0uy
+                0uy
+                0uy
+                0uy
+                0uy
+                0uy
+                0uy
+                0uy
+            |]
+            32
+        || isIPv6InRange
+            address
+            [|
+                0x20uy
+                0x02uy
+                0uy
+                0uy
+                0uy
+                0uy
+                0uy
+                0uy
+                0uy
+                0uy
+                0uy
+                0uy
+                0uy
+                0uy
+                0uy
+                0uy
+            |]
+            16
         || isIPv6InRange
             address
             [|
