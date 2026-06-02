@@ -50,7 +50,15 @@ module private WebhookDispatchTestHelpers =
 
     type ThrowingTransport() =
         interface IOutboundWebhookTransport with
-            member _.SendAsync(_, _) = task { return raise (InvalidOperationException("simulated outbound failure with secret")) }
+            member _.SendAsync(_, _) =
+                task {
+                    return
+                        raise (
+                            InvalidOperationException(
+                                "simulated outbound failure token=super-secret-token url=https://example.test/hook?signature=signed-secret"
+                            )
+                        )
+                }
 
     let configuration: IConfiguration = ConfigurationBuilder().Build()
 
@@ -262,7 +270,7 @@ type WebhookDispatchUnitTests() =
         }
 
     [<Test>]
-    member _.TransientFailuresRetryAndExhaustedAttemptsDeadLetter() =
+    member _.TransientFailureSchedulesRetryWithoutBlockingCommittedEventDispatch() =
         task {
             let ownerId = Guid.NewGuid()
             let organizationId = Guid.NewGuid()
@@ -280,8 +288,7 @@ type WebhookDispatchUnitTests() =
             let transport =
                 WebhookDispatchTestHelpers.RecordingTransport(
                     [
-                        OutboundWebhookResult.TransientFailure(Option.Some 503, "service unavailable")
-                        OutboundWebhookResult.TransientFailure(Option.Some 500, "server error")
+                        OutboundWebhookResult.TransientFailure(Option.Some 503, "service unavailable token=response-secret")
                         OutboundWebhookResult.Succeeded 200
                     ]
                 )
@@ -291,17 +298,48 @@ type WebhookDispatchUnitTests() =
                     transport
                     (WebhookDispatchTestHelpers.appliedEvent ownerId organizationId repositoryId targetBranchId promotionSetId (Guid.NewGuid()))
 
-            Assert.That(result.DeliveredCount, Is.EqualTo(1))
-            Assert.That(transport.Requests, Has.Length.EqualTo(3))
+            Assert.That(result.DeliveredCount, Is.EqualTo(0))
+            Assert.That(result.FailedCount, Is.EqualTo(1))
+            Assert.That(transport.Requests, Has.Length.EqualTo(1))
             let deliveries = WebhookStore.listDeliveries transientRule.Scope transientRule.WebhookRuleId true
             let delivery = deliveries[0]
-            Assert.That(delivery.Status, Is.EqualTo(WebhookDeliveryStatus.Succeeded))
-            Assert.That(delivery.AttemptCount, Is.EqualTo(3))
+            Assert.That(delivery.Status, Is.EqualTo(WebhookDeliveryStatus.RetryScheduled))
+            Assert.That(delivery.AttemptCount, Is.EqualTo(1))
+            Assert.That(delivery.NextAttemptAt, Is.Not.EqualTo(Option.None))
+            Assert.That(delivery.LastError.Value, Does.Not.Contain("response-secret"))
 
-            WebhookStore.clearForTests ()
+            let! retryResult =
+                WebhookDispatch.processScheduledRetriesAsync
+                    WebhookDispatchTestHelpers.logger
+                    WebhookDispatchTestHelpers.configuration
+                    WebhookDispatchTestHelpers.hostEnvironment
+                    transport
+                    (delivery.NextAttemptAt.Value.Plus(Duration.FromSeconds(1.0)))
+                    10
+                    CancellationToken.None
 
-            let exhaustedRule =
-                { transientRule with WebhookRuleId = Guid.NewGuid(); RetryPolicy = { MaxAttempts = 2; InitialDelaySeconds = 1; MaxDelaySeconds = 8 } }
+            Assert.That(retryResult.DeliveredCount, Is.EqualTo(1))
+            Assert.That(transport.Requests, Has.Length.EqualTo(2))
+            let updatedDeliveries = WebhookStore.listDeliveries transientRule.Scope transientRule.WebhookRuleId true
+            Assert.That(updatedDeliveries[0].Status, Is.EqualTo(WebhookDeliveryStatus.Succeeded))
+            Assert.That(updatedDeliveries[0].AttemptCount, Is.EqualTo(2))
+        }
+
+    [<Test>]
+    member _.ScheduledRetryExhaustionDeadLettersWithoutBlockingSourceWorkflow() =
+        task {
+            let ownerId = Guid.NewGuid()
+            let organizationId = Guid.NewGuid()
+            let repositoryId = Guid.NewGuid()
+            let targetBranchId = Guid.NewGuid()
+            let promotionSetId = Guid.NewGuid()
+
+            let transientRule =
+                { WebhookDispatchTestHelpers.rule (Guid.NewGuid()) ownerId organizationId repositoryId (Option.Some targetBranchId) with
+                    RetryPolicy = { MaxAttempts = 2; InitialDelaySeconds = 1; MaxDelaySeconds = 8 }
+                }
+
+            let exhaustedRule = { transientRule with WebhookRuleId = Guid.NewGuid() }
 
             WebhookStore.upsertRule exhaustedRule |> ignore
 
@@ -319,11 +357,28 @@ type WebhookDispatchUnitTests() =
                     (WebhookDispatchTestHelpers.appliedEvent ownerId organizationId repositoryId targetBranchId promotionSetId (Guid.NewGuid()))
 
             Assert.That(exhaustedResult.FailedCount, Is.EqualTo(1))
-            Assert.That(exhaustedTransport.Requests, Has.Length.EqualTo(2))
+            Assert.That(exhaustedTransport.Requests, Has.Length.EqualTo(1))
             let exhaustedDeliveries = WebhookStore.listDeliveries exhaustedRule.Scope exhaustedRule.WebhookRuleId true
             let exhaustedDelivery = exhaustedDeliveries[0]
-            Assert.That(exhaustedDelivery.Status, Is.EqualTo(WebhookDeliveryStatus.DeadLettered))
-            Assert.That(exhaustedDelivery.AttemptCount, Is.EqualTo(2))
+            Assert.That(exhaustedDelivery.Status, Is.EqualTo(WebhookDeliveryStatus.RetryScheduled))
+            Assert.That(exhaustedDelivery.AttemptCount, Is.EqualTo(1))
+
+            let! retryResult =
+                WebhookDispatch.processScheduledRetriesAsync
+                    WebhookDispatchTestHelpers.logger
+                    WebhookDispatchTestHelpers.configuration
+                    WebhookDispatchTestHelpers.hostEnvironment
+                    exhaustedTransport
+                    (exhaustedDelivery.NextAttemptAt.Value.Plus(Duration.FromSeconds(1.0)))
+                    10
+                    CancellationToken.None
+
+            Assert.That(retryResult.FailedCount, Is.EqualTo(1))
+            Assert.That(exhaustedTransport.Requests, Has.Length.EqualTo(2))
+            let retriedDeliveries = WebhookStore.listDeliveries exhaustedRule.Scope exhaustedRule.WebhookRuleId true
+            let retriedDelivery = retriedDeliveries[0]
+            Assert.That(retriedDelivery.Status, Is.EqualTo(WebhookDeliveryStatus.DeadLettered))
+            Assert.That(retriedDelivery.AttemptCount, Is.EqualTo(2))
         }
 
     [<Test>]
@@ -380,6 +435,50 @@ type WebhookDispatchUnitTests() =
 
             let deliveries = WebhookStore.listDeliveries rule.Scope rule.WebhookRuleId true
             Assert.That(deliveries, Has.Count.EqualTo(1))
-            Assert.That(deliveries[0].Status, Is.EqualTo(WebhookDeliveryStatus.DeadLettered))
-            Assert.That(deliveries[0].AttemptCount, Is.EqualTo(rule.RetryPolicy.MaxAttempts))
+            Assert.That(deliveries[0].Status, Is.EqualTo(WebhookDeliveryStatus.RetryScheduled))
+            Assert.That(deliveries[0].AttemptCount, Is.EqualTo(1))
+            Assert.That(deliveries[0].LastError.Value, Does.Not.Contain("super-secret-token"))
+            Assert.That(deliveries[0].LastError.Value, Does.Not.Contain("signed-secret"))
+            Assert.That(deliveries[0].LastError.Value, Does.Contain("token=REDACTED"))
+            Assert.That(deliveries[0].LastError.Value, Does.Contain("signature=REDACTED"))
+        }
+
+    [<Test>]
+    member _.FailedResponseErrorIsRedactedBeforePersistence() =
+        task {
+            let ownerId = Guid.NewGuid()
+            let organizationId = Guid.NewGuid()
+            let repositoryId = Guid.NewGuid()
+            let targetBranchId = Guid.NewGuid()
+            let promotionSetId = Guid.NewGuid()
+
+            let rule = WebhookDispatchTestHelpers.rule (Guid.NewGuid()) ownerId organizationId repositoryId (Option.Some targetBranchId)
+            WebhookStore.upsertRule rule |> ignore
+
+            let transport =
+                WebhookDispatchTestHelpers.RecordingTransport(
+                    [
+                        OutboundWebhookResult.PermanentFailure(
+                            Option.Some 400,
+                            "bad response from https://example.test/hook?token=response-token&signature=response-signature secret=response-secret"
+                        )
+                    ]
+                )
+
+            let! result =
+                WebhookDispatchTestHelpers.dispatch
+                    transport
+                    (WebhookDispatchTestHelpers.appliedEvent ownerId organizationId repositoryId targetBranchId promotionSetId (Guid.NewGuid()))
+
+            Assert.That(result.FailedCount, Is.EqualTo(1))
+
+            let deliveries = WebhookStore.listDeliveries rule.Scope rule.WebhookRuleId true
+            Assert.That(deliveries, Has.Count.EqualTo(1))
+            Assert.That(deliveries[0].Status, Is.EqualTo(WebhookDeliveryStatus.Failed))
+            Assert.That(deliveries[0].LastError.Value, Does.Not.Contain("response-token"))
+            Assert.That(deliveries[0].LastError.Value, Does.Not.Contain("response-signature"))
+            Assert.That(deliveries[0].LastError.Value, Does.Not.Contain("response-secret"))
+            Assert.That(deliveries[0].LastError.Value, Does.Contain("token=REDACTED"))
+            Assert.That(deliveries[0].LastError.Value, Does.Contain("signature=REDACTED"))
+            Assert.That(deliveries[0].LastError.Value, Does.Contain("secret=REDACTED"))
         }

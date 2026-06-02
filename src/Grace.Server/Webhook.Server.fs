@@ -26,6 +26,7 @@ module WebhookStore =
 
     let private rules = ConcurrentDictionary<WebhookRuleId, WebhookRuleDto>()
     let private deliveries = ConcurrentDictionary<WebhookDeliveryId, WebhookDeliveryDto>()
+    let private deliveryPayloads = ConcurrentDictionary<WebhookDeliveryId, string>()
 
     let private scopeMatches (expected: WebhookScope) (actual: WebhookScope) =
         actual.OwnerId = expected.OwnerId
@@ -36,6 +37,7 @@ module WebhookStore =
     let clearForTests () =
         rules.Clear()
         deliveries.Clear()
+        deliveryPayloads.Clear()
 
     let upsertRule (rule: WebhookRuleDto) =
         rules[rule.WebhookRuleId] <- rule
@@ -58,6 +60,15 @@ module WebhookStore =
     let addDelivery (delivery: WebhookDeliveryDto) =
         deliveries[delivery.WebhookDeliveryId] <- delivery
         delivery
+
+    let addDeliveryPayload webhookDeliveryId payloadJson =
+        deliveryPayloads[webhookDeliveryId] <- payloadJson
+        payloadJson
+
+    let tryGetDeliveryPayload webhookDeliveryId =
+        match deliveryPayloads.TryGetValue webhookDeliveryId with
+        | true, payloadJson -> Some payloadJson
+        | _ -> None
 
     let upsertDelivery (delivery: WebhookDeliveryDto) =
         deliveries[delivery.WebhookDeliveryId] <- delivery
@@ -100,6 +111,18 @@ module WebhookStore =
                     || delivery.Status = WebhookDeliveryStatus.Pending
                     || delivery.Status = WebhookDeliveryStatus.RetryScheduled)
             | None -> false)
+        |> Seq.toArray
+        :> IReadOnlyList<WebhookDeliveryDto>
+
+    let listScheduledRetries dueAt maxCount =
+        deliveries.Values
+        |> Seq.filter (fun delivery ->
+            delivery.Status = WebhookDeliveryStatus.RetryScheduled
+            && match delivery.NextAttemptAt with
+               | Some nextAttemptAt -> nextAttemptAt <= dueAt
+               | None -> false)
+        |> Seq.sortBy (fun delivery -> delivery.NextAttemptAt)
+        |> Seq.truncate maxCount
         |> Seq.toArray
         :> IReadOnlyList<WebhookDeliveryDto>
 

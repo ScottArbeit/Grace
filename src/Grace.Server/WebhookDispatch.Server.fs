@@ -18,6 +18,7 @@ open System.Net
 open System.Net.Http
 open System.Security.Cryptography
 open System.Text
+open System.Text.RegularExpressions
 open System.Threading
 open System.Threading.Tasks
 
@@ -77,7 +78,7 @@ module WebhookDispatch =
                         message.Headers.TryAddWithoutValidation(header.Key, header.Value)
                         |> ignore
 
-                    let! response = client.SendAsync(message, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
+                    use! response = client.SendAsync(message, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
 
                     match int response.StatusCode with
                     | statusCode when
@@ -219,10 +220,51 @@ module WebhookDispatch =
             let multiplier = Math.Pow(2.0, float (max 0 (attemptCount - 1)))
             min policy.MaxDelaySeconds (int (float policy.InitialDelaySeconds * multiplier))
 
+    let private sensitiveErrorKeys =
+        [|
+            "access_token"
+            "api_key"
+            "apikey"
+            "client_secret"
+            "code"
+            "credential"
+            "key"
+            "password"
+            "secret"
+            "sig"
+            "signature"
+            "signed"
+            "token"
+        |]
+
+    let private redactSensitiveQueryValues (value: string) =
+        Regex.Replace(
+            value,
+            @"(?i)([?&;](?:access_token|api_key|apikey|client_secret|code|credential|key|password|secret|sig|signature|signed|token)=)([^&#;\s]+)",
+            "${1}REDACTED"
+        )
+
+    let private redactSensitiveAssignments (value: string) =
+        sensitiveErrorKeys
+        |> Array.fold
+            (fun current key ->
+                let pattern = sprintf @"(?i)\b(%s)(\s*[:=]\s*)(""[^""]*""|'[^']*'|[^&#\s,;]+)" (Regex.Escape key)
+
+                Regex.Replace(current, pattern, "${1}${2}REDACTED"))
+            value
+
+    let private sanitizePersistedError (value: string) =
+        if String.IsNullOrWhiteSpace value then
+            String.Empty
+        else
+            value
+            |> redactSensitiveQueryValues
+            |> redactSensitiveAssignments
+
     let private trimError (value: string) =
-        if String.IsNullOrWhiteSpace value then String.Empty
-        elif value.Length <= 256 then value
-        else value.Substring(0, 256)
+        let sanitized = sanitizePersistedError value
+
+        if sanitized.Length <= 256 then sanitized else sanitized.Substring(0, 256)
 
     let private validateDeliveryUrl hostEnvironment configuration (rule: WebhookRule) =
         OutboundUrlSafety.validate
@@ -262,9 +304,71 @@ module WebhookDispatch =
             { delivery with
                 Status = WebhookDeliveryStatus.DeadLettered
                 LastAttemptAt = Option.Some(getCurrentInstant ())
-                LastError = Option.Some $"Outbound URL rejected: {failure}"
+                LastError = Option.Some(trimError $"Outbound URL rejected: {failure}")
             }
         |> ignore
+
+    let private sendDeliveryAttempt
+        (logger: ILogger)
+        (transport: IOutboundWebhookTransport)
+        (rule: WebhookRule)
+        (validatedUrl: OutboundUrlSafety.ValidatedOutboundUrl)
+        (payloadJson: string)
+        (delivery: WebhookDelivery)
+        cancellationToken
+        =
+        task {
+            let attempt = delivery.AttemptCount + 1
+            let attemptAt = getCurrentInstant ()
+
+            let timestamp =
+                attemptAt
+                    .ToDateTimeUtc()
+                    .ToString("O", CultureInfo.InvariantCulture)
+
+            let request =
+                {
+                    DeliveryId = delivery.WebhookDeliveryId
+                    Url = validatedUrl.Uri
+                    UrlSafety = rule.Url.Safety
+                    RedactedUrl = OutboundUrlSafety.Redaction.redactUri rule.Url.Url
+                    Headers = headersForDelivery delivery rule payloadJson timestamp
+                    PayloadJson = payloadJson
+                }
+
+            logger.LogInformation(
+                "Dispatching webhook delivery {WebhookDeliveryId} for {EventName} to {RedactedUrl}, attempt {AttemptCount}.",
+                delivery.WebhookDeliveryId,
+                rule.EventName,
+                request.RedactedUrl,
+                attempt
+            )
+
+            let! result =
+                task {
+                    try
+                        return! transport.SendAsync(request, cancellationToken)
+                    with
+                    | ex -> return TransientFailure(Option.None, ex.Message)
+                }
+
+            let status, statusCode, error, nextAttemptAt = terminalDeliveryStatus attempt rule.RetryPolicy result
+
+            let updatedDelivery =
+                { delivery with
+                    AttemptCount = attempt
+                    LastAttemptAt = Some attemptAt
+                    LastStatusCode = statusCode
+                    LastError = error
+                    NextAttemptAt = nextAttemptAt
+                    Status = status
+                }
+
+            WebhookStore.upsertDelivery updatedDelivery
+            |> ignore
+
+            return updatedDelivery
+        }
 
     let private deliverRule
         (logger: ILogger)
@@ -294,68 +398,15 @@ module WebhookDispatch =
 
                 WebhookStore.addDelivery delivery |> ignore
 
+                WebhookStore.addDeliveryPayload delivery.WebhookDeliveryId payloadJson
+                |> ignore
+
                 match validateDeliveryUrl hostEnvironment configuration rule with
                 | Error failure ->
                     recordValidationFailure logger rule delivery failure
                     return Choice1Of2 false
                 | Ok validatedUrl ->
-                    let mutable currentDelivery = delivery
-                    let mutable shouldContinue = true
-
-                    while shouldContinue
-                          && currentDelivery.AttemptCount < rule.RetryPolicy.MaxAttempts do
-                        let attempt = currentDelivery.AttemptCount + 1
-                        let attemptAt = getCurrentInstant ()
-
-                        let timestamp =
-                            attemptAt
-                                .ToDateTimeUtc()
-                                .ToString("O", CultureInfo.InvariantCulture)
-
-                        let request =
-                            {
-                                DeliveryId = currentDelivery.WebhookDeliveryId
-                                Url = validatedUrl.Uri
-                                UrlSafety = rule.Url.Safety
-                                RedactedUrl = OutboundUrlSafety.Redaction.redactUri rule.Url.Url
-                                Headers = headersForDelivery currentDelivery rule payloadJson timestamp
-                                PayloadJson = payloadJson
-                            }
-
-                        logger.LogInformation(
-                            "Dispatching webhook delivery {WebhookDeliveryId} for {EventName} to {RedactedUrl}, attempt {AttemptCount}.",
-                            currentDelivery.WebhookDeliveryId,
-                            rule.EventName,
-                            request.RedactedUrl,
-                            attempt
-                        )
-
-                        let! result =
-                            task {
-                                try
-                                    return! transport.SendAsync(request, cancellationToken)
-                                with
-                                | ex -> return TransientFailure(Option.None, trimError ex.Message)
-                            }
-
-                        let status, statusCode, error, nextAttemptAt = terminalDeliveryStatus attempt rule.RetryPolicy result
-
-                        currentDelivery <-
-                            { currentDelivery with
-                                AttemptCount = attempt
-                                LastAttemptAt = Some attemptAt
-                                LastStatusCode = statusCode
-                                LastError = error
-                                NextAttemptAt = nextAttemptAt
-                                Status = status
-                            }
-
-                        WebhookStore.upsertDelivery currentDelivery
-                        |> ignore
-
-                        match result with
-                        | TransientFailure _ when attempt < rule.RetryPolicy.MaxAttempts -> ()
-                        | _ -> shouldContinue <- false
+                    let! currentDelivery = sendDeliveryAttempt logger transport rule validatedUrl payloadJson delivery cancellationToken
 
                     match currentDelivery.Status with
                     | WebhookDeliveryStatus.Succeeded -> return Choice1Of2 true
@@ -368,6 +419,69 @@ module WebhookDispatch =
                         )
 
                         return Choice1Of2 false
+        }
+
+    type ScheduledRetryResult =
+        {
+            ProcessedCount: int
+            DeliveredCount: int
+            FailedCount: int
+            RescheduledCount: int
+            SkippedCount: int
+        }
+
+        static member Empty = { ProcessedCount = 0; DeliveredCount = 0; FailedCount = 0; RescheduledCount = 0; SkippedCount = 0 }
+
+    let processScheduledRetriesAsync
+        (logger: ILogger)
+        (configuration: IConfiguration)
+        (hostEnvironment: IHostEnvironment)
+        (transport: IOutboundWebhookTransport)
+        dueAt
+        maxDeliveries
+        (cancellationToken: CancellationToken)
+        =
+        task {
+            let batchSize = max 0 maxDeliveries
+            let dueDeliveries = WebhookStore.listScheduledRetries dueAt batchSize
+            let mutable result = ScheduledRetryResult.Empty
+            let mutable index = 0
+
+            while index < dueDeliveries.Count do
+                let delivery = dueDeliveries[index]
+
+                match WebhookStore.tryGetRule delivery.WebhookRuleId, WebhookStore.tryGetDeliveryPayload delivery.WebhookDeliveryId with
+                | Some rule, Some payloadJson ->
+                    match validateDeliveryUrl hostEnvironment configuration rule with
+                    | Error failure ->
+                        recordValidationFailure logger rule delivery failure
+
+                        result <- { result with ProcessedCount = result.ProcessedCount + 1; FailedCount = result.FailedCount + 1 }
+                    | Ok validatedUrl ->
+                        let! updatedDelivery = sendDeliveryAttempt logger transport rule validatedUrl payloadJson delivery cancellationToken
+
+                        result <-
+                            match updatedDelivery.Status with
+                            | WebhookDeliveryStatus.Succeeded ->
+                                { result with ProcessedCount = result.ProcessedCount + 1; DeliveredCount = result.DeliveredCount + 1 }
+                            | WebhookDeliveryStatus.RetryScheduled ->
+                                { result with ProcessedCount = result.ProcessedCount + 1; RescheduledCount = result.RescheduledCount + 1 }
+                            | _ -> { result with ProcessedCount = result.ProcessedCount + 1; FailedCount = result.FailedCount + 1 }
+                | _ ->
+                    WebhookStore.upsertDelivery
+                        { delivery with
+                            Status = WebhookDeliveryStatus.DeadLettered
+                            LastAttemptAt = Some(getCurrentInstant ())
+                            LastError = Some(trimError "Retry delivery could not be processed because its rule or payload is no longer available.")
+                            NextAttemptAt = Option.None
+                        }
+                    |> ignore
+
+                    result <- { result with ProcessedCount = result.ProcessedCount + 1; FailedCount = result.FailedCount + 1 }
+
+                index <- index + 1
+
+            return result
         }
 
     let dispatchCommittedEventAsync
