@@ -30,40 +30,84 @@ module ApprovalStore =
     let private requests = ConcurrentDictionary<ApprovalRequestId, ApprovalRequestDto>()
     let private history = ConcurrentDictionary<ApprovalRequestId, ResizeArray<ApprovalRequestDto>>()
 
-    let private requestSeedDirectory = Path.Combine(Path.GetTempPath(), "Grace.ApprovalRequestSeeds")
+    let private requestSeedEnabled () =
+        let isDevelopment value = String.Equals(value, "Development", StringComparison.OrdinalIgnoreCase)
 
-    let private requestSeedPath approvalRequestId = Path.Combine(requestSeedDirectory, $"{approvalRequestId:N}.json")
+        Environment.GetEnvironmentVariable("GRACE_TESTING") = "1"
+        || isDevelopment (Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT"))
+        || isDevelopment (Environment.GetEnvironmentVariable("DOTNET_ENVIRONMENT"))
+
+    let private requestSeedDirectory () =
+        let runId = Environment.GetEnvironmentVariable("GRACE_TEST_RUN_ID")
+
+        let seedNamespace = if String.IsNullOrWhiteSpace runId then $"{Environment.ProcessId}" else runId
+
+        Path.Combine(Path.GetTempPath(), "Grace.ApprovalRequestSeeds", seedNamespace)
+
+    let private requestSeedPath approvalRequestId = Path.Combine(requestSeedDirectory (), $"{approvalRequestId:N}.json")
 
     let private persistSeededRequest (request: ApprovalRequestDto) =
-        Directory.CreateDirectory(requestSeedDirectory)
-        |> ignore
+        if requestSeedEnabled () then
+            Directory.CreateDirectory(requestSeedDirectory ())
+            |> ignore
 
-        File.WriteAllText(requestSeedPath request.ApprovalRequestId, JsonSerializer.Serialize(request, Constants.JsonSerializerOptions))
+            File.WriteAllText(requestSeedPath request.ApprovalRequestId, JsonSerializer.Serialize(request, Constants.JsonSerializerOptions))
 
     let private tryReadSeededRequest approvalRequestId =
-        let path = requestSeedPath approvalRequestId
-
-        if File.Exists path then
-            try
-                let request = JsonSerializer.Deserialize<ApprovalRequestDto>(File.ReadAllText path, Constants.JsonSerializerOptions)
-
-                if isNull (box request) then
-                    None
-                else
-                    requests[approvalRequestId] <- request
-                    Some request
-            with
-            | _ -> None
-        else
+        if requestSeedEnabled () |> not then
             None
+        else
+            let path = requestSeedPath approvalRequestId
+
+            if File.Exists path then
+                try
+                    let request = JsonSerializer.Deserialize<ApprovalRequestDto>(File.ReadAllText path, Constants.JsonSerializerOptions)
+
+                    if isNull (box request) then
+                        None
+                    else
+                        requests[approvalRequestId] <- request
+                        Some request
+                with
+                | _ -> None
+            else
+                None
+
+    let private hydrateSeededRequests () =
+        if requestSeedEnabled () then
+            let directory = requestSeedDirectory ()
+
+            if Directory.Exists directory then
+                Directory.EnumerateFiles(directory, "*.json")
+                |> Seq.iter (fun path ->
+                    try
+                        let request = JsonSerializer.Deserialize<ApprovalRequestDto>(File.ReadAllText path, Constants.JsonSerializerOptions)
+
+                        if isNull (box request) |> not then
+                            requests[request.ApprovalRequestId] <- request
+                    with
+                    | _ -> ())
+
+    let private scopeMatches (expected: ApprovalScope) (actual: ApprovalScope) =
+        actual.OwnerId = expected.OwnerId
+        && actual.OrganizationId = expected.OrganizationId
+        && actual.RepositoryId = expected.RepositoryId
+        && actual.TargetBranchId = expected.TargetBranchId
+
+    let private tryDeleteDirectory path =
+        if Directory.Exists path then
+            try
+                Directory.Delete(path, true)
+            with
+            | _ -> ()
 
     let clearForTests () =
         policies.Clear()
         requests.Clear()
         history.Clear()
 
-        if Directory.Exists requestSeedDirectory then
-            Directory.Delete(requestSeedDirectory, true)
+        let root = Path.Combine(Path.GetTempPath(), "Grace.ApprovalRequestSeeds")
+        tryDeleteDirectory root
 
     let upsertPolicy (policy: ApprovalPolicyDto) =
         policies[policy.ApprovalPolicyId] <- policy
@@ -74,11 +118,12 @@ module ApprovalStore =
         | true, policy -> Some policy
         | _ -> None
 
-    let listPolicies includeDeleted =
+    let listPolicies scope includeDeleted =
         policies.Values
         |> Seq.filter (fun policy ->
-            includeDeleted
-            || policy.Status <> ApprovalPolicyStatus.Deleted)
+            scopeMatches scope policy.Scope
+            && (includeDeleted
+                || policy.Status <> ApprovalPolicyStatus.Deleted))
         |> Seq.toArray
         :> IReadOnlyList<ApprovalPolicyDto>
 
@@ -101,9 +146,13 @@ module ApprovalStore =
         entries.Add request
         request
 
-    let listRequests includeTerminal =
+    let listRequests scope includeTerminal =
+        hydrateSeededRequests ()
+
         requests.Values
-        |> Seq.filter (fun request -> includeTerminal || not request.Status.IsTerminal)
+        |> Seq.filter (fun request ->
+            scopeMatches scope request.Scope
+            && (includeTerminal || not request.Status.IsTerminal))
         |> Seq.toArray
         :> IReadOnlyList<ApprovalRequestDto>
 
@@ -168,6 +217,12 @@ module ApprovalCommon =
         else
             Resource.Repository(scope.OwnerId, scope.OrganizationId, scope.RepositoryId)
 
+    let scopeEquals left right =
+        left.OwnerId = right.OwnerId
+        && left.OrganizationId = right.OrganizationId
+        && left.RepositoryId = right.RepositoryId
+        && left.TargetBranchId = right.TargetBranchId
+
     let currentUserId (context: HttpContext) =
         PrincipalMapper.tryGetUserId context.User
         |> Option.defaultValue "unknown"
@@ -228,6 +283,29 @@ module ApprovalPolicy =
                         }
         }
 
+    let private policyIdFromContext<'T when 'T :> ApprovalPolicyParameters> (context: HttpContext) =
+        task {
+            context.Request.EnableBuffering()
+            let! parameters = context.BindJsonAsync<'T>()
+
+            context.Request.Body.Seek(0L, IO.SeekOrigin.Begin)
+            |> ignore
+
+            return
+                tryParseGuid parameters.ApprovalPolicyId
+                |> Option.bind ApprovalStore.tryGetPolicy
+        }
+
+    let resolveStoredPolicyForManage<'T when 'T :> ApprovalPolicyParameters> (context: HttpContext) =
+        task {
+            let! policy = policyIdFromContext<'T> context
+
+            return
+                match policy with
+                | Some approvalPolicy -> Ok(Operation.ApprovalPolicyManage, resourceFromApprovalScope approvalPolicy.Scope)
+                | None -> Error(error context "Approval policy was not found.")
+        }
+
     let Create: HttpHandler =
         fun _ context ->
             task {
@@ -249,10 +327,11 @@ module ApprovalPolicy =
         fun _ context ->
             task {
                 let! parameters = Services.parse<ListApprovalPoliciesParameters> context
+                let scope = scopeFromPolicyParameters parameters
 
                 return!
                     context
-                    |> Services.result200Ok (ApprovalStore.listPolicies parameters.IncludeDeleted)
+                    |> Services.result200Ok (ApprovalStore.listPolicies scope parameters.IncludeDeleted)
             }
 
     let Show: HttpHandler =
@@ -277,18 +356,25 @@ module ApprovalPolicy =
                     with
                 | None -> return! Services.result404NotFound context
                 | Some existing ->
-                    match! buildPolicy context existing.ApprovalPolicyId (existing.Version + 1) existing.Status parameters with
-                    | Error message ->
+                    let requestedScope = scopeFromPolicyParameters parameters
+
+                    if scopeEquals requestedScope existing.Scope |> not then
                         return!
                             context
-                            |> Services.result400BadRequest (error context message)
-                    | Ok policy ->
-                        return!
-                            context
-                            |> Services.result200Ok (
-                                ApprovalStore.upsertPolicy
-                                    { policy with CreatedBy = existing.CreatedBy; CreatedAt = existing.CreatedAt; UpdatedAt = Some(getCurrentInstant ()) }
-                            )
+                            |> Services.result400BadRequest (error context "Approval policy scope cannot be changed.")
+                    else
+                        match! buildPolicy context existing.ApprovalPolicyId (existing.Version + 1) existing.Status parameters with
+                        | Error message ->
+                            return!
+                                context
+                                |> Services.result400BadRequest (error context message)
+                        | Ok policy ->
+                            return!
+                                context
+                                |> Services.result200Ok (
+                                    ApprovalStore.upsertPolicy
+                                        { policy with CreatedBy = existing.CreatedBy; CreatedAt = existing.CreatedAt; UpdatedAt = Some(getCurrentInstant ()) }
+                                )
             }
 
     let private setStatus status : HttpHandler =
@@ -319,13 +405,9 @@ module ApprovalPolicy =
                 let scope = scopeFromPolicyParameters parameters
 
                 let matches =
-                    ApprovalStore.listPolicies false
+                    ApprovalStore.listPolicies scope false
                     |> Seq.filter (fun policy ->
                         policy.Status = ApprovalPolicyStatus.Enabled
-                        && policy.Scope.OwnerId = scope.OwnerId
-                        && policy.Scope.OrganizationId = scope.OrganizationId
-                        && policy.Scope.RepositoryId = scope.RepositoryId
-                        && policy.Scope.TargetBranchId = scope.TargetBranchId
                         && (String.IsNullOrWhiteSpace parameters.Subject
                             || policy.Subject = parameters.Subject))
                     |> Seq.toArray

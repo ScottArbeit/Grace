@@ -294,6 +294,21 @@ module Application =
         let requireApprovalPolicyManage: HttpHandler =
             AuthorizationMiddleware.requiresPermission Operation.ApprovalPolicyManage approvalPolicyResourceFromContext
 
+        let requireApprovalPolicyShow: HttpHandler =
+            AuthorizationMiddleware.requiresPermissionResolved ApprovalPolicy.resolveStoredPolicyForManage<Approval.ShowApprovalPolicyParameters>
+
+        let requireApprovalPolicyUpdate: HttpHandler =
+            AuthorizationMiddleware.requiresPermissionResolved ApprovalPolicy.resolveStoredPolicyForManage<Approval.UpdateApprovalPolicyParameters>
+
+        let requireApprovalPolicyEnable: HttpHandler =
+            AuthorizationMiddleware.requiresPermissionResolved ApprovalPolicy.resolveStoredPolicyForManage<Approval.EnableApprovalPolicyParameters>
+
+        let requireApprovalPolicyDisable: HttpHandler =
+            AuthorizationMiddleware.requiresPermissionResolved ApprovalPolicy.resolveStoredPolicyForManage<Approval.DisableApprovalPolicyParameters>
+
+        let requireApprovalPolicyDelete: HttpHandler =
+            AuthorizationMiddleware.requiresPermissionResolved ApprovalPolicy.resolveStoredPolicyForManage<Approval.DeleteApprovalPolicyParameters>
+
         let requireApprovalRequestRead: HttpHandler =
             AuthorizationMiddleware.requiresPermission Operation.ApprovalRequestRead approvalRequestListResourceFromContext
 
@@ -854,19 +869,19 @@ module Application =
                                route "/list" (composeHandlers requireApprovalPolicyManage ApprovalPolicy.List)
                                |> addMetadata typeof<Approval.ListApprovalPoliciesParameters>
 
-                               route "/show" (composeHandlers requireApprovalPolicyManage ApprovalPolicy.Show)
+                               route "/show" (composeHandlers requireApprovalPolicyShow ApprovalPolicy.Show)
                                |> addMetadata typeof<Approval.ShowApprovalPolicyParameters>
 
-                               route "/update" (composeHandlers requireApprovalPolicyManage ApprovalPolicy.Update)
+                               route "/update" (composeHandlers requireApprovalPolicyUpdate ApprovalPolicy.Update)
                                |> addMetadata typeof<Approval.UpdateApprovalPolicyParameters>
 
-                               route "/enable" (composeHandlers requireApprovalPolicyManage ApprovalPolicy.Enable)
+                               route "/enable" (composeHandlers requireApprovalPolicyEnable ApprovalPolicy.Enable)
                                |> addMetadata typeof<Approval.EnableApprovalPolicyParameters>
 
-                               route "/disable" (composeHandlers requireApprovalPolicyManage ApprovalPolicy.Disable)
+                               route "/disable" (composeHandlers requireApprovalPolicyDisable ApprovalPolicy.Disable)
                                |> addMetadata typeof<Approval.DisableApprovalPolicyParameters>
 
-                               route "/delete" (composeHandlers requireApprovalPolicyManage ApprovalPolicy.Delete)
+                               route "/delete" (composeHandlers requireApprovalPolicyDelete ApprovalPolicy.Delete)
                                |> addMetadata typeof<Approval.DeleteApprovalPolicyParameters>
 
                                route "/evaluate" (composeHandlers requireApprovalPolicyManage ApprovalPolicy.Evaluate)

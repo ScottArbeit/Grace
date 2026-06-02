@@ -79,6 +79,30 @@ module private ApprovalTestHelpers =
         parameters.CorrelationId <- generateCorrelationId ()
         parameters
 
+    let updatePolicyParameters (repositoryId: string) (branchId: string) (policyId: string) =
+        let parameters = createPolicyParameters repositoryId branchId
+        parameters.ApprovalPolicyId <- policyId
+        parameters.Name <- $"updated-{Guid.NewGuid():N}"
+        parameters
+
+    let listPolicyParameters (repositoryId: string) (branchId: string) =
+        let parameters = Parameters.Approval.ListApprovalPoliciesParameters()
+        parameters.OwnerId <- ownerId
+        parameters.OrganizationId <- organizationId
+        parameters.RepositoryId <- repositoryId
+        parameters.TargetBranchId <- branchId
+        parameters.CorrelationId <- generateCorrelationId ()
+        parameters
+
+    let listRequestParameters (repositoryId: string) (branchId: string) =
+        let parameters = Parameters.Approval.ListApprovalRequestsParameters()
+        parameters.OwnerId <- ownerId
+        parameters.OrganizationId <- organizationId
+        parameters.RepositoryId <- repositoryId
+        parameters.TargetBranchId <- branchId
+        parameters.CorrelationId <- generateCorrelationId ()
+        parameters
+
     let requestParameters<'T when 'T :> Parameters.Approval.ApprovalRequestParameters and 'T: (new: unit -> 'T)>
         (repositoryId: string)
         (branchId: string)
@@ -117,6 +141,14 @@ module private ApprovalTestHelpers =
         |> ignore
 
         requestId.ToString()
+
+    let createPolicyAsync (client: HttpClient) repositoryId branchId =
+        task {
+            let! createResponse = client.PostAsync("/approval/policy/create", createJsonContent (createPolicyParameters repositoryId branchId))
+
+            Assert.That(createResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+            return! deserializeContent<ApprovalPolicy> createResponse
+        }
 
 [<NonParallelizable>]
 type ApprovalApiIntegrationTests() =
@@ -169,6 +201,129 @@ type ApprovalApiIntegrationTests() =
             use client = ApprovalTestHelpers.createAuthenticatedClient $"{Guid.NewGuid()}"
             let! response = client.PostAsync("/approval/request/create", createJsonContent (obj ()))
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.NotFound))
+        }
+
+    [<Test>]
+    member _.PolicyListReturnsOnlyRequestedAuthorizedScope() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let allowedBranchId = $"{Guid.NewGuid()}"
+            let otherBranchId = $"{Guid.NewGuid()}"
+            let adminUser = $"{Guid.NewGuid()}"
+
+            let! grantAdmin = ApprovalTestHelpers.grantRoleAsync Client "repo" ownerId organizationId repositoryId "" adminUser "RepoAdmin"
+            Assert.That(grantAdmin.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+
+            use adminClient = ApprovalTestHelpers.createAuthenticatedClient adminUser
+            let! allowedPolicy = ApprovalTestHelpers.createPolicyAsync adminClient repositoryId allowedBranchId
+            let! otherPolicy = ApprovalTestHelpers.createPolicyAsync adminClient repositoryId otherBranchId
+
+            let! listResponse =
+                adminClient.PostAsync("/approval/policy/list", createJsonContent (ApprovalTestHelpers.listPolicyParameters repositoryId allowedBranchId))
+
+            Assert.That(listResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+
+            let! policies = deserializeContent<ApprovalPolicy array> listResponse
+
+            Assert.That(
+                policies
+                |> Array.map (fun policy -> policy.ApprovalPolicyId),
+                Is.EquivalentTo([| allowedPolicy.ApprovalPolicyId |])
+            )
+
+            Assert.That(
+                policies
+                |> Array.exists (fun policy -> policy.ApprovalPolicyId = otherPolicy.ApprovalPolicyId),
+                Is.False
+            )
+        }
+
+    [<Test>]
+    member _.PolicyStoredScopeBlocksBodyScopeSpoofingForShowAndUpdate() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let allowedBranchId = $"{Guid.NewGuid()}"
+            let storedBranchId = $"{Guid.NewGuid()}"
+            let adminUser = $"{Guid.NewGuid()}"
+            let limitedUser = $"{Guid.NewGuid()}"
+
+            let! grantAdmin = ApprovalTestHelpers.grantRoleAsync Client "repo" ownerId organizationId repositoryId "" adminUser "RepoAdmin"
+            Assert.That(grantAdmin.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+
+            use adminClient = ApprovalTestHelpers.createAuthenticatedClient adminUser
+            let! storedPolicy = ApprovalTestHelpers.createPolicyAsync adminClient repositoryId storedBranchId
+
+            let! grantLimited = ApprovalTestHelpers.grantRoleAsync Client "branch" ownerId organizationId repositoryId allowedBranchId limitedUser "BranchAdmin"
+
+            Assert.That(grantLimited.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+
+            use limitedClient = ApprovalTestHelpers.createAuthenticatedClient limitedUser
+
+            let spoofedShow = ApprovalTestHelpers.showPolicyParameters repositoryId allowedBranchId (storedPolicy.ApprovalPolicyId.ToString())
+
+            let! showResponse = limitedClient.PostAsync("/approval/policy/show", createJsonContent spoofedShow)
+            Assert.That(showResponse.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden))
+
+            let spoofedUpdate = ApprovalTestHelpers.updatePolicyParameters repositoryId allowedBranchId (storedPolicy.ApprovalPolicyId.ToString())
+
+            let! updateResponse = limitedClient.PostAsync("/approval/policy/update", createJsonContent spoofedUpdate)
+            Assert.That(updateResponse.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden))
+        }
+
+    [<Test>]
+    member _.PolicyUpdateRejectsScopeChangeEvenForStoredScopeManager() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let storedBranchId = repositoryDefaultBranchIds[0]
+            let otherBranchId = $"{Guid.NewGuid()}"
+            let adminUser = $"{Guid.NewGuid()}"
+
+            let! grantAdmin = ApprovalTestHelpers.grantRoleAsync Client "repo" ownerId organizationId repositoryId "" adminUser "RepoAdmin"
+            Assert.That(grantAdmin.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+
+            use adminClient = ApprovalTestHelpers.createAuthenticatedClient adminUser
+            let! storedPolicy = ApprovalTestHelpers.createPolicyAsync adminClient repositoryId storedBranchId
+
+            let movedUpdate = ApprovalTestHelpers.updatePolicyParameters repositoryId otherBranchId (storedPolicy.ApprovalPolicyId.ToString())
+
+            let! updateResponse = adminClient.PostAsync("/approval/policy/update", createJsonContent movedUpdate)
+            Assert.That(updateResponse.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
+        }
+
+    [<Test>]
+    member _.RequestListReturnsOnlyRequestedAuthorizedScope() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let allowedBranchId = $"{Guid.NewGuid()}"
+            let otherBranchId = $"{Guid.NewGuid()}"
+            let userId = $"{Guid.NewGuid()}"
+            let allowedRequestId = ApprovalTestHelpers.seedRequest repositoryId allowedBranchId $"user:{userId}"
+            let otherRequestId = ApprovalTestHelpers.seedRequest repositoryId otherBranchId $"user:{Guid.NewGuid()}"
+
+            let! grantReader = ApprovalTestHelpers.grantRoleAsync Client "branch" ownerId organizationId repositoryId allowedBranchId userId "ApprovalResponder"
+
+            Assert.That(grantReader.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+
+            use client = ApprovalTestHelpers.createAuthenticatedClient userId
+
+            let! listResponse =
+                client.PostAsync("/approval/request/list", createJsonContent (ApprovalTestHelpers.listRequestParameters repositoryId allowedBranchId))
+
+            Assert.That(listResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+
+            let! requests = deserializeContent<ApprovalRequest array> listResponse
+
+            Assert.That(
+                requests
+                |> Array.map (fun request -> request.ApprovalRequestId.ToString()),
+                Is.EquivalentTo([| allowedRequestId |])
+            )
+
+            Assert.That(
+                requests
+                |> Array.exists (fun request -> request.ApprovalRequestId.ToString() = otherRequestId),
+                Is.False
+            )
         }
 
     [<Test>]

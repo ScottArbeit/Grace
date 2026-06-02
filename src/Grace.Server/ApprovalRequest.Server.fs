@@ -136,10 +136,11 @@ module ApprovalRequest =
         fun _ context ->
             task {
                 let! parameters = Services.parse<ListApprovalRequestsParameters> context
+                let scope = scopeFromRequestParameters parameters
 
                 return!
                     context
-                    |> Services.result200Ok (ApprovalStore.listRequests parameters.IncludeTerminal)
+                    |> Services.result200Ok (ApprovalStore.listRequests scope parameters.IncludeTerminal)
             }
 
     let Show: HttpHandler =
