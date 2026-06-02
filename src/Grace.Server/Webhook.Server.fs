@@ -27,6 +27,7 @@ module WebhookStore =
     let private rules = ConcurrentDictionary<WebhookRuleId, WebhookRuleDto>()
     let private deliveries = ConcurrentDictionary<WebhookDeliveryId, WebhookDeliveryDto>()
     let private deliveryPayloads = ConcurrentDictionary<WebhookDeliveryId, string>()
+    let private deliveryRuleSnapshots = ConcurrentDictionary<WebhookDeliveryId, WebhookRuleDto>()
 
     let private scopeMatches (expected: WebhookScope) (actual: WebhookScope) =
         actual.OwnerId = expected.OwnerId
@@ -38,6 +39,7 @@ module WebhookStore =
         rules.Clear()
         deliveries.Clear()
         deliveryPayloads.Clear()
+        deliveryRuleSnapshots.Clear()
 
     let upsertRule (rule: WebhookRuleDto) =
         rules[rule.WebhookRuleId] <- rule
@@ -68,6 +70,15 @@ module WebhookStore =
     let tryGetDeliveryPayload webhookDeliveryId =
         match deliveryPayloads.TryGetValue webhookDeliveryId with
         | true, payloadJson -> Some payloadJson
+        | _ -> None
+
+    let addDeliveryRuleSnapshot webhookDeliveryId (rule: WebhookRuleDto) =
+        deliveryRuleSnapshots[webhookDeliveryId] <- rule
+        rule
+
+    let tryGetDeliveryRuleSnapshot webhookDeliveryId =
+        match deliveryRuleSnapshots.TryGetValue webhookDeliveryId with
+        | true, rule -> Some rule
         | _ -> None
 
     let upsertDelivery (delivery: WebhookDeliveryDto) =

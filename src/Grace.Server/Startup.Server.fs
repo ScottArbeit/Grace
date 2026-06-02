@@ -1861,6 +1861,8 @@ module Application =
                 .AddLogging()
                 .AddHostedService<ReminderService>()
                 .AddHostedService<Notification.Subscriber.GraceEventSubscriptionService>()
+                .AddSingleton<WebhookDispatch.IOutboundWebhookTransport, WebhookDispatch.HttpOutboundWebhookTransport>()
+                .AddHostedService<WebhookRetryHostedService>()
                 .AddHttpLogging()
                 .AddOrleans(fun siloBuilder ->
                     siloBuilder.Services.AddSerializer (fun serializerBuilder ->

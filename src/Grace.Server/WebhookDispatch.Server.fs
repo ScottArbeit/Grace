@@ -401,6 +401,9 @@ module WebhookDispatch =
                 WebhookStore.addDeliveryPayload delivery.WebhookDeliveryId payloadJson
                 |> ignore
 
+                WebhookStore.addDeliveryRuleSnapshot delivery.WebhookDeliveryId rule
+                |> ignore
+
                 match validateDeliveryUrl hostEnvironment configuration rule with
                 | Error failure ->
                     recordValidationFailure logger rule delivery failure
@@ -450,7 +453,7 @@ module WebhookDispatch =
             while index < dueDeliveries.Count do
                 let delivery = dueDeliveries[index]
 
-                match WebhookStore.tryGetRule delivery.WebhookRuleId, WebhookStore.tryGetDeliveryPayload delivery.WebhookDeliveryId with
+                match WebhookStore.tryGetDeliveryRuleSnapshot delivery.WebhookDeliveryId, WebhookStore.tryGetDeliveryPayload delivery.WebhookDeliveryId with
                 | Some rule, Some payloadJson ->
                     match validateDeliveryUrl hostEnvironment configuration rule with
                     | Error failure ->
@@ -472,7 +475,7 @@ module WebhookDispatch =
                         { delivery with
                             Status = WebhookDeliveryStatus.DeadLettered
                             LastAttemptAt = Some(getCurrentInstant ())
-                            LastError = Some(trimError "Retry delivery could not be processed because its rule or payload is no longer available.")
+                            LastError = Some(trimError "Retry delivery could not be processed because its rule snapshot or payload is no longer available.")
                             NextAttemptAt = Option.None
                         }
                     |> ignore
@@ -526,3 +529,63 @@ module WebhookDispatch =
                 logger.LogError(ex, "Webhook dispatch failed after source event commit; source workflow will not be blocked.")
                 return DispatchResult.Empty
         }
+
+    let drainScheduledRetriesOnceAsync
+        (logger: ILogger)
+        (configuration: IConfiguration)
+        (hostEnvironment: IHostEnvironment)
+        (transport: IOutboundWebhookTransport)
+        maxDeliveries
+        (cancellationToken: CancellationToken)
+        =
+        processScheduledRetriesAsync logger configuration hostEnvironment transport (getCurrentInstant ()) maxDeliveries cancellationToken
+
+type WebhookRetryHostedService
+    (
+        logger: ILogger<WebhookRetryHostedService>,
+        configuration: IConfiguration,
+        hostEnvironment: IHostEnvironment,
+        transport: WebhookDispatch.IOutboundWebhookTransport
+    ) =
+    inherit BackgroundService()
+
+    let pollIntervalSeconds = max 1 (configuration.GetValue<int>("grace:webhooks:retryProcessor:pollIntervalSeconds", 30))
+    let initialDelaySeconds = max 0 (configuration.GetValue<int>("grace:webhooks:retryProcessor:initialDelaySeconds", 5))
+    let maxDeliveriesPerTick = max 1 (configuration.GetValue<int>("grace:webhooks:retryProcessor:maxDeliveriesPerTick", 25))
+    let pollInterval = TimeSpan.FromSeconds(float pollIntervalSeconds)
+    let initialDelay = TimeSpan.FromSeconds(float initialDelaySeconds)
+
+    member internal _.DrainOnceAsync(cancellationToken: CancellationToken) =
+        WebhookDispatch.drainScheduledRetriesOnceAsync logger configuration hostEnvironment transport maxDeliveriesPerTick cancellationToken
+
+    override this.ExecuteAsync(stoppingToken: CancellationToken) =
+        task {
+            try
+                if initialDelay > TimeSpan.Zero then do! Task.Delay(initialDelay, stoppingToken)
+
+                use periodicTimer = new PeriodicTimer(pollInterval)
+                let mutable ticked = true
+
+                while ticked
+                      && not stoppingToken.IsCancellationRequested do
+                    try
+                        let! result = this.DrainOnceAsync(stoppingToken)
+
+                        if result.ProcessedCount > 0 then
+                            logger.LogInformation(
+                                "Processed {ProcessedCount} scheduled webhook retries: {DeliveredCount} delivered, {FailedCount} failed, {RescheduledCount} rescheduled.",
+                                result.ProcessedCount,
+                                result.DeliveredCount,
+                                result.FailedCount,
+                                result.RescheduledCount
+                            )
+                    with
+                    | :? OperationCanceledException when stoppingToken.IsCancellationRequested -> ()
+                    | ex -> logger.LogError(ex, "Scheduled webhook retry processing failed; the processor will continue on the next tick.")
+
+                    let! tick = periodicTimer.WaitForNextTickAsync(stoppingToken)
+                    ticked <- tick
+            with
+            | :? OperationCanceledException when stoppingToken.IsCancellationRequested -> ()
+        }
+        :> Task
