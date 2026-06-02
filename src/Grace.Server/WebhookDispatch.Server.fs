@@ -349,6 +349,7 @@ module WebhookDispatch =
                     try
                         return! transport.SendAsync(request, cancellationToken)
                     with
+                    | :? OperationCanceledException as ex -> return raise ex
                     | ex -> return TransientFailure(Option.None, ex.Message)
                 }
 
@@ -451,6 +452,8 @@ module WebhookDispatch =
             let mutable index = 0
 
             while index < dueDeliveries.Count do
+                cancellationToken.ThrowIfCancellationRequested()
+
                 let delivery = dueDeliveries[index]
 
                 match WebhookStore.tryGetDeliveryRuleSnapshot delivery.WebhookDeliveryId, WebhookStore.tryGetDeliveryPayload delivery.WebhookDeliveryId with
