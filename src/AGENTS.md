@@ -36,6 +36,9 @@ update the issue before editing the new paths.
 - When acting as the main implementation orchestrator, keep coding and code review work in subagents, including fixes in
   response to review results. The main agent coordinates issues, subagents, pull requests, and final integration
   evidence. Follow the required subagent review loop in `docs/Development process.md`.
+- Persist each review-only subagent report, including "Reviewed And OK" notes, to the issue or pull request before
+  launching another review pass. Later review prompts should include prior OK notes and ask the reviewer to re-check
+  them only when the new diff affects those areas.
 - When the user asks to address a code review comment, review comment, PR feedback, or similar, complete the full
   review-thread workflow: evaluate the comment, make the appropriate fix or explicitly explain why no code change is
   needed, validate the result, commit and push the branch, reply to the GitHub review comment with the outcome and

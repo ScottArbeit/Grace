@@ -204,7 +204,9 @@ agent, not a nested `codex review` process launched from inside an existing agen
 The implementation subagent must stop after committing and validating the slice and return a
 [Ready For Review handoff](#ready-for-review-handoff) to the parent/orchestrator thread. The parent/orchestrator is
 responsible for spawning the fresh review-only sibling subagent, collecting its findings, and sending actionable issues
-back to an implementation subagent for fixes.
+back to an implementation subagent for fixes. After every review-only pass, the parent/orchestrator must persist the
+review report to the GitHub issue or pull request before starting the next implementation or review pass. The persisted
+report must include both actionable findings and the "Reviewed And OK" notes.
 
 If the subagent launcher directly exposes a dedicated Code Review mode, skill, command, or capability, select it
 explicitly for the review-only sibling subagent. Do not assume that a generic prompt asking a model to act like a
@@ -236,17 +238,20 @@ The review loop is blocking:
    references where possible, or a clear no-issues result. The final report must include a short "Reviewed And OK"
    section with brief bullets for non-issues the reviewer explicitly checked, especially concerns raised by prior
    review passes.
-4. If the review finds issues, send them to an implementation subagent to address in the issue-owned branch/worktree.
-5. The implementation subagent re-runs focused validation for the changed behavior or docs, plus broader validation when
+4. Persist the full review report to the issue or pull request. If another review pass will run later, copy the prior
+   "Reviewed And OK" notes into that review prompt and tell the reviewer to treat them as already-reviewed unless the
+   new diff affects those areas.
+5. If the review finds issues, send them to an implementation subagent to address in the issue-owned branch/worktree.
+6. The implementation subagent re-runs focused validation for the changed behavior or docs, plus broader validation when
    the fix touches shared or risky surfaces.
-6. The implementation subagent commits the review fix and returns a new Ready For Review handoff.
-7. If a pull request already exists, add a new standalone pull request comment for the review fix using the
+7. The implementation subagent commits the review fix and returns a new Ready For Review handoff.
+8. If a pull request already exists, add a new standalone pull request comment for the review fix using the
    [Review/Fix comment template](#reviewfix-comment-template). The comment must make the high-level outcome easy to
    scan before the detailed issue and fix text. Do not add review-fix notes to the pull request body. If the pull
    request does not exist yet, add the standalone comment immediately after opening the pull request.
-8. From the parent/orchestrator thread, spawn another fresh review-only sibling subagent pass against the updated
+9. From the parent/orchestrator thread, spawn another fresh review-only sibling subagent pass against the updated
    committed diff, again using a dedicated Code Review capability when the subagent launcher directly exposes one.
-9. Repeat the loop until the review reports no issues.
+10. Repeat the loop until the review reports no issues.
 
 Only after a fresh local review-only sibling subagent reports no issues can the task continue toward pull request
 creation, handoff, merge readiness, or any other completion step. Record whether a dedicated subagent Code Review

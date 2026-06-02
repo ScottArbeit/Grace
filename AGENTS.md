@@ -58,6 +58,9 @@ completed sub-issues are checked.
 - When acting as the main implementation orchestrator, keep coding and code review work in subagents, including fixes in
   response to review results. The main agent coordinates issues, subagents, pull requests, and final integration
   evidence. Follow the required subagent review loop in `docs/Development process.md`.
+- After each review-only subagent pass, persist the findings and "Reviewed And OK" notes to the GitHub issue or pull
+  request before starting another review pass. Include prior "Reviewed And OK" notes in later review prompts so
+  reviewers can build on prior coverage instead of repeating it.
 - Open normal ready-for-review pull requests. Do not open draft pull requests unless the user explicitly asks for a
   draft.
 - When the user says a PR is merged, verify the merge, delete the issue branch and worktree, run `git fetch --prune`,
