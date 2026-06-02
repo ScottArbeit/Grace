@@ -240,6 +240,11 @@ type OutboundUrlSafetyUnit() =
         |> assertRejected (ValidationFailure.UnsafeHostRejected "127.0.0.1")
 
     [<Test>]
+    member _.WellKnownNat64IPv6LiteralIsRejected() =
+        validateOutsideDevelopment emptyConfiguration (publicRequest "https://[64:ff9b::7f00:1]/events")
+        |> assertRejected (ValidationFailure.UnsafeHostRejected "64:ff9b::7f00:1")
+
+    [<Test>]
     member _.RedirectsRequireRevalidation() =
         let original =
             validatePublic (publicRequest "https://hooks.example.test/events")
