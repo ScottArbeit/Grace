@@ -287,6 +287,17 @@ type OutboundUrlSafetyUnit() =
         )
 
     [<Test>]
+    member _.RedactsJwtBearerOAuthAssertionQueryNamesCaseInsensitively() =
+        let redacted =
+            OutboundUrlPolicy.Redaction.redactUri
+                "https://hooks.example.test/token?client_assertion=header.payload.signature&ASSERTION=jwt-bearer-material&keep=value"
+
+        Assert.That(redacted, Is.EqualTo("https://hooks.example.test/token?client_assertion=REDACTED&ASSERTION=REDACTED&keep=value"))
+
+        Assert.That(redacted, Does.Not.Contain("header.payload.signature"))
+        Assert.That(redacted, Does.Not.Contain("jwt-bearer-material"))
+
+    [<Test>]
     member _.RedactsGoogleCloudSignedUrlQueryNamesCaseInsensitively() =
         let redacted =
             OutboundUrlPolicy.Redaction.redactUri

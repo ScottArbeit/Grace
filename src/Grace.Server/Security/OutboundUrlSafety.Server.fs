@@ -462,6 +462,8 @@ module OutboundUrlSafety =
                     "access_token"
                     "refresh_token"
                     "id_token"
+                    "client_assertion"
+                    "assertion"
                     "code"
                     "state"
                     "nonce"
