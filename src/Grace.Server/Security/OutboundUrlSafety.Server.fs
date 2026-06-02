@@ -462,6 +462,7 @@ module OutboundUrlSafety =
                     "access_token"
                     "refresh_token"
                     "id_token"
+                    "id_token_hint"
                     "client_assertion"
                     "assertion"
                     "code"
@@ -535,6 +536,7 @@ module OutboundUrlSafety =
                         builder.UserName <- "REDACTED"
                         builder.Password <- String.Empty
 
+                    builder.Path <- "/[redacted-path]"
                     builder.Query <- redactQuery uri.Query
                     builder.Fragment <- String.Empty
                     builder.Uri.AbsoluteUri

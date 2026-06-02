@@ -274,7 +274,7 @@ type OutboundUrlSafetyUnit() =
         Assert.That(
             redacted,
             Is.EqualTo(
-                "https://REDACTED@hooks.example.test/path?sig=REDACTED&keep=value&access_token=REDACTED&nested=key&api_key=REDACTED&client_secret=REDACTED&X-Amz-Signature=REDACTED&SharedAccessSignature=REDACTED&sv=REDACTED&sp=REDACTED&sr=REDACTED&se=REDACTED&skoid=REDACTED&sktid=REDACTED&skt=REDACTED&ske=REDACTED&sks=REDACTED&skv=REDACTED"
+                "https://REDACTED@hooks.example.test/[redacted-path]?sig=REDACTED&keep=value&access_token=REDACTED&nested=key&api_key=REDACTED&client_secret=REDACTED&X-Amz-Signature=REDACTED&SharedAccessSignature=REDACTED&sv=REDACTED&sp=REDACTED&sr=REDACTED&se=REDACTED&skoid=REDACTED&sktid=REDACTED&skt=REDACTED&ske=REDACTED&sks=REDACTED&skv=REDACTED"
             )
         )
 
@@ -282,12 +282,12 @@ type OutboundUrlSafetyUnit() =
     member _.RedactsTokenAndCredentialQueryNamesCaseInsensitively() =
         let redacted =
             OutboundUrlPolicy.Redaction.redactUri
-                "https://hooks.example.test/path?refresh_token=refresh&id_token=id&State=state&NONCE=nonce&SAMLResponse=saml&RelayState=relay&X-Amz-Credential=credential&X-Amz-Security-Token=session&Api_Key=key&oauth_token=oauth&x-api-key=header"
+                "https://hooks.example.test/path?refresh_token=refresh&id_token=id&id_token_hint=hint&State=state&NONCE=nonce&SAMLResponse=saml&RelayState=relay&X-Amz-Credential=credential&X-Amz-Security-Token=session&Api_Key=key&oauth_token=oauth&x-api-key=header"
 
         Assert.That(
             redacted,
             Is.EqualTo(
-                "https://hooks.example.test/path?refresh_token=REDACTED&id_token=REDACTED&State=REDACTED&NONCE=REDACTED&SAMLResponse=REDACTED&RelayState=REDACTED&X-Amz-Credential=REDACTED&X-Amz-Security-Token=REDACTED&Api_Key=REDACTED&oauth_token=REDACTED&x-api-key=REDACTED"
+                "https://hooks.example.test/[redacted-path]?refresh_token=REDACTED&id_token=REDACTED&id_token_hint=REDACTED&State=REDACTED&NONCE=REDACTED&SAMLResponse=REDACTED&RelayState=REDACTED&X-Amz-Credential=REDACTED&X-Amz-Security-Token=REDACTED&Api_Key=REDACTED&oauth_token=REDACTED&x-api-key=REDACTED"
             )
         )
 
@@ -297,7 +297,7 @@ type OutboundUrlSafetyUnit() =
             OutboundUrlPolicy.Redaction.redactUri
                 "https://hooks.example.test/token?client_assertion=header.payload.signature&ASSERTION=jwt-bearer-material&keep=value"
 
-        Assert.That(redacted, Is.EqualTo("https://hooks.example.test/token?client_assertion=REDACTED&ASSERTION=REDACTED&keep=value"))
+        Assert.That(redacted, Is.EqualTo("https://hooks.example.test/[redacted-path]?client_assertion=REDACTED&ASSERTION=REDACTED&keep=value"))
 
         Assert.That(redacted, Does.Not.Contain("header.payload.signature"))
         Assert.That(redacted, Does.Not.Contain("jwt-bearer-material"))
@@ -311,7 +311,7 @@ type OutboundUrlSafetyUnit() =
         Assert.That(
             redacted,
             Is.EqualTo(
-                "https://storage.googleapis.com/bucket/object?X-Goog-Signature=REDACTED&x-goog-credential=REDACTED&X-GOOG-ALGORITHM=REDACTED&x-goog-date=REDACTED&X-Goog-Expires=REDACTED&x-goog-signedheaders=REDACTED&keep=value"
+                "https://storage.googleapis.com/[redacted-path]?X-Goog-Signature=REDACTED&x-goog-credential=REDACTED&X-GOOG-ALGORITHM=REDACTED&x-goog-date=REDACTED&X-Goog-Expires=REDACTED&x-goog-signedheaders=REDACTED&keep=value"
             )
         )
 
@@ -319,7 +319,7 @@ type OutboundUrlSafetyUnit() =
     member _.RedactsSensitiveQueryValuesDelimitedWithSemicolons() =
         let redacted = OutboundUrlPolicy.Redaction.redactUri "https://hooks.example.test/path?keep=value;access_token=secret;client_secret=also-secret"
 
-        Assert.That(redacted, Is.EqualTo("https://hooks.example.test/path?keep=value&access_token=REDACTED&client_secret=REDACTED"))
+        Assert.That(redacted, Is.EqualTo("https://hooks.example.test/[redacted-path]?keep=value&access_token=REDACTED&client_secret=REDACTED"))
 
         Assert.That(redacted, Does.Not.Contain("=secret"))
         Assert.That(redacted, Does.Not.Contain("also-secret"))
@@ -328,9 +328,20 @@ type OutboundUrlSafetyUnit() =
     member _.RedactionOmitsFragments() =
         let redacted = OutboundUrlPolicy.Redaction.redactUri "https://hooks.example.test/callback?keep=value#access_token=fragment-token&oauth_token=oauth"
 
-        Assert.That(redacted, Is.EqualTo("https://hooks.example.test/callback?keep=value"))
+        Assert.That(redacted, Is.EqualTo("https://hooks.example.test/[redacted-path]?keep=value"))
         Assert.That(redacted, Does.Not.Contain("fragment-token"))
         Assert.That(redacted, Does.Not.Contain("oauth"))
+
+    [<Test>]
+    member _.RedactionOmitsSecretBearingPathSegments() =
+        let redacted =
+            OutboundUrlPolicy.Redaction.redactUri
+                "https://hooks.example.test/hooks/bearer-token-abc123/customer-secret-value?keep=value&id_token_hint=logout-token"
+
+        Assert.That(redacted, Is.EqualTo("https://hooks.example.test/[redacted-path]?keep=value&id_token_hint=REDACTED"))
+        Assert.That(redacted, Does.Not.Contain("hooks/bearer-token-abc123"))
+        Assert.That(redacted, Does.Not.Contain("customer-secret-value"))
+        Assert.That(redacted, Does.Not.Contain("logout-token"))
 
     [<Test>]
     member _.MalformedSecretBearingUrlsAreNotReturnedDuringRedaction() =
