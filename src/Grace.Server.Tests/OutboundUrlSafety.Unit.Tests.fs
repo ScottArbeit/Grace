@@ -50,7 +50,18 @@ type OutboundUrlSafetyUnit() =
         | "metadata.example.test" -> [| IPAddress.Parse("169.254.169.254") |]
         | _ -> [| IPAddress.Parse("93.184.216.34") |]
 
+    let developmentConfiguration = configuration [ "ASPNETCORE_ENVIRONMENT", "Development" ]
+
+    let unsafeLocalDevelopmentConfiguration =
+        configuration [ "ASPNETCORE_ENVIRONMENT", "Development"
+                        OutboundUrlPolicy.UnsafeLocalDevelopmentConfigKey, "true" ]
+
     let validatePublic request = OutboundUrlPolicy.validateWithResolver publicResolver emptyConfiguration request
+
+    let addressList (addresses: IPAddress array) =
+        addresses
+        |> Array.map (fun address -> address.ToString())
+        |> String.concat ","
 
     [<Test>]
     member _.PublicTargetsRequireAbsoluteHttps() =
@@ -61,6 +72,7 @@ type OutboundUrlSafetyUnit() =
         Assert.That(validated.ScopedUrl.Safety, Is.EqualTo(UrlSafety.PublicHttps))
         Assert.That(validated.ScopedUrl.Url, Is.EqualTo("https://hooks.example.test/events"))
         Assert.That(validated.RedirectPolicy, Is.EqualTo(OutboundUrlPolicy.RevalidateEveryRedirect))
+        Assert.That(addressList validated.ResolvedAddresses, Is.EqualTo("93.184.216.34"))
 
         validatePublic (publicRequest "http://hooks.example.test/events")
         |> assertRejected ValidationFailure.HttpsRequired
@@ -103,37 +115,57 @@ type OutboundUrlSafetyUnit() =
 
     [<Test>]
     member _.UnsafeLocalDevelopmentRequiresServerOptInAndPerCommandAcknowledgement() =
-        let config = configuration [ OutboundUrlPolicy.UnsafeLocalDevelopmentConfigKey, "true" ]
-
         OutboundUrlPolicy.validate emptyConfiguration (localRequest "http://localhost:5000/webhook")
         |> assertRejected ValidationFailure.LocalTargetRequiresDevelopmentAcknowledgement
 
         let missingAcknowledgement: ValidationRequest =
             { Url = "http://localhost:5000/webhook"; RequestedSafety = UrlSafety.LocalUnsafeDevOnly; AcknowledgeUnsafeLocalDevelopment = false }
 
-        OutboundUrlPolicy.validate config missingAcknowledgement
+        OutboundUrlPolicy.validate unsafeLocalDevelopmentConfiguration missingAcknowledgement
+        |> assertRejected ValidationFailure.LocalTargetRequiresDevelopmentAcknowledgement
+
+        OutboundUrlPolicy.validate developmentConfiguration (localRequest "http://localhost:5000/webhook")
         |> assertRejected ValidationFailure.LocalTargetRequiresDevelopmentAcknowledgement
 
         let localhost =
-            OutboundUrlPolicy.validate config (localRequest "http://localhost:5000/webhook")
+            OutboundUrlPolicy.validate unsafeLocalDevelopmentConfiguration (localRequest "http://localhost:5000/webhook")
             |> assertAccepted
 
         let ipv4 =
-            OutboundUrlPolicy.validate config (localRequest "http://127.0.0.1:5000/webhook")
+            OutboundUrlPolicy.validate unsafeLocalDevelopmentConfiguration (localRequest "http://127.0.0.1:5000/webhook")
             |> assertAccepted
 
         let ipv6 =
-            OutboundUrlPolicy.validate config (localRequest "http://[::1]:5000/webhook")
+            OutboundUrlPolicy.validate unsafeLocalDevelopmentConfiguration (localRequest "http://[::1]:5000/webhook")
             |> assertAccepted
 
         Assert.That(localhost.ScopedUrl.Safety, Is.EqualTo(UrlSafety.LocalUnsafeDevOnly))
         Assert.That(ipv4.ScopedUrl.Safety, Is.EqualTo(UrlSafety.LocalUnsafeDevOnly))
         Assert.That(ipv6.ScopedUrl.Safety, Is.EqualTo(UrlSafety.LocalUnsafeDevOnly))
 
+        Assert.That(addressList localhost.ResolvedAddresses, Is.EqualTo("127.0.0.1,::1"))
+
+        Assert.That(addressList ipv4.ResolvedAddresses, Is.EqualTo("127.0.0.1"))
+        Assert.That(addressList ipv6.ResolvedAddresses, Is.EqualTo("::1"))
+
+    [<Test>]
+    member _.UnsafeLocalDevelopmentConfigAndAcknowledgementAreInsufficientOutsideDevelopment() =
+        let productionConfig =
+            configuration [ "ASPNETCORE_ENVIRONMENT", "Production"
+                            OutboundUrlPolicy.UnsafeLocalDevelopmentConfigKey, "true" ]
+
+        let dotnetProductionConfig =
+            configuration [ "DOTNET_ENVIRONMENT", "Production"
+                            OutboundUrlPolicy.UnsafeLocalDevelopmentConfigKey, "true" ]
+
+        OutboundUrlPolicy.validate productionConfig (localRequest "http://localhost:5000/webhook")
+        |> assertRejected ValidationFailure.LocalTargetRequiresDevelopmentAcknowledgement
+
+        OutboundUrlPolicy.validate dotnetProductionConfig (localRequest "http://127.0.0.1:5000/webhook")
+        |> assertRejected ValidationFailure.LocalTargetRequiresDevelopmentAcknowledgement
+
     [<Test>]
     member _.UnsafeLocalDevelopmentStillRejectsPrivateAndMetadataTargets() =
-        let config = configuration [ OutboundUrlPolicy.UnsafeLocalDevelopmentConfigKey, "true" ]
-
         for url in
             [
                 "http://10.0.0.1/webhook"
@@ -141,7 +173,7 @@ type OutboundUrlSafetyUnit() =
                 "http://192.168.0.10/webhook"
                 "http://169.254.169.254/metadata"
             ] do
-            match OutboundUrlPolicy.validate config (localRequest url) with
+            match OutboundUrlPolicy.validate unsafeLocalDevelopmentConfiguration (localRequest url) with
             | Error (ValidationFailure.UnsafeHostRejected _) -> ()
             | Error failure -> Assert.Fail(sprintf "Expected %s to be rejected as an unsafe host but got %A." url failure)
             | Ok value -> Assert.Fail($"Expected {url} to be rejected but got {value.ScopedUrl.Url}.")
@@ -153,6 +185,24 @@ type OutboundUrlSafetyUnit() =
 
         OutboundUrlPolicy.validateWithResolver publicResolver emptyConfiguration (publicRequest "https://metadata.example.test/events")
         |> assertRejected (ValidationFailure.UnsafeHostRejected "169.254.169.254")
+
+    [<Test>]
+    member _.PublicHostnamesCarryResolvedAddressesForAddressPinning() =
+        let resolver host =
+            match host with
+            | "multi.example.test" ->
+                [|
+                    IPAddress.Parse("93.184.216.34")
+                    IPAddress.Parse("2606:2800:220:1:248:1893:25c8:1946")
+                    IPAddress.Parse("::ffff:93.184.216.34")
+                |]
+            | _ -> [||]
+
+        let validated =
+            OutboundUrlPolicy.validateWithResolver resolver emptyConfiguration (publicRequest "https://multi.example.test/events")
+            |> assertAccepted
+
+        Assert.That(addressList validated.ResolvedAddresses, Is.EqualTo("93.184.216.34,2606:2800:220:1:248:1893:25c8:1946"))
 
     [<Test>]
     member _.IPv4MappedIPv6LoopbackLiteralIsRejected() =
@@ -173,9 +223,29 @@ type OutboundUrlSafetyUnit() =
 
     [<Test>]
     member _.RedactsUserInfoAndSensitiveQueryValues() =
-        let redacted = OutboundUrlPolicy.Redaction.redactUri "https://user:secret@hooks.example.test/path?sig=abc&keep=value&access_token=token&nested=key"
+        let redacted =
+            OutboundUrlPolicy.Redaction.redactUri
+                "https://user:secret@hooks.example.test/path?sig=abc&keep=value&access_token=token&nested=key&api_key=k&client_secret=s&X-Amz-Signature=aws&SharedAccessSignature=sas&sv=2024&sp=r&sr=b&se=tomorrow&skoid=o&sktid=t&skt=st&ske=se&sks=b&skv=v"
 
-        Assert.That(redacted, Is.EqualTo("https://REDACTED@hooks.example.test/path?sig=REDACTED&keep=value&access_token=REDACTED&nested=key"))
+        Assert.That(
+            redacted,
+            Is.EqualTo(
+                "https://REDACTED@hooks.example.test/path?sig=REDACTED&keep=value&access_token=REDACTED&nested=key&api_key=REDACTED&client_secret=REDACTED&X-Amz-Signature=REDACTED&SharedAccessSignature=REDACTED&sv=REDACTED&sp=REDACTED&sr=REDACTED&se=REDACTED&skoid=REDACTED&sktid=REDACTED&skt=REDACTED&ske=REDACTED&sks=REDACTED&skv=REDACTED"
+            )
+        )
+
+    [<Test>]
+    member _.RedactsTokenAndCredentialQueryNamesCaseInsensitively() =
+        let redacted =
+            OutboundUrlPolicy.Redaction.redactUri
+                "https://hooks.example.test/path?refresh_token=refresh&id_token=id&X-Amz-Credential=credential&X-Amz-Security-Token=session&Api_Key=key"
+
+        Assert.That(
+            redacted,
+            Is.EqualTo(
+                "https://hooks.example.test/path?refresh_token=REDACTED&id_token=REDACTED&X-Amz-Credential=REDACTED&X-Amz-Security-Token=REDACTED&Api_Key=REDACTED"
+            )
+        )
 
     [<Test>]
     member _.MalformedSecretBearingUrlsAreNotReturnedDuringRedaction() =

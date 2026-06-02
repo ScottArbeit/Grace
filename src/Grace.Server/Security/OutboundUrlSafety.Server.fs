@@ -38,7 +38,7 @@ module OutboundUrlSafety =
 
         static member PublicHttps url = { Url = url; RequestedSafety = OutboundUrlSafety.PublicHttps; AcknowledgeUnsafeLocalDevelopment = false }
 
-    type ValidatedOutboundUrl = { Uri: Uri; ScopedUrl: ScopedOutboundUrl; RedirectPolicy: RedirectPolicy }
+    type ValidatedOutboundUrl = { Uri: Uri; ScopedUrl: ScopedOutboundUrl; RedirectPolicy: RedirectPolicy; ResolvedAddresses: IPAddress array }
 
     type SigningInput = { RequestId: string; Timestamp: string; KeyId: string; PayloadSha256Hex: string; SignedMaterial: byte array }
 
@@ -58,6 +58,16 @@ module OutboundUrlSafety =
             || String.Equals(value, "1", StringComparison.OrdinalIgnoreCase)
             || String.Equals(value, "yes", StringComparison.OrdinalIgnoreCase)
         | None -> false
+
+    let isDevelopmentEnvironment (configuration: IConfiguration) =
+        let isDevelopment value = String.Equals(value, "Development", StringComparison.OrdinalIgnoreCase)
+
+        match tryGetConfigValue configuration "ASPNETCORE_ENVIRONMENT" with
+        | Some value when isDevelopment value -> true
+        | _ ->
+            match tryGetConfigValue configuration "DOTNET_ENVIRONMENT" with
+            | Some value -> isDevelopment value
+            | None -> false
 
     let private isLocalhostName (host: string) = String.Equals(host, "localhost", StringComparison.OrdinalIgnoreCase)
 
@@ -262,13 +272,22 @@ module OutboundUrlSafety =
 
     let private resolveHostAddresses: HostAddressResolver = fun host -> Dns.GetHostAddresses(host)
 
+    let private normalizeAddresses (addresses: IPAddress array) =
+        addresses
+        |> Array.map normalizeAddress
+        |> Array.distinctBy (fun address -> address.ToString())
+
     let private validateResolvedAddresses host (addresses: IPAddress array) =
         if isNull addresses || addresses.Length = 0 then
             Error(UnsafeHostRejected host)
         else
-            match addresses |> Array.tryFind isUnsafeAddress with
+            let normalizedAddresses = normalizeAddresses addresses
+
+            match normalizedAddresses
+                  |> Array.tryFind isUnsafeAddress
+                with
             | Some address -> Error(UnsafeHostRejected(addressForFailure address))
-            | None -> Ok()
+            | None -> Ok normalizedAddresses
 
     let private validateResolvedHost (resolver: HostAddressResolver) host =
         try
@@ -296,14 +315,15 @@ module OutboundUrlSafety =
         else
             match tryParseIPAddress uri.Host with
             | Some address when isUnsafeAddress address -> Error(UnsafeHostRejected(addressForFailure address))
-            | Some _ -> Ok()
+            | Some address -> Ok [| normalizeAddress address |]
             | None -> validateResolvedHost resolver uri.Host
 
     let private validateLocalDevelopmentTarget (configuration: IConfiguration) (request: ValidationRequest) (uri: Uri) =
         if
             not
                 (
-                    isUnsafeLocalDevelopmentEnabled configuration
+                    isDevelopmentEnvironment configuration
+                    && isUnsafeLocalDevelopmentEnabled configuration
                     && request.AcknowledgeUnsafeLocalDevelopment
                 )
         then
@@ -312,7 +332,11 @@ module OutboundUrlSafety =
              && uri.Scheme <> Uri.UriSchemeHttps then
             Error(UnsupportedScheme uri.Scheme)
         elif isPermittedUnsafeLocalHost uri then
-            Ok()
+            match tryParseIPAddress uri.Host with
+            | Some address -> Ok [| normalizeAddress address |]
+            | None ->
+                Ok [| IPAddress.Parse("127.0.0.1")
+                      IPAddress.IPv6Loopback |]
         else
             Error(UnsafeHostRejected uri.Host)
 
@@ -339,11 +363,12 @@ module OutboundUrlSafety =
                     | OutboundUrlSafety.LocalUnsafeDevOnly -> validateLocalDevelopmentTarget configuration request uri
 
                 validation
-                |> Result.map (fun () ->
+                |> Result.map (fun resolvedAddresses ->
                     {
                         Uri = uri
                         ScopedUrl = { Url = uri.AbsoluteUri; Safety = request.RequestedSafety }
                         RedirectPolicy = RedirectPolicy.RevalidateEveryRedirect
+                        ResolvedAddresses = resolvedAddresses
                     })
 
     let validate (configuration: IConfiguration) (request: ValidationRequest) = validateWithResolver resolveHostAddresses configuration request
@@ -362,14 +387,32 @@ module OutboundUrlSafety =
         let private sensitiveQueryNames =
             HashSet<string>(
                 [
+                    "api_key"
                     "sig"
                     "signature"
                     "token"
                     "access_token"
+                    "refresh_token"
+                    "id_token"
                     "code"
                     "key"
                     "secret"
+                    "client_secret"
                     "password"
+                    "x-amz-signature"
+                    "x-amz-credential"
+                    "x-amz-security-token"
+                    "sharedaccesssignature"
+                    "se"
+                    "sp"
+                    "sv"
+                    "sr"
+                    "skoid"
+                    "sktid"
+                    "skt"
+                    "ske"
+                    "sks"
+                    "skv"
                 ],
                 StringComparer.OrdinalIgnoreCase
             )
