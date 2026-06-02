@@ -16,6 +16,7 @@ open Microsoft.Extensions.Logging.Abstractions
 open NodaTime
 open NUnit.Framework
 open System
+open System.Collections.Concurrent
 open System.Collections.Generic
 open System.Threading
 open System.Threading.Tasks
@@ -60,6 +61,24 @@ module private WebhookDispatchTestHelpers =
                         )
                 }
 
+    type ScriptedTransport(steps: (OutboundWebhookRequest -> CancellationToken -> Task<OutboundWebhookResult>) list) =
+        let requests = List<OutboundWebhookRequest>()
+        let mutable remainingSteps = steps
+
+        member _.Requests = requests |> Seq.toArray
+
+        interface IOutboundWebhookTransport with
+            member _.SendAsync(request, cancellationToken) =
+                task {
+                    requests.Add request
+
+                    match remainingSteps with
+                    | step :: tail ->
+                        remainingSteps <- tail
+                        return! step request cancellationToken
+                    | [] -> return OutboundWebhookResult.Succeeded 200
+                }
+
     type CancelingTransport(cancellationTokenSource: CancellationTokenSource) =
         let requests = List<OutboundWebhookRequest>()
 
@@ -83,6 +102,30 @@ module private WebhookDispatchTestHelpers =
                 task {
                     requests.Add request
                     cancellationTokenSource.Cancel()
+                    return OutboundWebhookResult.Succeeded 200
+                }
+
+    type BlockingSuccessTransport() =
+        let requests = ConcurrentBag<OutboundWebhookRequest>()
+        let firstRequest = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
+        let release = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
+
+        member _.Requests = requests.ToArray()
+
+        member _.WaitForFirstRequestAsync() = firstRequest.Task
+
+        member _.Release() =
+            release.TrySetResult(())
+            |> ignore
+
+        interface IOutboundWebhookTransport with
+            member _.SendAsync(request, _) =
+                task {
+                    requests.Add request
+                    firstRequest.TrySetResult(())
+                    |> ignore
+
+                    do! release.Task
                     return OutboundWebhookResult.Succeeded 200
                 }
 
@@ -296,6 +339,41 @@ type WebhookDispatchUnitTests() =
         }
 
     [<Test>]
+    member _.ConcurrentDuplicateCommittedEventOnlySendsOnceForDedupeKey() =
+        task {
+            let ownerId = Guid.NewGuid()
+            let organizationId = Guid.NewGuid()
+            let repositoryId = Guid.NewGuid()
+            let targetBranchId = Guid.NewGuid()
+            let promotionSetId = Guid.NewGuid()
+            let terminalReferenceId = Guid.NewGuid()
+            let rule = WebhookDispatchTestHelpers.rule (Guid.NewGuid()) ownerId organizationId repositoryId Option.None
+            WebhookStore.upsertRule rule |> ignore
+
+            let transport = WebhookDispatchTestHelpers.BlockingSuccessTransport()
+            let graceEvent = WebhookDispatchTestHelpers.appliedEvent ownerId organizationId repositoryId targetBranchId promotionSetId terminalReferenceId
+            let dispatches =
+                [|
+                    for _ in 1..16 ->
+                        WebhookDispatchTestHelpers.dispatch transport graceEvent
+                |]
+
+            do! transport.WaitForFirstRequestAsync()
+            transport.Release()
+
+            let! results = Task.WhenAll dispatches
+
+            Assert.That(results |> Array.sumBy _.DeliveryCount, Is.EqualTo(1))
+            Assert.That(results |> Array.sumBy _.DeliveredCount, Is.EqualTo(1))
+            Assert.That(results |> Array.sumBy _.SkippedDuplicateCount, Is.EqualTo(15))
+            Assert.That(transport.Requests, Has.Length.EqualTo(1))
+
+            let deliveries = WebhookStore.listDeliveries rule.Scope rule.WebhookRuleId true
+            Assert.That(deliveries, Has.Count.EqualTo(1))
+            Assert.That(deliveries[0].Status, Is.EqualTo(WebhookDeliveryStatus.Succeeded))
+        }
+
+    [<Test>]
     member _.TransientFailureSchedulesRetryWithoutBlockingCommittedEventDispatch() =
         task {
             let ownerId = Guid.NewGuid()
@@ -349,6 +427,64 @@ type WebhookDispatchUnitTests() =
             let updatedDeliveries = WebhookStore.listDeliveries transientRule.Scope transientRule.WebhookRuleId true
             Assert.That(updatedDeliveries[0].Status, Is.EqualTo(WebhookDeliveryStatus.Succeeded))
             Assert.That(updatedDeliveries[0].AttemptCount, Is.EqualTo(2))
+        }
+
+    [<Test>]
+    member _.TimeoutLikeCancellationSchedulesRetryAndDoesNotAbortCommittedEventBatch() =
+        task {
+            let ownerId = Guid.NewGuid()
+            let organizationId = Guid.NewGuid()
+            let repositoryId = Guid.NewGuid()
+            let targetBranchId = Guid.NewGuid()
+            let promotionSetId = Guid.NewGuid()
+
+            let timeoutRule =
+                { WebhookDispatchTestHelpers.rule (Guid.NewGuid()) ownerId organizationId repositoryId (Option.Some targetBranchId) with
+                    RetryPolicy = { MaxAttempts = 3; InitialDelaySeconds = 1; MaxDelaySeconds = 8 }
+                }
+
+            let successRule =
+                WebhookDispatchTestHelpers.rule (Guid.NewGuid()) ownerId organizationId repositoryId (Option.Some targetBranchId)
+
+            WebhookStore.upsertRule timeoutRule |> ignore
+            WebhookStore.upsertRule successRule |> ignore
+
+            let timeoutStep _ _ =
+                task {
+                    return raise (TaskCanceledException("simulated request timeout"))
+                }
+
+            let successStep _ _ =
+                task {
+                    return OutboundWebhookResult.Succeeded 200
+                }
+
+            let transport = WebhookDispatchTestHelpers.ScriptedTransport([ timeoutStep; successStep ])
+
+            let! result =
+                WebhookDispatchTestHelpers.dispatch
+                    transport
+                    (WebhookDispatchTestHelpers.appliedEvent ownerId organizationId repositoryId targetBranchId promotionSetId (Guid.NewGuid()))
+
+            Assert.That(result.DeliveryCount, Is.EqualTo(2))
+            Assert.That(result.DeliveredCount, Is.EqualTo(1))
+            Assert.That(result.FailedCount, Is.EqualTo(1))
+            Assert.That(transport.Requests, Has.Length.EqualTo(2))
+
+            let deliveries =
+                WebhookStore.listDeliveries timeoutRule.Scope WebhookRuleId.Empty true
+                |> Seq.toArray
+
+            Assert.That(deliveries, Has.Length.EqualTo(2))
+            Assert.That(deliveries |> Seq.filter (fun delivery -> delivery.Status = WebhookDeliveryStatus.Succeeded), Has.Exactly(1).Items)
+
+            let retryDelivery =
+                deliveries
+                |> Seq.find (fun delivery -> delivery.Status = WebhookDeliveryStatus.RetryScheduled)
+
+            Assert.That(retryDelivery.AttemptCount, Is.EqualTo(1))
+            Assert.That(retryDelivery.LastError.Value, Does.Contain("simulated request timeout"))
+            Assert.That(retryDelivery.NextAttemptAt, Is.Not.EqualTo(Option.None))
         }
 
     [<Test>]

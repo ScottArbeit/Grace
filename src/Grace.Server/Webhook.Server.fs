@@ -26,8 +26,11 @@ module WebhookStore =
 
     let private rules = ConcurrentDictionary<WebhookRuleId, WebhookRuleDto>()
     let private deliveries = ConcurrentDictionary<WebhookDeliveryId, WebhookDeliveryDto>()
+    let private deliveryDedupeIndex = ConcurrentDictionary<string, WebhookDeliveryId>()
     let private deliveryPayloads = ConcurrentDictionary<WebhookDeliveryId, string>()
     let private deliveryRuleSnapshots = ConcurrentDictionary<WebhookDeliveryId, WebhookRuleDto>()
+
+    let private deliveryDedupeKey webhookRuleId dedupeKey = $"{webhookRuleId:N}:{dedupeKey}"
 
     let private scopeMatches (expected: WebhookScope) (actual: WebhookScope) =
         actual.OwnerId = expected.OwnerId
@@ -38,6 +41,7 @@ module WebhookStore =
     let clearForTests () =
         rules.Clear()
         deliveries.Clear()
+        deliveryDedupeIndex.Clear()
         deliveryPayloads.Clear()
         deliveryRuleSnapshots.Clear()
 
@@ -61,7 +65,15 @@ module WebhookStore =
 
     let addDelivery (delivery: WebhookDeliveryDto) =
         deliveries[delivery.WebhookDeliveryId] <- delivery
+        deliveryDedupeIndex[deliveryDedupeKey delivery.WebhookRuleId delivery.DedupeKey] <- delivery.WebhookDeliveryId
         delivery
+
+    let tryClaimDeliveryByRuleAndDedupe (delivery: WebhookDeliveryDto) =
+        if deliveryDedupeIndex.TryAdd(deliveryDedupeKey delivery.WebhookRuleId delivery.DedupeKey, delivery.WebhookDeliveryId) then
+            deliveries[delivery.WebhookDeliveryId] <- delivery
+            true
+        else
+            false
 
     let addDeliveryPayload webhookDeliveryId payloadJson =
         deliveryPayloads[webhookDeliveryId] <- payloadJson
@@ -91,10 +103,13 @@ module WebhookStore =
         | _ -> None
 
     let tryGetDeliveryByRuleAndDedupe webhookRuleId dedupeKey =
-        deliveries.Values
-        |> Seq.tryFind (fun delivery ->
-            delivery.WebhookRuleId = webhookRuleId
-            && delivery.DedupeKey = dedupeKey)
+        match deliveryDedupeIndex.TryGetValue(deliveryDedupeKey webhookRuleId dedupeKey) with
+        | true, webhookDeliveryId -> tryGetDelivery webhookDeliveryId
+        | _ ->
+            deliveries.Values
+            |> Seq.tryFind (fun delivery ->
+                delivery.WebhookRuleId = webhookRuleId
+                && delivery.DedupeKey = dedupeKey)
 
     let listEnabledRulesForEvent (scope: WebhookScope) eventName eventVersion =
         rules.Values

@@ -349,7 +349,15 @@ module WebhookDispatch =
                     try
                         return! transport.SendAsync(request, cancellationToken)
                     with
-                    | :? OperationCanceledException as ex -> return raise ex
+                    | :? OperationCanceledException as ex when cancellationToken.IsCancellationRequested -> return raise ex
+                    | :? OperationCanceledException as ex ->
+                        let message =
+                            if String.IsNullOrWhiteSpace ex.Message then
+                                "Outbound request timed out or was canceled before completion."
+                            else
+                                ex.Message
+
+                        return TransientFailure(Option.None, message)
                     | ex -> return TransientFailure(Option.None, ex.Message)
                 }
 
@@ -383,22 +391,20 @@ module WebhookDispatch =
         cancellationToken
         =
         task {
-            match WebhookStore.tryGetDeliveryByRuleAndDedupe rule.WebhookRuleId dedupeKey with
-            | Option.Some _ -> return Choice2Of2 true
-            | Option.None ->
-                let delivery =
-                    { WebhookDelivery.Default with
-                        WebhookDeliveryId = Guid.NewGuid()
-                        WebhookRuleId = rule.WebhookRuleId
-                        EventName = definition.Name
-                        EventVersion = definition.Version
-                        DedupeKey = dedupeKey
-                        Status = WebhookDeliveryStatus.Pending
-                        CreatedAt = getCurrentInstant ()
-                    }
+            let delivery =
+                { WebhookDelivery.Default with
+                    WebhookDeliveryId = Guid.NewGuid()
+                    WebhookRuleId = rule.WebhookRuleId
+                    EventName = definition.Name
+                    EventVersion = definition.Version
+                    DedupeKey = dedupeKey
+                    Status = WebhookDeliveryStatus.Pending
+                    CreatedAt = getCurrentInstant ()
+                }
 
-                WebhookStore.addDelivery delivery |> ignore
-
+            if WebhookStore.tryClaimDeliveryByRuleAndDedupe delivery |> not then
+                return Choice2Of2 true
+            else
                 WebhookStore.addDeliveryPayload delivery.WebhookDeliveryId payloadJson
                 |> ignore
 
@@ -528,6 +534,7 @@ module WebhookDispatch =
                             SkippedDuplicateCount = duplicateCount
                         }
             with
+            | :? OperationCanceledException as ex when cancellationToken.IsCancellationRequested -> return raise ex
             | ex ->
                 logger.LogError(ex, "Webhook dispatch failed after source event commit; source workflow will not be blocked.")
                 return DispatchResult.Empty
