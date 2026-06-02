@@ -125,217 +125,31 @@ module OutboundUrlSafety =
         || isIPv4InRange address [| 224uy; 0uy; 0uy; 0uy |] 4
         || isIPv4InRange address [| 240uy; 0uy; 0uy; 0uy |] 4
 
+    let private unsafeIPv6SpecialPurposeRanges =
+        [|
+            "::", 128, "Unspecified address"
+            "::1", 128, "Loopback address"
+            "::ffff:0:0", 96, "IPv4-mapped address"
+            "64:ff9b::", 96, "Well-known NAT64 prefix"
+            "64:ff9b:1::", 48, "Local-use NAT64 prefix"
+            "100::", 64, "Discard-only prefix"
+            "100:0:0:1::", 64, "Dummy IPv6 prefix"
+            "2001::", 32, "Teredo"
+            "2001:2::", 48, "Benchmarking"
+            "2001:db8::", 32, "Documentation"
+            "2002::", 16, "6to4"
+            "3fff::", 20, "Documentation"
+            "5f00::", 16, "Segment Routing SIDs"
+            "fc00::", 7, "Unique local"
+            "fec0::", 10, "Deprecated site-local"
+            "fe80::", 10, "Link-local unicast"
+            "ff00::", 8, "Multicast"
+        |]
+        |> Array.map (fun (prefix, prefixLength, _) -> IPAddress.Parse(prefix).GetAddressBytes(), prefixLength)
+
     let private isUnsafeIPv6Address (address: IPAddress) =
-        isIPv6InRange
-            address
-            [|
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-            |]
-            128
-        || isIPv6InRange
-            address
-            [|
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                1uy
-            |]
-            128
-        || isIPv6InRange
-            address
-            [|
-                0uy
-                0x64uy
-                0xFFuy
-                0x9Buy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-            |]
-            96
-        || isIPv6InRange
-            address
-            [|
-                0uy
-                0x64uy
-                0xFFuy
-                0x9Buy
-                0uy
-                1uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-            |]
-            48
-        || isIPv6InRange
-            address
-            [|
-                0x20uy
-                0x01uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-            |]
-            32
-        || isIPv6InRange
-            address
-            [|
-                0x20uy
-                0x02uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-            |]
-            16
-        || isIPv6InRange
-            address
-            [|
-                0xFCuy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-            |]
-            7
-        || isIPv6InRange
-            address
-            [|
-                0xFEuy
-                0xC0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-            |]
-            10
-        || isIPv6InRange
-            address
-            [|
-                0xFEuy
-                0x80uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-            |]
-            10
-        || isIPv6InRange
-            address
-            [|
-                0xFFuy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-                0uy
-            |]
-            8
+        unsafeIPv6SpecialPurposeRanges
+        |> Array.exists (fun (prefix, prefixLength) -> isIPv6InRange address prefix prefixLength)
 
     let private normalizeAddress (address: IPAddress) = if address.IsIPv4MappedToIPv6 then address.MapToIPv4() else address
 
@@ -343,6 +157,11 @@ module OutboundUrlSafety =
         let normalizedAddress = normalizeAddress address
 
         match normalizedAddress.AddressFamily with
+        | Net.Sockets.AddressFamily.InterNetwork when
+            address.IsIPv4MappedToIPv6
+            && isUnsafeIPv6Address address
+            ->
+            true
         | Net.Sockets.AddressFamily.InterNetwork -> isUnsafeIPv4Address normalizedAddress
         | Net.Sockets.AddressFamily.InterNetworkV6 -> isUnsafeIPv6Address normalizedAddress
         | _ -> true
@@ -360,13 +179,9 @@ module OutboundUrlSafety =
         if isNull addresses || addresses.Length = 0 then
             Error(UnsafeHostRejected host)
         else
-            let normalizedAddresses = normalizeAddresses addresses
-
-            match normalizedAddresses
-                  |> Array.tryFind isUnsafeAddress
-                with
+            match addresses |> Array.tryFind isUnsafeAddress with
             | Some address -> Error(UnsafeHostRejected(addressForFailure address))
-            | None -> Ok normalizedAddresses
+            | None -> Ok(normalizeAddresses addresses)
 
     let private validateResolvedHost (resolver: HostAddressResolver) host =
         try

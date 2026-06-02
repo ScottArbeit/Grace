@@ -48,6 +48,7 @@ type OutboundUrlSafetyUnit() =
         | "hooks.example.test" -> [| IPAddress.Parse("93.184.216.34") |]
         | "private.example.test" -> [| IPAddress.Parse("10.1.2.3") |]
         | "metadata.example.test" -> [| IPAddress.Parse("169.254.169.254") |]
+        | "mapped-public.example.test" -> [| IPAddress.Parse("::ffff:8.8.8.8") |]
         | _ -> [| IPAddress.Parse("93.184.216.34") |]
 
     let developmentConfiguration = configuration [ "ASPNETCORE_ENVIRONMENT", "Development" ]
@@ -122,11 +123,18 @@ type OutboundUrlSafetyUnit() =
                 "https://169.254.169.254/metadata"
                 "https://192.88.99.1/events"
                 "https://[::ffff:127.0.0.1]/events"
+                "https://[::ffff:8.8.8.8]/events"
                 "https://224.0.0.1/events"
                 "https://0.0.0.0/events"
+                "https://[100::1]/events"
+                "https://[100:0:0:1::1]/events"
                 "https://[64:ff9b:1::1]/events"
                 "https://[2001::1]/events"
+                "https://[2001:2::1]/events"
+                "https://[2001:db8::1]/events"
                 "https://[2002::1]/events"
+                "https://[3fff::1]/events"
+                "https://[5f00::1]/events"
                 "https://[fc00::1]/events"
                 "https://[fe80::1]/events"
                 "https://[ff02::1]/events"
@@ -216,6 +224,9 @@ type OutboundUrlSafetyUnit() =
         validateOutsideDevelopment emptyConfiguration (publicRequest "https://metadata.example.test/events")
         |> assertRejected (ValidationFailure.UnsafeHostRejected "169.254.169.254")
 
+        validateOutsideDevelopment emptyConfiguration (publicRequest "https://mapped-public.example.test/events")
+        |> assertRejected (ValidationFailure.UnsafeHostRejected "8.8.8.8")
+
     [<Test>]
     member _.PublicHostnamesCarryResolvedAddressesForAddressPinning() =
         let resolver host =
@@ -224,7 +235,6 @@ type OutboundUrlSafetyUnit() =
                 [|
                     IPAddress.Parse("93.184.216.34")
                     IPAddress.Parse("2606:2800:220:1:248:1893:25c8:1946")
-                    IPAddress.Parse("::ffff:93.184.216.34")
                 |]
             | _ -> [||]
 
