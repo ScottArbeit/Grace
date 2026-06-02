@@ -188,7 +188,7 @@ module ApprovalRequest =
                             { Grace.Types.Webhooks.ApprovalRequest.Default with
                                 ApprovalRequestId =
                                     tryParseGuid parameters.ApprovalRequestId
-                                    |> Option.defaultValue (Guid.NewGuid())
+                                    |> Option.defaultValue ApprovalRequestId.Empty
                                 ApprovalPolicyId =
                                     tryParseGuid parameters.ApprovalPolicyId
                                     |> Option.defaultValue ApprovalPolicyId.Empty

@@ -1,6 +1,7 @@
 namespace Grace.Server.Tests
 
 open Grace.Actors.ApprovalRequest
+open Grace.Server
 open Grace.Shared.Utilities
 open Grace.Types.Types
 open Grace.Types.Webhooks
@@ -153,3 +154,42 @@ type ApprovalRequestActorDecisionTests() =
         match decideCommand created.Request (ApprovalRequestCommand.Create currentAttempt) (metadata ()) with
         | Ok _ -> Assert.Fail "A request for a different attempt should not replay as the existing request."
         | Error error -> Assert.That(error.Error, Does.Contain("different payload"))
+
+[<TestFixture>]
+type GeneratedApprovalRequestIdTests() =
+
+    let requestFor attempt =
+        { ApprovalRequest.Default with
+            ApprovalRequestId = Guid.Empty
+            ApprovalPolicyId = Guid.Parse("11111111-1111-1111-1111-111111111111")
+            ApprovalPolicyVersion = 3
+            Subject = "promotion"
+            Scope =
+                { ApprovalScope.Default with
+                    OwnerId = Guid.Parse("22222222-2222-2222-2222-222222222222")
+                    OrganizationId = Guid.Parse("33333333-3333-3333-3333-333333333333")
+                    RepositoryId = Guid.Parse("44444444-4444-4444-4444-444444444444")
+                    TargetBranchId = Guid.Parse("55555555-5555-5555-5555-555555555555")
+                    PromotionSetId = Some(Guid.Parse("66666666-6666-6666-6666-666666666666"))
+                    StepsComputationAttempt = attempt
+                    ApprovalPolicyId = Some(Guid.Parse("11111111-1111-1111-1111-111111111111"))
+                    ApprovalPolicyVersion = Some 3
+                }
+            RequiredResponder = "role:ApprovalResponder"
+            CreatedBy = UserId "workflow"
+            CreatedAt = getCurrentInstant ()
+        }
+
+    [<Test>]
+    member _.GeneratedRequestIdIsStableForSameLogicalKeyAndDistinctAcrossAttempts() =
+        let first = requestFor (Some 7)
+        let replay = { first with CreatedAt = getCurrentInstant (); CreatedBy = UserId "retrying-workflow" }
+        let nextAttempt = { first with Scope = { first.Scope with StepsComputationAttempt = Some 8 } }
+
+        let firstId = ApprovalStore.buildGeneratedApprovalRequestId first
+        let replayId = ApprovalStore.buildGeneratedApprovalRequestId replay
+        let nextAttemptId = ApprovalStore.buildGeneratedApprovalRequestId nextAttempt
+
+        Assert.That(firstId, Is.Not.EqualTo(Guid.Empty))
+        Assert.That(replayId, Is.EqualTo(firstId))
+        Assert.That(nextAttemptId, Is.Not.EqualTo(firstId))

@@ -19,6 +19,9 @@ open NodaTime
 open System
 open System.Collections.Concurrent
 open System.Collections.Generic
+open System.Globalization
+open System.Security.Cryptography
+open System.Text
 open System.Threading.Tasks
 
 module ApprovalStore =
@@ -89,6 +92,59 @@ module ApprovalStore =
     let private metadata correlationId principal =
         let eventMetadata = EventMetadata.New correlationId principal
         eventMetadata
+
+    let private canonicalSegment (value: string) =
+        let segment =
+            if isNull value then
+                String.Empty
+            else
+                value
+
+        $"{segment.Length}:{segment}"
+
+    let private canonicalGuid (value: Guid) = value.ToString("D").ToLowerInvariant()
+
+    let private canonicalOptionalGuid (value: Guid option) =
+        match value with
+        | Some guid -> canonicalGuid guid
+        | None -> String.Empty
+
+    let private canonicalOptionalInt (value: int option) =
+        match value with
+        | Some attempt -> attempt.ToString(CultureInfo.InvariantCulture)
+        | None -> String.Empty
+
+    let private createDeterministicGuid (seed: string) =
+        let seedBytes = Encoding.UTF8.GetBytes(seed)
+
+        use hasher = SHA256.Create()
+        let hash = hasher.ComputeHash(seedBytes)
+        let guidBytes = hash[0..15]
+        guidBytes[6] <- (guidBytes[6] &&& 0x0Fuy) ||| 0x50uy
+        guidBytes[8] <- (guidBytes[8] &&& 0x3Fuy) ||| 0x80uy
+        Guid(guidBytes)
+
+    let buildGeneratedApprovalRequestId (request: ApprovalRequestDto) =
+        let scope =
+            if isNull (box request.Scope) then
+                ApprovalScope.Default
+            else
+                request.Scope
+
+        [| "grace.approval-request.generated.v1"
+           canonicalGuid request.ApprovalPolicyId
+           request.ApprovalPolicyVersion.ToString(CultureInfo.InvariantCulture)
+           request.Subject
+           canonicalGuid scope.OwnerId
+           canonicalGuid scope.OrganizationId
+           canonicalGuid scope.RepositoryId
+           canonicalGuid scope.TargetBranchId
+           canonicalOptionalGuid scope.PromotionSetId
+           canonicalOptionalInt scope.StepsComputationAttempt
+           request.RequiredResponder |]
+        |> Array.map canonicalSegment
+        |> String.concat "|"
+        |> createDeterministicGuid
 
     let private normalizeRequest approvalRequestId fallbackScope (approvalRequest: ApprovalRequestDto) =
         { approvalRequest with
@@ -180,7 +236,7 @@ module ApprovalStore =
         task {
             let approvalRequestId =
                 if request.ApprovalRequestId = Guid.Empty then
-                    Guid.NewGuid()
+                    buildGeneratedApprovalRequestId request
                 else
                     request.ApprovalRequestId
 

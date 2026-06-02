@@ -392,6 +392,61 @@ type ApprovalApiIntegrationTests() =
         }
 
     [<Test>]
+    member _.ConcurrentGeneratedCreateWithoutStableRequestIdConvergesOnOneRequestForSameLogicalKey() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let branchId = $"{Guid.NewGuid()}"
+            let policyId = Guid.NewGuid()
+            let userId = $"{Guid.NewGuid()}"
+            let selector = "role:ApprovalResponder"
+            let attempt = Some 12
+
+            let createOne _ =
+                task {
+                    let parameters = ApprovalTestHelpers.seedGeneratedParameters repositoryId branchId None policyId selector attempt
+                    let! response = Client.PostAsync("/approval/request/_seedGenerated", createJsonContent parameters)
+                    let! text = response.Content.ReadAsStringAsync()
+                    Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK), text)
+                    return deserialize<ApprovalRequest> text
+                }
+
+            let! created = [| 1..8 |] |> Array.map createOne |> Task.WhenAll
+            let requestIds = created |> Array.map _.ApprovalRequestId |> Array.distinct
+
+            Assert.That(requestIds, Has.Length.EqualTo(1))
+            Assert.That(requestIds[0], Is.Not.EqualTo(Guid.Empty))
+
+            let nextAttemptParameters = ApprovalTestHelpers.seedGeneratedParameters repositoryId branchId None policyId selector (Some 13)
+            let! nextAttemptResponse = Client.PostAsync("/approval/request/_seedGenerated", createJsonContent nextAttemptParameters)
+            let! nextAttemptText = nextAttemptResponse.Content.ReadAsStringAsync()
+            Assert.That(nextAttemptResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), nextAttemptText)
+            let nextAttempt = deserialize<ApprovalRequest> nextAttemptText
+
+            Assert.That(nextAttempt.ApprovalRequestId, Is.Not.EqualTo(requestIds[0]))
+
+            let! grantReader = ApprovalTestHelpers.grantRoleAsync Client "branch" ownerId organizationId repositoryId branchId userId "ApprovalResponder"
+            Assert.That(grantReader.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+
+            use client = ApprovalTestHelpers.createAuthenticatedClient userId
+            let listParameters = ApprovalTestHelpers.listRequestParameters repositoryId branchId
+            let! listResponse = client.PostAsync("/approval/request/list", createJsonContent listParameters)
+            let! listText = listResponse.Content.ReadAsStringAsync()
+            Assert.That(listResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), listText)
+            let requests = deserialize<ApprovalRequest array> listText
+
+            let matchingRequests =
+                requests
+                |> Array.filter (fun request ->
+                    request.ApprovalPolicyId = policyId
+                    && request.Subject = "promotion"
+                    && request.RequiredResponder = selector
+                    && request.Scope.StepsComputationAttempt = attempt)
+
+            Assert.That(matchingRequests, Has.Length.EqualTo(1))
+            Assert.That(matchingRequests[0].ApprovalRequestId, Is.EqualTo(requestIds[0]))
+        }
+
+    [<Test>]
     member _.ResponseRejectsMissingRespondPermissionEvenWhenSelectorMatches() =
         task {
             let repositoryId = repositoryIds[0]
