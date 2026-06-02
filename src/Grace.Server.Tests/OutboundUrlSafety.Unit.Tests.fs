@@ -336,6 +336,23 @@ type OutboundUrlSafetyUnit() =
         )
 
     [<Test>]
+    member _.RedactsAwsSigV4AndAzureSasMetadataQueryNamesCaseInsensitively() =
+        let redacted =
+            OutboundUrlPolicy.Redaction.redactUri
+                "https://hooks.example.test/path?X-Amz-Algorithm=AWS4-HMAC-SHA256&x-amz-date=20260602T120000Z&X-AMZ-Expires=900&x-Amz-SignedHeaders=host&X-Amz-Credential=credential&x-amz-signature=signature&X-Amz-Security-Token=session&ST=2026-06-02T12%3A00%3A00Z&se=2026-06-02T13%3A00%3A00Z&keep=value"
+
+        Assert.That(
+            redacted,
+            Is.EqualTo(
+                "https://hooks.example.test/[redacted-path]?X-Amz-Algorithm=REDACTED&x-amz-date=REDACTED&X-AMZ-Expires=REDACTED&x-Amz-SignedHeaders=REDACTED&X-Amz-Credential=REDACTED&x-amz-signature=REDACTED&X-Amz-Security-Token=REDACTED&ST=REDACTED&se=REDACTED&keep=value"
+            )
+        )
+
+        Assert.That(redacted, Does.Not.Contain("AWS4-HMAC-SHA256"))
+        Assert.That(redacted, Does.Not.Contain("20260602T120000Z"))
+        Assert.That(redacted, Does.Not.Contain("2026-06-02T12%3A00%3A00Z"))
+
+    [<Test>]
     member _.RedactsSensitiveQueryValuesDelimitedWithSemicolons() =
         let redacted = OutboundUrlPolicy.Redaction.redactUri "https://hooks.example.test/path?keep=value;access_token=secret;client_secret=also-secret"
 
