@@ -257,7 +257,8 @@ module ApprovalRequest =
 
                 match tryParseGuid parameters.ApprovalRequestId with
                 | Some requestId ->
-                    let! history = ApprovalStore.requestHistoryAsync requestId (Services.getCorrelationId context)
+                    let scope = scopeFromRequestParameters parameters
+                    let! history = ApprovalStore.requestHistoryAsync requestId scope (Services.getCorrelationId context)
                     return! context |> Services.result200Ok history
                 | None ->
                     return!

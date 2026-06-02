@@ -485,8 +485,14 @@ module Interfaces =
         /// Returns the current approval request state.
         abstract member Get: correlationId: CorrelationId -> Task<ApprovalRequest option>
 
+        /// Returns the current approval request state as JSON.
+        abstract member GetJson: correlationId: CorrelationId -> Task<string option>
+
         /// Returns the events handled by this approval request.
         abstract member GetEvents: correlationId: CorrelationId -> Task<IReadOnlyList<ApprovalRequestEvent>>
+
+        /// Returns the request history reconstructed inside the actor as JSON.
+        abstract member GetHistoryJson: correlationId: CorrelationId -> Task<string>
 
         /// Creates a workflow-generated approval request.
         abstract member Create: request: ApprovalRequest -> eventMetadata: EventMetadata -> Task<GraceResult<ApprovalRequestDecisionResult>>
@@ -513,7 +519,7 @@ module Interfaces =
 
         /// Records an approval request decision from primitive fields across the Orleans boundary.
         abstract member RecordDecisionGenerated:
-            decision: ApprovalDecision * decidedBy: string * reason: string option * clientDecisionId: ApprovalClientDecisionId * eventMetadata: EventMetadata ->
+            decision: string * decidedBy: string * reason: string option * clientDecisionId: ApprovalClientDecisionId * eventMetadata: EventMetadata ->
                 Task<GraceResult<ApprovalRequestDecisionResult>>
 
         /// Validates incoming commands and converts them to persisted events.
@@ -529,6 +535,32 @@ module Interfaces =
 
         /// Adds an approval request id to this scope index across the Orleans boundary.
         abstract member AddRequest: approvalRequestId: ApprovalRequestId * eventMetadata: EventMetadata -> Task<GraceResult<ApprovalRequestId array>>
+
+        /// Adds or replays a durable approval request record in this index.
+        abstract member RegisterRequest: request: ApprovalRequest * eventMetadata: EventMetadata -> Task<GraceResult<ApprovalRequestId array>>
+
+        /// Adds or replays a durable generated approval request record from primitive fields across the Orleans boundary.
+        abstract member RegisterGeneratedRequest:
+            approvalRequestId: ApprovalRequestId *
+            approvalPolicyId: ApprovalPolicyId *
+            approvalPolicyVersion: ApprovalPolicyVersion *
+            subject: ApprovalSubject *
+            ownerId: OwnerId *
+            organizationId: OrganizationId *
+            repositoryId: RepositoryId *
+            targetBranchId: BranchId *
+            promotionSetId: PromotionSetId option *
+            stepsComputationAttempt: int option *
+            requiredResponder: ApprovalResponderSelector *
+            createdBy: string *
+            eventMetadata: EventMetadata ->
+                Task<GraceResult<ApprovalRequestId array>>
+
+        /// Returns an indexed approval request record when this index has one.
+        abstract member GetRequest: approvalRequestId: ApprovalRequestId -> correlationId: CorrelationId -> Task<ApprovalRequest option>
+
+        /// Returns an indexed approval request record as JSON when this index has one.
+        abstract member GetRequestJson: approvalRequestId: ApprovalRequestId -> correlationId: CorrelationId -> Task<string option>
 
         /// Returns the request ids currently indexed for the scope.
         abstract member List: correlationId: CorrelationId -> Task<ApprovalRequestId array>

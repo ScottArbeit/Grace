@@ -396,6 +396,8 @@ module Webhooks =
     [<KnownType("GetKnownTypes"); GenerateSerializer>]
     type ApprovalRequestIndexEventType =
         | RequestAdded of approvalRequestId: ApprovalRequestId
+        | RequestIndexed of request: ApprovalRequest
+        | RequestIndexedJson of requestJson: string
 
         static member GetKnownTypes() = GetKnownTypes<ApprovalRequestIndexEventType>()
 

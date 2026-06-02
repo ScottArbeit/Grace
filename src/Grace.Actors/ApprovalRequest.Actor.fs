@@ -220,10 +220,31 @@ module ApprovalRequest =
                     Some request
                 |> returnTask
 
+            member this.GetJson correlationId =
+                this.correlationId <- correlationId
+
+                if request.ApprovalRequestId = ApprovalRequestId.Empty then
+                    None
+                else
+                    Some(serialize request)
+                |> returnTask
+
             member this.GetEvents correlationId =
                 this.correlationId <- correlationId
 
                 (state.State :> IReadOnlyList<ApprovalRequestEvent>)
+                |> returnTask
+
+            member this.GetHistoryJson correlationId =
+                this.correlationId <- correlationId
+
+                state.State
+                |> Seq.filter (fun event -> isNull (box event) |> not)
+                |> Seq.filter (fun event -> isNull (box event.Event) |> not)
+                |> Seq.scan (fun current event -> ApprovalRequest.UpdateDto event current) Grace.Types.Webhooks.ApprovalRequest.Default
+                |> Seq.skip 1
+                |> Seq.toArray
+                |> serialize
                 |> returnTask
 
             member this.Create request metadata = this.ProcessCommand (ApprovalRequestCommand.Create request) metadata
@@ -272,16 +293,33 @@ module ApprovalRequest =
             member this.RecordDecision decision metadata = this.ProcessCommand (ApprovalRequestCommand.RecordDecision decision) metadata
 
             member this.RecordDecisionGenerated(decision, decidedBy, reason, clientDecisionId, metadata) =
-                let requestDecision =
-                    { ApprovalRequestDecision.Default with
-                        Decision = decision
-                        DecidedBy = UserId decidedBy
-                        DecidedAt = metadata.Timestamp
-                        Reason = reason
-                        ClientDecisionId = clientDecisionId
-                    }
+                match decision with
+                | value when String.Equals(value, nameof ApprovalDecision.Approve, StringComparison.OrdinalIgnoreCase) ->
+                    let requestDecision =
+                        { ApprovalRequestDecision.Default with
+                            Decision = ApprovalDecision.Approve
+                            DecidedBy = UserId decidedBy
+                            DecidedAt = metadata.Timestamp
+                            Reason = reason
+                            ClientDecisionId = clientDecisionId
+                        }
 
-                this.ProcessCommand (ApprovalRequestCommand.RecordDecision requestDecision) metadata
+                    this.ProcessCommand (ApprovalRequestCommand.RecordDecision requestDecision) metadata
+                | value when String.Equals(value, nameof ApprovalDecision.Reject, StringComparison.OrdinalIgnoreCase) ->
+                    let requestDecision =
+                        { ApprovalRequestDecision.Default with
+                            Decision = ApprovalDecision.Reject
+                            DecidedBy = UserId decidedBy
+                            DecidedAt = metadata.Timestamp
+                            Reason = reason
+                            ClientDecisionId = clientDecisionId
+                        }
+
+                    this.ProcessCommand (ApprovalRequestCommand.RecordDecision requestDecision) metadata
+                | _ ->
+                    GraceError.Create $"Approval decision '{decision}' is not valid." metadata.CorrelationId
+                    |> Error
+                    |> returnTask
 
             member this.Handle command metadata = this.ProcessCommand command metadata
 
@@ -292,17 +330,39 @@ module ApprovalRequest =
         inherit Grain()
 
         let mutable requestIds = HashSet<ApprovalRequestId>()
+        let mutable requests = Dictionary<ApprovalRequestId, ApprovalRequest>()
+        let mutable requestJsonById = Dictionary<ApprovalRequestId, string>()
         member val private correlationId: CorrelationId = String.Empty with get, set
 
         override _.OnActivateAsync(ct) =
             if isNull state.State then state.State <- List<ApprovalRequestIndexEvent>()
 
             requestIds <- HashSet<ApprovalRequestId>()
+            requests <- Dictionary<ApprovalRequestId, ApprovalRequest>()
+            requestJsonById <- Dictionary<ApprovalRequestId, string>()
 
             state.State
             |> Seq.iter (fun indexEvent ->
-                match indexEvent.Event with
-                | ApprovalRequestIndexEventType.RequestAdded approvalRequestId -> requestIds.Add approvalRequestId |> ignore)
+                if isNull (box indexEvent) |> not
+                   && isNull (box indexEvent.Event) |> not then
+                    match indexEvent.Event with
+                    | ApprovalRequestIndexEventType.RequestAdded approvalRequestId -> requestIds.Add approvalRequestId |> ignore
+                    | ApprovalRequestIndexEventType.RequestIndexed request ->
+                        if isNull (box request) |> not
+                           && request.ApprovalRequestId
+                              <> ApprovalRequestId.Empty then
+                            requestIds.Add request.ApprovalRequestId |> ignore
+                            requests[request.ApprovalRequestId] <- request
+                            requestJsonById[request.ApprovalRequestId] <- serialize request
+                    | ApprovalRequestIndexEventType.RequestIndexedJson requestJson ->
+                        if String.IsNullOrWhiteSpace requestJson |> not then
+                            let request = deserialize<ApprovalRequest> requestJson
+
+                            if request.ApprovalRequestId
+                               <> ApprovalRequestId.Empty then
+                                requestIds.Add request.ApprovalRequestId |> ignore
+                                requests[request.ApprovalRequestId] <- request
+                                requestJsonById[request.ApprovalRequestId] <- requestJson)
 
             Task.CompletedTask
 
@@ -326,6 +386,33 @@ module ApprovalRequest =
                     return Ok returnValue
             }
 
+        member private this.RegisterRequestCore (request: ApprovalRequest) (eventMetadata: EventMetadata) =
+            task {
+                this.correlationId <- eventMetadata.CorrelationId
+
+                if
+                    isNull (box request)
+                    || request.ApprovalRequestId = ApprovalRequestId.Empty
+                then
+                    return Error(GraceError.Create "ApprovalRequestId must be a non-empty Guid." eventMetadata.CorrelationId)
+                elif requests.ContainsKey request.ApprovalRequestId
+                     && requests[request.ApprovalRequestId] = request then
+                    let returnValue = GraceReturnValue.Create (requestIds |> Seq.toArray) eventMetadata.CorrelationId
+                    return Ok returnValue
+                else
+                    let requestJson = serialize request
+                    let event: ApprovalRequestIndexEvent = { Event = ApprovalRequestIndexEventType.RequestIndexedJson requestJson; Metadata = eventMetadata }
+                    if isNull state.State then state.State <- List<ApprovalRequestIndexEvent>()
+
+                    state.State.Add event
+                    do! state.WriteStateAsync()
+                    requestIds.Add request.ApprovalRequestId |> ignore
+                    requests[request.ApprovalRequestId] <- request
+                    requestJsonById[request.ApprovalRequestId] <- requestJson
+                    let returnValue = GraceReturnValue.Create (requestIds |> Seq.toArray) eventMetadata.CorrelationId
+                    return Ok returnValue
+            }
+
         interface IApprovalRequestIndexActor with
             member this.Handle command metadata =
                 task {
@@ -336,6 +423,65 @@ module ApprovalRequest =
                 }
 
             member this.AddRequest(approvalRequestId, eventMetadata) = this.AddRequestCore approvalRequestId eventMetadata
+
+            member this.RegisterRequest(request, eventMetadata) = this.RegisterRequestCore request eventMetadata
+
+            member this.RegisterGeneratedRequest
+                (
+                    approvalRequestId,
+                    approvalPolicyId,
+                    approvalPolicyVersion,
+                    subject,
+                    ownerId,
+                    organizationId,
+                    repositoryId,
+                    targetBranchId,
+                    promotionSetId,
+                    stepsComputationAttempt,
+                    requiredResponder,
+                    createdBy,
+                    eventMetadata
+                ) =
+                let request =
+                    { Grace.Types.Webhooks.ApprovalRequest.Default with
+                        ApprovalRequestId = approvalRequestId
+                        ApprovalPolicyId = approvalPolicyId
+                        ApprovalPolicyVersion = approvalPolicyVersion
+                        Subject = subject
+                        Scope =
+                            { ApprovalScope.Default with
+                                OwnerId = ownerId
+                                OrganizationId = organizationId
+                                RepositoryId = repositoryId
+                                TargetBranchId = targetBranchId
+                                PromotionSetId = promotionSetId
+                                StepsComputationAttempt = stepsComputationAttempt
+                                ApprovalPolicyId = Some approvalPolicyId
+                                ApprovalPolicyVersion = Some approvalPolicyVersion
+                            }
+                        RequiredResponder = requiredResponder
+                        Status = ApprovalRequestStatus.Pending
+                        CreatedBy = UserId createdBy
+                        CreatedAt = eventMetadata.Timestamp
+                    }
+
+                this.RegisterRequestCore request eventMetadata
+
+            member this.GetRequest approvalRequestId correlationId =
+                this.correlationId <- correlationId
+
+                match requests.TryGetValue approvalRequestId with
+                | true, request -> Some request
+                | _ -> None
+                |> returnTask
+
+            member this.GetRequestJson approvalRequestId correlationId =
+                this.correlationId <- correlationId
+
+                match requestJsonById.TryGetValue approvalRequestId with
+                | true, requestJson -> Some requestJson
+                | _ -> None
+                |> returnTask
 
             member this.List correlationId =
                 this.correlationId <- correlationId
