@@ -11,6 +11,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Include="AssemblyInfo.fs" />
     <Compile Include="EventMetadata.Types.Tests.fs" />
     <Compile Include="Automation.Types.Tests.fs" />
     <Compile Include="PromotionSet.ConflictModel.Types.Tests.fs" />

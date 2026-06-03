@@ -8,6 +8,7 @@ open System.Collections.Generic
 open System.Threading.Tasks
 
 [<TestFixture>]
+[<NonParallelizable>]
 type PromotionSetConflictModelTypesTests() =
 
     let sampleRequest: ConflictResolutionModelRequest =
