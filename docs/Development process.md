@@ -390,6 +390,19 @@ pwsh ./scripts/validate.ps1 -Full
 Use `-Fast` for the normal development loop. Use `-Full` when the change touches Aspire integration coverage, emulators,
 storage, Cosmos DB, Service Bus, Redis, cross-service behavior, or deployment/runtime behavior.
 
+Avoid duplicate builds. `validate.ps1 -Fast` already restores, builds the solution, and runs the configured fast test
+projects. If a worker is going to run `validate -Fast`, it should not also run a separate full-solution
+`dotnet build` or broad `dotnet test` as a routine step. Use this efficient order instead:
+
+1. Run Fantomas formatting or targeted Fantomas checks for touched F# files.
+2. Run the narrow focused test command that proves the changed behavior, if that focused test is outside the fast gate
+   or gives faster defect localization.
+3. Run `pwsh ./scripts/validate.ps1 -Fast`.
+4. Run `git diff --check`.
+
+Use separate `dotnet build` or broad `dotnet test` commands only when diagnosing a failure, when `validate -Fast` is
+being intentionally skipped, or when a required focused test project is not covered by the fast gate.
+
 If running commands manually, the high-level fallback is:
 
 ```powershell
@@ -411,7 +424,7 @@ order is:
 
 1. Apply the code change.
 2. Run Fantomas on the touched files, or run the repo-standard recursive Fantomas command when the edit is broad.
-3. Run build and tests.
+3. Run focused tests and `validate -Fast` using the non-duplicative validation order above.
 4. Run `git diff --check`.
 
 Avoid running the full test suite before formatting, then discovering Fantomas rewrote files and forcing another

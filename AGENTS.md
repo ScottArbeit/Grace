@@ -59,6 +59,10 @@ completed sub-issues are checked.
 - Prefer vertical slices with focused tests and `pwsh ./scripts/validate.ps1 -Fast` as the normal validation gate.
 - Use `pwsh ./scripts/validate.ps1 -Full` when Aspire, emulators, storage, Service Bus, Cosmos DB, Redis,
   deployment/runtime behavior, or cross-service integration is affected.
+- Order validation to avoid duplicate builds. Run formatters before validation. If the slice will run
+  `pwsh ./scripts/validate.ps1 -Fast`, do not also run separate full-solution `dotnet build` or broad `dotnet test`
+  commands unless there is a specific diagnostic reason; prefer only the narrow focused tests that prove the changed
+  behavior, then `validate -Fast`.
 - Commit after each completed slice and keep pull requests focused and reviewable.
 - When acting as the main implementation orchestrator, delegate all coding and fixing tasks to worker subagents and use
   fresh review-only subagents for code review. The main orchestrator must not implement, repair, inspect or validate

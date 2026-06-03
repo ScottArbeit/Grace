@@ -32,7 +32,11 @@ update the issue before editing the new paths.
 - Create or switch to an issue-owned branch/worktree from latest `origin/main` before editing implementation files.
 - Prefer vertical slices that prove one public behavior at a time through the closest stable boundary.
 - Validate changes with `pwsh ./scripts/validate.ps1 -Fast` (use `-Full` for Aspire integration coverage).
-- If running commands manually, use `dotnet build --configuration Release` and `dotnet test --no-build`.
+- Order validation to avoid duplicate builds. Run formatters before validation. If `validate -Fast` will run, do not
+  also run separate full-solution `dotnet build` or broad `dotnet test` commands unless there is a specific diagnostic
+  reason; prefer only the narrow focused tests that prove the changed behavior, then `validate -Fast`.
+- If running commands manually instead of `validate -Fast`, use `dotnet build --configuration Release` and
+  `dotnet test --no-build`.
 - Resolve all compilation errors before considering a task complete.
 - Run impacted tests for each task and fix failures introduced by your changes.
 - Create a new git commit after each completed task to keep review scope clear.
