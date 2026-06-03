@@ -63,6 +63,7 @@
 		<Compile Include="Security\PermissionEvaluator.Server.fs" />
 		<Compile Include="Security\AuthorizationMiddleware.Server.fs" />
 		<Compile Include="Security\EndpointAuthorizationManifest.Server.fs" />
+		<Compile Include="Security\StorageAuthorizationResources.Server.fs" />
         <Compile Include="OrleansFilters.Server.fs" />
 		<Compile Include="Middleware\Fake.Middleware.fs" />
 		<Compile Include="Middleware\HttpSecurityHeaders.Middleware.fs" />
