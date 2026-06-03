@@ -18,6 +18,7 @@
     <Compile Include="AuthMapping.Unit.Tests.fs" />
     <Compile Include="Authorization.Unit.Tests.fs" />
     <Compile Include="ExternalAuthConfig.Unit.Tests.fs" />
+    <Compile Include="AuthSchemeSelection.Unit.Tests.fs" />
     <Compile Include="OutboundUrlSafety.Unit.Tests.fs" />
     <Compile Include="StorageAuthorizationResources.Unit.Tests.fs" />
     <Compile Include="ValidateIds.Decisions.Tests.fs" />
@@ -41,6 +42,7 @@
     <Compile Include="Queue.Server.Tests.fs" />
     <Compile Include="OrleansFilters.Server.Tests.fs" />
     <Compile Include="WorkItem.Server.Tests.fs" />
+    <Compile Include="WorkItem.Attachments.Tests.fs" />
     <Compile Include="ApprovalRequest.Actor.Tests.fs" />
     <Compile Include="Validations.Server.Tests.fs" />
     <Compile Include="Program.fs" />
