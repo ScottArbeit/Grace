@@ -153,12 +153,7 @@ module Application =
 
                 let graceIds = Services.getGraceIds context
 
-                let resources =
-                    parameters.FileVersions
-                    |> Seq.map (fun fileVersion -> Resource.Path(graceIds.OwnerId, graceIds.OrganizationId, graceIds.RepositoryId, fileVersion.RelativePath))
-                    |> Seq.toList
-
-                return resources
+                return StorageAuthorizationResources.uploadMetadataResources graceIds.OwnerId graceIds.OrganizationId graceIds.RepositoryId parameters
             }
 
         let uploadUriResourcesFromContext (context: HttpContext) =
@@ -171,12 +166,7 @@ module Application =
 
                 let graceIds = Services.getGraceIds context
 
-                let resources =
-                    parameters.FileVersions
-                    |> Seq.map (fun fileVersion -> Resource.Path(graceIds.OwnerId, graceIds.OrganizationId, graceIds.RepositoryId, fileVersion.RelativePath))
-                    |> Seq.toList
-
-                return resources
+                return StorageAuthorizationResources.uploadUriResources graceIds.OwnerId graceIds.OrganizationId graceIds.RepositoryId parameters
             }
 
         let downloadPathResourceFromContext (context: HttpContext) =
@@ -189,7 +179,7 @@ module Application =
 
                 let graceIds = Services.getGraceIds context
 
-                return Resource.Path(graceIds.OwnerId, graceIds.OrganizationId, graceIds.RepositoryId, parameters.FileVersion.RelativePath)
+                return StorageAuthorizationResources.downloadUriResource graceIds.OwnerId graceIds.OrganizationId graceIds.RepositoryId parameters
             }
 
         let contentBlockUploadPathResourceFromContext (context: HttpContext) =
@@ -202,13 +192,7 @@ module Application =
 
                 let graceIds = Services.getGraceIds context
 
-                let path =
-                    if String.IsNullOrWhiteSpace parameters.AuthorizedScope then
-                        StorageKeys.contentBlockObjectKey parameters.ContentBlockAddress
-                    else
-                        parameters.AuthorizedScope
-
-                return Resource.Path(graceIds.OwnerId, graceIds.OrganizationId, graceIds.RepositoryId, path)
+                return StorageAuthorizationResources.contentBlockUploadResource graceIds.OwnerId graceIds.OrganizationId graceIds.RepositoryId parameters
             }
 
         let contentBlockDownloadPathResourceFromContext (context: HttpContext) =
@@ -221,13 +205,7 @@ module Application =
 
                 let graceIds = Services.getGraceIds context
 
-                return
-                    Resource.Path(
-                        graceIds.OwnerId,
-                        graceIds.OrganizationId,
-                        graceIds.RepositoryId,
-                        StorageKeys.contentBlockObjectKey parameters.ContentBlockAddress
-                    )
+                return StorageAuthorizationResources.contentBlockDownloadResource graceIds.OwnerId graceIds.OrganizationId graceIds.RepositoryId parameters
             }
 
         let uploadSessionPathResourceFromContext (context: HttpContext) =
@@ -240,7 +218,7 @@ module Application =
 
                 let graceIds = Services.getGraceIds context
 
-                return Resource.Path(graceIds.OwnerId, graceIds.OrganizationId, graceIds.RepositoryId, parameters.AuthorizedScope)
+                return StorageAuthorizationResources.uploadSessionResource graceIds.OwnerId graceIds.OrganizationId graceIds.RepositoryId parameters
             }
 
         let composeHandlers (first: HttpHandler) (second: HttpHandler) : HttpHandler = fun next context -> first (second next) context
