@@ -48,7 +48,9 @@ update the issue before editing the new paths.
   fixes, and "Reviewed And OK" notes can be recorded on the pull request instead of only on the issue.
 - Persist each review-only subagent report, including "Reviewed And OK" notes, to the pull request when one exists, or
   to the issue before the first pull request exists. Later review prompts should include prior OK notes and ask the
-  reviewer to re-check them only when the new diff affects those areas.
+  reviewer to re-check them only when the new diff affects those areas. If the first code review for a new pull request
+  finds no issues, still add a pull request comment with the review output so the review pass is documented where code
+  review evidence belongs.
 - When the user asks to address a code review comment, review comment, PR feedback, or similar, complete the full
   review-thread workflow: evaluate the comment, make the appropriate fix or explicitly explain why no code change is
   needed, validate the result, commit and push the branch, reply to the GitHub review comment with the outcome and

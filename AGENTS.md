@@ -72,7 +72,9 @@ completed sub-issues are checked.
   fixes, and "Reviewed And OK" notes can be recorded on the pull request instead of only on the issue.
 - After each review-only subagent pass, persist the findings and "Reviewed And OK" notes to the pull request when one
   exists, or to the GitHub issue before the first pull request exists. Include prior "Reviewed And OK" notes in later
-  review prompts so reviewers can build on prior coverage instead of repeating it.
+  review prompts so reviewers can build on prior coverage instead of repeating it. If the first code review for a new
+  pull request finds no issues, still add a pull request comment with the review output so the review pass is documented
+  where code review evidence belongs.
 - Open normal ready-for-review pull requests. Do not open draft pull requests unless the user explicitly asks for a
   draft.
 - When the user says a PR is merged, verify the merge, delete the issue branch and worktree, run `git fetch --prune`,

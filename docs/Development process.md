@@ -222,6 +222,8 @@ must open a normal ready-for-review pull request. The pull request can remain op
 From that point on, review findings, review fixes, validation evidence, and "Reviewed And OK" notes should be recorded
 as standalone pull request comments, not only as issue comments. Use the issue for claim, planning, parent/epic
 coordination, and pre-PR evidence; use the pull request as the durable code-review ledger once it exists.
+If the first code review for a newly opened pull request reports no issues, still add a standalone pull request comment
+containing the review output. A clean review is evidence, and it belongs on the pull request with the code it reviewed.
 
 A coding task is not complete until a parent/orchestrator thread runs a fresh local review-only sibling subagent after
 the implementation slice has been validated and committed. The review agent must be a sibling of the implementation
@@ -265,7 +267,8 @@ The review loop is blocking:
    review passes.
 4. Persist the full review report to the pull request when one exists, or to the issue before the first pull request
    exists. If another review pass will run later, copy the prior "Reviewed And OK" notes into that review prompt and
-   tell the reviewer to treat them as already-reviewed unless the new diff affects those areas.
+   tell the reviewer to treat them as already-reviewed unless the new diff affects those areas. This applies even when
+   the first pull request review finds no issues.
 5. If the review finds a missing acceptance-criterion class, repeated trap, or issue-template gap that could affect
    active future workers, amend the active future issues or templates before spawning parallel workers. Preserve issue
    history by appending an addendum unless replacing stale text is clearer and safe.
