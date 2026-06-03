@@ -74,12 +74,31 @@ update the issue before editing the new paths.
 
 ## Test Project Organization
 
-- `Grace.Server/*.Server.fs` should be primarily covered by `Grace.Server.Tests/*Server.Tests.fs`.
-- `Grace.CLI/Command/*.CLI.fs` should be primarily covered by `Grace.CLI.Tests/*.CLI.Tests.fs`.
+- `Grace.Server.Tests` is the Aspire-backed server integration project. Put HTTP flows, emulator/resource coverage,
+  Service Bus validation, storage route behavior, and server-surface actor behavior there.
+- `Grace.Server.Unit.Tests` is the no-Aspire server-adjacent project. Put pure helper, deterministic contract, and
+  unit-shaped server coverage there only when it does not need HTTP hosting, emulators, blob storage, Service Bus,
+  Redis, `Grace.Server.Tests.Services`, or `Grace.Aspire.AppHost`.
+- `Grace.CLI/Command/*.CLI.fs` should be primarily covered by `Grace.CLI.Tests/*.CLI.Tests.fs`. Pure parser coverage
+  belongs in dedicated `*.CLI.Parsing.Tests.fs` files that can be parallelized. Tests that touch command invocation,
+  local config/history, environment variables, console output, filesystem/current-directory state, or SDK identity
+  remain serialized in the non-parsing CLI test files.
 - `Grace.Types/*.Types.fs` should be covered by `Grace.Types.Tests/*.Types.Tests.fs`.
 - Keep auth-focused suites separate for now (`Grace.Authorization.Tests`, plus auth-specific files inside other test
   projects).
 - Prefer server-surface integration tests for actor behavior; avoid duplicating deep actor internals in server test files.
+
+## Test Parallelization And Validation
+
+- `pwsh ./scripts/validate.ps1 -Fast` and `-Full` run one solution-level `dotnet test "src/Grace.slnx"` command with
+  selection filters. Fast selects Authorization, CLI, Types, and Server.Unit tests. Full adds Server integration tests.
+- Do not reintroduce custom per-project process fan-out into validation unless a future issue owns that runner change.
+- Assembly-level NUnit parallel defaults are intentionally limited. `Grace.Authorization.Tests` and `Grace.Types.Tests`
+  have bounded defaults. `Grace.Server.Unit.Tests` is deferred while process-static approval-store mutation remains in
+  the project. `Grace.CLI.Tests` is deferred while global/current-process mutations remain. `Grace.Server.Tests` stays
+  integration-controlled because it shares Aspire-hosted resources and setup state.
+- If running a project-specific `dotnet test --no-build` command, run the matching Release build for that project first
+  so the test assembly exists and reflects current source.
 
 ## F# Coding Guidelines
 
