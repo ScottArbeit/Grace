@@ -1,0 +1,191 @@
+'/webhook/rule/create':
+  post:
+    tags:
+      - Webhooks
+    summary: Create a webhook rule.
+    operationId: CreateWebhookRule
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: './Webhook.Components.OpenAPI.yaml#/CreateWebhookRuleParameters'
+    responses:
+      '200':
+        $ref: './Webhook.Components.OpenAPI.yaml#/WebhookRuleResponse'
+      '400':
+        $ref: './Responses.OpenAPI.yaml#/400'
+      '500':
+        $ref: './Responses.OpenAPI.yaml#/500'
+'/webhook/rule/list':
+  post:
+    tags:
+      - Webhooks
+    summary: List webhook rules.
+    operationId: ListWebhookRules
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: './Webhook.Components.OpenAPI.yaml#/ListWebhookRulesParameters'
+    responses:
+      '200':
+        $ref: './Webhook.Components.OpenAPI.yaml#/WebhookRuleListResponse'
+      '400':
+        $ref: './Responses.OpenAPI.yaml#/400'
+      '500':
+        $ref: './Responses.OpenAPI.yaml#/500'
+'/webhook/rule/show':
+  post:
+    tags:
+      - Webhooks
+    summary: Show a webhook rule.
+    operationId: ShowWebhookRule
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: './Webhook.Components.OpenAPI.yaml#/ShowWebhookRuleParameters'
+    responses:
+      '200':
+        $ref: './Webhook.Components.OpenAPI.yaml#/WebhookRuleResponse'
+      '400':
+        $ref: './Responses.OpenAPI.yaml#/400'
+      '500':
+        $ref: './Responses.OpenAPI.yaml#/500'
+'/webhook/rule/update':
+  post:
+    tags:
+      - Webhooks
+    summary: Update a webhook rule.
+    operationId: UpdateWebhookRule
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: './Webhook.Components.OpenAPI.yaml#/UpdateWebhookRuleParameters'
+    responses:
+      '200':
+        $ref: './Webhook.Components.OpenAPI.yaml#/WebhookRuleResponse'
+      '400':
+        $ref: './Responses.OpenAPI.yaml#/400'
+      '500':
+        $ref: './Responses.OpenAPI.yaml#/500'
+'/webhook/rule/enable':
+  post:
+    tags:
+      - Webhooks
+    summary: Enable a webhook rule.
+    operationId: EnableWebhookRule
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: './Webhook.Components.OpenAPI.yaml#/EnableWebhookRuleParameters'
+    responses:
+      '200':
+        $ref: './Webhook.Components.OpenAPI.yaml#/WebhookRuleResponse'
+      '400':
+        $ref: './Responses.OpenAPI.yaml#/400'
+      '500':
+        $ref: './Responses.OpenAPI.yaml#/500'
+'/webhook/rule/disable':
+  post:
+    tags:
+      - Webhooks
+    summary: Disable a webhook rule.
+    operationId: DisableWebhookRule
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: './Webhook.Components.OpenAPI.yaml#/DisableWebhookRuleParameters'
+    responses:
+      '200':
+        $ref: './Webhook.Components.OpenAPI.yaml#/WebhookRuleResponse'
+      '400':
+        $ref: './Responses.OpenAPI.yaml#/400'
+      '500':
+        $ref: './Responses.OpenAPI.yaml#/500'
+'/webhook/rule/delete':
+  post:
+    tags:
+      - Webhooks
+    summary: Delete a webhook rule.
+    operationId: DeleteWebhookRule
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: './Webhook.Components.OpenAPI.yaml#/DeleteWebhookRuleParameters'
+    responses:
+      '200':
+        $ref: './Webhook.Components.OpenAPI.yaml#/WebhookRuleResponse'
+      '400':
+        $ref: './Responses.OpenAPI.yaml#/400'
+      '500':
+        $ref: './Responses.OpenAPI.yaml#/500'
+'/webhook/rule/test':
+  post:
+    tags:
+      - Webhooks
+    summary: Create a test webhook delivery.
+    operationId: TestWebhookRule
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: './Webhook.Components.OpenAPI.yaml#/TestWebhookRuleParameters'
+    responses:
+      '200':
+        $ref: './Webhook.Components.OpenAPI.yaml#/WebhookDeliveryResponse'
+      '400':
+        $ref: './Responses.OpenAPI.yaml#/400'
+      '500':
+        $ref: './Responses.OpenAPI.yaml#/500'
+'/webhook/delivery/list':
+  post:
+    tags:
+      - Webhooks
+    summary: List webhook deliveries.
+    operationId: ListWebhookDeliveries
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: './Webhook.Components.OpenAPI.yaml#/ListWebhookDeliveriesParameters'
+    responses:
+      '200':
+        $ref: './Webhook.Components.OpenAPI.yaml#/WebhookDeliveryListResponse'
+      '400':
+        $ref: './Responses.OpenAPI.yaml#/400'
+      '500':
+        $ref: './Responses.OpenAPI.yaml#/500'
+'/webhook/delivery/show':
+  post:
+    tags:
+      - Webhooks
+    summary: Show a webhook delivery.
+    operationId: ShowWebhookDelivery
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: './Webhook.Components.OpenAPI.yaml#/ShowWebhookDeliveryParameters'
+    responses:
+      '200':
+        $ref: './Webhook.Components.OpenAPI.yaml#/WebhookDeliveryResponse'
+      '400':
+        $ref: './Responses.OpenAPI.yaml#/400'
+      '500':
+        $ref: './Responses.OpenAPI.yaml#/500'
+

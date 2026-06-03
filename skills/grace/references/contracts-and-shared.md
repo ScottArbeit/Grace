@@ -54,6 +54,8 @@ Important vocabulary:
 - An approval policy defines the requirement.
 - An approval request is the durable decision workflow.
 - Approval request decisions must be idempotent by client decision ID and responder identity.
+- An approval notification delivery is distinct from a webhook delivery. The current public surface stores and validates
+  approval policy notification URLs, but does not expose public approval-notification delivery query commands or routes.
 
 Avoid adding an `approval request create` public command or endpoint unless a current product decision explicitly
 reopens that boundary. Generated approval requests are seeded or produced by policy/workflow behavior.

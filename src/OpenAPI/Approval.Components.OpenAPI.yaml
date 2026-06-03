@@ -1,0 +1,372 @@
+ApprovalPolicyParameters:
+  allOf:
+    - $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/CommonParameters'
+    - type: object
+      properties:
+        OwnerId:
+          type: string
+          format: uuid
+        OwnerName:
+          type: string
+        OrganizationId:
+          type: string
+          format: uuid
+        OrganizationName:
+          type: string
+        RepositoryId:
+          type: string
+          format: uuid
+        RepositoryName:
+          type: string
+        TargetBranchId:
+          type: string
+          format: uuid
+        ApprovalPolicyId:
+          type: string
+          format: uuid
+CreateApprovalPolicyParameters:
+  allOf:
+    - $ref: '#/ApprovalPolicyParameters'
+    - type: object
+      properties:
+        Name:
+          type: string
+        Subject:
+          type: string
+          example: promotion-set.apply
+        RequiredResponder:
+          type: string
+        NotificationUrl:
+          type: string
+          format: uri
+        NotificationUrlSafety:
+          $ref: '#/OutboundUrlSafety'
+        AcknowledgeUnsafeLocalDevelopment:
+          type: boolean
+          default: false
+        TimeoutSeconds:
+          type: integer
+          nullable: true
+        OnTimeout:
+          $ref: '#/ApprovalTimeoutAction'
+UpdateApprovalPolicyParameters:
+  $ref: '#/CreateApprovalPolicyParameters'
+ListApprovalPoliciesParameters:
+  allOf:
+    - $ref: '#/ApprovalPolicyParameters'
+    - type: object
+      properties:
+        IncludeDeleted:
+          type: boolean
+          default: false
+ShowApprovalPolicyParameters:
+  $ref: '#/ApprovalPolicyParameters'
+EnableApprovalPolicyParameters:
+  $ref: '#/ApprovalPolicyParameters'
+DisableApprovalPolicyParameters:
+  $ref: '#/ApprovalPolicyParameters'
+DeleteApprovalPolicyParameters:
+  $ref: '#/ApprovalPolicyParameters'
+EvaluateApprovalPolicyParameters:
+  allOf:
+    - $ref: '#/ApprovalPolicyParameters'
+    - type: object
+      properties:
+        Subject:
+          type: string
+ApprovalRequestParameters:
+  allOf:
+    - $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/CommonParameters'
+    - type: object
+      properties:
+        OwnerId:
+          type: string
+          format: uuid
+        OwnerName:
+          type: string
+        OrganizationId:
+          type: string
+          format: uuid
+        OrganizationName:
+          type: string
+        RepositoryId:
+          type: string
+          format: uuid
+        RepositoryName:
+          type: string
+        TargetBranchId:
+          type: string
+          format: uuid
+        ApprovalRequestId:
+          type: string
+          format: uuid
+ListApprovalRequestsParameters:
+  allOf:
+    - $ref: '#/ApprovalRequestParameters'
+    - type: object
+      properties:
+        IncludeTerminal:
+          type: boolean
+          default: true
+ShowApprovalRequestParameters:
+  $ref: '#/ApprovalRequestParameters'
+ApproveApprovalRequestParameters:
+  allOf:
+    - $ref: '#/ApprovalRequestParameters'
+    - type: object
+      properties:
+        Reason:
+          type: string
+        ClientDecisionId:
+          type: string
+RejectApprovalRequestParameters:
+  $ref: '#/ApproveApprovalRequestParameters'
+ApprovalRequestHistoryParameters:
+  $ref: '#/ApprovalRequestParameters'
+OutboundUrlSafety:
+  type: string
+  enum:
+    - PublicHttps
+    - LocalUnsafeDevOnly
+ApprovalTimeoutAction:
+  type: string
+  enum:
+    - Reject
+    - Expire
+ApprovalPolicyStatus:
+  type: string
+  enum:
+    - Enabled
+    - Disabled
+    - Deleted
+ApprovalRequestStatus:
+  type: string
+  enum:
+    - Pending
+    - Approved
+    - Rejected
+    - Expired
+    - Cancelled
+    - Superseded
+ApprovalDecision:
+  type: string
+  enum:
+    - Approve
+    - Reject
+PromotionSetApprovalState:
+  type: string
+  enum:
+    - NotRequired
+    - Pending
+    - Approved
+    - Rejected
+    - Expired
+    - Stale
+ScopedOutboundUrl:
+  type: object
+  properties:
+    Url:
+      type: string
+      format: uri
+    Safety:
+      $ref: '#/OutboundUrlSafety'
+ApprovalScope:
+  type: object
+  properties:
+    OwnerId:
+      type: string
+      format: uuid
+    OrganizationId:
+      type: string
+      format: uuid
+    RepositoryId:
+      type: string
+      format: uuid
+    TargetBranchId:
+      type: string
+      format: uuid
+    PromotionSetId:
+      type: string
+      format: uuid
+      nullable: true
+    StepsComputationAttempt:
+      type: integer
+      nullable: true
+    ApprovalPolicyId:
+      type: string
+      format: uuid
+      nullable: true
+    ApprovalPolicyVersion:
+      type: integer
+      nullable: true
+ApprovalPolicy:
+  type: object
+  properties:
+    Class:
+      type: string
+    ApprovalPolicyId:
+      type: string
+      format: uuid
+    Version:
+      type: integer
+    Name:
+      type: string
+    Subject:
+      type: string
+    Scope:
+      $ref: '#/ApprovalScope'
+    RequiredResponder:
+      type: string
+    NotificationUrl:
+      $ref: '#/ScopedOutboundUrl'
+      nullable: true
+    TimeoutSeconds:
+      type: integer
+      nullable: true
+    OnTimeout:
+      $ref: '#/ApprovalTimeoutAction'
+    Status:
+      $ref: '#/ApprovalPolicyStatus'
+    CreatedBy:
+      type: string
+    CreatedAt:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant'
+    UpdatedAt:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant'
+      nullable: true
+ApprovalRequestDecision:
+  type: object
+  properties:
+    Decision:
+      $ref: '#/ApprovalDecision'
+    DecidedBy:
+      type: string
+    DecidedAt:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant'
+    Reason:
+      type: string
+      nullable: true
+    ClientDecisionId:
+      type: string
+ApprovalRequest:
+  type: object
+  properties:
+    Class:
+      type: string
+    ApprovalRequestId:
+      type: string
+      format: uuid
+    ApprovalPolicyId:
+      type: string
+      format: uuid
+    ApprovalPolicyVersion:
+      type: integer
+    Subject:
+      type: string
+    Scope:
+      $ref: '#/ApprovalScope'
+    RequiredResponder:
+      type: string
+    Status:
+      $ref: '#/ApprovalRequestStatus'
+    Decision:
+      $ref: '#/ApprovalRequestDecision'
+      nullable: true
+    CreatedBy:
+      type: string
+    CreatedAt:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant'
+    ExpiresAt:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant'
+      nullable: true
+    UpdatedAt:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant'
+      nullable: true
+    SupersededByApprovalRequestId:
+      type: string
+      format: uuid
+      nullable: true
+PromotionSetApprovalSummary:
+  type: object
+  properties:
+    Class:
+      type: string
+    PromotionSetId:
+      type: string
+      format: uuid
+    TargetBranchId:
+      type: string
+      format: uuid
+    StepsComputationAttempt:
+      type: integer
+    State:
+      $ref: '#/PromotionSetApprovalState'
+    ApprovalRequestId:
+      type: string
+      format: uuid
+      nullable: true
+    ApprovalPolicyId:
+      type: string
+      format: uuid
+      nullable: true
+    RequiredResponder:
+      type: string
+      nullable: true
+    LastDecisionAt:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant'
+      nullable: true
+    ExpiresAt:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant'
+      nullable: true
+    Reason:
+      type: string
+      nullable: true
+ApprovalPolicyResponse:
+  description: OK
+  content:
+    application/json:
+      schema:
+        allOf:
+          - $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/GraceReturnValue'
+          - type: object
+            properties:
+              ReturnValue:
+                $ref: '#/ApprovalPolicy'
+ApprovalPolicyListResponse:
+  description: OK
+  content:
+    application/json:
+      schema:
+        allOf:
+          - $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/GraceReturnValue'
+          - type: object
+            properties:
+              ReturnValue:
+                type: array
+                items:
+                  $ref: '#/ApprovalPolicy'
+ApprovalRequestResponse:
+  description: OK
+  content:
+    application/json:
+      schema:
+        allOf:
+          - $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/GraceReturnValue'
+          - type: object
+            properties:
+              ReturnValue:
+                $ref: '#/ApprovalRequest'
+ApprovalRequestListResponse:
+  description: OK
+  content:
+    application/json:
+      schema:
+        allOf:
+          - $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/GraceReturnValue'
+          - type: object
+            properties:
+              ReturnValue:
+                type: array
+                items:
+                  $ref: '#/ApprovalRequest'
+

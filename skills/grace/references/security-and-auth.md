@@ -50,6 +50,9 @@ security-sensitive logging, or review of public access boundaries.
 - Redact authorization headers, tokens, connection strings, SAS URLs, and credential-bearing URLs in logs and tests.
 - Prefer constants from `Constants.EnvironmentVariables` over raw environment key strings.
 - In PowerShell scripts, avoid passing SAS URLs through unescaped inline `--settings`; use JSON files when needed.
+- Webhook URLs and approval policy notification URLs must use public HTTPS by default. Unsafe loopback URLs require a
+  Development host environment, server opt-in, and explicit per-request acknowledgement.
+- CLI JSON output for webhook rules and approval policies must redact destination URLs and signing secret material.
 
 ## Security Test Checklist
 
