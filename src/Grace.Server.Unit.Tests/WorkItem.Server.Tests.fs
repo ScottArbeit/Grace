@@ -13,6 +13,7 @@ open NUnit.Framework
 open NodaTime
 open System
 open System.Collections.Generic
+open System.Text
 
 [<Parallelizable(ParallelScope.All)>]
 type WorkItemServerUnitTests() =
@@ -247,11 +248,62 @@ type WorkItemServerUnitTests() =
         Assert.That(summaryArtifactId, Is.Not.EqualTo(promptArtifactId))
 
     [<Test>]
+    member _.DeterministicAddSummaryArtifactIdDiffersByRepositoryWorkItemAndCorrelationSegment() =
+        let repositoryId = Guid.Parse("89f08f88-0d98-4562-a5f7-bce8d4e4c2ec")
+        let otherRepositoryId = Guid.Parse("0242c758-2055-4ae1-80c5-7c1638cc0cdf")
+        let workItemId = Guid.Parse("6d742a8e-5fd6-4d89-81cd-7ea3005570ef")
+        let otherWorkItemId = Guid.Parse("78ac36f4-9046-482c-981c-d173a3c94e94")
+        let correlationId = "corr:add-summary:summary-artifact"
+
+        let baselineId = WorkItem.buildDeterministicAddSummaryArtifactId repositoryId workItemId correlationId
+        let otherRepositoryArtifactId = WorkItem.buildDeterministicAddSummaryArtifactId otherRepositoryId workItemId correlationId
+        let otherWorkItemArtifactId = WorkItem.buildDeterministicAddSummaryArtifactId repositoryId otherWorkItemId correlationId
+        let otherCorrelationSegmentId = WorkItem.buildDeterministicAddSummaryArtifactId repositoryId workItemId "corr:add-summary:prompt-artifact"
+
+        Assert.That(otherRepositoryArtifactId, Is.Not.EqualTo(baselineId))
+        Assert.That(otherWorkItemArtifactId, Is.Not.EqualTo(baselineId))
+        Assert.That(otherCorrelationSegmentId, Is.Not.EqualTo(baselineId))
+
+    [<Test>]
     member _.DeterministicAddSummaryBlobPathUsesArtifactIdentityPartition() =
         let artifactId = Guid.Parse("7d535f96-e634-4313-b5ff-d9293ee9db57")
         let blobPath = WorkItem.buildDeterministicAddSummaryBlobPath artifactId
 
         Assert.That(blobPath, Is.EqualTo("grace-artifacts/by-id/7d535f96-e634-4313-b5ff-d9293ee9db57"))
+
+    [<Test>]
+    member _.DeterministicAddSummaryBlobPathDoesNotUseDatePartitions() =
+        let artifactId = Guid.Parse("7d535f96-e634-4313-b5ff-d9293ee9db57")
+        let blobPath = WorkItem.buildDeterministicAddSummaryBlobPath artifactId
+
+        Assert.That(blobPath.Split('/'), Has.Length.EqualTo(3))
+        Assert.That(blobPath, Does.Not.Match(@".*/\d{4}/\d{2}/\d{2}/.*"))
+
+    [<Test>]
+    member _.AddSummaryMimeTypeDefaultsAndTrimsWhitespace() =
+        Assert.That(WorkItem.normalizeAddSummaryMimeType null, Is.EqualTo("text/markdown"))
+        Assert.That(WorkItem.normalizeAddSummaryMimeType String.Empty, Is.EqualTo("text/markdown"))
+        Assert.That(WorkItem.normalizeAddSummaryMimeType "   ", Is.EqualTo("text/markdown"))
+        Assert.That(WorkItem.normalizeAddSummaryMimeType "  application/json  ", Is.EqualTo("application/json"))
+
+    [<Test>]
+    member _.AddSummaryContentHashUsesLowercaseSha256Hex() =
+        let contentBytes = Encoding.UTF8.GetBytes("Grace add-summary content")
+
+        let contentHash = WorkItem.computeSha256 contentBytes
+
+        Assert.That(contentHash, Is.EqualTo("fe7b99b4ee981f8232f58cc18ac51e3999d3c52b01002d1070df8f751c92c423"))
+        Assert.That(contentHash, Is.EqualTo(contentHash.ToLowerInvariant()))
+
+    [<Test>]
+    member _.RecoverableArtifactCreateErrorsAllowReplayConditions() =
+        let duplicateCorrelationError = GraceError.Create "Duplicate correlation ID for Artifact command." "corr-add-summary"
+        let existingArtifactError = GraceError.Create "Artifact already exists." "corr-add-summary"
+        let fatalError = GraceError.Create "Artifact content upload failed." "corr-add-summary"
+
+        Assert.That(WorkItem.isRecoverableArtifactCreateError duplicateCorrelationError, Is.True)
+        Assert.That(WorkItem.isRecoverableArtifactCreateError existingArtifactError, Is.True)
+        Assert.That(WorkItem.isRecoverableArtifactCreateError fatalError, Is.False)
 
     [<Test>]
     member _.RemoveArtifactTypeValidationRejectsMissingArtifactType() =
