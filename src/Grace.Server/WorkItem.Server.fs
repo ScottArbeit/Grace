@@ -449,7 +449,7 @@ module WorkItem =
             else
                 Ok()
 
-    let private normalizeAddSummaryMimeType (mimeType: string) = if String.IsNullOrWhiteSpace(mimeType) then "text/markdown" else mimeType.Trim()
+    let internal normalizeAddSummaryMimeType (mimeType: string) = if String.IsNullOrWhiteSpace(mimeType) then "text/markdown" else mimeType.Trim()
 
     let internal buildAddSummaryArtifactSeed (repositoryId: RepositoryId) (workItemId: WorkItemId) (artifactCorrelationId: CorrelationId) =
         let normalizedCorrelationId =
@@ -485,7 +485,7 @@ module WorkItem =
 
     let internal buildDeterministicAddSummaryBlobPath (artifactId: ArtifactId) = $"grace-artifacts/by-id/{artifactId}"
 
-    let private computeSha256 (contentBytes: byte array) =
+    let internal computeSha256 (contentBytes: byte array) =
         use hasher = SHA256.Create()
         let hash = hasher.ComputeHash(contentBytes)
         Convert.ToHexString(hash).ToLowerInvariant()
@@ -534,7 +534,7 @@ module WorkItem =
     let private isArtifactAlreadyExistsError (graceError: GraceError) =
         String.Equals(graceError.Error, "Artifact already exists.", StringComparison.OrdinalIgnoreCase)
 
-    let private isRecoverableArtifactCreateError (graceError: GraceError) =
+    let internal isRecoverableArtifactCreateError (graceError: GraceError) =
         isArtifactDuplicateCorrelationIdError graceError
         || isArtifactAlreadyExistsError graceError
 
