@@ -62,6 +62,7 @@
 		<Compile Include="Security\AuthSchemeSelection.Server.fs" />
 		<Compile Include="Security\OutboundUrlSafety.Server.fs" />
 		<Compile Include="Security\PermissionEvaluator.Server.fs" />
+		<Compile Include="Security\MetricsAuthorization.Server.fs" />
 		<Compile Include="Security\AuthorizationMiddleware.Server.fs" />
 		<Compile Include="Security\EndpointAuthorizationManifest.Server.fs" />
 		<Compile Include="Security\StorageAuthorizationResources.Server.fs" />
