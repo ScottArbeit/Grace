@@ -1,6 +1,8 @@
 namespace Grace.Server.Tests
 
 open Grace.Server.Middleware
+open Grace.Shared.Validation.Errors
+open Grace.Types.Types
 open Microsoft.AspNetCore.Http
 open NUnit.Framework
 open System
@@ -107,3 +109,182 @@ type ValidateIdsDecisionsTests() =
         Assert.That(properties.RepositoryName.IsSome, Is.True)
         Assert.That(properties.BranchId.IsNone, Is.True)
         Assert.That(properties.BranchName.IsNone, Is.True)
+
+    [<TestCase("/owner/create", ValidateIdsDecisions.EntityKind.Owner)>]
+    [<TestCase("/organization/create", ValidateIdsDecisions.EntityKind.Organization)>]
+    [<TestCase("/repository/create", ValidateIdsDecisions.EntityKind.Repository)>]
+    [<TestCase("/branch/create", ValidateIdsDecisions.EntityKind.Branch)>]
+    member _.CreatePathsChooseCreateValidationMode(path: string, entityKind: ValidateIdsDecisions.EntityKind) =
+        let result = ValidateIdsDecisions.validationModeForPath entityKind path
+
+        Assert.That(result, Is.EqualTo(ValidateIdsDecisions.EntityValidationMode.Create))
+
+    [<TestCase("/Owner/Create", ValidateIdsDecisions.EntityKind.Owner)>]
+    [<TestCase("/organization/list", ValidateIdsDecisions.EntityKind.Organization)>]
+    [<TestCase("/repository/create/details", ValidateIdsDecisions.EntityKind.Repository)>]
+    [<TestCase("/branch/delete", ValidateIdsDecisions.EntityKind.Branch)>]
+    member _.NonCreatePathsChooseExistingValidationMode(path: string, entityKind: ValidateIdsDecisions.EntityKind) =
+        let result = ValidateIdsDecisions.validationModeForPath entityKind path
+
+        if path.Equals("/Owner/Create", StringComparison.InvariantCultureIgnoreCase) then
+            Assert.That(result, Is.EqualTo(ValidateIdsDecisions.EntityValidationMode.Create))
+        else
+            Assert.That(result, Is.EqualTo(ValidateIdsDecisions.EntityValidationMode.Existing))
+
+    [<Test>]
+    member _.EntityValidationStopsWhenEarlierScopeAlreadyFailed() =
+        let currentError = Some(GraceError.Create "Earlier failure" "correlation-id")
+        let properties = ValidateIdsDecisions.discoverEntityProperties typeof<BodyWithAllEntityProperties>
+
+        let result = ValidateIdsDecisions.shouldValidateEntity currentError properties.OrganizationId properties.OrganizationName
+
+        Assert.That(result, Is.False)
+
+    [<Test>]
+    member _.EntityValidationRequiresIdAndNamePropertiesToExist() =
+        let properties = ValidateIdsDecisions.discoverEntityProperties typeof<BodyWithMissingEntityProperties>
+
+        let ownerResult = ValidateIdsDecisions.shouldValidateEntity None properties.OwnerId properties.OwnerName
+        let repositoryResult = ValidateIdsDecisions.shouldValidateEntity None properties.RepositoryId properties.RepositoryName
+
+        Assert.That(ownerResult, Is.False)
+        Assert.That(repositoryResult, Is.False)
+
+    [<TestCase(ValidateIdsDecisions.EntityKind.Owner, "OwnerIdIsRequired")>]
+    [<TestCase(ValidateIdsDecisions.EntityKind.Organization, "OrganizationIdIsRequired")>]
+    [<TestCase(ValidateIdsDecisions.EntityKind.Repository, "RepositoryIdIsRequired")>]
+    [<TestCase(ValidateIdsDecisions.EntityKind.Branch, "BranchIdIsRequired")>]
+    member _.CreateValidationRequiresIds(entityKind: ValidateIdsDecisions.EntityKind, expectedErrorName: string) =
+        task {
+            let! error = ValidateIdsDecisions.getEntityValidationErrorMessage entityKind ValidateIdsDecisions.EntityValidationMode.Create "" "valid-name"
+
+            let expected =
+                match expectedErrorName with
+                | "OwnerIdIsRequired" -> OwnerError.getErrorMessage OwnerError.OwnerIdIsRequired
+                | "OrganizationIdIsRequired" -> OrganizationError.getErrorMessage OrganizationError.OrganizationIdIsRequired
+                | "RepositoryIdIsRequired" -> RepositoryError.getErrorMessage RepositoryError.RepositoryIdIsRequired
+                | "BranchIdIsRequired" -> BranchError.getErrorMessage BranchError.BranchIdIsRequired
+                | _ -> failwith "Unexpected test case."
+
+            Assert.That(error, Is.EqualTo(Some expected))
+        }
+
+    [<TestCase(ValidateIdsDecisions.EntityKind.Owner, "OwnerNameIsRequired")>]
+    [<TestCase(ValidateIdsDecisions.EntityKind.Organization, "OrganizationNameIsRequired")>]
+    [<TestCase(ValidateIdsDecisions.EntityKind.Repository, "RepositoryNameIsRequired")>]
+    [<TestCase(ValidateIdsDecisions.EntityKind.Branch, "BranchNameIsRequired")>]
+    member _.CreateValidationRequiresNames(entityKind: ValidateIdsDecisions.EntityKind, expectedErrorName: string) =
+        task {
+            let! error =
+                ValidateIdsDecisions.getEntityValidationErrorMessage entityKind ValidateIdsDecisions.EntityValidationMode.Create (Guid.NewGuid().ToString()) ""
+
+            let expected =
+                match expectedErrorName with
+                | "OwnerNameIsRequired" -> OwnerError.getErrorMessage OwnerError.OwnerNameIsRequired
+                | "OrganizationNameIsRequired" -> OrganizationError.getErrorMessage OrganizationError.OrganizationNameIsRequired
+                | "RepositoryNameIsRequired" -> RepositoryError.getErrorMessage RepositoryError.RepositoryNameIsRequired
+                | "BranchNameIsRequired" -> BranchError.getErrorMessage BranchError.BranchNameIsRequired
+                | _ -> failwith "Unexpected test case."
+
+            Assert.That(error, Is.EqualTo(Some expected))
+        }
+
+    [<TestCase(ValidateIdsDecisions.EntityKind.Owner)>]
+    [<TestCase(ValidateIdsDecisions.EntityKind.Organization)>]
+    [<TestCase(ValidateIdsDecisions.EntityKind.Repository)>]
+    [<TestCase(ValidateIdsDecisions.EntityKind.Branch)>]
+    member _.ExistingValidationAllowsOnlyId(entityKind: ValidateIdsDecisions.EntityKind) =
+        task {
+            let! error =
+                ValidateIdsDecisions.getEntityValidationErrorMessage
+                    entityKind
+                    ValidateIdsDecisions.EntityValidationMode.Existing
+                    (Guid.NewGuid().ToString())
+                    ""
+
+            Assert.That(error, Is.EqualTo(None))
+        }
+
+    [<TestCase(ValidateIdsDecisions.EntityKind.Owner)>]
+    [<TestCase(ValidateIdsDecisions.EntityKind.Organization)>]
+    [<TestCase(ValidateIdsDecisions.EntityKind.Repository)>]
+    [<TestCase(ValidateIdsDecisions.EntityKind.Branch)>]
+    member _.ExistingValidationAllowsOnlyName(entityKind: ValidateIdsDecisions.EntityKind) =
+        task {
+            let! error = ValidateIdsDecisions.getEntityValidationErrorMessage entityKind ValidateIdsDecisions.EntityValidationMode.Existing "" "valid-name"
+
+            Assert.That(error, Is.EqualTo(None))
+        }
+
+    [<TestCase(ValidateIdsDecisions.EntityKind.Owner, "InvalidOwnerId")>]
+    [<TestCase(ValidateIdsDecisions.EntityKind.Organization, "InvalidOrganizationId")>]
+    [<TestCase(ValidateIdsDecisions.EntityKind.Repository, "InvalidRepositoryId")>]
+    [<TestCase(ValidateIdsDecisions.EntityKind.Branch, "InvalidBranchId")>]
+    member _.InvalidIdsFailBeforeResolution(entityKind: ValidateIdsDecisions.EntityKind, expectedErrorName: string) =
+        task {
+            let! error =
+                ValidateIdsDecisions.getEntityValidationErrorMessage entityKind ValidateIdsDecisions.EntityValidationMode.Existing "not-a-guid" "valid-name"
+
+            let expected =
+                match expectedErrorName with
+                | "InvalidOwnerId" -> OwnerError.getErrorMessage OwnerError.InvalidOwnerId
+                | "InvalidOrganizationId" -> OrganizationError.getErrorMessage OrganizationError.InvalidOrganizationId
+                | "InvalidRepositoryId" -> RepositoryError.getErrorMessage RepositoryError.InvalidRepositoryId
+                | "InvalidBranchId" -> BranchError.getErrorMessage BranchError.InvalidBranchId
+                | _ -> failwith "Unexpected test case."
+
+            Assert.That(error, Is.EqualTo(Some expected))
+        }
+
+    [<TestCase(ValidateIdsDecisions.EntityKind.Owner, true)>]
+    [<TestCase(ValidateIdsDecisions.EntityKind.Owner, false)>]
+    [<TestCase(ValidateIdsDecisions.EntityKind.Organization, true)>]
+    [<TestCase(ValidateIdsDecisions.EntityKind.Organization, false)>]
+    [<TestCase(ValidateIdsDecisions.EntityKind.Repository, true)>]
+    [<TestCase(ValidateIdsDecisions.EntityKind.Repository, false)>]
+    [<TestCase(ValidateIdsDecisions.EntityKind.Branch, true)>]
+    [<TestCase(ValidateIdsDecisions.EntityKind.Branch, false)>]
+    member _.NotFoundErrorSelectionPreservesIdVersusNameOnlyErrors(entityKind: ValidateIdsDecisions.EntityKind, hasId: bool) =
+        let id = if hasId then Guid.NewGuid().ToString() else ""
+        let result = ValidateIdsDecisions.notFoundErrorMessage entityKind id
+
+        let expected =
+            match entityKind, hasId with
+            | ValidateIdsDecisions.EntityKind.Owner, true -> OwnerError.getErrorMessage OwnerError.OwnerIdDoesNotExist
+            | ValidateIdsDecisions.EntityKind.Owner, false -> OwnerError.getErrorMessage OwnerError.OwnerDoesNotExist
+            | ValidateIdsDecisions.EntityKind.Organization, true -> OrganizationError.getErrorMessage OrganizationError.OrganizationIdDoesNotExist
+            | ValidateIdsDecisions.EntityKind.Organization, false -> OrganizationError.getErrorMessage OrganizationError.OrganizationDoesNotExist
+            | ValidateIdsDecisions.EntityKind.Repository, true -> RepositoryError.getErrorMessage RepositoryError.RepositoryIdDoesNotExist
+            | ValidateIdsDecisions.EntityKind.Repository, false -> RepositoryError.getErrorMessage RepositoryError.RepositoryDoesNotExist
+            | ValidateIdsDecisions.EntityKind.Branch, true -> BranchError.getErrorMessage BranchError.BranchIdDoesNotExist
+            | ValidateIdsDecisions.EntityKind.Branch, false -> BranchError.getErrorMessage BranchError.BranchDoesNotExist
+            | _ -> failwith "Unexpected test case."
+
+        Assert.That(result, Is.EqualTo(expected))
+
+    [<TestCase(ValidateIdsDecisions.EntityKind.Owner)>]
+    [<TestCase(ValidateIdsDecisions.EntityKind.Organization)>]
+    [<TestCase(ValidateIdsDecisions.EntityKind.Repository)>]
+    [<TestCase(ValidateIdsDecisions.EntityKind.Branch)>]
+    member _.ResolvedIdsPopulateExpectedGraceIdsFields(entityKind: ValidateIdsDecisions.EntityKind) =
+        let id = Guid.NewGuid().ToString()
+        let result = ValidateIdsDecisions.withEntityId entityKind id GraceIds.Default
+
+        match entityKind with
+        | ValidateIdsDecisions.EntityKind.Owner ->
+            Assert.That(result.OwnerIdString, Is.EqualTo(id))
+            Assert.That(result.OwnerId, Is.EqualTo(Guid.Parse(id)))
+            Assert.That(result.HasOwner, Is.True)
+        | ValidateIdsDecisions.EntityKind.Organization ->
+            Assert.That(result.OrganizationIdString, Is.EqualTo(id))
+            Assert.That(result.OrganizationId, Is.EqualTo(Guid.Parse(id)))
+            Assert.That(result.HasOrganization, Is.True)
+        | ValidateIdsDecisions.EntityKind.Repository ->
+            Assert.That(result.RepositoryIdString, Is.EqualTo(id))
+            Assert.That(result.RepositoryId, Is.EqualTo(Guid.Parse(id)))
+            Assert.That(result.HasRepository, Is.True)
+        | ValidateIdsDecisions.EntityKind.Branch ->
+            Assert.That(result.BranchIdString, Is.EqualTo(id))
+            Assert.That(result.BranchId, Is.EqualTo(Guid.Parse(id)))
+            Assert.That(result.HasBranch, Is.True)
+        | _ -> failwith "Unexpected test case."
