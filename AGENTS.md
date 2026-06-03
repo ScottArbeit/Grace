@@ -56,6 +56,8 @@ completed sub-issues are checked.
 - Declare owned paths, forbidden or sensitive paths, risk surfaces, validation, docs impact, and definition of done
   before editing.
 - After the issue exists, claim it and create an issue-owned branch/worktree from latest `origin/main` before editing.
+- When a task assigns a worktree different from the thread workspace root, every `apply_patch` filename must be an
+  absolute path under the assigned worktree. After the first patch, verify git status in both locations.
 - Prefer vertical slices with focused tests and `pwsh ./scripts/validate.ps1 -Fast` as the normal validation gate.
 - Use `pwsh ./scripts/validate.ps1 -Full` when Aspire, emulators, storage, Service Bus, Cosmos DB, Redis,
   deployment/runtime behavior, or cross-service integration is affected.

@@ -162,6 +162,10 @@ Always inspect the current state before editing:
 git status --short --branch
 ```
 
+When a task assigns a worktree different from the thread workspace root, every `apply_patch` filename must be an
+absolute path under the assigned worktree. After the first patch, verify `git status --short --branch` in both the
+assigned worktree and the workspace root.
+
 If unrelated changes already exist, leave them alone. If they affect the task, work with them instead of reverting them.
 If the task must expand beyond the issue's owned paths, comment on the issue before editing the new paths.
 

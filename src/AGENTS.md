@@ -30,6 +30,8 @@ update the issue before editing the new paths.
   shapes, expected tests, and high-risk adversarial examples. The issue should be contextual enough for an
   implementation agent to succeed from the issue body alone without hidden project context.
 - Create or switch to an issue-owned branch/worktree from latest `origin/main` before editing implementation files.
+- When a task assigns a worktree different from the thread workspace root, every `apply_patch` filename must be an
+  absolute path under the assigned worktree. After the first patch, verify git status in both locations.
 - Prefer vertical slices that prove one public behavior at a time through the closest stable boundary.
 - Validate changes with `pwsh ./scripts/validate.ps1 -Fast` (use `-Full` for Aspire integration coverage).
 - Order validation to avoid duplicate builds. Run formatters before validation. If `validate -Fast` will run, do not
