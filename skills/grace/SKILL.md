@@ -1,0 +1,57 @@
+---
+name: grace
+description: Grace repository workflow, architecture, and implementation guidance. Use when working in a Grace repo or on Grace planning, GitHub issue orchestration, F#/.NET code, Orleans actors, Giraffe HTTP APIs, SDK or CLI surfaces, DTOs/events/parameters, authorization, webhooks and approval requests, manifest-backed storage, tests, Aspire/runtime, docs, CONTRIBUTING, or AGENTS updates.
+---
+
+# Grace
+
+Use this skill to work in the Grace repository without loading every domain-specific playbook up front.
+
+## Start Here
+
+1. Read the repo-local instructions before editing:
+   - `AGENTS.md`
+   - the closest nested `AGENTS.md`, usually under `src/`
+   - `docs/Development process.md` for non-trivial tracked work
+1. Inspect the current code, commands, and tests before answering behavior questions. Grace changes quickly.
+1. Keep planning-only requests in chat. Create issues, branches, worktrees, or PRs only when the user asks for tracked
+   implementation or tracker setup.
+1. For tracked implementation, use the Grace issue-owned workflow and validation profile from
+   [workflow.md](references/workflow.md).
+1. Load only the reference files needed for the task.
+
+## Reference Router
+
+Read these files on demand:
+
+| Task | Load |
+| ---- | ---- |
+| Issue-owned work, epics, DAGs, review loops, branch/worktree cleanup, validation profiles | [workflow.md](references/workflow.md) |
+| Finding code, choosing project boundaries, understanding the repo layout | [project-map.md](references/project-map.md) |
+| DTOs, domain events, parameters, serializers, shared helpers, role semantics | [contracts-and-shared.md](references/contracts-and-shared.md) |
+| HTTP routes, Giraffe handlers, endpoint authorization, SDK, CLI, public command behavior | [public-surfaces.md](references/public-surfaces.md) |
+| Orleans grains, event-sourced decisions, idempotency, reminders, durable state transitions | [actors-and-durability.md](references/actors-and-durability.md) |
+| Auth, RBAC, PATs, OIDC, TestAuth, path permissions, security review points | [security-and-auth.md](references/security-and-auth.md) |
+| Manifest-backed uploads, ContentBlocks, Service Bus, webhooks, Aspire, hosted/runtime work | [runtime-and-storage.md](references/runtime-and-storage.md) |
+| Server integration tests, CLI tests, contract tests, authorization tests, validation commands | [tests.md](references/tests.md) |
+| README, CONTRIBUTING, AGENTS, Markdown, HTML/process docs, contributor guidance | [docs-and-contributing.md](references/docs-and-contributing.md) |
+
+## Grace Defaults
+
+- Prefer repo evidence over memory, guesses, or old plans.
+- Preserve Grace vocabulary: work items, promotion sets, queues, gates, policies, attestations, review reports,
+  webhooks, approval policies, approval requests, UploadSessions, FileManifests, ContentBlocks, and
+  ManifestContributionWorkflows.
+- Keep changes vertically sliced through the nearest public boundary whenever possible.
+- Coordinate across `Grace.Types`, `Grace.Shared`, `Grace.Server`, `Grace.Actors`, `Grace.SDK`, `Grace.CLI`, and tests
+  when one surface changes another.
+- Prefer `pwsh ./scripts/validate.ps1 -Fast`; use `-Full` when Aspire, emulators, Service Bus, storage, Redis,
+  deployment/runtime behavior, or cross-service integration is affected.
+- Use PowerShell examples before bash / zsh in docs.
+
+## Output Habits
+
+- Cite concrete files and commands in final answers.
+- State skipped validation and the reason.
+- For reviews, lead with findings and include file/line references.
+- For docs-only work, validate Markdown or explain why validation was skipped.

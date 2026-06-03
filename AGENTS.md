@@ -21,6 +21,8 @@ Optional: `pwsh ./scripts/install-githooks.ps1` to add a pre-commit `validate -F
 More context:
 
 - `src/AGENTS.md`
+- `skills/grace/SKILL.md` for Agent Skills-compatible clients; use it as the portable Grace context router after
+  reading repo-local instructions.
 - `src/docs/ASPIRE_SETUP.md`
 - `src/docs/ENVIRONMENT.md`
 

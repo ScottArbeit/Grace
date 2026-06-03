@@ -94,6 +94,8 @@ These rules apply to `task { }` and `backgroundTask { }`.
 ## Agent-Friendly Context Practices
 
 - Start with relevant `AGENTS.md` files to load patterns, dependencies, and test strategy before broad code exploration.
+- When Agent Skills are available, load `../skills/grace/SKILL.md` after the relevant `AGENTS.md` files and use its
+  references as the on-demand router for Grace-specific workflow, architecture, testing, and public-surface guidance.
 - Use these summaries to target only source files needed for implementation or verification.
 - When documenting new behavior, update the closest `AGENTS.md` so future agents inherit context quickly.
 

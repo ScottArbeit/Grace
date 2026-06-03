@@ -1,0 +1,4 @@
+interface:
+  display_name: "Grace"
+  short_description: "Grace repo workflow and architecture guidance"
+  default_prompt: "Use $grace to work in the Grace repository with the right workflow, validation profile, and project-specific guidance."
