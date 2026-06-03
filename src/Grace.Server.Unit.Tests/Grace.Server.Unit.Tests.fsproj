@@ -20,6 +20,7 @@
     <Compile Include="ExternalAuthConfig.Unit.Tests.fs" />
     <Compile Include="AuthSchemeSelection.Unit.Tests.fs" />
     <Compile Include="OutboundUrlSafety.Unit.Tests.fs" />
+    <Compile Include="StorageAuthorizationResources.Unit.Tests.fs" />
     <Compile Include="ValidateIds.Decisions.Tests.fs" />
     <Compile Include="Storage.Server.Tests.fs" />
     <Compile Include="DedupeIndex.Server.Tests.fs" />
