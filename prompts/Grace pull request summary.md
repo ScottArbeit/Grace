@@ -7,18 +7,15 @@ Use this prompt to produce a complete GitHub pull request body for the Grace rep
 You are preparing a high-rigor PR summary that will be reviewed by humans and re-researched by other LLMs.
 Write clearly, concretely, and thoroughly.
 
-## Compliance Gate
+## Runtime Transparency Check
 
 Before writing, confirm and report:
 
 1. Harness used.
 2. Exact model used.
 3. Reasoning or effort level used.
-4. Whether this run used the latest generally available model from that provider.
-5. Whether reasoning / effort is at least equivalent to Codex and Claude's `high`.
-
-If items 4 or 5 are not true, stop and output only:
-`NON-COMPLIANT: latest-model and high-reasoning requirements not met.`
+4. Metadata source and evidence.
+5. Any unavailable metadata fields and what was checked.
 
 ## Input You Should Receive
 
@@ -59,10 +56,13 @@ harness: <tool/harness name>
 provider: <model provider>
 model: <exact model identifier>
 reasoning_level: <provider-specific setting>
-reasoning_level_equivalent: <OpenAI low|medium|high|xhigh equivalent>
-latest_model_asserted: true|false
-high_reasoning_asserted: true|false
 prompt_count: <integer>
+metadata_source: <status|runtime-settings|config-file|env|mixed|unknown>
+metadata_evidence:
+  harness: <short evidence>
+  provider: <short evidence>
+  model: <short evidence>
+  reasoning_level: <short evidence>
 generated_at_utc: <ISO-8601 UTC timestamp>
 ```
 
@@ -72,9 +72,8 @@ generated_at_utc: <ISO-8601 UTC timestamp>
 - Provider:
 - Model:
 - Reasoning Level:
-- Reasoning Level Equivalent:
-- Latest-Model Compliance:
-- High-Reasoning Compliance:
+- Metadata Source:
+- Metadata Evidence:
 - Timestamp (UTC):
 
 ### 2) PR Introduction
