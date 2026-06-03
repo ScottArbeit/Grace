@@ -428,11 +428,7 @@ module WebhookCommand =
         parameters.EventName <- parseResult.GetValue(Options.eventName)
         parameters.EventVersion <- parseResult.GetValue(Options.eventVersion)
 
-        parameters.Url <-
-            parseResult.GetValue(Options.urlOptional)
-            |> Option.ofObj
-            |> Option.defaultValue String.Empty
-
+        parameters.Url <- parseResult.GetValue(Options.url)
         parameters.UrlSafety <- urlSafety allowUnsafe
         parameters.AcknowledgeUnsafeLocalDevelopment <- allowUnsafe
 
@@ -557,7 +553,7 @@ module WebhookCommand =
             |> addOption Options.name
             |> addOption Options.eventName
             |> addOption Options.eventVersion
-            |> addOption Options.urlOptional
+            |> addOption Options.url
             |> addOption Options.allowUnsafeLocal
             |> addOption Options.signingSecretVersion
             |> addOption Options.maxAttempts

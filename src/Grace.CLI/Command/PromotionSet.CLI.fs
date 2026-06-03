@@ -659,7 +659,11 @@ module PromotionSetCommand =
                     | Error error -> return Error error
         }
 
-    let private listPromotionSetsHandler (parseResult: ParseResult) =
+    let internal listPromotionSetsWith
+        (getQueueStatus: Parameters.Queue.QueueStatusParameters -> Task<GraceResult<Grace.Types.Queue.PromotionQueue>>)
+        (getPromotionSet: Parameters.PromotionSet.GetPromotionSetParameters -> Task<GraceResult<PromotionSetDto>>)
+        (parseResult: ParseResult)
+        =
         task {
             try
                 if parseResult |> verbose then printParseResult parseResult
@@ -683,10 +687,10 @@ module PromotionSetCommand =
                             CorrelationId = graceIds.CorrelationId
                         )
 
-                    match! Grace.SDK.Queue.Status(parameters) with
+                    match! getQueueStatus parameters with
                     | Error error -> return Error error
                     | Ok queue ->
-                        let! promotionSets =
+                        let! (promotionSets: GraceResult<PromotionSetDto> array) =
                             queue.ReturnValue.PromotionSetIds
                             |> Seq.map (fun promotionSetId ->
                                 task {
@@ -702,22 +706,44 @@ module PromotionSetCommand =
                                             CorrelationId = graceIds.CorrelationId
                                         )
 
-                                    return! Grace.SDK.PromotionSet.Get(parameters)
+                                    return! getPromotionSet parameters
                                 })
                             |> Task.WhenAll
 
-                        let successful =
+                        let failures =
                             promotionSets
                             |> Array.choose (function
-                                | Ok value -> Option.Some(value.ReturnValue, tryApprovalSummaryFromProperties value.Properties)
-                                | Error _ -> Option.None)
-                            |> Array.toList
+                                | Error error -> Option.Some error
+                                | Ok _ -> Option.None)
 
-                        renderPromotionSetList parseResult successful
-                        return Ok(GraceReturnValue.Create successful graceIds.CorrelationId)
+                        if failures.Length > 0 then
+                            let details =
+                                failures
+                                |> Seq.map (fun error -> error.Error)
+                                |> String.concat Environment.NewLine
+
+                            return
+                                Error(
+                                    (GraceError.Create
+                                        $"Unable to list promotion sets because {failures.Length} promotion set fetch(es) failed."
+                                        graceIds.CorrelationId)
+                                        .enhance ("Errors", details)
+                                )
+                        else
+                            let successful =
+                                promotionSets
+                                |> Array.choose (function
+                                    | Ok value -> Option.Some(value.ReturnValue, tryApprovalSummaryFromProperties value.Properties)
+                                    | Error _ -> Option.None)
+                                |> Array.toList
+
+                            renderPromotionSetList parseResult successful
+                            return Ok(GraceReturnValue.Create successful graceIds.CorrelationId)
             with
             | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
         }
+
+    let private listPromotionSetsHandler parseResult = listPromotionSetsWith Grace.SDK.Queue.Status Grace.SDK.PromotionSet.Get parseResult
 
     type ListPromotionSets() =
         inherit AsynchronousCommandLineAction()

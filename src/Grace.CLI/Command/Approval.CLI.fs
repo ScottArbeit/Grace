@@ -288,6 +288,15 @@ module ApprovalCommand =
             |> ignore
 
             table.AddRow(
+                "ExpiresAt",
+                summary.ExpiresAt
+                |> Option.map string
+                |> Option.defaultValue "-"
+                |> Markup.Escape
+            )
+            |> ignore
+
+            table.AddRow(
                 "Reason",
                 summary.Reason
                 |> Option.defaultValue "-"
@@ -613,7 +622,10 @@ module ApprovalCommand =
 
         execute (fun () -> Grace.SDK.ApprovalRequest.History parameters) (renderApprovalRequests parseResult)
 
-    let private waitRequestHandler parseResult =
+    let internal waitRequestWith
+        (showRequest: Grace.Shared.Parameters.Approval.ShowApprovalRequestParameters -> Task<GraceResult<ApprovalRequest>>)
+        parseResult
+        =
         task {
             let graceIds = parseResult |> getNormalizedIdsAndNames
             let requestId = parseResult.GetValue(Options.requestId)
@@ -629,7 +641,7 @@ module ApprovalCommand =
                 addRequestScope parameters graceIds parseResult
                 |> ignore
 
-                let! result = Grace.SDK.ApprovalRequest.Show parameters
+                let! result = showRequest parameters
                 lastResult <- Some result
 
                 match result with
@@ -641,9 +653,18 @@ module ApprovalCommand =
                 | _ -> do! Task.Delay(TimeSpan.FromSeconds(float pollSeconds))
 
             match lastResult with
+            | Some (Ok returnValue) when not returnValue.ReturnValue.Status.IsTerminal ->
+                return
+                    Error(
+                        GraceError.Create
+                            $"Approval request wait timed out after {timeoutSeconds} seconds while request {requestId} remained {getDiscriminatedUnionCaseName returnValue.ReturnValue.Status}."
+                            graceIds.CorrelationId
+                    )
             | Some result -> return result
             | None -> return Error(GraceError.Create "Approval request wait did not fetch a request." graceIds.CorrelationId)
         }
+
+    let private waitRequestHandler parseResult = waitRequestWith Grace.SDK.ApprovalRequest.Show parseResult
 
     type Action<'T>(handler: ParseResult -> Task<GraceResult<'T>>) =
         inherit AsynchronousCommandLineAction()

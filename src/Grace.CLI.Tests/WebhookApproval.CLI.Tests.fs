@@ -4,6 +4,8 @@ open FsUnit
 open Grace.CLI
 open Grace.CLI.Command
 open Grace.Shared
+open Grace.Shared.Utilities
+open Grace.Types.Queue
 open Grace.Types.PromotionSet
 open Grace.Types.Types
 open Grace.Types.Webhooks
@@ -12,6 +14,7 @@ open NUnit.Framework
 open Spectre.Console
 open System
 open System.IO
+open System.Threading.Tasks
 
 [<NonParallelizable>]
 module WebhookApprovalCommandTests =
@@ -101,6 +104,8 @@ module WebhookApprovalCommandTests =
                     webhookId
                     "--event"
                     "promotion-set.applied"
+                    "--url"
+                    "https://example.test/webhook"
                 |]
             | "test" ->
                 [|
@@ -285,6 +290,17 @@ module WebhookApprovalCommandTests =
         )
 
     [<Test>]
+    let ``webhook update requires url to match server update contract`` () =
+        assertDoesNotParse (
+            withIds [| "webhook"
+                       "update"
+                       "--webhook"
+                       Guid.NewGuid().ToString()
+                       "--event"
+                       "promotion-set.applied" |]
+        )
+
+    [<Test>]
     let ``approval policy create requires name subject and required responder`` () =
         assertDoesNotParse (
             withIds [| "approval"
@@ -320,6 +336,7 @@ module WebhookApprovalCommandTests =
     let ``pending approval output includes request policy status expiration and next command`` () =
         let requestId = Guid.NewGuid()
         let policyId = Guid.NewGuid()
+        let expiresAt = Instant.FromUtc(2026, 6, 3, 11, 0)
 
         let summary =
             {
@@ -332,6 +349,7 @@ module WebhookApprovalCommandTests =
                 ApprovalPolicyId = Some policyId
                 RequiredResponder = Some "maintainer"
                 LastDecisionAt = Some(Instant.FromUtc(2026, 6, 3, 10, 0))
+                ExpiresAt = Some expiresAt
                 Reason = Some "Approval is required before apply can continue."
             }
 
@@ -349,9 +367,170 @@ module WebhookApprovalCommandTests =
         output |> should contain (policyId.ToString())
         output |> should contain "Pending"
         output |> should contain "LastDecisionAt"
+        output |> should contain "ExpiresAt"
+        output |> should contain (expiresAt.ToString())
 
         output
         |> should contain "grace approval request approve --request"
+
+    [<Test>]
+    let ``json output redacts webhook destination and signing secret version`` () =
+        let secretUrl = "https://example.test/webhook?sig=secret-token"
+        let secretVersion = "kv-secret-version"
+
+        let rule =
+            { WebhookRule.Default with
+                WebhookRuleId = Guid.NewGuid()
+                Name = "apply"
+                EventName = "promotion-set.applied"
+                Url = { Url = secretUrl; Safety = OutboundUrlSafety.PublicHttps }
+                SigningSecretVersion = secretVersion
+            }
+
+        let parseResult =
+            GraceCommand.rootCommand.Parse(
+                withIds [| "webhook"
+                           "show"
+                           "--webhook"
+                           rule.WebhookRuleId.ToString()
+                           "--output"
+                           "Json" |]
+            )
+
+        let output =
+            captureOutput (fun () ->
+                Common.renderOutput parseResult (Ok(GraceReturnValue.Create rule "corr"))
+                |> ignore)
+
+        output |> should not' (contain secretUrl)
+        output |> should not' (contain "secret-token")
+        output |> should not' (contain secretVersion)
+        output |> should contain "Safety"
+
+        let listOutput =
+            captureOutput (fun () ->
+                Common.renderOutput parseResult (Ok(GraceReturnValue.Create [| rule |] "corr"))
+                |> ignore)
+
+        listOutput |> should not' (contain secretUrl)
+        listOutput |> should not' (contain secretVersion)
+
+    [<Test>]
+    let ``json output redacts approval policy notification url`` () =
+        let secretUrl = "https://example.test/approval?callback=secret-token"
+
+        let policy =
+            { ApprovalPolicy.Default with
+                ApprovalPolicyId = Guid.NewGuid()
+                Name = "release"
+                Subject = "promotion"
+                RequiredResponder = "maintainer"
+                NotificationUrl = Some { Url = secretUrl; Safety = OutboundUrlSafety.PublicHttps }
+            }
+
+        let parseResult =
+            GraceCommand.rootCommand.Parse(
+                withIds [| "approval"
+                           "policy"
+                           "show"
+                           "--policy"
+                           policy.ApprovalPolicyId.ToString()
+                           "--output"
+                           "Json" |]
+            )
+
+        let output =
+            captureOutput (fun () ->
+                Common.renderOutput parseResult (Ok(GraceReturnValue.Create policy "corr"))
+                |> ignore)
+
+        output |> should not' (contain secretUrl)
+        output |> should not' (contain "secret-token")
+        output |> should contain "NotificationUrl"
+
+        let listOutput =
+            captureOutput (fun () ->
+                Common.renderOutput parseResult (Ok(GraceReturnValue.Create [| policy |] "corr"))
+                |> ignore)
+
+        listOutput |> should not' (contain secretUrl)
+
+    [<Test>]
+    let ``approval request wait returns error when timeout expires while pending`` () =
+        let requestId = Guid.NewGuid()
+
+        let pending = { ApprovalRequest.Default with ApprovalRequestId = requestId; Status = ApprovalRequestStatus.Pending }
+
+        let parseResult =
+            GraceCommand.rootCommand.Parse(
+                withIds [| "approval"
+                           "request"
+                           "wait"
+                           "--request"
+                           requestId.ToString()
+                           "--wait-timeout-seconds"
+                           "1"
+                           "--poll-seconds"
+                           "1"
+                           "--output"
+                           "Silent" |]
+            )
+
+        let showRequest (_: Grace.Shared.Parameters.Approval.ShowApprovalRequestParameters) = Task.FromResult(Ok(GraceReturnValue.Create pending "corr"))
+
+        match ApprovalCommand.waitRequestWith showRequest parseResult
+              |> fun task -> task.GetAwaiter().GetResult()
+            with
+        | Error error ->
+            error.Error |> should contain "timed out"
+            error.Error |> should contain "Pending"
+        | Ok _ -> Assert.Fail("Expected approval request wait to fail when the timeout expires while the request is pending.")
+
+    [<Test>]
+    let ``promotion set list fails when a child promotion set fetch fails`` () =
+        let firstPromotionSetId = Guid.NewGuid()
+        let secondPromotionSetId = Guid.NewGuid()
+
+        let parseResult =
+            GraceCommand.rootCommand.Parse(
+                withIds [| "promotion-set"
+                           "list"
+                           "--branch"
+                           branchId.ToString()
+                           "--output"
+                           "Silent" |]
+            )
+
+        let queue =
+            { PromotionQueue.Default with
+                TargetBranchId = branchId
+                PromotionSetIds =
+                    [
+                        firstPromotionSetId
+                        secondPromotionSetId
+                    ]
+            }
+
+        let getQueueStatus (_: Grace.Shared.Parameters.Queue.QueueStatusParameters) = Task.FromResult(Ok(GraceReturnValue.Create queue "corr"))
+
+        let getPromotionSet (parameters: Grace.Shared.Parameters.PromotionSet.GetPromotionSetParameters) =
+            if parameters.PromotionSetId = firstPromotionSetId.ToString() then
+                Task.FromResult(
+                    Ok(GraceReturnValue.Create { PromotionSetDto.Default with PromotionSetId = firstPromotionSetId; TargetBranchId = branchId } "corr")
+                )
+            else
+                Task.FromResult(Error(GraceError.Create "stale promotion set id" "corr"))
+
+        match PromotionSetCommand.listPromotionSetsWith getQueueStatus getPromotionSet parseResult
+              |> fun task -> task.GetAwaiter().GetResult()
+            with
+        | Error error ->
+            error.Error
+            |> should contain "promotion set fetch"
+
+            serialize error.Properties
+            |> should contain "stale promotion set id"
+        | Ok _ -> Assert.Fail("Expected promotion-set list to fail when any child promotion set fetch fails.")
 
     [<Test>]
     let ``promotion set list output includes compact approval summary`` () =

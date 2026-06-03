@@ -449,6 +449,7 @@ module Webhooks =
             ApprovalPolicyId: ApprovalPolicyId option
             RequiredResponder: ApprovalResponderSelector option
             LastDecisionAt: Instant option
+            ExpiresAt: Instant option
             Reason: string option
         }
 
@@ -463,6 +464,7 @@ module Webhooks =
                 ApprovalPolicyId = None
                 RequiredResponder = None
                 LastDecisionAt = None
+                ExpiresAt = None
                 Reason = None
             }
 
