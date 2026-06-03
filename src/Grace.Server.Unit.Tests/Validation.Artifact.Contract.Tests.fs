@@ -33,7 +33,7 @@ type ValidationArtifactContractTests() =
     member _.DeterministicArtifactIdPinsKnownVector() =
         let artifactId = Artifact.createDeterministicArtifactId "promotion-set/validation/output"
 
-        Assert.That(artifactId, Is.EqualTo(Guid.Parse("8b6502e5-4f50-d25b-972e-1b932504e39d")))
+        Assert.That(artifactId, Is.EqualTo(Guid.Parse("8b6502e5-4f50-524b-972e-1b932504e39d")))
 
     [<Test>]
     member _.DeterministicArtifactIdNormalizesEmptyAndWhitespaceSeeds() =
@@ -41,7 +41,7 @@ type ValidationArtifactContractTests() =
         let whitespaceSeedArtifactId = Artifact.createDeterministicArtifactId "   "
 
         Assert.That(whitespaceSeedArtifactId, Is.EqualTo(emptySeedArtifactId))
-        Assert.That(emptySeedArtifactId, Is.EqualTo(Guid.Parse("42c4b0e3-fc98-145c-9afb-f4c8996fb924")))
+        Assert.That(emptySeedArtifactId, Is.EqualTo(Guid.Parse("42c4b0e3-fc98-541c-9afb-f4c8996fb924")))
 
     [<Test>]
     member _.DeterministicArtifactIdNormalizesSeedCaseAndWhitespace() =
@@ -49,16 +49,16 @@ type ValidationArtifactContractTests() =
         let mixedArtifactId = Artifact.createDeterministicArtifactId " Artifact Seed "
 
         Assert.That(mixedArtifactId, Is.EqualTo(canonicalArtifactId))
-        Assert.That(canonicalArtifactId, Is.EqualTo(Guid.Parse("d01d5ec6-e55b-1551-b80d-f0fcc46d8639")))
+        Assert.That(canonicalArtifactId, Is.EqualTo(Guid.Parse("d01d5ec6-e55b-5591-b80d-f0fcc46d8639")))
 
     [<Test>]
     member _.DeterministicArtifactIdPinsGuidVersionAndVariantBits() =
-        let artifactId = Artifact.createDeterministicArtifactId "AGENTSUMMARY:42"
-        let guidBytes = artifactId.ToByteArray()
+        let artifactId = Artifact.createDeterministicArtifactId "promotion-set/validation/output"
+        let formattedArtifactId = artifactId.ToString("D")
 
-        Assert.That(guidBytes[6] &&& 0xF0uy, Is.EqualTo(0x50uy))
-        Assert.That(guidBytes[8] &&& 0xC0uy, Is.EqualTo(0x80uy))
-        Assert.That(artifactId, Is.EqualTo(Guid.Parse("d091d3f6-ac6b-5259-9905-ab9949092970")))
+        Assert.That(formattedArtifactId.Substring(14, 1), Is.EqualTo("5"))
+        Assert.That(formattedArtifactId.Substring(19, 1), Is.EqualTo("9"))
+        Assert.That(artifactId, Is.EqualTo(Guid.Parse("8b6502e5-4f50-524b-972e-1b932504e39d")))
 
     [<Test>]
     member _.KnownArtifactTypeAliasesParseCaseInsensitively() =
