@@ -247,6 +247,8 @@ module GraceCommand =
                         "candidate"
                         "queue"
                         "promotion-set"
+                        "approval"
+                        "webhook"
                         "agent"
                     ]
             }
@@ -582,6 +584,8 @@ module GraceCommand =
         rootCommand.Subcommands.Add(ReviewCommand.Build)
         rootCommand.Subcommands.Add(CandidateCommand.Build)
         rootCommand.Subcommands.Add(QueueCommand.Build)
+        rootCommand.Subcommands.Add(WebhookCommand.Build)
+        rootCommand.Subcommands.Add(ApprovalCommand.Build)
         rootCommand.Subcommands.Add(PromotionSetCommand.Build)
         rootCommand.Subcommands.Add(AgentCommand.Build)
         rootCommand.Subcommands.Add(Admin.Build)

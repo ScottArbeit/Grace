@@ -9,6 +9,7 @@ open Grace.Shared.Utilities
 open Grace.Shared.Validation.Errors
 open Grace.Types.PromotionSet
 open Grace.Types.Types
+open Grace.Types.Webhooks
 open Spectre.Console
 open System
 open System.CommandLine
@@ -51,6 +52,15 @@ module PromotionSetCommand =
                 [| "--target-branch" |],
                 Required = true,
                 Description = "The target branch ID <Guid>.",
+                Arity = ArgumentArity.ExactlyOne
+            )
+
+        let branch =
+            new Option<string>(
+                "--branch",
+                [| "-b"; "--target-branch" |],
+                Required = false,
+                Description = "Target branch ID or name.",
                 Arity = ArgumentArity.ExactlyOne
             )
 
@@ -252,6 +262,20 @@ module PromotionSetCommand =
             with
             | ex -> Error($"Unable to read promotion pointers file: {ex.Message}")
 
+    let internal tryApprovalSummaryFromProperties (properties: Collections.Generic.IDictionary<string, obj>) =
+        match properties.TryGetValue("ApprovalSummary") with
+        | true, value when not (isNull value) ->
+            try
+                match value with
+                | :? PromotionSetApprovalSummary as summary -> Option.Some summary
+                | :? JsonElement as jsonElement -> Option.Some(jsonElement.Deserialize<PromotionSetApprovalSummary>(Constants.JsonSerializerOptions))
+                | _ ->
+                    let jsonText = JsonSerializer.Serialize(value, Constants.JsonSerializerOptions)
+                    Option.Some(JsonSerializer.Deserialize<PromotionSetApprovalSummary>(jsonText, Constants.JsonSerializerOptions))
+            with
+            | _ -> Option.None
+        | _ -> Option.None
+
     let private getPromotionSet (graceIds: GraceIds) (promotionSetId: PromotionSetId) =
         let parameters =
             Parameters.PromotionSet.GetPromotionSetParameters(
@@ -308,6 +332,57 @@ module PromotionSetCommand =
 
             table.AddRow("StepCount", promotionSet.Steps.Length.ToString())
             |> ignore
+
+            AnsiConsole.Write(table)
+
+    let internal renderPromotionSetWithApprovalSummary
+        (parseResult: ParseResult)
+        (promotionSet: PromotionSetDto)
+        (approvalSummary: PromotionSetApprovalSummary option)
+        =
+        renderPromotionSet parseResult promotionSet
+
+        match approvalSummary with
+        | Option.Some summary when
+            summary.State
+            <> PromotionSetApprovalState.NotRequired
+            ->
+            ApprovalCommand.renderApprovalSummary parseResult summary
+        | _ -> ()
+
+    let internal renderPromotionSetList (parseResult: ParseResult) (items: (PromotionSetDto * PromotionSetApprovalSummary option) seq) =
+        if
+            not (parseResult |> json)
+            && not (parseResult |> silent)
+        then
+            let table = Table(Border = TableBorder.Rounded)
+            table.AddColumn("PromotionSetId") |> ignore
+            table.AddColumn("TargetBranchId") |> ignore
+            table.AddColumn("Status") |> ignore
+            table.AddColumn("Approval") |> ignore
+            table.AddColumn("ApprovalRequestId") |> ignore
+
+            items
+            |> Seq.iter (fun (promotionSet, summary) ->
+                let approvalState =
+                    summary
+                    |> Option.map (fun value -> getDiscriminatedUnionCaseName value.State)
+                    |> Option.defaultValue "-"
+
+                let approvalRequestId =
+                    summary
+                    |> Option.bind (fun value -> value.ApprovalRequestId)
+                    |> Option.map string
+                    |> Option.defaultValue "-"
+
+                table.AddRow(
+                    Markup.Escape(promotionSet.PromotionSetId.ToString()),
+                    Markup.Escape(promotionSet.TargetBranchId.ToString()),
+                    Markup.Escape(getDiscriminatedUnionCaseName promotionSet.Status),
+                    Markup.Escape(approvalState),
+                    Markup.Escape(approvalRequestId)
+                )
+                |> ignore)
 
             AnsiConsole.Write(table)
 
@@ -526,9 +601,16 @@ module PromotionSetCommand =
                 | Ok promotionSetId ->
                     match! getPromotionSet graceIds promotionSetId with
                     | Ok returnValue ->
-                        renderPromotionSet parseResult returnValue.ReturnValue
+                        renderPromotionSetWithApprovalSummary parseResult returnValue.ReturnValue (tryApprovalSummaryFromProperties returnValue.Properties)
                         return Ok returnValue
-                    | Error error -> return Error error
+                    | Error error ->
+                        match tryApprovalSummaryFromProperties error.Properties with
+                        | Option.Some summary when summary.State = PromotionSetApprovalState.Pending ->
+                            ApprovalCommand.renderPendingApproval parseResult summary
+                        | Option.Some summary -> ApprovalCommand.renderApprovalSummary parseResult summary
+                        | Option.None -> ()
+
+                        return Error error
             with
             | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
         }
@@ -539,6 +621,110 @@ module PromotionSetCommand =
         override _.InvokeAsync(parseResult: ParseResult, _: CancellationToken) : Task<int> =
             task {
                 let! result = getPromotionSetHandler parseResult
+                return result |> renderOutput parseResult
+            }
+
+    let private resolveTargetBranchId (parseResult: ParseResult) (graceIds: GraceIds) =
+        task {
+            let branchRaw =
+                parseResult.GetValue(Options.branch)
+                |> Option.ofObj
+                |> Option.defaultValue String.Empty
+
+            if String.IsNullOrWhiteSpace branchRaw then
+                return Ok graceIds.BranchId
+            else
+                let mutable parsed = Guid.Empty
+
+                if
+                    Guid.TryParse(branchRaw, &parsed)
+                    && parsed <> Guid.Empty
+                then
+                    return Ok parsed
+                else
+                    let parameters =
+                        Parameters.Branch.GetBranchParameters(
+                            BranchName = branchRaw,
+                            OwnerId = graceIds.OwnerIdString,
+                            OwnerName = graceIds.OwnerName,
+                            OrganizationId = graceIds.OrganizationIdString,
+                            OrganizationName = graceIds.OrganizationName,
+                            RepositoryId = graceIds.RepositoryIdString,
+                            RepositoryName = graceIds.RepositoryName,
+                            CorrelationId = graceIds.CorrelationId
+                        )
+
+                    match! Grace.SDK.Branch.Get(parameters) with
+                    | Ok branch -> return Ok branch.ReturnValue.BranchId
+                    | Error error -> return Error error
+        }
+
+    let private listPromotionSetsHandler (parseResult: ParseResult) =
+        task {
+            try
+                if parseResult |> verbose then printParseResult parseResult
+                let graceIds = parseResult |> getNormalizedIdsAndNames
+                let! targetBranchIdResult = resolveTargetBranchId parseResult graceIds
+
+                match targetBranchIdResult with
+                | Error error -> return Error error
+                | Ok targetBranchId when targetBranchId = Guid.Empty ->
+                    return Error(GraceError.Create (QueueError.getErrorMessage QueueError.InvalidTargetBranchId) (getCorrelationId parseResult))
+                | Ok targetBranchId ->
+                    let parameters =
+                        Parameters.Queue.QueueStatusParameters(
+                            TargetBranchId = targetBranchId.ToString(),
+                            OwnerId = graceIds.OwnerIdString,
+                            OwnerName = graceIds.OwnerName,
+                            OrganizationId = graceIds.OrganizationIdString,
+                            OrganizationName = graceIds.OrganizationName,
+                            RepositoryId = graceIds.RepositoryIdString,
+                            RepositoryName = graceIds.RepositoryName,
+                            CorrelationId = graceIds.CorrelationId
+                        )
+
+                    match! Grace.SDK.Queue.Status(parameters) with
+                    | Error error -> return Error error
+                    | Ok queue ->
+                        let! promotionSets =
+                            queue.ReturnValue.PromotionSetIds
+                            |> Seq.map (fun promotionSetId ->
+                                task {
+                                    let parameters =
+                                        Parameters.PromotionSet.GetPromotionSetParameters(
+                                            PromotionSetId = promotionSetId.ToString(),
+                                            OwnerId = graceIds.OwnerIdString,
+                                            OwnerName = graceIds.OwnerName,
+                                            OrganizationId = graceIds.OrganizationIdString,
+                                            OrganizationName = graceIds.OrganizationName,
+                                            RepositoryId = graceIds.RepositoryIdString,
+                                            RepositoryName = graceIds.RepositoryName,
+                                            CorrelationId = graceIds.CorrelationId
+                                        )
+
+                                    return! Grace.SDK.PromotionSet.Get(parameters)
+                                })
+                            |> Task.WhenAll
+
+                        let successful =
+                            promotionSets
+                            |> Array.choose (function
+                                | Ok value -> Option.Some(value.ReturnValue, tryApprovalSummaryFromProperties value.Properties)
+                                | Error _ -> Option.None)
+                            |> Array.toList
+
+                        renderPromotionSetList parseResult successful
+                        return Ok(GraceReturnValue.Create successful graceIds.CorrelationId)
+            with
+            | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
+        }
+
+    type ListPromotionSets() =
+        inherit AsynchronousCommandLineAction()
+
+        override _.InvokeAsync(parseResult: ParseResult, _: CancellationToken) : Task<int> =
+            task {
+                let! result = listPromotionSetsHandler parseResult
                 return result |> renderOutput parseResult
             }
 
@@ -724,7 +910,14 @@ module PromotionSetCommand =
                             AnsiConsole.MarkupLine($"[green]Requested apply for promotion set[/] {Markup.Escape(promotionSetId.ToString())}")
 
                         return Ok returnValue
-                    | Error error -> return Error error
+                    | Error error ->
+                        match tryApprovalSummaryFromProperties error.Properties with
+                        | Option.Some summary when summary.State = PromotionSetApprovalState.Pending ->
+                            ApprovalCommand.renderPendingApproval parseResult summary
+                        | Option.Some summary -> ApprovalCommand.renderApprovalSummary parseResult summary
+                        | Option.None -> ()
+
+                        return Error error
             with
             | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
         }
@@ -897,6 +1090,22 @@ module PromotionSetCommand =
         getCommand.Action <- new GetPromotionSet()
         promotionSetCommand.Subcommands.Add(getCommand)
 
+        let showCommand =
+            new Command("show", Description = "Show promotion set details.")
+            |> addOption Options.promotionSetId
+            |> addCommonOptions
+
+        showCommand.Action <- new GetPromotionSet()
+        promotionSetCommand.Subcommands.Add(showCommand)
+
+        let listCommand =
+            new Command("list", Description = "List promotion sets for a target branch.")
+            |> addOption Options.branch
+            |> addCommonOptions
+
+        listCommand.Action <- new ListPromotionSets()
+        promotionSetCommand.Subcommands.Add(listCommand)
+
         let getEventsCommand =
             new Command("get-events", Description = "Get promotion set events.")
             |> addOption Options.promotionSetId
@@ -930,6 +1139,14 @@ module PromotionSetCommand =
 
         applyCommand.Action <- new ApplyPromotionSet()
         promotionSetCommand.Subcommands.Add(applyCommand)
+
+        let requestApprovalCommand =
+            new Command("request-approval", Description = "Request approval for a promotion set.")
+            |> addOption Options.promotionSetId
+            |> addCommonOptions
+
+        requestApprovalCommand.Action <- new ApplyPromotionSet()
+        promotionSetCommand.Subcommands.Add(requestApprovalCommand)
 
         let deleteCommand =
             new Command("delete", Description = "Logically delete a promotion set.")
