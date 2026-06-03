@@ -184,7 +184,7 @@ function Invoke-TestProjectsParallel([object[]]$Projects, [string]$Configuration
             Write-Host ("Starting {0}..." -f $project.Label)
             $processArguments = @{
                 FilePath = "dotnet"
-                ArgumentList = @("test", $project.Path, "-c", $Configuration, "--no-build", "--tl")
+                ArgumentList = @("test", $project.Path, "-c", $Configuration, "--no-build", "--tl:on")
                 NoNewWindow = $true
                 PassThru = $true
                 RedirectStandardOutput = $stdoutPath
@@ -285,7 +285,7 @@ try {
 
     if (-not $SkipBuild) {
         Write-Section "Build"
-        Invoke-External "Grace solution build" { dotnet build "src/Grace.slnx" -c $Configuration @graceBuildProperties --tl }
+        Invoke-External "Grace solution build" { dotnet build "src/Grace.slnx" -c $Configuration @graceBuildProperties --tl:on }
     } else {
         Write-Section "Build"
         Write-Host "Skipped (-SkipBuild)."

@@ -70,7 +70,7 @@ try {
     Invoke-External "dotnet tool restore" { dotnet tool restore }
 
     Write-Section "Restore Packages"
-    Invoke-External "dotnet restore" { dotnet restore "src/Grace.sln" --tl }
+    Invoke-External "dotnet restore" { dotnet restore "src/Grace.sln" --tl:on }
 
     Write-Section "Next Steps"
     Write-Host "Run: pwsh ./scripts/validate.ps1 -Fast"
