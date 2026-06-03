@@ -432,6 +432,8 @@ module RootHelpGroupingTests =
             reviewAndPromotion |> should contain "candidate"
             reviewAndPromotion |> should contain "queue"
             reviewAndPromotion |> should contain "agent"
+            reviewAndPromotion |> should contain "approval"
+            reviewAndPromotion |> should contain "webhook"
 
             reviewAndPromotion
             |> should contain "promotion-set")

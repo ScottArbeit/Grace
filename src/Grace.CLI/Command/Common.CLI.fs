@@ -8,9 +8,11 @@ open Grace.Shared.Validation.Errors
 open Grace.Shared.Client.Configuration
 open Grace.Shared.Resources.Text
 open Grace.Types.Types
+open Grace.Types.Webhooks
 open Grace.Shared.Utilities
 open Spectre.Console
 open System
+open System.Collections.Generic
 open System.CommandLine
 open System.CommandLine.Parsing
 open System.Globalization
@@ -402,6 +404,45 @@ module Common =
         AnsiConsole.Write(markup)
         AnsiConsole.WriteLine()
 
+    let private redactedValue = "[redacted]"
+
+    let private redactScopedOutboundUrl (url: ScopedOutboundUrl) = { url with Url = redactedValue }
+
+    let private redactWebhookRule (rule: WebhookRule) = { rule with Url = redactScopedOutboundUrl rule.Url; SigningSecretVersion = redactedValue }
+
+    let private redactApprovalPolicy (policy: ApprovalPolicy) =
+        { policy with
+            NotificationUrl =
+                policy.NotificationUrl
+                |> Option.map redactScopedOutboundUrl
+        }
+
+    let private redactJsonReturnValue<'T> (returnValue: 'T) =
+        match box returnValue with
+        | :? WebhookRule as rule -> box (redactWebhookRule rule)
+        | :? (WebhookRule array) as rules -> box (rules |> Array.map redactWebhookRule)
+        | :? (IEnumerable<WebhookRule>) as rules -> box (rules |> Seq.map redactWebhookRule |> Seq.toArray)
+        | :? ApprovalPolicy as policy -> box (redactApprovalPolicy policy)
+        | :? (ApprovalPolicy array) as policies -> box (policies |> Array.map redactApprovalPolicy)
+        | :? (IEnumerable<ApprovalPolicy>) as policies ->
+            box (
+                policies
+                |> Seq.map redactApprovalPolicy
+                |> Seq.toArray
+            )
+        | _ -> box returnValue
+
+    let private renderJsonReturnValue (graceReturnValue: GraceReturnValue<'T>) =
+        let output =
+            {|
+                ReturnValue = redactJsonReturnValue graceReturnValue.ReturnValue
+                EventTime = graceReturnValue.EventTime
+                CorrelationId = graceReturnValue.CorrelationId
+                Properties = graceReturnValue.Properties.Select(fun kvp -> {| Key = kvp.Key; Value = kvp.Value |})
+            |}
+
+        serialize output
+
     /// Prints output to the console, depending on the output format.
     let renderOutput (parseResult: ParseResult) (result: GraceResult<'T>) =
         let outputFormat =
@@ -413,7 +454,7 @@ module Common =
         match result with
         | Ok graceReturnValue ->
             match outputFormat with
-            | Json -> AnsiConsole.WriteLine(Markup.Escape($"{graceReturnValue}"))
+            | Json -> AnsiConsole.WriteLine(Markup.Escape(renderJsonReturnValue graceReturnValue))
             | Minimal -> () //AnsiConsole.MarkupLine($"""[{Colors.Highlighted}]{Markup.Escape($"{graceReturnValue.ReturnValue}")}[/]""")
             | Silent -> ()
             | Verbose ->

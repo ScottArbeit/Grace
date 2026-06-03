@@ -26,6 +26,7 @@
     <Compile Include="WorkItem.CLI.Tests.fs" />
     <Compile Include="Review.CLI.Tests.fs" />
     <Compile Include="Queue.CLI.Tests.fs" />
+    <Compile Include="WebhookApproval.CLI.Tests.fs" />
     <Compile Include="PromotionSet.CLI.Tests.fs" />
     <Compile Include="Watch.Tests.fs" />
     <Compile Include="LocalPlanner.SDK.Tests.fs" />

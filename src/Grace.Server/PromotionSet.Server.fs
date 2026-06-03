@@ -117,6 +117,9 @@ module PromotionSet =
                     |> Option.bind (fun approvalRequest ->
                         approvalRequest.Decision
                         |> Option.map (fun decision -> decision.DecidedAt))
+                ExpiresAt =
+                    request
+                    |> Option.bind (fun approvalRequest -> approvalRequest.ExpiresAt)
                 Reason = reason
             }
 
