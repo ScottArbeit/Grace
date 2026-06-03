@@ -12,6 +12,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Include="AssemblyInfo.fs" />
     <Compile Include="AuthorizationSemantics.Tests.fs" />
     <Compile Include="ClaimMapping.Tests.fs" />
     <Compile Include="PathPermissions.Tests.fs" />
