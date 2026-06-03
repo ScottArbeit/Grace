@@ -245,4 +245,3 @@
         $ref: './Responses.OpenAPI.yaml#/400'
       '500':
         $ref: './Responses.OpenAPI.yaml#/500'
-

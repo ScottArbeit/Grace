@@ -286,4 +286,3 @@ WebhookDeliveryListResponse:
                 type: array
                 items:
                   $ref: '#/WebhookDelivery'
-

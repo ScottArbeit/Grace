@@ -369,4 +369,3 @@ ApprovalRequestListResponse:
                 type: array
                 items:
                   $ref: '#/ApprovalRequest'
-
