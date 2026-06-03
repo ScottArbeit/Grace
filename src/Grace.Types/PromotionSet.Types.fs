@@ -74,6 +74,33 @@ module PromotionSet =
     [<GenerateSerializer>]
     type PromotionPointer = { BranchId: BranchId; ReferenceId: ReferenceId; DirectoryVersionId: DirectoryVersionId }
 
+    [<CLIMutable; GenerateSerializer>]
+    type PromotionSetApprovalPolicySnapshot =
+        {
+            ApprovalPolicyId: Guid
+            Version: int
+            Subject: string
+            OwnerId: OwnerId
+            OrganizationId: OrganizationId
+            RepositoryId: RepositoryId
+            TargetBranchId: BranchId
+            RequiredResponder: string
+            TimeoutSeconds: int option
+        }
+
+        static member Default =
+            {
+                ApprovalPolicyId = Guid.Empty
+                Version = 1
+                Subject = String.Empty
+                OwnerId = OwnerId.Empty
+                OrganizationId = OrganizationId.Empty
+                RepositoryId = RepositoryId.Empty
+                TargetBranchId = BranchId.Empty
+                RequiredResponder = String.Empty
+                TimeoutSeconds = Option.None
+            }
+
     [<GenerateSerializer>]
     type PromotionSetStep =
         {
@@ -146,7 +173,7 @@ module PromotionSet =
         | UpdateInputPromotions of promotionPointers: PromotionPointer list
         | RecomputeStepsIfStale of reason: string option
         | ResolveConflicts of stepId: PromotionSetStepId * resolutions: ConflictResolutionDecision list
-        | Apply
+        | Apply of approvalPolicies: PromotionSetApprovalPolicySnapshot list
         | DeleteLogical of force: bool * deleteReason: DeleteReason
 
         static member GetKnownTypes() = GetKnownTypes<PromotionSetCommand>()

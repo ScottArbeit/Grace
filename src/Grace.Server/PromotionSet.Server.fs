@@ -11,6 +11,7 @@ open Grace.Shared.Validation.Errors
 open Grace.Shared.Validation.Utilities
 open Grace.Types.PromotionSet
 open Grace.Types.Types
+open Grace.Types.Webhooks
 open Grace.Shared.Utilities
 open Microsoft.AspNetCore.Http
 open System
@@ -50,6 +51,126 @@ module PromotionSet =
                     Some "PromotionPointer.DirectoryVersionId must be a non-empty Guid."
                 else
                     Option.None)
+
+    let private approvalSubject = "promotion"
+
+    let private approvalScopeFromPromotionSet (promotionSet: PromotionSetDto) (policy: PromotionSetApprovalPolicySnapshot) =
+        { ApprovalScope.Default with
+            OwnerId = promotionSet.OwnerId
+            OrganizationId = promotionSet.OrganizationId
+            RepositoryId = promotionSet.RepositoryId
+            TargetBranchId = promotionSet.TargetBranchId
+            PromotionSetId = Some promotionSet.PromotionSetId
+            StepsComputationAttempt = Some promotionSet.StepsComputationAttempt
+            ApprovalPolicyId = Some policy.ApprovalPolicyId
+            ApprovalPolicyVersion = Some policy.Version
+        }
+
+    let private policySnapshot (policy: ApprovalPolicy) : PromotionSetApprovalPolicySnapshot =
+        { PromotionSetApprovalPolicySnapshot.Default with
+            ApprovalPolicyId = policy.ApprovalPolicyId
+            Version = policy.Version
+            Subject = policy.Subject
+            OwnerId = policy.Scope.OwnerId
+            OrganizationId = policy.Scope.OrganizationId
+            RepositoryId = policy.Scope.RepositoryId
+            TargetBranchId = policy.Scope.TargetBranchId
+            RequiredResponder = policy.RequiredResponder
+            TimeoutSeconds = policy.TimeoutSeconds
+        }
+
+    let private matchingApprovalPolicies ownerId organizationId repositoryId targetBranchId : PromotionSetApprovalPolicySnapshot list =
+        let scope =
+            { ApprovalScope.Default with OwnerId = ownerId; OrganizationId = organizationId; RepositoryId = repositoryId; TargetBranchId = targetBranchId }
+
+        ApprovalStore.listPolicies scope false
+        |> Seq.filter (fun (policy: ApprovalPolicy) -> policy.Status = ApprovalPolicyStatus.Enabled)
+        |> Seq.filter (fun (policy: ApprovalPolicy) -> String.Equals(policy.Subject, approvalSubject, StringComparison.OrdinalIgnoreCase))
+        |> Seq.map policySnapshot
+        |> Seq.sortBy (fun policy -> policy.ApprovalPolicyId, policy.Version)
+        |> Seq.toList
+
+    let private approvalSummaryFromRequest
+        (promotionSet: PromotionSetDto)
+        (policy: PromotionSetApprovalPolicySnapshot)
+        (request: ApprovalRequest option)
+        : PromotionSetApprovalSummary
+        =
+        let baseSummary = PromotionSetApprovalSummary.NotRequired promotionSet.PromotionSetId promotionSet.TargetBranchId promotionSet.StepsComputationAttempt
+
+        let policySummary state reason =
+            { baseSummary with
+                State = state
+                ApprovalPolicyId = Some policy.ApprovalPolicyId
+                ApprovalRequestId =
+                    request
+                    |> Option.map (fun approvalRequest -> approvalRequest.ApprovalRequestId)
+                RequiredResponder = Some policy.RequiredResponder
+                LastDecisionAt =
+                    request
+                    |> Option.bind (fun approvalRequest ->
+                        approvalRequest.Decision
+                        |> Option.map (fun decision -> decision.DecidedAt))
+                Reason = reason
+            }
+
+        let now = getCurrentInstant ()
+
+        match request with
+        | Option.None -> policySummary PromotionSetApprovalState.Pending (Option.Some "Approval is required before apply can continue.")
+        | Option.Some approvalRequest when
+            approvalRequest.ExpiresAt
+            |> Option.exists (fun expiresAt -> expiresAt <= now)
+            ->
+            policySummary PromotionSetApprovalState.Stale (Some "Approval request is expired.")
+        | Option.Some approvalRequest ->
+            match approvalRequest.Status with
+            | ApprovalRequestStatus.Pending -> policySummary PromotionSetApprovalState.Pending (Some "Approval is required before apply can continue.")
+            | ApprovalRequestStatus.Approved -> policySummary PromotionSetApprovalState.Approved Option.None
+            | ApprovalRequestStatus.Rejected -> policySummary PromotionSetApprovalState.Rejected (Some "Approval request was rejected.")
+            | ApprovalRequestStatus.Expired -> policySummary PromotionSetApprovalState.Expired (Some "Approval request is expired.")
+            | ApprovalRequestStatus.Cancelled -> policySummary PromotionSetApprovalState.Stale (Some "Approval request was cancelled.")
+            | ApprovalRequestStatus.Superseded -> policySummary PromotionSetApprovalState.Stale (Some "Approval request was superseded.")
+
+    let private deriveApprovalSummary (promotionSet: PromotionSetDto) correlationId =
+        task {
+            let matchingPolicies =
+                matchingApprovalPolicies promotionSet.OwnerId promotionSet.OrganizationId promotionSet.RepositoryId promotionSet.TargetBranchId
+
+            match matchingPolicies with
+            | [] -> return PromotionSetApprovalSummary.NotRequired promotionSet.PromotionSetId promotionSet.TargetBranchId promotionSet.StepsComputationAttempt
+            | policy :: _ ->
+                let scope = approvalScopeFromPromotionSet promotionSet policy
+
+                let requestTemplate =
+                    { ApprovalRequest.Default with
+                        ApprovalPolicyId = policy.ApprovalPolicyId
+                        ApprovalPolicyVersion = policy.Version
+                        Subject = approvalSubject
+                        Scope = scope
+                        RequiredResponder = policy.RequiredResponder
+                    }
+
+                let approvalRequestId = ApprovalStore.buildGeneratedApprovalRequestId requestTemplate
+                let! request = ApprovalStore.tryGetRequestAsync approvalRequestId scope correlationId
+
+                match request with
+                | Option.Some approvalRequest when
+                    approvalRequest.ApprovalPolicyId = policy.ApprovalPolicyId
+                    && approvalRequest.ApprovalPolicyVersion = policy.Version
+                    && approvalRequest.Subject = approvalSubject
+                    && approvalRequest.RequiredResponder = policy.RequiredResponder
+                    && approvalRequest.Scope = scope
+                    ->
+                    return approvalSummaryFromRequest promotionSet policy (Option.Some approvalRequest)
+                | Option.Some approvalRequest ->
+                    return
+                        { approvalSummaryFromRequest promotionSet policy (Option.Some approvalRequest) with
+                            State = PromotionSetApprovalState.Stale
+                            Reason = Option.Some "Approval request is not valid for the current apply attempt."
+                        }
+                | Option.None -> return approvalSummaryFromRequest promotionSet policy Option.None
+        }
 
     let private processCommand<'T when 'T :> PromotionSetParameters>
         (context: HttpContext)
@@ -105,6 +226,7 @@ module PromotionSet =
             let correlationId = getCorrelationId context
             let actorProxy = PromotionSet.CreateActorProxy promotionSetId graceIds.RepositoryId correlationId
             let! promotionSet = actorProxy.Get correlationId
+            let! approvalSummary = deriveApprovalSummary promotionSet correlationId
 
             let graceReturnValue =
                 (GraceReturnValue.Create promotionSet correlationId)
@@ -113,6 +235,7 @@ module PromotionSet =
                     .enhance(nameof OrganizationId, graceIds.OrganizationId)
                     .enhance(nameof RepositoryId, graceIds.RepositoryId)
                     .enhance(nameof PromotionSetId, promotionSetId)
+                    .enhance("ApprovalSummary", approvalSummary)
                     .enhance ("Path", context.Request.Path.Value)
 
             return! context |> result200Ok graceReturnValue
@@ -304,7 +427,17 @@ module PromotionSet =
                     |]
 
                 let promotionSetId = Guid.Parse(parameters.PromotionSetId)
-                let command = PromotionSetCommand.Apply
+                let correlationId = getCorrelationId context
+                let actorProxy = PromotionSet.CreateActorProxy promotionSetId graceIds.RepositoryId correlationId
+                let! promotionSet = actorProxy.Get correlationId
+
+                let approvalPolicies =
+                    if promotionSet.PromotionSetId = PromotionSetId.Empty then
+                        []
+                    else
+                        matchingApprovalPolicies graceIds.OwnerId graceIds.OrganizationId graceIds.RepositoryId promotionSet.TargetBranchId
+
+                let command = PromotionSetCommand.Apply approvalPolicies
                 return! processCommand context parameters validations promotionSetId command
             }
 
@@ -342,7 +475,13 @@ module PromotionSet =
                 else
                     let mutable stepId = Guid.Empty
 
-                    if not (Guid.TryParse(parameters.StepId, &stepId) && stepId <> Guid.Empty) then
+                    if
+                        not
+                            (
+                                Guid.TryParse(parameters.StepId, &stepId)
+                                && stepId <> Guid.Empty
+                            )
+                    then
                         return!
                             context
                             |> result400BadRequest (

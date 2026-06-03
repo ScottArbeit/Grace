@@ -4,6 +4,7 @@ open Grace.Actors
 open Grace.Types.Events
 open Grace.Types.PromotionSet
 open Grace.Types.Types
+open Grace.Types.Webhooks
 open NodaTime
 open NUnit.Framework
 open System
@@ -32,12 +33,35 @@ type PromotionSetCommandValidationTests() =
             StepsComputationStatus = computationStatus
         }
 
+    let approvalPolicyFor (dto: PromotionSetDto) policyId version =
+        { PromotionSetApprovalPolicySnapshot.Default with
+            ApprovalPolicyId = policyId
+            Version = version
+            Subject = "promotion"
+            OwnerId = dto.OwnerId
+            OrganizationId = dto.OrganizationId
+            RepositoryId = dto.RepositoryId
+            TargetBranchId = dto.TargetBranchId
+            RequiredResponder = "role:ApprovalResponder"
+        }
+
+    let approvalRequestFor (dto: PromotionSetDto) (policy: PromotionSetApprovalPolicySnapshot) =
+        { ApprovalRequest.Default with
+            ApprovalRequestId = Guid.NewGuid()
+            ApprovalPolicyId = policy.ApprovalPolicyId
+            ApprovalPolicyVersion = policy.Version
+            Subject = "promotion"
+            Scope = PromotionSet.approvalScope dto policy
+            RequiredResponder = policy.RequiredResponder
+            Status = ApprovalRequestStatus.Pending
+        }
+
     [<Test>]
     member _.ApplyRejectedWhenPromotionSetAlreadySucceeded() =
         let dto = existingPromotionSet PromotionSetStatus.Succeeded StepsComputationStatus.Computed
         let metadata = createMetadata "corr-apply-succeeded"
 
-        match PromotionSet.validateCommandForState [] dto PromotionSetCommand.Apply metadata with
+        match PromotionSet.validateCommandForState [] dto (PromotionSetCommand.Apply []) metadata with
         | Ok _ -> Assert.Fail("Expected apply validation to fail for succeeded PromotionSet.")
         | Error graceError -> Assert.That(graceError.Error, Is.EqualTo("PromotionSet has already been applied successfully."))
 
@@ -46,7 +70,7 @@ type PromotionSetCommandValidationTests() =
         let dto = existingPromotionSet PromotionSetStatus.Running StepsComputationStatus.Computing
         let metadata = createMetadata "corr-apply-running"
 
-        match PromotionSet.validateCommandForState [] dto PromotionSetCommand.Apply metadata with
+        match PromotionSet.validateCommandForState [] dto (PromotionSetCommand.Apply []) metadata with
         | Ok _ -> Assert.Fail("Expected apply validation to fail for running PromotionSet.")
         | Error graceError -> Assert.That(graceError.Error, Is.EqualTo("PromotionSet is already running."))
 
@@ -83,9 +107,69 @@ type PromotionSetCommandValidationTests() =
                 { Event = PromotionSetEventType.ApplyStarted; Metadata = createMetadata duplicateCorrelationId }
             ]
 
-        match PromotionSet.validateCommandForState existingEvents dto PromotionSetCommand.Apply (createMetadata duplicateCorrelationId) with
+        match PromotionSet.validateCommandForState existingEvents dto (PromotionSetCommand.Apply []) (createMetadata duplicateCorrelationId) with
         | Ok _ -> Assert.Fail("Expected duplicate correlation ID validation to fail.")
         | Error graceError -> Assert.That(graceError.Error, Is.EqualTo("Duplicate correlation ID for PromotionSet command."))
+
+    [<Test>]
+    member _.ApprovalPolicySelectionUsesDeterministicMatchingOrder() =
+        let dto = existingPromotionSet PromotionSetStatus.Ready StepsComputationStatus.Computed
+        let laterPolicy = approvalPolicyFor dto (Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")) 1
+        let earlierPolicy = approvalPolicyFor dto (Guid.Parse("11111111-1111-1111-1111-111111111111")) 3
+
+        let nonPromotionPolicy = { approvalPolicyFor dto (Guid.Parse("00000000-0000-0000-0000-000000000001")) 1 with Subject = "webhook" }
+
+        let wrongScopePolicy = { approvalPolicyFor dto (Guid.Parse("00000000-0000-0000-0000-000000000002")) 1 with RepositoryId = Guid.NewGuid() }
+
+        match
+            PromotionSet.selectApprovalPolicy
+                dto
+                [
+                    laterPolicy
+                    wrongScopePolicy
+                    nonPromotionPolicy
+                    earlierPolicy
+                ]
+            with
+        | Option.Some selected -> Assert.That(selected.ApprovalPolicyId, Is.EqualTo(earlierPolicy.ApprovalPolicyId))
+        | Option.None -> Assert.Fail("Expected a matching approval policy.")
+
+    [<Test>]
+    member _.ApprovalRequestMustMatchExactCurrentAttemptIdentity() =
+        let dto = { existingPromotionSet PromotionSetStatus.Ready StepsComputationStatus.Computed with StepsComputationAttempt = 4 }
+
+        let policy = approvalPolicyFor dto (Guid.NewGuid()) 2
+        let currentRequest = approvalRequestFor dto policy
+
+        let priorAttemptRequest = { currentRequest with Scope = { currentRequest.Scope with StepsComputationAttempt = Option.Some 3 } }
+
+        let priorPolicyVersionRequest =
+            { currentRequest with
+                ApprovalPolicyVersion = policy.Version - 1
+                Scope = { currentRequest.Scope with ApprovalPolicyVersion = Option.Some(policy.Version - 1) }
+            }
+
+        Assert.That(PromotionSet.requestMatchesCurrentAttempt dto policy currentRequest, Is.True)
+        Assert.That(PromotionSet.requestMatchesCurrentAttempt dto policy priorAttemptRequest, Is.False)
+        Assert.That(PromotionSet.requestMatchesCurrentAttempt dto policy priorPolicyVersionRequest, Is.False)
+
+    [<Test>]
+    member _.GeneratedApprovalRequestIdIncludesCurrentAttemptIdentity() =
+        let dto = { existingPromotionSet PromotionSetStatus.Ready StepsComputationStatus.Computed with StepsComputationAttempt = 4 }
+
+        let policy = approvalPolicyFor dto (Guid.NewGuid()) 1
+        let currentRequest = approvalRequestFor dto policy
+
+        let replayRequest = { currentRequest with ApprovalRequestId = Guid.NewGuid() }
+
+        let nextAttemptRequest = { currentRequest with Scope = { currentRequest.Scope with StepsComputationAttempt = Option.Some 5 } }
+
+        Assert.That(PromotionSet.buildGeneratedApprovalRequestId replayRequest, Is.EqualTo(PromotionSet.buildGeneratedApprovalRequestId currentRequest))
+
+        Assert.That(
+            PromotionSet.buildGeneratedApprovalRequestId nextAttemptRequest,
+            Is.Not.EqualTo(PromotionSet.buildGeneratedApprovalRequestId currentRequest)
+        )
 
     [<Test>]
     member _.UpdateInputPromotionsRejectedAfterSuccess() =
