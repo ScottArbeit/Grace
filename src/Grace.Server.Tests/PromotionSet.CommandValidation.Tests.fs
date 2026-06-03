@@ -50,6 +50,25 @@ type PromotionSetCommandValidationTests() =
             RequiredResponder = "role:ApprovalResponder"
         }
 
+    let storedApprovalPolicyFor (dto: PromotionSetDto) (policy: PromotionSetApprovalPolicySnapshot) =
+        { ApprovalPolicy.Default with
+            ApprovalPolicyId = policy.ApprovalPolicyId
+            Version = policy.Version
+            Subject = policy.Subject
+            Scope =
+                { ApprovalScope.Default with
+                    OwnerId = dto.OwnerId
+                    OrganizationId = dto.OrganizationId
+                    RepositoryId = dto.RepositoryId
+                    TargetBranchId = dto.TargetBranchId
+                    ApprovalPolicyId = Some policy.ApprovalPolicyId
+                    ApprovalPolicyVersion = Some policy.Version
+                }
+            RequiredResponder = policy.RequiredResponder
+            TimeoutSeconds = policy.TimeoutSeconds
+            Status = ApprovalPolicyStatus.Enabled
+        }
+
     let approvalRequestFor (dto: PromotionSetDto) (policy: PromotionSetApprovalPolicySnapshot) =
         { ApprovalRequest.Default with
             ApprovalRequestId = Guid.NewGuid()
@@ -146,8 +165,22 @@ type PromotionSetCommandValidationTests() =
         let validPolicy = approvalPolicyFor dto (Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")) 1
 
         match PromotionSet.selectApprovalPolicyOrInvalid dto [ validPolicy; invalidPolicy ] with
-        | Error selected -> Assert.That(selected.ApprovalPolicyId, Is.EqualTo(invalidPolicy.ApprovalPolicyId))
+        | Error (PromotionSet.InvalidMatchingApprovalPolicy selected) -> Assert.That(selected.ApprovalPolicyId, Is.EqualTo(invalidPolicy.ApprovalPolicyId))
         | Ok _ -> Assert.Fail("Expected invalid matching approval policy to block apply gate selection.")
+        | Error _ -> Assert.Fail("Expected the invalid matching approval policy to be reported.")
+
+    [<Test>]
+    member _.MultipleMatchingApprovalPoliciesAreRejectedInsteadOfCollapsed() =
+        let dto = existingPromotionSet PromotionSetStatus.Ready StepsComputationStatus.Computed
+        let firstPolicy = approvalPolicyFor dto (Guid.Parse("11111111-1111-1111-1111-111111111111")) 1
+        let secondPolicy = approvalPolicyFor dto (Guid.Parse("22222222-2222-2222-2222-222222222222")) 1
+
+        match PromotionSet.selectApprovalPolicyOrInvalid dto [ secondPolicy; firstPolicy ] with
+        | Error (PromotionSet.MultipleMatchingApprovalPolicies matchingPolicies) ->
+            Assert.That(matchingPolicies.Length, Is.EqualTo(2))
+            Assert.That(matchingPolicies[0].ApprovalPolicyId, Is.EqualTo(firstPolicy.ApprovalPolicyId))
+        | Ok _ -> Assert.Fail("Expected multiple matching approval policies to block apply gate selection.")
+        | Error _ -> Assert.Fail("Expected multiple matching approval policies to be reported.")
 
     [<Test>]
     member _.CurrentPolicyResolverOverridesStaleCallerSnapshotAtApplyGate() =
@@ -157,11 +190,80 @@ type PromotionSetCommandValidationTests() =
             let currentPolicy = approvalPolicyFor dto (Guid.Parse("22222222-2222-2222-2222-222222222222")) 2
             let resolver = FixedApprovalPolicySnapshotResolver([ currentPolicy ]) :> IApprovalPolicySnapshotResolver
 
-            let! policies = PromotionSet.currentApprovalPoliciesForGate (Some resolver) dto [ stalePolicy ] "corr-current-policy"
+            let! policiesResult = PromotionSet.currentApprovalPoliciesForGate (Some resolver) dto [ stalePolicy ] "corr-current-policy"
 
-            match PromotionSet.selectApprovalPolicy dto policies with
-            | Option.Some selected -> Assert.That(selected.ApprovalPolicyId, Is.EqualTo(currentPolicy.ApprovalPolicyId))
-            | Option.None -> Assert.Fail("Expected current resolver policy to be selected.")
+            match policiesResult with
+            | Ok policies ->
+                match PromotionSet.selectApprovalPolicy dto policies with
+                | Option.Some selected -> Assert.That(selected.ApprovalPolicyId, Is.EqualTo(currentPolicy.ApprovalPolicyId))
+                | Option.None -> Assert.Fail("Expected current resolver policy to be selected.")
+            | Error graceError -> Assert.Fail($"Expected resolver policies, but got {graceError.Error}.")
+        }
+
+    [<Test>]
+    member _.MissingCurrentPolicyResolverFailsClosedWhenNoFallbackSnapshotsExist() =
+        task {
+            let dto = existingPromotionSet PromotionSetStatus.Ready StepsComputationStatus.Computed
+
+            let! policiesResult = PromotionSet.currentApprovalPoliciesForGate Option.None dto [] "corr-missing-policy-resolver"
+
+            match policiesResult with
+            | Error graceError -> Assert.That(graceError.Error, Is.EqualTo("Approval policy resolver is unavailable for promotion apply."))
+            | Ok _ -> Assert.Fail("Expected missing resolver without fallback snapshots to fail closed.")
+        }
+
+    [<Test>]
+    member _.NonHostedFallbackSnapshotsRemainUsableWhenExplicitlySupplied() =
+        task {
+            let dto = existingPromotionSet PromotionSetStatus.Ready StepsComputationStatus.Computed
+            let fallbackPolicy = approvalPolicyFor dto (Guid.Parse("11111111-1111-1111-1111-111111111111")) 1
+
+            let! policiesResult = PromotionSet.currentApprovalPoliciesForGate Option.None dto [ fallbackPolicy ] "corr-fallback-policy"
+
+            match policiesResult with
+            | Ok [ selected ] -> Assert.That(selected.ApprovalPolicyId, Is.EqualTo(fallbackPolicy.ApprovalPolicyId))
+            | Ok policies -> Assert.Fail($"Expected one fallback policy, got {policies.Length}.")
+            | Error graceError -> Assert.Fail($"Expected fallback snapshots, but got {graceError.Error}.")
+        }
+
+    [<Test>]
+    member _.DerivedApprovalSummaryReportsInvalidMatchingPolicyAsStale() =
+        task {
+            let dto = existingPromotionSet PromotionSetStatus.Ready StepsComputationStatus.Computed
+            let invalidPolicy = { approvalPolicyFor dto (Guid.NewGuid()) 1 with RequiredResponder = " " }
+
+            Grace.Server.ApprovalStore.upsertPolicy (storedApprovalPolicyFor dto invalidPolicy)
+            |> ignore
+
+            let! summary = Grace.Server.PromotionSet.deriveApprovalSummary dto "corr-invalid-summary"
+
+            Assert.That(summary.State, Is.EqualTo(PromotionSetApprovalState.Stale))
+            Assert.That(summary.ApprovalPolicyId, Is.EqualTo(Some invalidPolicy.ApprovalPolicyId))
+
+            Assert.That(
+                summary.Reason,
+                Is.EqualTo(Some "Approval policy is invalid for apply because RequiredResponder is blank or policy identity is invalid.")
+            )
+        }
+
+    [<Test>]
+    member _.DerivedApprovalSummaryReportsMultipleMatchingPoliciesAsStale() =
+        task {
+            let dto = existingPromotionSet PromotionSetStatus.Ready StepsComputationStatus.Computed
+            let firstPolicy = approvalPolicyFor dto (Guid.NewGuid()) 1
+            let secondPolicy = approvalPolicyFor dto (Guid.NewGuid()) 1
+
+            Grace.Server.ApprovalStore.upsertPolicy (storedApprovalPolicyFor dto firstPolicy)
+            |> ignore
+
+            Grace.Server.ApprovalStore.upsertPolicy (storedApprovalPolicyFor dto secondPolicy)
+            |> ignore
+
+            let! summary = Grace.Server.PromotionSet.deriveApprovalSummary dto "corr-multiple-summary"
+
+            Assert.That(summary.State, Is.EqualTo(PromotionSetApprovalState.Stale))
+            Assert.That(summary.ApprovalPolicyId.IsNone, Is.True)
+            Assert.That(summary.Reason, Is.EqualTo(Some "Multiple enabled approval policies match promotion apply scope; apply requires exactly one."))
         }
 
     [<Test>]

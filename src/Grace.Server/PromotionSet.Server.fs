@@ -138,14 +138,31 @@ module PromotionSet =
             | ApprovalRequestStatus.Cancelled -> policySummary PromotionSetApprovalState.Stale (Some "Approval request was cancelled.")
             | ApprovalRequestStatus.Superseded -> policySummary PromotionSetApprovalState.Stale (Some "Approval request was superseded.")
 
-    let private deriveApprovalSummary (promotionSet: PromotionSetDto) correlationId =
+    let private multiplePoliciesApprovalSummary (promotionSet: PromotionSetDto) =
+        { (PromotionSetApprovalSummary.NotRequired promotionSet.PromotionSetId promotionSet.TargetBranchId promotionSet.StepsComputationAttempt) with
+            State = PromotionSetApprovalState.Stale
+            Reason = Some "Multiple enabled approval policies match promotion apply scope; apply requires exactly one."
+        }
+
+    let private invalidPolicyApprovalSummary (promotionSet: PromotionSetDto) (policy: PromotionSetApprovalPolicySnapshot) =
+        { (PromotionSetApprovalSummary.NotRequired promotionSet.PromotionSetId promotionSet.TargetBranchId promotionSet.StepsComputationAttempt) with
+            State = PromotionSetApprovalState.Stale
+            ApprovalPolicyId = Some policy.ApprovalPolicyId
+            RequiredResponder = Some policy.RequiredResponder
+            Reason = Some "Approval policy is invalid for apply because RequiredResponder is blank or policy identity is invalid."
+        }
+
+    let internal deriveApprovalSummary (promotionSet: PromotionSetDto) correlationId =
         task {
             let matchingPolicies =
                 matchingApprovalPolicies promotionSet.OwnerId promotionSet.OrganizationId promotionSet.RepositoryId promotionSet.TargetBranchId
 
-            match matchingPolicies with
-            | [] -> return PromotionSetApprovalSummary.NotRequired promotionSet.PromotionSetId promotionSet.TargetBranchId promotionSet.StepsComputationAttempt
-            | policy :: _ ->
+            match Grace.Actors.PromotionSet.selectApprovalPolicyOrInvalid promotionSet matchingPolicies with
+            | Error (Grace.Actors.PromotionSet.InvalidMatchingApprovalPolicy policy) -> return invalidPolicyApprovalSummary promotionSet policy
+            | Error (Grace.Actors.PromotionSet.MultipleMatchingApprovalPolicies _) -> return multiplePoliciesApprovalSummary promotionSet
+            | Ok Option.None ->
+                return PromotionSetApprovalSummary.NotRequired promotionSet.PromotionSetId promotionSet.TargetBranchId promotionSet.StepsComputationAttempt
+            | Ok (Option.Some policy) ->
                 let scope = approvalScopeFromPromotionSet promotionSet policy
 
                 let requestTemplate =

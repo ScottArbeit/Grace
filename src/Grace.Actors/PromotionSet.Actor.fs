@@ -159,16 +159,27 @@ module PromotionSet =
         |> List.sortBy (fun policy -> policy.ApprovalPolicyId, policy.Version)
         |> List.tryHead
 
-    let internal selectApprovalPolicy (promotionSetDto: PromotionSetDto) (approvalPolicies: PromotionSetApprovalPolicySnapshot list) =
+    let internal validMatchingApprovalPolicies (promotionSetDto: PromotionSetDto) (approvalPolicies: PromotionSetApprovalPolicySnapshot list) =
         approvalPolicies
         |> List.filter (scopeMatchesPolicy promotionSetDto)
         |> List.sortBy (fun policy -> policy.ApprovalPolicyId, policy.Version)
+
+    let internal selectApprovalPolicy (promotionSetDto: PromotionSetDto) (approvalPolicies: PromotionSetApprovalPolicySnapshot list) =
+        validMatchingApprovalPolicies promotionSetDto approvalPolicies
         |> List.tryHead
 
-    let internal selectApprovalPolicyOrInvalid (promotionSetDto: PromotionSetDto) (approvalPolicies: PromotionSetApprovalPolicySnapshot list) =
+    type ApprovalPolicySelectionFailure =
+        | InvalidMatchingApprovalPolicy of PromotionSetApprovalPolicySnapshot
+        | MultipleMatchingApprovalPolicies of PromotionSetApprovalPolicySnapshot list
+
+    let selectApprovalPolicyOrInvalid (promotionSetDto: PromotionSetDto) (approvalPolicies: PromotionSetApprovalPolicySnapshot list) =
         match invalidMatchingApprovalPolicy promotionSetDto approvalPolicies with
-        | Option.Some invalidPolicy -> Error invalidPolicy
-        | Option.None -> Ok(selectApprovalPolicy promotionSetDto approvalPolicies)
+        | Option.Some invalidPolicy -> Error(InvalidMatchingApprovalPolicy invalidPolicy)
+        | Option.None ->
+            match validMatchingApprovalPolicies promotionSetDto approvalPolicies with
+            | [] -> Ok Option.None
+            | [ policy ] -> Ok(Option.Some policy)
+            | matchingPolicies -> Error(MultipleMatchingApprovalPolicies matchingPolicies)
 
     let internal currentApprovalPoliciesForGate
         (resolver: IApprovalPolicySnapshotResolver option)
@@ -179,7 +190,7 @@ module PromotionSet =
         task {
             match resolver with
             | Option.Some policyResolver ->
-                return!
+                let! policies =
                     policyResolver.GetCurrentApprovalPoliciesForPromotionApply(
                         promotionSetDto.OwnerId,
                         promotionSetDto.OrganizationId,
@@ -187,7 +198,11 @@ module PromotionSet =
                         promotionSetDto.TargetBranchId,
                         correlationId
                     )
-            | Option.None -> return fallbackApprovalPolicies
+
+                return Ok policies
+            | Option.None when fallbackApprovalPolicies.IsEmpty ->
+                return Error(GraceError.Create "Approval policy resolver is unavailable for promotion apply." correlationId)
+            | Option.None -> return Ok fallbackApprovalPolicies
         }
 
     let internal approvalScope (promotionSetDto: PromotionSetDto) (policy: PromotionSetApprovalPolicySnapshot) =
@@ -1874,117 +1889,104 @@ module PromotionSet =
 
         member private this.EnsureApprovalAllowsApply(approvalPolicies: PromotionSetApprovalPolicySnapshot list, metadata: EventMetadata) =
             task {
-                let! currentApprovalPolicies =
+                let! currentApprovalPoliciesResult =
                     currentApprovalPoliciesForGate (this.GetApprovalPolicySnapshotResolver()) promotionSetDto approvalPolicies metadata.CorrelationId
 
-                match selectApprovalPolicyOrInvalid promotionSetDto currentApprovalPolicies with
-                | Error invalidPolicy ->
-                    let summary =
-                        approvalSummary
-                            promotionSetDto
-                            invalidPolicy
-                            Option.None
-                            PromotionSetApprovalState.Stale
-                            (Option.Some "Approval policy is invalid for apply because RequiredResponder is blank or policy identity is invalid.")
-
-                    return
-                        Error(
-                            (GraceError.Create
-                                "Approval policy is invalid for apply because RequiredResponder is blank or policy identity is invalid."
-                                metadata.CorrelationId)
-                                .enhance ("ApprovalSummary", summary)
-                        )
-                | Ok Option.None ->
-                    return
-                        Ok(
-                            PromotionSetApprovalSummary.NotRequired
-                                promotionSetDto.PromotionSetId
-                                promotionSetDto.TargetBranchId
-                                promotionSetDto.StepsComputationAttempt
-                        )
-                | Ok (Option.Some policy) ->
-                    let scope = approvalScope promotionSetDto policy
-
-                    let requestTemplate =
-                        { Grace.Types.Webhooks.ApprovalRequest.Default with
-                            ApprovalPolicyId = policy.ApprovalPolicyId
-                            ApprovalPolicyVersion = policy.Version
-                            Subject = approvalSubject
-                            Scope = scope
-                            RequiredResponder = policy.RequiredResponder
-                            Status = ApprovalRequestStatus.Pending
-                            CreatedBy = UserId metadata.Principal
-                            CreatedAt = metadata.Timestamp
-                            ExpiresAt =
-                                policy.TimeoutSeconds
-                                |> Option.map (fun seconds -> metadata.Timestamp.Plus(Duration.FromSeconds(float seconds)))
-                        }
-
-                    let approvalRequestId = buildGeneratedApprovalRequestId requestTemplate
-                    let! currentRequest = this.GetApprovalRequestFromDurableHistory(approvalRequestId, scope, metadata.CorrelationId)
-                    let now = getCurrentInstant ()
-
-                    match currentRequest with
-                    | Option.Some request when
-                        not
-                        <| requestMatchesCurrentAttempt promotionSetDto policy request
-                        ->
+                match currentApprovalPoliciesResult with
+                | Error graceError -> return Error graceError
+                | Ok currentApprovalPolicies ->
+                    match selectApprovalPolicyOrInvalid promotionSetDto currentApprovalPolicies with
+                    | Error (InvalidMatchingApprovalPolicy invalidPolicy) ->
                         let summary =
                             approvalSummary
                                 promotionSetDto
-                                policy
-                                (Option.Some request)
+                                invalidPolicy
+                                Option.None
                                 PromotionSetApprovalState.Stale
-                                (Option.Some "Approval request is not valid for the current apply attempt.")
+                                (Option.Some "Approval policy is invalid for apply because RequiredResponder is blank or policy identity is invalid.")
 
                         return
                             Error(
-                                (GraceError.Create "Approval request is not valid for the current apply attempt." metadata.CorrelationId)
+                                (GraceError.Create
+                                    "Approval policy is invalid for apply because RequiredResponder is blank or policy identity is invalid."
+                                    metadata.CorrelationId)
                                     .enhance ("ApprovalSummary", summary)
                             )
-                    | Option.Some request when
-                        request.Status = ApprovalRequestStatus.Approved
-                        && expirationIsValid now request
-                        ->
-                        return Ok(approvalSummary promotionSetDto policy (Option.Some request) PromotionSetApprovalState.Approved Option.None)
-                    | Option.Some request when
-                        request.Status = ApprovalRequestStatus.Pending
-                        && expirationIsValid now request
-                        ->
+                    | Error (MultipleMatchingApprovalPolicies matchingPolicies) ->
                         let summary =
-                            approvalSummary
-                                promotionSetDto
-                                policy
-                                (Option.Some request)
-                                PromotionSetApprovalState.Pending
-                                (Option.Some "Approval is required before apply can continue.")
+                            { (PromotionSetApprovalSummary.NotRequired
+                                  promotionSetDto.PromotionSetId
+                                  promotionSetDto.TargetBranchId
+                                  promotionSetDto.StepsComputationAttempt) with
+                                State = PromotionSetApprovalState.Stale
+                                Reason = Option.Some "Multiple enabled approval policies match promotion apply scope; apply requires exactly one."
+                            }
 
                         return
                             Error(
-                                (GraceError.Create "Approval is required before apply can continue." metadata.CorrelationId)
+                                ((GraceError.Create
+                                    "Multiple enabled approval policies match promotion apply scope; apply requires exactly one."
+                                    metadata.CorrelationId)
+                                    .enhance ("ApprovalPolicyCount", matchingPolicies.Length))
                                     .enhance ("ApprovalSummary", summary)
                             )
-                    | Option.Some request ->
-                        let state, message =
-                            match request.Status with
-                            | ApprovalRequestStatus.Rejected -> PromotionSetApprovalState.Rejected, "Approval request was rejected."
-                            | ApprovalRequestStatus.Expired -> PromotionSetApprovalState.Expired, "Approval request is expired."
-                            | ApprovalRequestStatus.Cancelled -> PromotionSetApprovalState.Stale, "Approval request was cancelled."
-                            | ApprovalRequestStatus.Superseded -> PromotionSetApprovalState.Stale, "Approval request was superseded."
-                            | ApprovalRequestStatus.Approved -> PromotionSetApprovalState.Stale, "Approval request is expired."
-                            | ApprovalRequestStatus.Pending -> PromotionSetApprovalState.Stale, "Approval request is expired."
-
-                        let summary = approvalSummary promotionSetDto policy (Option.Some request) state (Option.Some message)
-
+                    | Ok Option.None ->
                         return
-                            Error(
-                                (GraceError.Create message metadata.CorrelationId)
-                                    .enhance ("ApprovalSummary", summary)
+                            Ok(
+                                PromotionSetApprovalSummary.NotRequired
+                                    promotionSetDto.PromotionSetId
+                                    promotionSetDto.TargetBranchId
+                                    promotionSetDto.StepsComputationAttempt
                             )
-                    | Option.None ->
-                        match! this.CreatePendingApprovalRequest({ requestTemplate with ApprovalRequestId = approvalRequestId }, metadata) with
-                        | Error graceError -> return Error graceError
-                        | Ok request ->
+                    | Ok (Option.Some policy) ->
+                        let scope = approvalScope promotionSetDto policy
+
+                        let requestTemplate =
+                            { Grace.Types.Webhooks.ApprovalRequest.Default with
+                                ApprovalPolicyId = policy.ApprovalPolicyId
+                                ApprovalPolicyVersion = policy.Version
+                                Subject = approvalSubject
+                                Scope = scope
+                                RequiredResponder = policy.RequiredResponder
+                                Status = ApprovalRequestStatus.Pending
+                                CreatedBy = UserId metadata.Principal
+                                CreatedAt = metadata.Timestamp
+                                ExpiresAt =
+                                    policy.TimeoutSeconds
+                                    |> Option.map (fun seconds -> metadata.Timestamp.Plus(Duration.FromSeconds(float seconds)))
+                            }
+
+                        let approvalRequestId = buildGeneratedApprovalRequestId requestTemplate
+                        let! currentRequest = this.GetApprovalRequestFromDurableHistory(approvalRequestId, scope, metadata.CorrelationId)
+                        let now = getCurrentInstant ()
+
+                        match currentRequest with
+                        | Option.Some request when
+                            not
+                            <| requestMatchesCurrentAttempt promotionSetDto policy request
+                            ->
+                            let summary =
+                                approvalSummary
+                                    promotionSetDto
+                                    policy
+                                    (Option.Some request)
+                                    PromotionSetApprovalState.Stale
+                                    (Option.Some "Approval request is not valid for the current apply attempt.")
+
+                            return
+                                Error(
+                                    (GraceError.Create "Approval request is not valid for the current apply attempt." metadata.CorrelationId)
+                                        .enhance ("ApprovalSummary", summary)
+                                )
+                        | Option.Some request when
+                            request.Status = ApprovalRequestStatus.Approved
+                            && expirationIsValid now request
+                            ->
+                            return Ok(approvalSummary promotionSetDto policy (Option.Some request) PromotionSetApprovalState.Approved Option.None)
+                        | Option.Some request when
+                            request.Status = ApprovalRequestStatus.Pending
+                            && expirationIsValid now request
+                            ->
                             let summary =
                                 approvalSummary
                                     promotionSetDto
@@ -1998,6 +2000,40 @@ module PromotionSet =
                                     (GraceError.Create "Approval is required before apply can continue." metadata.CorrelationId)
                                         .enhance ("ApprovalSummary", summary)
                                 )
+                        | Option.Some request ->
+                            let state, message =
+                                match request.Status with
+                                | ApprovalRequestStatus.Rejected -> PromotionSetApprovalState.Rejected, "Approval request was rejected."
+                                | ApprovalRequestStatus.Expired -> PromotionSetApprovalState.Expired, "Approval request is expired."
+                                | ApprovalRequestStatus.Cancelled -> PromotionSetApprovalState.Stale, "Approval request was cancelled."
+                                | ApprovalRequestStatus.Superseded -> PromotionSetApprovalState.Stale, "Approval request was superseded."
+                                | ApprovalRequestStatus.Approved -> PromotionSetApprovalState.Stale, "Approval request is expired."
+                                | ApprovalRequestStatus.Pending -> PromotionSetApprovalState.Stale, "Approval request is expired."
+
+                            let summary = approvalSummary promotionSetDto policy (Option.Some request) state (Option.Some message)
+
+                            return
+                                Error(
+                                    (GraceError.Create message metadata.CorrelationId)
+                                        .enhance ("ApprovalSummary", summary)
+                                )
+                        | Option.None ->
+                            match! this.CreatePendingApprovalRequest({ requestTemplate with ApprovalRequestId = approvalRequestId }, metadata) with
+                            | Error graceError -> return Error graceError
+                            | Ok request ->
+                                let summary =
+                                    approvalSummary
+                                        promotionSetDto
+                                        policy
+                                        (Option.Some request)
+                                        PromotionSetApprovalState.Pending
+                                        (Option.Some "Approval is required before apply can continue.")
+
+                                return
+                                    Error(
+                                        (GraceError.Create "Approval is required before apply can continue." metadata.CorrelationId)
+                                            .enhance ("ApprovalSummary", summary)
+                                    )
             }
 
         member private this.ApplyPromotionSet(approvalPolicies: PromotionSetApprovalPolicySnapshot list, metadata: EventMetadata) =
