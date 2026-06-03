@@ -22,9 +22,6 @@ function Get-GraceBuildProperties {
     }
 
     $buildNumber = $env:GraceBuildNumber
-    if ([string]::IsNullOrWhiteSpace($buildNumber)) {
-        $buildNumber = [DateTime]::UtcNow.ToString("yyyyMMddHHmmss", [Globalization.CultureInfo]::InvariantCulture)
-    }
 
     $sourceRevision = $env:GraceSourceRevisionId
     if ([string]::IsNullOrWhiteSpace($sourceRevision)) {
@@ -37,10 +34,11 @@ function Get-GraceBuildProperties {
         }
     }
 
-    $properties = @(
-        "-p:GraceBuildKind=$buildKind",
-        "-p:GraceBuildNumber=$buildNumber"
-    )
+    $properties = @("-p:GraceBuildKind=$buildKind")
+
+    if (-not [string]::IsNullOrWhiteSpace($buildNumber)) {
+        $properties += "-p:GraceBuildNumber=$buildNumber"
+    }
 
     if (-not [string]::IsNullOrWhiteSpace($sourceRevision)) {
         $properties += "-p:GraceSourceRevisionId=$sourceRevision"
