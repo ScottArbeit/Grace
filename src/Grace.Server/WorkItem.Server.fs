@@ -7,6 +7,7 @@ open Grace.Actors.Interfaces
 open Grace.Actors.Services
 open Grace.Server.ApplicationContext
 open Grace.Server.Services
+open Grace.Server.WorkItemAttachments
 open Grace.Shared
 open Grace.Shared.Extensions
 open Grace.Shared.Parameters.WorkItem
@@ -906,76 +907,6 @@ module WorkItem =
                 context.Items[ "Command" ] <- "Get"
                 return! processQuery context parameters validations query
             }
-
-    type private WorkItemAttachment = { ArtifactId: ArtifactId; Metadata: ArtifactMetadata; AttachmentType: string }
-
-    let private getAttachmentTypeName (artifactType: ArtifactType) =
-        if isNull (box artifactType) then
-            "summary"
-        else
-            match artifactType with
-            | ArtifactType.AgentSummary -> "summary"
-            | ArtifactType.Prompt -> "prompt"
-            | ArtifactType.ReviewNotes -> "notes"
-            | ArtifactType.Other kind when
-                kind.Equals("summary", StringComparison.OrdinalIgnoreCase)
-                || kind.Equals("agentsummary", StringComparison.OrdinalIgnoreCase)
-                ->
-                "summary"
-            | ArtifactType.Other kind when kind.Equals("prompt", StringComparison.OrdinalIgnoreCase) -> "prompt"
-            | ArtifactType.Other kind when
-                kind.Equals("notes", StringComparison.OrdinalIgnoreCase)
-                || kind.Equals("reviewnotes", StringComparison.OrdinalIgnoreCase)
-                ->
-                "notes"
-            | _ -> "other"
-
-    let private tryGetReviewerAttachmentTypeName (artifactType: ArtifactType) =
-        if isNull (box artifactType) then
-            Some "summary"
-        else
-            match artifactType with
-            | ArtifactType.AgentSummary -> Some "summary"
-            | ArtifactType.Prompt -> Some "prompt"
-            | ArtifactType.ReviewNotes -> Some "notes"
-            | ArtifactType.Other kind when
-                kind.Equals("summary", StringComparison.OrdinalIgnoreCase)
-                || kind.Equals("agentsummary", StringComparison.OrdinalIgnoreCase)
-                ->
-                Some "summary"
-            | ArtifactType.Other kind when kind.Equals("prompt", StringComparison.OrdinalIgnoreCase) -> Some "prompt"
-            | ArtifactType.Other kind when
-                kind.Equals("notes", StringComparison.OrdinalIgnoreCase)
-                || kind.Equals("reviewnotes", StringComparison.OrdinalIgnoreCase)
-                ->
-                Some "notes"
-            | _ -> None
-
-    let private isTextMimeType (mimeType: string) =
-        if String.IsNullOrWhiteSpace(mimeType) then
-            false
-        else
-            let normalized = mimeType.Trim().ToLowerInvariant()
-
-            normalized.StartsWith("text/", StringComparison.OrdinalIgnoreCase)
-            || normalized.Contains("+json", StringComparison.OrdinalIgnoreCase)
-            || normalized.Contains("+xml", StringComparison.OrdinalIgnoreCase)
-            || normalized.Equals("application/json", StringComparison.OrdinalIgnoreCase)
-            || normalized.Equals("application/xml", StringComparison.OrdinalIgnoreCase)
-            || normalized.Equals("application/yaml", StringComparison.OrdinalIgnoreCase)
-            || normalized.Equals("application/x-yaml", StringComparison.OrdinalIgnoreCase)
-            || normalized.Equals("application/toml", StringComparison.OrdinalIgnoreCase)
-            || normalized.Equals("application/javascript", StringComparison.OrdinalIgnoreCase)
-            || normalized.Equals("application/x-javascript", StringComparison.OrdinalIgnoreCase)
-
-    let private toAttachmentDescriptor (attachment: WorkItemAttachment) =
-        WorkItemAttachmentDescriptor(
-            ArtifactId = attachment.ArtifactId.ToString(),
-            AttachmentType = attachment.AttachmentType,
-            MimeType = attachment.Metadata.MimeType,
-            Size = attachment.Metadata.Size,
-            CreatedAt = attachment.Metadata.CreatedAt.ToString()
-        )
 
     let private selectAttachmentDeterministically (attachments: WorkItemAttachment list) (latest: bool) =
         if List.isEmpty attachments then

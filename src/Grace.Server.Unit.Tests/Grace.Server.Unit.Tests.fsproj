@@ -40,6 +40,7 @@
     <Compile Include="Queue.Server.Tests.fs" />
     <Compile Include="OrleansFilters.Server.Tests.fs" />
     <Compile Include="WorkItem.Server.Tests.fs" />
+    <Compile Include="WorkItem.Attachments.Tests.fs" />
     <Compile Include="ApprovalRequest.Actor.Tests.fs" />
     <Compile Include="Validations.Server.Tests.fs" />
     <Compile Include="Program.fs" />
