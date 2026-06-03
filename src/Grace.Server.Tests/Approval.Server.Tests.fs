@@ -209,6 +209,50 @@ type ApprovalApiIntegrationTests() =
         }
 
     [<Test>]
+    member _.PolicyCreateRejectsBlankRequiredResponder() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let branchId = repositoryDefaultBranchIds[0]
+            let adminUser = $"{Guid.NewGuid()}"
+
+            let! grant = ApprovalTestHelpers.grantRoleAsync Client "repo" ownerId organizationId repositoryId "" adminUser "RepoAdmin"
+            Assert.That(grant.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+
+            use adminClient = ApprovalTestHelpers.createAuthenticatedClient adminUser
+            let parameters = ApprovalTestHelpers.createPolicyParameters repositoryId branchId
+            parameters.RequiredResponder <- "   "
+
+            let! createResponse = adminClient.PostAsync("/approval/policy/create", createJsonContent parameters)
+            let! responseText = createResponse.Content.ReadAsStringAsync()
+
+            Assert.That(createResponse.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), responseText)
+            Assert.That(responseText, Does.Contain("RequiredResponder is required."))
+        }
+
+    [<Test>]
+    member _.PolicyUpdateRejectsBlankRequiredResponder() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let branchId = repositoryDefaultBranchIds[0]
+            let adminUser = $"{Guid.NewGuid()}"
+
+            let! grant = ApprovalTestHelpers.grantRoleAsync Client "repo" ownerId organizationId repositoryId "" adminUser "RepoAdmin"
+            Assert.That(grant.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+
+            use adminClient = ApprovalTestHelpers.createAuthenticatedClient adminUser
+            let! storedPolicy = ApprovalTestHelpers.createPolicyAsync adminClient repositoryId branchId
+
+            let updateParameters = ApprovalTestHelpers.updatePolicyParameters repositoryId branchId (storedPolicy.ApprovalPolicyId.ToString())
+            updateParameters.RequiredResponder <- ""
+
+            let! updateResponse = adminClient.PostAsync("/approval/policy/update", createJsonContent updateParameters)
+            let! responseText = updateResponse.Content.ReadAsStringAsync()
+
+            Assert.That(updateResponse.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), responseText)
+            Assert.That(responseText, Does.Contain("RequiredResponder is required."))
+        }
+
+    [<Test>]
     member _.NoPublicApprovalRequestCreateRouteExists() =
         task {
             use client = ApprovalTestHelpers.createAuthenticatedClient $"{Guid.NewGuid()}"
@@ -411,7 +455,11 @@ type ApprovalApiIntegrationTests() =
                 }
 
             let! created = [| 1..8 |] |> Array.map createOne |> Task.WhenAll
-            let requestIds = created |> Array.map _.ApprovalRequestId |> Array.distinct
+
+            let requestIds =
+                created
+                |> Array.map (fun request -> request.ApprovalRequestId)
+                |> Array.distinct
 
             Assert.That(requestIds, Has.Length.EqualTo(1))
             Assert.That(requestIds[0], Is.Not.EqualTo(Guid.Empty))

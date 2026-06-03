@@ -94,11 +94,7 @@ module ApprovalStore =
         eventMetadata
 
     let private canonicalSegment (value: string) =
-        let segment =
-            if isNull value then
-                String.Empty
-            else
-                value
+        let segment = if isNull value then String.Empty else value
 
         $"{segment.Length}:{segment}"
 
@@ -125,23 +121,21 @@ module ApprovalStore =
         Guid(guidBytes)
 
     let buildGeneratedApprovalRequestId (request: ApprovalRequestDto) =
-        let scope =
-            if isNull (box request.Scope) then
-                ApprovalScope.Default
-            else
-                request.Scope
+        let scope = if isNull (box request.Scope) then ApprovalScope.Default else request.Scope
 
-        [| "grace.approval-request.generated.v1"
-           canonicalGuid request.ApprovalPolicyId
-           request.ApprovalPolicyVersion.ToString(CultureInfo.InvariantCulture)
-           request.Subject
-           canonicalGuid scope.OwnerId
-           canonicalGuid scope.OrganizationId
-           canonicalGuid scope.RepositoryId
-           canonicalGuid scope.TargetBranchId
-           canonicalOptionalGuid scope.PromotionSetId
-           canonicalOptionalInt scope.StepsComputationAttempt
-           request.RequiredResponder |]
+        [|
+            "grace.approval-request.generated.v1"
+            canonicalGuid request.ApprovalPolicyId
+            request.ApprovalPolicyVersion.ToString(CultureInfo.InvariantCulture)
+            request.Subject
+            canonicalGuid scope.OwnerId
+            canonicalGuid scope.OrganizationId
+            canonicalGuid scope.RepositoryId
+            canonicalGuid scope.TargetBranchId
+            canonicalOptionalGuid scope.PromotionSetId
+            canonicalOptionalInt scope.StepsComputationAttempt
+            request.RequiredResponder
+        |]
         |> Array.map canonicalSegment
         |> String.concat "|"
         |> createDeterministicGuid
@@ -430,33 +424,36 @@ module ApprovalPolicy =
 
     let private buildPolicy context approvalPolicyId version status (parameters: CreateApprovalPolicyParameters) =
         task {
-            match validateNotificationUrl context parameters with
-            | Error message -> return Error message
-            | Ok notificationUrl ->
-                let scope = { scopeFromPolicyParameters parameters with ApprovalPolicyId = Some approvalPolicyId; ApprovalPolicyVersion = Some version }
+            if String.IsNullOrWhiteSpace parameters.RequiredResponder then
+                return Error "RequiredResponder is required."
+            else
+                match validateNotificationUrl context parameters with
+                | Error message -> return Error message
+                | Ok notificationUrl ->
+                    let scope = { scopeFromPolicyParameters parameters with ApprovalPolicyId = Some approvalPolicyId; ApprovalPolicyVersion = Some version }
 
-                let timeoutSeconds =
-                    if parameters.TimeoutSeconds.HasValue then
-                        Some parameters.TimeoutSeconds.Value
-                    else
-                        None
+                    let timeoutSeconds =
+                        if parameters.TimeoutSeconds.HasValue then
+                            Some parameters.TimeoutSeconds.Value
+                        else
+                            None
 
-                return
-                    Ok
-                        { Grace.Types.Webhooks.ApprovalPolicy.Default with
-                            ApprovalPolicyId = approvalPolicyId
-                            Version = version
-                            Name = parameters.Name
-                            Subject = parameters.Subject
-                            Scope = scope
-                            RequiredResponder = parameters.RequiredResponder
-                            NotificationUrl = notificationUrl
-                            TimeoutSeconds = timeoutSeconds
-                            OnTimeout = parameters.OnTimeout
-                            Status = status
-                            CreatedBy = currentUserId context
-                            CreatedAt = getCurrentInstant ()
-                        }
+                    return
+                        Ok
+                            { Grace.Types.Webhooks.ApprovalPolicy.Default with
+                                ApprovalPolicyId = approvalPolicyId
+                                Version = version
+                                Name = parameters.Name
+                                Subject = parameters.Subject
+                                Scope = scope
+                                RequiredResponder = parameters.RequiredResponder.Trim()
+                                NotificationUrl = notificationUrl
+                                TimeoutSeconds = timeoutSeconds
+                                OnTimeout = parameters.OnTimeout
+                                Status = status
+                                CreatedBy = currentUserId context
+                                CreatedAt = getCurrentInstant ()
+                            }
         }
 
     let private policyIdFromContext<'T when 'T :> ApprovalPolicyParameters> (context: HttpContext) =
