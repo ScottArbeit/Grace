@@ -135,22 +135,60 @@ module PromotionSet =
         |> String.concat "|"
         |> createDeterministicGuid
 
-    let internal scopeMatchesPolicy (promotionSetDto: PromotionSetDto) (policy: PromotionSetApprovalPolicySnapshot) =
+    let internal policyMatchesApplyScope (promotionSetDto: PromotionSetDto) (policy: PromotionSetApprovalPolicySnapshot) =
         policy.OwnerId = promotionSetDto.OwnerId
         && policy.OrganizationId = promotionSetDto.OrganizationId
         && policy.RepositoryId = promotionSetDto.RepositoryId
         && policy.TargetBranchId = promotionSetDto.TargetBranchId
         && String.Equals(policy.Subject, approvalSubject, StringComparison.OrdinalIgnoreCase)
-        && policy.ApprovalPolicyId <> Guid.Empty
+
+    let internal policyIsValidForApply (policy: PromotionSetApprovalPolicySnapshot) =
+        policy.ApprovalPolicyId <> Guid.Empty
         && policy.Version > 0
         && String.IsNullOrWhiteSpace policy.RequiredResponder
            |> not
+
+    let internal scopeMatchesPolicy (promotionSetDto: PromotionSetDto) (policy: PromotionSetApprovalPolicySnapshot) =
+        policyMatchesApplyScope promotionSetDto policy
+        && policyIsValidForApply policy
+
+    let internal invalidMatchingApprovalPolicy (promotionSetDto: PromotionSetDto) (approvalPolicies: PromotionSetApprovalPolicySnapshot list) =
+        approvalPolicies
+        |> List.filter (policyMatchesApplyScope promotionSetDto)
+        |> List.filter (policyIsValidForApply >> not)
+        |> List.sortBy (fun policy -> policy.ApprovalPolicyId, policy.Version)
+        |> List.tryHead
 
     let internal selectApprovalPolicy (promotionSetDto: PromotionSetDto) (approvalPolicies: PromotionSetApprovalPolicySnapshot list) =
         approvalPolicies
         |> List.filter (scopeMatchesPolicy promotionSetDto)
         |> List.sortBy (fun policy -> policy.ApprovalPolicyId, policy.Version)
         |> List.tryHead
+
+    let internal selectApprovalPolicyOrInvalid (promotionSetDto: PromotionSetDto) (approvalPolicies: PromotionSetApprovalPolicySnapshot list) =
+        match invalidMatchingApprovalPolicy promotionSetDto approvalPolicies with
+        | Option.Some invalidPolicy -> Error invalidPolicy
+        | Option.None -> Ok(selectApprovalPolicy promotionSetDto approvalPolicies)
+
+    let internal currentApprovalPoliciesForGate
+        (resolver: IApprovalPolicySnapshotResolver option)
+        (promotionSetDto: PromotionSetDto)
+        (fallbackApprovalPolicies: PromotionSetApprovalPolicySnapshot list)
+        correlationId
+        =
+        task {
+            match resolver with
+            | Option.Some policyResolver ->
+                return!
+                    policyResolver.GetCurrentApprovalPoliciesForPromotionApply(
+                        promotionSetDto.OwnerId,
+                        promotionSetDto.OrganizationId,
+                        promotionSetDto.RepositoryId,
+                        promotionSetDto.TargetBranchId,
+                        correlationId
+                    )
+            | Option.None -> return fallbackApprovalPolicies
+        }
 
     let internal approvalScope (promotionSetDto: PromotionSetDto) (policy: PromotionSetApprovalPolicySnapshot) =
         { ApprovalScope.Default with
@@ -309,6 +347,14 @@ module PromotionSet =
                 match services.GetService(typeof<IConflictResolutionModelProvider>) with
                 | null -> NullConflictResolutionModelProvider() :> IConflictResolutionModelProvider
                 | provider -> provider :?> IConflictResolutionModelProvider
+
+        member private this.GetApprovalPolicySnapshotResolver() =
+            match hostServiceProvider with
+            | null -> Option.None
+            | services ->
+                match services.GetService(typeof<IApprovalPolicySnapshotResolver>) with
+                | null -> Option.None
+                | resolver -> Option.Some(resolver :?> IApprovalPolicySnapshotResolver)
 
         member private this.UploadArtifactPayload(blobPath: string, payloadJson: string, metadata: EventMetadata) =
             task {
@@ -1828,8 +1874,27 @@ module PromotionSet =
 
         member private this.EnsureApprovalAllowsApply(approvalPolicies: PromotionSetApprovalPolicySnapshot list, metadata: EventMetadata) =
             task {
-                match selectApprovalPolicy promotionSetDto approvalPolicies with
-                | Option.None ->
+                let! currentApprovalPolicies =
+                    currentApprovalPoliciesForGate (this.GetApprovalPolicySnapshotResolver()) promotionSetDto approvalPolicies metadata.CorrelationId
+
+                match selectApprovalPolicyOrInvalid promotionSetDto currentApprovalPolicies with
+                | Error invalidPolicy ->
+                    let summary =
+                        approvalSummary
+                            promotionSetDto
+                            invalidPolicy
+                            Option.None
+                            PromotionSetApprovalState.Stale
+                            (Option.Some "Approval policy is invalid for apply because RequiredResponder is blank or policy identity is invalid.")
+
+                    return
+                        Error(
+                            (GraceError.Create
+                                "Approval policy is invalid for apply because RequiredResponder is blank or policy identity is invalid."
+                                metadata.CorrelationId)
+                                .enhance ("ApprovalSummary", summary)
+                        )
+                | Ok Option.None ->
                     return
                         Ok(
                             PromotionSetApprovalSummary.NotRequired
@@ -1837,7 +1902,7 @@ module PromotionSet =
                                 promotionSetDto.TargetBranchId
                                 promotionSetDto.StepsComputationAttempt
                         )
-                | Option.Some policy ->
+                | Ok (Option.Some policy) ->
                     let scope = approvalScope promotionSetDto policy
 
                     let requestTemplate =

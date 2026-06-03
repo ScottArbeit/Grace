@@ -21,6 +21,7 @@
         <Compile Include="Constants.Actor.fs" />
         <Compile Include="Types.Actor.fs" />
         <Compile Include="Interfaces.Actor.fs" />
+        <Compile Include="ApprovalPolicySnapshotResolver.Actor.fs" />
         <Compile Include="Context.Actor.fs" />
         <Compile Include="PersonalAccessToken.Actor.fs" />
         <Compile Include="Timing.Actor.fs" />

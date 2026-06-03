@@ -9,6 +9,11 @@ open NodaTime
 open NUnit.Framework
 open System
 open System.Collections.Generic
+open System.Threading.Tasks
+
+type private FixedApprovalPolicySnapshotResolver(policies: PromotionSetApprovalPolicySnapshot list) =
+    interface IApprovalPolicySnapshotResolver with
+        member _.GetCurrentApprovalPoliciesForPromotionApply(_, _, _, _, _) = Task.FromResult policies
 
 [<Parallelizable(ParallelScope.All)>]
 type PromotionSetCommandValidationTests() =
@@ -133,6 +138,31 @@ type PromotionSetCommandValidationTests() =
             with
         | Option.Some selected -> Assert.That(selected.ApprovalPolicyId, Is.EqualTo(earlierPolicy.ApprovalPolicyId))
         | Option.None -> Assert.Fail("Expected a matching approval policy.")
+
+    [<Test>]
+    member _.InvalidMatchingApprovalPolicyIsReportedInsteadOfDropped() =
+        let dto = existingPromotionSet PromotionSetStatus.Ready StepsComputationStatus.Computed
+        let invalidPolicy = { approvalPolicyFor dto (Guid.Parse("11111111-1111-1111-1111-111111111111")) 1 with RequiredResponder = " " }
+        let validPolicy = approvalPolicyFor dto (Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")) 1
+
+        match PromotionSet.selectApprovalPolicyOrInvalid dto [ validPolicy; invalidPolicy ] with
+        | Error selected -> Assert.That(selected.ApprovalPolicyId, Is.EqualTo(invalidPolicy.ApprovalPolicyId))
+        | Ok _ -> Assert.Fail("Expected invalid matching approval policy to block apply gate selection.")
+
+    [<Test>]
+    member _.CurrentPolicyResolverOverridesStaleCallerSnapshotAtApplyGate() =
+        task {
+            let dto = existingPromotionSet PromotionSetStatus.Ready StepsComputationStatus.Computed
+            let stalePolicy = approvalPolicyFor dto (Guid.Parse("11111111-1111-1111-1111-111111111111")) 1
+            let currentPolicy = approvalPolicyFor dto (Guid.Parse("22222222-2222-2222-2222-222222222222")) 2
+            let resolver = FixedApprovalPolicySnapshotResolver([ currentPolicy ]) :> IApprovalPolicySnapshotResolver
+
+            let! policies = PromotionSet.currentApprovalPoliciesForGate (Some resolver) dto [ stalePolicy ] "corr-current-policy"
+
+            match PromotionSet.selectApprovalPolicy dto policies with
+            | Option.Some selected -> Assert.That(selected.ApprovalPolicyId, Is.EqualTo(currentPolicy.ApprovalPolicyId))
+            | Option.None -> Assert.Fail("Expected current resolver policy to be selected.")
+        }
 
     [<Test>]
     member _.ApprovalRequestMustMatchExactCurrentAttemptIdentity() =

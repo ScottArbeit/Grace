@@ -90,6 +90,12 @@ module PromotionSet =
         |> Seq.sortBy (fun policy -> policy.ApprovalPolicyId, policy.Version)
         |> Seq.toList
 
+    type ApprovalPolicySnapshotResolver() =
+        interface Grace.Actors.IApprovalPolicySnapshotResolver with
+            member _.GetCurrentApprovalPoliciesForPromotionApply(ownerId, organizationId, repositoryId, targetBranchId, _correlationId) =
+                matchingApprovalPolicies ownerId organizationId repositoryId targetBranchId
+                |> Task.FromResult
+
     let private approvalSummaryFromRequest
         (promotionSet: PromotionSetDto)
         (policy: PromotionSetApprovalPolicySnapshot)
@@ -428,16 +434,7 @@ module PromotionSet =
 
                 let promotionSetId = Guid.Parse(parameters.PromotionSetId)
                 let correlationId = getCorrelationId context
-                let actorProxy = PromotionSet.CreateActorProxy promotionSetId graceIds.RepositoryId correlationId
-                let! promotionSet = actorProxy.Get correlationId
-
-                let approvalPolicies =
-                    if promotionSet.PromotionSetId = PromotionSetId.Empty then
-                        []
-                    else
-                        matchingApprovalPolicies graceIds.OwnerId graceIds.OrganizationId graceIds.RepositoryId promotionSet.TargetBranchId
-
-                let command = PromotionSetCommand.Apply approvalPolicies
+                let command = PromotionSetCommand.Apply []
                 return! processCommand context parameters validations promotionSetId command
             }
 
