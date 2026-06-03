@@ -1,7 +1,7 @@
 name: Agent Task
 description: Coordinate a Grace implementation task for a human or AI agent.
 labels:
-  - agent-task
+  - ready-for-agent
 body:
   - type: textarea
     id: objective
