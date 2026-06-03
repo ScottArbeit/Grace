@@ -59,6 +59,7 @@
                 <Compile Include="Security\ClaimsTransformation.Server.fs" />
                 <Compile Include="Security\TestAuth.Server.fs" />
 		<Compile Include="Security\PersonalAccessTokenAuth.Server.fs" />
+		<Compile Include="Security\AuthSchemeSelection.Server.fs" />
 		<Compile Include="Security\OutboundUrlSafety.Server.fs" />
 		<Compile Include="Security\PermissionEvaluator.Server.fs" />
 		<Compile Include="Security\AuthorizationMiddleware.Server.fs" />
@@ -83,6 +84,7 @@
                 <Compile Include="PromotionSet.Server.fs" />
                 <Compile Include="Webhook.Server.fs" />
                 <Compile Include="WebhookDispatch.Server.fs" />
+                <Compile Include="WorkItem.Attachments.Server.fs" />
                 <Compile Include="WorkItem.Server.fs" />
                 <Compile Include="Policy.Server.fs" />
                 <Compile Include="ReviewModels.Server.fs" />
