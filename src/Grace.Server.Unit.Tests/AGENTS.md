@@ -18,6 +18,8 @@ Global policies live in `../AGENTS.md`; follow them before touching tests here.
 ## Validation
 
 - Run targeted Fantomas formatting or checks before build and test validation after F# changes.
+- Build `src/Grace.Server.Unit.Tests/Grace.Server.Unit.Tests.fsproj` in Release before running project-specific
+  `--no-build` tests.
 - Run `dotnet test --configuration Release --no-build src/Grace.Server.Unit.Tests/Grace.Server.Unit.Tests.fsproj`
-  after a build context exists.
+  only after that build context exists.
 - Run `pwsh ./scripts/validate.ps1 -Fast` for the normal fast gate.

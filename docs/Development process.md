@@ -396,7 +396,9 @@ projects. If a worker is going to run `validate -Fast`, it should not also run a
 
 1. Run Fantomas formatting or targeted Fantomas checks for touched F# files.
 2. Run the narrow focused test command that proves the changed behavior, if that focused test is outside the fast gate
-   or gives faster defect localization.
+   or gives faster defect localization. When the focused command uses `--no-build`, first run the matching
+   `dotnet build --configuration Release <project>` command so the test assembly exists and reflects the current
+   source.
 3. Run `pwsh ./scripts/validate.ps1 -Fast`.
 4. Run `git diff --check`.
 
@@ -424,7 +426,8 @@ order is:
 
 1. Apply the code change.
 2. Run Fantomas on the touched files, or run the repo-standard recursive Fantomas command when the edit is broad.
-3. Run focused tests and `validate -Fast` using the non-duplicative validation order above.
+3. Build the focused project before any focused `dotnet test --no-build` command, then run focused tests and
+   `validate -Fast` using the non-duplicative validation order above.
 4. Run `git diff --check`.
 
 Avoid running the full test suite before formatting, then discovering Fantomas rewrote files and forcing another

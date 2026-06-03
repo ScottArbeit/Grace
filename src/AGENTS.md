@@ -36,7 +36,7 @@ update the issue before editing the new paths.
   also run separate full-solution `dotnet build` or broad `dotnet test` commands unless there is a specific diagnostic
   reason; prefer only the narrow focused tests that prove the changed behavior, then `validate -Fast`.
 - If running commands manually instead of `validate -Fast`, use `dotnet build --configuration Release` and
-  `dotnet test --no-build`.
+  `dotnet test --no-build`; build the focused project before any project-specific `--no-build` test command.
 - Resolve all compilation errors before considering a task complete.
 - Run impacted tests for each task and fix failures introduced by your changes.
 - Create a new git commit after each completed task to keep review scope clear.
