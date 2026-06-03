@@ -80,6 +80,18 @@ type PromotionSetCommandValidationTests() =
             Status = ApprovalRequestStatus.Pending
         }
 
+    let assertPastExpiresAtSummaryIsStaleFor status =
+        let dto = existingPromotionSet PromotionSetStatus.Ready StepsComputationStatus.Computed
+        let policy = approvalPolicyFor dto (Guid.NewGuid()) 1
+
+        let request = { approvalRequestFor dto policy with Status = status; ExpiresAt = Some(Instant.FromUtc(2026, 1, 1, 0, 0)) }
+
+        let summary = Grace.Server.PromotionSet.approvalSummaryFromRequest dto policy (Some request)
+
+        Assert.That(summary.State, Is.EqualTo(PromotionSetApprovalState.Stale))
+        Assert.That(summary.ApprovalPolicyId, Is.EqualTo(Some policy.ApprovalPolicyId))
+        Assert.That(summary.Reason, Is.EqualTo(Some "Approval request is expired."))
+
     [<Test>]
     member _.ApplyRejectedWhenPromotionSetAlreadySucceeded() =
         let dto = existingPromotionSet PromotionSetStatus.Succeeded StepsComputationStatus.Computed
@@ -265,6 +277,25 @@ type PromotionSetCommandValidationTests() =
             Assert.That(summary.ApprovalPolicyId.IsNone, Is.True)
             Assert.That(summary.Reason, Is.EqualTo(Some "Multiple enabled approval policies match promotion apply scope; apply requires exactly one."))
         }
+
+    [<Test>]
+    member _.DerivedApprovalSummaryKeepsExplicitExpiredStatusWhenRequestExpiresAtIsPast() =
+        let dto = existingPromotionSet PromotionSetStatus.Ready StepsComputationStatus.Computed
+        let policy = approvalPolicyFor dto (Guid.NewGuid()) 1
+
+        let request = { approvalRequestFor dto policy with Status = ApprovalRequestStatus.Expired; ExpiresAt = Some(Instant.FromUtc(2026, 1, 1, 0, 0)) }
+
+        let summary = Grace.Server.PromotionSet.approvalSummaryFromRequest dto policy (Some request)
+
+        Assert.That(summary.State, Is.EqualTo(PromotionSetApprovalState.Expired))
+        Assert.That(summary.ApprovalPolicyId, Is.EqualTo(Some policy.ApprovalPolicyId))
+        Assert.That(summary.Reason, Is.EqualTo(Some "Approval request is expired."))
+
+    [<Test>]
+    member _.DerivedApprovalSummaryReportsPastExpiresAtPendingRequestAsStale() = assertPastExpiresAtSummaryIsStaleFor ApprovalRequestStatus.Pending
+
+    [<Test>]
+    member _.DerivedApprovalSummaryReportsPastExpiresAtApprovedRequestAsStale() = assertPastExpiresAtSummaryIsStaleFor ApprovalRequestStatus.Approved
 
     [<Test>]
     member _.ApprovalRequestMustMatchExactCurrentAttemptIdentity() =

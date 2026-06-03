@@ -96,7 +96,7 @@ module PromotionSet =
                 matchingApprovalPolicies ownerId organizationId repositoryId targetBranchId
                 |> Task.FromResult
 
-    let private approvalSummaryFromRequest
+    let internal approvalSummaryFromRequest
         (promotionSet: PromotionSetDto)
         (policy: PromotionSetApprovalPolicySnapshot)
         (request: ApprovalRequest option)
@@ -124,13 +124,14 @@ module PromotionSet =
 
         match request with
         | Option.None -> policySummary PromotionSetApprovalState.Pending (Option.Some "Approval is required before apply can continue.")
-        | Option.Some approvalRequest when
-            approvalRequest.ExpiresAt
-            |> Option.exists (fun expiresAt -> expiresAt <= now)
-            ->
-            policySummary PromotionSetApprovalState.Stale (Some "Approval request is expired.")
         | Option.Some approvalRequest ->
             match approvalRequest.Status with
+            | ApprovalRequestStatus.Pending
+            | ApprovalRequestStatus.Approved when
+                approvalRequest.ExpiresAt
+                |> Option.exists (fun expiresAt -> expiresAt <= now)
+                ->
+                policySummary PromotionSetApprovalState.Stale (Some "Approval request is expired.")
             | ApprovalRequestStatus.Pending -> policySummary PromotionSetApprovalState.Pending (Some "Approval is required before apply can continue.")
             | ApprovalRequestStatus.Approved -> policySummary PromotionSetApprovalState.Approved Option.None
             | ApprovalRequestStatus.Rejected -> policySummary PromotionSetApprovalState.Rejected (Some "Approval request was rejected.")
