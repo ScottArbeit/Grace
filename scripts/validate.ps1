@@ -175,40 +175,63 @@ function Join-TestFilter([string[]]$Terms) {
     $Terms -join "|"
 }
 
+function Get-FSharpProjectTypeFilterTerms([string]$ProjectPath) {
+    if (-not (Test-Path $ProjectPath)) {
+        throw "Test project '$ProjectPath' was not found."
+    }
+
+    $projectDirectory = Split-Path -Path $ProjectPath -Parent
+    [xml]$project = Get-Content -Path $ProjectPath -Raw
+    $terms = @()
+
+    foreach ($compileItem in $project.SelectNodes("//Compile")) {
+        $include = $compileItem.Include
+        if ([string]::IsNullOrWhiteSpace($include)) {
+            continue
+        }
+
+        $sourcePath = Join-Path $projectDirectory $include
+        if (-not (Test-Path $sourcePath)) {
+            throw "Compile item '$include' from '$ProjectPath' was not found."
+        }
+
+        $namespace = $null
+        foreach ($line in Get-Content -Path $sourcePath) {
+            if ($line -match '^\s*namespace\s+([A-Za-z0-9_.]+)') {
+                $namespace = $Matches[1]
+                continue
+            }
+
+            if ($line -match '^\s*type\s+(?!private\b)([A-Za-z_][A-Za-z0-9_]*)') {
+                if ([string]::IsNullOrWhiteSpace($namespace)) {
+                    continue
+                }
+
+                $terms += "FullyQualifiedName~$namespace.$($Matches[1])"
+            }
+        }
+    }
+
+    [string[]]($terms | Select-Object -Unique)
+}
+
+function Get-ServerUnitTestFilterTerms {
+    $terms = Get-FSharpProjectTypeFilterTerms "src/Grace.Server.Unit.Tests/Grace.Server.Unit.Tests.fsproj"
+    if ($terms.Length -eq 0) {
+        throw "No server unit test filter terms were discovered."
+    }
+
+    [string[]]$terms
+}
+
 function Get-FastTestFilterTerms {
     $terms = @(
         "FullyQualifiedName~Grace.Authorization.Tests",
         "FullyQualifiedName~Grace.CLI.Tests",
-        "FullyQualifiedName~Grace.Types.Tests",
-        "FullyQualifiedName~Grace.Server.Tests.ApprovalRequestActorDecisionTests",
-        "FullyQualifiedName~Grace.Server.Tests.GeneratedApprovalRequestIdTests",
-        "FullyQualifiedName~Grace.Server.Tests.ClaimMappingTests",
-        "FullyQualifiedName~Grace.Server.Tests.AuthorizationUnit",
-        "FullyQualifiedName~Grace.Server.Tests.ContentBlockMetadataActorTests",
-        "FullyQualifiedName~Grace.Server.Tests.DedupeIndexServerTests",
-        "FullyQualifiedName~Grace.Server.Tests.AutomationEventingTests",
-        "FullyQualifiedName~Grace.Server.Tests.EvidenceDeterminism",
-        "FullyQualifiedName~Grace.Server.Tests.ManifestContributionWorkflowActorTests",
-        "FullyQualifiedName~Grace.Server.Tests.NotificationServerTests",
-        "FullyQualifiedName~Grace.Server.Tests.OrleansPartitionKeyProviderTests",
-        "FullyQualifiedName~Grace.Server.Tests.OutboundUrlSafetyUnit",
-        "FullyQualifiedName~Grace.Server.Tests.PolicyDeterminism",
-        "FullyQualifiedName~Grace.Server.Tests.PolicyValidationDerivedTests",
-        "FullyQualifiedName~Grace.Server.Tests.PromotionSetCommandValidationTests",
-        "FullyQualifiedName~Grace.Server.Tests.QueuePromotionSetTests",
-        "FullyQualifiedName~Grace.Server.Tests.RepositoryContentCounterActorTests",
-        "FullyQualifiedName~Grace.Server.Tests.ReviewProjectionTests",
-        "FullyQualifiedName~Grace.Server.Tests.ReviewNotesDeterminism",
-        "FullyQualifiedName~Grace.Server.Tests.SaveBoundaryActorTests",
-        "FullyQualifiedName~Grace.Server.Tests.ServicesEffectivePromotionTests",
-        "FullyQualifiedName~Grace.Server.Tests.StorageContentBlockSdkContract",
-        "FullyQualifiedName~Grace.Server.Tests.UploadSessionActorTests",
-        "FullyQualifiedName~Grace.Server.Tests.ValidationArtifactContractTests",
-        "FullyQualifiedName~Grace.Server.Tests.Validations",
-        "FullyQualifiedName~Grace.Server.Tests.WorkItemServerUnitTests"
+        "FullyQualifiedName~Grace.Types.Tests"
     )
 
-    [string[]]$terms
+    [string[]]($terms + (Get-ServerUnitTestFilterTerms))
 }
 
 function Get-TestFilter([bool]$IncludeFullTests) {
