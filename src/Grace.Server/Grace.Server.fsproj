@@ -162,6 +162,7 @@
 	</ItemGroup>
 	<ItemGroup>
 		<InternalsVisibleTo Include="Grace.Server.Tests" />
+		<InternalsVisibleTo Include="Grace.Server.Unit.Tests" />
 	</ItemGroup>
 	<ItemGroup>
 	  <None Include="instructions.md" />
