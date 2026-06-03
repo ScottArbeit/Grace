@@ -84,6 +84,7 @@
                 <Compile Include="PromotionSet.Server.fs" />
                 <Compile Include="Webhook.Server.fs" />
                 <Compile Include="WebhookDispatch.Server.fs" />
+                <Compile Include="WorkItem.Attachments.Server.fs" />
                 <Compile Include="WorkItem.Server.fs" />
                 <Compile Include="Policy.Server.fs" />
                 <Compile Include="ReviewModels.Server.fs" />
