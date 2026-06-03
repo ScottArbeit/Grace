@@ -63,6 +63,8 @@ completed sub-issues are checked.
   `pwsh ./scripts/validate.ps1 -Fast`, do not also run separate full-solution `dotnet build` or broad `dotnet test`
   commands unless there is a specific diagnostic reason; prefer only the narrow focused tests that prove the changed
   behavior, then `validate -Fast`.
+- When a focused test command uses `--no-build`, run the matching Release build for that project after formatting and
+  before the `--no-build` test command.
 - Commit after each completed slice and keep pull requests focused and reviewable.
 - When acting as the main implementation orchestrator, delegate all coding and fixing tasks to worker subagents and use
   fresh review-only subagents for code review. The main orchestrator must not implement, repair, inspect or validate
