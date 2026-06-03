@@ -25,13 +25,12 @@ jobs:
       - name: Format
         run: echo "Skipped (temporarily disabled pending full repo formatting)."
       - name: Restore
-        run: dotnet restore "src/Grace.slnx" --tl:on
+        run: dotnet restore "src/Grace.slnx"
       - name: Build
         run: |
           dotnet build "src/Grace.slnx" \
             --configuration Release \
             --no-restore \
-            --tl:on \
             -p:GraceBuildKind="${GraceBuildKind}" \
             -p:GraceBuildNumber="${GraceBuildNumber}" \
             -p:GraceSourceRevisionId="${GraceSourceRevisionId}"
@@ -72,4 +71,4 @@ jobs:
 
           exit "${failed}"
       - name: Test
-        run: dotnet test "src/Grace.slnx" --configuration Release --no-build --no-restore --tl:on
+        run: dotnet test "src/Grace.slnx" --configuration Release --no-build --no-restore
