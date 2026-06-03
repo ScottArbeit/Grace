@@ -1,0 +1,247 @@
+'/approval/policy/create':
+  post:
+    tags:
+      - Approvals
+    summary: Create an approval policy.
+    operationId: CreateApprovalPolicy
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: './Approval.Components.OpenAPI.yaml#/CreateApprovalPolicyParameters'
+    responses:
+      '200':
+        $ref: './Approval.Components.OpenAPI.yaml#/ApprovalPolicyResponse'
+      '400':
+        $ref: './Responses.OpenAPI.yaml#/400'
+      '500':
+        $ref: './Responses.OpenAPI.yaml#/500'
+'/approval/policy/list':
+  post:
+    tags:
+      - Approvals
+    summary: List approval policies.
+    operationId: ListApprovalPolicies
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: './Approval.Components.OpenAPI.yaml#/ListApprovalPoliciesParameters'
+    responses:
+      '200':
+        $ref: './Approval.Components.OpenAPI.yaml#/ApprovalPolicyListResponse'
+      '400':
+        $ref: './Responses.OpenAPI.yaml#/400'
+      '500':
+        $ref: './Responses.OpenAPI.yaml#/500'
+'/approval/policy/show':
+  post:
+    tags:
+      - Approvals
+    summary: Show an approval policy.
+    operationId: ShowApprovalPolicy
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: './Approval.Components.OpenAPI.yaml#/ShowApprovalPolicyParameters'
+    responses:
+      '200':
+        $ref: './Approval.Components.OpenAPI.yaml#/ApprovalPolicyResponse'
+      '400':
+        $ref: './Responses.OpenAPI.yaml#/400'
+      '500':
+        $ref: './Responses.OpenAPI.yaml#/500'
+'/approval/policy/update':
+  post:
+    tags:
+      - Approvals
+    summary: Update an approval policy.
+    operationId: UpdateApprovalPolicy
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: './Approval.Components.OpenAPI.yaml#/UpdateApprovalPolicyParameters'
+    responses:
+      '200':
+        $ref: './Approval.Components.OpenAPI.yaml#/ApprovalPolicyResponse'
+      '400':
+        $ref: './Responses.OpenAPI.yaml#/400'
+      '500':
+        $ref: './Responses.OpenAPI.yaml#/500'
+'/approval/policy/enable':
+  post:
+    tags:
+      - Approvals
+    summary: Enable an approval policy.
+    operationId: EnableApprovalPolicy
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: './Approval.Components.OpenAPI.yaml#/EnableApprovalPolicyParameters'
+    responses:
+      '200':
+        $ref: './Approval.Components.OpenAPI.yaml#/ApprovalPolicyResponse'
+      '400':
+        $ref: './Responses.OpenAPI.yaml#/400'
+      '500':
+        $ref: './Responses.OpenAPI.yaml#/500'
+'/approval/policy/disable':
+  post:
+    tags:
+      - Approvals
+    summary: Disable an approval policy.
+    operationId: DisableApprovalPolicy
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: './Approval.Components.OpenAPI.yaml#/DisableApprovalPolicyParameters'
+    responses:
+      '200':
+        $ref: './Approval.Components.OpenAPI.yaml#/ApprovalPolicyResponse'
+      '400':
+        $ref: './Responses.OpenAPI.yaml#/400'
+      '500':
+        $ref: './Responses.OpenAPI.yaml#/500'
+'/approval/policy/delete':
+  post:
+    tags:
+      - Approvals
+    summary: Delete an approval policy.
+    operationId: DeleteApprovalPolicy
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: './Approval.Components.OpenAPI.yaml#/DeleteApprovalPolicyParameters'
+    responses:
+      '200':
+        $ref: './Approval.Components.OpenAPI.yaml#/ApprovalPolicyResponse'
+      '400':
+        $ref: './Responses.OpenAPI.yaml#/400'
+      '500':
+        $ref: './Responses.OpenAPI.yaml#/500'
+'/approval/policy/evaluate':
+  post:
+    tags:
+      - Approvals
+    summary: Evaluate approval policies for a subject.
+    operationId: EvaluateApprovalPolicy
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: './Approval.Components.OpenAPI.yaml#/EvaluateApprovalPolicyParameters'
+    responses:
+      '200':
+        $ref: './Approval.Components.OpenAPI.yaml#/ApprovalPolicyListResponse'
+      '400':
+        $ref: './Responses.OpenAPI.yaml#/400'
+      '500':
+        $ref: './Responses.OpenAPI.yaml#/500'
+'/approval/request/list':
+  post:
+    tags:
+      - Approvals
+    summary: List workflow-generated approval requests.
+    operationId: ListApprovalRequests
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: './Approval.Components.OpenAPI.yaml#/ListApprovalRequestsParameters'
+    responses:
+      '200':
+        $ref: './Approval.Components.OpenAPI.yaml#/ApprovalRequestListResponse'
+      '400':
+        $ref: './Responses.OpenAPI.yaml#/400'
+      '500':
+        $ref: './Responses.OpenAPI.yaml#/500'
+'/approval/request/show':
+  post:
+    tags:
+      - Approvals
+    summary: Show a workflow-generated approval request.
+    operationId: ShowApprovalRequest
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: './Approval.Components.OpenAPI.yaml#/ShowApprovalRequestParameters'
+    responses:
+      '200':
+        $ref: './Approval.Components.OpenAPI.yaml#/ApprovalRequestResponse'
+      '400':
+        $ref: './Responses.OpenAPI.yaml#/400'
+      '500':
+        $ref: './Responses.OpenAPI.yaml#/500'
+'/approval/request/approve':
+  post:
+    tags:
+      - Approvals
+    summary: Approve a workflow-generated approval request.
+    operationId: ApproveApprovalRequest
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: './Approval.Components.OpenAPI.yaml#/ApproveApprovalRequestParameters'
+    responses:
+      '200':
+        $ref: './Approval.Components.OpenAPI.yaml#/ApprovalRequestResponse'
+      '400':
+        $ref: './Responses.OpenAPI.yaml#/400'
+      '500':
+        $ref: './Responses.OpenAPI.yaml#/500'
+'/approval/request/reject':
+  post:
+    tags:
+      - Approvals
+    summary: Reject a workflow-generated approval request.
+    operationId: RejectApprovalRequest
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: './Approval.Components.OpenAPI.yaml#/RejectApprovalRequestParameters'
+    responses:
+      '200':
+        $ref: './Approval.Components.OpenAPI.yaml#/ApprovalRequestResponse'
+      '400':
+        $ref: './Responses.OpenAPI.yaml#/400'
+      '500':
+        $ref: './Responses.OpenAPI.yaml#/500'
+'/approval/request/history':
+  post:
+    tags:
+      - Approvals
+    summary: Show approval request history.
+    operationId: ApprovalRequestHistory
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: './Approval.Components.OpenAPI.yaml#/ApprovalRequestHistoryParameters'
+    responses:
+      '200':
+        $ref: './Approval.Components.OpenAPI.yaml#/ApprovalRequestListResponse'
+      '400':
+        $ref: './Responses.OpenAPI.yaml#/400'
+      '500':
+        $ref: './Responses.OpenAPI.yaml#/500'

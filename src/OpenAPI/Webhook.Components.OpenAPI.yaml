@@ -1,0 +1,288 @@
+WebhookRuleParameters:
+  allOf:
+    - $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/CommonParameters'
+    - type: object
+      properties:
+        OwnerId:
+          type: string
+          format: uuid
+        OwnerName:
+          type: string
+        OrganizationId:
+          type: string
+          format: uuid
+        OrganizationName:
+          type: string
+        RepositoryId:
+          type: string
+          format: uuid
+        RepositoryName:
+          type: string
+        TargetBranchId:
+          type: string
+          format: uuid
+        WebhookRuleId:
+          type: string
+          format: uuid
+CreateWebhookRuleParameters:
+  allOf:
+    - $ref: '#/WebhookRuleParameters'
+    - type: object
+      properties:
+        Name:
+          type: string
+        EventName:
+          type: string
+          example: promotion-set.applied
+        EventVersion:
+          type: integer
+          default: 1
+        Url:
+          type: string
+          format: uri
+        UrlSafety:
+          $ref: '#/OutboundUrlSafety'
+        AcknowledgeUnsafeLocalDevelopment:
+          type: boolean
+          default: false
+        SigningSecretVersion:
+          type: string
+        MaxAttempts:
+          type: integer
+          default: 8
+        InitialDelaySeconds:
+          type: integer
+          default: 30
+        MaxDelaySeconds:
+          type: integer
+          default: 3600
+UpdateWebhookRuleParameters:
+  $ref: '#/CreateWebhookRuleParameters'
+ListWebhookRulesParameters:
+  allOf:
+    - $ref: '#/WebhookRuleParameters'
+    - type: object
+      properties:
+        IncludeDeleted:
+          type: boolean
+          default: false
+ShowWebhookRuleParameters:
+  $ref: '#/WebhookRuleParameters'
+EnableWebhookRuleParameters:
+  $ref: '#/WebhookRuleParameters'
+DisableWebhookRuleParameters:
+  $ref: '#/WebhookRuleParameters'
+DeleteWebhookRuleParameters:
+  $ref: '#/WebhookRuleParameters'
+TestWebhookRuleParameters:
+  allOf:
+    - $ref: '#/WebhookRuleParameters'
+    - type: object
+      properties:
+        DedupeKey:
+          type: string
+WebhookDeliveryParameters:
+  allOf:
+    - $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/CommonParameters'
+    - type: object
+      properties:
+        OwnerId:
+          type: string
+          format: uuid
+        OwnerName:
+          type: string
+        OrganizationId:
+          type: string
+          format: uuid
+        OrganizationName:
+          type: string
+        RepositoryId:
+          type: string
+          format: uuid
+        RepositoryName:
+          type: string
+        TargetBranchId:
+          type: string
+          format: uuid
+        WebhookRuleId:
+          type: string
+          format: uuid
+        WebhookDeliveryId:
+          type: string
+          format: uuid
+ListWebhookDeliveriesParameters:
+  allOf:
+    - $ref: '#/WebhookDeliveryParameters'
+    - type: object
+      properties:
+        IncludeTerminal:
+          type: boolean
+          default: true
+ShowWebhookDeliveryParameters:
+  $ref: '#/WebhookDeliveryParameters'
+OutboundUrlSafety:
+  type: string
+  enum:
+    - PublicHttps
+    - LocalUnsafeDevOnly
+ScopedOutboundUrl:
+  type: object
+  properties:
+    Url:
+      type: string
+      format: uri
+    Safety:
+      $ref: '#/OutboundUrlSafety'
+WebhookScope:
+  type: object
+  properties:
+    OwnerId:
+      type: string
+      format: uuid
+    OrganizationId:
+      type: string
+      format: uuid
+    RepositoryId:
+      type: string
+      format: uuid
+    TargetBranchId:
+      type: string
+      format: uuid
+      nullable: true
+WebhookRetryPolicy:
+  type: object
+  properties:
+    MaxAttempts:
+      type: integer
+    InitialDelaySeconds:
+      type: integer
+    MaxDelaySeconds:
+      type: integer
+WebhookRuleStatus:
+  type: string
+  enum:
+    - Enabled
+    - Disabled
+    - Deleted
+WebhookDeliveryStatus:
+  type: string
+  enum:
+    - Pending
+    - Succeeded
+    - RetryScheduled
+    - Failed
+    - DeadLettered
+WebhookRule:
+  type: object
+  properties:
+    Class:
+      type: string
+    WebhookRuleId:
+      type: string
+      format: uuid
+    Name:
+      type: string
+    EventName:
+      type: string
+    EventVersion:
+      type: integer
+    Scope:
+      $ref: '#/WebhookScope'
+    Url:
+      $ref: '#/ScopedOutboundUrl'
+    SigningSecretVersion:
+      type: string
+    RetryPolicy:
+      $ref: '#/WebhookRetryPolicy'
+    Status:
+      $ref: '#/WebhookRuleStatus'
+    CreatedBy:
+      type: string
+    CreatedAt:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant'
+    UpdatedAt:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant'
+      nullable: true
+WebhookDelivery:
+  type: object
+  properties:
+    Class:
+      type: string
+    WebhookDeliveryId:
+      type: string
+      format: uuid
+    WebhookRuleId:
+      type: string
+      format: uuid
+    EventName:
+      type: string
+    EventVersion:
+      type: integer
+    DedupeKey:
+      type: string
+    Status:
+      $ref: '#/WebhookDeliveryStatus'
+    AttemptCount:
+      type: integer
+    LastAttemptAt:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant'
+      nullable: true
+    NextAttemptAt:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant'
+      nullable: true
+    LastStatusCode:
+      type: integer
+      nullable: true
+    LastError:
+      type: string
+      nullable: true
+    CreatedAt:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant'
+WebhookRuleResponse:
+  description: OK
+  content:
+    application/json:
+      schema:
+        allOf:
+          - $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/GraceReturnValue'
+          - type: object
+            properties:
+              ReturnValue:
+                $ref: '#/WebhookRule'
+WebhookRuleListResponse:
+  description: OK
+  content:
+    application/json:
+      schema:
+        allOf:
+          - $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/GraceReturnValue'
+          - type: object
+            properties:
+              ReturnValue:
+                type: array
+                items:
+                  $ref: '#/WebhookRule'
+WebhookDeliveryResponse:
+  description: OK
+  content:
+    application/json:
+      schema:
+        allOf:
+          - $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/GraceReturnValue'
+          - type: object
+            properties:
+              ReturnValue:
+                $ref: '#/WebhookDelivery'
+WebhookDeliveryListResponse:
+  description: OK
+  content:
+    application/json:
+      schema:
+        allOf:
+          - $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/GraceReturnValue'
+          - type: object
+            properties:
+              ReturnValue:
+                type: array
+                items:
+                  $ref: '#/WebhookDelivery'

@@ -49,6 +49,52 @@ paths:
           description: OK
         '400':
           description: Bad Request
+  /approval/policy/create:
+    $ref: './Approval.Paths.OpenAPI.yaml#/~1approval~1policy~1create'
+  /approval/policy/list:
+    $ref: './Approval.Paths.OpenAPI.yaml#/~1approval~1policy~1list'
+  /approval/policy/show:
+    $ref: './Approval.Paths.OpenAPI.yaml#/~1approval~1policy~1show'
+  /approval/policy/update:
+    $ref: './Approval.Paths.OpenAPI.yaml#/~1approval~1policy~1update'
+  /approval/policy/enable:
+    $ref: './Approval.Paths.OpenAPI.yaml#/~1approval~1policy~1enable'
+  /approval/policy/disable:
+    $ref: './Approval.Paths.OpenAPI.yaml#/~1approval~1policy~1disable'
+  /approval/policy/delete:
+    $ref: './Approval.Paths.OpenAPI.yaml#/~1approval~1policy~1delete'
+  /approval/policy/evaluate:
+    $ref: './Approval.Paths.OpenAPI.yaml#/~1approval~1policy~1evaluate'
+  /approval/request/list:
+    $ref: './Approval.Paths.OpenAPI.yaml#/~1approval~1request~1list'
+  /approval/request/show:
+    $ref: './Approval.Paths.OpenAPI.yaml#/~1approval~1request~1show'
+  /approval/request/approve:
+    $ref: './Approval.Paths.OpenAPI.yaml#/~1approval~1request~1approve'
+  /approval/request/reject:
+    $ref: './Approval.Paths.OpenAPI.yaml#/~1approval~1request~1reject'
+  /approval/request/history:
+    $ref: './Approval.Paths.OpenAPI.yaml#/~1approval~1request~1history'
+  /webhook/rule/create:
+    $ref: './Webhook.Paths.OpenAPI.yaml#/~1webhook~1rule~1create'
+  /webhook/rule/list:
+    $ref: './Webhook.Paths.OpenAPI.yaml#/~1webhook~1rule~1list'
+  /webhook/rule/show:
+    $ref: './Webhook.Paths.OpenAPI.yaml#/~1webhook~1rule~1show'
+  /webhook/rule/update:
+    $ref: './Webhook.Paths.OpenAPI.yaml#/~1webhook~1rule~1update'
+  /webhook/rule/enable:
+    $ref: './Webhook.Paths.OpenAPI.yaml#/~1webhook~1rule~1enable'
+  /webhook/rule/disable:
+    $ref: './Webhook.Paths.OpenAPI.yaml#/~1webhook~1rule~1disable'
+  /webhook/rule/delete:
+    $ref: './Webhook.Paths.OpenAPI.yaml#/~1webhook~1rule~1delete'
+  /webhook/rule/test:
+    $ref: './Webhook.Paths.OpenAPI.yaml#/~1webhook~1rule~1test'
+  /webhook/delivery/list:
+    $ref: './Webhook.Paths.OpenAPI.yaml#/~1webhook~1delivery~1list'
+  /webhook/delivery/show:
+    $ref: './Webhook.Paths.OpenAPI.yaml#/~1webhook~1delivery~1show'
   /branch/create:
     $ref: './Branch.Paths.OpenAPI.yaml#/~1branch~1create'
   /branch/rebase:
@@ -213,6 +259,72 @@ paths:
 
 components:
   schemas:
+    ApprovalPolicyParameters:
+      $ref: 'Approval.Components.OpenAPI.yaml#/ApprovalPolicyParameters'
+    CreateApprovalPolicyParameters:
+      $ref: 'Approval.Components.OpenAPI.yaml#/CreateApprovalPolicyParameters'
+    UpdateApprovalPolicyParameters:
+      $ref: 'Approval.Components.OpenAPI.yaml#/UpdateApprovalPolicyParameters'
+    ListApprovalPoliciesParameters:
+      $ref: 'Approval.Components.OpenAPI.yaml#/ListApprovalPoliciesParameters'
+    ShowApprovalPolicyParameters:
+      $ref: 'Approval.Components.OpenAPI.yaml#/ShowApprovalPolicyParameters'
+    EnableApprovalPolicyParameters:
+      $ref: 'Approval.Components.OpenAPI.yaml#/EnableApprovalPolicyParameters'
+    DisableApprovalPolicyParameters:
+      $ref: 'Approval.Components.OpenAPI.yaml#/DisableApprovalPolicyParameters'
+    DeleteApprovalPolicyParameters:
+      $ref: 'Approval.Components.OpenAPI.yaml#/DeleteApprovalPolicyParameters'
+    EvaluateApprovalPolicyParameters:
+      $ref: 'Approval.Components.OpenAPI.yaml#/EvaluateApprovalPolicyParameters'
+    ApprovalRequestParameters:
+      $ref: 'Approval.Components.OpenAPI.yaml#/ApprovalRequestParameters'
+    ListApprovalRequestsParameters:
+      $ref: 'Approval.Components.OpenAPI.yaml#/ListApprovalRequestsParameters'
+    ShowApprovalRequestParameters:
+      $ref: 'Approval.Components.OpenAPI.yaml#/ShowApprovalRequestParameters'
+    ApproveApprovalRequestParameters:
+      $ref: 'Approval.Components.OpenAPI.yaml#/ApproveApprovalRequestParameters'
+    RejectApprovalRequestParameters:
+      $ref: 'Approval.Components.OpenAPI.yaml#/RejectApprovalRequestParameters'
+    ApprovalRequestHistoryParameters:
+      $ref: 'Approval.Components.OpenAPI.yaml#/ApprovalRequestHistoryParameters'
+    ApprovalPolicy:
+      $ref: 'Approval.Components.OpenAPI.yaml#/ApprovalPolicy'
+    ApprovalRequest:
+      $ref: 'Approval.Components.OpenAPI.yaml#/ApprovalRequest'
+    PromotionSetApprovalSummary:
+      $ref: 'Approval.Components.OpenAPI.yaml#/PromotionSetApprovalSummary'
+
+    WebhookRuleParameters:
+      $ref: 'Webhook.Components.OpenAPI.yaml#/WebhookRuleParameters'
+    CreateWebhookRuleParameters:
+      $ref: 'Webhook.Components.OpenAPI.yaml#/CreateWebhookRuleParameters'
+    UpdateWebhookRuleParameters:
+      $ref: 'Webhook.Components.OpenAPI.yaml#/UpdateWebhookRuleParameters'
+    ListWebhookRulesParameters:
+      $ref: 'Webhook.Components.OpenAPI.yaml#/ListWebhookRulesParameters'
+    ShowWebhookRuleParameters:
+      $ref: 'Webhook.Components.OpenAPI.yaml#/ShowWebhookRuleParameters'
+    EnableWebhookRuleParameters:
+      $ref: 'Webhook.Components.OpenAPI.yaml#/EnableWebhookRuleParameters'
+    DisableWebhookRuleParameters:
+      $ref: 'Webhook.Components.OpenAPI.yaml#/DisableWebhookRuleParameters'
+    DeleteWebhookRuleParameters:
+      $ref: 'Webhook.Components.OpenAPI.yaml#/DeleteWebhookRuleParameters'
+    TestWebhookRuleParameters:
+      $ref: 'Webhook.Components.OpenAPI.yaml#/TestWebhookRuleParameters'
+    WebhookDeliveryParameters:
+      $ref: 'Webhook.Components.OpenAPI.yaml#/WebhookDeliveryParameters'
+    ListWebhookDeliveriesParameters:
+      $ref: 'Webhook.Components.OpenAPI.yaml#/ListWebhookDeliveriesParameters'
+    ShowWebhookDeliveryParameters:
+      $ref: 'Webhook.Components.OpenAPI.yaml#/ShowWebhookDeliveryParameters'
+    WebhookRule:
+      $ref: 'Webhook.Components.OpenAPI.yaml#/WebhookRule'
+    WebhookDelivery:
+      $ref: 'Webhook.Components.OpenAPI.yaml#/WebhookDelivery'
+
     BranchParameters:
       $ref: 'Branch.Components.OpenAPI.yaml#/BranchParameters'
     BranchQueryParameters:

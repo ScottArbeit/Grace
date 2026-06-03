@@ -63,6 +63,18 @@ Current high-signal command groups:
 - `grace candidate` for candidate-first reviewer projections.
 - `grace queue` for status, enqueue, pause, resume, and dequeue.
 - `grace promotion-set` for promotion set lifecycle.
+- `grace webhook` for webhook rule management and webhook delivery inspection.
+- `grace approval policy` for approval policy management.
+- `grace approval request` for workflow-generated approval request inspection and approve/reject/wait/history.
+
+Do not add public `hook`, `subscription`, `notification rule`, or `approval request create` commands unless a current
+product decision explicitly reopens those boundaries.
+
+## Static OpenAPI
+
+Static OpenAPI source lives under `src/OpenAPI`. Keep it aligned when adding or changing public HTTP routes, including
+the webhook and approval route families. Internal workflow/test seams such as `/approval/request/_seedGenerated` should
+stay out of public OpenAPI unless they become supported public API.
 
 ## Work Item, Review, Queue, And Promotion Flow
 

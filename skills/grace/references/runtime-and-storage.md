@@ -29,6 +29,9 @@ Guardrails:
 - Keep retry state bounded and observable.
 - Do not let current webhook rule edits mutate already-scheduled delivery semantics.
 - Validate URL restrictions, event registry membership, and terminal status transitions.
+- Webhook delivery is post-event and must not block or authorize the source workflow.
+- Approval notification delivery is a separate contract from webhook delivery. Do not expose it through webhook delivery
+  routes or CLI commands.
 
 ## Manifest-Backed Uploads
 
