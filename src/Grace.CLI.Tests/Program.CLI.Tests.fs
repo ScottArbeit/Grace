@@ -6,6 +6,7 @@ open NUnit.Framework
 open System
 
 [<TestFixture>]
+[<NonParallelizable>]
 module CommandParsingTests =
     let private withEnvironmentVariable (name: string) (value: string option) (action: unit -> unit) =
         let original = Environment.GetEnvironmentVariable(name)
@@ -15,43 +16,6 @@ module CommandParsingTests =
             action ()
         finally
             Environment.SetEnvironmentVariable(name, original)
-
-    [<Test>]
-    let ``top level command returns none for empty args`` () =
-        GraceCommand.tryGetTopLevelCommandFromArgs Array.empty true
-        |> should equal None
-
-    [<Test>]
-    let ``top level command detects command token`` () =
-        GraceCommand.tryGetTopLevelCommandFromArgs [| "connect"; "owner/org/repo" |] true
-        |> should equal (Some "connect")
-
-    [<Test>]
-    let ``top level command skips output option`` () =
-        GraceCommand.tryGetTopLevelCommandFromArgs [| "--output"; "Verbose"; "connect" |] true
-        |> should equal (Some "connect")
-
-    [<Test>]
-    let ``top level command skips correlation id option`` () =
-        GraceCommand.tryGetTopLevelCommandFromArgs [| "-c"; "abc123"; "connect" |] true
-        |> should equal (Some "connect")
-
-    [<Test>]
-    let ``top level command skips source option`` () =
-        GraceCommand.tryGetTopLevelCommandFromArgs [| "--source"; "codex"; "connect" |] true
-        |> should equal (Some "connect")
-
-    [<Test>]
-    let ``top level command honors end of options marker`` () =
-        GraceCommand.tryGetTopLevelCommandFromArgs
-            [|
-                "--output"
-                "Verbose"
-                "--"
-                "connect"
-            |]
-            true
-        |> should equal (Some "connect")
 
     [<Test>]
     let ``resolveInvocationSource prefers explicit source over environment`` () =

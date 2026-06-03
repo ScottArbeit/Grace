@@ -111,62 +111,6 @@ module AgentCommandTests =
         exitCode |> should equal -1
 
     [<Test>]
-    let ``agent add-summary accepts numeric work item identifier`` () =
-        let missingSummary = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid()}.md")
-
-        let parseResult =
-            GraceCommand.rootCommand.Parse(
-                withIds [| "agent"
-                           "add-summary"
-                           "--work-item-id"
-                           "123"
-                           "--summary-file"
-                           missingSummary |]
-            )
-
-        parseResult.Errors.Count |> should equal 0
-
-    [<Test>]
-    let ``agent add-summary accepts guid work item identifier`` () =
-        let missingSummary = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid()}.md")
-
-        let parseResult =
-            GraceCommand.rootCommand.Parse(
-                withIds [| "agent"
-                           "add-summary"
-                           "--work-item-id"
-                           (Guid.NewGuid().ToString())
-                           "--summary-file"
-                           missingSummary |]
-            )
-
-        parseResult.Errors.Count |> should equal 0
-
-    [<Test>]
-    let ``agent add-summary accepts prompt and promotion-set options with numeric identifier`` () =
-        let missingSummary = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid()}.md")
-        let missingPrompt = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid()}.md")
-        let promotionSetId = Guid.NewGuid().ToString()
-
-        let parseResult =
-            GraceCommand.rootCommand.Parse(
-                withIds [| "agent"
-                           "add-summary"
-                           "--work-item-id"
-                           "42"
-                           "--summary-file"
-                           missingSummary
-                           "--prompt-file"
-                           missingPrompt
-                           "--prompt-origin"
-                           "agent://codex"
-                           "--promotion-set-id"
-                           promotionSetId |]
-            )
-
-        parseResult.Errors.Count |> should equal 0
-
-    [<Test>]
     let ``agent add-summary rejects prompt-origin without prompt file`` () =
         let summaryPath = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid()}.md")
 

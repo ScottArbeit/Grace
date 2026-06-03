@@ -14,18 +14,24 @@
 	</PropertyGroup>
 
   <ItemGroup>
+    <Compile Include="Agent.CLI.Parsing.Tests.fs" />
     <Compile Include="Agent.CLI.Tests.fs" />
     <Compile Include="Auth.Tests.fs" />
     <Compile Include="AuthTokenBundle.Tests.fs" />
+    <Compile Include="Connect.CLI.Parsing.Tests.fs" />
     <Compile Include="Connect.CLI.Tests.fs" />
     <Compile Include="BuildInfo.Tests.fs" />
+    <Compile Include="Program.CLI.Parsing.Tests.fs" />
     <Compile Include="Program.CLI.Tests.fs" />
     <Compile Include="HistoryStorage.CLI.Tests.fs" />
     <Compile Include="LocalStateDb.Tests.fs" />
     <Compile Include="History.CLI.Tests.fs" />
+    <Compile Include="WorkItem.CLI.Parsing.Tests.fs" />
     <Compile Include="WorkItem.CLI.Tests.fs" />
     <Compile Include="Review.CLI.Tests.fs" />
+    <Compile Include="Queue.CLI.Parsing.Tests.fs" />
     <Compile Include="Queue.CLI.Tests.fs" />
+    <Compile Include="WebhookApproval.CLI.Parsing.Tests.fs" />
     <Compile Include="WebhookApproval.CLI.Tests.fs" />
     <Compile Include="PromotionSet.CLI.Tests.fs" />
     <Compile Include="Watch.Tests.fs" />
