@@ -7,24 +7,20 @@ Use this prompt to produce a complete GitHub issue body for the Grace repository
 You are preparing a high-rigor issue write-up that will be reviewed by humans and re-researched by other LLMs.
 Write clearly, concretely, and thoroughly.
 
-## Compliance Gate
+## Runtime Transparency Check
 
 Before writing, confirm and report:
 
 1. Harness used.
 2. Exact model used.
 3. Reasoning or effort level used.
-4. Whether this run used the latest generally available model from that provider.
-5. Whether reasoning is at least equivalent to OpenAI `high`.
-
-If items 4 or 5 are not true, stop and output only:
-`NON-COMPLIANT: latest-model and high-reasoning requirements not met.`
+4. Metadata source and evidence.
+5. Any unavailable metadata fields and what was checked.
 
 ## Runtime Metadata Script (Required)
 
 Before drafting the issue body, run the metadata collection script and use its output as the source of truth for:
-`harness`, `provider`, `model`, `reasoning_level`, `reasoning_level_equivalent`, `high_reasoning_asserted`,
-`latest_model_asserted`, `metadata_source`, and `metadata_evidence`.
+`harness`, `provider`, `model`, `reasoning_level`, `metadata_source`, and `metadata_evidence`.
 
 PowerShell:
 
@@ -43,25 +39,38 @@ For auditability, prefer a second run with `-Verbose` and capture important disc
 ## Copy/Paste Snippet
 
 Use one of these commands to print a ready-to-paste YAML block for the top of the issue body.
-After pasting, add `prompt_count: <integer>` on its own line inside the same YAML block.
+After pasting, replace `prompt_count: <integer>` with the actual prompt count.
 
 PowerShell:
 
-```powershell
-$meta = pwsh ./scripts/collect-runtime-metadata.ps1 -WorkspacePath . -OutputFormat Yaml
-$metaText = $meta -join [Environment]::NewLine
-(
-  '```yaml' + [Environment]::NewLine + $metaText + [Environment]::NewLine +
-  'prompt_count: <integer>' + [Environment]::NewLine + '```'
-)
+````powershell
+$meta = pwsh ./scripts/collect-runtime-metadata.ps1 -WorkspacePath . -OutputFormat Json | ConvertFrom-Json
+@"
+```yaml
+harness: $($meta.harness)
+provider: $($meta.provider)
+model: $($meta.model)
+reasoning_level: $($meta.reasoning_level)
+prompt_count: <integer>
+metadata_source: $($meta.metadata_source)
+metadata_evidence:
+  harness: $($meta.metadata_evidence.harness)
+  provider: $($meta.metadata_evidence.provider)
+  model: $($meta.metadata_evidence.model)
+  reasoning_level: $($meta.metadata_evidence.reasoning_level)
+generated_at_utc: $($meta.generated_at_utc)
 ```
+"@
+````
 
 bash / zsh:
 
 ```bash
-meta="$(pwsh ./scripts/collect-runtime-metadata.ps1 -WorkspacePath . -OutputFormat Yaml)"
-printf '```yaml\n%s\nprompt_count: <integer>\n```\n' "$meta"
+pwsh ./scripts/collect-runtime-metadata.ps1 -WorkspacePath . -OutputFormat Json
 ```
+
+For bash / zsh, convert the JSON output into the required YAML fields with your preferred local JSON tooling, or copy
+the values manually into the metadata block.
 
 ## Runtime Metadata Discovery (Required)
 
@@ -88,40 +97,11 @@ Always include a short evidence line for each discovered field. Evidence must be
 
 Do not claim a value without evidence.
 
-## Reasoning-Level Normalization (Required)
+## Reasoning And Model Metadata Handling
 
-Set `reasoning_level` to the provider-native setting (verbatim when available). Then compute
-`reasoning_level_equivalent` as one of: `low`, `medium`, `high`, `xhigh`.
-
-Normalization rules (use the first rule that applies):
-
-1. If provider explicitly reports one of `low|medium|high|xhigh`, use it directly.
-2. If provider reports text containing:
-    - `minimal`, `light`, `fast` => `low`
-    - `balanced`, `standard`, `normal`, `default` => `medium`
-    - `deep`, `intensive`, `high` => `high`
-    - `max`, `very-high`, `ultra`, `extended` => `xhigh`
-3. If reasoning/thinking is boolean only:
-    - disabled/off => `low`
-    - enabled/on with no strength/budget detail => `medium` (conservative default)
-4. If a numeric reasoning budget is available (tokens/steps):
-    - `<= 2000` => `low`
-    - `2001-8000` => `medium`
-    - `8001-24000` => `high`
-    - `> 24000` => `xhigh`
-5. If none apply => `unknown` and mark compliance as false.
-
-## Latest-Model Assertion Rule (Required)
-
-Set `latest_model_asserted: true` only when you have explicit evidence from this same run that the selected model is the
-latest generally available model for that provider.
-
-Acceptable evidence:
-
-- harness-provided statement that the active model is latest/current, or
-- a provider source checked in-run with date and link
-
-If that evidence is missing, set `latest_model_asserted: false`. Do not guess.
+Set `reasoning_level` to the provider-native setting verbatim when available. Do not normalize it into a required
+cross-provider tier, and do not infer whether the selected model is the newest or strongest option. If the value is not
+exposed by the harness, set it to `unknown` and describe the evidence checked.
 
 ## Input You Should Receive
 
@@ -168,9 +148,6 @@ harness: <tool/harness name>
 provider: <model provider>
 model: <exact model identifier>
 reasoning_level: <provider-specific setting>
-reasoning_level_equivalent: <OpenAI low|medium|high|xhigh equivalent>
-latest_model_asserted: true|false
-high_reasoning_asserted: true|false
 prompt_count: <integer>
 metadata_source: <status|runtime-settings|config-file|env|mixed|unknown>
 metadata_evidence:
@@ -187,9 +164,6 @@ generated_at_utc: <ISO-8601 UTC timestamp>
 - Provider:
 - Model:
 - Reasoning Level:
-- Reasoning Level Equivalent:
-- Latest-Model Compliance:
-- High-Reasoning Compliance:
 - Metadata Source:
 - Metadata Evidence:
 - Timestamp (UTC):

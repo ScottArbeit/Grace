@@ -41,9 +41,9 @@ For non-trivial tracked work:
 
 When acting as the main implementation orchestrator, follow the repo policy:
 
-- Delegate coding and fixing tasks to GPT-5.5 Medium worker subagents when the available tools and user authorization
-  allow delegation.
-- Use GPT-5.4-mini xhigh fresh local review-only sibling subagents for code review when available.
+- Delegate coding and fixing tasks to worker subagents when the available tools and user authorization allow
+  delegation.
+- Use fresh local review-only sibling subagents for code review when available.
 - Do not replace the worker by locally implementing or validating code fixes from the orchestrator role.
 - Persist each review report, including "Reviewed And OK" notes, to the issue or PR before starting another review.
 - Include prior OK notes in follow-up review prompts so reviewers do not repeat work without cause.
