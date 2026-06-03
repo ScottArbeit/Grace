@@ -167,72 +167,92 @@ function Invoke-External([string]$Label, [scriptblock]$Command) {
     }
 }
 
-function Invoke-TestProjectsParallel([object[]]$Projects, [string]$Configuration) {
-    if ($null -eq $Projects -or $Projects.Count -eq 0) {
-        return
+function Join-TestFilter([string[]]$Terms) {
+    if ($null -eq $Terms -or $Terms.Length -eq 0) {
+        throw "At least one test filter term is required."
     }
 
-    $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("grace-validation-tests-{0}" -f [guid]::NewGuid().ToString("N"))
-    $null = New-Item -ItemType Directory -Path $tempRoot -Force
-    $processes = @()
+    $Terms -join "|"
+}
 
-    try {
-        foreach ($project in $Projects) {
-            $stdoutPath = Join-Path $tempRoot ("{0}.stdout.log" -f $project.Label)
-            $stderrPath = Join-Path $tempRoot ("{0}.stderr.log" -f $project.Label)
+function Get-FSharpProjectTypeFilterTerms([string]$ProjectPath) {
+    if (-not (Test-Path $ProjectPath)) {
+        throw "Test project '$ProjectPath' was not found."
+    }
 
-            Write-Host ("Starting {0}..." -f $project.Label)
-            $processArguments = @{
-                FilePath = "dotnet"
-                ArgumentList = @("test", $project.Path, "-c", $Configuration, "--no-build")
-                NoNewWindow = $true
-                PassThru = $true
-                RedirectStandardOutput = $stdoutPath
-                RedirectStandardError = $stderrPath
-            }
-            $process = Start-Process @processArguments
+    $projectDirectory = Split-Path -Path $ProjectPath -Parent
+    [xml]$project = Get-Content -Path $ProjectPath -Raw
+    $terms = @()
 
-            $processes += [pscustomobject]@{
-                Label = $project.Label
-                Process = $process
-                StartedAt = Get-Date
-                StdOut = $stdoutPath
-                StdErr = $stderrPath
-            }
+    foreach ($compileItem in $project.SelectNodes("//Compile")) {
+        $include = $compileItem.Include
+        if ([string]::IsNullOrWhiteSpace($include)) {
+            continue
         }
 
-        $failures = @()
-        foreach ($entry in $processes) {
-            $entry.Process.WaitForExit()
-            $elapsed = $entry.Process.ExitTime - $entry.StartedAt
+        $sourcePath = Join-Path $projectDirectory $include
+        if (-not (Test-Path $sourcePath)) {
+            throw "Compile item '$include' from '$ProjectPath' was not found."
+        }
 
-            Write-Host ""
-            Write-Host ("-- {0} ({1:c}) --" -f $entry.Label, $elapsed)
+        $namespace = $null
+        foreach ($line in Get-Content -Path $sourcePath) {
+            if ($line -match '^\s*namespace\s+([A-Za-z0-9_.]+)') {
+                $namespace = $Matches[1]
+                continue
+            }
 
-            if (Test-Path $entry.StdOut) {
-                $stdout = Get-Content $entry.StdOut -Raw
-                if (-not [string]::IsNullOrWhiteSpace($stdout)) {
-                    Write-Host $stdout.TrimEnd()
+            if ($line -match '^\s*type\s+(?!private\b)([A-Za-z_][A-Za-z0-9_]*)') {
+                if ([string]::IsNullOrWhiteSpace($namespace)) {
+                    continue
                 }
-            }
 
-            if (Test-Path $entry.StdErr) {
-                $stderr = Get-Content $entry.StdErr -Raw
-                if (-not [string]::IsNullOrWhiteSpace($stderr)) {
-                    Write-Host $stderr.TrimEnd()
-                }
-            }
-
-            if ($entry.Process.ExitCode -ne 0) {
-                $failures += ("{0} failed with exit code {1}" -f $entry.Label, $entry.Process.ExitCode)
+                $terms += "FullyQualifiedName~$namespace.$($Matches[1])"
             }
         }
+    }
 
-        if ($failures.Count -gt 0) {
-            throw ("Test project failures: {0}." -f ($failures -join "; "))
-        }
-    } finally {
-        Remove-Item -Path $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+    [string[]]($terms | Select-Object -Unique)
+}
+
+function Get-ServerUnitTestFilterTerms {
+    $terms = Get-FSharpProjectTypeFilterTerms "src/Grace.Server.Unit.Tests/Grace.Server.Unit.Tests.fsproj"
+    if ($terms.Length -eq 0) {
+        throw "No server unit test filter terms were discovered."
+    }
+
+    [string[]]$terms
+}
+
+function Get-FastTestFilterTerms {
+    $terms = @(
+        "FullyQualifiedName~Grace.Authorization.Tests",
+        "FullyQualifiedName~Grace.CLI.Tests",
+        "FullyQualifiedName~Grace.Types.Tests"
+    )
+
+    [string[]]($terms + (Get-ServerUnitTestFilterTerms))
+}
+
+function Get-TestFilter([bool]$IncludeFullTests) {
+    $terms = Get-FastTestFilterTerms
+
+    if ($IncludeFullTests) {
+        $terms += "FullyQualifiedName~Grace.Server.Tests"
+    }
+
+    Join-TestFilter $terms
+}
+
+function Invoke-SolutionTests([string]$Configuration, [bool]$IncludeFullTests) {
+    $testFilter = Get-TestFilter $IncludeFullTests
+
+    Write-Host "Test target: src/Grace.slnx"
+    Write-Host ("Test filter: {0}" -f $testFilter)
+    Write-Host ("Running: dotnet test `"src/Grace.slnx`" -c {0} --no-build --filter `"{1}`"" -f $Configuration, $testFilter)
+
+    Invoke-External "Grace solution tests" {
+        dotnet test "src/Grace.slnx" -c $Configuration --no-build --filter $testFilter
     }
 }
 
@@ -293,33 +313,7 @@ try {
 
     if (-not $SkipTests) {
         Write-Section "Test"
-        $testProjects = @(
-            [pscustomobject]@{
-                Label = "Grace.Authorization.Tests"
-                Path = "src/Grace.Authorization.Tests/Grace.Authorization.Tests.fsproj"
-            },
-            [pscustomobject]@{
-                Label = "Grace.CLI.Tests"
-                Path = "src/Grace.CLI.Tests/Grace.CLI.Tests.fsproj"
-            },
-            [pscustomobject]@{
-                Label = "Grace.Types.Tests"
-                Path = "src/Grace.Types.Tests/Grace.Types.Tests.fsproj"
-            },
-            [pscustomobject]@{
-                Label = "Grace.Server.Unit.Tests"
-                Path = "src/Grace.Server.Unit.Tests/Grace.Server.Unit.Tests.fsproj"
-            }
-        )
-
-        if ($Full) {
-            $testProjects += [pscustomobject]@{
-                Label = "Grace.Server.Tests"
-                Path = "src/Grace.Server.Tests/Grace.Server.Tests.fsproj"
-            }
-        }
-
-        Invoke-TestProjectsParallel $testProjects $Configuration
+        Invoke-SolutionTests $Configuration $Full
     } else {
         Write-Section "Test"
         Write-Host "Skipped (-SkipTests)."
