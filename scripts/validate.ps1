@@ -305,6 +305,10 @@ try {
             [pscustomobject]@{
                 Label = "Grace.Types.Tests"
                 Path = "src/Grace.Types.Tests/Grace.Types.Tests.fsproj"
+            },
+            [pscustomobject]@{
+                Label = "Grace.Server.Unit.Tests"
+                Path = "src/Grace.Server.Unit.Tests/Grace.Server.Unit.Tests.fsproj"
             }
         )
 

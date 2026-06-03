@@ -11,10 +11,8 @@ type OrleansPartitionKeyProviderTests() =
         let mutable current = DirectoryInfo(Environment.CurrentDirectory)
         let mutable resolvedPath = String.Empty
 
-        while
-            isNull current |> not
-            && String.IsNullOrWhiteSpace(resolvedPath)
-            do
+        while isNull current |> not
+              && String.IsNullOrWhiteSpace(resolvedPath) do
             let candidate = Path.Combine(current.FullName, "src", "Grace.Server", "OrleansFilters.Server.fs")
 
             if File.Exists(candidate) then
@@ -32,7 +30,4 @@ type OrleansPartitionKeyProviderTests() =
         let filePath = tryResolveSourcePath ()
         let sourceText = File.ReadAllText(filePath)
 
-        Assert.That(
-            sourceText,
-            Does.Contain("| StateName.WorkItemNumberCounter -> repositoryId ()")
-        )
+        Assert.That(sourceText, Does.Contain("| StateName.WorkItemNumberCounter -> repositoryId ()"))
