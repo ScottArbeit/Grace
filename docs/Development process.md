@@ -224,6 +224,10 @@ as standalone pull request comments, not only as issue comments. Use the issue f
 coordination, and pre-PR evidence; use the pull request as the durable code-review ledger once it exists.
 If the first code review for a newly opened pull request reports no issues, still add a standalone pull request comment
 containing the review output. A clean review is evidence, and it belongs on the pull request with the code it reviewed.
+Whenever the orchestrator adds or updates code-review comments on a pull request, it must update the pull request
+body's `Review Status` section in the same turn. That section should stay high-level: reviews run, current open
+findings, fix commits already pushed, final no-issues review status, and links to detailed standalone review/fix
+comments.
 
 A coding task is not complete until a parent/orchestrator thread runs a fresh local review-only sibling subagent after
 the implementation slice has been validated and committed. The review agent must be a sibling of the implementation
@@ -269,6 +273,7 @@ The review loop is blocking:
    exists. If another review pass will run later, copy the prior "Reviewed And OK" notes into that review prompt and
    tell the reviewer to treat them as already-reviewed unless the new diff affects those areas. This applies even when
    the first pull request review finds no issues.
+   Also update the pull request body's `Review Status` section when the pull request already exists.
 5. If the review finds a missing acceptance-criterion class, repeated trap, or issue-template gap that could affect
    active future workers, amend the active future issues or templates before spawning parallel workers. Preserve issue
    history by appending an addendum unless replacing stale text is clearer and safe.
@@ -278,7 +283,8 @@ The review loop is blocking:
 8. The implementation subagent commits and pushes the review fix, then returns a new Ready For Review handoff.
 9. Add a new standalone pull request comment for each review fix using the
    [Review/Fix comment template](#reviewfix-comment-template). The comment must make the high-level outcome easy to
-   scan before the detailed issue and fix text. Do not add review-fix notes to the pull request body.
+   scan before the detailed issue and fix text. Do not add review-fix notes to the pull request body; keep the body to a
+   high-level `Review Status` summary and links to detailed comments.
 10. From the parent/orchestrator thread, spawn another fresh review-only sibling subagent pass against the updated
    committed diff, again using a dedicated Code Review capability when the subagent launcher directly exposes one.
 11. Repeat the loop until the review reports no issues.
@@ -400,6 +406,17 @@ git diff --check
 
 If validation is skipped, record exactly what was skipped and why in the task record or pull request.
 
+For F# changes, run Fantomas formatting or targeted Fantomas checks before build and test validation. The intended
+order is:
+
+1. Apply the code change.
+2. Run Fantomas on the touched files, or run the repo-standard recursive Fantomas command when the edit is broad.
+3. Run build and tests.
+4. Run `git diff --check`.
+
+Avoid running the full test suite before formatting, then discovering Fantomas rewrote files and forcing another
+build/test cycle.
+
 ## Documentation Expectations
 
 Update documentation in the same slice when a change affects:
@@ -431,6 +448,7 @@ comments as the review loop continues:
 - "Reviewed And OK" notes from the final review pass, especially prior concerns that were rechecked and found safe
 - standalone, templated Markdown pull request comments for each review issue that required a fix, including the issue,
   fix, fix commit, and validation; do not put review-fix notes in the pull request body
+- a `Review Status` section that summarizes the current review/fix state and links to detailed review/fix comments
 - docs impact
 - residual risk
 - rollback or recovery notes when the change touches runtime or data

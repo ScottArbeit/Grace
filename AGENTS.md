@@ -75,6 +75,9 @@ completed sub-issues are checked.
   review prompts so reviewers can build on prior coverage instead of repeating it. If the first code review for a new
   pull request finds no issues, still add a pull request comment with the review output so the review pass is documented
   where code review evidence belongs.
+- When adding or updating code-review comments on a pull request, update the pull request body's `Review Status` section
+  at the same time. Keep it as a high-level summary of reviews run, open findings, fix commits, final no-issues reviews,
+  and where the detailed review/fix comments live.
 - Open normal ready-for-review pull requests. Do not open draft pull requests unless the user explicitly asks for a
   draft.
 - When the user says a PR is merged, verify the merge, delete the issue branch and worktree, run `git fetch --prune`,

@@ -51,6 +51,9 @@ update the issue before editing the new paths.
   reviewer to re-check them only when the new diff affects those areas. If the first code review for a new pull request
   finds no issues, still add a pull request comment with the review output so the review pass is documented where code
   review evidence belongs.
+- When adding or updating code-review comments on a pull request, update the pull request body's `Review Status` section
+  at the same time. Keep it as a high-level summary of reviews run, open findings, fix commits, final no-issues reviews,
+  and where the detailed review/fix comments live.
 - When the user asks to address a code review comment, review comment, PR feedback, or similar, complete the full
   review-thread workflow: evaluate the comment, make the appropriate fix or explicitly explain why no code change is
   needed, validate the result, commit and push the branch, reply to the GitHub review comment with the outcome and
@@ -83,7 +86,10 @@ update the issue before editing the new paths.
 - Structure modules so domain types live in `Grace.Types`, shared helpers in `Grace.Shared`, and orchestration in the
   project-specific assembly.
 - Add lightweight comments only where control flow or transformations are non-obvious.
-- Format code with `dotnet tool run fantomas --recurse .` from `./src`.
+- Run Fantomas formatting or a targeted Fantomas check before build and test validation. Avoid the slow loop where tests
+  pass, Fantomas then changes files, and the same build/tests must be repeated. For broad F# edits, format with
+  `dotnet tool run fantomas --recurse .` from `./src`; for narrow fixes, run targeted Fantomas on the touched files
+  before validation.
 
 ## Avoid FS3511 in Resumable Computation Expressions
 
