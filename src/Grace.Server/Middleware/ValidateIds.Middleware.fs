@@ -19,36 +19,10 @@ open System.Collections.Generic
 open System.Diagnostics
 open System.Linq
 open System.Net
-open System.Reflection
 open System.Threading.Tasks
 open System.Text
 open System.Text.Json
 open Grace.Actors.Constants.ActorName
-
-/// Holds the PropertyInfo for each Entity Id and Name property.
-type EntityProperties =
-    {
-        OwnerId: PropertyInfo option
-        OwnerName: PropertyInfo option
-        OrganizationId: PropertyInfo option
-        OrganizationName: PropertyInfo option
-        RepositoryId: PropertyInfo option
-        RepositoryName: PropertyInfo option
-        BranchId: PropertyInfo option
-        BranchName: PropertyInfo option
-    }
-
-    static member Default =
-        {
-            OwnerId = None
-            OwnerName = None
-            OrganizationId = None
-            OrganizationName = None
-            RepositoryId = None
-            RepositoryName = None
-            BranchId = None
-            BranchName = None
-        }
 
 /// Examines the body of the incoming request to validate the Ids and Names in the request, and ensure that we know the right Ids. Having the Ids already figured out saves work for the rest of the pipeline.
 ///
@@ -65,31 +39,18 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
     /// Holds the property info for each request body type.
     let propertyLookup = ConcurrentDictionary<Type, EntityProperties>()
 
-    /// Paths that we want to ignore, because they won't have Ids and Names in the body.
-    let ignorePaths =
-        [
-            "/healthz"
-            "/notifications"
-            "/approval/request/_seedGenerated"
-        ]
-
     /// Gets the parameter type for the endpoint from the endpoint metadata created in Startup.Server.fs.
     let getBodyType (context: HttpContext) =
         let path = context.Request.Path.ToString()
 
-        if not
-           <| (ignorePaths
-               |> Seq.exists (fun ignorePath -> path.StartsWith(ignorePath, StringComparison.InvariantCultureIgnoreCase))) then
+        if not <| ValidateIdsDecisions.isIgnoredPath path then
             let endpoint = context.GetEndpoint()
 
             if isNull (endpoint) then
                 log.LogDebug("{CurrentInstant}: Path: {path}; Endpoint: null.", getCurrentInstantExtended (), path)
                 None
             elif endpoint.Metadata.Count > 0 then
-                let requestBodyType =
-                    endpoint.Metadata
-                    |> Seq.tryFind (fun metadataItem -> metadataItem.GetType().FullName = "System.RuntimeType") // The types that we add in Startup.Server.fs show up here as "System.RuntimeType".
-                    |> Option.map (fun metadataItem -> metadataItem :?> Type) // Convert the metadata item to a Type.
+                let requestBodyType = ValidateIdsDecisions.tryGetBodyType path endpoint
 
                 if requestBodyType |> Option.isSome then
                     log.LogDebug(
@@ -160,27 +121,7 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                             not
                             <| propertyLookup.TryGetValue(requestBodyType, &entityProperties)
                         then
-
-                            // Get all of the properties on the request body type.
-                            let properties = requestBodyType.GetProperties(BindingFlags.Public ||| BindingFlags.Instance)
-
-                            /// Checks if a property with the given name exists on the request body type.
-                            let findProperty name =
-                                properties
-                                |> Seq.tryFind (fun property -> property.Name = name)
-
-                            // Check if these entity properties exist on the request body type.
-                            entityProperties <-
-                                {
-                                    OwnerId = findProperty (nameof OwnerId)
-                                    OwnerName = findProperty (nameof OwnerName)
-                                    OrganizationId = findProperty (nameof OrganizationId)
-                                    OrganizationName = findProperty (nameof OrganizationName)
-                                    RepositoryId = findProperty (nameof RepositoryId)
-                                    RepositoryName = findProperty (nameof RepositoryName)
-                                    BranchId = findProperty (nameof BranchId)
-                                    BranchName = findProperty (nameof BranchName)
-                                }
+                            entityProperties <- ValidateIdsDecisions.discoverEntityProperties requestBodyType
 
                             // Cache the property list for this request body type.
                             propertyLookup.TryAdd(requestBodyType, entityProperties)
@@ -476,9 +417,7 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
 
                     context.Request.Headers[ "X-MiddlewareTraceOut" ] <- $"{middlewareTraceOutHeader}{nameof ValidateIdsMiddleware} --> "
 
-                    if not
-                       <| (ignorePaths
-                           |> Seq.exists (fun ignorePath -> path.StartsWith(ignorePath, StringComparison.InvariantCultureIgnoreCase))) then
+                    if not <| ValidateIdsDecisions.isIgnoredPath path then
                         log.LogDebug(
                             "{CurrentInstant}: Path: {path}; Elapsed: {elapsed}ms; Status code: {statusCode}; graceIds: {graceIds}",
                             getCurrentInstantExtended (),

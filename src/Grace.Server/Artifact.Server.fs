@@ -43,7 +43,7 @@ module Artifact =
         use hasher = SHA256.Create()
         let hash = hasher.ComputeHash(seedBytes)
         let guidBytes = hash[0..15]
-        guidBytes[6] <- (guidBytes[6] &&& 0x0Fuy) ||| 0x50uy
+        guidBytes[7] <- (guidBytes[7] &&& 0x0Fuy) ||| 0x50uy
         guidBytes[8] <- (guidBytes[8] &&& 0x3Fuy) ||| 0x80uy
         Guid(guidBytes)
 

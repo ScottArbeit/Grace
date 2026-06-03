@@ -22,6 +22,63 @@ type ValidationArtifactContractTests() =
         Assert.That(blobPath, Is.EqualTo("grace-artifacts/2026/02/19/13/78a3f80f-6dd4-4a38-b005-5178bc65f9cd"))
 
     [<Test>]
+    member _.DeterministicArtifactBlobPathUsesByIdPartition() =
+        let artifactId = Guid.Parse("78a3f80f-6dd4-4a38-b005-5178bc65f9cd")
+
+        let blobPath = Artifact.buildDeterministicBlobPath artifactId
+
+        Assert.That(blobPath, Is.EqualTo("grace-artifacts/by-id/78a3f80f-6dd4-4a38-b005-5178bc65f9cd"))
+
+    [<Test>]
+    member _.DeterministicArtifactIdPinsKnownVector() =
+        let artifactId = Artifact.createDeterministicArtifactId "promotion-set/validation/output"
+
+        Assert.That(artifactId, Is.EqualTo(Guid.Parse("8b6502e5-4f50-524b-972e-1b932504e39d")))
+
+    [<Test>]
+    member _.DeterministicArtifactIdNormalizesEmptyAndWhitespaceSeeds() =
+        let emptySeedArtifactId = Artifact.createDeterministicArtifactId String.Empty
+        let whitespaceSeedArtifactId = Artifact.createDeterministicArtifactId "   "
+
+        Assert.That(whitespaceSeedArtifactId, Is.EqualTo(emptySeedArtifactId))
+        Assert.That(emptySeedArtifactId, Is.EqualTo(Guid.Parse("42c4b0e3-fc98-541c-9afb-f4c8996fb924")))
+
+    [<Test>]
+    member _.DeterministicArtifactIdNormalizesSeedCaseAndWhitespace() =
+        let canonicalArtifactId = Artifact.createDeterministicArtifactId "artifact seed"
+        let mixedArtifactId = Artifact.createDeterministicArtifactId " Artifact Seed "
+
+        Assert.That(mixedArtifactId, Is.EqualTo(canonicalArtifactId))
+        Assert.That(canonicalArtifactId, Is.EqualTo(Guid.Parse("d01d5ec6-e55b-5591-b80d-f0fcc46d8639")))
+
+    [<Test>]
+    member _.DeterministicArtifactIdPinsGuidVersionAndVariantBits() =
+        let artifactId = Artifact.createDeterministicArtifactId "promotion-set/validation/output"
+        let formattedArtifactId = artifactId.ToString("D")
+
+        Assert.That(formattedArtifactId.Substring(14, 1), Is.EqualTo("5"))
+        Assert.That(formattedArtifactId.Substring(19, 1), Is.EqualTo("9"))
+        Assert.That(artifactId, Is.EqualTo(Guid.Parse("8b6502e5-4f50-524b-972e-1b932504e39d")))
+
+    [<Test>]
+    member _.KnownArtifactTypeAliasesParseCaseInsensitively() =
+        let cases =
+            [
+                "agentsummary", ArtifactType.AgentSummary
+                "CONFLICTREPORT", ArtifactType.ConflictReport
+                "prompt", ArtifactType.Prompt
+                "validationoutput", ArtifactType.ValidationOutput
+                "reviewnotes", ArtifactType.ReviewNotes
+                "other", ArtifactType.Other "Other"
+            ]
+
+        cases
+        |> List.iter (fun (rawArtifactType, expected) ->
+            let parsed = Artifact.parseArtifactType rawArtifactType
+
+            Assert.That(parsed, Is.EqualTo(expected)))
+
+    [<Test>]
     member _.UnknownArtifactTypeMapsToOther() =
         let parsed = Artifact.parseArtifactType "CustomOutput"
 
