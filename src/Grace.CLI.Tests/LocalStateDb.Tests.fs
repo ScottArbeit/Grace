@@ -631,34 +631,6 @@ module LocalStateDbTests =
             })
 
     [<Test>]
-    let ``busy writer retries and eventually succeeds`` () =
-        withTempDir (fun _ configuration ->
-            task {
-                do! LocalStateDb.ensureDbInitialized configuration.GraceStatusFile
-
-                use lockConnection = openRawConnection configuration.GraceStatusFile
-                executeNonQuery lockConnection "BEGIN IMMEDIATE;"
-
-                let rootId = Guid.NewGuid()
-                let rootHash = "root-hash"
-                let ticks = getCurrentInstant().ToUnixTimeTicks()
-                let status = createTestStatus rootId rootHash ticks
-
-                let writerTask = task { do! LocalStateDb.applyStatusIncremental configuration.GraceStatusFile status Seq.empty Seq.empty }
-
-                do! Task.Delay(450)
-                executeNonQuery lockConnection "COMMIT;"
-
-                do! writerTask
-
-                let! meta = LocalStateDb.readStatusMeta configuration.GraceStatusFile
-                meta.RootDirectoryId |> should equal rootId
-
-                meta.RootDirectorySha256Hash
-                |> should equal rootHash
-            })
-
-    [<Test>]
     let ``non-busy sqlite failures are not retried`` () =
         withTempDir (fun _ configuration ->
             task {

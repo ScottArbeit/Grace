@@ -310,11 +310,18 @@ module WorkItemCommand =
         else
             try
                 let outputFilePath = Path.GetFullPath(outputFileRaw)
+                let outputFileName = Path.GetFileName(outputFilePath)
 
-                if Directory.Exists(outputFilePath) then
+                if
+                    outputFileName.IndexOfAny(Path.GetInvalidFileNameChars())
+                    >= 0
+                then
+                    Error(GraceError.Create $"Output file path is invalid: {outputFileRaw}" (getCorrelationId parseResult))
+                elif Directory.Exists(outputFilePath) then
                     Error(GraceError.Create $"Output file path points to a directory: {outputFilePath}" (getCorrelationId parseResult))
                 else
                     Ok outputFilePath
+
             with
             | ex -> Error(GraceError.Create $"Output file path is invalid: {ex.Message}" (getCorrelationId parseResult))
 
@@ -797,7 +804,6 @@ module WorkItemCommand =
     let private attachmentsDownloadHandlerImpl (parseResult: ParseResult) =
         task {
             if parseResult |> verbose then printParseResult parseResult
-            let graceIds = parseResult |> getNormalizedIdsAndNames
             let workItemRaw = parseResult.GetValue(Arguments.workItemIdentifier)
             let artifactIdRaw = parseResult.GetValue(Options.artifactId)
 
@@ -810,6 +816,8 @@ module WorkItemCommand =
                     match tryResolveOutputFilePath parseResult with
                     | Error error -> return Error error
                     | Ok outputFilePath ->
+                        let graceIds = parseResult |> getNormalizedIdsAndNames
+
                         let parameters =
                             Parameters.WorkItem.DownloadWorkItemAttachmentParameters(
                                 WorkItemId = workItem,
