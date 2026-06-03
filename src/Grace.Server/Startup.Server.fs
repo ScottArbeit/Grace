@@ -1747,19 +1747,7 @@ module Application =
                             options.ForwardDefaultSelector <-
                                 fun context ->
                                     let authorization = context.Request.Headers.Authorization.ToString()
-
-                                    if
-                                        not (String.IsNullOrWhiteSpace authorization)
-                                        && authorization.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)
-                                    then
-                                        let token = authorization.Substring("Bearer ".Length).Trim()
-
-                                        if token.StartsWith(TokenPrefix, StringComparison.Ordinal) then
-                                            PersonalAccessTokenAuth.SchemeName
-                                        else
-                                            TestAuth.SchemeName
-                                    else
-                                        TestAuth.SchemeName
+                                    AuthSchemeSelection.selectScheme true false authorization
                     )
                     .AddScheme<AuthenticationSchemeOptions, GraceTestAuthHandler>(TestAuth.SchemeName, (fun _ -> ()))
                     .AddScheme<AuthenticationSchemeOptions, PersonalAccessTokenAuth.PersonalAccessTokenAuthHandler>(
@@ -1784,23 +1772,7 @@ module Application =
                             options.ForwardDefaultSelector <-
                                 fun context ->
                                     let authorization = context.Request.Headers.Authorization.ToString()
-
-                                    if
-                                        not (String.IsNullOrWhiteSpace authorization)
-                                        && authorization.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)
-                                    then
-                                        let token = authorization.Substring("Bearer ".Length).Trim()
-
-                                        if token.StartsWith(TokenPrefix, StringComparison.Ordinal) then
-                                            PersonalAccessTokenAuth.SchemeName
-                                        else if hasOidc then
-                                            JwtBearerDefaults.AuthenticationScheme
-                                        else
-                                            PersonalAccessTokenAuth.SchemeName
-                                    else if hasOidc then
-                                        JwtBearerDefaults.AuthenticationScheme
-                                    else
-                                        PersonalAccessTokenAuth.SchemeName
+                                    AuthSchemeSelection.selectScheme false hasOidc authorization
                     )
                     .AddScheme<AuthenticationSchemeOptions, PersonalAccessTokenAuth.PersonalAccessTokenAuthHandler>(
                         PersonalAccessTokenAuth.SchemeName,
