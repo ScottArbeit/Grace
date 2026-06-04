@@ -1,6 +1,6 @@
 {
   "name": "@grace/sdk",
-  "version": "0.0.0-s09",
+  "version": "0.0.0-s11",
   "description": "Facade-first Grace TypeScript Node SDK package harness.",
   "type": "module",
   "private": true,
@@ -14,7 +14,8 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "smoke": "npm run build && node smoke/import-facade.mjs"
+    "smoke": "npm run build && node smoke/import-facade.mjs",
+    "test": "npm run build && node --test test/*.mjs"
   },
   "devDependencies": {
     "typescript": "5.8.3"
