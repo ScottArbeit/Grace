@@ -252,11 +252,23 @@ function Test-OpenApiProjections {
     $bundlePath = Join-Path $openApiRoot 'Grace.OpenAPI.yaml'
     $projectionPath = Join-Path $openApiRoot 'Grace.OpenAPI.3.1.2.yaml'
     $lossReportPath = Join-Path $openApiRoot 'Grace.OpenAPI.3.1.2.loss-report.json'
+    $generatedArtifactPaths = Get-GeneratedArtifactPaths $manifest
+    $requiredDerivedArtifacts = @(
+        'Grace.OpenAPI.yaml',
+        'Grace.OpenAPI.3.1.2.yaml',
+        'Grace.OpenAPI.3.1.2.loss-report.json'
+    )
 
     foreach ($requiredPath in @($bundlePath, $projectionPath, $lossReportPath)) {
         if (-not (Test-Path -LiteralPath $requiredPath -PathType Leaf)) {
             Add-Failure "Missing required OpenAPI derived artifact: $requiredPath"
             return
+        }
+    }
+
+    foreach ($requiredArtifact in $requiredDerivedArtifacts) {
+        if (-not $generatedArtifactPaths.Contains($requiredArtifact)) {
+            Add-Failure "Required OpenAPI derived artifact is not represented in generatedArtifacts: $requiredArtifact"
         }
     }
 
