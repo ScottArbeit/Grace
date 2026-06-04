@@ -1,0 +1,80 @@
+{
+  "schemaVersion": 1,
+  "protocolVersion": "grace-protocol-v1",
+  "generatedBy": "Grace.Shared.ContentBlockFormat and Grace.Shared.ManifestValidation",
+  "chunkingSuiteId": "grace-rabin-blake3-64k-v1",
+  "file": {
+    "utf8": "alpha logical rangebeta logical range",
+    "fileContentHash": "a03273f3243999d98b2d5d9a05ace27d58cde56371792c84357c567401150d37",
+    "size": 37
+  },
+  "contentBlocks": [
+    {
+      "name": "alpha",
+      "physicalOffset": 4096,
+      "utf8": "alpha logical range",
+      "address": "d2c76649b2fce14038b618ed0b86b984df9a0a51b7c075b3a069ab1dab8d9e88",
+      "logicalSize": 19,
+      "payloadBase64": "YWxwaGEgbG9naWNhbCByYW5nZUdDQjFNRVRBAQAAAAEAAAAAEAAAAAAAABMAAAA9YEEkfxcK7vSNGaHJcvqEdZgbkxSZUC/vt+K3upaj6jwAAAA2p5GObH3vmfMQdCg17FZZEfLGpaMxA3TytjoCG14G2EdDQjFFTkQh"
+    },
+    {
+      "name": "beta",
+      "physicalOffset": 8192,
+      "utf8": "beta logical range",
+      "address": "b1b4059ce29bca5ba07bc3583629d12bb4eabf52dc2afe15922f15587891566b",
+      "logicalSize": 18,
+      "payloadBase64": "YmV0YSBsb2dpY2FsIHJhbmdlR0NCMU1FVEEBAAAAAQAAAAAgAAAAAAAAEgAAAC90N9ohRI80/l77dtlNtzW+rnAyqEe+2ppwiD+dqXxyPAAAACdmdi5Gf9QUA0WQ9iD22abv1fL8B4WaCE8ygys60R4GR0NCMUVORCE="
+    }
+  ],
+  "manifest": {
+    "manifestAddress": "fb04c59db6110ad5fee108a84f325711a560927a452147de2682480eb2c0b7d9",
+    "size": 37,
+    "blocks": [
+      {
+        "ordinal": 0,
+        "name": "alpha",
+        "offset": 0,
+        "size": 19
+      },
+      {
+        "ordinal": 1,
+        "name": "beta",
+        "offset": 19,
+        "size": 18
+      }
+    ]
+  },
+  "success": {
+    "expectedUtf8": "alpha logical rangebeta logical range"
+  },
+  "rejectionCases": [
+    {
+      "name": "tampered-payload-byte",
+      "expectedErrorKind": "ContentBlockPayloadInvalid"
+    },
+    {
+      "name": "invalid-compact-block-footer",
+      "expectedErrorKind": "ContentBlockPayloadInvalid"
+    },
+    {
+      "name": "reordered-manifest-blocks",
+      "expectedErrorKind": "BlockRangeOutOfOrder"
+    },
+    {
+      "name": "stale-manifest-address",
+      "expectedErrorKind": "ManifestAddressMismatch"
+    },
+    {
+      "name": "file-content-hash-mismatch",
+      "expectedErrorKind": "FileContentHashMismatch"
+    },
+    {
+      "name": "missing-content-block",
+      "expectedErrorKind": "MissingContentBlockPayload"
+    },
+    {
+      "name": "content-block-address-mismatch",
+      "expectedErrorKind": "ContentBlockPayloadInvalid"
+    }
+  ]
+}

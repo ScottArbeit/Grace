@@ -63,12 +63,14 @@ module Auth =
                     return
                         Ok graceReturnValue
                         |> enhance "ServerResponseTime" $"{(endTime - startTime).TotalMilliseconds:F3} ms"
+                        |> ClientIdentity.enhanceWithLifecycleDiagnostics response
                 else
                     let! graceError = response.Content.ReadFromJsonAsync<GraceError>(Constants.JsonSerializerOptions)
 
                     return
                         Error graceError
                         |> enhance "ServerResponseTime" $"{(endTime - startTime).TotalMilliseconds:F3} ms"
+                        |> ClientIdentity.enhanceWithLifecycleDiagnostics response
             with
             | ex ->
                 let exceptionResponse = Utilities.ExceptionResponse.Create ex

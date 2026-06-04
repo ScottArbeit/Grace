@@ -1,0 +1,61 @@
+{
+  "schemaVersion": 1,
+  "protocolVersion": "grace-protocol-v1",
+  "generatedBy": "Grace.Types.Common.ManifestEligibilityPolicy.Default",
+  "policy": {
+    "class": "ManifestEligibilityPolicy",
+    "thresholdBytes": 1048576,
+    "binaryScanBytes": 8192
+  },
+  "vectors": [
+    {
+      "name": "small-text-whole-file",
+      "kind": "text",
+      "uncompressedSize": 1048575,
+      "compressedSize": 1024,
+      "containsNulWithinBinaryScanWindow": false,
+      "expectedReferenceType": "WholeFileContent"
+    },
+    {
+      "name": "binary-one-byte-below-threshold-whole-file",
+      "kind": "binary",
+      "uncompressedSize": 1048575,
+      "compressedSize": null,
+      "containsNulWithinBinaryScanWindow": true,
+      "expectedReferenceType": "WholeFileContent"
+    },
+    {
+      "name": "binary-at-threshold-manifest",
+      "kind": "binary",
+      "uncompressedSize": 1048576,
+      "compressedSize": null,
+      "containsNulWithinBinaryScanWindow": true,
+      "expectedReferenceType": "FileManifest"
+    },
+    {
+      "name": "text-compressed-one-byte-below-threshold-whole-file",
+      "kind": "text",
+      "uncompressedSize": 2097152,
+      "compressedSize": 1048575,
+      "containsNulWithinBinaryScanWindow": false,
+      "expectedReferenceType": "WholeFileContent"
+    },
+    {
+      "name": "text-compressed-at-threshold-manifest",
+      "kind": "text",
+      "uncompressedSize": 2097152,
+      "compressedSize": 1048576,
+      "containsNulWithinBinaryScanWindow": false,
+      "expectedReferenceType": "FileManifest"
+    },
+    {
+      "name": "nul-after-scan-window-is-not-binary-by-itself",
+      "kind": "text",
+      "uncompressedSize": 2097152,
+      "compressedSize": 1024,
+      "containsNulWithinBinaryScanWindow": false,
+      "nulOffset": 8192,
+      "expectedReferenceType": "WholeFileContent"
+    }
+  ]
+}

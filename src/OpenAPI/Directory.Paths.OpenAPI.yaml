@@ -1,27 +1,42 @@
   /directory/create:
     post:
+      tags:
+        - Directories
       summary: Create a new directory version.
-      description: |
-        ### Validation rules
-
-        - `DirectoryVersion.DirectoryId` should be a valid and non-empty GUID.
-        - `DirectoryVersion.RepositoryId` should be a valid and non-empty GUID.
-        - The repository specified by `DirectoryVersion.RepositoryId` should exist.
-
-        ### Errors and Problem Details
-
-        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
-
+      description: Creates a directory version for the repository.
+      operationId: CreateDirectoryVersion
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: Directory.Components.OpenAPI.yaml#/CreateParameters
-
+              $ref: './Directory.Components.OpenAPI.yaml#/CreateParameters'
+            examples:
+              createDirectoryVersion:
+                summary: Create a directory version
+                value: &directoryCreateExample
+                  CorrelationId: cli-20260604T181500Z-0001
+                  Principal: user:alice
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                  RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                  DirectoryVersionId: 33a4e36b-828f-4fae-9343-50b6560dc842
+                  DirectoryVersion:
+                    Class: DirectoryVersion
+                    DirectoryVersionId: 33a4e36b-828f-4fae-9343-50b6560dc842
+                    OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                    OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                    RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                    RelativePath: src
+                    Sha256Hash: 805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243
+                    Directories: []
+                    Files: []
+                    Size: 0
+                    CreatedAt: '2026-06-04T18:15:00Z'
+                    HashesValidated: true
       responses:
         '200':
-          $ref: './Responses.OpenAPI.yaml#/200'
+          $ref: './Directory.Components.OpenAPI.yaml#/DirectoryCommandResponse'
         '400':
           $ref: './Responses.OpenAPI.yaml#/400'
         '500':
@@ -29,33 +44,30 @@
 
   /directory/get:
     post:
+      tags:
+        - Directories
       summary: Get a directory version.
-      description: |
-        ### Validation rules
-
-        - `RepositoryId` should be a valid and non-empty GUID.
-        - `DirectoryId` should be a valid and non-empty GUID.
-        - The repository specified by `RepositoryId` should exist.
-        - The directory specified by `DirectoryId` should exist.
-
-        ### Errors and Problem Details
-
-        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
-
+      description: Gets a directory version DTO.
+      operationId: GetDirectoryVersion
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: Directory.Components.OpenAPI.yaml#/GetParameters
-
+              $ref: './Directory.Components.OpenAPI.yaml#/GetParameters'
+            examples:
+              getDirectoryVersion:
+                summary: Get a directory version
+                value: &directoryBaseExample
+                  CorrelationId: cli-20260604T181500Z-0001
+                  Principal: user:alice
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                  RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                  DirectoryVersionId: 33a4e36b-828f-4fae-9343-50b6560dc842
       responses:
         '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/DirectoryVersion'
+          $ref: './Directory.Components.OpenAPI.yaml#/DirectoryVersionResponse'
         '400':
           $ref: './Responses.OpenAPI.yaml#/400'
         '500':
@@ -63,34 +75,24 @@
 
   /directory/getDirectoryVersionsRecursive:
     post:
-      summary: Get a directory version and all of its children.
-      description: |
-        ### Validation rules
-
-        - `RepositoryId` should be a valid and non-empty GUID.
-        - `DirectoryId` should be a valid and non-empty GUID.
-        - The repository specified by `RepositoryId` should exist.
-        - The directory specified by `DirectoryId` should exist.
-
-        ### Errors and Problem Details
-
-        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
-
+      tags:
+        - Directories
+      summary: List a directory version and its children.
+      description: Gets a directory version and all recursive child directory versions.
+      operationId: ListDirectoryVersionsRecursive
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: Directory.Components.OpenAPI.yaml#/GetParameters
-
+              $ref: './Directory.Components.OpenAPI.yaml#/GetParameters'
+            examples:
+              listDirectoryVersionsRecursive:
+                summary: List recursive directory versions
+                value: *directoryBaseExample
       responses:
         '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                type: array
-                $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/DirectoryVersion'
+          $ref: './Directory.Components.OpenAPI.yaml#/DirectoryVersionListResponse'
         '400':
           $ref: './Responses.OpenAPI.yaml#/400'
         '500':
@@ -98,33 +100,27 @@
 
   /directory/getByDirectoryIds:
     post:
-      summary: Get a list of directory versions by directory IDs.
-      description: |
-        ### Validation rules
-
-        - `RepositoryId` should be a valid and non-empty GUID.
-        - The repository specified by `RepositoryId` should exist.
-        - The directories specified by `DirectoryIds` should exist.
-
-        ### Errors and Problem Details
-
-        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
-
+      tags:
+        - Directories
+      summary: List directory versions by id.
+      description: Gets directory version DTOs by directory version ids.
+      operationId: ListDirectoryVersionsById
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: Directory.Components.OpenAPI.yaml#/GetByDirectoryIdsParameters
-
+              $ref: './Directory.Components.OpenAPI.yaml#/GetByDirectoryIdsParameters'
+            examples:
+              listDirectoryVersionsById:
+                summary: List directory versions by id
+                value:
+                  <<: *directoryBaseExample
+                  DirectoryIds:
+                    - 33a4e36b-828f-4fae-9343-50b6560dc842
       responses:
         '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                type: array
-                $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/DirectoryVersion'
+          $ref: './Directory.Components.OpenAPI.yaml#/DirectoryVersionListResponse'
         '400':
           $ref: './Responses.OpenAPI.yaml#/400'
         '500':
@@ -132,33 +128,26 @@
 
   /directory/getBySha256Hash:
     post:
-      summary: Get a directory version by its SHA256 hash.
-      description: |
-        ### Validation rules
-
-        - `DirectoryId` should be a valid and non-empty GUID.
-        - `RepositoryId` should be a valid and non-empty GUID.
-        - `Sha256Hash` should not be empty.
-        - The repository specified by `RepositoryId` should exist.
-
-        ### Errors and Problem Details
-
-        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
-
+      tags:
+        - Directories
+      summary: Get a directory version by SHA-256 hash.
+      description: Gets a directory version DTO by SHA-256 hash.
+      operationId: GetDirectoryVersionBySha256Hash
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: Directory.Components.OpenAPI.yaml#/GetBySha256HashParameters
-
+              $ref: './Directory.Components.OpenAPI.yaml#/GetBySha256HashParameters'
+            examples:
+              getDirectoryVersionBySha256Hash:
+                summary: Get a directory version by SHA-256
+                value:
+                  <<: *directoryBaseExample
+                  Sha256Hash: 805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243
       responses:
         '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: Shared.Components.OpenAPI.yaml#/components/schemas/Sha256Hash
+          $ref: './Directory.Components.OpenAPI.yaml#/DirectoryVersionResponse'
         '400':
           $ref: './Responses.OpenAPI.yaml#/400'
         '500':
@@ -166,31 +155,38 @@
 
   /directory/saveDirectoryVersions:
     post:
-      summary: Save a list of directory versions.
-      description: |
-        ### Validation rules
-
-        - Each `DirectoryVersion` in the `DirectoryVersions` list should have valid properties:
-          - `DirectoryVersion.DirectoryId` should be a valid and non-empty GUID.
-          - `DirectoryVersion.RepositoryId` should be a valid and non-empty GUID.
-          - `DirectoryVersion.Sha256Hash` should not be empty.
-          - `DirectoryVersion.RelativePath` must not be empty.
-          - The repository specified by `DirectoryVersion.RepositoryId` should exist.
-
-        ### Errors and Problem Details
-
-        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
-
+      tags:
+        - Directories
+      summary: Save directory versions.
+      description: Saves a list of directory versions.
+      operationId: SaveDirectoryVersions
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: Directory.Components.OpenAPI.yaml#/SaveDirectoryVersionsParameters
-
+              $ref: './Directory.Components.OpenAPI.yaml#/SaveDirectoryVersionsParameters'
+            examples:
+              saveDirectoryVersions:
+                summary: Save directory versions
+                value:
+                  <<: *directoryBaseExample
+                  DirectoryVersions:
+                    - Class: DirectoryVersion
+                      DirectoryVersionId: 33a4e36b-828f-4fae-9343-50b6560dc842
+                      OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                      OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                      RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                      RelativePath: src
+                      Sha256Hash: 805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243
+                      Directories: []
+                      Files: []
+                      Size: 0
+                      CreatedAt: '2026-06-04T18:15:00Z'
+                      HashesValidated: true
       responses:
         '200':
-          $ref: './Responses.OpenAPI.yaml#/200'
+          $ref: './Directory.Components.OpenAPI.yaml#/DirectoryCommandResponse'
         '400':
           $ref: './Responses.OpenAPI.yaml#/400'
         '500':

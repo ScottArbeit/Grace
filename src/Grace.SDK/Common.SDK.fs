@@ -57,12 +57,14 @@ module Common =
                     return
                         Ok graceReturn
                         |> enhance "ServerResponseTime" $"{(endTime - startTime).TotalMilliseconds:F3} ms"
+                        |> ClientIdentity.enhanceWithLifecycleDiagnostics response
                 else
                     let! graceError = response.Content.ReadFromJsonAsync<GraceError>(Constants.JsonSerializerOptions)
 
                     return
                         Error graceError
                         |> enhance "ServerResponseTime" $"{(endTime - startTime).TotalMilliseconds:F3} ms"
+                        |> ClientIdentity.enhanceWithLifecycleDiagnostics response
             with
             | ex ->
                 let exceptionResponse = Utilities.ExceptionResponse.Create ex
@@ -98,8 +100,11 @@ module Common =
                     return
                         Ok graceReturnValue
                         |> enhance "ServerResponseTime" $"{(endTime - startTime).TotalMilliseconds:F3} ms"
+                        |> ClientIdentity.enhanceWithLifecycleDiagnostics response
                 else if response.StatusCode = HttpStatusCode.NotFound then
-                    return Error(GraceError.Create $"Server endpoint {route} not found." parameters.CorrelationId)
+                    return
+                        Error(GraceError.Create $"Server endpoint {route} not found." parameters.CorrelationId)
+                        |> ClientIdentity.enhanceWithLifecycleDiagnostics response
                 elif response.StatusCode = HttpStatusCode.BadRequest then
                     let! errorMessage = response.Content.ReadAsStringAsync()
 
@@ -107,6 +112,7 @@ module Common =
                         Error(GraceError.Create $"{errorMessage}" parameters.CorrelationId)
                         |> enhance "ServerResponseTime" $"{(endTime - startTime).TotalMilliseconds:F3} ms"
                         |> enhance "StatusCode" $"{response.StatusCode}"
+                        |> ClientIdentity.enhanceWithLifecycleDiagnostics response
                 else
                     let! responseAsString = response.Content.ReadAsStringAsync()
 
@@ -117,12 +123,14 @@ module Common =
                             Error graceError
                             |> enhance "ServerResponseTime" $"{(endTime - startTime).TotalMilliseconds:F3} ms"
                             |> enhance "StatusCode" $"{response.StatusCode}"
+                            |> ClientIdentity.enhanceWithLifecycleDiagnostics response
                     with
                     | ex ->
                         return
                             Error(GraceError.Create $"{responseAsString}" parameters.CorrelationId)
                             |> enhance "ServerResponseTime" $"{(endTime - startTime).TotalMilliseconds:F3} ms"
                             |> enhance "StatusCode" $"{response.StatusCode}"
+                            |> ClientIdentity.enhanceWithLifecycleDiagnostics response
             with
             | ex ->
                 let exceptionResponse = Utilities.ExceptionResponse.Create ex

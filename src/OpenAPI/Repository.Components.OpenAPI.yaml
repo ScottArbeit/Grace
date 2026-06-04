@@ -1,140 +1,318 @@
     RepositoryParameters:
-      description: Parameters for many endpoints in the /repository path.
+      description: Parameters shared by public endpoints in the /repository route family.
       type: object
+      allOf:
+        - $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/CommonParameters'
       properties:
         OwnerId:
-          type: string
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/OwnerId'
         OwnerName:
-          type: string
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/OwnerName'
         OrganizationId:
-          type: string
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/OrganizationId'
         OrganizationName:
-          type: string
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/OrganizationName'
         RepositoryId:
-          type: string
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/RepositoryId'
         RepositoryName:
-          type: string
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/RepositoryName'
+      example: &repositoryBaseExample
+        CorrelationId: cli-20260604T181500Z-0001
+        Principal: user:alice
+        OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+        OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+        RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
     CreateRepositoryParameters:
       description: Parameters for the /repository/create endpoint.
       allOf:
-        - $ref: 'Repository.Components.OpenAPI.yaml#/RepositoryParameters'
+        - $ref: '#/RepositoryParameters'
+        - type: object
+          properties:
+            ObjectStorageProvider:
+              $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/ObjectStorageProvider'
     IsEmptyParameters:
       description: Parameters for the /repository/isEmpty endpoint.
       allOf:
-        - $ref: 'Repository.Components.OpenAPI.yaml#/RepositoryParameters'
+        - $ref: '#/RepositoryParameters'
     InitParameters:
       description: Parameters for the /repository/init endpoint.
       allOf:
-        - $ref: 'Repository.Components.OpenAPI.yaml#/RepositoryParameters'
-      properties:
-        GraceConfig:
-          type: string
+        - $ref: '#/RepositoryParameters'
+        - type: object
+          properties:
+            GraceConfig:
+              type: string
+              example: '{}'
     SetRepositoryVisibilityParameters:
       description: Parameters for the /repository/setVisibility endpoint.
       allOf:
-        - $ref: 'Repository.Components.OpenAPI.yaml#/RepositoryParameters'
-      properties:
-        Visibility:
-          type: string
+        - $ref: '#/RepositoryParameters'
+        - type: object
+          properties:
+            Visibility:
+              $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/RepositoryVisibility'
     SetRepositoryStatusParameters:
       description: Parameters for the /repository/setStatus endpoint.
       allOf:
-        - $ref: 'Repository.Components.OpenAPI.yaml#/RepositoryParameters'
-      properties:
-        Status:
-          type: string
+        - $ref: '#/RepositoryParameters'
+        - type: object
+          properties:
+            Status:
+              $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/RepositoryStatus'
     RecordSavesParameters:
-      description: Parameters for the /repository/recordSaves endpoint.
+      description: Parameters for the /repository/setRecordSaves endpoint.
       allOf:
-        - $ref: 'Repository.Components.OpenAPI.yaml#/RepositoryParameters'
-      properties:
-        RecordSaves:
-          type: boolean
+        - $ref: '#/RepositoryParameters'
+        - type: object
+          properties:
+            RecordSaves:
+              type: boolean
+              example: true
     SetSaveDaysParameters:
       description: Parameters for the /repository/setSaveDays endpoint.
       allOf:
-        - $ref: 'Repository.Components.OpenAPI.yaml#/RepositoryParameters'
-      properties:
-        SaveDays:
-          type: number
+        - $ref: '#/RepositoryParameters'
+        - type: object
+          properties:
+            SaveDays:
+              type: number
+              format: float
+              minimum: 0
+              example: 30
     SetCheckpointDaysParameters:
-      description: Parameters for the /repository/setCheckpointDays
+      description: Parameters for the /repository/setCheckpointDays endpoint.
       allOf:
-        - $ref: 'Repository.Components.OpenAPI.yaml#/RepositoryParameters'
-      properties:
-        CheckpointDays:
-          type: number
+        - $ref: '#/RepositoryParameters'
+        - type: object
+          properties:
+            CheckpointDays:
+              type: number
+              format: float
+              minimum: 0
+              example: 90
     SetRepositoryDescriptionParameters:
       description: Parameters for the /repository/setDescription endpoint.
       allOf:
-        - $ref: 'Repository.Components.OpenAPI.yaml#/RepositoryParameters'
-      properties:
-        Description:
-          type: string
+        - $ref: '#/RepositoryParameters'
+        - type: object
+          properties:
+            Description:
+              type: string
+              maxLength: 2048
+              example: Repository for release candidates.
     SetDefaultServerApiVersionParameters:
       description: Parameters for the /repository/setDefaultServerApiVersion endpoint.
       allOf:
-        - $ref: 'Repository.Components.OpenAPI.yaml#/RepositoryParameters'
-      properties:
-        DefaultServerApiVersion:
-          type: string
+        - $ref: '#/RepositoryParameters'
+        - type: object
+          properties:
+            DefaultServerApiVersion:
+              type: string
+              example: '2026-06-04'
     SetRepositoryNameParameters:
       description: Parameters for the /repository/setName endpoint.
       allOf:
-        - $ref: 'Repository.Components.OpenAPI.yaml#/RepositoryParameters'
-      properties:
-        NewName:
-          type: string
+        - $ref: '#/RepositoryParameters'
+        - type: object
+          properties:
+            NewName:
+              $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/RepositoryName'
     DeleteRepositoryParameters:
       description: Parameters for the /repository/delete endpoint.
       allOf:
-        - $ref: 'Repository.Components.OpenAPI.yaml#/RepositoryParameters'
-      properties:
-        Force:
-          type: boolean
-        DeleteReason:
-          type: string
+        - $ref: '#/RepositoryParameters'
+        - type: object
+          properties:
+            Force:
+              type: boolean
+              example: false
+            DeleteReason:
+              type: string
+              example: Repository retired.
     EnablePromotionTypeParameters:
-      description: Parameters for enabling promotion type.
+      description: Parameters for repository promotion type feature toggles.
       allOf:
-        - $ref: 'Repository.Components.OpenAPI.yaml#/RepositoryParameters'
-      properties:
-        Enabled:
-          type: boolean
+        - $ref: '#/RepositoryParameters'
+        - type: object
+          properties:
+            Enabled:
+              type: boolean
+              example: true
     GetReferencesByReferenceIdParameters:
       description: Parameters for the /repository/getReferencesByReferenceId endpoint.
       allOf:
-        - $ref: 'Repository.Components.OpenAPI.yaml#/RepositoryParameters'
-      properties:
-        ReferenceIds:
-          type: array
-          items:
-            $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/ReferenceId'
-        MaxCount:
-          type: integer
+        - $ref: '#/RepositoryParameters'
+        - type: object
+          properties:
+            ReferenceIds:
+              type: array
+              items:
+                $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/ReferenceId'
+            MaxCount:
+              type: integer
+              format: int32
+              minimum: 1
+              maximum: 1000
+              example: 50
     GetBranchesParameters:
-      description: Parameters for the /repository/getBranched endpoint.
+      description: Parameters for the /repository/getBranches endpoint.
       allOf:
-        - $ref: 'Repository.Components.OpenAPI.yaml#/RepositoryParameters'
-      properties:
-        IncludeDeleted:
-          type: boolean
-        MaxCount:
-          type: integer
+        - $ref: '#/RepositoryParameters'
+        - type: object
+          properties:
+            IncludeDeleted:
+              type: boolean
+              example: false
+            MaxCount:
+              type: integer
+              format: int32
+              minimum: 1
+              maximum: 1000
+              example: 50
     GetBranchesByBranchIdParameters:
       description: Parameters for the /repository/getBranchesByBranchId endpoint.
       allOf:
-        - $ref: 'Repository.Components.OpenAPI.yaml#/RepositoryParameters'
-      properties:
-        BranchIds:
-          type: array
-          items:
-            $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/BranchId'
-        MaxCount:
-          type: integer
-        IncludeDeleted:
-          type: boolean
+        - $ref: '#/RepositoryParameters'
+        - type: object
+          properties:
+            BranchIds:
+              type: array
+              items:
+                $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/BranchId'
+            MaxCount:
+              type: integer
+              format: int32
+              minimum: 1
+              maximum: 1000
+              example: 50
+            IncludeDeleted:
+              type: boolean
+              example: false
     UndeleteRepositoryParameters:
       description: Parameters for the /repository/undelete endpoint.
       allOf:
-        - $ref: 'Repository.Components.OpenAPI.yaml#/RepositoryParameters'
+        - $ref: '#/RepositoryParameters'
+    RepositoryCommandReturnValue:
+      description: Grace response envelope returned by repository command endpoints.
+      type: object
+      properties:
+        ReturnValue:
+          type: string
+          example: Repository command succeeded.
+        EventTime:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant'
+        CorrelationId:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/CorrelationId'
+        Properties:
+          type: object
+          additionalProperties:
+            type: string
+      required: [ReturnValue, EventTime, CorrelationId, Properties]
+      example: &repositoryCommandReturnValueExample
+        ReturnValue: Repository command succeeded.
+        EventTime: '2026-06-04T18:15:00Z'
+        CorrelationId: cli-20260604T181500Z-0001
+        Properties:
+          Path: /repository/create
+          OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+          OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+          RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+    RepositoryReturnValue:
+      description: Grace response envelope whose ReturnValue contains a repository DTO.
+      type: object
+      properties:
+        ReturnValue:
+          $ref: 'Dto.Components.OpenAPI.yaml#/RepositoryDto'
+        EventTime:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant'
+        CorrelationId:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/CorrelationId'
+        Properties:
+          type: object
+          additionalProperties:
+            type: string
+      required: [ReturnValue, EventTime, CorrelationId, Properties]
+    RepositoryBooleanReturnValue:
+      description: Grace response envelope whose ReturnValue contains a boolean repository query result.
+      type: object
+      properties:
+        ReturnValue:
+          type: boolean
+          example: true
+        EventTime:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant'
+        CorrelationId:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/CorrelationId'
+        Properties:
+          type: object
+          additionalProperties:
+            type: string
+      required: [ReturnValue, EventTime, CorrelationId, Properties]
+    RepositoryBranchesReturnValue:
+      description: Grace response envelope whose ReturnValue contains branch DTOs.
+      type: object
+      properties:
+        ReturnValue:
+          type: array
+          items:
+            $ref: 'Dto.Components.OpenAPI.yaml#/BranchDto'
+        EventTime:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant'
+        CorrelationId:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/CorrelationId'
+        Properties:
+          type: object
+          additionalProperties:
+            type: string
+      required: [ReturnValue, EventTime, CorrelationId, Properties]
+    RepositoryReferencesReturnValue:
+      description: Grace response envelope whose ReturnValue contains reference DTOs.
+      type: object
+      properties:
+        ReturnValue:
+          type: array
+          items:
+            $ref: 'Dto.Components.OpenAPI.yaml#/ReferenceDto'
+        EventTime:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant'
+        CorrelationId:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/CorrelationId'
+        Properties:
+          type: object
+          additionalProperties:
+            type: string
+      required: [ReturnValue, EventTime, CorrelationId, Properties]
+    RepositoryCommandResponse:
+      description: OK
+      content:
+        application/json:
+          schema:
+            $ref: '#/RepositoryCommandReturnValue'
+          examples:
+            repositoryCommand:
+              summary: Repository command response envelope
+              value: *repositoryCommandReturnValueExample
+    RepositoryResponse:
+      description: OK
+      content:
+        application/json:
+          schema:
+            $ref: '#/RepositoryReturnValue'
+    RepositoryBooleanResponse:
+      description: OK
+      content:
+        application/json:
+          schema:
+            $ref: '#/RepositoryBooleanReturnValue'
+    RepositoryBranchesResponse:
+      description: OK
+      content:
+        application/json:
+          schema:
+            $ref: '#/RepositoryBranchesReturnValue'
+    RepositoryReferencesResponse:
+      description: OK
+      content:
+        application/json:
+          schema:
+            $ref: '#/RepositoryReferencesReturnValue'

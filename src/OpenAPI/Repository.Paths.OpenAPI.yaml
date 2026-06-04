@@ -1,36 +1,30 @@
   /repository/create:
     post:
+      tags:
+        - Repositories
       summary: Create a new repository.
-      description: |
-        This endpoint creates a new repository.
-
-        ### Validation rules
-        - The `OwnerId` must be a valid and non-empty GUID.
-        - The `OwnerName` must be a valid Grace name.
-        - Either `OwnerId` or `OwnerName` must be provided.
-        - The `OrganizationId` must be a valid and non-empty GUID.
-        - The `OrganizationName` must be a valid Grace name.
-        - Either `OrganizationId` or `OrganizationName` must be provided.
-        - The `RepositoryId` must not be empty.
-        - The `RepositoryId` must be a valid and non-empty GUID.
-        - The `RepositoryName` must not be empty.
-        - The `RepositoryName` must be a valid Grace name.
-        - The `OwnerId` must correspond to an existing owner.
-        - The `OrganizationId` must correspond to an existing organization.
-
-        ### Errors and Problem Details
-        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
-
+      description: Creates a repository in an organization.
+      operationId: CreateRepository
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: Repository.Components.OpenAPI.yaml#/CreateRepositoryParameters
-
+              $ref: './Repository.Components.OpenAPI.yaml#/CreateRepositoryParameters'
+            examples:
+              createRepository:
+                summary: Create a repository
+                value: &repositoryBaseExample
+                  CorrelationId: cli-20260604T181500Z-0001
+                  Principal: user:alice
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                  RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                  RepositoryName: sample-repository
+                  ObjectStorageProvider: AzureBlobStorage
       responses:
         '200':
-          $ref: './Responses.OpenAPI.yaml#/200'
+          $ref: './Repository.Components.OpenAPI.yaml#/RepositoryCommandResponse'
         '400':
           $ref: './Responses.OpenAPI.yaml#/400'
         '500':
@@ -38,29 +32,53 @@
 
   /repository/setVisibility:
     post:
-      summary: Sets the search visibility of the repository.
-      description: |
-        This endpoint sets the search visibility of a repository.
-
-        ### Validation rules
-        - Either `RepositoryId` or `RepositoryName` must be provided.
-        - The `Visibility` value must be valid.
-        - The repository must exist.
-        - The repository must not be deleted.
-
-        ### Errors and Problem Details
-        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
-
+      tags:
+        - Repositories
+      summary: Set repository visibility.
+      description: Sets whether the repository is public or private.
+      operationId: SetRepositoryVisibility
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: Repository.Components.OpenAPI.yaml#/SetRepositoryVisibilityParameters
-
+              $ref: './Repository.Components.OpenAPI.yaml#/SetRepositoryVisibilityParameters'
+            examples:
+              setRepositoryVisibility:
+                summary: Set repository visibility
+                value:
+                  <<: *repositoryBaseExample
+                  Visibility: Private
       responses:
         '200':
-          $ref: './Responses.OpenAPI.yaml#/200'
+          $ref: './Repository.Components.OpenAPI.yaml#/RepositoryCommandResponse'
+        '400':
+          $ref: './Responses.OpenAPI.yaml#/400'
+        '500':
+          $ref: './Responses.OpenAPI.yaml#/500'
+
+  /repository/setName:
+    post:
+      tags:
+        - Repositories
+      summary: Set the name of a repository.
+      description: Renames a repository that exists and has not been deleted.
+      operationId: SetRepositoryName
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: './Repository.Components.OpenAPI.yaml#/SetRepositoryNameParameters'
+            examples:
+              setRepositoryName:
+                summary: Rename a repository
+                value:
+                  <<: *repositoryBaseExample
+                  NewName: sample-repository-renamed
+      responses:
+        '200':
+          $ref: './Repository.Components.OpenAPI.yaml#/RepositoryCommandResponse'
         '400':
           $ref: './Responses.OpenAPI.yaml#/400'
         '500':
@@ -68,29 +86,26 @@
 
   /repository/setSaveDays:
     post:
-      summary: Sets the number of days to keep saves in the repository.
-      description: |
-        This endpoint sets the number of days to keep saves in a repository.
-
-        ### Validation rules
-        - Either `RepositoryId` or `RepositoryName` must be provided.
-        - The `SaveDays` value must be valid.
-        - The repository must exist.
-        - The repository must not be deleted.
-
-        ### Errors and Problem Details
-        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
-
+      tags:
+        - Repositories
+      summary: Set save retention.
+      description: Sets the number of days to keep saves in the repository.
+      operationId: SetRepositorySaveDays
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: Repository.Components.OpenAPI.yaml#/SetSaveDaysParameters
-
+              $ref: './Repository.Components.OpenAPI.yaml#/SetSaveDaysParameters'
+            examples:
+              setRepositorySaveDays:
+                summary: Set save retention
+                value:
+                  <<: *repositoryBaseExample
+                  SaveDays: 30
       responses:
         '200':
-          $ref: './Responses.OpenAPI.yaml#/200'
+          $ref: './Repository.Components.OpenAPI.yaml#/RepositoryCommandResponse'
         '400':
           $ref: './Responses.OpenAPI.yaml#/400'
         '500':
@@ -98,29 +113,26 @@
 
   /repository/setCheckpointDays:
     post:
-      summary: Sets the number of days to keep checkpoints in the repository.
-      description: |
-        This endpoint sets the number of days to keep checkpoints in a repository.
-
-        ### Validation rules
-        - Either `RepositoryId` or `RepositoryName` must be provided.
-        - The `CheckpointDays` value must be valid.
-        - The repository must exist.
-        - The repository must not be deleted.
-
-        ### Errors and Problem Details
-        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
-
+      tags:
+        - Repositories
+      summary: Set checkpoint retention.
+      description: Sets the number of days to keep checkpoints in the repository.
+      operationId: SetRepositoryCheckpointDays
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: Repository.Components.OpenAPI.yaml#/SetCheckpointDaysParameters
-
+              $ref: './Repository.Components.OpenAPI.yaml#/SetCheckpointDaysParameters'
+            examples:
+              setRepositoryCheckpointDays:
+                summary: Set checkpoint retention
+                value:
+                  <<: *repositoryBaseExample
+                  CheckpointDays: 90
       responses:
         '200':
-          $ref: './Responses.OpenAPI.yaml#/200'
+          $ref: './Repository.Components.OpenAPI.yaml#/RepositoryCommandResponse'
         '400':
           $ref: './Responses.OpenAPI.yaml#/400'
         '500':
@@ -128,29 +140,26 @@
 
   /repository/setStatus:
     post:
-      summary: Sets the status of the repository (Public, Private).
-      description: |
-        This endpoint sets the status of a repository.
-
-        ### Validation rules
-        - Either `RepositoryId` or `RepositoryName` must be provided.
-        - The `Status` value must be a valid repository status.
-        - The repository must exist.
-        - The repository must not be deleted.
-
-        ### Errors and Problem Details
-        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
-
+      tags:
+        - Repositories
+      summary: Set repository status.
+      description: Sets the repository operational status.
+      operationId: SetRepositoryStatus
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: Repository.Components.OpenAPI.yaml#/SetRepositoryStatusParameters
-
+              $ref: './Repository.Components.OpenAPI.yaml#/SetRepositoryStatusParameters'
+            examples:
+              setRepositoryStatus:
+                summary: Set repository status
+                value:
+                  <<: *repositoryBaseExample
+                  Status: Active
       responses:
         '200':
-          $ref: './Responses.OpenAPI.yaml#/200'
+          $ref: './Repository.Components.OpenAPI.yaml#/RepositoryCommandResponse'
         '400':
           $ref: './Responses.OpenAPI.yaml#/400'
         '500':
@@ -158,29 +167,26 @@
 
   /repository/setDefaultServerApiVersion:
     post:
-      summary: Sets the default server API version for the repository.
-      description: |
-        This endpoint sets the default server API version for a repository.
-
-        ### Validation rules
-        - Either `RepositoryId` or `RepositoryName` must be provided.
-        - The `DefaultServerApiVersion` must not be empty.
-        - The repository must exist.
-        - The repository must not be deleted.
-
-        ### Errors and Problem Details
-        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
-
+      tags:
+        - Repositories
+      summary: Set the default server API version.
+      description: Sets the default server API version clients should use for the repository.
+      operationId: SetRepositoryDefaultServerApiVersion
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: Repository.Components.OpenAPI.yaml#/SetDefaultServerApiVersionParameters
-
+              $ref: './Repository.Components.OpenAPI.yaml#/SetDefaultServerApiVersionParameters'
+            examples:
+              setRepositoryDefaultServerApiVersion:
+                summary: Set default server API version
+                value:
+                  <<: *repositoryBaseExample
+                  DefaultServerApiVersion: '2026-06-04'
       responses:
         '200':
-          $ref: './Responses.OpenAPI.yaml#/200'
+          $ref: './Repository.Components.OpenAPI.yaml#/RepositoryCommandResponse'
         '400':
           $ref: './Responses.OpenAPI.yaml#/400'
         '500':
@@ -188,28 +194,26 @@
 
   /repository/setRecordSaves:
     post:
-      summary: Sets whether or not to keep saves in the repository.
-      description: |
-        This endpoint sets whether or not to keep saves in a repository.
-
-        ### Validation rules
-        - Either `RepositoryId` or `RepositoryName` must be provided.
-        - The repository must exist.
-        - The repository must not be deleted.
-
-        ### Errors and Problem Details
-        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
-
+      tags:
+        - Repositories
+      summary: Set whether saves are recorded.
+      description: Sets the repository default for whether save references should be kept.
+      operationId: SetRepositoryRecordSaves
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: Repository.Components.OpenAPI.yaml#/RecordSavesParameters
-
+              $ref: './Repository.Components.OpenAPI.yaml#/RecordSavesParameters'
+            examples:
+              setRepositoryRecordSaves:
+                summary: Enable save recording
+                value:
+                  <<: *repositoryBaseExample
+                  RecordSaves: true
       responses:
         '200':
-          $ref: './Responses.OpenAPI.yaml#/200'
+          $ref: './Repository.Components.OpenAPI.yaml#/RepositoryCommandResponse'
         '400':
           $ref: './Responses.OpenAPI.yaml#/400'
         '500':
@@ -217,29 +221,26 @@
 
   /repository/setDescription:
     post:
-      summary: Sets the description of the repository.
-      description: |
-        This endpoint sets the description of a repository.
-
-        ### Validation rules
-        - Either `RepositoryId` or `RepositoryName` must be provided.
-        - The `Description` must not be empty.
-        - The repository must exist.
-        - The repository must not be deleted.
-
-        ### Errors and Problem Details
-        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
-
+      tags:
+        - Repositories
+      summary: Set repository description.
+      description: Sets the repository description.
+      operationId: SetRepositoryDescription
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: Repository.Components.OpenAPI.yaml#/SetRepositoryDescriptionParameters
-
+              $ref: './Repository.Components.OpenAPI.yaml#/SetRepositoryDescriptionParameters'
+            examples:
+              setRepositoryDescription:
+                summary: Set repository description
+                value:
+                  <<: *repositoryBaseExample
+                  Description: Repository for release candidates.
       responses:
         '200':
-          $ref: './Responses.OpenAPI.yaml#/200'
+          $ref: './Repository.Components.OpenAPI.yaml#/RepositoryCommandResponse'
         '400':
           $ref: './Responses.OpenAPI.yaml#/400'
         '500':
@@ -247,29 +248,27 @@
 
   /repository/delete:
     post:
-      summary: Deletes the repository.
-      description: |
-        This endpoint deletes a repository.
-
-        ### Validation rules
-        - Either `RepositoryId` or `RepositoryName` must be provided.
-        - The `DeleteReason` must not be empty.
-        - The repository must exist.
-        - The repository must not be deleted.
-
-        ### Errors and Problem Details
-        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
-
+      tags:
+        - Repositories
+      summary: Delete a repository.
+      description: Logically deletes a repository that exists and has not already been deleted.
+      operationId: DeleteRepository
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: Repository.Components.OpenAPI.yaml#/DeleteRepositoryParameters
-
+              $ref: './Repository.Components.OpenAPI.yaml#/DeleteRepositoryParameters'
+            examples:
+              deleteRepository:
+                summary: Delete a repository
+                value:
+                  <<: *repositoryBaseExample
+                  Force: false
+                  DeleteReason: Repository retired.
       responses:
         '200':
-          $ref: './Responses.OpenAPI.yaml#/200'
+          $ref: './Repository.Components.OpenAPI.yaml#/RepositoryCommandResponse'
         '400':
           $ref: './Responses.OpenAPI.yaml#/400'
         '500':
@@ -277,28 +276,24 @@
 
   /repository/undelete:
     post:
-      summary: Undeletes a previously-deleted repository.
-      description: |
-        This endpoint undeletes a previously-deleted repository.
-
-        ### Validation rules
-        - Either `RepositoryId` or `RepositoryName` must be provided.
-        - The repository must exist.
-        - The repository must be deleted.
-
-        ### Errors and Problem Details
-        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
-
+      tags:
+        - Repositories
+      summary: Undelete a previously deleted repository.
+      description: Restores a logically deleted repository.
+      operationId: UndeleteRepository
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: Repository.Components.OpenAPI.yaml#/RepositoryParameters
-
+              $ref: './Repository.Components.OpenAPI.yaml#/UndeleteRepositoryParameters'
+            examples:
+              undeleteRepository:
+                summary: Restore a repository
+                value: *repositoryBaseExample
       responses:
         '200':
-          $ref: './Responses.OpenAPI.yaml#/200'
+          $ref: './Repository.Components.OpenAPI.yaml#/RepositoryCommandResponse'
         '400':
           $ref: './Responses.OpenAPI.yaml#/400'
         '500':
@@ -306,77 +301,49 @@
 
   /repository/exists:
     post:
-      summary: Checks if a repository exists with the given parameters.
-      description: |
-        This endpoint checks if a repository exists based on the provided parameters.
-
-        ### Validation rules
-        - Either `RepositoryId` or `RepositoryName` must be provided.
-        - The `OwnerId` must be a valid and non-empty GUID.
-        - The `OwnerName` must be a valid Grace name.
-        - Either `OwnerId` or `OwnerName` must be provided.
-        - The `OrganizationId` must be a valid and non-empty GUID.
-        - The `OrganizationName` must be a valid Grace name.
-        - Either `OrganizationId` or `OrganizationName` must be provided.
-        - The `RepositoryId` must be a valid and non-empty GUID.
-        - The repository ID must not exist.
-
-        ### Errors and Problem Details
-        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
-
+      tags:
+        - Repositories
+      summary: Check whether a repository exists.
+      description: Checks whether a repository exists for the supplied selector values.
+      operationId: RepositoryExists
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: Repository.Components.OpenAPI.yaml#/RepositoryParameters
-
+              $ref: './Repository.Components.OpenAPI.yaml#/RepositoryParameters'
+            examples:
+              repositoryExists:
+                summary: Check repository existence
+                value: *repositoryBaseExample
       responses:
         '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                type: boolean
+          $ref: './Repository.Components.OpenAPI.yaml#/RepositoryBooleanResponse'
         '400':
           $ref: './Responses.OpenAPI.yaml#/400'
         '500':
           $ref: './Responses.OpenAPI.yaml#/500'
-  
+
   /repository/isEmpty:
     post:
-      summary: Checks if a repository is empty.
-      description: |
-        This endpoint checks if a repository is empty, meaning it has just been created and has no data.
-
-        ### Validation rules
-        - Either `RepositoryId` or `RepositoryName` must be provided.
-        - The `OwnerId` must be a valid and non-empty GUID.
-        - The `OwnerName` must be a valid Grace name.
-        - Either `OwnerId` or `OwnerName` must be provided.
-        - The `OrganizationId` must be a valid and non-empty GUID.
-        - The `OrganizationName` must be a valid Grace name.
-        - Either `OrganizationId` or `OrganizationName` must be provided.
-        - The `RepositoryId` must be a valid and non-empty GUID.
-        - The repository ID must not exist.
-
-        ### Errors and Problem Details
-        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
-
+      tags:
+        - Repositories
+      summary: Check whether a repository is empty.
+      description: Checks whether a repository has no content yet.
+      operationId: RepositoryIsEmpty
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: Repository.Components.OpenAPI.yaml#/RepositoryParameters
-
+              $ref: './Repository.Components.OpenAPI.yaml#/IsEmptyParameters'
+            examples:
+              repositoryIsEmpty:
+                summary: Check whether a repository is empty
+                value: *repositoryBaseExample
       responses:
         '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                type: boolean
+          $ref: './Repository.Components.OpenAPI.yaml#/RepositoryBooleanResponse'
         '400':
           $ref: './Responses.OpenAPI.yaml#/400'
         '500':
@@ -384,39 +351,24 @@
 
   /repository/get:
     post:
-      summary: Gets a repository.
-      description: |
-        This endpoint retrieves the details of a repository.
-
-        ### Validation rules
-        - Either `RepositoryId` or `RepositoryName` must be provided.
-        - The `OwnerId` must be a valid and non-empty GUID.
-        - The `OwnerName` must be a valid Grace name.
-        - Either `OwnerId` or `OwnerName` must be provided.
-        - The `OrganizationId` must be a valid and non-empty GUID.
-        - The `OrganizationName` must be a valid Grace name.
-        - Either `OrganizationId` or `OrganizationName` must be provided.
-        - The `RepositoryId` must be a valid and non-empty GUID.
-        - The `RepositoryName` must not be empty.
-        - The repository ID must not exist.
-
-        ### Errors and Problem Details
-        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
-
+      tags:
+        - Repositories
+      summary: Get a repository.
+      description: Gets repository metadata.
+      operationId: GetRepository
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: Repository.Components.OpenAPI.yaml#/RepositoryParameters
-
+              $ref: './Repository.Components.OpenAPI.yaml#/RepositoryParameters'
+            examples:
+              getRepository:
+                summary: Get a repository
+                value: *repositoryBaseExample
       responses:
         '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: Dto.Components.OpenAPI.yaml#/RepositoryDto
+          $ref: './Repository.Components.OpenAPI.yaml#/RepositoryResponse'
         '400':
           $ref: './Responses.OpenAPI.yaml#/400'
         '500':
@@ -424,40 +376,27 @@
 
   /repository/getBranches:
     post:
-      summary: Gets a repository's branches.
-      description: |
-        This endpoint retrieves the branches of a repository.
-
-        ### Validation rules
-        - The `OwnerId` must be a valid and non-empty GUID.
-        - The `OwnerName` must be a valid Grace name.
-        - Either `OwnerId` or `OwnerName` must be provided.
-        - The `OrganizationId` must be a valid and non-empty GUID.
-        - The `OrganizationName` must be a valid Grace name.
-        - Either `OrganizationId` or `OrganizationName` must be provided.
-        - The `RepositoryId` must be a valid and non-empty GUID.
-        - Either `RepositoryId` or `RepositoryName` must be provided.
-        - The `MaxCount` must be a number between 1 and 1000 (inclusive).
-        - The repository ID must not exist.
-
-        ### Errors and Problem Details
-        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
-
+      tags:
+        - Repositories
+      summary: List repository branches.
+      description: Gets branches for the repository.
+      operationId: ListRepositoryBranches
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: Repository.Components.OpenAPI.yaml#/GetBranchesParameters
-
+              $ref: './Repository.Components.OpenAPI.yaml#/GetBranchesParameters'
+            examples:
+              listRepositoryBranches:
+                summary: List repository branches
+                value: &repositoryListBranchesExample
+                  <<: *repositoryBaseExample
+                  IncludeDeleted: false
+                  MaxCount: 50
       responses:
         '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                type: array
-                $ref: Dto.Components.OpenAPI.yaml#/BranchDto
+          $ref: './Repository.Components.OpenAPI.yaml#/RepositoryBranchesResponse'
         '400':
           $ref: './Responses.OpenAPI.yaml#/400'
         '500':
@@ -465,41 +404,28 @@
 
   /repository/getReferencesByReferenceId:
     post:
-      summary: Gets a list of references by reference IDs.
-      description: |
-        This endpoint retrieves a list of references based on the provided reference IDs.
-
-        ### Validation rules
-        - The `OwnerId` must be a valid and non-empty GUID.
-        - The `OwnerName` must be a valid Grace name.
-        - Either `OwnerId` or `OwnerName` must be provided.
-        - The `OrganizationId` must be a valid and non-empty GUID.
-        - The `OrganizationName` must be a valid Grace name.
-        - Either `OrganizationId` or `OrganizationName` must be provided.
-        - The `RepositoryId` must be a valid and non-empty GUID.
-        - Either `RepositoryId` or `RepositoryName` must be provided.
-        - The `ReferenceIds` must not be empty.
-        - The `MaxCount` must be a number between 1 and 1000 (inclusive).
-        - The repository ID must not exist.
-
-        ### Errors and Problem Details
-        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
-
+      tags:
+        - Repositories
+      summary: List references by reference id.
+      description: Gets references in the repository by reference ids.
+      operationId: ListRepositoryReferencesByReferenceId
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: Repository.Components.OpenAPI.yaml#/GetReferencesByReferenceIdParameters
-
+              $ref: './Repository.Components.OpenAPI.yaml#/GetReferencesByReferenceIdParameters'
+            examples:
+              listRepositoryReferencesByReferenceId:
+                summary: List references by id
+                value:
+                  <<: *repositoryBaseExample
+                  ReferenceIds:
+                    - c8f9bac8-d489-46c7-917f-b36b7d9efa9a
+                  MaxCount: 50
       responses:
         '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                type: array
-                $ref: Dto.Components.OpenAPI.yaml#/ReferenceDto
+          $ref: './Repository.Components.OpenAPI.yaml#/RepositoryReferencesResponse'
         '400':
           $ref: './Responses.OpenAPI.yaml#/400'
         '500':
@@ -507,41 +433,27 @@
 
   /repository/getBranchesByBranchId:
     post:
-      summary: Gets a list of branches by branch IDs.
-      description: |
-        This endpoint retrieves a list of branches based on the provided branch IDs.
-
-        ### Validation rules
-        - The `OwnerId` must be a valid and non-empty GUID.
-        - The `OwnerName` must be a valid Grace name.
-        - Either `OwnerId` or `OwnerName` must be provided.
-        - The `OrganizationId` must be a valid and non-empty GUID.
-        - The `OrganizationName` must be a valid Grace name.
-        - Either `OrganizationId` or `OrganizationName` must be provided.
-        - The `RepositoryId` must be a valid and non-empty GUID.
-        - Either `RepositoryId` or `RepositoryName` must be provided.
-        - The `BranchIds` must not be empty.
-        - The `MaxCount` must be a number between 1 and 1000 (inclusive).
-        - The repository ID must not exist.
-
-        ### Errors and Problem Details
-        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
-
+      tags:
+        - Repositories
+      summary: List branches by branch id.
+      description: Gets branches in the repository by branch ids.
+      operationId: ListRepositoryBranchesByBranchId
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: Repository.Components.OpenAPI.yaml#/GetBranchesByBranchIdParameters
-
+              $ref: './Repository.Components.OpenAPI.yaml#/GetBranchesByBranchIdParameters'
+            examples:
+              listRepositoryBranchesByBranchId:
+                summary: List branches by id
+                value:
+                  <<: *repositoryListBranchesExample
+                  BranchIds:
+                    - de7bf47d-23ae-4599-af68-68a317ea390d
       responses:
         '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                type: array
-                $ref: Dto.Components.OpenAPI.yaml#/BranchDto
+          $ref: './Repository.Components.OpenAPI.yaml#/RepositoryBranchesResponse'
         '400':
           $ref: './Responses.OpenAPI.yaml#/400'
         '500':

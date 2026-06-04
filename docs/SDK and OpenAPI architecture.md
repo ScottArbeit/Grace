@@ -159,14 +159,14 @@ The scope includes:
 - Product/build/package identity is centralized at `src/Directory.Build.props:3-25`, with base version `0.2.0`.
   `docs/Build versioning.md:3-35` documents the current build version model and distinguishes runtime identity
   from configuration schema identity at `docs/Build versioning.md:59-72`.
-- Static OpenAPI source currently declares `openapi: 3.1.0` and `info.version: "0.1"` at
-  `src/OpenAPI/Main.OpenAPI.yaml:1-35`. Runtime OpenAPI metadata declares `v0.2` at
-  `src/Grace.Server/Startup.Server.fs:1641-1644`. The intended future model must resolve this by separating
-  product build version from HTTP API contract version.
-- Server API versioning packages and wiring already exist. `src/Grace.Server/Startup.Server.fs:1858-1878` sets
-  API version readers and explorer defaults. `src/Grace.Shared/Constants.Shared.fs:189` defines
-  `X-Api-Version`. `src/Grace.Types/Common.Types.fs:1210-1217` defines `ServerApiVersions` as
-  `V2022-02-01`, `Latest`, and `Edge`.
+- Static OpenAPI source currently declares `openapi: 3.1.0` and `info.version: "2023-10-01"` in the committed
+  entrypoints at `src/OpenAPI/Main.OpenAPI.yaml` and `src/OpenAPI/Grace.OpenAPI.yaml`. That value is the HTTP API
+  contract version, not the Grace product build version or an SDK package version.
+- Server API versioning packages and wiring already exist. `src/Grace.Server/Startup.Server.fs` sets API version
+  readers and explorer defaults from the shared `2023-10-01` contract. `src/Grace.Shared/Constants.Shared.fs` defines
+  `X-Api-Version`, and `src/Grace.Shared/ApiContractVersion.Shared.fs` defines the current released date plus explicit
+  `latest` and `edge` aliases. `src/Grace.Server/Middleware/ApiVersionAlias.Middleware.fs` maps those aliases to the
+  current released date before ASP.NET API version parsing.
 - Client identity headers already exist. `src/Grace.Shared/Constants.Shared.fs:193-197` defines
   `X-Grace-Client-Type` and `X-Grace-Client-Version`; `src/Grace.SDK/ClientIdentity.SDK.fs:21-37` applies
   configured client identity headers to SDK HTTP clients. The current `ClientType` mapping only showed CLI
@@ -456,6 +456,23 @@ supports Grace auth/correlation/client identity policy, and can sit behind the h
 1. Rust generator feasibility must be evaluated during the generator prototype matrix, even if Rust facade support
    remains deferred.
 
+### Current server lifecycle contract
+
+The first server-side lifecycle policy recognizes Grace CLI/SDK client identity from `X-Grace-Client-Type` and
+`X-Grace-Client-Version`. The identity is diagnostic and lifecycle input only; it is not authentication proof.
+
+Recognized deprecated clients continue through normal request handling and receive response headers:
+
+- `X-Grace-Client-Support-Status: deprecated`
+- `X-Grace-Client-Unsupported-After`
+- `X-Grace-Client-Min-Version`
+- `X-Grace-Client-Recommended-Version`
+- `X-Grace-Client-Update-Url`
+
+Recognized unsupported clients receive `426 Upgrade Required` with the same lifecycle headers and a structured
+`GraceError` whose `Error` value is `UnsupportedClientVersion`. Missing, unknown, or malformed client identity
+continues without lifecycle headers so raw HTTP clients are not blocked by lifecycle diagnostics.
+
 ## Non-functional requirements
 
 - The OpenAPI contract should be standard-conforming and OpenAPI 3.2-forward.
@@ -679,6 +696,12 @@ Do not describe a Tier 3 or Tier 4 SDK as complete unless protocol vectors exist
 generator as accepted unless deterministic regeneration, compile/import, transport policy, and facade-fit gates pass.
 Do not describe OpenAPI as SDK-grade unless response shapes, media types, errors, headers, examples, tags, versioning,
 source/derived freshness, and runtime evidence are all covered.
+
+The final S17 audit for epic #211 is recorded in
+[SDK OpenAPI final audit](SDK%20OpenAPI%20final%20audit.md). That audit is the release matrix and traceability record
+for the current `epic/211-sdk-openapi` branch. It intentionally keeps TypeScript Tier 4 scoped to the proven
+`facade-transfer-progress-diagnostics` capability, keeps Python and Rust at proof-harness maturity, and does not claim
+browser TypeScript support or SDK-grade OpenAPI completion while quality gates remain pending.
 
 ### Specification self-critique
 

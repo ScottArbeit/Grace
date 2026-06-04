@@ -36,7 +36,10 @@ components:
       example: MyBranch
     CorrelationId:
       type: string
-      description: If you don't provide a CorrelationId, a Guid will be generated for you. (You're welcome.) CorrelationId's are just strings; feel free to send any kind of CorrelationId you prefer.
+      description: >-
+        Body DTO correlation id copied into Grace command/event metadata after request parsing. This field is distinct
+        from the X-Correlation-Id transport header, which correlates the HTTP request/response exchange.
+      example: cli-20260604T181500Z-0001
     ContainerName:
       type: string
       description: The name of the container must be a valid Grace name. (See the Grace documentation for more information.)
@@ -118,7 +121,9 @@ components:
       properties:
         CorrelationId:
           type: string
-          description: A unique identifier for correlating logs and telemetry.
+          description: >-
+            Body DTO correlation id copied into Grace command/event metadata after request parsing. This field is
+            distinct from the X-Correlation-Id transport header.
         Principal:
           type: string
           description: The entity on whose behalf the action is being performed.
@@ -195,7 +200,9 @@ components:
             type: string
 
     ClientType:
-      description: The Grace client version string for the client that initiated an API request.
+      description: >-
+        The Grace client identity type/version recorded for diagnostics. Client identity headers are not authentication
+        proof and must not be used as authorization evidence.
       type: string
 
     GraceReturnValue:
@@ -214,19 +221,36 @@ components:
             type: string
 
     GraceError:
+      description: >-
+        Grace domain error envelope returned by command handlers. Authentication challenges and framework authorization
+        failures use their HTTP-specific response shapes instead of this domain error envelope.
       type: object
       properties:
         Error:
           type: string
+          example: OwnerId is required.
         EventTime:
           type: string
           format: date-time
+          example: '2026-06-04T18:15:00Z'
         CorrelationId:
           type: string
+          example: cli-20260604T181500Z-0001
         Properties:
           type: object
           additionalProperties:
             type: string
+      required:
+        - Error
+        - EventTime
+        - CorrelationId
+        - Properties
+      example:
+        Error: OwnerId is required.
+        EventTime: '2026-06-04T18:15:00Z'
+        CorrelationId: cli-20260604T181500Z-0001
+        Properties:
+          Path: /owner/get
 
     GraceResult:
       oneOf:

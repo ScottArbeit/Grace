@@ -1,0 +1,122 @@
+components:
+  parameters:
+    CorrelationIdHeader:
+      name: X-Correlation-Id
+      in: header
+      required: false
+      description: >-
+        Optional transport correlation header. When omitted, Grace generates a correlation id and returns it in the
+        response header. This transport header is distinct from body DTO CorrelationId fields, which are copied into
+        command/event metadata after request parsing.
+      schema:
+        type: string
+      example: cli-20260604T181500Z-0001
+    ApiVersionHeader:
+      name: X-Api-Version
+      in: header
+      required: false
+      description: >-
+        Optional Grace API contract version requested by SDK clients. Supported values are released date versions such
+        as 2023-10-01 or explicit override aliases such as latest and edge.
+      schema:
+        type: string
+        pattern: '^(20[0-9]{2}-[0-9]{2}-[0-9]{2}|latest|edge)$'
+      example: '2023-10-01'
+    ClientTypeHeader:
+      name: X-Grace-Client-Type
+      in: header
+      required: false
+      description: >-
+        Optional client identity type used for diagnostics and event metadata. This header is not authentication proof;
+        authorization is evaluated from the configured authentication principal and Grace authorization policy.
+      schema:
+        type: string
+      example: CLI
+    ClientVersionHeader:
+      name: X-Grace-Client-Version
+      in: header
+      required: false
+      description: >-
+        Optional client identity version paired with X-Grace-Client-Type for diagnostics and event metadata. This header
+        is not authentication proof.
+      schema:
+        type: string
+      example: 0.42.0
+    WebhookDeliveryIdHeader:
+      name: x-grace-webhook-delivery-id
+      in: header
+      required: true
+      description: Unique webhook delivery id included with outbound webhook requests.
+      schema:
+        type: string
+        format: uuid
+      example: 7a93f7b4-df35-49eb-86e1-49d95745f2e4
+    WebhookEventNameHeader:
+      name: x-grace-webhook-event-name
+      in: header
+      required: true
+      description: Grace event name included with outbound webhook requests.
+      schema:
+        type: string
+      example: promotion-set.applied
+    WebhookEventVersionHeader:
+      name: x-grace-webhook-event-version
+      in: header
+      required: true
+      description: Grace event contract version included with outbound webhook requests.
+      schema:
+        type: integer
+      example: 1
+    WebhookTimestampHeader:
+      name: x-grace-webhook-timestamp
+      in: header
+      required: true
+      description: UTC timestamp used in webhook signature material.
+      schema:
+        type: string
+        format: date-time
+      example: '2026-06-04T18:15:00Z'
+    WebhookSignatureKeyIdHeader:
+      name: x-grace-webhook-signature-key-id
+      in: header
+      required: true
+      description: Webhook signing secret version used to compute the signature.
+      schema:
+        type: string
+      example: secret-v1
+    WebhookPayloadSha256Header:
+      name: x-grace-webhook-payload-sha256
+      in: header
+      required: true
+      description: Lowercase SHA-256 hex digest of the outbound webhook payload bytes.
+      schema:
+        type: string
+        pattern: '^[a-f0-9]{64}$'
+      example: 8f2a559490e4a9bb1a4fcd73d4a0fb701ff61e942d7b6b3f42e4612d48e6a7fb
+    WebhookSignatureHeader:
+      name: x-grace-webhook-signature
+      in: header
+      required: true
+      description: HMAC-SHA256 webhook signature over the signed delivery material.
+      schema:
+        type: string
+        pattern: '^sha256=[a-f0-9]{64}$'
+      example: sha256=2a98f6d8e9be1e9b6d1bd06c0de24d73a6d73c1f9f8ce845f7b8cb11d7e4b15c
+  headers:
+    CorrelationId:
+      description: Transport correlation id for the HTTP request/response exchange.
+      schema:
+        type: string
+      example: cli-20260604T181500Z-0001
+    UploadSessionLifecycleState:
+      description: >-
+        Diagnostic lifecycle state for manifest upload-session responses. Invalid or unknown values must be treated as
+        diagnostics only and must not be used as authentication or authorization proof.
+      schema:
+        $ref: 'Storage.Components.OpenAPI.yaml#/UploadSessionLifecycleState'
+      example: Finalized
+    UploadSessionLifecycleReason:
+      description: Optional diagnostic explanation for a lifecycle-state response header.
+      schema:
+        type: string
+      example: manifest-finalized
