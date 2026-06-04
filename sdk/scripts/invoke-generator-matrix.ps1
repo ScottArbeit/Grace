@@ -520,6 +520,31 @@ else {
     }
 }
 
+$overallConclusion = if ($acceptanceFailures.Count -eq 0) {
+    'OpenAPI Generator is the only evaluated tool that produced compile/importable TS, Python, and Rust output, and only with --skip-validate-spec. Kiota and NSwag are rejected until OpenAPI schema-shape debt is fixed.'
+}
+else {
+    "Accepted OpenAPI Generator proof points were not satisfied: $($acceptanceFailures -join '; ') Kiota and NSwag remain rejected until OpenAPI schema-shape debt is fixed."
+}
+
+$residualRisks = New-Object System.Collections.Generic.List[string]
+$residualRisks.Add(
+    'OpenAPI validation errors remain in DirectoryVersion, FileVersion, DiffPiece, FileDiff, FileSystemDifference, and GraceResult shapes.'
+)
+
+if ($acceptanceFailures.Count -eq 0) {
+    $residualRisks.Add(
+        'OpenAPI Generator output is accepted only as a raw-client proof point behind facades, not as a stable package surface.'
+    )
+    $residualRisks.Add('Rust feasibility is proven at cargo-check level, but Rust facade support remains deferred.')
+}
+else {
+    $residualRisks.Add(
+        'OpenAPI Generator raw-client proof points are not accepted until generation and all required compile/import probes pass.'
+    )
+    $residualRisks.Add('Rust feasibility is not proven by this run until the Rust cargo-check probe passes.')
+}
+
 $evidence = [ordered]@{
     schemaVersion = 1
     issue = 221
@@ -530,12 +555,8 @@ $evidence = [ordered]@{
     matrix = $matrixEntries
     probes = $probes
     deterministicRegeneration = $deterministicRegeneration
-    overallConclusion = 'OpenAPI Generator is the only evaluated tool that produced compile/importable TS, Python, and Rust output, and only with --skip-validate-spec. Kiota and NSwag are rejected until OpenAPI schema-shape debt is fixed.'
-    residualRisks = @(
-        'OpenAPI validation errors remain in DirectoryVersion, FileVersion, DiffPiece, FileDiff, FileSystemDifference, and GraceResult shapes.',
-        'OpenAPI Generator output is accepted only as a raw-client proof point behind facades, not as a stable package surface.',
-        'Rust feasibility is proven at cargo-check level, but Rust facade support remains deferred.'
-    )
+    overallConclusion = $overallConclusion
+    residualRisks = @($residualRisks.ToArray())
 }
 
 $evidencePath = Join-Path $matrixRoot 'generator-matrix-evidence.json'
