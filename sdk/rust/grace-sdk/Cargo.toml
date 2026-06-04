@@ -2,7 +2,7 @@
 name = "grace-sdk"
 version = "0.0.0-s09"
 edition = "2024"
-description = "Facade-first Grace Rust SDK package harness."
+description = "Facade-first Grace Rust SDK proof harness; supported facade behavior is deferred."
 publish = false
 
 [lib]
