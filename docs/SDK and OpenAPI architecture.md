@@ -456,6 +456,23 @@ supports Grace auth/correlation/client identity policy, and can sit behind the h
 1. Rust generator feasibility must be evaluated during the generator prototype matrix, even if Rust facade support
    remains deferred.
 
+### Current server lifecycle contract
+
+The first server-side lifecycle policy recognizes Grace CLI/SDK client identity from `X-Grace-Client-Type` and
+`X-Grace-Client-Version`. The identity is diagnostic and lifecycle input only; it is not authentication proof.
+
+Recognized deprecated clients continue through normal request handling and receive response headers:
+
+- `X-Grace-Client-Support-Status: deprecated`
+- `X-Grace-Client-Unsupported-After`
+- `X-Grace-Client-Min-Version`
+- `X-Grace-Client-Recommended-Version`
+- `X-Grace-Client-Update-Url`
+
+Recognized unsupported clients receive `426 Upgrade Required` with the same lifecycle headers and a structured
+`GraceError` whose `Error` value is `UnsupportedClientVersion`. Missing, unknown, or malformed client identity
+continues without lifecycle headers so raw HTTP clients are not blocked by lifecycle diagnostics.
+
 ## Non-functional requirements
 
 - The OpenAPI contract should be standard-conforming and OpenAPI 3.2-forward.
