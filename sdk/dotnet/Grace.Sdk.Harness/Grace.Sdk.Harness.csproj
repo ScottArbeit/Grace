@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>Grace.Sdk.Harness</AssemblyName>
+    <RootNamespace>Grace.Sdk.Harness</RootNamespace>
+    <IsPackable>true</IsPackable>
+    <PackageId>Grace.Sdk.Harness</PackageId>
+    <Version>0.0.0-s09</Version>
+    <Authors>Grace</Authors>
+    <Description>Facade-first Grace SDK package harness. Generated raw clients are not the public surface.</Description>
+  </PropertyGroup>
+</Project>
