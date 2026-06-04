@@ -21,6 +21,7 @@
     <Compile Include="AuthSchemeSelection.Unit.Tests.fs" />
     <Compile Include="OutboundUrlSafety.Unit.Tests.fs" />
     <Compile Include="ApiVersionAlias.Middleware.Tests.fs" />
+    <Compile Include="SdkLifecycle.Middleware.Tests.fs" />
     <Compile Include="MetricsAuthorization.Unit.Tests.fs" />
     <Compile Include="StorageAuthorizationResources.Unit.Tests.fs" />
     <Compile Include="ValidateIds.Decisions.Tests.fs" />

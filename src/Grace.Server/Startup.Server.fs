@@ -1927,6 +1927,7 @@ module Application =
                 .UseMiddleware<LogRequestHeadersMiddleware>()
                 .UseStaticFiles()
                 .UseMiddleware<ApiVersionAliasMiddleware>()
+                .UseMiddleware<SdkLifecycleMiddleware>()
                 .UseRouting()
                 .UseAuthentication()
                 .UseMiddleware<LogAuthorizationFailureMiddleware>()
