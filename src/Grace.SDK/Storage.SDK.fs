@@ -23,6 +23,7 @@ open System.IO.Compression
 open System.IO.Enumeration
 open System.Linq
 open System.Net
+open System.Net.Http
 open System.Net.Http.Json
 open System.Threading.Tasks
 open System.Text
@@ -41,6 +42,20 @@ module Storage =
 
     let private contentBlockPlacement contentBlockAddress etag = { ObjectKey = StorageKeys.contentBlockObjectKey contentBlockAddress; ETag = etag }
 
+    let internal readStringResponseWithLifecycle (response: HttpResponseMessage) correlationId errorPrefix =
+        task {
+            let! responseText = response.Content.ReadAsStringAsync()
+
+            if response.IsSuccessStatusCode then
+                return
+                    GraceReturnValue.Create responseText correlationId
+                    |> ClientIdentity.okWithLifecycleDiagnostics response
+            else
+                return
+                    GraceError.Create $"{errorPrefix}; {responseText}" correlationId
+                    |> ClientIdentity.errorWithLifecycleDiagnostics response
+        }
+
     /// Gets a file from object storage and saves it to the local object directory.
     let GetFileFromObjectStorage (getDownloadUriParameters: GetDownloadUriParameters) correlationId =
         task {
@@ -55,60 +70,72 @@ module Storage =
                     let serviceUrl = $"{Current().ServerUri}/storage/getDownloadUri"
                     let jsonContent = createJsonContent getDownloadUriParameters
                     let! response = httpClient.PostAsync(serviceUrl, jsonContent)
-                    let! blobUriWithSasToken = response.Content.ReadAsStringAsync()
-                    //logToConsole $"response.StatusCode: {response.StatusCode}; blobUriWithSasToken: {blobUriWithSasToken}"
 
-                    let relativeDirectory =
-                        if fileVersion.RelativeDirectory = Constants.RootDirectoryPath then
-                            String.Empty
+                    match! readStringResponseWithLifecycle response correlationId (getErrorMessage StorageError.FailedCommunicatingWithObjectStorage) with
+                    | Ok downloadUriReturnValue ->
+                        let blobUriWithSasToken = downloadUriReturnValue.ReturnValue
+                        //logToConsole $"response.StatusCode: {response.StatusCode}; blobUriWithSasToken: {blobUriWithSasToken}"
+
+                        let relativeDirectory =
+                            if fileVersion.RelativeDirectory = Constants.RootDirectoryPath then
+                                String.Empty
+                            else
+                                getNativeFilePath fileVersion.RelativeDirectory
+
+                        let tempFilePath = Path.Combine(Path.GetTempPath(), relativeDirectory, fileVersion.GetObjectFileName)
+
+                        let objectFilePath = Path.Combine(Current().ObjectDirectory, fileVersion.RelativePath, fileVersion.GetObjectFileName)
+
+                        let tempFileInfo = FileInfo(tempFilePath)
+                        let objectFileInfo = FileInfo(objectFilePath)
+
+                        Directory.CreateDirectory(tempFileInfo.Directory.FullName)
+                        |> ignore
+
+                        Directory.CreateDirectory(objectFileInfo.Directory.FullName)
+                        |> ignore
+                        //logToConsole $"tempFilePath: {tempFilePath}; objectFilePath: {objectFilePath}"
+
+                        // Download the file from object storage.
+                        let blobClient = BlobClient(Uri(blobUriWithSasToken))
+                        let! azureResponse = blobClient.DownloadToAsync(tempFilePath)
+
+                        if not <| azureResponse.IsError then
+                            //File.Move(tempFilePath, objectFilePath, overwrite = true)
+                            if fileVersion.IsBinary then
+                                File.Move(tempFilePath, objectFilePath, overwrite = true)
+                            else
+                                use tempFileStream = tempFileInfo.OpenRead()
+                                use gzStream = new GZipStream(tempFileStream, CompressionMode.Decompress, leaveOpen = false)
+                                use fileWriter = objectFileInfo.OpenWrite()
+
+                                do! gzStream.CopyToAsync(fileWriter)
+                                //logToConsole $"In GetFileFromObjectStorage: After CopyToAsync(). {fileVersion.RelativePath}"
+
+                                do! fileWriter.FlushAsync()
+                            //logToConsole $"In GetFileFromObjectStorage: After FlushAsync(). {fileVersion.RelativePath}"
+
+                            //logToConsole $"After tempFileInfo.Delete(). {fileVersion.RelativePath}"
+
+                            tempFileInfo.Delete()
+
+                            return
+                                GraceReturnValue.Create "Retrieved all files from object storage." correlationId
+                                |> fun value ->
+                                    value.enhance downloadUriReturnValue.Properties
+                                    |> Ok
                         else
-                            getNativeFilePath fileVersion.RelativeDirectory
+                            tempFileInfo.Delete()
 
-                    let tempFilePath = Path.Combine(Path.GetTempPath(), relativeDirectory, fileVersion.GetObjectFileName)
+                            let error = GraceError.Create (getErrorMessage StorageError.FailedCommunicatingWithObjectStorage) correlationId
 
-                    let objectFilePath = Path.Combine(Current().ObjectDirectory, fileVersion.RelativePath, fileVersion.GetObjectFileName)
+                            error.Properties.Add("StatusCode", $"HTTP {azureResponse.Status}")
+                            error.Properties.Add("ReasonPhrase", $"Reason: {azureResponse.ReasonPhrase}")
 
-                    let tempFileInfo = FileInfo(tempFilePath)
-                    let objectFileInfo = FileInfo(objectFilePath)
-
-                    Directory.CreateDirectory(tempFileInfo.Directory.FullName)
-                    |> ignore
-
-                    Directory.CreateDirectory(objectFileInfo.Directory.FullName)
-                    |> ignore
-                    //logToConsole $"tempFilePath: {tempFilePath}; objectFilePath: {objectFilePath}"
-
-                    // Download the file from object storage.
-                    let blobClient = BlobClient(Uri(blobUriWithSasToken))
-                    let! azureResponse = blobClient.DownloadToAsync(tempFilePath)
-
-                    if not <| azureResponse.IsError then
-                        //File.Move(tempFilePath, objectFilePath, overwrite = true)
-                        if fileVersion.IsBinary then
-                            File.Move(tempFilePath, objectFilePath, overwrite = true)
-                        else
-                            use tempFileStream = tempFileInfo.OpenRead()
-                            use gzStream = new GZipStream(tempFileStream, CompressionMode.Decompress, leaveOpen = false)
-                            use fileWriter = objectFileInfo.OpenWrite()
-
-                            do! gzStream.CopyToAsync(fileWriter)
-                            //logToConsole $"In GetFileFromObjectStorage: After CopyToAsync(). {fileVersion.RelativePath}"
-
-                            do! fileWriter.FlushAsync()
-                        //logToConsole $"In GetFileFromObjectStorage: After FlushAsync(). {fileVersion.RelativePath}"
-
-                        //logToConsole $"After tempFileInfo.Delete(). {fileVersion.RelativePath}"
-
-                        tempFileInfo.Delete()
-                        return Ok(GraceReturnValue.Create "Retrieved all files from object storage." correlationId)
-                    else
-                        tempFileInfo.Delete()
-
-                        let error = GraceError.Create (getErrorMessage StorageError.FailedCommunicatingWithObjectStorage) correlationId
-
-                        error.Properties.Add("StatusCode", $"HTTP {azureResponse.Status}")
-                        error.Properties.Add("ReasonPhrase", $"Reason: {azureResponse.ReasonPhrase}")
-                        return Error error
+                            return
+                                error.enhance downloadUriReturnValue.Properties
+                                |> Error
+                    | Error error -> return Error error
                 | AWSS3 -> return Error(GraceError.Create (getErrorMessage StorageError.NotImplemented) correlationId)
                 | GoogleCloudStorage -> return Error(GraceError.Create (getErrorMessage StorageError.NotImplemented) correlationId)
                 | ObjectStorageProvider.Unknown -> return Error(GraceError.Create (getErrorMessage StorageError.NotImplemented) correlationId)
@@ -136,7 +163,7 @@ module Storage =
                         if response.IsSuccessStatusCode then
                             let! uploadMetadata = response.Content.ReadFromJsonAsync<GraceReturnValue<List<UploadMetadata>>>(Constants.JsonSerializerOptions)
 
-                            return Ok uploadMetadata
+                            return ClientIdentity.okWithLifecycleDiagnostics response uploadMetadata
                         else
                             let! errorMessage = response.Content.ReadAsStringAsync()
 
@@ -151,6 +178,7 @@ module Storage =
                             return
                                 Error graceError
                                 |> enhance "fileVersions" $"{fileVersionList}"
+                                |> ClientIdentity.enhanceWithLifecycleDiagnostics response
                     | AWSS3 -> return Error(GraceError.Create (getErrorMessage StorageError.NotImplemented) correlationId)
                     | GoogleCloudStorage -> return Error(GraceError.Create (getErrorMessage StorageError.NotImplemented) correlationId)
                     | ObjectStorageProvider.Unknown -> return Error(GraceError.Create (getErrorMessage StorageError.NotImplemented) correlationId)
@@ -373,9 +401,7 @@ module Storage =
                     let serviceUrl = $"{Current().ServerUri}/storage/getUploadUri"
                     let jsonContent = createJsonContent parameters
                     let! response = httpClient.PostAsync(serviceUrl, jsonContent)
-                    let! blobUriWithSasToken = response.Content.ReadAsStringAsync()
-                    //logToConsole $"blobUriWithSasToken: {blobUriWithSasToken}"
-                    return Ok(GraceReturnValue.Create blobUriWithSasToken parameters.CorrelationId)
+                    return! readStringResponseWithLifecycle response parameters.CorrelationId (getErrorMessage StorageError.FailedToGetUploadUrls)
                 | ObjectStorageProvider.AWSS3 -> return Error(GraceError.Create (getErrorMessage StorageError.NotImplemented) parameters.CorrelationId)
                 | ObjectStorageProvider.GoogleCloudStorage ->
                     return Error(GraceError.Create (getErrorMessage StorageError.NotImplemented) parameters.CorrelationId)
@@ -398,9 +424,9 @@ module Storage =
                     let serviceUrl = $"{Current().ServerUri}/storage/getDownloadUri"
                     let jsonContent = createJsonContent parameters
                     let! response = httpClient.PostAsync(serviceUrl, jsonContent)
-                    let! blobUriWithSasToken = response.Content.ReadAsStringAsync()
-                    //logToConsole $"blobUriWithSasToken: {blobUriWithSasToken}"
-                    return Ok(GraceReturnValue.Create blobUriWithSasToken parameters.CorrelationId)
+
+                    return!
+                        readStringResponseWithLifecycle response parameters.CorrelationId (getErrorMessage StorageError.FailedCommunicatingWithObjectStorage)
                 | ObjectStorageProvider.AWSS3 -> return Error(GraceError.Create (getErrorMessage StorageError.NotImplemented) parameters.CorrelationId)
                 | ObjectStorageProvider.GoogleCloudStorage ->
                     return Error(GraceError.Create (getErrorMessage StorageError.NotImplemented) parameters.CorrelationId)
@@ -423,8 +449,7 @@ module Storage =
                     let serviceUrl = $"{Current().ServerUri}/storage/getContentBlockUploadUri"
                     let jsonContent = createJsonContent parameters
                     let! response = httpClient.PostAsync(serviceUrl, jsonContent)
-                    let! blobUriWithSasToken = response.Content.ReadAsStringAsync()
-                    return Ok(GraceReturnValue.Create blobUriWithSasToken parameters.CorrelationId)
+                    return! readStringResponseWithLifecycle response parameters.CorrelationId (getErrorMessage StorageError.FailedToGetUploadUrls)
                 | ObjectStorageProvider.AWSS3 -> return Error(GraceError.Create (getErrorMessage StorageError.NotImplemented) parameters.CorrelationId)
                 | ObjectStorageProvider.GoogleCloudStorage ->
                     return Error(GraceError.Create (getErrorMessage StorageError.NotImplemented) parameters.CorrelationId)
@@ -447,8 +472,9 @@ module Storage =
                     let serviceUrl = $"{Current().ServerUri}/storage/getContentBlockDownloadUri"
                     let jsonContent = createJsonContent parameters
                     let! response = httpClient.PostAsync(serviceUrl, jsonContent)
-                    let! blobUriWithSasToken = response.Content.ReadAsStringAsync()
-                    return Ok(GraceReturnValue.Create blobUriWithSasToken parameters.CorrelationId)
+
+                    return!
+                        readStringResponseWithLifecycle response parameters.CorrelationId (getErrorMessage StorageError.FailedCommunicatingWithObjectStorage)
                 | ObjectStorageProvider.AWSS3 -> return Error(GraceError.Create (getErrorMessage StorageError.NotImplemented) parameters.CorrelationId)
                 | ObjectStorageProvider.GoogleCloudStorage ->
                     return Error(GraceError.Create (getErrorMessage StorageError.NotImplemented) parameters.CorrelationId)
@@ -474,11 +500,13 @@ module Storage =
                 if response.IsSuccessStatusCode then
                     let! discoveryResult = response.Content.ReadFromJsonAsync<GraceReturnValue<DiscoverContentBlocksResult>>(Constants.JsonSerializerOptions)
 
-                    return Ok discoveryResult
+                    return ClientIdentity.okWithLifecycleDiagnostics response discoveryResult
                 else
                     let! errorMessage = response.Content.ReadAsStringAsync()
 
-                    return Error(GraceError.Create $"Failed to discover ContentBlocks; {errorMessage}" correlationId)
+                    return
+                        GraceError.Create $"Failed to discover ContentBlocks; {errorMessage}" correlationId
+                        |> ClientIdentity.errorWithLifecycleDiagnostics response
             with
             | ex ->
                 let exceptionResponse = ExceptionResponse.Create ex

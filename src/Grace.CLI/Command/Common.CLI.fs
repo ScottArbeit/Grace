@@ -1,6 +1,7 @@
 namespace Grace.CLI
 
 open FSharpPlus
+open Grace.SDK
 open Grace.CLI.Services
 open Grace.CLI.Text
 open Grace.Shared
@@ -24,6 +25,10 @@ open Spectre.Console.Json
 open System.Text.RegularExpressions
 
 module Common =
+
+    let mutable private renderedLifecycleWarnings = HashSet<string>(StringComparer.OrdinalIgnoreCase)
+
+    let resetLifecycleWarningSuppression () = renderedLifecycleWarnings <- HashSet<string>(StringComparer.OrdinalIgnoreCase)
 
     type ParameterBase() =
         member val public CorrelationId: string = String.Empty with get, set
@@ -443,6 +448,102 @@ module Common =
 
         serialize output
 
+    let private tryGetProperty (properties: Dictionary<string, obj>) key =
+        if isNull properties then
+            None
+        else
+            match properties.TryGetValue key with
+            | true, value when
+                not (isNull value)
+                && not <| String.IsNullOrWhiteSpace($"{value}")
+                ->
+                Some($"{value}")
+            | _ -> None
+
+    let private isTrueProperty (properties: Dictionary<string, obj>) key =
+        match tryGetProperty properties key with
+        | Some value -> value.Equals("true", StringComparison.OrdinalIgnoreCase)
+        | None -> false
+
+    let private sanitizeLifecyclePropertiesForHumanOutput (properties: Dictionary<string, obj>) =
+        let sanitized = Dictionary<string, obj>()
+        let updateUrlIsHttps = isTrueProperty properties ClientIdentity.LifecycleUpdateUrlIsHttpsPropertyKey
+
+        if not (isNull properties) then
+            properties
+            |> Seq.iter (fun kvp ->
+                if
+                    kvp.Key.Equals(ClientIdentity.LifecycleUpdateUrlPropertyKey, StringComparison.Ordinal)
+                    && not updateUrlIsHttps
+                then
+                    ()
+                else
+                    sanitized[kvp.Key] <- kvp.Value)
+
+        sanitized
+
+    let private appendIfSome (lines: ResizeArray<string>) label value =
+        match value with
+        | Some value -> lines.Add($"{label}: {value}")
+        | None -> ()
+
+    let private tryBuildLifecycleWarning (properties: Dictionary<string, obj>) =
+        match tryGetProperty properties ClientIdentity.LifecycleStatusPropertyKey with
+        | None -> None
+        | Some status ->
+            let recommendedVersion = tryGetProperty properties ClientIdentity.LifecycleRecommendedVersionPropertyKey
+            let minimumVersion = tryGetProperty properties ClientIdentity.LifecycleMinimumVersionPropertyKey
+            let unsupportedAfter = tryGetProperty properties ClientIdentity.LifecycleUnsupportedAfterPropertyKey
+            let updateUrl = tryGetProperty properties ClientIdentity.LifecycleUpdateUrlPropertyKey
+            let updateUrlIsHttps = isTrueProperty properties ClientIdentity.LifecycleUpdateUrlIsHttpsPropertyKey
+            let unsupportedAfterIsMalformed = isTrueProperty properties ClientIdentity.LifecycleUnsupportedAfterIsMalformedPropertyKey
+            let normalizedStatus = status.Trim().ToLowerInvariant()
+
+            let title =
+                match normalizedStatus with
+                | "unsupported" -> "This Grace client version is no longer supported."
+                | "deprecated" -> "This Grace client version is deprecated."
+                | _ -> $"Grace reported client lifecycle status '{status}'."
+
+            let lines = ResizeArray<string>()
+            lines.Add(title)
+
+            match recommendedVersion, minimumVersion with
+            | Some recommendedVersion, _ -> lines.Add($"Update to Grace CLI/SDK version {recommendedVersion} or newer.")
+            | None, Some minimumVersion -> lines.Add($"Update to Grace CLI/SDK version {minimumVersion} or newer.")
+            | None, None -> lines.Add("Update Grace CLI/SDK before continuing with production workflows.")
+
+            if normalizedStatus = "unsupported" then
+                lines.Add("The server rejected this request because the client version is unsupported.")
+
+            appendIfSome lines "Minimum supported version" minimumVersion
+            appendIfSome lines "Recommended version" recommendedVersion
+
+            match unsupportedAfter with
+            | Some value when unsupportedAfterIsMalformed -> lines.Add($"Unsupported-after value from server could not be parsed: {value}.")
+            | Some value -> lines.Add($"Unsupported after: {value}.")
+            | None -> ()
+
+            match updateUrl, updateUrlIsHttps with
+            | Some value, true -> lines.Add($"Update URL: {value}")
+            | Some _, false -> lines.Add("Update URL from server was not HTTPS and was not displayed.")
+            | None, _ -> ()
+
+            Some(normalizedStatus, String.Join(Environment.NewLine, lines))
+
+    let private renderLifecycleWarningOnce outputFormat properties =
+        match outputFormat with
+        | Json
+        | Silent -> ()
+        | _ ->
+            match tryBuildLifecycleWarning properties with
+            | Some (status, warningText) ->
+                let warningKey = $"{status}:{warningText}"
+
+                if renderedLifecycleWarnings.Add warningKey then
+                    AnsiConsole.MarkupLine($"[{Colors.Important}]{Markup.Escape(warningText)}[/]")
+            | None -> ()
+
     /// Prints output to the console, depending on the output format.
     let renderOutput (parseResult: ParseResult) (result: GraceResult<'T>) =
         let outputFormat =
@@ -453,6 +554,8 @@ module Common =
 
         match result with
         | Ok graceReturnValue ->
+            renderLifecycleWarningOnce outputFormat graceReturnValue.Properties
+
             match outputFormat with
             | Json -> AnsiConsole.WriteLine(Markup.Escape(renderJsonReturnValue graceReturnValue))
             | Minimal -> () //AnsiConsole.MarkupLine($"""[{Colors.Highlighted}]{Markup.Escape($"{graceReturnValue.ReturnValue}")}[/]""")
@@ -464,13 +567,17 @@ module Common =
 
                 AnsiConsole.MarkupLine($"""[{Colors.Verbose}]CorrelationId: "{graceReturnValue.CorrelationId}"[/]""")
 
-                AnsiConsole.MarkupLine($"""[{Colors.Verbose}]Properties: {Markup.Escape(serialize graceReturnValue.Properties)}[/]""")
+                let properties = sanitizeLifecyclePropertiesForHumanOutput graceReturnValue.Properties
+
+                AnsiConsole.MarkupLine($"""[{Colors.Verbose}]Properties: {Markup.Escape(serialize properties)}[/]""")
 
                 AnsiConsole.WriteLine()
             | Normal -> () // Return unit because in the Normal case, we expect to print output within each command.
 
             0
         | Error error ->
+            renderLifecycleWarningOnce outputFormat error.Properties
+
             let json =
                 if error.Error.Contains("Stack trace") then
                     Uri.UnescapeDataString(error.Error)
@@ -494,7 +601,16 @@ module Common =
             | Verbose ->
                 AnsiConsole.MarkupLine($"[{Colors.Error}]{Markup.Escape(errorText)}[/]")
                 AnsiConsole.WriteLine()
-                AnsiConsole.MarkupLine($"[{Colors.Verbose}]{Markup.Escape(json)}[/]")
+
+                let sanitizedError = { error with Properties = sanitizeLifecyclePropertiesForHumanOutput error.Properties }
+
+                let verboseJson =
+                    if error.Error.Contains("Stack trace") then
+                        json
+                    else
+                        Uri.UnescapeDataString(serialize sanitizedError)
+
+                AnsiConsole.MarkupLine($"[{Colors.Verbose}]{Markup.Escape(verboseJson)}[/]")
                 AnsiConsole.WriteLine()
             | Normal -> AnsiConsole.MarkupLine($"[{Colors.Error}]{Markup.Escape(errorText)}[/]")
 

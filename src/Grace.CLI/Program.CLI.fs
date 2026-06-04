@@ -726,6 +726,7 @@ module GraceCommand =
         Auth.configureSdkAuth ()
         Services.configureSdkClientIdentity ()
         Services.resetInvocationCorrelationId ()
+        Common.resetLifecycleWarningSuppression ()
 
         // Create a MemoryCache instance.
         //let memoryCacheOptions = MemoryCacheOptions(TrackStatistics = false, TrackLinkedCacheEntries = false)
