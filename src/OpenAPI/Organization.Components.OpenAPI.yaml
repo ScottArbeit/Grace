@@ -132,8 +132,6 @@
           OrganizationType: Public
           Description: Engineering organization for Alice's projects.
           SearchVisibility: Visible
-          Repositories:
-            sample-repository: ab6f35ef-6e01-440b-8f9b-c343a5272095
           CreatedAt: '2026-06-04T18:15:00Z'
           DeleteReason: ''
         EventTime: '2026-06-04T18:15:00Z'
@@ -142,23 +140,6 @@
           Path: /organization/get
           OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
           OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
-    OrganizationRepositoriesReturnValue:
-      description: Grace response envelope whose ReturnValue contains repositories for an organization.
-      type: object
-      properties:
-        ReturnValue:
-          type: array
-          items:
-            $ref: 'Dto.Components.OpenAPI.yaml#/RepositoryDto'
-        EventTime:
-          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant'
-        CorrelationId:
-          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/CorrelationId'
-        Properties:
-          type: object
-          additionalProperties:
-            type: string
-      required: [ReturnValue, EventTime, CorrelationId, Properties]
     OrganizationCommandResponse:
       description: OK
       content:
@@ -184,4 +165,11 @@
       content:
         application/json:
           schema:
-            $ref: '#/OrganizationRepositoriesReturnValue'
+            type: object
+            additionalProperties:
+              type: string
+          examples:
+            repositories:
+              summary: Organization repository id-to-name dictionary
+              value:
+                ab6f35ef-6e01-440b-8f9b-c343a5272095: sample-repository

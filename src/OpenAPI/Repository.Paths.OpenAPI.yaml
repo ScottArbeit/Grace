@@ -57,6 +57,33 @@
         '500':
           $ref: './Responses.OpenAPI.yaml#/500'
 
+  /repository/setName:
+    post:
+      tags:
+        - Repositories
+      summary: Set the name of a repository.
+      description: Renames a repository that exists and has not been deleted.
+      operationId: SetRepositoryName
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: './Repository.Components.OpenAPI.yaml#/SetRepositoryNameParameters'
+            examples:
+              setRepositoryName:
+                summary: Rename a repository
+                value:
+                  <<: *repositoryBaseExample
+                  NewName: sample-repository-renamed
+      responses:
+        '200':
+          $ref: './Repository.Components.OpenAPI.yaml#/RepositoryCommandResponse'
+        '400':
+          $ref: './Responses.OpenAPI.yaml#/400'
+        '500':
+          $ref: './Responses.OpenAPI.yaml#/500'
+
   /repository/setSaveDays:
     post:
       tags:

@@ -458,6 +458,105 @@ function Assert-OperationTextMatches {
     }
 }
 
+function Get-OpenApiNamedBlock {
+    param(
+        [string] $Text,
+        [string] $Name
+    )
+
+    $lines = [regex]::Split($Text, '\r?\n')
+    $blockLinePattern = "^(?<indent>\s*)$([regex]::Escape($Name)):\s*(?:#.*)?$"
+    $blockStart = -1
+    $blockIndent = -1
+
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        $match = [regex]::Match($lines[$i], $blockLinePattern)
+        if ($match.Success) {
+            $blockStart = $i
+            $blockIndent = $match.Groups['indent'].Value.Length
+            break
+        }
+    }
+
+    if ($blockStart -lt 0) {
+        return $null
+    }
+
+    $blockEnd = $lines.Count
+    for ($i = $blockStart + 1; $i -lt $lines.Count; $i++) {
+        if ([string]::IsNullOrWhiteSpace($lines[$i])) {
+            continue
+        }
+
+        $indent = Get-YamlIndentLength $lines[$i]
+        if ($indent -le $blockIndent) {
+            $blockEnd = $i
+            break
+        }
+    }
+
+    return [pscustomobject]@{
+        Lines = @($lines[$blockStart..($blockEnd - 1)])
+        Text = ($lines[$blockStart..($blockEnd - 1)] -join [Environment]::NewLine)
+        Indent = $blockIndent
+    }
+}
+
+function Assert-OpenApiResponseIsRawStringDictionary {
+    param(
+        [string] $Text,
+        [string] $ResponseName,
+        [string] $MessagePrefix
+    )
+
+    $responseBlock = Get-OpenApiNamedBlock $Text $ResponseName
+    if ($null -eq $responseBlock) {
+        Add-Failure "$MessagePrefix response component is missing."
+        return
+    }
+
+    $responseText = [string] $responseBlock.Text
+    foreach ($forbiddenProperty in @('ReturnValue', 'EventTime', 'CorrelationId', 'Properties')) {
+        if ($responseText -match "(?m)^\s+$([regex]::Escape($forbiddenProperty)):\s*") {
+            Add-Failure "$MessagePrefix response must be a raw id-to-name dictionary, not an envelope or DTO array."
+            return
+        }
+    }
+
+    foreach ($forbiddenReference in @('OrganizationDto', 'RepositoryDto')) {
+        if ($responseText.Contains($forbiddenReference, [StringComparison]::Ordinal)) {
+            Add-Failure "$MessagePrefix response must be a raw id-to-name dictionary, not an envelope or DTO array."
+            return
+        }
+    }
+
+    if ($responseText -notmatch "(?m)^\s+schema:\s*$" -or
+        $responseText -notmatch "(?m)^\s+type:\s*object\s*$" -or
+        $responseText -notmatch "(?m)^\s+additionalProperties:\s*$" -or
+        $responseText -notmatch "(?m)^\s+type:\s*string\s*$") {
+        Add-Failure "$MessagePrefix response must model application/json as a raw object with string additionalProperties."
+    }
+}
+
+function Assert-OpenApiNamedBlockDoesNotContain {
+    param(
+        [string] $Text,
+        [string] $BlockName,
+        [string] $ForbiddenNeedle,
+        [string] $Message
+    )
+
+    $block = Get-OpenApiNamedBlock $Text $BlockName
+    if ($null -eq $block) {
+        Add-Failure "OpenAPI block '$BlockName' is missing."
+        return
+    }
+
+    if ([string] $block.Text -match "(?m)^\s+$([regex]::Escape($ForbiddenNeedle)):\s*") {
+        Add-Failure $Message
+    }
+}
+
 function Get-YamlIndentLength {
     param([string] $Line)
 
@@ -897,6 +996,7 @@ function Test-OpenApiOwnerOrganizationRepositoryDirectoryDetails {
 
         [pscustomobject]@{ File = 'Repository.Paths.OpenAPI.yaml'; OperationId = 'CreateRepository'; Tag = 'Repositories'; Response = 'RepositoryCommandResponse' },
         [pscustomobject]@{ File = 'Repository.Paths.OpenAPI.yaml'; OperationId = 'SetRepositoryVisibility'; Tag = 'Repositories'; Response = 'RepositoryCommandResponse' },
+        [pscustomobject]@{ File = 'Repository.Paths.OpenAPI.yaml'; OperationId = 'SetRepositoryName'; Tag = 'Repositories'; Response = 'RepositoryCommandResponse' },
         [pscustomobject]@{ File = 'Repository.Paths.OpenAPI.yaml'; OperationId = 'SetRepositorySaveDays'; Tag = 'Repositories'; Response = 'RepositoryCommandResponse' },
         [pscustomobject]@{ File = 'Repository.Paths.OpenAPI.yaml'; OperationId = 'SetRepositoryCheckpointDays'; Tag = 'Repositories'; Response = 'RepositoryCommandResponse' },
         [pscustomobject]@{ File = 'Repository.Paths.OpenAPI.yaml'; OperationId = 'SetRepositoryStatus'; Tag = 'Repositories'; Response = 'RepositoryCommandResponse' },
@@ -1019,6 +1119,31 @@ function Test-OpenApiOwnerOrganizationRepositoryDirectoryDetails {
     if ($directoryComponentsText -match '(DirectoryVersionCommand|DirectoryVersionEvent|DirectoryEvent|Actor)') {
         Add-Failure 'Directory OpenAPI components must expose public parameter/DTO shapes, not internal actor command/event shapes.'
     }
+
+    $ownerComponentsText = Get-Content -LiteralPath (Join-Path $OpenApiRoot 'Owner.Components.OpenAPI.yaml') -Raw
+    $organizationComponentsText = Get-Content -LiteralPath (Join-Path $OpenApiRoot 'Organization.Components.OpenAPI.yaml') -Raw
+
+    Assert-OpenApiResponseIsRawStringDictionary `
+        $ownerComponentsText `
+        'OwnerOrganizationsResponse' `
+        '/owner/listOrganizations'
+
+    Assert-OpenApiResponseIsRawStringDictionary `
+        $organizationComponentsText `
+        'OrganizationRepositoriesResponse' `
+        '/organization/listRepositories'
+
+    Assert-OpenApiNamedBlockDoesNotContain `
+        $ownerComponentsText `
+        'OwnerReturnValue' `
+        'Organizations' `
+        'OwnerReturnValue examples must not include non-existent OwnerDto.Organizations.'
+
+    Assert-OpenApiNamedBlockDoesNotContain `
+        $organizationComponentsText `
+        'OrganizationReturnValue' `
+        'Repositories' `
+        'OrganizationReturnValue examples must not include non-existent OrganizationDto.Repositories.'
 
     $getBySha256HashOperation = Get-RequiredOpenApiOperation $Operations 'Directory.Paths.OpenAPI.yaml' 'GetDirectoryVersionBySha256Hash'
     Assert-OperationSha256ExamplesAreValid $getBySha256HashOperation @('Sha256Hash')

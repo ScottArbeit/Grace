@@ -203,6 +203,8 @@ paths:
     $ref: './Repository.Paths.OpenAPI.yaml#/~1repository~1create'
   /repository/setVisibility:
     $ref: './Repository.Paths.OpenAPI.yaml#/~1repository~1setVisibility'
+  /repository/setName:
+    $ref: './Repository.Paths.OpenAPI.yaml#/~1repository~1setName'
   /repository/setSaveDays:
     $ref: './Repository.Paths.OpenAPI.yaml#/~1repository~1setSaveDays'
   /repository/setCheckpointDays:

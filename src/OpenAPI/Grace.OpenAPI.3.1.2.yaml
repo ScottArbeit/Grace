@@ -2148,6 +2148,38 @@ paths:
           $ref: '#/components/responses/400'
         '500':
           $ref: '#/components/responses/500'
+  /repository/setName:
+    post:
+      tags:
+        - Repositories
+      summary: Set the name of a repository.
+      description: Renames a repository that exists and has not been deleted.
+      operationId: SetRepositoryName
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetRepositoryNameParameters'
+            examples:
+              setRepositoryName:
+                summary: Rename a repository
+                value:
+                  CorrelationId: cli-20260604T181500Z-0001
+                  Principal: user:alice
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                  RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                  RepositoryName: sample-repository
+                  ObjectStorageProvider: AzureBlobStorage
+                  NewName: sample-repository-renamed
+      responses:
+        '200':
+          $ref: '#/components/responses/RepositoryCommandResponse'
+        '400':
+          $ref: '#/components/responses/400'
+        '500':
+          $ref: '#/components/responses/500'
   /repository/setSaveDays:
     post:
       tags:
@@ -5425,27 +5457,6 @@ components:
           Path: /organization/create
           OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
           OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
-    OrganizationRepositoriesReturnValue:
-      description: Grace response envelope whose ReturnValue contains repositories for an organization.
-      type: object
-      properties:
-        ReturnValue:
-          type: array
-          items:
-            $ref: '#/components/schemas/RepositoryDto'
-        EventTime:
-          $ref: '#/components/schemas/Instant'
-        CorrelationId:
-          $ref: '#/components/schemas/CorrelationId'
-        Properties:
-          type: object
-          additionalProperties:
-            type: string
-      required:
-        - ReturnValue
-        - EventTime
-        - CorrelationId
-        - Properties
     OrganizationReturnValue:
       description: Grace response envelope whose ReturnValue contains an organization DTO.
       type: object
@@ -5474,8 +5485,6 @@ components:
           OrganizationType: Public
           Description: Engineering organization for Alice's projects.
           SearchVisibility: Visible
-          Repositories:
-            sample-repository: ab6f35ef-6e01-440b-8f9b-c343a5272095
           CreatedAt: '2026-06-04T18:15:00Z'
           DeleteReason: ''
         EventTime: '2026-06-04T18:15:00Z'
@@ -5511,27 +5520,6 @@ components:
         Properties:
           Path: /owner/create
           OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
-    OwnerOrganizationsReturnValue:
-      description: Grace response envelope whose ReturnValue contains the owner's organizations.
-      type: object
-      properties:
-        ReturnValue:
-          type: array
-          items:
-            $ref: '#/components/schemas/OrganizationDto'
-        EventTime:
-          $ref: '#/components/schemas/Instant'
-        CorrelationId:
-          $ref: '#/components/schemas/CorrelationId'
-        Properties:
-          type: object
-          additionalProperties:
-            type: string
-      required:
-        - ReturnValue
-        - EventTime
-        - CorrelationId
-        - Properties
     OwnerReturnValue:
       description: Grace response envelope whose ReturnValue contains an owner DTO.
       type: object
@@ -5559,8 +5547,6 @@ components:
           OwnerType: Public
           Description: Source control owner for Alice's projects.
           SearchVisibility: Visible
-          Organizations:
-            alice-org: e35d64a9-b990-44f5-bf02-32ad7d15630c
           CreatedAt: '2026-06-04T18:15:00Z'
           DeleteReason: ''
         EventTime: '2026-06-04T18:15:00Z'
@@ -6700,7 +6686,14 @@ components:
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/OrganizationRepositoriesReturnValue'
+            type: object
+            additionalProperties:
+              type: string
+          examples:
+            repositories:
+              summary: Organization repository id-to-name dictionary
+              value:
+                ab6f35ef-6e01-440b-8f9b-c343a5272095: sample-repository
     OrganizationResponse:
       description: OK
       content:
@@ -6719,8 +6712,6 @@ components:
                   OrganizationType: Public
                   Description: Engineering organization for Alice's projects.
                   SearchVisibility: Visible
-                  Repositories:
-                    sample-repository: ab6f35ef-6e01-440b-8f9b-c343a5272095
                   CreatedAt: '2026-06-04T18:15:00Z'
                   DeleteReason: ''
                 EventTime: '2026-06-04T18:15:00Z'
@@ -6750,7 +6741,14 @@ components:
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/OwnerOrganizationsReturnValue'
+            type: object
+            additionalProperties:
+              type: string
+          examples:
+            organizations:
+              summary: Owner organization id-to-name dictionary
+              value:
+                e35d64a9-b990-44f5-bf02-32ad7d15630c: alice-org
     OwnerResponse:
       description: OK
       content:
@@ -6768,8 +6766,6 @@ components:
                   OwnerType: Public
                   Description: Source control owner for Alice's projects.
                   SearchVisibility: Visible
-                  Organizations:
-                    alice-org: e35d64a9-b990-44f5-bf02-32ad7d15630c
                   CreatedAt: '2026-06-04T18:15:00Z'
                   DeleteReason: ''
                 EventTime: '2026-06-04T18:15:00Z'
