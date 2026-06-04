@@ -458,6 +458,416 @@ function Assert-OperationTextMatches {
     }
 }
 
+function Get-YamlIndentLength {
+    param([string] $Line)
+
+    $match = [regex]::Match($Line, '^(?<indent>\s*)')
+    return $match.Groups['indent'].Value.Length
+}
+
+function Get-OpenApiSchemaPropertyBlock {
+    param(
+        [string] $Text,
+        [string] $SchemaName,
+        [string] $PropertyName
+    )
+
+    $lines = [regex]::Split($Text, '\r?\n')
+    $schemaLinePattern = "^(?<indent>\s*)$([regex]::Escape($SchemaName)):\s*(?:#.*)?$"
+    $schemaStart = -1
+    $schemaIndent = -1
+
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        $match = [regex]::Match($lines[$i], $schemaLinePattern)
+        if ($match.Success) {
+            $schemaStart = $i
+            $schemaIndent = $match.Groups['indent'].Value.Length
+            break
+        }
+    }
+
+    if ($schemaStart -lt 0) {
+        return $null
+    }
+
+    $schemaEnd = $lines.Count
+    for ($i = $schemaStart + 1; $i -lt $lines.Count; $i++) {
+        if ([string]::IsNullOrWhiteSpace($lines[$i])) {
+            continue
+        }
+
+        $indent = Get-YamlIndentLength $lines[$i]
+        if ($indent -le $schemaIndent) {
+            $schemaEnd = $i
+            break
+        }
+    }
+
+    $propertiesStart = -1
+    $propertiesIndent = $schemaIndent + 2
+    $propertiesLinePattern = "^\s{$propertiesIndent}properties:\s*(?:#.*)?$"
+    for ($i = $schemaStart + 1; $i -lt $schemaEnd; $i++) {
+        if ([regex]::IsMatch($lines[$i], $propertiesLinePattern)) {
+            $propertiesStart = $i
+            break
+        }
+    }
+
+    if ($propertiesStart -lt 0) {
+        return $null
+    }
+
+    $propertiesEnd = $schemaEnd
+    for ($i = $propertiesStart + 1; $i -lt $schemaEnd; $i++) {
+        if ([string]::IsNullOrWhiteSpace($lines[$i])) {
+            continue
+        }
+
+        $indent = Get-YamlIndentLength $lines[$i]
+        if ($indent -le $propertiesIndent) {
+            $propertiesEnd = $i
+            break
+        }
+    }
+
+    $propertyStart = -1
+    $propertyIndent = $propertiesIndent + 2
+    $propertyLinePattern = "^\s{$propertyIndent}$([regex]::Escape($PropertyName)):\s*(?:#.*)?$"
+    for ($i = $propertiesStart + 1; $i -lt $propertiesEnd; $i++) {
+        if ([regex]::IsMatch($lines[$i], $propertyLinePattern)) {
+            $propertyStart = $i
+            break
+        }
+    }
+
+    if ($propertyStart -lt 0) {
+        return $null
+    }
+
+    $propertyEnd = $propertiesEnd
+    for ($i = $propertyStart + 1; $i -lt $propertiesEnd; $i++) {
+        if ([string]::IsNullOrWhiteSpace($lines[$i])) {
+            continue
+        }
+
+        $indent = Get-YamlIndentLength $lines[$i]
+        if ($indent -le $propertyIndent) {
+            $propertyEnd = $i
+            break
+        }
+    }
+
+    return [pscustomobject]@{
+        Lines = @($lines[$propertyStart..($propertyEnd - 1)])
+        PropertyIndent = $propertyIndent
+    }
+}
+
+function Assert-OpenApiSchemaPropertyIsString {
+    param(
+        [string] $Text,
+        [string] $SchemaName,
+        [string] $PropertyName,
+        [string] $Message
+    )
+
+    $propertyBlock = Get-OpenApiSchemaPropertyBlock $Text $SchemaName $PropertyName
+    if ($null -eq $propertyBlock) {
+        Add-Failure $Message
+        return
+    }
+
+    $directChildIndent = $propertyBlock.PropertyIndent + 2
+    $directTypeValues = [System.Collections.Generic.List[string]]::new()
+    $hasDirectRef = $false
+
+    foreach ($line in @($propertyBlock.Lines | Select-Object -Skip 1)) {
+        if ([string]::IsNullOrWhiteSpace($line)) {
+            continue
+        }
+
+        $indent = Get-YamlIndentLength $line
+        if ($indent -ne $directChildIndent) {
+            continue
+        }
+
+        $typeMatch = [regex]::Match($line, "^\s{$directChildIndent}type:\s*['""]?(?<type>[^'""\s#]+)['""]?\s*(?:#.*)?$")
+        if ($typeMatch.Success) {
+            $directTypeValues.Add($typeMatch.Groups['type'].Value)
+        }
+
+        if ([regex]::IsMatch($line, "^\s{$directChildIndent}\`$ref:\s*")) {
+            $hasDirectRef = $true
+        }
+    }
+
+    if ($directTypeValues.Count -ne 1 -or $directTypeValues[0] -ne 'string' -or $hasDirectRef) {
+        Add-Failure $Message
+    }
+}
+
+function Assert-OperationHasJsonRequestExample {
+    param(
+        [object] $Operation,
+        [string] $Message
+    )
+
+    if ($null -eq $Operation) {
+        return
+    }
+
+    if ([string] $Operation.OperationText -match '(?m)^\s+requestBody:\s*$') {
+        Assert-OperationTextMatches `
+            $Operation `
+            '(?s)requestBody:\s*.*?content:\s*.*?application/json:\s*.*?examples:' `
+            $Message
+    }
+}
+
+function Assert-OperationSha256ExamplesAreValid {
+    param(
+        [object] $Operation,
+        [string[]] $RequiredFields
+    )
+
+    if ($null -eq $Operation) {
+        return
+    }
+
+    $location = "$($Operation.File):$($Operation.LineNumber) $($Operation.Method.ToUpperInvariant()) $($Operation.Path)"
+    $exampleMatches = [regex]::Matches(
+        [string] $Operation.OperationText,
+        "(?m)^\s+(?<name>Sha256Hash(?:1|2)?):\s*(?<value>['""]?[A-Za-z0-9]+['""]?)\s*$"
+    )
+    $fieldsSeen = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+
+    foreach ($match in $exampleMatches) {
+        $fieldName = $match.Groups['name'].Value
+        $fieldValue = $match.Groups['value'].Value.Trim("'`"")
+        [void] $fieldsSeen.Add($fieldName)
+
+        if ($fieldValue -notmatch '^[A-Fa-f0-9]{64}$') {
+            Add-Failure "OpenAPI example field '$fieldName' must be a valid 64-character SHA-256 hex value: $location has '$fieldValue'."
+        }
+    }
+
+    foreach ($requiredField in $RequiredFields) {
+        if (-not $fieldsSeen.Contains($requiredField)) {
+            Add-Failure "OpenAPI operation '$($Operation.OperationId)' must include a literal '$requiredField' example for S05 SHA-256 proof coverage: $location"
+        }
+    }
+}
+
+function Test-OpenApiBranchReferenceDiffDetails {
+    param(
+        [string] $OpenApiRoot,
+        [object[]] $Operations
+    )
+
+    $expectedOperations = @(
+        [pscustomobject]@{ File = 'Branch.Paths.OpenAPI.yaml'; OperationId = 'CreateBranch'; Tag = 'Branches' },
+        [pscustomobject]@{ File = 'Branch.Paths.OpenAPI.yaml'; OperationId = 'RebaseBranch'; Tag = 'Branches' },
+        [pscustomobject]@{ File = 'Branch.Paths.OpenAPI.yaml'; OperationId = 'PromoteBranch'; Tag = 'Branches' },
+        [pscustomobject]@{ File = 'Branch.Paths.OpenAPI.yaml'; OperationId = 'CommitBranch'; Tag = 'Branches' },
+        [pscustomobject]@{ File = 'Branch.Paths.OpenAPI.yaml'; OperationId = 'CheckpointBranch'; Tag = 'Branches' },
+        [pscustomobject]@{ File = 'Branch.Paths.OpenAPI.yaml'; OperationId = 'SaveBranch'; Tag = 'Branches' },
+        [pscustomobject]@{ File = 'Branch.Paths.OpenAPI.yaml'; OperationId = 'TagBranch'; Tag = 'Branches' },
+        [pscustomobject]@{ File = 'Branch.Paths.OpenAPI.yaml'; OperationId = 'EnableBranchPromotion'; Tag = 'Branches' },
+        [pscustomobject]@{ File = 'Branch.Paths.OpenAPI.yaml'; OperationId = 'EnableBranchCommit'; Tag = 'Branches' },
+        [pscustomobject]@{ File = 'Branch.Paths.OpenAPI.yaml'; OperationId = 'EnableBranchCheckpoint'; Tag = 'Branches' },
+        [pscustomobject]@{ File = 'Branch.Paths.OpenAPI.yaml'; OperationId = 'EnableBranchSave'; Tag = 'Branches' },
+        [pscustomobject]@{ File = 'Branch.Paths.OpenAPI.yaml'; OperationId = 'EnableBranchTag'; Tag = 'Branches' },
+        [pscustomobject]@{ File = 'Branch.Paths.OpenAPI.yaml'; OperationId = 'DeleteBranch'; Tag = 'Branches' },
+        [pscustomobject]@{ File = 'Branch.Paths.OpenAPI.yaml'; OperationId = 'GetBranch'; Tag = 'Branches' },
+        [pscustomobject]@{ File = 'Branch.Paths.OpenAPI.yaml'; OperationId = 'GetParentBranch'; Tag = 'Branches' },
+        [pscustomobject]@{ File = 'Branch.Paths.OpenAPI.yaml'; OperationId = 'GetBranchReference'; Tag = 'Branches' },
+        [pscustomobject]@{ File = 'Branch.Paths.OpenAPI.yaml'; OperationId = 'ListBranchReferences'; Tag = 'Branches' },
+        [pscustomobject]@{ File = 'Branch.Paths.OpenAPI.yaml'; OperationId = 'ListBranchPromotions'; Tag = 'Branches' },
+        [pscustomobject]@{ File = 'Branch.Paths.OpenAPI.yaml'; OperationId = 'ListBranchCommits'; Tag = 'Branches' },
+        [pscustomobject]@{ File = 'Branch.Paths.OpenAPI.yaml'; OperationId = 'ListBranchCheckpoints'; Tag = 'Branches' },
+        [pscustomobject]@{ File = 'Branch.Paths.OpenAPI.yaml'; OperationId = 'ListBranchSaves'; Tag = 'Branches' },
+        [pscustomobject]@{ File = 'Branch.Paths.OpenAPI.yaml'; OperationId = 'ListBranchTags'; Tag = 'Branches' },
+        [pscustomobject]@{ File = 'Diff.Paths.OpenAPI.yaml'; OperationId = 'PopulateDiff'; Tag = 'Diffs' },
+        [pscustomobject]@{ File = 'Diff.Paths.OpenAPI.yaml'; OperationId = 'GetDiff'; Tag = 'Diffs' },
+        [pscustomobject]@{ File = 'Diff.Paths.OpenAPI.yaml'; OperationId = 'GetDiffBySha256Hash'; Tag = 'Diffs' }
+    )
+
+    $branchCommandOperationIds = @(
+        'CreateBranch',
+        'RebaseBranch',
+        'PromoteBranch',
+        'CommitBranch',
+        'CheckpointBranch',
+        'SaveBranch',
+        'TagBranch',
+        'EnableBranchPromotion',
+        'EnableBranchCommit',
+        'EnableBranchCheckpoint',
+        'EnableBranchSave',
+        'EnableBranchTag',
+        'DeleteBranch'
+    )
+
+    $branchQueryResponses = @(
+        [pscustomobject]@{ OperationId = 'GetBranch'; Response = 'BranchResponse' },
+        [pscustomobject]@{ OperationId = 'GetParentBranch'; Response = 'BranchResponse' },
+        [pscustomobject]@{ OperationId = 'GetBranchReference'; Response = 'ReferenceResponse' },
+        [pscustomobject]@{ OperationId = 'ListBranchReferences'; Response = 'ReferenceListResponse' },
+        [pscustomobject]@{ OperationId = 'ListBranchPromotions'; Response = 'ReferenceListResponse' },
+        [pscustomobject]@{ OperationId = 'ListBranchCommits'; Response = 'ReferenceListResponse' },
+        [pscustomobject]@{ OperationId = 'ListBranchCheckpoints'; Response = 'ReferenceListResponse' },
+        [pscustomobject]@{ OperationId = 'ListBranchSaves'; Response = 'ReferenceListResponse' },
+        [pscustomobject]@{ OperationId = 'ListBranchTags'; Response = 'ReferenceListResponse' }
+    )
+
+    $familyFiles = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($file in @('Branch.Paths.OpenAPI.yaml', 'Diff.Paths.OpenAPI.yaml')) {
+        [void] $familyFiles.Add($file)
+    }
+
+    $familyOperations = @($Operations | Where-Object { $familyFiles.Contains($_.File) })
+    $genericOperationIds = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($operationId in @('Create', 'Get', 'Delete', 'List', 'Update', 'Enable', 'Disable', 'Promote', 'Rebase')) {
+        [void] $genericOperationIds.Add($operationId)
+    }
+
+    foreach ($operation in $familyOperations) {
+        $location = "$($operation.File):$($operation.LineNumber) $($operation.Method.ToUpperInvariant()) $($operation.Path)"
+
+        if ([string]::IsNullOrWhiteSpace([string] $operation.OperationId)) {
+            Add-Failure "Branch/diff OpenAPI operation is missing an SDK-friendly operationId: $location"
+            continue
+        }
+
+        if ($genericOperationIds.Contains([string] $operation.OperationId)) {
+            Add-Failure "Branch/diff OpenAPI operationId '$($operation.OperationId)' is too generic for SDK generation: $location"
+        }
+
+        if (-not $operation.HasTag) {
+            Add-Failure "Branch/diff OpenAPI operation is missing its primary SDK tag: $location"
+        }
+
+        if (-not ($operation.Has400 -and $operation.Has500)) {
+            Add-Failure "Branch/diff OpenAPI operation is missing reusable 400/500 error responses: $location"
+        }
+
+        Assert-OperationTextMatches `
+            $operation `
+            "(?s)responses:\s*.*?'200':\s*.*?\`$ref:\s*'\./(?:Branch|Diff)\.Components\.OpenAPI\.yaml#/" `
+            "Branch/diff OpenAPI operation must use a family success response component: $location"
+
+        Assert-OperationHasJsonRequestExample `
+            $operation `
+            "Branch/diff OpenAPI operation with a JSON request body must include an example: $location"
+
+        Assert-OperationSha256ExamplesAreValid $operation @()
+    }
+
+    foreach ($expected in $expectedOperations) {
+        $operation = Get-RequiredOpenApiOperation $Operations $expected.File $expected.OperationId
+
+        Assert-OperationTextMatches `
+            $operation `
+            "(?s)tags:\s*-\s+$($expected.Tag)\b" `
+            "Operation '$($expected.OperationId)' must carry primary SDK tag '$($expected.Tag)'."
+    }
+
+    $promoteBranchOperation = Get-RequiredOpenApiOperation $Operations 'Branch.Paths.OpenAPI.yaml' 'PromoteBranch'
+    Assert-OperationSha256ExamplesAreValid $promoteBranchOperation @('Sha256Hash')
+
+    $getDiffBySha256HashOperation = Get-RequiredOpenApiOperation $Operations 'Diff.Paths.OpenAPI.yaml' 'GetDiffBySha256Hash'
+    Assert-OperationSha256ExamplesAreValid $getDiffBySha256HashOperation @('Sha256Hash1', 'Sha256Hash2')
+
+    foreach ($operationId in $branchCommandOperationIds) {
+        $operation = Get-RequiredOpenApiOperation $Operations 'Branch.Paths.OpenAPI.yaml' $operationId
+
+        Assert-OperationTextMatches `
+            $operation `
+            "(?s)responses:\s*.*?'200':\s*.*?\`$ref:\s*'\./Branch\.Components\.OpenAPI\.yaml#/BranchCommandResponse'" `
+            "Branch command operation '$operationId' must use the string-returning BranchCommandResponse envelope."
+
+        if ($null -ne $operation -and [string] $operation.OperationText -match 'Branch\.Components\.OpenAPI\.yaml#/BranchResponse') {
+            Add-Failure "Branch command operation '$operationId' must not use the BranchApiDto BranchResponse envelope."
+        }
+    }
+
+    foreach ($expectedResponse in $branchQueryResponses) {
+        $operation = Get-RequiredOpenApiOperation $Operations 'Branch.Paths.OpenAPI.yaml' $expectedResponse.OperationId
+
+        Assert-OperationTextMatches `
+            $operation `
+            "(?s)responses:\s*.*?'200':\s*.*?\`$ref:\s*'\./Branch\.Components\.OpenAPI\.yaml#/$($expectedResponse.Response)'" `
+            "Branch query operation '$($expectedResponse.OperationId)' must use '$($expectedResponse.Response)' instead of a command string envelope."
+
+        if ($null -ne $operation -and [string] $operation.OperationText -match 'Branch\.Components\.OpenAPI\.yaml#/BranchCommandResponse') {
+            Add-Failure "Branch query operation '$($expectedResponse.OperationId)' must not use the string-returning BranchCommandResponse envelope."
+        }
+    }
+
+    $populateDiffOperation = Get-RequiredOpenApiOperation $Operations 'Diff.Paths.OpenAPI.yaml' 'PopulateDiff'
+    Assert-OperationTextMatches `
+        $populateDiffOperation `
+        "(?s)responses:\s*.*?'200':\s*.*?\`$ref:\s*'\./Diff\.Components\.OpenAPI\.yaml#/DiffPopulateResponse'" `
+        "PopulateDiff must use the string-returning DiffPopulateResponse envelope."
+
+    $branchComponentsText = Get-Content -LiteralPath (Join-Path $OpenApiRoot 'Branch.Components.OpenAPI.yaml') -Raw
+    foreach ($requiredBranchContract in @(
+            'DirectoryVersionId:',
+            'BranchCommandReturnValue:',
+            'BranchCommandResponse:',
+            'BranchReturnValue:',
+            'ReferenceReturnValue:',
+            'ReferenceListReturnValue:'
+        )) {
+        Assert-TextContains $branchComponentsText $requiredBranchContract "Branch OpenAPI components are missing '$requiredBranchContract'."
+    }
+
+    Assert-OpenApiSchemaPropertyIsString `
+        $branchComponentsText `
+        'BranchCommandReturnValue' `
+        'ReturnValue' `
+        'BranchCommandReturnValue must model command success ReturnValue as a string.'
+
+    Assert-OperationTextMatches `
+        ([pscustomobject]@{ OperationText = $branchComponentsText }) `
+        "(?s)BranchReturnValue:\s*.*?ReturnValue:\s*.*?\`$ref:\s*'#/BranchApiDto'" `
+        'BranchReturnValue must keep branch query ReturnValue as BranchApiDto.'
+
+    $diffComponentsText = Get-Content -LiteralPath (Join-Path $OpenApiRoot 'Diff.Components.OpenAPI.yaml') -Raw
+    foreach ($requiredDiffContract in @(
+            'DirectoryVersionId1:',
+            'DirectoryVersionId2:',
+            'DiffReturnValue:',
+            'DiffPopulateReturnValue:'
+        )) {
+        Assert-TextContains $diffComponentsText $requiredDiffContract "Diff OpenAPI components are missing '$requiredDiffContract'."
+    }
+
+    Assert-OpenApiSchemaPropertyIsString `
+        $diffComponentsText `
+        'DiffPopulateReturnValue' `
+        'ReturnValue' `
+        'DiffPopulateReturnValue must model populate success ReturnValue as a string.'
+
+    if ($diffComponentsText -match '(?s)DiffPopulateReturnValue:\s*.*?ReturnValue:\s*.*?type:\s*boolean') {
+        Add-Failure 'DiffPopulateReturnValue must not model populate success ReturnValue as boolean.'
+    }
+
+    $referenceComponentsText = Get-Content -LiteralPath (Join-Path $OpenApiRoot 'Reference.Components.OpenAPI.yaml') -Raw
+    foreach ($requiredReferenceContract in @(
+            'ReferenceParameters:',
+            'ReferenceId:',
+            'ReferenceType:',
+            'ReferenceText:'
+        )) {
+        Assert-TextContains $referenceComponentsText $requiredReferenceContract "Reference OpenAPI components are missing '$requiredReferenceContract'."
+    }
+
+    if ($referenceComponentsText -match '(RepositoryText|ReferenceCommand|ReferenceEvent|Actor)') {
+        Add-Failure 'Reference OpenAPI components must expose public selector fields, not internal actor command/event shapes or stale RepositoryText naming.'
+    }
+}
+
 function Test-OpenApiSharedContractDetails {
     param(
         [string] $OpenApiRoot,
@@ -538,6 +948,8 @@ function Test-OpenApiSharedContractDetails {
             "(?s)requestBody:\s*.*?content:\s*.*?application/json:\s*.*?examples:" `
             "Webhook operation '$operationId' must include an application/json example in its own request body."
     }
+
+    Test-OpenApiBranchReferenceDiffDetails $OpenApiRoot $Operations
 }
 
 function Test-OpenApiQuality {

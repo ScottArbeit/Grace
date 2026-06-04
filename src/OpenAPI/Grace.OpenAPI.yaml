@@ -540,924 +540,468 @@ paths:
           $ref: '#/components/responses/500'
   /branch/create:
     post:
-      summary: Creates a new branch.
-      description: Creates a new branch with the specified name, based on the specified parent branch.
-      operationId: Create
+      tags:
+        - Branches
+      summary: Create a branch.
+      description: Creates a branch with the specified name, based on the specified parent branch.
+      operationId: CreateBranch
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              allOf:
-                - allOf:
-                    - type: object
-                      properties:
-                        CorrelationId:
-                          type: string
-                          description: If you don't provide a CorrelationId, a Guid will be generated for you. (You're welcome.) CorrelationId's are just strings; feel free to send any kind of CorrelationId you prefer.
-                        Principal:
-                          type: string
-                    - type: object
-                      properties:
-                        BranchId:
-                          type: string
-                          format: uuid
-                          example: de7bf47d-23ae-4599-af68-68a317ea390d
-                        BranchName:
-                          type: string
-                          example: MyBranch
-                        OwnerId:
-                          type: string
-                          format: uuid
-                          example: 9dd5f81f-dc43-4839-9173-85d09394f30f
-                        OwnerName:
-                          type: string
-                        OrganizationId:
-                          type: string
-                          format: uuid
-                          example: e35d64a9-b990-44f5-bf02-32ad7d15630c
-                        OrganizationName:
-                          type: string
-                        RepositoryId:
-                          type: string
-                          format: uuid
-                          example: ab6f35ef-6e01-440b-8f9b-c343a5272095
-                        RepositoryName:
-                          type: string
-                - type: object
-                  properties:
-                    ParentBranchId:
-                      type: string
-                      format: uuid
-                      example: de7bf47d-23ae-4599-af68-68a317ea390d
-                    ParentBranchName:
-                      type: string
-                      example: MyBranch
+              $ref: '#/components/schemas/CreateBranchParameters'
+            examples:
+              createBranch:
+                summary: Create a release branch
+                value:
+                  CorrelationId: cli-20260604T181500Z-0001
+                  Principal: user:alice
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                  RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                  BranchName: release-2026-06
+                  ParentBranchId: de7bf47d-23ae-4599-af68-68a317ea390d
+                  InitialPermissions:
+                    - Commit
+                    - Checkpoint
+                    - Save
+                    - Tag
       responses:
         '200':
-          description: OK
+          $ref: '#/components/responses/BranchCommandResponse'
         '400':
-          description: Bad Request
+          $ref: '#/components/responses/400'
         '500':
-          description: Internal Server Error
+          $ref: '#/components/responses/500'
   /branch/rebase:
     post:
-      summary: Rebases a branch on its parent branch.
-      description: Rebases a branch on its parent branch.
-      operationId: Rebase
+      tags:
+        - Branches
+      summary: Rebase a branch.
+      description: Rebases a branch on the specified reference from its parent branch.
+      operationId: RebaseBranch
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              allOf:
-                - allOf:
-                    - type: object
-                      properties:
-                        CorrelationId:
-                          type: string
-                          description: If you don't provide a CorrelationId, a Guid will be generated for you. (You're welcome.) CorrelationId's are just strings; feel free to send any kind of CorrelationId you prefer.
-                        Principal:
-                          type: string
-                    - type: object
-                      properties:
-                        BranchId:
-                          type: string
-                          format: uuid
-                          example: de7bf47d-23ae-4599-af68-68a317ea390d
-                        BranchName:
-                          type: string
-                          example: MyBranch
-                        OwnerId:
-                          type: string
-                          format: uuid
-                          example: 9dd5f81f-dc43-4839-9173-85d09394f30f
-                        OwnerName:
-                          type: string
-                        OrganizationId:
-                          type: string
-                          format: uuid
-                          example: e35d64a9-b990-44f5-bf02-32ad7d15630c
-                        OrganizationName:
-                          type: string
-                        RepositoryId:
-                          type: string
-                          format: uuid
-                          example: ab6f35ef-6e01-440b-8f9b-c343a5272095
-                        RepositoryName:
-                          type: string
-                - type: object
-                  properties:
-                    BasedOn:
-                      type: string
-                      format: uuid
-                      example: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
+              $ref: '#/components/schemas/RebaseParameters'
+            examples:
+              rebaseBranch:
+                summary: Rebase a branch to a parent reference
+                value:
+                  CorrelationId: cli-20260604T181500Z-0001
+                  Principal: user:alice
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                  RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                  BranchName: release-2026-06
+                  ParentBranchId: de7bf47d-23ae-4599-af68-68a317ea390d
+                  InitialPermissions:
+                    - Commit
+                    - Checkpoint
+                    - Save
+                    - Tag
+                  BasedOn: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
       responses:
         '200':
-          description: OK
+          $ref: '#/components/responses/BranchCommandResponse'
         '400':
-          description: Bad Request
+          $ref: '#/components/responses/400'
         '500':
-          description: Internal Server Error
+          $ref: '#/components/responses/500'
   /branch/promote:
     post:
-      summary: Creates a promotion reference in the parent of the specified branch, based on the most-recent commit.
-      description: Creates a promotion reference in the parent of the specified branch, based on the most-recent commit.
-      operationId: Promote
+      tags:
+        - Branches
+      summary: Promote the current branch content.
+      description: Creates a promotion reference in the parent of the specified branch, based on the current directory version.
+      operationId: PromoteBranch
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              allOf:
-                - allOf:
-                    - type: object
-                      properties:
-                        CorrelationId:
-                          type: string
-                          description: If you don't provide a CorrelationId, a Guid will be generated for you. (You're welcome.) CorrelationId's are just strings; feel free to send any kind of CorrelationId you prefer.
-                        Principal:
-                          type: string
-                    - type: object
-                      properties:
-                        BranchId:
-                          type: string
-                          format: uuid
-                          example: de7bf47d-23ae-4599-af68-68a317ea390d
-                        BranchName:
-                          type: string
-                          example: MyBranch
-                        OwnerId:
-                          type: string
-                          format: uuid
-                          example: 9dd5f81f-dc43-4839-9173-85d09394f30f
-                        OwnerName:
-                          type: string
-                        OrganizationId:
-                          type: string
-                          format: uuid
-                          example: e35d64a9-b990-44f5-bf02-32ad7d15630c
-                        OrganizationName:
-                          type: string
-                        RepositoryId:
-                          type: string
-                          format: uuid
-                          example: ab6f35ef-6e01-440b-8f9b-c343a5272095
-                        RepositoryName:
-                          type: string
-                - type: object
-                  properties:
-                    DirectoryId:
-                      type: string
-                      format: uuid
-                      example: 33a4e36b-828f-4fae-9343-50b6560dc842
-                    Sha256Hash:
-                      type: string
-                      example: 805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243
-                    Message:
-                      type: string
+              $ref: '#/components/schemas/CreateReferenceParameters'
+            examples:
+              createReference:
+                summary: Create a branch reference
+                value:
+                  CorrelationId: cli-20260604T181500Z-0001
+                  Principal: user:alice
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                  RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                  BranchId: de7bf47d-23ae-4599-af68-68a317ea390d
+                  DirectoryVersionId: 33a4e36b-828f-4fae-9343-50b6560dc842
+                  Sha256Hash: 805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243
+                  Message: Capture release candidate.
       responses:
         '200':
-          description: OK
+          $ref: '#/components/responses/BranchCommandResponse'
         '400':
-          description: Bad Request
+          $ref: '#/components/responses/400'
         '500':
-          description: Internal Server Error
+          $ref: '#/components/responses/500'
   /branch/commit:
     post:
-      summary: Creates a commit reference pointing to the current root directory version in the branch.
+      tags:
+        - Branches
+      summary: Commit the current branch content.
       description: Creates a commit reference pointing to the current root directory version in the branch.
+      operationId: CommitBranch
       requestBody:
+        required: true
         content:
           application/json:
             schema:
-              allOf:
-                - allOf:
-                    - type: object
-                      properties:
-                        CorrelationId:
-                          type: string
-                          description: If you don't provide a CorrelationId, a Guid will be generated for you. (You're welcome.) CorrelationId's are just strings; feel free to send any kind of CorrelationId you prefer.
-                        Principal:
-                          type: string
-                    - type: object
-                      properties:
-                        BranchId:
-                          type: string
-                          format: uuid
-                          example: de7bf47d-23ae-4599-af68-68a317ea390d
-                        BranchName:
-                          type: string
-                          example: MyBranch
-                        OwnerId:
-                          type: string
-                          format: uuid
-                          example: 9dd5f81f-dc43-4839-9173-85d09394f30f
-                        OwnerName:
-                          type: string
-                        OrganizationId:
-                          type: string
-                          format: uuid
-                          example: e35d64a9-b990-44f5-bf02-32ad7d15630c
-                        OrganizationName:
-                          type: string
-                        RepositoryId:
-                          type: string
-                          format: uuid
-                          example: ab6f35ef-6e01-440b-8f9b-c343a5272095
-                        RepositoryName:
-                          type: string
-                - type: object
-                  properties:
-                    DirectoryId:
-                      type: string
-                      format: uuid
-                      example: 33a4e36b-828f-4fae-9343-50b6560dc842
-                    Sha256Hash:
-                      type: string
-                      example: 805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243
-                    Message:
-                      type: string
+              $ref: '#/components/schemas/CreateReferenceParameters'
+            examples:
+              commitBranch:
+                summary: Create a commit reference
+                value:
+                  CorrelationId: cli-20260604T181500Z-0001
+                  Principal: user:alice
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                  RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                  BranchId: de7bf47d-23ae-4599-af68-68a317ea390d
+                  DirectoryVersionId: 33a4e36b-828f-4fae-9343-50b6560dc842
+                  Sha256Hash: 805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243
+                  Message: Commit release candidate.
       responses:
         '200':
-          description: Success
+          $ref: '#/components/responses/BranchCommandResponse'
         '400':
-          description: Bad Request
+          $ref: '#/components/responses/400'
         '500':
-          description: Server Error
+          $ref: '#/components/responses/500'
   /branch/checkpoint:
     post:
-      summary: Creates a checkpoint reference pointing to the current root directory version in the branch.
+      tags:
+        - Branches
+      summary: Checkpoint the current branch content.
       description: Creates a checkpoint reference pointing to the current root directory version in the branch.
+      operationId: CheckpointBranch
       requestBody:
+        required: true
         content:
           application/json:
             schema:
-              allOf:
-                - allOf:
-                    - type: object
-                      properties:
-                        CorrelationId:
-                          type: string
-                          description: If you don't provide a CorrelationId, a Guid will be generated for you. (You're welcome.) CorrelationId's are just strings; feel free to send any kind of CorrelationId you prefer.
-                        Principal:
-                          type: string
-                    - type: object
-                      properties:
-                        BranchId:
-                          type: string
-                          format: uuid
-                          example: de7bf47d-23ae-4599-af68-68a317ea390d
-                        BranchName:
-                          type: string
-                          example: MyBranch
-                        OwnerId:
-                          type: string
-                          format: uuid
-                          example: 9dd5f81f-dc43-4839-9173-85d09394f30f
-                        OwnerName:
-                          type: string
-                        OrganizationId:
-                          type: string
-                          format: uuid
-                          example: e35d64a9-b990-44f5-bf02-32ad7d15630c
-                        OrganizationName:
-                          type: string
-                        RepositoryId:
-                          type: string
-                          format: uuid
-                          example: ab6f35ef-6e01-440b-8f9b-c343a5272095
-                        RepositoryName:
-                          type: string
-                - type: object
-                  properties:
-                    DirectoryId:
-                      type: string
-                      format: uuid
-                      example: 33a4e36b-828f-4fae-9343-50b6560dc842
-                    Sha256Hash:
-                      type: string
-                      example: 805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243
-                    Message:
-                      type: string
+              $ref: '#/components/schemas/CreateReferenceParameters'
+            examples:
+              checkpointBranch:
+                summary: Create a checkpoint reference
+                value:
+                  CorrelationId: cli-20260604T181500Z-0001
+                  Principal: user:alice
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                  RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                  BranchId: de7bf47d-23ae-4599-af68-68a317ea390d
+                  DirectoryVersionId: 33a4e36b-828f-4fae-9343-50b6560dc842
+                  Sha256Hash: 805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243
+                  Message: Checkpoint release candidate.
       responses:
         '200':
-          description: Success
+          $ref: '#/components/responses/BranchCommandResponse'
         '400':
-          description: Bad Request
+          $ref: '#/components/responses/400'
         '500':
-          description: Server Error
+          $ref: '#/components/responses/500'
   /branch/save:
     post:
-      summary: Creates a save reference pointing to the current root directory version in the branch.
+      tags:
+        - Branches
+      summary: Save the current branch content.
       description: Creates a save reference pointing to the current root directory version in the branch.
+      operationId: SaveBranch
       requestBody:
+        required: true
         content:
           application/json:
             schema:
-              allOf:
-                - allOf:
-                    - type: object
-                      properties:
-                        CorrelationId:
-                          type: string
-                          description: If you don't provide a CorrelationId, a Guid will be generated for you. (You're welcome.) CorrelationId's are just strings; feel free to send any kind of CorrelationId you prefer.
-                        Principal:
-                          type: string
-                    - type: object
-                      properties:
-                        BranchId:
-                          type: string
-                          format: uuid
-                          example: de7bf47d-23ae-4599-af68-68a317ea390d
-                        BranchName:
-                          type: string
-                          example: MyBranch
-                        OwnerId:
-                          type: string
-                          format: uuid
-                          example: 9dd5f81f-dc43-4839-9173-85d09394f30f
-                        OwnerName:
-                          type: string
-                        OrganizationId:
-                          type: string
-                          format: uuid
-                          example: e35d64a9-b990-44f5-bf02-32ad7d15630c
-                        OrganizationName:
-                          type: string
-                        RepositoryId:
-                          type: string
-                          format: uuid
-                          example: ab6f35ef-6e01-440b-8f9b-c343a5272095
-                        RepositoryName:
-                          type: string
-                - type: object
-                  properties:
-                    DirectoryId:
-                      type: string
-                      format: uuid
-                      example: 33a4e36b-828f-4fae-9343-50b6560dc842
-                    Sha256Hash:
-                      type: string
-                      example: 805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243
-                    Message:
-                      type: string
+              $ref: '#/components/schemas/CreateReferenceParameters'
+            examples:
+              saveBranch:
+                summary: Create a save reference
+                value:
+                  CorrelationId: cli-20260604T181500Z-0001
+                  Principal: user:alice
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                  RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                  BranchId: de7bf47d-23ae-4599-af68-68a317ea390d
+                  DirectoryVersionId: 33a4e36b-828f-4fae-9343-50b6560dc842
+                  Sha256Hash: 805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243
+                  Message: Save release candidate.
       responses:
         '200':
-          description: Success
+          $ref: '#/components/responses/BranchCommandResponse'
         '400':
-          description: Bad Request
+          $ref: '#/components/responses/400'
         '500':
-          description: Server Error
+          $ref: '#/components/responses/500'
   /branch/tag:
     post:
-      summary: Creates a tag reference pointing to the current root directory version in the branch.
+      tags:
+        - Branches
+      summary: Tag the current branch content.
       description: Creates a tag reference pointing to the current root directory version in the branch.
+      operationId: TagBranch
       requestBody:
+        required: true
         content:
           application/json:
             schema:
-              allOf:
-                - allOf:
-                    - type: object
-                      properties:
-                        CorrelationId:
-                          type: string
-                          description: If you don't provide a CorrelationId, a Guid will be generated for you. (You're welcome.) CorrelationId's are just strings; feel free to send any kind of CorrelationId you prefer.
-                        Principal:
-                          type: string
-                    - type: object
-                      properties:
-                        BranchId:
-                          type: string
-                          format: uuid
-                          example: de7bf47d-23ae-4599-af68-68a317ea390d
-                        BranchName:
-                          type: string
-                          example: MyBranch
-                        OwnerId:
-                          type: string
-                          format: uuid
-                          example: 9dd5f81f-dc43-4839-9173-85d09394f30f
-                        OwnerName:
-                          type: string
-                        OrganizationId:
-                          type: string
-                          format: uuid
-                          example: e35d64a9-b990-44f5-bf02-32ad7d15630c
-                        OrganizationName:
-                          type: string
-                        RepositoryId:
-                          type: string
-                          format: uuid
-                          example: ab6f35ef-6e01-440b-8f9b-c343a5272095
-                        RepositoryName:
-                          type: string
-                - type: object
-                  properties:
-                    DirectoryId:
-                      type: string
-                      format: uuid
-                      example: 33a4e36b-828f-4fae-9343-50b6560dc842
-                    Sha256Hash:
-                      type: string
-                      example: 805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243
-                    Message:
-                      type: string
+              $ref: '#/components/schemas/CreateReferenceParameters'
+            examples:
+              tagBranch:
+                summary: Create a tag reference
+                value:
+                  CorrelationId: cli-20260604T181500Z-0001
+                  Principal: user:alice
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                  RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                  BranchId: de7bf47d-23ae-4599-af68-68a317ea390d
+                  DirectoryVersionId: 33a4e36b-828f-4fae-9343-50b6560dc842
+                  Sha256Hash: 805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243
+                  Message: Tag release candidate.
       responses:
         '200':
-          description: Success
+          $ref: '#/components/responses/BranchCommandResponse'
         '400':
-          description: Bad Request
+          $ref: '#/components/responses/400'
         '500':
-          description: Server Error
+          $ref: '#/components/responses/500'
   /branch/enablePromotion:
     post:
-      summary: Enables or disables promotion for the specified branch.
+      tags:
+        - Branches
+      summary: Enable or disable promotion references.
       description: Enables or disables promotion for the specified branch.
-      operationId: EnablePromotion
+      operationId: EnableBranchPromotion
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              allOf:
-                - allOf:
-                    - type: object
-                      properties:
-                        CorrelationId:
-                          type: string
-                          description: If you don't provide a CorrelationId, a Guid will be generated for you. (You're welcome.) CorrelationId's are just strings; feel free to send any kind of CorrelationId you prefer.
-                        Principal:
-                          type: string
-                    - type: object
-                      properties:
-                        BranchId:
-                          type: string
-                          format: uuid
-                          example: de7bf47d-23ae-4599-af68-68a317ea390d
-                        BranchName:
-                          type: string
-                          example: MyBranch
-                        OwnerId:
-                          type: string
-                          format: uuid
-                          example: 9dd5f81f-dc43-4839-9173-85d09394f30f
-                        OwnerName:
-                          type: string
-                        OrganizationId:
-                          type: string
-                          format: uuid
-                          example: e35d64a9-b990-44f5-bf02-32ad7d15630c
-                        OrganizationName:
-                          type: string
-                        RepositoryId:
-                          type: string
-                          format: uuid
-                          example: ab6f35ef-6e01-440b-8f9b-c343a5272095
-                        RepositoryName:
-                          type: string
-                - type: object
-                  properties:
-                    Enabled:
-                      type: boolean
+              $ref: '#/components/schemas/EnableFeatureParameters'
+            examples:
+              enableFeature:
+                summary: Enable a branch feature
+                value:
+                  CorrelationId: cli-20260604T181500Z-0001
+                  Principal: user:alice
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                  RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                  BranchId: de7bf47d-23ae-4599-af68-68a317ea390d
+                  Enabled: true
       responses:
         '200':
-          description: OK
+          $ref: '#/components/responses/BranchCommandResponse'
         '400':
-          description: Bad Request
+          $ref: '#/components/responses/400'
         '500':
-          description: Internal Server Error
+          $ref: '#/components/responses/500'
   /branch/enableCommit:
     post:
-      summary: Enables or disables commit for the specified branch.
+      tags:
+        - Branches
+      summary: Enable or disable commit references.
       description: Enables or disables commit for the specified branch.
-      operationId: EnableCommit
+      operationId: EnableBranchCommit
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              allOf:
-                - allOf:
-                    - type: object
-                      properties:
-                        CorrelationId:
-                          type: string
-                          description: If you don't provide a CorrelationId, a Guid will be generated for you. (You're welcome.) CorrelationId's are just strings; feel free to send any kind of CorrelationId you prefer.
-                        Principal:
-                          type: string
-                    - type: object
-                      properties:
-                        BranchId:
-                          type: string
-                          format: uuid
-                          example: de7bf47d-23ae-4599-af68-68a317ea390d
-                        BranchName:
-                          type: string
-                          example: MyBranch
-                        OwnerId:
-                          type: string
-                          format: uuid
-                          example: 9dd5f81f-dc43-4839-9173-85d09394f30f
-                        OwnerName:
-                          type: string
-                        OrganizationId:
-                          type: string
-                          format: uuid
-                          example: e35d64a9-b990-44f5-bf02-32ad7d15630c
-                        OrganizationName:
-                          type: string
-                        RepositoryId:
-                          type: string
-                          format: uuid
-                          example: ab6f35ef-6e01-440b-8f9b-c343a5272095
-                        RepositoryName:
-                          type: string
-                - type: object
-                  properties:
-                    Enabled:
-                      type: boolean
+              $ref: '#/components/schemas/EnableFeatureParameters'
+            examples:
+              enableCommit:
+                summary: Enable commit references
+                value:
+                  CorrelationId: cli-20260604T181500Z-0001
+                  Principal: user:alice
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                  RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                  BranchId: de7bf47d-23ae-4599-af68-68a317ea390d
+                  Enabled: true
       responses:
         '200':
-          description: OK
+          $ref: '#/components/responses/BranchCommandResponse'
         '400':
-          description: Bad Request
+          $ref: '#/components/responses/400'
         '500':
-          description: Internal Server Error
+          $ref: '#/components/responses/500'
   /branch/enableCheckpoint:
     post:
-      summary: Enables or disables checkpoint for the specified branch.
+      tags:
+        - Branches
+      summary: Enable or disable checkpoint references.
       description: Enables or disables checkpoint for the specified branch.
-      operationId: EnableCheckpoint
+      operationId: EnableBranchCheckpoint
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              allOf:
-                - allOf:
-                    - type: object
-                      properties:
-                        CorrelationId:
-                          type: string
-                          description: If you don't provide a CorrelationId, a Guid will be generated for you. (You're welcome.) CorrelationId's are just strings; feel free to send any kind of CorrelationId you prefer.
-                        Principal:
-                          type: string
-                    - type: object
-                      properties:
-                        BranchId:
-                          type: string
-                          format: uuid
-                          example: de7bf47d-23ae-4599-af68-68a317ea390d
-                        BranchName:
-                          type: string
-                          example: MyBranch
-                        OwnerId:
-                          type: string
-                          format: uuid
-                          example: 9dd5f81f-dc43-4839-9173-85d09394f30f
-                        OwnerName:
-                          type: string
-                        OrganizationId:
-                          type: string
-                          format: uuid
-                          example: e35d64a9-b990-44f5-bf02-32ad7d15630c
-                        OrganizationName:
-                          type: string
-                        RepositoryId:
-                          type: string
-                          format: uuid
-                          example: ab6f35ef-6e01-440b-8f9b-c343a5272095
-                        RepositoryName:
-                          type: string
-                - type: object
-                  properties:
-                    Enabled:
-                      type: boolean
+              $ref: '#/components/schemas/EnableFeatureParameters'
+            examples:
+              enableCheckpoint:
+                summary: Enable checkpoint references
+                value:
+                  CorrelationId: cli-20260604T181500Z-0001
+                  Principal: user:alice
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                  RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                  BranchId: de7bf47d-23ae-4599-af68-68a317ea390d
+                  Enabled: true
       responses:
         '200':
-          description: OK
+          $ref: '#/components/responses/BranchCommandResponse'
         '400':
-          description: Bad Request
+          $ref: '#/components/responses/400'
         '500':
-          description: Internal Server Error
+          $ref: '#/components/responses/500'
   /branch/enableSave:
     post:
-      summary: Enables or disables save for the specified branch.
+      tags:
+        - Branches
+      summary: Enable or disable save references.
       description: Enables or disables save for the specified branch.
-      operationId: EnableSave
+      operationId: EnableBranchSave
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              allOf:
-                - allOf:
-                    - type: object
-                      properties:
-                        CorrelationId:
-                          type: string
-                          description: If you don't provide a CorrelationId, a Guid will be generated for you. (You're welcome.) CorrelationId's are just strings; feel free to send any kind of CorrelationId you prefer.
-                        Principal:
-                          type: string
-                    - type: object
-                      properties:
-                        BranchId:
-                          type: string
-                          format: uuid
-                          example: de7bf47d-23ae-4599-af68-68a317ea390d
-                        BranchName:
-                          type: string
-                          example: MyBranch
-                        OwnerId:
-                          type: string
-                          format: uuid
-                          example: 9dd5f81f-dc43-4839-9173-85d09394f30f
-                        OwnerName:
-                          type: string
-                        OrganizationId:
-                          type: string
-                          format: uuid
-                          example: e35d64a9-b990-44f5-bf02-32ad7d15630c
-                        OrganizationName:
-                          type: string
-                        RepositoryId:
-                          type: string
-                          format: uuid
-                          example: ab6f35ef-6e01-440b-8f9b-c343a5272095
-                        RepositoryName:
-                          type: string
-                - type: object
-                  properties:
-                    Enabled:
-                      type: boolean
+              $ref: '#/components/schemas/EnableFeatureParameters'
+            examples:
+              enableSave:
+                summary: Enable save references
+                value:
+                  CorrelationId: cli-20260604T181500Z-0001
+                  Principal: user:alice
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                  RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                  BranchId: de7bf47d-23ae-4599-af68-68a317ea390d
+                  Enabled: true
       responses:
         '200':
-          description: OK
+          $ref: '#/components/responses/BranchCommandResponse'
         '400':
-          description: Bad Request
+          $ref: '#/components/responses/400'
         '500':
-          description: Internal Server Error
+          $ref: '#/components/responses/500'
   /branch/enableTag:
     post:
-      summary: Enables or disables tag for the specified branch.
+      tags:
+        - Branches
+      summary: Enable or disable tag references.
       description: Enables or disables tag for the specified branch.
-      operationId: EnableTag
+      operationId: EnableBranchTag
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              allOf:
-                - allOf:
-                    - type: object
-                      properties:
-                        CorrelationId:
-                          type: string
-                          description: If you don't provide a CorrelationId, a Guid will be generated for you. (You're welcome.) CorrelationId's are just strings; feel free to send any kind of CorrelationId you prefer.
-                        Principal:
-                          type: string
-                    - type: object
-                      properties:
-                        BranchId:
-                          type: string
-                          format: uuid
-                          example: de7bf47d-23ae-4599-af68-68a317ea390d
-                        BranchName:
-                          type: string
-                          example: MyBranch
-                        OwnerId:
-                          type: string
-                          format: uuid
-                          example: 9dd5f81f-dc43-4839-9173-85d09394f30f
-                        OwnerName:
-                          type: string
-                        OrganizationId:
-                          type: string
-                          format: uuid
-                          example: e35d64a9-b990-44f5-bf02-32ad7d15630c
-                        OrganizationName:
-                          type: string
-                        RepositoryId:
-                          type: string
-                          format: uuid
-                          example: ab6f35ef-6e01-440b-8f9b-c343a5272095
-                        RepositoryName:
-                          type: string
-                - type: object
-                  properties:
-                    Enabled:
-                      type: boolean
+              $ref: '#/components/schemas/EnableFeatureParameters'
+            examples:
+              enableTag:
+                summary: Enable tag references
+                value:
+                  CorrelationId: cli-20260604T181500Z-0001
+                  Principal: user:alice
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                  RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                  BranchId: de7bf47d-23ae-4599-af68-68a317ea390d
+                  Enabled: true
       responses:
         '200':
-          description: OK
+          $ref: '#/components/responses/BranchCommandResponse'
         '400':
-          description: Bad Request
+          $ref: '#/components/responses/400'
         '500':
-          description: Internal Server Error
+          $ref: '#/components/responses/500'
   /branch/delete:
     post:
-      summary: Deletes the specified branch.
+      tags:
+        - Branches
+      summary: Delete a branch.
       description: Deletes the specified branch.
-      operationId: Delete
+      operationId: DeleteBranch
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              allOf:
-                - allOf:
-                    - type: object
-                      properties:
-                        CorrelationId:
-                          type: string
-                          description: If you don't provide a CorrelationId, a Guid will be generated for you. (You're welcome.) CorrelationId's are just strings; feel free to send any kind of CorrelationId you prefer.
-                        Principal:
-                          type: string
-                    - type: object
-                      properties:
-                        BranchId:
-                          type: string
-                          format: uuid
-                          example: de7bf47d-23ae-4599-af68-68a317ea390d
-                        BranchName:
-                          type: string
-                          example: MyBranch
-                        OwnerId:
-                          type: string
-                          format: uuid
-                          example: 9dd5f81f-dc43-4839-9173-85d09394f30f
-                        OwnerName:
-                          type: string
-                        OrganizationId:
-                          type: string
-                          format: uuid
-                          example: e35d64a9-b990-44f5-bf02-32ad7d15630c
-                        OrganizationName:
-                          type: string
-                        RepositoryId:
-                          type: string
-                          format: uuid
-                          example: ab6f35ef-6e01-440b-8f9b-c343a5272095
-                        RepositoryName:
-                          type: string
+              $ref: '#/components/schemas/DeleteBranchParameters'
+            examples:
+              deleteBranch:
+                summary: Delete a branch and reassign child branches
+                value:
+                  CorrelationId: cli-20260604T181500Z-0001
+                  Principal: user:alice
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                  RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                  BranchId: de7bf47d-23ae-4599-af68-68a317ea390d
+                  Enabled: true
+                  Force: false
+                  DeleteReason: Superseded by release branch.
+                  ReassignChildBranches: true
+                  NewParentBranchId: 11111111-1111-1111-1111-111111111111
       responses:
         '200':
-          description: OK
+          $ref: '#/components/responses/BranchCommandResponse'
         '400':
-          description: Bad Request
+          $ref: '#/components/responses/400'
         '500':
-          description: Internal Server Error
+          $ref: '#/components/responses/500'
   /branch/get:
     post:
-      summary: Gets the specified branch.
+      tags:
+        - Branches
+      summary: Get a branch.
       description: Gets the specified branch.
-      operationId: Get
+      operationId: GetBranch
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              allOf:
-                - allOf:
-                    - type: object
-                      properties:
-                        CorrelationId:
-                          type: string
-                          description: If you don't provide a CorrelationId, a Guid will be generated for you. (You're welcome.) CorrelationId's are just strings; feel free to send any kind of CorrelationId you prefer.
-                        Principal:
-                          type: string
-                    - type: object
-                      properties:
-                        BranchId:
-                          type: string
-                          format: uuid
-                          example: de7bf47d-23ae-4599-af68-68a317ea390d
-                        BranchName:
-                          type: string
-                          example: MyBranch
-                        OwnerId:
-                          type: string
-                          format: uuid
-                          example: 9dd5f81f-dc43-4839-9173-85d09394f30f
-                        OwnerName:
-                          type: string
-                        OrganizationId:
-                          type: string
-                          format: uuid
-                          example: e35d64a9-b990-44f5-bf02-32ad7d15630c
-                        OrganizationName:
-                          type: string
-                        RepositoryId:
-                          type: string
-                          format: uuid
-                          example: ab6f35ef-6e01-440b-8f9b-c343a5272095
-                        RepositoryName:
-                          type: string
-                - type: object
-                  properties:
-                    Sha256Hash:
-                      type: string
-                      example: 805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243
-                    ReferenceId:
-                      type: string
-                      format: uuid
-                      example: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
+              $ref: '#/components/schemas/GetBranchParameters'
+            examples:
+              getBranch:
+                summary: Get a branch by id
+                value:
+                  CorrelationId: cli-20260604T181500Z-0001
+                  Principal: user:alice
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                  RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                  BranchId: de7bf47d-23ae-4599-af68-68a317ea390d
+                  IncludeDeleted: false
       responses:
         '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  Class:
-                    type: string
-                    example: BranchDto
-                  BranchId:
-                    type: string
-                    format: uuid
-                    example: de7bf47d-23ae-4599-af68-68a317ea390d
-                  BranchName:
-                    type: string
-                    example: MyBranch
-                  ParentBranchId:
-                    type: string
-                    format: uuid
-                    example: de7bf47d-23ae-4599-af68-68a317ea390d
-                  BasedOn:
-                    type: string
-                    format: uuid
-                    example: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
-                  RepositoryId:
-                    type: string
-                    format: uuid
-                    example: ab6f35ef-6e01-440b-8f9b-c343a5272095
-                  UserId:
-                    type: string
-                  PromotionEnabled:
-                    type: boolean
-                  CommitEnabled:
-                    type: boolean
-                  CheckpointEnabled:
-                    type: boolean
-                  SaveEnabled:
-                    type: boolean
-                  TagEnabled:
-                    type: boolean
-                  LatestPromotion:
-                    type: string
-                    format: uuid
-                    example: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
-                  LatestCommit:
-                    type: string
-                    format: uuid
-                    example: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
-                  LatestCheckpoint:
-                    type: string
-                    format: uuid
-                    example: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
-                  LatestSave:
-                    type: string
-                    format: uuid
-                    example: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
-                  CreatedAt:
-                    type: string
-                    format: date-time
-                  UpdatedAt:
-                    type: string
-                    format: date-time
-                    nullable: true
-                  DeletedAt:
-                    type: string
-                    format: date-time
-                    nullable: true
-                required:
-                  - Class
-                  - BranchId
-                  - BranchName
-                  - ParentBranchId
-                  - BasedOn
-                  - RepositoryId
-                  - UserId
-                  - PromotionEnabled
-                  - CommitEnabled
-                  - CheckpointEnabled
-                  - SaveEnabled
-                  - TagEnabled
-                  - LatestPromotion
-                  - LatestCommit
-                  - LatestCheckpoint
-                  - LatestSave
-                  - CreatedAt
+          $ref: '#/components/responses/BranchResponse'
         '400':
-          description: Bad Request
+          $ref: '#/components/responses/400'
         '500':
-          description: Internal Server Error
+          $ref: '#/components/responses/500'
   /branch/getParentBranch:
     post:
-      summary: Gets the parent branch of the specified branch.
+      tags:
+        - Branches
+      summary: Get the parent branch.
       description: Gets the parent branch of the specified branch.
       operationId: GetParentBranch
       requestBody:
@@ -1465,961 +1009,342 @@ paths:
         content:
           application/json:
             schema:
-              allOf:
-                - allOf:
-                    - type: object
-                      properties:
-                        CorrelationId:
-                          type: string
-                          description: If you don't provide a CorrelationId, a Guid will be generated for you. (You're welcome.) CorrelationId's are just strings; feel free to send any kind of CorrelationId you prefer.
-                        Principal:
-                          type: string
-                    - type: object
-                      properties:
-                        BranchId:
-                          type: string
-                          format: uuid
-                          example: de7bf47d-23ae-4599-af68-68a317ea390d
-                        BranchName:
-                          type: string
-                          example: MyBranch
-                        OwnerId:
-                          type: string
-                          format: uuid
-                          example: 9dd5f81f-dc43-4839-9173-85d09394f30f
-                        OwnerName:
-                          type: string
-                        OrganizationId:
-                          type: string
-                          format: uuid
-                          example: e35d64a9-b990-44f5-bf02-32ad7d15630c
-                        OrganizationName:
-                          type: string
-                        RepositoryId:
-                          type: string
-                          format: uuid
-                          example: ab6f35ef-6e01-440b-8f9b-c343a5272095
-                        RepositoryName:
-                          type: string
-                - type: object
-                  properties:
-                    Sha256Hash:
-                      type: string
-                      example: 805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243
-                    ReferenceId:
-                      type: string
-                      format: uuid
-                      example: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
+              $ref: '#/components/schemas/GetBranchParameters'
+            examples:
+              getParentBranch:
+                summary: Get the parent branch
+                value:
+                  CorrelationId: cli-20260604T181500Z-0001
+                  Principal: user:alice
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                  RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                  BranchId: de7bf47d-23ae-4599-af68-68a317ea390d
+                  IncludeDeleted: false
       responses:
         '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  Class:
-                    type: string
-                    example: BranchDto
-                  BranchId:
-                    type: string
-                    format: uuid
-                    example: de7bf47d-23ae-4599-af68-68a317ea390d
-                  BranchName:
-                    type: string
-                    example: MyBranch
-                  ParentBranchId:
-                    type: string
-                    format: uuid
-                    example: de7bf47d-23ae-4599-af68-68a317ea390d
-                  BasedOn:
-                    type: string
-                    format: uuid
-                    example: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
-                  RepositoryId:
-                    type: string
-                    format: uuid
-                    example: ab6f35ef-6e01-440b-8f9b-c343a5272095
-                  UserId:
-                    type: string
-                  PromotionEnabled:
-                    type: boolean
-                  CommitEnabled:
-                    type: boolean
-                  CheckpointEnabled:
-                    type: boolean
-                  SaveEnabled:
-                    type: boolean
-                  TagEnabled:
-                    type: boolean
-                  LatestPromotion:
-                    type: string
-                    format: uuid
-                    example: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
-                  LatestCommit:
-                    type: string
-                    format: uuid
-                    example: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
-                  LatestCheckpoint:
-                    type: string
-                    format: uuid
-                    example: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
-                  LatestSave:
-                    type: string
-                    format: uuid
-                    example: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
-                  CreatedAt:
-                    type: string
-                    format: date-time
-                  UpdatedAt:
-                    type: string
-                    format: date-time
-                    nullable: true
-                  DeletedAt:
-                    type: string
-                    format: date-time
-                    nullable: true
-                required:
-                  - Class
-                  - BranchId
-                  - BranchName
-                  - ParentBranchId
-                  - BasedOn
-                  - RepositoryId
-                  - UserId
-                  - PromotionEnabled
-                  - CommitEnabled
-                  - CheckpointEnabled
-                  - SaveEnabled
-                  - TagEnabled
-                  - LatestPromotion
-                  - LatestCommit
-                  - LatestCheckpoint
-                  - LatestSave
-                  - CreatedAt
+          $ref: '#/components/responses/BranchResponse'
         '400':
-          description: Bad Request
+          $ref: '#/components/responses/400'
         '500':
-          description: Internal Server Error
+          $ref: '#/components/responses/500'
   /branch/getReference:
     post:
-      summary: Gets the specified reference.
-      description: Gets the specified reference.
-      operationId: GetReference
+      tags:
+        - Branches
+      summary: Get a branch reference.
+      description: Gets the specified reference from the branch.
+      operationId: GetBranchReference
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              allOf:
-                - allOf:
-                    - allOf:
-                        - type: object
-                          properties:
-                            CorrelationId:
-                              type: string
-                              description: If you don't provide a CorrelationId, a Guid will be generated for you. (You're welcome.) CorrelationId's are just strings; feel free to send any kind of CorrelationId you prefer.
-                            Principal:
-                              type: string
-                        - type: object
-                          properties:
-                            BranchId:
-                              type: string
-                              format: uuid
-                              example: de7bf47d-23ae-4599-af68-68a317ea390d
-                            BranchName:
-                              type: string
-                              example: MyBranch
-                            OwnerId:
-                              type: string
-                              format: uuid
-                              example: 9dd5f81f-dc43-4839-9173-85d09394f30f
-                            OwnerName:
-                              type: string
-                            OrganizationId:
-                              type: string
-                              format: uuid
-                              example: e35d64a9-b990-44f5-bf02-32ad7d15630c
-                            OrganizationName:
-                              type: string
-                            RepositoryId:
-                              type: string
-                              format: uuid
-                              example: ab6f35ef-6e01-440b-8f9b-c343a5272095
-                            RepositoryName:
-                              type: string
-                    - type: object
-                      properties:
-                        Sha256Hash:
-                          type: string
-                          example: 805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243
-                        ReferenceId:
-                          type: string
-                          format: uuid
-                          example: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
+              $ref: '#/components/schemas/GetReferenceParameters'
+            examples:
+              getReference:
+                summary: Get a reference by id
+                value:
+                  CorrelationId: cli-20260604T181500Z-0001
+                  Principal: user:alice
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                  RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                  BranchId: de7bf47d-23ae-4599-af68-68a317ea390d
+                  IncludeDeleted: false
+                  ReferenceId: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
       responses:
         '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  Class:
-                    type: string
-                    example: ReferenceDto
-                  ReferenceId:
-                    type: string
-                    format: uuid
-                    example: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
-                  BranchId:
-                    type: string
-                    format: uuid
-                    example: de7bf47d-23ae-4599-af68-68a317ea390d
-                  DirectoryId:
-                    type: string
-                    format: uuid
-                    example: 33a4e36b-828f-4fae-9343-50b6560dc842
-                  Sha256Hash:
-                    type: string
-                    example: 805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243
-                  ReferenceType:
-                    type: string
-                    enum:
-                      - Promotion
-                      - Commit
-                      - Checkpoint
-                      - Save
-                      - Tag
-                    example: Commit
-                  ReferenceText:
-                    type: string
-                  CreatedAt:
-                    type: string
-                    format: date-time
-                required:
-                  - Class
-                  - ReferenceId
-                  - BranchId
-                  - DirectoryId
-                  - Sha256Hash
-                  - ReferenceType
-                  - ReferenceText
-                  - CreatedAt
+          $ref: '#/components/responses/ReferenceResponse'
         '400':
-          description: Bad Request
+          $ref: '#/components/responses/400'
         '500':
-          description: Internal Server Error
+          $ref: '#/components/responses/500'
   /branch/getReferences:
     post:
-      summary: Gets the references for the specified branch.
+      tags:
+        - Branches
+      summary: List branch references.
       description: Gets the references for the specified branch.
-      operationId: GetReferences
+      operationId: ListBranchReferences
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              allOf:
-                - allOf:
-                    - type: object
-                      properties:
-                        CorrelationId:
-                          type: string
-                          description: If you don't provide a CorrelationId, a Guid will be generated for you. (You're welcome.) CorrelationId's are just strings; feel free to send any kind of CorrelationId you prefer.
-                        Principal:
-                          type: string
-                    - type: object
-                      properties:
-                        BranchId:
-                          type: string
-                          format: uuid
-                          example: de7bf47d-23ae-4599-af68-68a317ea390d
-                        BranchName:
-                          type: string
-                          example: MyBranch
-                        OwnerId:
-                          type: string
-                          format: uuid
-                          example: 9dd5f81f-dc43-4839-9173-85d09394f30f
-                        OwnerName:
-                          type: string
-                        OrganizationId:
-                          type: string
-                          format: uuid
-                          example: e35d64a9-b990-44f5-bf02-32ad7d15630c
-                        OrganizationName:
-                          type: string
-                        RepositoryId:
-                          type: string
-                          format: uuid
-                          example: ab6f35ef-6e01-440b-8f9b-c343a5272095
-                        RepositoryName:
-                          type: string
-                - type: object
-                  properties:
-                    FullSha:
-                      type: boolean
-                    MaxCount:
-                      type: integer
+              $ref: '#/components/schemas/GetReferencesParameters'
+            examples:
+              listReferences:
+                summary: List references for a branch
+                value:
+                  CorrelationId: cli-20260604T181500Z-0001
+                  Principal: user:alice
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                  RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                  BranchId: de7bf47d-23ae-4599-af68-68a317ea390d
+                  FullSha: false
+                  MaxCount: 50
       responses:
         '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  type: object
-                  properties:
-                    Class:
-                      type: string
-                      example: ReferenceDto
-                    ReferenceId:
-                      type: string
-                      format: uuid
-                      example: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
-                    BranchId:
-                      type: string
-                      format: uuid
-                      example: de7bf47d-23ae-4599-af68-68a317ea390d
-                    DirectoryId:
-                      type: string
-                      format: uuid
-                      example: 33a4e36b-828f-4fae-9343-50b6560dc842
-                    Sha256Hash:
-                      type: string
-                      example: 805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243
-                    ReferenceType:
-                      type: string
-                      enum:
-                        - Promotion
-                        - Commit
-                        - Checkpoint
-                        - Save
-                        - Tag
-                      example: Commit
-                    ReferenceText:
-                      type: string
-                    CreatedAt:
-                      type: string
-                      format: date-time
-                  required:
-                    - Class
-                    - ReferenceId
-                    - BranchId
-                    - DirectoryId
-                    - Sha256Hash
-                    - ReferenceType
-                    - ReferenceText
-                    - CreatedAt
+          $ref: '#/components/responses/ReferenceListResponse'
         '400':
-          description: Bad Request
+          $ref: '#/components/responses/400'
         '500':
-          description: Internal Server Error
+          $ref: '#/components/responses/500'
   /branch/getPromotions:
     post:
-      summary: Gets the promotions for the specified branch.
-      description: Gets the promotions for the specified branch.
-      operationId: GetPromotions
+      tags:
+        - Branches
+      summary: List branch promotions.
+      description: Gets the promotion references for the specified branch.
+      operationId: ListBranchPromotions
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              allOf:
-                - allOf:
-                    - type: object
-                      properties:
-                        CorrelationId:
-                          type: string
-                          description: If you don't provide a CorrelationId, a Guid will be generated for you. (You're welcome.) CorrelationId's are just strings; feel free to send any kind of CorrelationId you prefer.
-                        Principal:
-                          type: string
-                    - type: object
-                      properties:
-                        BranchId:
-                          type: string
-                          format: uuid
-                          example: de7bf47d-23ae-4599-af68-68a317ea390d
-                        BranchName:
-                          type: string
-                          example: MyBranch
-                        OwnerId:
-                          type: string
-                          format: uuid
-                          example: 9dd5f81f-dc43-4839-9173-85d09394f30f
-                        OwnerName:
-                          type: string
-                        OrganizationId:
-                          type: string
-                          format: uuid
-                          example: e35d64a9-b990-44f5-bf02-32ad7d15630c
-                        OrganizationName:
-                          type: string
-                        RepositoryId:
-                          type: string
-                          format: uuid
-                          example: ab6f35ef-6e01-440b-8f9b-c343a5272095
-                        RepositoryName:
-                          type: string
-                - type: object
-                  properties:
-                    FullSha:
-                      type: boolean
-                    MaxCount:
-                      type: integer
+              $ref: '#/components/schemas/GetReferencesParameters'
+            examples:
+              listPromotions:
+                summary: List promotion references
+                value:
+                  CorrelationId: cli-20260604T181500Z-0001
+                  Principal: user:alice
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                  RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                  BranchId: de7bf47d-23ae-4599-af68-68a317ea390d
+                  FullSha: false
+                  MaxCount: 50
       responses:
         '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  type: object
-                  properties:
-                    Class:
-                      type: string
-                      example: ReferenceDto
-                    ReferenceId:
-                      type: string
-                      format: uuid
-                      example: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
-                    BranchId:
-                      type: string
-                      format: uuid
-                      example: de7bf47d-23ae-4599-af68-68a317ea390d
-                    DirectoryId:
-                      type: string
-                      format: uuid
-                      example: 33a4e36b-828f-4fae-9343-50b6560dc842
-                    Sha256Hash:
-                      type: string
-                      example: 805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243
-                    ReferenceType:
-                      type: string
-                      enum:
-                        - Promotion
-                        - Commit
-                        - Checkpoint
-                        - Save
-                        - Tag
-                      example: Commit
-                    ReferenceText:
-                      type: string
-                    CreatedAt:
-                      type: string
-                      format: date-time
-                  required:
-                    - Class
-                    - ReferenceId
-                    - BranchId
-                    - DirectoryId
-                    - Sha256Hash
-                    - ReferenceType
-                    - ReferenceText
-                    - CreatedAt
+          $ref: '#/components/responses/ReferenceListResponse'
         '400':
-          description: Bad Request
+          $ref: '#/components/responses/400'
         '500':
-          description: Internal Server Error
+          $ref: '#/components/responses/500'
   /branch/getCommits:
     post:
-      summary: Gets the commits for the specified branch.
-      description: Gets the commits for the specified branch.
-      operationId: GetCommits
+      tags:
+        - Branches
+      summary: List branch commits.
+      description: Gets the commit references for the specified branch.
+      operationId: ListBranchCommits
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              allOf:
-                - allOf:
-                    - type: object
-                      properties:
-                        CorrelationId:
-                          type: string
-                          description: If you don't provide a CorrelationId, a Guid will be generated for you. (You're welcome.) CorrelationId's are just strings; feel free to send any kind of CorrelationId you prefer.
-                        Principal:
-                          type: string
-                    - type: object
-                      properties:
-                        BranchId:
-                          type: string
-                          format: uuid
-                          example: de7bf47d-23ae-4599-af68-68a317ea390d
-                        BranchName:
-                          type: string
-                          example: MyBranch
-                        OwnerId:
-                          type: string
-                          format: uuid
-                          example: 9dd5f81f-dc43-4839-9173-85d09394f30f
-                        OwnerName:
-                          type: string
-                        OrganizationId:
-                          type: string
-                          format: uuid
-                          example: e35d64a9-b990-44f5-bf02-32ad7d15630c
-                        OrganizationName:
-                          type: string
-                        RepositoryId:
-                          type: string
-                          format: uuid
-                          example: ab6f35ef-6e01-440b-8f9b-c343a5272095
-                        RepositoryName:
-                          type: string
-                - type: object
-                  properties:
-                    FullSha:
-                      type: boolean
-                    MaxCount:
-                      type: integer
+              $ref: '#/components/schemas/GetReferencesParameters'
+            examples:
+              listCommits:
+                summary: List commit references
+                value:
+                  CorrelationId: cli-20260604T181500Z-0001
+                  Principal: user:alice
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                  RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                  BranchId: de7bf47d-23ae-4599-af68-68a317ea390d
+                  FullSha: false
+                  MaxCount: 50
       responses:
         '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  type: object
-                  properties:
-                    Class:
-                      type: string
-                      example: ReferenceDto
-                    ReferenceId:
-                      type: string
-                      format: uuid
-                      example: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
-                    BranchId:
-                      type: string
-                      format: uuid
-                      example: de7bf47d-23ae-4599-af68-68a317ea390d
-                    DirectoryId:
-                      type: string
-                      format: uuid
-                      example: 33a4e36b-828f-4fae-9343-50b6560dc842
-                    Sha256Hash:
-                      type: string
-                      example: 805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243
-                    ReferenceType:
-                      type: string
-                      enum:
-                        - Promotion
-                        - Commit
-                        - Checkpoint
-                        - Save
-                        - Tag
-                      example: Commit
-                    ReferenceText:
-                      type: string
-                    CreatedAt:
-                      type: string
-                      format: date-time
-                  required:
-                    - Class
-                    - ReferenceId
-                    - BranchId
-                    - DirectoryId
-                    - Sha256Hash
-                    - ReferenceType
-                    - ReferenceText
-                    - CreatedAt
+          $ref: '#/components/responses/ReferenceListResponse'
         '400':
-          description: Bad Request
+          $ref: '#/components/responses/400'
         '500':
-          description: Internal Server Error
+          $ref: '#/components/responses/500'
   /branch/getCheckpoints:
     post:
-      summary: Gets the checkpoints for the specified branch.
-      description: Gets the checkpoints for the specified branch.
-      operationId: GetCheckpoints
+      tags:
+        - Branches
+      summary: List branch checkpoints.
+      description: Gets the checkpoint references for the specified branch.
+      operationId: ListBranchCheckpoints
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              allOf:
-                - allOf:
-                    - type: object
-                      properties:
-                        CorrelationId:
-                          type: string
-                          description: If you don't provide a CorrelationId, a Guid will be generated for you. (You're welcome.) CorrelationId's are just strings; feel free to send any kind of CorrelationId you prefer.
-                        Principal:
-                          type: string
-                    - type: object
-                      properties:
-                        BranchId:
-                          type: string
-                          format: uuid
-                          example: de7bf47d-23ae-4599-af68-68a317ea390d
-                        BranchName:
-                          type: string
-                          example: MyBranch
-                        OwnerId:
-                          type: string
-                          format: uuid
-                          example: 9dd5f81f-dc43-4839-9173-85d09394f30f
-                        OwnerName:
-                          type: string
-                        OrganizationId:
-                          type: string
-                          format: uuid
-                          example: e35d64a9-b990-44f5-bf02-32ad7d15630c
-                        OrganizationName:
-                          type: string
-                        RepositoryId:
-                          type: string
-                          format: uuid
-                          example: ab6f35ef-6e01-440b-8f9b-c343a5272095
-                        RepositoryName:
-                          type: string
-                - type: object
-                  properties:
-                    FullSha:
-                      type: boolean
-                    MaxCount:
-                      type: integer
+              $ref: '#/components/schemas/GetReferencesParameters'
+            examples:
+              listCheckpoints:
+                summary: List checkpoint references
+                value:
+                  CorrelationId: cli-20260604T181500Z-0001
+                  Principal: user:alice
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                  RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                  BranchId: de7bf47d-23ae-4599-af68-68a317ea390d
+                  FullSha: false
+                  MaxCount: 50
       responses:
         '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  type: object
-                  properties:
-                    Class:
-                      type: string
-                      example: ReferenceDto
-                    ReferenceId:
-                      type: string
-                      format: uuid
-                      example: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
-                    BranchId:
-                      type: string
-                      format: uuid
-                      example: de7bf47d-23ae-4599-af68-68a317ea390d
-                    DirectoryId:
-                      type: string
-                      format: uuid
-                      example: 33a4e36b-828f-4fae-9343-50b6560dc842
-                    Sha256Hash:
-                      type: string
-                      example: 805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243
-                    ReferenceType:
-                      type: string
-                      enum:
-                        - Promotion
-                        - Commit
-                        - Checkpoint
-                        - Save
-                        - Tag
-                      example: Commit
-                    ReferenceText:
-                      type: string
-                    CreatedAt:
-                      type: string
-                      format: date-time
-                  required:
-                    - Class
-                    - ReferenceId
-                    - BranchId
-                    - DirectoryId
-                    - Sha256Hash
-                    - ReferenceType
-                    - ReferenceText
-                    - CreatedAt
+          $ref: '#/components/responses/ReferenceListResponse'
         '400':
-          description: Bad Request
+          $ref: '#/components/responses/400'
         '500':
-          description: Internal Server Error
+          $ref: '#/components/responses/500'
   /branch/getSaves:
     post:
-      summary: Gets the saves for the specified branch.
-      description: Gets the saves for the specified branch.
-      operationId: GetSaves
+      tags:
+        - Branches
+      summary: List branch saves.
+      description: Gets the save references for the specified branch.
+      operationId: ListBranchSaves
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              allOf:
-                - allOf:
-                    - type: object
-                      properties:
-                        CorrelationId:
-                          type: string
-                          description: If you don't provide a CorrelationId, a Guid will be generated for you. (You're welcome.) CorrelationId's are just strings; feel free to send any kind of CorrelationId you prefer.
-                        Principal:
-                          type: string
-                    - type: object
-                      properties:
-                        BranchId:
-                          type: string
-                          format: uuid
-                          example: de7bf47d-23ae-4599-af68-68a317ea390d
-                        BranchName:
-                          type: string
-                          example: MyBranch
-                        OwnerId:
-                          type: string
-                          format: uuid
-                          example: 9dd5f81f-dc43-4839-9173-85d09394f30f
-                        OwnerName:
-                          type: string
-                        OrganizationId:
-                          type: string
-                          format: uuid
-                          example: e35d64a9-b990-44f5-bf02-32ad7d15630c
-                        OrganizationName:
-                          type: string
-                        RepositoryId:
-                          type: string
-                          format: uuid
-                          example: ab6f35ef-6e01-440b-8f9b-c343a5272095
-                        RepositoryName:
-                          type: string
-                - type: object
-                  properties:
-                    FullSha:
-                      type: boolean
-                    MaxCount:
-                      type: integer
+              $ref: '#/components/schemas/GetReferencesParameters'
+            examples:
+              listSaves:
+                summary: List save references
+                value:
+                  CorrelationId: cli-20260604T181500Z-0001
+                  Principal: user:alice
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                  RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                  BranchId: de7bf47d-23ae-4599-af68-68a317ea390d
+                  FullSha: false
+                  MaxCount: 50
       responses:
         '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  type: object
-                  properties:
-                    Class:
-                      type: string
-                      example: ReferenceDto
-                    ReferenceId:
-                      type: string
-                      format: uuid
-                      example: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
-                    BranchId:
-                      type: string
-                      format: uuid
-                      example: de7bf47d-23ae-4599-af68-68a317ea390d
-                    DirectoryId:
-                      type: string
-                      format: uuid
-                      example: 33a4e36b-828f-4fae-9343-50b6560dc842
-                    Sha256Hash:
-                      type: string
-                      example: 805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243
-                    ReferenceType:
-                      type: string
-                      enum:
-                        - Promotion
-                        - Commit
-                        - Checkpoint
-                        - Save
-                        - Tag
-                      example: Commit
-                    ReferenceText:
-                      type: string
-                    CreatedAt:
-                      type: string
-                      format: date-time
-                  required:
-                    - Class
-                    - ReferenceId
-                    - BranchId
-                    - DirectoryId
-                    - Sha256Hash
-                    - ReferenceType
-                    - ReferenceText
-                    - CreatedAt
+          $ref: '#/components/responses/ReferenceListResponse'
         '400':
-          description: Bad Request
+          $ref: '#/components/responses/400'
         '500':
-          description: Internal Server Error
+          $ref: '#/components/responses/500'
   /branch/getTags:
     post:
-      summary: Gets the tags for the specified branch.
-      description: Gets the tags for the specified branch.
-      operationId: GetTags
+      tags:
+        - Branches
+      summary: List branch tags.
+      description: Gets the tag references for the specified branch.
+      operationId: ListBranchTags
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              allOf:
-                - allOf:
-                    - type: object
-                      properties:
-                        CorrelationId:
-                          type: string
-                          description: If you don't provide a CorrelationId, a Guid will be generated for you. (You're welcome.) CorrelationId's are just strings; feel free to send any kind of CorrelationId you prefer.
-                        Principal:
-                          type: string
-                    - type: object
-                      properties:
-                        BranchId:
-                          type: string
-                          format: uuid
-                          example: de7bf47d-23ae-4599-af68-68a317ea390d
-                        BranchName:
-                          type: string
-                          example: MyBranch
-                        OwnerId:
-                          type: string
-                          format: uuid
-                          example: 9dd5f81f-dc43-4839-9173-85d09394f30f
-                        OwnerName:
-                          type: string
-                        OrganizationId:
-                          type: string
-                          format: uuid
-                          example: e35d64a9-b990-44f5-bf02-32ad7d15630c
-                        OrganizationName:
-                          type: string
-                        RepositoryId:
-                          type: string
-                          format: uuid
-                          example: ab6f35ef-6e01-440b-8f9b-c343a5272095
-                        RepositoryName:
-                          type: string
-                - type: object
-                  properties:
-                    FullSha:
-                      type: boolean
-                    MaxCount:
-                      type: integer
+              $ref: '#/components/schemas/GetReferencesParameters'
+            examples:
+              listTags:
+                summary: List tag references
+                value:
+                  CorrelationId: cli-20260604T181500Z-0001
+                  Principal: user:alice
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                  RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                  BranchId: de7bf47d-23ae-4599-af68-68a317ea390d
+                  FullSha: false
+                  MaxCount: 50
       responses:
         '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  type: object
-                  properties:
-                    Class:
-                      type: string
-                      example: ReferenceDto
-                    ReferenceId:
-                      type: string
-                      format: uuid
-                      example: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
-                    BranchId:
-                      type: string
-                      format: uuid
-                      example: de7bf47d-23ae-4599-af68-68a317ea390d
-                    DirectoryId:
-                      type: string
-                      format: uuid
-                      example: 33a4e36b-828f-4fae-9343-50b6560dc842
-                    Sha256Hash:
-                      type: string
-                      example: 805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243
-                    ReferenceType:
-                      type: string
-                      enum:
-                        - Promotion
-                        - Commit
-                        - Checkpoint
-                        - Save
-                        - Tag
-                      example: Commit
-                    ReferenceText:
-                      type: string
-                    CreatedAt:
-                      type: string
-                      format: date-time
-                  required:
-                    - Class
-                    - ReferenceId
-                    - BranchId
-                    - DirectoryId
-                    - Sha256Hash
-                    - ReferenceType
-                    - ReferenceText
-                    - CreatedAt
+          $ref: '#/components/responses/ReferenceListResponse'
         '400':
-          description: Bad Request
+          $ref: '#/components/responses/400'
         '500':
-          description: Internal Server Error
+          $ref: '#/components/responses/500'
   /diff/populate:
     post:
-      summary: Populates the diff actor without returning the diff.
+      tags:
+        - Diffs
+      summary: Populate a diff actor.
       description: |
-        Populates the diff actor without returning the diff. This endpoint is meant to be used when generating the diff through reacting to an event.
-        ### Errors and Problem Details
-        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+        Populates the diff actor without returning the diff. This endpoint is meant to be used when generating the diff
+        through reacting to an event.
+      operationId: PopulateDiff
       requestBody:
         required: true
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/PopulateParameters'
+            examples:
+              byDirectoryVersion:
+                summary: Compare two directory versions
+                value:
+                  CorrelationId: cli-20260604T181500Z-0001
+                  Principal: user:alice
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                  RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                  DirectoryVersionId1: 33a4e36b-828f-4fae-9343-50b6560dc842
+                  DirectoryVersionId2: 66b7b8c2-8d2f-4f04-951c-6b3486c4e5d1
       responses:
         '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/200'
+          $ref: '#/components/responses/DiffPopulateResponse'
         '400':
           $ref: '#/components/responses/400'
         '500':
           $ref: '#/components/responses/500'
   /diff/getDiff:
     post:
-      summary: Retrieves the contents of the diff.
-      description: |
-        Retrieves the contents of the diff between two directories.
-        ### Errors and Problem Details
-        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      tags:
+        - Diffs
+      summary: Get a diff.
+      description: Retrieves the contents of the diff between two directory versions.
+      operationId: GetDiff
       requestBody:
         required: true
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/GetDiffParameters'
+            examples:
+              byDirectoryVersion:
+                summary: Compare two directory versions
+                value:
+                  CorrelationId: cli-20260604T181500Z-0001
+                  Principal: user:alice
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                  RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                  DirectoryVersionId1: 33a4e36b-828f-4fae-9343-50b6560dc842
+                  DirectoryVersionId2: 66b7b8c2-8d2f-4f04-951c-6b3486c4e5d1
       responses:
         '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/200'
+          $ref: '#/components/responses/DiffResponse'
         '400':
           $ref: '#/components/responses/400'
         '500':
           $ref: '#/components/responses/500'
   /diff/getDiffBySha256Hash:
     post:
-      summary: Retrieves a diff taken by comparing two DirectoryVersions by Sha256Hash.
-      description: |
-        Retrieves a diff taken by comparing two DirectoryVersions identified by their SHA-256 hash.
-        ### Errors and Problem Details
-        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      tags:
+        - Diffs
+      summary: Get a diff by SHA-256 hash.
+      description: Retrieves a diff by comparing two directory versions identified by SHA-256 hash.
+      operationId: GetDiffBySha256Hash
       requestBody:
         required: true
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/GetDiffBySha256HashParameters'
+            examples:
+              bySha256Hash:
+                summary: Compare two directory versions by hash
+                value:
+                  CorrelationId: cli-20260604T181500Z-0001
+                  Principal: user:alice
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                  RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                  DirectoryVersionId1: 33a4e36b-828f-4fae-9343-50b6560dc842
+                  DirectoryVersionId2: 66b7b8c2-8d2f-4f04-951c-6b3486c4e5d1
+                  Sha256Hash1: 805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243
+                  Sha256Hash2: A05331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857240
       responses:
         '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/200'
+          $ref: '#/components/responses/DiffResponse'
         '400':
           $ref: '#/components/responses/400'
         '500':
@@ -3881,12 +2806,6 @@ paths:
           $ref: '#/components/responses/500'
 components:
   schemas:
-    '200':
-      description: OK
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/GraceReturnValue'
     ApprovalPolicyParameters:
       allOf:
         - $ref: '#/components/schemas/CommonParameters'
@@ -4309,123 +3228,172 @@ components:
         CreatedAt:
           $ref: '#/components/schemas/Instant'
     BranchParameters:
-      description: Parameters for many endpoints in the /branch path.
+      description: Parameters shared by public endpoints in the /branch route family.
       type: object
+      allOf:
+        - $ref: '#/components/schemas/CommonParameters'
       properties:
-        ownerId:
-          type: string
-        ownerName:
+        OwnerId:
+          $ref: '#/components/schemas/OwnerId'
+        OwnerName:
           $ref: '#/components/schemas/OwnerName'
-        organizationId:
-          type: string
-        organizationName:
+        OrganizationId:
+          $ref: '#/components/schemas/OrganizationId'
+        OrganizationName:
           $ref: '#/components/schemas/OrganizationName'
-        repositoryId:
-          type: string
-        repositoryName:
+        RepositoryId:
+          $ref: '#/components/schemas/RepositoryId'
+        RepositoryName:
           $ref: '#/components/schemas/RepositoryName'
-        branchId:
-          type: string
-        branchName:
+        BranchId:
+          $ref: '#/components/schemas/BranchId'
+        BranchName:
           $ref: '#/components/schemas/BranchName'
+      example:
+        CorrelationId: cli-20260604T181500Z-0001
+        Principal: user:alice
+        OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+        OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+        RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+        BranchId: de7bf47d-23ae-4599-af68-68a317ea390d
     BranchQueryParameters:
-      description: Base class for parameters for branch queries.
+      description: Parameters for branch query endpoints that can resolve a branch or reference by hash or reference id.
       allOf:
         - $ref: '#/components/schemas/BranchParameters'
         - type: object
           properties:
-            sha256Hash:
+            Sha256Hash:
               $ref: '#/components/schemas/Sha256Hash'
-            referenceId:
-              type: string
+            ReferenceId:
+              $ref: '#/components/schemas/ReferenceId'
     CreateBranchParameters:
       description: Parameters for the /branch/create endpoint.
       allOf:
         - $ref: '#/components/schemas/BranchParameters'
         - type: object
           properties:
-            parentBranchId:
-              type: string
-            parentBranchName:
+            ParentBranchId:
+              $ref: '#/components/schemas/BranchId'
+            ParentBranchName:
               $ref: '#/components/schemas/BranchName'
+            InitialPermissions:
+              type: array
+              items:
+                $ref: '#/components/schemas/ReferenceType'
     RebaseParameters:
       description: Parameters for the /branch/rebase endpoint.
       allOf:
         - $ref: '#/components/schemas/BranchParameters'
         - type: object
           properties:
-            basedOn:
+            BasedOn:
               $ref: '#/components/schemas/ReferenceId'
     CreateReferenceParameters:
-      description: Parameters for the various /branch/create[reference] endpoints.
+      description: Parameters for /branch/promote, /branch/commit, /branch/checkpoint, /branch/save, and /branch/tag.
       allOf:
         - $ref: '#/components/schemas/BranchParameters'
         - type: object
           properties:
-            directoryId:
-              $ref: '#/components/schemas/DirectoryId'
-            sha256Hash:
-              $ref: '#/components/schemas/Sha256Hash'
-            message:
+            DirectoryVersionId:
               type: string
+              format: uuid
+              example: 33a4e36b-828f-4fae-9343-50b6560dc842
+            Sha256Hash:
+              $ref: '#/components/schemas/Sha256Hash'
+            Message:
+              type: string
+              example: Capture release candidate.
     SetBranchNameParameters:
       description: Parameters for the /branch/setName endpoint.
       allOf:
         - $ref: '#/components/schemas/BranchParameters'
         - type: object
           properties:
-            newName:
+            NewName:
               type: string
+              example: ReleaseCandidate
     EnableFeatureParameters:
-      description: Parameters for the various /branch/enable[feature] endpoints.
+      description: Parameters for branch feature-toggle endpoints.
       allOf:
         - $ref: '#/components/schemas/BranchParameters'
         - type: object
           properties:
-            enabled:
+            Enabled:
               type: boolean
+              example: true
     DeleteBranchParameters:
       description: Parameters for the /branch/delete endpoint.
       allOf:
         - $ref: '#/components/schemas/BranchParameters'
+        - type: object
+          properties:
+            Force:
+              type: boolean
+              example: false
+            DeleteReason:
+              type: string
+              example: Superseded by release branch.
+            ReassignChildBranches:
+              type: boolean
+              example: true
+            NewParentBranchId:
+              $ref: '#/components/schemas/BranchId'
+            NewParentBranchName:
+              $ref: '#/components/schemas/BranchName'
     GetReferenceParameters:
       description: Parameters for the /branch/getReference endpoint.
       allOf:
         - $ref: '#/components/schemas/BranchQueryParameters'
     GetReferencesParameters:
-      description: Parameters for the /branch/getReferences and /branch/get[reference] endpoints.
+      description: Parameters for /branch/getReferences and reference-type list endpoints.
       allOf:
         - $ref: '#/components/schemas/BranchParameters'
         - type: object
           properties:
-            fullSha:
+            FullSha:
               type: boolean
-            maxCount:
+              example: false
+            MaxCount:
               type: integer
+              format: int32
+              minimum: 1
+              example: 50
     GetDiffsForReferenceTypeParameters:
       description: Parameters for the /branch/getDiffsForReferenceType endpoint.
       allOf:
         - $ref: '#/components/schemas/BranchParameters'
         - type: object
           properties:
-            referenceType:
-              type: string
-            maxCount:
+            ReferenceType:
+              $ref: '#/components/schemas/ReferenceType'
+            MaxCount:
               type: integer
+              format: int32
+              minimum: 1
+              example: 50
     GetDiffsForReferencesParameters:
       description: Parameters for the /branch/getDiffsForReferences endpoint.
       allOf:
         - $ref: '#/components/schemas/BranchParameters'
         - type: object
           properties:
-            references:
+            References:
               type: string
-            maxCount:
+              description: Comma-separated reference identifiers for diff lookup.
+            MaxCount:
               type: integer
+              format: int32
+              minimum: 1
+              example: 50
     GetBranchParameters:
       description: Parameters for the /branch/get endpoint.
       allOf:
         - $ref: '#/components/schemas/BranchQueryParameters'
+        - type: object
+          properties:
+            IncludeDeleted:
+              type: boolean
+              example: false
     SwitchParameters:
       description: Parameters for the /branch/switch endpoint.
       allOf:
@@ -4434,27 +3402,37 @@ components:
       description: Parameters for the /branch/getVersion endpoint.
       allOf:
         - $ref: '#/components/schemas/BranchQueryParameters'
+        - type: object
+          properties:
+            IncludeDeleted:
+              type: boolean
+              example: false
     DiffParameters:
-      description: Parameters for diff endpoints.
+      description: Parameters shared by public endpoints in the /diff route family.
+      type: object
       allOf:
         - $ref: '#/components/schemas/CommonParameters'
       properties:
         OwnerId:
-          type: string
+          $ref: '#/components/schemas/OwnerId'
         OwnerName:
           $ref: '#/components/schemas/OwnerName'
         OrganizationId:
-          type: string
+          $ref: '#/components/schemas/OrganizationId'
         OrganizationName:
           $ref: '#/components/schemas/OrganizationName'
         RepositoryId:
-          type: string
+          $ref: '#/components/schemas/RepositoryId'
         RepositoryName:
           $ref: '#/components/schemas/RepositoryName'
-        DirectoryId1:
-          $ref: '#/components/schemas/DirectoryId'
-        DirectoryId2:
-          $ref: '#/components/schemas/DirectoryId'
+        DirectoryVersionId1:
+          type: string
+          format: uuid
+          example: 33a4e36b-828f-4fae-9343-50b6560dc842
+        DirectoryVersionId2:
+          type: string
+          format: uuid
+          example: 66b7b8c2-8d2f-4f04-951c-6b3486c4e5d1
     PopulateParameters:
       description: Parameters for diff population.
       allOf:
@@ -4467,20 +3445,22 @@ components:
       description: Parameters for retrieving a diff by reference type.
       allOf:
         - $ref: '#/components/schemas/DiffParameters'
-      properties:
-        BranchId:
-          type: string
-        BranchName:
-          $ref: '#/components/schemas/BranchName'
+        - type: object
+          properties:
+            BranchId:
+              $ref: '#/components/schemas/BranchId'
+            BranchName:
+              $ref: '#/components/schemas/BranchName'
     GetDiffBySha256HashParameters:
-      description: Parameters for retrieving a diff by SHA256 hash.
+      description: Parameters for retrieving a diff by SHA-256 hash.
       allOf:
         - $ref: '#/components/schemas/DiffParameters'
-      properties:
-        Sha256Hash1:
-          $ref: '#/components/schemas/Sha256Hash'
-        Sha256Hash2:
-          $ref: '#/components/schemas/Sha256Hash'
+        - type: object
+          properties:
+            Sha256Hash1:
+              $ref: '#/components/schemas/Sha256Hash'
+            Sha256Hash2:
+              $ref: '#/components/schemas/Sha256Hash'
     DirectoryParameters:
       description: Parameters for many endpoints in the /directory path.
       type: object
@@ -4870,23 +3850,28 @@ components:
       allOf:
         - $ref: '#/components/schemas/OwnerParameters'
     ReferenceParameters:
-      description: Parameters for many endpoints in the /reference path.
+      description: Public reference identity fields used when a route accepts or returns reference selectors.
       type: object
-      properties:
-        ReferenceId:
-          type: string
-          description: Unique identifier of the reference.
-        ReferenceType:
-          type: string
-          description: Type of the reference.
-        RepositoryText:
-          type: string
-          description: Textual representation of the repository.
-        RepositoryName:
-          type: string
-          description: Name of the repository.
       allOf:
         - $ref: '#/components/schemas/CommonParameters'
+      properties:
+        ReferenceId:
+          $ref: '#/components/schemas/ReferenceId'
+        ReferenceType:
+          $ref: '#/components/schemas/ReferenceType'
+        ReferenceText:
+          $ref: '#/components/schemas/ReferenceText'
+        RepositoryId:
+          $ref: '#/components/schemas/RepositoryId'
+        RepositoryName:
+          $ref: '#/components/schemas/RepositoryName'
+      example:
+        CorrelationId: cli-20260604T181500Z-0001
+        Principal: user:alice
+        RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+        ReferenceId: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
+        ReferenceType: Commit
+        ReferenceText: Capture release candidate.
     RepositoryParameters:
       description: Parameters for many endpoints in the /repository path.
       type: object
@@ -5796,6 +4781,362 @@ components:
         - RetryScheduled
         - Failed
         - DeadLettered
+    BranchCommandReturnValue:
+      description: Grace response envelope returned by branch command endpoints.
+      type: object
+      properties:
+        ReturnValue:
+          type: string
+          example: Branch command succeeded.
+        EventTime:
+          $ref: '#/components/schemas/Instant'
+        CorrelationId:
+          $ref: '#/components/schemas/CorrelationId'
+        Properties:
+          type: object
+          additionalProperties:
+            type: string
+      required:
+        - ReturnValue
+        - EventTime
+        - CorrelationId
+        - Properties
+      example:
+        ReturnValue: Branch command succeeded.
+        EventTime: '2026-06-04T18:15:00Z'
+        CorrelationId: cli-20260604T181500Z-0001
+        Properties:
+          Path: /branch/create
+    ReferenceApiDto:
+      description: Public reference DTO returned through branch reference endpoints.
+      type: object
+      properties:
+        Class:
+          type: string
+          example: ReferenceDto
+        ReferenceId:
+          $ref: '#/components/schemas/ReferenceId'
+        OwnerId:
+          $ref: '#/components/schemas/OwnerId'
+        OrganizationId:
+          $ref: '#/components/schemas/OrganizationId'
+        RepositoryId:
+          $ref: '#/components/schemas/RepositoryId'
+        BranchId:
+          $ref: '#/components/schemas/BranchId'
+        DirectoryId:
+          type: string
+          format: uuid
+          description: DirectoryVersionId represented by the current server DTO field name.
+          example: 33a4e36b-828f-4fae-9343-50b6560dc842
+        Sha256Hash:
+          $ref: '#/components/schemas/Sha256Hash'
+        ReferenceType:
+          $ref: '#/components/schemas/ReferenceType'
+        ReferenceText:
+          $ref: '#/components/schemas/ReferenceText'
+        Links:
+          type: array
+          items:
+            type: string
+        CreatedAt:
+          $ref: '#/components/schemas/Instant'
+        UpdatedAt:
+          $ref: '#/components/schemas/Instant'
+          nullable: true
+        DeletedAt:
+          $ref: '#/components/schemas/Instant'
+          nullable: true
+        DeleteReason:
+          type: string
+    BranchApiDto:
+      description: Public branch DTO returned through branch endpoints.
+      type: object
+      properties:
+        Class:
+          type: string
+          example: BranchDto
+        BranchId:
+          $ref: '#/components/schemas/BranchId'
+        BranchName:
+          $ref: '#/components/schemas/BranchName'
+        ParentBranchId:
+          $ref: '#/components/schemas/BranchId'
+        OwnerId:
+          $ref: '#/components/schemas/OwnerId'
+        OrganizationId:
+          $ref: '#/components/schemas/OrganizationId'
+        RepositoryId:
+          $ref: '#/components/schemas/RepositoryId'
+        BasedOn:
+          $ref: '#/components/schemas/ReferenceApiDto'
+        UserId:
+          $ref: '#/components/schemas/UserId'
+        AssignEnabled:
+          type: boolean
+        PromotionEnabled:
+          type: boolean
+        CommitEnabled:
+          type: boolean
+        CheckpointEnabled:
+          type: boolean
+        SaveEnabled:
+          type: boolean
+        TagEnabled:
+          type: boolean
+        ExternalEnabled:
+          type: boolean
+        AutoRebaseEnabled:
+          type: boolean
+        PromotionMode:
+          type: string
+          example: IndividualOnly
+        LatestReference:
+          $ref: '#/components/schemas/ReferenceApiDto'
+        LatestPromotion:
+          $ref: '#/components/schemas/ReferenceApiDto'
+        LatestCommit:
+          $ref: '#/components/schemas/ReferenceApiDto'
+        LatestCheckpoint:
+          $ref: '#/components/schemas/ReferenceApiDto'
+        LatestSave:
+          $ref: '#/components/schemas/ReferenceApiDto'
+        ShouldRecomputeLatestReferences:
+          type: boolean
+        CreatedAt:
+          $ref: '#/components/schemas/Instant'
+        UpdatedAt:
+          $ref: '#/components/schemas/Instant'
+          nullable: true
+        DeletedAt:
+          $ref: '#/components/schemas/Instant'
+          nullable: true
+        DeleteReason:
+          type: string
+    BranchReturnValue:
+      description: Grace response envelope whose ReturnValue contains a branch.
+      type: object
+      properties:
+        ReturnValue:
+          $ref: '#/components/schemas/BranchApiDto'
+        EventTime:
+          $ref: '#/components/schemas/Instant'
+        CorrelationId:
+          $ref: '#/components/schemas/CorrelationId'
+        Properties:
+          type: object
+          additionalProperties:
+            type: string
+      required:
+        - ReturnValue
+        - EventTime
+        - CorrelationId
+        - Properties
+      example:
+        ReturnValue:
+          Class: BranchDto
+          BranchId: de7bf47d-23ae-4599-af68-68a317ea390d
+          BranchName: main
+          ParentBranchId: 00000000-0000-0000-0000-000000000000
+          OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+          OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+          RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+          BasedOn:
+            ReferenceId: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
+          UserId: user:alice
+          AssignEnabled: false
+          PromotionEnabled: true
+          CommitEnabled: true
+          CheckpointEnabled: true
+          SaveEnabled: true
+          TagEnabled: true
+          ExternalEnabled: false
+          AutoRebaseEnabled: true
+          PromotionMode: IndividualOnly
+          LatestReference:
+            ReferenceId: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
+          LatestPromotion:
+            ReferenceId: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
+          LatestCommit:
+            ReferenceId: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
+          LatestCheckpoint:
+            ReferenceId: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
+          LatestSave:
+            ReferenceId: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
+          ShouldRecomputeLatestReferences: false
+          CreatedAt: '2026-06-04T18:15:00Z'
+          DeleteReason: ''
+        EventTime: '2026-06-04T18:15:00Z'
+        CorrelationId: cli-20260604T181500Z-0001
+        Properties:
+          Path: /branch/get
+    ReferenceReturnValue:
+      description: Grace response envelope whose ReturnValue contains a reference.
+      type: object
+      properties:
+        ReturnValue:
+          $ref: '#/components/schemas/ReferenceApiDto'
+        EventTime:
+          $ref: '#/components/schemas/Instant'
+        CorrelationId:
+          $ref: '#/components/schemas/CorrelationId'
+        Properties:
+          type: object
+          additionalProperties:
+            type: string
+      required:
+        - ReturnValue
+        - EventTime
+        - CorrelationId
+        - Properties
+      example:
+        ReturnValue:
+          Class: ReferenceDto
+          ReferenceId: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
+          BranchId: de7bf47d-23ae-4599-af68-68a317ea390d
+          DirectoryId: 33a4e36b-828f-4fae-9343-50b6560dc842
+          Sha256Hash: 805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243
+          ReferenceType: Commit
+          ReferenceText: Capture release candidate.
+          CreatedAt: '2026-06-04T18:15:00Z'
+        EventTime: '2026-06-04T18:15:00Z'
+        CorrelationId: cli-20260604T181500Z-0001
+        Properties:
+          Path: /branch/getReference
+    ReferenceListReturnValue:
+      description: Grace response envelope whose ReturnValue contains references.
+      type: object
+      properties:
+        ReturnValue:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReferenceApiDto'
+        EventTime:
+          $ref: '#/components/schemas/Instant'
+        CorrelationId:
+          $ref: '#/components/schemas/CorrelationId'
+        Properties:
+          type: object
+          additionalProperties:
+            type: string
+      required:
+        - ReturnValue
+        - EventTime
+        - CorrelationId
+        - Properties
+      example:
+        ReturnValue:
+          - Class: ReferenceDto
+            ReferenceId: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
+            BranchId: de7bf47d-23ae-4599-af68-68a317ea390d
+            DirectoryId: 33a4e36b-828f-4fae-9343-50b6560dc842
+            Sha256Hash: 805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243
+            ReferenceType: Commit
+            ReferenceText: Capture release candidate.
+            CreatedAt: '2026-06-04T18:15:00Z'
+        EventTime: '2026-06-04T18:15:00Z'
+        CorrelationId: cli-20260604T181500Z-0001
+        Properties:
+          Path: /branch/getReferences
+    DiffPopulateReturnValue:
+      description: Grace response envelope returned when the diff actor is populated.
+      type: object
+      properties:
+        ReturnValue:
+          type: string
+          example: 'DiffActor.Compute: populated.'
+        EventTime:
+          $ref: '#/components/schemas/Instant'
+        CorrelationId:
+          $ref: '#/components/schemas/CorrelationId'
+        Properties:
+          type: object
+          additionalProperties:
+            type: string
+      required:
+        - ReturnValue
+        - EventTime
+        - CorrelationId
+        - Properties
+      example:
+        ReturnValue: 'DiffActor.Compute: populated.'
+        EventTime: '2026-06-04T18:15:00Z'
+        CorrelationId: cli-20260604T181500Z-0001
+        Properties:
+          DirectoryVersionId1: 33a4e36b-828f-4fae-9343-50b6560dc842
+          DirectoryVersionId2: 66b7b8c2-8d2f-4f04-951c-6b3486c4e5d1
+    DiffApiDto:
+      description: Public diff DTO returned through diff endpoints.
+      type: object
+      properties:
+        Class:
+          type: string
+          example: DiffDto
+        OwnerId:
+          $ref: '#/components/schemas/OwnerId'
+        OrganizationId:
+          $ref: '#/components/schemas/OrganizationId'
+        RepositoryId:
+          $ref: '#/components/schemas/RepositoryId'
+        DirectoryVersionId1:
+          type: string
+          format: uuid
+          example: 33a4e36b-828f-4fae-9343-50b6560dc842
+        Directory1CreatedAt:
+          $ref: '#/components/schemas/Instant'
+        DirectoryVersionId2:
+          type: string
+          format: uuid
+          example: 66b7b8c2-8d2f-4f04-951c-6b3486c4e5d1
+        Directory2CreatedAt:
+          $ref: '#/components/schemas/Instant'
+        HasDifferences:
+          type: boolean
+        Differences:
+          type: array
+          items:
+            $ref: '#/components/schemas/FileSystemDifference'
+        FileDiffs:
+          type: array
+          items:
+            $ref: '#/components/schemas/FileDiff'
+    DiffReturnValue:
+      description: Grace response envelope whose ReturnValue contains a diff.
+      type: object
+      properties:
+        ReturnValue:
+          $ref: '#/components/schemas/DiffApiDto'
+        EventTime:
+          $ref: '#/components/schemas/Instant'
+        CorrelationId:
+          $ref: '#/components/schemas/CorrelationId'
+        Properties:
+          type: object
+          additionalProperties:
+            type: string
+      required:
+        - ReturnValue
+        - EventTime
+        - CorrelationId
+        - Properties
+      example:
+        ReturnValue:
+          Class: DiffDto
+          OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+          OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+          RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+          HasDifferences: true
+          DirectoryVersionId1: 33a4e36b-828f-4fae-9343-50b6560dc842
+          Directory1CreatedAt: '2026-06-04T18:14:00Z'
+          DirectoryVersionId2: 66b7b8c2-8d2f-4f04-951c-6b3486c4e5d1
+          Directory2CreatedAt: '2026-06-04T18:15:00Z'
+          Differences: []
+          FileDiffs: []
+        EventTime: '2026-06-04T18:15:00Z'
+        CorrelationId: cli-20260604T181500Z-0001
+        Properties:
+          DirectoryVersionId1: 33a4e36b-828f-4fae-9343-50b6560dc842
+          DirectoryVersionId2: 66b7b8c2-8d2f-4f04-951c-6b3486c4e5d1
     GraceReturnValueBase:
       description: Common metadata returned with successful Grace responses.
       type: object
@@ -6650,3 +5991,127 @@ components:
                     type: array
                     items:
                       $ref: '#/components/schemas/WebhookDelivery'
+    BranchCommandResponse:
+      description: OK
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/BranchCommandReturnValue'
+          examples:
+            branchCommand:
+              summary: Branch command response envelope
+              value:
+                ReturnValue: Branch command succeeded.
+                EventTime: '2026-06-04T18:15:00Z'
+                CorrelationId: cli-20260604T181500Z-0001
+                Properties:
+                  Path: /branch/create
+    BranchResponse:
+      description: OK
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/BranchReturnValue'
+          examples:
+            branch:
+              summary: Branch response envelope
+              value:
+                ReturnValue:
+                  Class: BranchDto
+                  BranchId: de7bf47d-23ae-4599-af68-68a317ea390d
+                  BranchName: main
+                  ParentBranchId: 00000000-0000-0000-0000-000000000000
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                  RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                  BasedOn:
+                    ReferenceId: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
+                  UserId: user:alice
+                  AssignEnabled: false
+                  PromotionEnabled: true
+                  CommitEnabled: true
+                  CheckpointEnabled: true
+                  SaveEnabled: true
+                  TagEnabled: true
+                  ExternalEnabled: false
+                  AutoRebaseEnabled: true
+                  PromotionMode: IndividualOnly
+                  LatestReference:
+                    ReferenceId: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
+                  LatestPromotion:
+                    ReferenceId: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
+                  LatestCommit:
+                    ReferenceId: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
+                  LatestCheckpoint:
+                    ReferenceId: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
+                  LatestSave:
+                    ReferenceId: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
+                  ShouldRecomputeLatestReferences: false
+                  CreatedAt: '2026-06-04T18:15:00Z'
+                  DeleteReason: ''
+                EventTime: '2026-06-04T18:15:00Z'
+                CorrelationId: cli-20260604T181500Z-0001
+                Properties:
+                  Path: /branch/get
+    ReferenceResponse:
+      description: OK
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ReferenceReturnValue'
+          examples:
+            reference:
+              summary: Reference response envelope
+              value:
+                ReturnValue:
+                  Class: ReferenceDto
+                  ReferenceId: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
+                  BranchId: de7bf47d-23ae-4599-af68-68a317ea390d
+                  DirectoryId: 33a4e36b-828f-4fae-9343-50b6560dc842
+                  Sha256Hash: 805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243
+                  ReferenceType: Commit
+                  ReferenceText: Capture release candidate.
+                  CreatedAt: '2026-06-04T18:15:00Z'
+                EventTime: '2026-06-04T18:15:00Z'
+                CorrelationId: cli-20260604T181500Z-0001
+                Properties:
+                  Path: /branch/getReference
+    ReferenceListResponse:
+      description: OK
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ReferenceListReturnValue'
+    DiffPopulateResponse:
+      description: OK
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/DiffPopulateReturnValue'
+    DiffResponse:
+      description: OK
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/DiffReturnValue'
+          examples:
+            diff:
+              summary: Diff response envelope
+              value:
+                ReturnValue:
+                  Class: DiffDto
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                  RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                  HasDifferences: true
+                  DirectoryVersionId1: 33a4e36b-828f-4fae-9343-50b6560dc842
+                  Directory1CreatedAt: '2026-06-04T18:14:00Z'
+                  DirectoryVersionId2: 66b7b8c2-8d2f-4f04-951c-6b3486c4e5d1
+                  Directory2CreatedAt: '2026-06-04T18:15:00Z'
+                  Differences: []
+                  FileDiffs: []
+                EventTime: '2026-06-04T18:15:00Z'
+                CorrelationId: cli-20260604T181500Z-0001
+                Properties:
+                  DirectoryVersionId1: 33a4e36b-828f-4fae-9343-50b6560dc842
+                  DirectoryVersionId2: 66b7b8c2-8d2f-4f04-951c-6b3486c4e5d1
