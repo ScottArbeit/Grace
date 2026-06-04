@@ -3,7 +3,9 @@ namespace Grace.Server
 open Grace.Shared.Parameters.WorkItem
 open Grace.Types.Artifact
 open Grace.Types.Types
+open Grace.Types.WorkItem
 open System
+open System.Collections.Generic
 
 module WorkItemAttachments =
     type internal WorkItemAttachment = { ArtifactId: ArtifactId; Metadata: ArtifactMetadata; AttachmentType: string }
@@ -39,6 +41,48 @@ module WorkItemAttachments =
         | None -> "other"
 
     let internal tryGetReviewerAttachmentTypeName (artifactType: ArtifactType) = tryClassifyArtifactType artifactType
+
+    let internal selectAttachmentDeterministically (attachments: WorkItemAttachment list) (latest: bool) =
+        if List.isEmpty attachments then
+            None
+        else
+            let ordered =
+                attachments
+                |> List.sortBy (fun attachment -> attachment.Metadata.CreatedAt, attachment.ArtifactId.ToString("N"))
+
+            if latest then
+                ordered |> List.rev |> List.head |> Some
+            else
+                ordered |> List.head |> Some
+
+    let internal buildLinksDto (workItemDto: WorkItemDto) (artifactMetadataById: IReadOnlyDictionary<ArtifactId, ArtifactMetadata option>) =
+        let agentSummaryArtifactIds = ResizeArray<ArtifactId>()
+        let promptArtifactIds = ResizeArray<ArtifactId>()
+        let reviewNotesArtifactIds = ResizeArray<ArtifactId>()
+        let otherArtifactIds = ResizeArray<ArtifactId>()
+
+        workItemDto.ArtifactIds
+        |> Seq.iter (fun artifactId ->
+            match artifactMetadataById[artifactId] with
+            | Some artifactMetadata ->
+                match artifactMetadata.ArtifactType with
+                | ArtifactType.AgentSummary -> agentSummaryArtifactIds.Add(artifactId)
+                | ArtifactType.Prompt -> promptArtifactIds.Add(artifactId)
+                | ArtifactType.ReviewNotes -> reviewNotesArtifactIds.Add(artifactId)
+                | _ -> otherArtifactIds.Add(artifactId)
+            | None -> otherArtifactIds.Add(artifactId))
+
+        {
+            WorkItemId = workItemDto.WorkItemId
+            WorkItemNumber = workItemDto.WorkItemNumber
+            ReferenceIds = workItemDto.ReferenceIds
+            PromotionSetIds = workItemDto.PromotionSetIds
+            ArtifactIds = workItemDto.ArtifactIds
+            AgentSummaryArtifactIds = agentSummaryArtifactIds |> Seq.toList
+            PromptArtifactIds = promptArtifactIds |> Seq.toList
+            ReviewNotesArtifactIds = reviewNotesArtifactIds |> Seq.toList
+            OtherArtifactIds = otherArtifactIds |> Seq.toList
+        }
 
     let internal isTextMimeType (mimeType: string) =
         if String.IsNullOrWhiteSpace(mimeType) then
