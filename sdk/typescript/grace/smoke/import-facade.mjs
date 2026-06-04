@@ -1,4 +1,4 @@
-import { GraceClient } from "@grace/sdk";
+import { GraceClient, GraceError } from "@grace/sdk";
 
 const client = new GraceClient();
 
@@ -8,6 +8,14 @@ if (!client.contract.apiContractVersion) {
 
 if (!client.contract.openApiProjectionSha256 || client.contract.openApiProjectionSha256.length !== 64) {
   throw new Error("GraceClient facade did not expose OpenAPI projection provenance.");
+}
+
+if (client.apiVersion !== "2023-10-01") {
+  throw new Error(`GraceClient facade defaulted to unexpected API version: ${client.apiVersion}.`);
+}
+
+if (typeof GraceError !== "function") {
+  throw new Error("GraceError facade export was not available.");
 }
 
 try {
