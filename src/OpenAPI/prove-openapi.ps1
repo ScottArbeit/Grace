@@ -193,6 +193,10 @@ function Test-OpenApiFreshness {
                 Add-Failure "Generated OpenAPI artifact is missing generator provenance: $($artifact.path)"
             }
 
+            if ($null -eq $artifact.generatorVersion -or [string]::IsNullOrWhiteSpace([string] $artifact.generatorVersion)) {
+                Add-Failure "Generated OpenAPI artifact is missing generatorVersion provenance: $($artifact.path)"
+            }
+
             if ($null -eq $artifact.command -or [string]::IsNullOrWhiteSpace([string] $artifact.command)) {
                 Add-Failure "Generated OpenAPI artifact is missing regeneration command provenance: $($artifact.path)"
             }
