@@ -458,6 +458,154 @@ function Assert-OperationTextMatches {
     }
 }
 
+function Get-YamlIndentLength {
+    param([string] $Line)
+
+    $match = [regex]::Match($Line, '^(?<indent>\s*)')
+    return $match.Groups['indent'].Value.Length
+}
+
+function Get-OpenApiSchemaPropertyBlock {
+    param(
+        [string] $Text,
+        [string] $SchemaName,
+        [string] $PropertyName
+    )
+
+    $lines = [regex]::Split($Text, '\r?\n')
+    $schemaLinePattern = "^(?<indent>\s*)$([regex]::Escape($SchemaName)):\s*(?:#.*)?$"
+    $schemaStart = -1
+    $schemaIndent = -1
+
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        $match = [regex]::Match($lines[$i], $schemaLinePattern)
+        if ($match.Success) {
+            $schemaStart = $i
+            $schemaIndent = $match.Groups['indent'].Value.Length
+            break
+        }
+    }
+
+    if ($schemaStart -lt 0) {
+        return $null
+    }
+
+    $schemaEnd = $lines.Count
+    for ($i = $schemaStart + 1; $i -lt $lines.Count; $i++) {
+        if ([string]::IsNullOrWhiteSpace($lines[$i])) {
+            continue
+        }
+
+        $indent = Get-YamlIndentLength $lines[$i]
+        if ($indent -le $schemaIndent) {
+            $schemaEnd = $i
+            break
+        }
+    }
+
+    $propertiesStart = -1
+    $propertiesIndent = $schemaIndent + 2
+    $propertiesLinePattern = "^\s{$propertiesIndent}properties:\s*(?:#.*)?$"
+    for ($i = $schemaStart + 1; $i -lt $schemaEnd; $i++) {
+        if ([regex]::IsMatch($lines[$i], $propertiesLinePattern)) {
+            $propertiesStart = $i
+            break
+        }
+    }
+
+    if ($propertiesStart -lt 0) {
+        return $null
+    }
+
+    $propertiesEnd = $schemaEnd
+    for ($i = $propertiesStart + 1; $i -lt $schemaEnd; $i++) {
+        if ([string]::IsNullOrWhiteSpace($lines[$i])) {
+            continue
+        }
+
+        $indent = Get-YamlIndentLength $lines[$i]
+        if ($indent -le $propertiesIndent) {
+            $propertiesEnd = $i
+            break
+        }
+    }
+
+    $propertyStart = -1
+    $propertyIndent = $propertiesIndent + 2
+    $propertyLinePattern = "^\s{$propertyIndent}$([regex]::Escape($PropertyName)):\s*(?:#.*)?$"
+    for ($i = $propertiesStart + 1; $i -lt $propertiesEnd; $i++) {
+        if ([regex]::IsMatch($lines[$i], $propertyLinePattern)) {
+            $propertyStart = $i
+            break
+        }
+    }
+
+    if ($propertyStart -lt 0) {
+        return $null
+    }
+
+    $propertyEnd = $propertiesEnd
+    for ($i = $propertyStart + 1; $i -lt $propertiesEnd; $i++) {
+        if ([string]::IsNullOrWhiteSpace($lines[$i])) {
+            continue
+        }
+
+        $indent = Get-YamlIndentLength $lines[$i]
+        if ($indent -le $propertyIndent) {
+            $propertyEnd = $i
+            break
+        }
+    }
+
+    return [pscustomobject]@{
+        Lines = @($lines[$propertyStart..($propertyEnd - 1)])
+        PropertyIndent = $propertyIndent
+    }
+}
+
+function Assert-OpenApiSchemaPropertyIsString {
+    param(
+        [string] $Text,
+        [string] $SchemaName,
+        [string] $PropertyName,
+        [string] $Message
+    )
+
+    $propertyBlock = Get-OpenApiSchemaPropertyBlock $Text $SchemaName $PropertyName
+    if ($null -eq $propertyBlock) {
+        Add-Failure $Message
+        return
+    }
+
+    $directChildIndent = $propertyBlock.PropertyIndent + 2
+    $directTypeValues = [System.Collections.Generic.List[string]]::new()
+    $hasDirectRef = $false
+
+    foreach ($line in @($propertyBlock.Lines | Select-Object -Skip 1)) {
+        if ([string]::IsNullOrWhiteSpace($line)) {
+            continue
+        }
+
+        $indent = Get-YamlIndentLength $line
+        if ($indent -ne $directChildIndent) {
+            continue
+        }
+
+        $typeMatch = [regex]::Match($line, "^\s{$directChildIndent}type:\s*['""]?(?<type>[^'""\s#]+)['""]?\s*(?:#.*)?$")
+        if ($typeMatch.Success) {
+            $directTypeValues.Add($typeMatch.Groups['type'].Value)
+        }
+
+        if ([regex]::IsMatch($line, "^\s{$directChildIndent}\`$ref:\s*")) {
+            $hasDirectRef = $true
+        }
+    }
+
+    if ($directTypeValues.Count -ne 1 -or $directTypeValues[0] -ne 'string' -or $hasDirectRef) {
+        Add-Failure $Message
+    }
+}
+
 function Assert-OperationHasJsonRequestExample {
     param(
         [object] $Operation,
@@ -674,9 +822,10 @@ function Test-OpenApiBranchReferenceDiffDetails {
         Assert-TextContains $branchComponentsText $requiredBranchContract "Branch OpenAPI components are missing '$requiredBranchContract'."
     }
 
-    Assert-OperationTextMatches `
-        ([pscustomobject]@{ OperationText = $branchComponentsText }) `
-        "(?s)BranchCommandReturnValue:\s*.*?ReturnValue:\s*.*?type:\s*string" `
+    Assert-OpenApiSchemaPropertyIsString `
+        $branchComponentsText `
+        'BranchCommandReturnValue' `
+        'ReturnValue' `
         'BranchCommandReturnValue must model command success ReturnValue as a string.'
 
     Assert-OperationTextMatches `
@@ -694,9 +843,10 @@ function Test-OpenApiBranchReferenceDiffDetails {
         Assert-TextContains $diffComponentsText $requiredDiffContract "Diff OpenAPI components are missing '$requiredDiffContract'."
     }
 
-    Assert-OperationTextMatches `
-        ([pscustomobject]@{ OperationText = $diffComponentsText }) `
-        "(?s)DiffPopulateReturnValue:\s*.*?ReturnValue:\s*.*?type:\s*string" `
+    Assert-OpenApiSchemaPropertyIsString `
+        $diffComponentsText `
+        'DiffPopulateReturnValue' `
+        'ReturnValue' `
         'DiffPopulateReturnValue must model populate success ReturnValue as a string.'
 
     if ($diffComponentsText -match '(?s)DiffPopulateReturnValue:\s*.*?ReturnValue:\s*.*?type:\s*boolean') {
