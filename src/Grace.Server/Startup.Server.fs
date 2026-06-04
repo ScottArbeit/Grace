@@ -1933,36 +1933,27 @@ module Application =
                 .Use(
                     Func<HttpContext, RequestDelegate, Task> (fun (context: HttpContext) (next: RequestDelegate) ->
                         task {
-                            if context.Request.Path.StartsWithSegments(PathString("/metrics")) then
+                            let gateDecision = MetricsAuthorization.decideBeforePermissionCheck context.Request.Path (PrincipalMapper.tryGetUserId context.User)
+
+                            match gateDecision with
+                            | PassThrough -> return! next.Invoke(context)
+                            | RequirePermissionCheck ->
                                 let includeReason = Environment.GetEnvironmentVariable("GRACE_TESTING") = "1"
+                                let principals = PrincipalMapper.getPrincipals context.User
+                                let claims = PrincipalMapper.getEffectiveClaims context.User
+                                let evaluator = context.RequestServices.GetRequiredService<IGracePermissionEvaluator>()
+                                let! permissionDecision = evaluator.CheckAsync(principals, claims, Operation.SystemAdmin, Resource.System)
+                                let finalDecision = MetricsAuthorization.decideAfterPermissionCheck includeReason permissionDecision
 
-                                match PrincipalMapper.tryGetUserId context.User with
-                                | None ->
-                                    context.Response.StatusCode <- StatusCodes.Status401Unauthorized
-                                    do! context.Response.WriteAsync("Authentication required.")
-                                | Some _ ->
-                                    let principals = PrincipalMapper.getPrincipals context.User
-                                    let claims = PrincipalMapper.getEffectiveClaims context.User
-                                    let evaluator = context.RequestServices.GetRequiredService<IGracePermissionEvaluator>()
-                                    let! decision = evaluator.CheckAsync(principals, claims, Operation.SystemAdmin, Resource.System)
-
-                                    match decision with
-                                    | Allowed _ -> return! next.Invoke(context)
-                                    | Denied reason ->
-                                        context.Response.StatusCode <- StatusCodes.Status403Forbidden
-
-                                        let message =
-                                            if
-                                                includeReason
-                                                && not (String.IsNullOrWhiteSpace reason)
-                                            then
-                                                reason
-                                            else
-                                                "Forbidden."
-
-                                        do! context.Response.WriteAsync(message)
-                            else
-                                return! next.Invoke(context)
+                                match finalDecision with
+                                | PassThrough -> return! next.Invoke(context)
+                                | RejectRequest (statusCode, message) ->
+                                    context.Response.StatusCode <- statusCode
+                                    do! context.Response.WriteAsync(message)
+                                | RequirePermissionCheck -> invalidOp "Metrics authorization produced an unexpected repeated permission check."
+                            | RejectRequest (statusCode, message) ->
+                                context.Response.StatusCode <- statusCode
+                                do! context.Response.WriteAsync(message)
                         }
                         :> Task)
                 )
