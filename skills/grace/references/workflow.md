@@ -34,7 +34,8 @@ For non-trivial tracked work:
 1. Confirm or create the GitHub issue.
 1. Declare objective, context, owned paths, forbidden paths, risk surfaces, validation, docs impact, and definition of
    done.
-1. Claim the issue and create an issue-owned branch/worktree from the selected base.
+1. Claim the issue with a comment, assign it to the authenticated GitHub user, and create an issue-owned
+   branch/worktree from the selected base.
 1. Inspect `git status --short --branch` before editing.
 1. Work in vertical slices through the closest stable public boundary.
 1. Run formatting or freshness checks first, then exactly one final build/test gate.

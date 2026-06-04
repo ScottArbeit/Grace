@@ -61,7 +61,8 @@ Grace development uses a task-record-first process that keeps human and agent wo
 2. Create or confirm the GitHub issue using the Grace agent task template.
 3. Declare objective, context, owned paths, forbidden or sensitive paths, risk surfaces, validation, docs impact, and
    definition of done before editing.
-4. Claim the issue and create an issue-owned branch/worktree from the latest `origin/main`.
+4. Claim the issue with a comment, assign it to the authenticated GitHub user, and create an issue-owned worktree from
+   the latest `origin/main`.
 5. Work in vertical slices that prove one public behavior at a time.
 6. Validate with the fastest meaningful focused command, then run `pwsh ./scripts/validate.ps1 -Fast` for the normal
    repo gate.

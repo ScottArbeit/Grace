@@ -34,9 +34,9 @@ update the issue before editing the new paths.
 - Before assigning or starting a sub-issue, require the minimum detail gate: invariant tuple, forbidden implementation
   shapes, expected tests, and high-risk adversarial examples. The issue should be contextual enough for an
   implementation agent to succeed from the issue body alone without hidden project context.
-- Create or switch to an issue-owned branch/worktree from the selected base before editing implementation files: latest
-  `origin/main` for direct-to-`main` slices, or current `origin/epic/...` for sub-issues under an explicitly declared
-  epic integration branch.
+- Claim the issue with a comment, assign it to the authenticated GitHub user, and create or switch to an issue-owned
+  branch/worktree from the selected base before editing implementation files: latest `origin/main` for direct-to-`main`
+  slices, or current `origin/epic/...` for sub-issues under an explicitly declared epic integration branch.
 - When a task assigns a worktree different from the thread workspace root, every `apply_patch` filename must be an
   absolute path under the assigned worktree. After the first patch, verify git status in both locations.
 - Prefer vertical slices that prove one public behavior at a time through the closest stable boundary.

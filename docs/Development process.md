@@ -143,13 +143,13 @@ Definition of done:
 
 ## Workspace
 
-After the GitHub issue exists, claim it before editing and create an issue-owned branch and worktree from the selected
-base:
+After the GitHub issue exists, claim it before editing, assign it to the authenticated GitHub user, and create an
+issue-owned branch and worktree from the selected base:
 
 - direct-to-`main` issue: use the latest `origin/main`
 - sub-issue under an epic integration branch: use the current `origin/epic/<parent-issue>-<short-slug>`
 
-Post a claim comment before editing:
+Post a claim comment and assign the issue to the authenticated GitHub user before editing:
 
 ```markdown
 ## Claimed

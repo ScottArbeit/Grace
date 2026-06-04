@@ -2,7 +2,9 @@ name: Validate
 
 on:
   pull_request:
-    branches: [ main ]
+    branches:
+      - main
+      - "epic/**"
   schedule:
     - cron: "0 3 * * *"
   workflow_dispatch:

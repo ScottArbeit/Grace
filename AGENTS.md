@@ -61,9 +61,9 @@ final epic-to-`main` PR as the production release candidate. Ensure CI or record
   without hidden project context.
 - Declare owned paths, forbidden or sensitive paths, risk surfaces, validation, docs impact, and definition of done
   before editing.
-- After the issue exists, claim it and create an issue-owned branch/worktree from the selected base before editing:
-  latest `origin/main` for direct-to-`main` slices, or current `origin/epic/...` for sub-issues under an explicitly
-  declared epic integration branch.
+- After the issue exists, claim it with a comment, assign it to the authenticated GitHub user, and create an
+  issue-owned branch/worktree from the selected base before editing: latest `origin/main` for direct-to-`main` slices,
+  or current `origin/epic/...` for sub-issues under an explicitly declared epic integration branch.
 - When a task assigns a worktree different from the thread workspace root, every `apply_patch` filename must be an
   absolute path under the assigned worktree. After the first patch, verify git status in both locations.
 - Prefer vertical slices with focused tests and `pwsh ./scripts/validate.ps1 -Fast` as the normal validation gate.
