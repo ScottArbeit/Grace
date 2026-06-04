@@ -44,10 +44,11 @@ function Invoke-NativeCommand {
 }
 
 $repoRoot = Get-RepoRoot
+$npmExecutable = if ($IsWindows) { 'npm.cmd' } else { 'npm' }
 
 Invoke-Step 'TypeScript facade import smoke' (Join-Path $repoRoot 'sdk/typescript/grace') {
-    Invoke-NativeCommand -FilePath 'npm.cmd' -ArgumentList @('ci', '--ignore-scripts')
-    Invoke-NativeCommand -FilePath 'npm.cmd' -ArgumentList @('run', 'smoke')
+    Invoke-NativeCommand -FilePath $npmExecutable -ArgumentList @('ci', '--ignore-scripts')
+    Invoke-NativeCommand -FilePath $npmExecutable -ArgumentList @('run', 'smoke')
 }
 
 Invoke-Step 'Python facade import smoke' (Join-Path $repoRoot 'sdk/python/grace-sdk') {

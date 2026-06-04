@@ -43,9 +43,11 @@ pwsh ./sdk/scripts/generate-sdk-clients.ps1 -Mode Generate
 pwsh ./sdk/scripts/generate-sdk-clients.ps1 -Mode Check
 ```
 
-The harness pins the generator harness schema and reports local tool versions in `sdk/generated/generator-report.json`.
-The initial generator engine is `grace-sdk-harness` version `0.1.0`: it records the OpenAPI projection provenance and
-creates deterministic generated metadata stubs, but it does not claim a final OpenAPI code generator selection.
+The harness pins the generator harness schema and records deterministic provenance in
+`sdk/generated/generator-report.json`. Live local tool versions are printed to the console as diagnostics during
+harness runs; they are not committed to the freshness report. The initial generator engine is `grace-sdk-harness`
+version `0.1.0`: it records the OpenAPI projection provenance and creates deterministic generated metadata stubs, but
+it does not claim a final OpenAPI code generator selection.
 
 ## Smoke tests
 
