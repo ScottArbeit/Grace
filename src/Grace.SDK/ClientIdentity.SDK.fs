@@ -189,3 +189,8 @@ module ClientIdentity =
             | Ok graceReturnValue -> graceReturnValue.enhance properties |> Ok
             | Error graceError -> graceError.enhance properties |> Error
         | None -> result
+
+    let okWithLifecycleDiagnostics (response: HttpResponseMessage) (graceReturnValue: GraceReturnValue<'T>) =
+        enhanceWithLifecycleDiagnostics response (Ok graceReturnValue)
+
+    let errorWithLifecycleDiagnostics (response: HttpResponseMessage) (graceError: GraceError) = enhanceWithLifecycleDiagnostics response (Error graceError)

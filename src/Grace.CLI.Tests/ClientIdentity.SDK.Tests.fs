@@ -181,6 +181,36 @@ type ClientIdentitySdkTests() =
         | Ok _ -> Assert.Fail("Expected error diagnostics.")
 
     [<Test>]
+    member _.DirectSdkStringResponsePathPreservesLifecycleDiagnosticsOnSuccessAndError() =
+        task {
+            use successResponse = new HttpResponseMessage(HttpStatusCode.OK)
+            successResponse.Content <- new StringContent("https://storage.example.test/upload")
+            addLifecycleHeaders successResponse "deprecated" "2026-12-01" "0.1.0" (Some "0.2.0") "https://github.com/ScottArbeit/Grace/releases"
+
+            let! success = Storage.readStringResponseWithLifecycle successResponse "corr-direct-success" "direct failure"
+
+            match success with
+            | Ok value ->
+                Assert.That(value.ReturnValue, Is.EqualTo("https://storage.example.test/upload"))
+                Assert.That(value.Properties[ClientIdentity.LifecycleStatusPropertyKey], Is.EqualTo("deprecated"))
+                Assert.That(value.Properties[ClientIdentity.LifecycleRecommendedVersionPropertyKey], Is.EqualTo("0.2.0"))
+            | Error error -> Assert.Fail($"Expected direct SDK success diagnostics, got {error.Error}.")
+
+            use errorResponse = new HttpResponseMessage(HttpStatusCode.UpgradeRequired)
+            errorResponse.Content <- new StringContent("UnsupportedClientVersion")
+            addLifecycleHeaders errorResponse "unsupported" "2026-12-01" "0.1.0" (Some "0.2.0") "https://github.com/ScottArbeit/Grace/releases"
+
+            let! failure = Storage.readStringResponseWithLifecycle errorResponse "corr-direct-error" "direct failure"
+
+            match failure with
+            | Error error ->
+                Assert.That(error.Error, Does.Contain("direct failure"))
+                Assert.That(error.Properties[ClientIdentity.LifecycleStatusPropertyKey], Is.EqualTo("unsupported"))
+                Assert.That(error.Properties[ClientIdentity.LifecycleRecommendedVersionPropertyKey], Is.EqualTo("0.2.0"))
+            | Ok _ -> Assert.Fail("Expected direct SDK error diagnostics.")
+        }
+
+    [<Test>]
     member _.LifecycleDiagnosticsHandleMissingRecommendedVersionMalformedDateAndNonHttpsUrl() =
         use response = new HttpResponseMessage(HttpStatusCode.OK)
         addLifecycleHeaders response "mystery" "not-a-date" "0.1.0" None "http://example.test/update"
@@ -235,5 +265,5 @@ type ClientIdentitySdkTests() =
         Assert.That(output, Does.Contain("The server rejected this request because the client version is unsupported."))
         Assert.That(output, Does.Contain("Update to Grace CLI/SDK version 0.1.0 or newer."))
         Assert.That(output, Does.Contain("Unsupported-after value from server could not be parsed: not-a-date."))
-        Assert.That(output, Does.Contain("Update URL from server was not HTTPS and was not displayed:"))
-        Assert.That(output, Does.Contain("http://example.test/update"))
+        Assert.That(output, Does.Contain("Update URL from server was not HTTPS and was not displayed."))
+        Assert.That(output, Does.Not.Contain("http://example.test/update"))

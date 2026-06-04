@@ -509,7 +509,7 @@ module Common =
 
             match updateUrl, updateUrlIsHttps with
             | Some value, true -> lines.Add($"Update URL: {value}")
-            | Some value, false -> lines.Add($"Update URL from server was not HTTPS and was not displayed: {value}")
+            | Some _, false -> lines.Add("Update URL from server was not HTTPS and was not displayed.")
             | None, _ -> ()
 
             Some(normalizedStatus, String.Join(Environment.NewLine, lines))
