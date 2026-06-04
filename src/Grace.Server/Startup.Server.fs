@@ -1858,21 +1858,21 @@ module Application =
             let apiVersioningBuilder =
                 services.AddApiVersioning (fun options ->
                     options.ReportApiVersions <- true
-                    options.DefaultApiVersion <- new ApiVersion(1, 0)
+                    options.DefaultApiVersion <- ApiVersion(ApiContractVersion.CurrentReleasedDate)
                     options.AssumeDefaultVersionWhenUnspecified <- true
                     // Use whatever reader you want
                     options.ApiVersionReader <-
                         ApiVersionReader.Combine(
                             new UrlSegmentApiVersionReader(),
-                            new HeaderApiVersionReader("x-api-version"),
-                            new MediaTypeApiVersionReader("x-api-version")
+                            new HeaderApiVersionReader(Constants.ServerApiVersionHeaderKey),
+                            new MediaTypeApiVersionReader(Constants.ServerApiVersionHeaderKey)
                         ))
 
             apiVersioningBuilder.AddApiExplorer (fun options ->
                 // add the versioned api explorer, which also adds IApiVersionDescriptionProvider service
                 // note: the specified format code will format the version as "'v'major[.minor][-status]"
                 options.GroupNameFormat <- "'v'VVV"
-                options.DefaultApiVersion <- ApiVersion(DateOnly(2023, 10, 1))
+                options.DefaultApiVersion <- ApiVersion(ApiContractVersion.CurrentReleasedDate)
                 options.AssumeDefaultVersionWhenUnspecified <- true
                 options.ApiVersionParameterSource <- HeaderApiVersionReader(Constants.ServerApiVersionHeaderKey)
 

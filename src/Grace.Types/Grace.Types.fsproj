@@ -17,6 +17,7 @@
     <ItemGroup>
         <None Include="instructions.md" />
         <Compile Include="..\Grace.Shared\Constants.Shared.fs" Link="Constants.Shared.fs" />
+        <Compile Include="..\Grace.Shared\ApiContractVersion.Shared.fs" Link="ApiContractVersion.Shared.fs" />
         <Compile Include="..\Grace.Shared\Utilities.Shared.fs" Link="Utilities.Shared.fs" />
         <Compile Include="Common.Types.fs" />
         <Compile Include="ContentBlockMetadata.Types.fs" />
