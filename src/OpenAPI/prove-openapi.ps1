@@ -373,6 +373,7 @@ function Get-OpenApiOperations {
                 Method = $method
                 LineNumber = $index + 1
                 OperationId = if ($operationIdMatch.Success) { $operationIdMatch.Groups['id'].Value } else { $null }
+                OperationText = $operationText
                 HasTag = $operationText -match "(?m)^\s+tags:\s*$" -and $operationText -match "(?m)^\s+-\s+[A-Za-z][A-Za-z0-9 ._-]*\s*$"
                 HasResponses = $responsesMatch.Success
                 Has400 = $operationText -match "(?m)^\s+'400':\s*$"
@@ -425,8 +426,43 @@ function Assert-TextContains {
     }
 }
 
+function Get-RequiredOpenApiOperation {
+    param(
+        [object[]] $Operations,
+        [string] $File,
+        [string] $OperationId
+    )
+
+    $matches = @($Operations | Where-Object { $_.File -eq $File -and $_.OperationId -eq $OperationId })
+    if ($matches.Count -eq 1) {
+        return $matches[0]
+    }
+
+    Add-Failure "Expected exactly one OpenAPI operation '$OperationId' in $File, found $($matches.Count)."
+    return $null
+}
+
+function Assert-OperationTextMatches {
+    param(
+        [object] $Operation,
+        [string] $Pattern,
+        [string] $Message
+    )
+
+    if ($null -eq $Operation) {
+        return
+    }
+
+    if ([string] $Operation.OperationText -notmatch $Pattern) {
+        Add-Failure $Message
+    }
+}
+
 function Test-OpenApiSharedContractDetails {
-    param([string] $OpenApiRoot)
+    param(
+        [string] $OpenApiRoot,
+        [object[]] $Operations
+    )
 
     $headersFile = Join-Path $OpenApiRoot 'Transport.Headers.OpenAPI.yaml'
     if (-not (Test-Path -LiteralPath $headersFile -PathType Leaf)) {
@@ -441,10 +477,20 @@ function Test-OpenApiSharedContractDetails {
             'name: X-Grace-Client-Type',
             'name: X-Grace-Client-Version',
             'UploadSessionLifecycleState:',
-            'WebhookSignature:',
+            'name: x-grace-webhook-delivery-id',
+            'name: x-grace-webhook-event-name',
+            'name: x-grace-webhook-event-version',
+            'name: x-grace-webhook-timestamp',
+            'name: x-grace-webhook-signature-key-id',
+            'name: x-grace-webhook-payload-sha256',
+            'name: x-grace-webhook-signature',
             'not authentication proof'
         )) {
         Assert-TextContains $headersText $requiredHeader "Reusable header contract is missing '$requiredHeader'."
+    }
+
+    if ($headersText -match '(?m)^\s+Webhook(?:DeliveryId|EventName|EventVersion|Timestamp|SignatureKeyId|PayloadSha256|Signature):\s*$') {
+        Add-Failure 'Outbound webhook headers must not be represented only as components.headers aliases without exact wire names.'
     }
 
     $sharedText = Get-Content -LiteralPath (Join-Path $OpenApiRoot 'Shared.Components.OpenAPI.yaml') -Raw
@@ -469,28 +515,28 @@ function Test-OpenApiSharedContractDetails {
     Assert-TextContains $responsesText "'403':" 'Reusable 403 authorization response must be present.'
     Assert-TextContains $responsesText 'value: Forbidden.' 'Reusable 403 response must stay distinct from GraceError.'
 
-    $storageText = Get-Content -LiteralPath (Join-Path $OpenApiRoot 'Storage.Paths.OpenAPI.yaml') -Raw
     foreach ($operationId in @('GetDownloadUri', 'GetContentBlockUploadUri', 'GetContentBlockDownloadUri')) {
-        $pattern = "(?s)operationId:\s*$operationId\b.*?responses:\s*.*?'200':\s*.*?content:\s*.*?text/plain:"
-        if ($storageText -notmatch $pattern) {
-            Add-Failure "Storage raw URI operation '$operationId' must keep its 200 response as text/plain."
-        }
+        $operation = Get-RequiredOpenApiOperation $Operations 'Storage.Paths.OpenAPI.yaml' $operationId
+        Assert-OperationTextMatches `
+            $operation `
+            "(?s)responses:\s*.*?'200':\s*.*?content:\s*.*?text/plain:" `
+            "Storage raw URI operation '$operationId' must keep its own 200 response as text/plain."
     }
 
     foreach ($operationId in @('CreateApprovalPolicy', 'ApproveApprovalRequest')) {
-        $approvalText = Get-Content -LiteralPath (Join-Path $OpenApiRoot 'Approval.Paths.OpenAPI.yaml') -Raw
-        $pattern = "(?s)operationId:\s*$operationId\b.*?content:\s*.*?application/json:\s*.*?examples:"
-        if ($approvalText -notmatch $pattern) {
-            Add-Failure "Approval operation '$operationId' must include an application/json example."
-        }
+        $operation = Get-RequiredOpenApiOperation $Operations 'Approval.Paths.OpenAPI.yaml' $operationId
+        Assert-OperationTextMatches `
+            $operation `
+            "(?s)requestBody:\s*.*?content:\s*.*?application/json:\s*.*?examples:" `
+            "Approval operation '$operationId' must include an application/json example in its own request body."
     }
 
     foreach ($operationId in @('CreateWebhookRule', 'TestWebhookRule')) {
-        $webhookText = Get-Content -LiteralPath (Join-Path $OpenApiRoot 'Webhook.Paths.OpenAPI.yaml') -Raw
-        $pattern = "(?s)operationId:\s*$operationId\b.*?content:\s*.*?application/json:\s*.*?examples:"
-        if ($webhookText -notmatch $pattern) {
-            Add-Failure "Webhook operation '$operationId' must include an application/json example."
-        }
+        $operation = Get-RequiredOpenApiOperation $Operations 'Webhook.Paths.OpenAPI.yaml' $operationId
+        Assert-OperationTextMatches `
+            $operation `
+            "(?s)requestBody:\s*.*?content:\s*.*?application/json:\s*.*?examples:" `
+            "Webhook operation '$operationId' must include an application/json example in its own request body."
     }
 }
 
@@ -550,7 +596,7 @@ function Test-OpenApiQuality {
         Add-Pending "Error response coverage is not yet accepted. Missing 400/500 pairs: $($missingErrorResponses.Count). Examples: $examples"
     }
 
-    Test-OpenApiSharedContractDetails $openApiRoot
+    Test-OpenApiSharedContractDetails $openApiRoot $operations
 
     Add-Pass "Scanned $($operations.Count) OpenAPI operations for operationId, tag, response, and header proof scaffolding."
 }
