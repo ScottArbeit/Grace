@@ -476,6 +476,40 @@ function Assert-OperationHasJsonRequestExample {
     }
 }
 
+function Assert-OperationSha256ExamplesAreValid {
+    param(
+        [object] $Operation,
+        [string[]] $RequiredFields
+    )
+
+    if ($null -eq $Operation) {
+        return
+    }
+
+    $location = "$($Operation.File):$($Operation.LineNumber) $($Operation.Method.ToUpperInvariant()) $($Operation.Path)"
+    $exampleMatches = [regex]::Matches(
+        [string] $Operation.OperationText,
+        "(?m)^\s+(?<name>Sha256Hash(?:1|2)?):\s*(?<value>['""]?[A-Za-z0-9]+['""]?)\s*$"
+    )
+    $fieldsSeen = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+
+    foreach ($match in $exampleMatches) {
+        $fieldName = $match.Groups['name'].Value
+        $fieldValue = $match.Groups['value'].Value.Trim("'`"")
+        [void] $fieldsSeen.Add($fieldName)
+
+        if ($fieldValue -notmatch '^[A-Fa-f0-9]{64}$') {
+            Add-Failure "OpenAPI example field '$fieldName' must be a valid 64-character SHA-256 hex value: $location has '$fieldValue'."
+        }
+    }
+
+    foreach ($requiredField in $RequiredFields) {
+        if (-not $fieldsSeen.Contains($requiredField)) {
+            Add-Failure "OpenAPI operation '$($Operation.OperationId)' must include a literal '$requiredField' example for S05 SHA-256 proof coverage: $location"
+        }
+    }
+}
+
 function Test-OpenApiBranchReferenceDiffDetails {
     param(
         [string] $OpenApiRoot,
@@ -549,6 +583,8 @@ function Test-OpenApiBranchReferenceDiffDetails {
         Assert-OperationHasJsonRequestExample `
             $operation `
             "Branch/diff OpenAPI operation with a JSON request body must include an example: $location"
+
+        Assert-OperationSha256ExamplesAreValid $operation @()
     }
 
     foreach ($expected in $expectedOperations) {
@@ -559,6 +595,12 @@ function Test-OpenApiBranchReferenceDiffDetails {
             "(?s)tags:\s*-\s+$($expected.Tag)\b" `
             "Operation '$($expected.OperationId)' must carry primary SDK tag '$($expected.Tag)'."
     }
+
+    $promoteBranchOperation = Get-RequiredOpenApiOperation $Operations 'Branch.Paths.OpenAPI.yaml' 'PromoteBranch'
+    Assert-OperationSha256ExamplesAreValid $promoteBranchOperation @('Sha256Hash')
+
+    $getDiffBySha256HashOperation = Get-RequiredOpenApiOperation $Operations 'Diff.Paths.OpenAPI.yaml' 'GetDiffBySha256Hash'
+    Assert-OperationSha256ExamplesAreValid $getDiffBySha256HashOperation @('Sha256Hash1', 'Sha256Hash2')
 
     $branchComponentsText = Get-Content -LiteralPath (Join-Path $OpenApiRoot 'Branch.Components.OpenAPI.yaml') -Raw
     foreach ($requiredBranchContract in @(
