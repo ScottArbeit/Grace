@@ -5,6 +5,14 @@ export {
   type GraceClientRequest,
   type GraceClientResponse,
   type GraceClientAuthProvider,
+  type GraceDownloadFileRequest,
+  type GraceDownloadFileResult,
+  type GraceFileContentReference,
+  type GraceFileVersion,
+  type GraceStorageScope,
+  type GraceTransferStep,
+  type GraceUploadFileRequest,
+  type GraceUploadFileResult,
 } from "./facade/grace-client.js";
 export { GraceError, type GraceErrorBody } from "./facade/grace-error.js";
 export {
