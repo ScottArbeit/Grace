@@ -1,0 +1,74 @@
+{
+  "schemaVersion": 1,
+  "protocolVersion": "grace-protocol-v1",
+  "generatedBy": "Grace.Shared.ContentAddress",
+  "vectors": {
+    "blake3": [
+      {
+        "name": "empty",
+        "utf8": "",
+        "hash": "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262"
+      },
+      {
+        "name": "abc",
+        "utf8": "abc",
+        "hash": "6437b3ac38465133ffb63b75273a8db548c558465d79db03fd359c6cd5bd9d85"
+      },
+      {
+        "name": "BLAKE3",
+        "utf8": "BLAKE3",
+        "hash": "f890484173e516bfd935ef3d22b912dc9738de38743993cfedf2c9473b3216a4"
+      }
+    ],
+    "addressValidation": {
+      "valid": [
+        "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262"
+      ],
+      "invalid": [
+        "",
+        "AF1349B9F5F9A1A6A0404DEA36DCC9499BCB25C9ADC112B7CC9A93CAE41F3262",
+        "af1349",
+        "gf1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262"
+      ]
+    },
+    "contentBlock": {
+      "format": "raw-chunks",
+      "chunks": [
+        {
+          "ordinal": 0,
+          "utf8": "alpha chunk",
+          "address": "292e1ffe8d05890ad016853e3dfee1b6f612165bc4dae763c1167d9fcef9d0e8"
+        },
+        {
+          "ordinal": 1,
+          "utf8": "beta chunk",
+          "address": "2da114e540d4af623dfe76635e77dfe7630ba425021e13e47b46dfa9fea184b3"
+        }
+      ],
+      "preimage": "grace.cas.v1.content-block\nformat:raw-chunks\nchunk-count:2\nchunk:0:292e1ffe8d05890ad016853e3dfee1b6f612165bc4dae763c1167d9fcef9d0e8\nchunk:1:2da114e540d4af623dfe76635e77dfe7630ba425021e13e47b46dfa9fea184b3\n",
+      "address": "75359c5d838dda90b12c6cbcdd9b71a1f193daf6c23fa2bfd496065bed57a30f",
+      "reorderedAddress": "7f1a68bf50d82206d212bf60e10fdad4fd8d397bde2f1d164ad7976da5f45668"
+    },
+    "fileManifest": {
+      "chunkingSuiteId": "grace-rabin-blake3-64k-v1",
+      "fileContentHash": "fb283dfc43483eae4cfb9f3eb0d1da0c46c9c557acfab283907eeb3803008bae",
+      "size": 8192,
+      "blocks": [
+        {
+          "ordinal": 0,
+          "address": "75359c5d838dda90b12c6cbcdd9b71a1f193daf6c23fa2bfd496065bed57a30f",
+          "offset": 0,
+          "size": 4096
+        },
+        {
+          "ordinal": 1,
+          "address": "75359c5d838dda90b12c6cbcdd9b71a1f193daf6c23fa2bfd496065bed57a30f",
+          "offset": 4096,
+          "size": 4096
+        }
+      ],
+      "preimage": "grace.cas.v1.file-manifest\nchunking-suite:grace-rabin-blake3-64k-v1\nfile-content-hash:fb283dfc43483eae4cfb9f3eb0d1da0c46c9c557acfab283907eeb3803008bae\nsize:8192\nblock-count:2\nblock:0:75359c5d838dda90b12c6cbcdd9b71a1f193daf6c23fa2bfd496065bed57a30f:0:4096\nblock:1:75359c5d838dda90b12c6cbcdd9b71a1f193daf6c23fa2bfd496065bed57a30f:4096:4096\n",
+      "manifestAddress": "5dd11fdb1534c0f1c4fecca3c07498f9b59a7dff26d69fe78e43f7ce50d90895"
+    }
+  }
+}
