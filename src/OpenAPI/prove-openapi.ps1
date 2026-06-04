@@ -92,25 +92,12 @@ function Test-OpenApiFreshness {
         }
     }
 
-    foreach ($entry in $manifest.generatedArtifacts) {
-        $artifactPath = Join-Path $RepoRoot ([string] $entry.path)
-        if (-not (Test-Path -LiteralPath $artifactPath -PathType Leaf)) {
-            Add-Failure "Declared generated artifact is missing: $($entry.path)"
-            continue
-        }
-
-        $actualHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $artifactPath).Hash.ToLowerInvariant()
-        if ($actualHash -ne ([string] $entry.sha256).ToLowerInvariant()) {
-            Add-Failure "Generated artifact hash is stale for $($entry.path)."
-        }
-
-        if ([string]::IsNullOrWhiteSpace([string] $entry.sourceDigest)) {
-            Add-Failure "Generated artifact lacks sourceDigest evidence and cannot be accepted as fresh: $($entry.path)"
-        }
-    }
-
     if ($manifest.generatedArtifacts.Count -eq 0) {
         Write-Host '[INFO] No generated OpenAPI/client artifacts are declared; this scaffold accepts no generated-client freshness.'
+    }
+    else {
+        $declaredArtifacts = ($manifest.generatedArtifacts | ForEach-Object { [string] $_.path }) -join ', '
+        Add-Pending "Generated artifact freshness is not accepted yet. Declared artifacts require a future verifier that recomputes source digests, validates generator/tool-version provenance, and rejects hand-edited derived output. Declared: $declaredArtifacts"
     }
 
     Add-Pass "OpenAPI proof manifest covers $($expectedFiles.Count) canonical source files."
@@ -251,7 +238,7 @@ function Test-SdkPackageProof {
         return
     }
 
-    Add-Pass "Found SDK package proof placeholder: $packageProofPath"
+    Add-Pending "SDK package export/import proof is not accepted yet. A future verifier must validate package metadata, exported facade surface, import execution evidence, and generator isolation before this gate can pass. Placeholder path: $packageProofPath"
 }
 
 function Test-ProtocolVectorProof {
@@ -264,13 +251,7 @@ function Test-ProtocolVectorProof {
         return
     }
 
-    $vectors = Get-ChildItem -LiteralPath $vectorRoot -Recurse -File | Where-Object { $_.Extension -in @('.json', '.yaml', '.yml') }
-    if ($vectors.Count -eq 0) {
-        Add-Pending 'Protocol vector directory exists but contains no vector files; protocol parity remains unaccepted.'
-        return
-    }
-
-    Add-Pass "Found $($vectors.Count) protocol vector file(s)."
+    Add-Pending "Protocol vector proof is not accepted yet. A future verifier must validate vector schema, required coverage, and parity execution results before this gate can pass. Placeholder root: $vectorRoot"
 }
 
 $repoRoot = Get-RepoRoot
