@@ -1,6 +1,7 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "canonicalSourceRoot": "src/OpenAPI",
+  "canonicalOpenApiVersion": "3.2.0",
   "canonicalSourceFiles": [
     {
       "path": "Approval.Components.OpenAPI.yaml",
@@ -39,12 +40,8 @@
       "sha256": "f9bd41b00867ca40b94a99a6590739f421649409bcbbe28bad92063f7be227ed"
     },
     {
-      "path": "Grace.OpenAPI.yaml",
-      "sha256": "9a00870e06320e7ea0b00b604da2d8429168197533b5bde47df10c37d9f137ca"
-    },
-    {
       "path": "Main.OpenAPI.yaml",
-      "sha256": "8ac337d0d7b866447fc8d6dac30d6d74d775619f28e87487b12103af33ae8922"
+      "sha256": "be64dd541f0ccf2d033cdad13b479712e5169c781674ab53e78390cb1d0c156e"
     },
     {
       "path": "Organization.Components.OpenAPI.yaml",
@@ -103,7 +100,36 @@
       "sha256": "86370a041b63500f604ef7920783be6d85f82c97b62f9aaf1216f701a29572fb"
     }
   ],
-  "generatedArtifacts": [],
+  "generatedArtifacts": [
+    {
+      "path": "Grace.OpenAPI.yaml",
+      "kind": "canonical-bundle",
+      "sourceDigest": "189b6c5342b57ed77139228672d1fde322a12bb3c18ca90006ca511ba5a37ca4",
+      "generator": "@redocly/cli",
+      "generatorVersion": "2.31.6",
+      "command": "pwsh ./src/OpenAPI/generate-openapi-projections.ps1",
+      "sha256": "90aa6488234f3cdd06cd5e7cf7cf5903d6af23c1f2d292f9cb988598df261138"
+    },
+    {
+      "path": "Grace.OpenAPI.3.1.2.yaml",
+      "kind": "generator-projection",
+      "sourceDigest": "189b6c5342b57ed77139228672d1fde322a12bb3c18ca90006ca511ba5a37ca4",
+      "generator": "@redocly/cli",
+      "generatorVersion": "2.31.6",
+      "command": "pwsh ./src/OpenAPI/generate-openapi-projections.ps1",
+      "lossReport": "Grace.OpenAPI.3.1.2.loss-report.json",
+      "sha256": "f3a2423582999b93df0b7c0a72f29f424d2186b5d63c905e04edb4635e5220da"
+    },
+    {
+      "path": "Grace.OpenAPI.3.1.2.loss-report.json",
+      "kind": "projection-loss-report",
+      "sourceDigest": "189b6c5342b57ed77139228672d1fde322a12bb3c18ca90006ca511ba5a37ca4",
+      "generator": "@redocly/cli",
+      "generatorVersion": "2.31.6",
+      "command": "pwsh ./src/OpenAPI/generate-openapi-projections.ps1",
+      "sha256": "2531e2ce16a69f3b77ae58187af10cad3119a222fb54a5320bfa729f1dfd0eb8"
+    }
+  ],
   "pendingProofs": [
     "SDK package export/import proof",
     "Protocol vector proof"
