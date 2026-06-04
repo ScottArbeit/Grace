@@ -6,6 +6,17 @@
   "private": true,
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "graceProtocol": {
+    "tier": 3,
+    "protocolVersion": "grace-protocol-v1",
+    "vectorSuite": "grace-protocol-v1",
+    "supportedVectors": [
+      "content-addresses.v1.json",
+      "manifest-validation.v1.json",
+      "eligibility.v1.json"
+    ],
+    "runtimeBoundary": "native-typescript-node-no-dotnet-runtime"
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -17,11 +28,14 @@
     "smoke": "npm run build && node smoke/import-facade.mjs",
     "test": "npm run build && node --test test/*.mjs"
   },
+  "dependencies": {
+    "@noble/hashes": "^2.2.0"
+  },
   "devDependencies": {
     "@types/node": "^22.19.19",
     "typescript": "5.8.3"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=20.19.0"
   }
 }
