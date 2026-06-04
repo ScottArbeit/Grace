@@ -8,6 +8,10 @@ The initial S09 scaffold proves package boundaries, generator provenance, determ
 smoke checks. It does not claim completed language SDK behavior, browser compatibility, protocol parity, or stable
 standalone raw generated-client publishing.
 
+The final epic #211 release matrix and requirement traceability audit is maintained in
+[`docs/SDK OpenAPI final audit.md`](../docs/SDK%20OpenAPI%20final%20audit.md). Treat that audit as the current summary
+of which SDK/OpenAPI claims are proven, incomplete, deferred, out of scope, or rejected.
+
 ## Layout
 
 | Path | Purpose | Public surface status |
