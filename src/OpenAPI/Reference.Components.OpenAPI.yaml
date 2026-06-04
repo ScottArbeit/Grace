@@ -1,18 +1,23 @@
     ReferenceParameters:
-      description: Parameters for many endpoints in the /reference path.
+      description: Public reference identity fields used when a route accepts or returns reference selectors.
       type: object
-      properties:
-        ReferenceId:
-          type: string
-          description: Unique identifier of the reference.
-        ReferenceType:
-          type: string
-          description: Type of the reference.
-        RepositoryText:
-          type: string
-          description: Textual representation of the repository.
-        RepositoryName:
-          type: string
-          description: Name of the repository.
       allOf:
         - $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/CommonParameters'
+      properties:
+        ReferenceId:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/ReferenceId'
+        ReferenceType:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/ReferenceType'
+        ReferenceText:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/ReferenceText'
+        RepositoryId:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/RepositoryId'
+        RepositoryName:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/RepositoryName'
+      example:
+        CorrelationId: cli-20260604T181500Z-0001
+        Principal: user:alice
+        RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+        ReferenceId: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
+        ReferenceType: Commit
+        ReferenceText: Capture release candidate.

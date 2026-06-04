@@ -1,413 +1,409 @@
   /branch/create:
     post:
-      summary: Creates a new branch.
-      description: Creates a new branch with the specified name, based on the specified parent branch.
-      operationId: Create
+      tags:
+        - Branches
+      summary: Create a branch.
+      description: Creates a branch with the specified name, based on the specified parent branch.
+      operationId: CreateBranch
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              allOf: &ref_13
-                - allOf: &ref_0
-                    - type: object
-                      properties: &ref_10
-                        CorrelationId:
-                          type: string
-                          description: If you don't provide a CorrelationId, a Guid will be generated for you. (You're welcome.) CorrelationId's are just strings; feel free to send any kind of CorrelationId you prefer.
-                        Principal:
-                          type: string
-                    - type: object
-                      properties:
-                        BranchId:
-                          type: string
-                          format: uuid
-                          example: de7bf47d-23ae-4599-af68-68a317ea390d
-                        BranchName:
-                          type: string
-                          example: MyBranch
-                        OwnerId:
-                          type: string
-                          format: uuid
-                          example: 9dd5f81f-dc43-4839-9173-85d09394f30f
-                        OwnerName:
-                          type: string
-                        OrganizationId:
-                          type: string
-                          format: uuid
-                          example: e35d64a9-b990-44f5-bf02-32ad7d15630c
-                        OrganizationName:
-                          type: string
-                        RepositoryId:
-                          type: string
-                          format: uuid
-                          example: ab6f35ef-6e01-440b-8f9b-c343a5272095
-                        RepositoryName:
-                          type: string
-                - type: object
-                  properties:
-                    ParentBranchId:
-                      type: string
-                      format: uuid
-                      example: de7bf47d-23ae-4599-af68-68a317ea390d
-                    ParentBranchName:
-                      type: string
-                      example: MyBranch
+              $ref: './Branch.Components.OpenAPI.yaml#/CreateBranchParameters'
+            examples:
+              createBranch:
+                summary: Create a release branch
+                value: &branchCreateExample
+                  CorrelationId: cli-20260604T181500Z-0001
+                  Principal: user:alice
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                  RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                  BranchName: release-2026-06
+                  ParentBranchId: de7bf47d-23ae-4599-af68-68a317ea390d
+                  InitialPermissions:
+                    - Commit
+                    - Checkpoint
+                    - Save
+                    - Tag
       responses:
         '200':
-          description: OK
+          $ref: './Branch.Components.OpenAPI.yaml#/BranchResponse'
         '400':
-          description: Bad Request
+          $ref: './Responses.OpenAPI.yaml#/400'
         '500':
-          description: Internal Server Error
+          $ref: './Responses.OpenAPI.yaml#/500'
+
   /branch/rebase:
     post:
-      summary: Rebases a branch on its parent branch.
-      description: Rebases a branch on its parent branch.
-      operationId: Rebase
+      tags:
+        - Branches
+      summary: Rebase a branch.
+      description: Rebases a branch on the specified reference from its parent branch.
+      operationId: RebaseBranch
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              allOf: &ref_14
-                - allOf: *ref_0
-                - type: object
-                  properties:
-                    BasedOn:
-                      type: string
-                      format: uuid
-                      example: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
+              $ref: './Branch.Components.OpenAPI.yaml#/RebaseParameters'
+            examples:
+              rebaseBranch:
+                summary: Rebase a branch to a parent reference
+                value:
+                  <<: *branchCreateExample
+                  BranchName: release-2026-06
+                  BasedOn: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
       responses:
         '200':
-          description: OK
+          $ref: './Branch.Components.OpenAPI.yaml#/BranchResponse'
         '400':
-          description: Bad Request
+          $ref: './Responses.OpenAPI.yaml#/400'
         '500':
-          description: Internal Server Error
+          $ref: './Responses.OpenAPI.yaml#/500'
+
   /branch/promote:
     post:
-      summary: Creates a promotion reference in the parent of the specified branch, based on the most-recent commit.
-      description: Creates a promotion reference in the parent of the specified branch, based on the most-recent commit.
-      operationId: Promote
+      tags:
+        - Branches
+      summary: Promote the current branch content.
+      description: Creates a promotion reference in the parent of the specified branch, based on the current directory version.
+      operationId: PromoteBranch
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              allOf: &ref_1
-                - allOf: *ref_0
-                - type: object
-                  properties:
-                    DirectoryId:
-                      type: string
-                      format: uuid
-                      example: 33a4e36b-828f-4fae-9343-50b6560dc842
-                    Sha256Hash:
-                      type: string
-                      example: 805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243
-                    Message:
-                      type: string
+              $ref: './Branch.Components.OpenAPI.yaml#/CreateReferenceParameters'
+            examples:
+              createReference:
+                summary: Create a branch reference
+                value: &createReferenceExample
+                  CorrelationId: cli-20260604T181500Z-0001
+                  Principal: user:alice
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                  RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                  BranchId: de7bf47d-23ae-4599-af68-68a317ea390d
+                  DirectoryVersionId: 33a4e36b-828f-4fae-9343-50b6560dc842
+                  Sha256Hash: 805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243
+                  Message: Capture release candidate.
       responses:
         '200':
-          description: OK
+          $ref: './Branch.Components.OpenAPI.yaml#/BranchResponse'
         '400':
-          description: Bad Request
+          $ref: './Responses.OpenAPI.yaml#/400'
         '500':
-          description: Internal Server Error
+          $ref: './Responses.OpenAPI.yaml#/500'
+
   /branch/commit:
     post:
-      summary: Creates a commit reference pointing to the current root directory version in the branch.
+      tags:
+        - Branches
+      summary: Commit the current branch content.
       description: Creates a commit reference pointing to the current root directory version in the branch.
+      operationId: CommitBranch
       requestBody:
+        required: true
         content:
           application/json:
             schema:
-              allOf: *ref_1
+              $ref: './Branch.Components.OpenAPI.yaml#/CreateReferenceParameters'
+            examples:
+              commitBranch:
+                summary: Create a commit reference
+                value:
+                  <<: *createReferenceExample
+                  Message: Commit release candidate.
       responses:
         '200':
-          description: Success
+          $ref: './Branch.Components.OpenAPI.yaml#/BranchResponse'
         '400':
-          description: Bad Request
+          $ref: './Responses.OpenAPI.yaml#/400'
         '500':
-          description: Server Error
+          $ref: './Responses.OpenAPI.yaml#/500'
+
   /branch/checkpoint:
     post:
-      summary: Creates a checkpoint reference pointing to the current root directory version in the branch.
+      tags:
+        - Branches
+      summary: Checkpoint the current branch content.
       description: Creates a checkpoint reference pointing to the current root directory version in the branch.
+      operationId: CheckpointBranch
       requestBody:
+        required: true
         content:
           application/json:
             schema:
-              allOf: *ref_1
+              $ref: './Branch.Components.OpenAPI.yaml#/CreateReferenceParameters'
+            examples:
+              checkpointBranch:
+                summary: Create a checkpoint reference
+                value:
+                  <<: *createReferenceExample
+                  Message: Checkpoint release candidate.
       responses:
         '200':
-          description: Success
+          $ref: './Branch.Components.OpenAPI.yaml#/BranchResponse'
         '400':
-          description: Bad Request
+          $ref: './Responses.OpenAPI.yaml#/400'
         '500':
-          description: Server Error
+          $ref: './Responses.OpenAPI.yaml#/500'
+
   /branch/save:
     post:
-      summary: Creates a save reference pointing to the current root directory version in the branch.
+      tags:
+        - Branches
+      summary: Save the current branch content.
       description: Creates a save reference pointing to the current root directory version in the branch.
+      operationId: SaveBranch
       requestBody:
+        required: true
         content:
           application/json:
             schema:
-              allOf: *ref_1
+              $ref: './Branch.Components.OpenAPI.yaml#/CreateReferenceParameters'
+            examples:
+              saveBranch:
+                summary: Create a save reference
+                value:
+                  <<: *createReferenceExample
+                  Message: Save release candidate.
       responses:
         '200':
-          description: Success
+          $ref: './Branch.Components.OpenAPI.yaml#/BranchResponse'
         '400':
-          description: Bad Request
+          $ref: './Responses.OpenAPI.yaml#/400'
         '500':
-          description: Server Error
+          $ref: './Responses.OpenAPI.yaml#/500'
+
   /branch/tag:
     post:
-      summary: Creates a tag reference pointing to the current root directory version in the branch.
+      tags:
+        - Branches
+      summary: Tag the current branch content.
       description: Creates a tag reference pointing to the current root directory version in the branch.
+      operationId: TagBranch
       requestBody:
+        required: true
         content:
           application/json:
             schema:
-              allOf: *ref_1
+              $ref: './Branch.Components.OpenAPI.yaml#/CreateReferenceParameters'
+            examples:
+              tagBranch:
+                summary: Create a tag reference
+                value:
+                  <<: *createReferenceExample
+                  Message: Tag release candidate.
       responses:
         '200':
-          description: Success
+          $ref: './Branch.Components.OpenAPI.yaml#/BranchResponse'
         '400':
-          description: Bad Request
+          $ref: './Responses.OpenAPI.yaml#/400'
         '500':
-          description: Server Error
+          $ref: './Responses.OpenAPI.yaml#/500'
+
   /branch/enablePromotion:
     post:
-      summary: Enables or disables promotion for the specified branch.
+      tags:
+        - Branches
+      summary: Enable or disable promotion references.
       description: Enables or disables promotion for the specified branch.
-      operationId: EnablePromotion
+      operationId: EnableBranchPromotion
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              allOf: &ref_2
-                - allOf: *ref_0
-                - type: object
-                  properties:
-                    Enabled:
-                      type: boolean
+              $ref: './Branch.Components.OpenAPI.yaml#/EnableFeatureParameters'
+            examples:
+              enableFeature:
+                summary: Enable a branch feature
+                value: &enableFeatureExample
+                  CorrelationId: cli-20260604T181500Z-0001
+                  Principal: user:alice
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                  RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                  BranchId: de7bf47d-23ae-4599-af68-68a317ea390d
+                  Enabled: true
       responses:
         '200':
-          description: OK
+          $ref: './Branch.Components.OpenAPI.yaml#/BranchResponse'
         '400':
-          description: Bad Request
+          $ref: './Responses.OpenAPI.yaml#/400'
         '500':
-          description: Internal Server Error
+          $ref: './Responses.OpenAPI.yaml#/500'
+
   /branch/enableCommit:
     post:
-      summary: Enables or disables commit for the specified branch.
+      tags:
+        - Branches
+      summary: Enable or disable commit references.
       description: Enables or disables commit for the specified branch.
-      operationId: EnableCommit
+      operationId: EnableBranchCommit
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              allOf: *ref_2
+              $ref: './Branch.Components.OpenAPI.yaml#/EnableFeatureParameters'
+            examples:
+              enableCommit:
+                summary: Enable commit references
+                value: *enableFeatureExample
       responses:
         '200':
-          description: OK
+          $ref: './Branch.Components.OpenAPI.yaml#/BranchResponse'
         '400':
-          description: Bad Request
+          $ref: './Responses.OpenAPI.yaml#/400'
         '500':
-          description: Internal Server Error
+          $ref: './Responses.OpenAPI.yaml#/500'
+
   /branch/enableCheckpoint:
     post:
-      summary: Enables or disables checkpoint for the specified branch.
+      tags:
+        - Branches
+      summary: Enable or disable checkpoint references.
       description: Enables or disables checkpoint for the specified branch.
-      operationId: EnableCheckpoint
+      operationId: EnableBranchCheckpoint
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              allOf: *ref_2
+              $ref: './Branch.Components.OpenAPI.yaml#/EnableFeatureParameters'
+            examples:
+              enableCheckpoint:
+                summary: Enable checkpoint references
+                value: *enableFeatureExample
       responses:
         '200':
-          description: OK
+          $ref: './Branch.Components.OpenAPI.yaml#/BranchResponse'
         '400':
-          description: Bad Request
+          $ref: './Responses.OpenAPI.yaml#/400'
         '500':
-          description: Internal Server Error
+          $ref: './Responses.OpenAPI.yaml#/500'
+
   /branch/enableSave:
     post:
-      summary: Enables or disables save for the specified branch.
+      tags:
+        - Branches
+      summary: Enable or disable save references.
       description: Enables or disables save for the specified branch.
-      operationId: EnableSave
+      operationId: EnableBranchSave
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              allOf: *ref_2
+              $ref: './Branch.Components.OpenAPI.yaml#/EnableFeatureParameters'
+            examples:
+              enableSave:
+                summary: Enable save references
+                value: *enableFeatureExample
       responses:
         '200':
-          description: OK
+          $ref: './Branch.Components.OpenAPI.yaml#/BranchResponse'
         '400':
-          description: Bad Request
+          $ref: './Responses.OpenAPI.yaml#/400'
         '500':
-          description: Internal Server Error
+          $ref: './Responses.OpenAPI.yaml#/500'
+
   /branch/enableTag:
     post:
-      summary: Enables or disables tag for the specified branch.
+      tags:
+        - Branches
+      summary: Enable or disable tag references.
       description: Enables or disables tag for the specified branch.
-      operationId: EnableTag
+      operationId: EnableBranchTag
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              allOf: *ref_2
+              $ref: './Branch.Components.OpenAPI.yaml#/EnableFeatureParameters'
+            examples:
+              enableTag:
+                summary: Enable tag references
+                value: *enableFeatureExample
       responses:
         '200':
-          description: OK
+          $ref: './Branch.Components.OpenAPI.yaml#/BranchResponse'
         '400':
-          description: Bad Request
+          $ref: './Responses.OpenAPI.yaml#/400'
         '500':
-          description: Internal Server Error
+          $ref: './Responses.OpenAPI.yaml#/500'
+
   /branch/delete:
     post:
-      summary: Deletes the specified branch.
+      tags:
+        - Branches
+      summary: Delete a branch.
       description: Deletes the specified branch.
-      operationId: Delete
+      operationId: DeleteBranch
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              allOf: &ref_15
-                - allOf: *ref_0
+              $ref: './Branch.Components.OpenAPI.yaml#/DeleteBranchParameters'
+            examples:
+              deleteBranch:
+                summary: Delete a branch and reassign child branches
+                value:
+                  <<: *enableFeatureExample
+                  Force: false
+                  DeleteReason: Superseded by release branch.
+                  ReassignChildBranches: true
+                  NewParentBranchId: 11111111-1111-1111-1111-111111111111
       responses:
         '200':
-          description: OK
+          $ref: './Branch.Components.OpenAPI.yaml#/BranchResponse'
         '400':
-          description: Bad Request
+          $ref: './Responses.OpenAPI.yaml#/400'
         '500':
-          description: Internal Server Error
+          $ref: './Responses.OpenAPI.yaml#/500'
+
   /branch/get:
     post:
-      summary: Gets the specified branch.
+      tags:
+        - Branches
+      summary: Get a branch.
       description: Gets the specified branch.
-      operationId: Get
+      operationId: GetBranch
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              allOf: &ref_3
-                - allOf: *ref_0
-                - type: object
-                  properties:
-                    Sha256Hash:
-                      type: string
-                      example: 805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243
-                    ReferenceId:
-                      type: string
-                      format: uuid
-                      example: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
+              $ref: './Branch.Components.OpenAPI.yaml#/GetBranchParameters'
+            examples:
+              getBranch:
+                summary: Get a branch by id
+                value: &getBranchExample
+                  CorrelationId: cli-20260604T181500Z-0001
+                  Principal: user:alice
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                  RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                  BranchId: de7bf47d-23ae-4599-af68-68a317ea390d
+                  IncludeDeleted: false
       responses:
         '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                type: object
-                properties: &ref_4
-                  Class:
-                    type: string
-                    example: BranchDto
-                  BranchId:
-                    type: string
-                    format: uuid
-                    example: de7bf47d-23ae-4599-af68-68a317ea390d
-                  BranchName:
-                    type: string
-                    example: MyBranch
-                  ParentBranchId:
-                    type: string
-                    format: uuid
-                    example: de7bf47d-23ae-4599-af68-68a317ea390d
-                  BasedOn:
-                    type: string
-                    format: uuid
-                    example: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
-                  RepositoryId:
-                    type: string
-                    format: uuid
-                    example: ab6f35ef-6e01-440b-8f9b-c343a5272095
-                  UserId:
-                    type: string
-                  PromotionEnabled:
-                    type: boolean
-                  CommitEnabled:
-                    type: boolean
-                  CheckpointEnabled:
-                    type: boolean
-                  SaveEnabled:
-                    type: boolean
-                  TagEnabled:
-                    type: boolean
-                  LatestPromotion:
-                    type: string
-                    format: uuid
-                    example: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
-                  LatestCommit:
-                    type: string
-                    format: uuid
-                    example: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
-                  LatestCheckpoint:
-                    type: string
-                    format: uuid
-                    example: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
-                  LatestSave:
-                    type: string
-                    format: uuid
-                    example: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
-                  CreatedAt:
-                    type: string
-                    format: date-time
-                  UpdatedAt:
-                    type: string
-                    format: date-time
-                    nullable: true
-                  DeletedAt:
-                    type: string
-                    format: date-time
-                    nullable: true
-                required: &ref_5
-                  - Class
-                  - BranchId
-                  - BranchName
-                  - ParentBranchId
-                  - BasedOn
-                  - RepositoryId
-                  - UserId
-                  - PromotionEnabled
-                  - CommitEnabled
-                  - CheckpointEnabled
-                  - SaveEnabled
-                  - TagEnabled
-                  - LatestPromotion
-                  - LatestCommit
-                  - LatestCheckpoint
-                  - LatestSave
-                  - CreatedAt
+          $ref: './Branch.Components.OpenAPI.yaml#/BranchResponse'
         '400':
-          description: Bad Request
+          $ref: './Responses.OpenAPI.yaml#/400'
         '500':
-          description: Internal Server Error
+          $ref: './Responses.OpenAPI.yaml#/500'
+
   /branch/getParentBranch:
     post:
-      summary: Gets the parent branch of the specified branch.
+      tags:
+        - Branches
+      summary: Get the parent branch.
       description: Gets the parent branch of the specified branch.
       operationId: GetParentBranch
       requestBody:
@@ -415,245 +411,200 @@
         content:
           application/json:
             schema:
-              allOf: *ref_3
+              $ref: './Branch.Components.OpenAPI.yaml#/GetBranchParameters'
+            examples:
+              getParentBranch:
+                summary: Get the parent branch
+                value: *getBranchExample
       responses:
         '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                type: object
-                properties: *ref_4
-                required: *ref_5
+          $ref: './Branch.Components.OpenAPI.yaml#/BranchResponse'
         '400':
-          description: Bad Request
+          $ref: './Responses.OpenAPI.yaml#/400'
         '500':
-          description: Internal Server Error
+          $ref: './Responses.OpenAPI.yaml#/500'
+
   /branch/getReference:
     post:
-      summary: Gets the specified reference.
-      description: Gets the specified reference.
-      operationId: GetReference
+      tags:
+        - Branches
+      summary: Get a branch reference.
+      description: Gets the specified reference from the branch.
+      operationId: GetBranchReference
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              allOf: &ref_17
-                - allOf: *ref_3
+              $ref: './Branch.Components.OpenAPI.yaml#/GetReferenceParameters'
+            examples:
+              getReference:
+                summary: Get a reference by id
+                value:
+                  <<: *getBranchExample
+                  ReferenceId: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
       responses:
         '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                type: object
-                properties: &ref_6
-                  Class:
-                    type: string
-                    example: ReferenceDto
-                  ReferenceId:
-                    type: string
-                    format: uuid
-                    example: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
-                  BranchId:
-                    type: string
-                    format: uuid
-                    example: de7bf47d-23ae-4599-af68-68a317ea390d
-                  DirectoryId:
-                    type: string
-                    format: uuid
-                    example: 33a4e36b-828f-4fae-9343-50b6560dc842
-                  Sha256Hash:
-                    type: string
-                    example: 805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243
-                  ReferenceType:
-                    type: string
-                    enum: &ref_9
-                      - Promotion
-                      - Commit
-                      - Checkpoint
-                      - Save
-                      - Tag
-                    example: Commit
-                  ReferenceText:
-                    type: string
-                  CreatedAt:
-                    type: string
-                    format: date-time
-                required: &ref_7
-                  - Class
-                  - ReferenceId
-                  - BranchId
-                  - DirectoryId
-                  - Sha256Hash
-                  - ReferenceType
-                  - ReferenceText
-                  - CreatedAt
+          $ref: './Branch.Components.OpenAPI.yaml#/ReferenceResponse'
         '400':
-          description: Bad Request
+          $ref: './Responses.OpenAPI.yaml#/400'
         '500':
-          description: Internal Server Error
+          $ref: './Responses.OpenAPI.yaml#/500'
+
   /branch/getReferences:
     post:
-      summary: Gets the references for the specified branch.
+      tags:
+        - Branches
+      summary: List branch references.
       description: Gets the references for the specified branch.
-      operationId: GetReferences
+      operationId: ListBranchReferences
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              allOf: &ref_8
-                - allOf: *ref_0
-                - type: object
-                  properties:
-                    FullSha:
-                      type: boolean
-                    MaxCount:
-                      type: integer
+              $ref: './Branch.Components.OpenAPI.yaml#/GetReferencesParameters'
+            examples:
+              listReferences:
+                summary: List references for a branch
+                value: &listReferencesExample
+                  CorrelationId: cli-20260604T181500Z-0001
+                  Principal: user:alice
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                  RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                  BranchId: de7bf47d-23ae-4599-af68-68a317ea390d
+                  FullSha: false
+                  MaxCount: 50
       responses:
         '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  type: object
-                  properties: *ref_6
-                  required: *ref_7
+          $ref: './Branch.Components.OpenAPI.yaml#/ReferenceListResponse'
         '400':
-          description: Bad Request
+          $ref: './Responses.OpenAPI.yaml#/400'
         '500':
-          description: Internal Server Error
+          $ref: './Responses.OpenAPI.yaml#/500'
+
   /branch/getPromotions:
     post:
-      summary: Gets the promotions for the specified branch.
-      description: Gets the promotions for the specified branch.
-      operationId: GetPromotions
+      tags:
+        - Branches
+      summary: List branch promotions.
+      description: Gets the promotion references for the specified branch.
+      operationId: ListBranchPromotions
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              allOf: *ref_8
+              $ref: './Branch.Components.OpenAPI.yaml#/GetReferencesParameters'
+            examples:
+              listPromotions:
+                summary: List promotion references
+                value: *listReferencesExample
       responses:
         '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  type: object
-                  properties: *ref_6
-                  required: *ref_7
+          $ref: './Branch.Components.OpenAPI.yaml#/ReferenceListResponse'
         '400':
-          description: Bad Request
+          $ref: './Responses.OpenAPI.yaml#/400'
         '500':
-          description: Internal Server Error
+          $ref: './Responses.OpenAPI.yaml#/500'
+
   /branch/getCommits:
     post:
-      summary: Gets the commits for the specified branch.
-      description: Gets the commits for the specified branch.
-      operationId: GetCommits
+      tags:
+        - Branches
+      summary: List branch commits.
+      description: Gets the commit references for the specified branch.
+      operationId: ListBranchCommits
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              allOf: *ref_8
+              $ref: './Branch.Components.OpenAPI.yaml#/GetReferencesParameters'
+            examples:
+              listCommits:
+                summary: List commit references
+                value: *listReferencesExample
       responses:
         '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  type: object
-                  properties: *ref_6
-                  required: *ref_7
+          $ref: './Branch.Components.OpenAPI.yaml#/ReferenceListResponse'
         '400':
-          description: Bad Request
+          $ref: './Responses.OpenAPI.yaml#/400'
         '500':
-          description: Internal Server Error
+          $ref: './Responses.OpenAPI.yaml#/500'
+
   /branch/getCheckpoints:
     post:
-      summary: Gets the checkpoints for the specified branch.
-      description: Gets the checkpoints for the specified branch.
-      operationId: GetCheckpoints
+      tags:
+        - Branches
+      summary: List branch checkpoints.
+      description: Gets the checkpoint references for the specified branch.
+      operationId: ListBranchCheckpoints
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              allOf: *ref_8
+              $ref: './Branch.Components.OpenAPI.yaml#/GetReferencesParameters'
+            examples:
+              listCheckpoints:
+                summary: List checkpoint references
+                value: *listReferencesExample
       responses:
         '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  type: object
-                  properties: *ref_6
-                  required: *ref_7
+          $ref: './Branch.Components.OpenAPI.yaml#/ReferenceListResponse'
         '400':
-          description: Bad Request
+          $ref: './Responses.OpenAPI.yaml#/400'
         '500':
-          description: Internal Server Error
+          $ref: './Responses.OpenAPI.yaml#/500'
+
   /branch/getSaves:
     post:
-      summary: Gets the saves for the specified branch.
-      description: Gets the saves for the specified branch.
-      operationId: GetSaves
+      tags:
+        - Branches
+      summary: List branch saves.
+      description: Gets the save references for the specified branch.
+      operationId: ListBranchSaves
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              allOf: *ref_8
+              $ref: './Branch.Components.OpenAPI.yaml#/GetReferencesParameters'
+            examples:
+              listSaves:
+                summary: List save references
+                value: *listReferencesExample
       responses:
         '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  type: object
-                  properties: *ref_6
-                  required: *ref_7
+          $ref: './Branch.Components.OpenAPI.yaml#/ReferenceListResponse'
         '400':
-          description: Bad Request
+          $ref: './Responses.OpenAPI.yaml#/400'
         '500':
-          description: Internal Server Error
+          $ref: './Responses.OpenAPI.yaml#/500'
+
   /branch/getTags:
     post:
-      summary: Gets the tags for the specified branch.
-      description: Gets the tags for the specified branch.
-      operationId: GetTags
+      tags:
+        - Branches
+      summary: List branch tags.
+      description: Gets the tag references for the specified branch.
+      operationId: ListBranchTags
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              allOf: *ref_8
+              $ref: './Branch.Components.OpenAPI.yaml#/GetReferencesParameters'
+            examples:
+              listTags:
+                summary: List tag references
+                value: *listReferencesExample
       responses:
         '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  type: object
-                  properties: *ref_6
-                  required: *ref_7
+          $ref: './Branch.Components.OpenAPI.yaml#/ReferenceListResponse'
         '400':
-          description: Bad Request
+          $ref: './Responses.OpenAPI.yaml#/400'
         '500':
-          description: Internal Server Error
+          $ref: './Responses.OpenAPI.yaml#/500'

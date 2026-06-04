@@ -1,24 +1,29 @@
     DiffParameters:
-      description: Parameters for diff endpoints.
+      description: Parameters shared by public endpoints in the /diff route family.
+      type: object
       allOf:
         - $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/CommonParameters'
       properties:
         OwnerId:
-          type: string
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/OwnerId'
         OwnerName:
           $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/OwnerName'
         OrganizationId:
-          type: string
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/OrganizationId'
         OrganizationName:
           $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/OrganizationName'
         RepositoryId:
-          type: string
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/RepositoryId'
         RepositoryName:
           $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/RepositoryName'
-        DirectoryId1:
-          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/DirectoryId'
-        DirectoryId2:
-          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/DirectoryId'
+        DirectoryVersionId1:
+          type: string
+          format: uuid
+          example: 33a4e36b-828f-4fae-9343-50b6560dc842
+        DirectoryVersionId2:
+          type: string
+          format: uuid
+          example: 66b7b8c2-8d2f-4f04-951c-6b3486c4e5d1
     PopulateParameters:
       description: Parameters for diff population.
       allOf:
@@ -31,17 +36,125 @@
       description: Parameters for retrieving a diff by reference type.
       allOf:
         - $ref: './Diff.Components.OpenAPI.yaml#/DiffParameters'
-      properties:
-        BranchId:
-          type: string
-        BranchName:
-          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/BranchName'
+        - type: object
+          properties:
+            BranchId:
+              $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/BranchId'
+            BranchName:
+              $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/BranchName'
     GetDiffBySha256HashParameters:
-      description: Parameters for retrieving a diff by SHA256 hash.
+      description: Parameters for retrieving a diff by SHA-256 hash.
       allOf:
         - $ref: './Diff.Components.OpenAPI.yaml#/DiffParameters'
+        - type: object
+          properties:
+            Sha256Hash1:
+              $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Sha256Hash'
+            Sha256Hash2:
+              $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Sha256Hash'
+    DiffApiDto:
+      description: Public diff DTO returned through diff endpoints.
+      type: object
       properties:
-        Sha256Hash1:
-          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Sha256Hash'
-        Sha256Hash2:
-          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Sha256Hash'
+        Class:
+          type: string
+          example: DiffDto
+        OwnerId:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/OwnerId'
+        OrganizationId:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/OrganizationId'
+        RepositoryId:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/RepositoryId'
+        DirectoryVersionId1:
+          type: string
+          format: uuid
+          example: 33a4e36b-828f-4fae-9343-50b6560dc842
+        Directory1CreatedAt:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant'
+        DirectoryVersionId2:
+          type: string
+          format: uuid
+          example: 66b7b8c2-8d2f-4f04-951c-6b3486c4e5d1
+        Directory2CreatedAt:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant'
+        HasDifferences:
+          type: boolean
+        Differences:
+          type: array
+          items:
+            $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/FileSystemDifference'
+        FileDiffs:
+          type: array
+          items:
+            $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/FileDiff'
+    DiffReturnValue:
+      description: Grace response envelope whose ReturnValue contains a diff.
+      type: object
+      properties:
+        ReturnValue:
+          $ref: './Diff.Components.OpenAPI.yaml#/DiffApiDto'
+        EventTime:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant'
+        CorrelationId:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/CorrelationId'
+        Properties:
+          type: object
+          additionalProperties:
+            type: string
+      required: [ReturnValue, EventTime, CorrelationId, Properties]
+      example: &diffReturnValueExample
+        ReturnValue:
+          Class: DiffDto
+          OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+          OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+          RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+          HasDifferences: true
+          DirectoryVersionId1: 33a4e36b-828f-4fae-9343-50b6560dc842
+          Directory1CreatedAt: '2026-06-04T18:14:00Z'
+          DirectoryVersionId2: 66b7b8c2-8d2f-4f04-951c-6b3486c4e5d1
+          Directory2CreatedAt: '2026-06-04T18:15:00Z'
+          Differences: []
+          FileDiffs: []
+        EventTime: '2026-06-04T18:15:00Z'
+        CorrelationId: cli-20260604T181500Z-0001
+        Properties:
+          DirectoryVersionId1: 33a4e36b-828f-4fae-9343-50b6560dc842
+          DirectoryVersionId2: 66b7b8c2-8d2f-4f04-951c-6b3486c4e5d1
+    DiffPopulateReturnValue:
+      description: Grace response envelope whose ReturnValue indicates whether the diff actor was populated.
+      type: object
+      properties:
+        ReturnValue:
+          type: boolean
+        EventTime:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant'
+        CorrelationId:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/CorrelationId'
+        Properties:
+          type: object
+          additionalProperties:
+            type: string
+      required: [ReturnValue, EventTime, CorrelationId, Properties]
+      example:
+        ReturnValue: true
+        EventTime: '2026-06-04T18:15:00Z'
+        CorrelationId: cli-20260604T181500Z-0001
+        Properties:
+          DirectoryVersionId1: 33a4e36b-828f-4fae-9343-50b6560dc842
+          DirectoryVersionId2: 66b7b8c2-8d2f-4f04-951c-6b3486c4e5d1
+    DiffResponse:
+      description: OK
+      content:
+        application/json:
+          schema:
+            $ref: './Diff.Components.OpenAPI.yaml#/DiffReturnValue'
+          examples:
+            diff:
+              summary: Diff response envelope
+              value: *diffReturnValueExample
+    DiffPopulateResponse:
+      description: OK
+      content:
+        application/json:
+          schema:
+            $ref: './Diff.Components.OpenAPI.yaml#/DiffPopulateReturnValue'

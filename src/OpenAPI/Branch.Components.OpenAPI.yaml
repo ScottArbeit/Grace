@@ -1,121 +1,170 @@
     BranchParameters:
-      description: Parameters for many endpoints in the /branch path.
+      description: Parameters shared by public endpoints in the /branch route family.
       type: object
+      allOf:
+        - $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/CommonParameters'
       properties:
-        ownerId:
-          type: string
-        ownerName:
+        OwnerId:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/OwnerId'
+        OwnerName:
           $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/OwnerName'
-        organizationId:
-          type: string
-        organizationName:
+        OrganizationId:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/OrganizationId'
+        OrganizationName:
           $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/OrganizationName'
-        repositoryId:
-          type: string
-        repositoryName:
+        RepositoryId:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/RepositoryId'
+        RepositoryName:
           $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/RepositoryName'
-        branchId:
-          type: string
-        branchName:
+        BranchId:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/BranchId'
+        BranchName:
           $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/BranchName'
+      example: &branchBaseExample
+        CorrelationId: cli-20260604T181500Z-0001
+        Principal: user:alice
+        OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+        OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+        RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+        BranchId: de7bf47d-23ae-4599-af68-68a317ea390d
     BranchQueryParameters:
-      description: Base class for parameters for branch queries.
+      description: Parameters for branch query endpoints that can resolve a branch or reference by hash or reference id.
       allOf:
         - $ref: '#/BranchParameters'
         - type: object
           properties:
-            sha256Hash:
+            Sha256Hash:
               $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Sha256Hash'
-            referenceId:
-              type: string
+            ReferenceId:
+              $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/ReferenceId'
     CreateBranchParameters:
       description: Parameters for the /branch/create endpoint.
       allOf:
         - $ref: '#/BranchParameters'
         - type: object
           properties:
-            parentBranchId:
-              type: string
-            parentBranchName:
+            ParentBranchId:
+              $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/BranchId'
+            ParentBranchName:
               $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/BranchName'
+            InitialPermissions:
+              type: array
+              items:
+                $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/ReferenceType'
     RebaseParameters:
       description: Parameters for the /branch/rebase endpoint.
       allOf:
         - $ref: '#/BranchParameters'
         - type: object
           properties:
-            basedOn:
+            BasedOn:
               $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/ReferenceId'
     CreateReferenceParameters:
-      description: Parameters for the various /branch/create[reference] endpoints.
+      description: Parameters for /branch/promote, /branch/commit, /branch/checkpoint, /branch/save, and /branch/tag.
       allOf:
         - $ref: '#/BranchParameters'
         - type: object
           properties:
-            directoryId:
-              $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/DirectoryId'
-            sha256Hash:
-              $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Sha256Hash'
-            message:
+            DirectoryVersionId:
               type: string
+              format: uuid
+              example: 33a4e36b-828f-4fae-9343-50b6560dc842
+            Sha256Hash:
+              $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Sha256Hash'
+            Message:
+              type: string
+              example: Capture release candidate.
     SetBranchNameParameters:
       description: Parameters for the /branch/setName endpoint.
       allOf:
         - $ref: '#/BranchParameters'
         - type: object
           properties:
-            newName:
+            NewName:
               type: string
+              example: ReleaseCandidate
     EnableFeatureParameters:
-      description: Parameters for the various /branch/enable[feature] endpoints.
+      description: Parameters for branch feature-toggle endpoints.
       allOf:
         - $ref: '#/BranchParameters'
         - type: object
           properties:
-            enabled:
+            Enabled:
               type: boolean
+              example: true
     DeleteBranchParameters:
       description: Parameters for the /branch/delete endpoint.
       allOf:
         - $ref: '#/BranchParameters'
+        - type: object
+          properties:
+            Force:
+              type: boolean
+              example: false
+            DeleteReason:
+              type: string
+              example: Superseded by release branch.
+            ReassignChildBranches:
+              type: boolean
+              example: true
+            NewParentBranchId:
+              $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/BranchId'
+            NewParentBranchName:
+              $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/BranchName'
     GetReferenceParameters:
       description: Parameters for the /branch/getReference endpoint.
       allOf:
         - $ref: '#/BranchQueryParameters'
     GetReferencesParameters:
-      description: Parameters for the /branch/getReferences and /branch/get[reference] endpoints.
+      description: Parameters for /branch/getReferences and reference-type list endpoints.
       allOf:
         - $ref: '#/BranchParameters'
         - type: object
           properties:
-            fullSha:
+            FullSha:
               type: boolean
-            maxCount:
+              example: false
+            MaxCount:
               type: integer
+              format: int32
+              minimum: 1
+              example: 50
     GetDiffsForReferenceTypeParameters:
       description: Parameters for the /branch/getDiffsForReferenceType endpoint.
       allOf:
         - $ref: '#/BranchParameters'
         - type: object
           properties:
-            referenceType:
-              type: string
-            maxCount:
+            ReferenceType:
+              $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/ReferenceType'
+            MaxCount:
               type: integer
+              format: int32
+              minimum: 1
+              example: 50
     GetDiffsForReferencesParameters:
       description: Parameters for the /branch/getDiffsForReferences endpoint.
       allOf:
         - $ref: '#/BranchParameters'
         - type: object
           properties:
-            references:
+            References:
               type: string
-            maxCount:
+              description: Comma-separated reference identifiers for diff lookup.
+            MaxCount:
               type: integer
+              format: int32
+              minimum: 1
+              example: 50
     GetBranchParameters:
       description: Parameters for the /branch/get endpoint.
       allOf:
         - $ref: '#/BranchQueryParameters'
+        - type: object
+          properties:
+            IncludeDeleted:
+              type: boolean
+              example: false
     SwitchParameters:
       description: Parameters for the /branch/switch endpoint.
       allOf:
@@ -124,3 +173,253 @@
       description: Parameters for the /branch/getVersion endpoint.
       allOf:
         - $ref: '#/BranchQueryParameters'
+        - type: object
+          properties:
+            IncludeDeleted:
+              type: boolean
+              example: false
+    ReferenceApiDto:
+      description: Public reference DTO returned through branch reference endpoints.
+      type: object
+      properties:
+        Class:
+          type: string
+          example: ReferenceDto
+        ReferenceId:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/ReferenceId'
+        OwnerId:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/OwnerId'
+        OrganizationId:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/OrganizationId'
+        RepositoryId:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/RepositoryId'
+        BranchId:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/BranchId'
+        DirectoryId:
+          type: string
+          format: uuid
+          description: DirectoryVersionId represented by the current server DTO field name.
+          example: 33a4e36b-828f-4fae-9343-50b6560dc842
+        Sha256Hash:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Sha256Hash'
+        ReferenceType:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/ReferenceType'
+        ReferenceText:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/ReferenceText'
+        Links:
+          type: array
+          items:
+            type: string
+        CreatedAt:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant'
+        UpdatedAt:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant'
+          nullable: true
+        DeletedAt:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant'
+          nullable: true
+        DeleteReason:
+          type: string
+    BranchApiDto:
+      description: Public branch DTO returned through branch endpoints.
+      type: object
+      properties:
+        Class:
+          type: string
+          example: BranchDto
+        BranchId:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/BranchId'
+        BranchName:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/BranchName'
+        ParentBranchId:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/BranchId'
+        OwnerId:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/OwnerId'
+        OrganizationId:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/OrganizationId'
+        RepositoryId:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/RepositoryId'
+        BasedOn:
+          $ref: '#/ReferenceApiDto'
+        UserId:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/UserId'
+        AssignEnabled:
+          type: boolean
+        PromotionEnabled:
+          type: boolean
+        CommitEnabled:
+          type: boolean
+        CheckpointEnabled:
+          type: boolean
+        SaveEnabled:
+          type: boolean
+        TagEnabled:
+          type: boolean
+        ExternalEnabled:
+          type: boolean
+        AutoRebaseEnabled:
+          type: boolean
+        PromotionMode:
+          type: string
+          example: IndividualOnly
+        LatestReference:
+          $ref: '#/ReferenceApiDto'
+        LatestPromotion:
+          $ref: '#/ReferenceApiDto'
+        LatestCommit:
+          $ref: '#/ReferenceApiDto'
+        LatestCheckpoint:
+          $ref: '#/ReferenceApiDto'
+        LatestSave:
+          $ref: '#/ReferenceApiDto'
+        ShouldRecomputeLatestReferences:
+          type: boolean
+        CreatedAt:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant'
+        UpdatedAt:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant'
+          nullable: true
+        DeletedAt:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant'
+          nullable: true
+        DeleteReason:
+          type: string
+    BranchReturnValue:
+      description: Grace response envelope whose ReturnValue contains a branch.
+      type: object
+      properties:
+        ReturnValue:
+          $ref: '#/BranchApiDto'
+        EventTime:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant'
+        CorrelationId:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/CorrelationId'
+        Properties:
+          type: object
+          additionalProperties:
+            type: string
+      required: [ReturnValue, EventTime, CorrelationId, Properties]
+      example: &branchReturnValueExample
+        ReturnValue:
+          Class: BranchDto
+          BranchId: de7bf47d-23ae-4599-af68-68a317ea390d
+          BranchName: main
+          ParentBranchId: 00000000-0000-0000-0000-000000000000
+          OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+          OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+          RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+          BasedOn:
+            ReferenceId: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
+          UserId: user:alice
+          AssignEnabled: false
+          PromotionEnabled: true
+          CommitEnabled: true
+          CheckpointEnabled: true
+          SaveEnabled: true
+          TagEnabled: true
+          ExternalEnabled: false
+          AutoRebaseEnabled: true
+          PromotionMode: IndividualOnly
+          LatestReference:
+            ReferenceId: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
+          LatestPromotion:
+            ReferenceId: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
+          LatestCommit:
+            ReferenceId: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
+          LatestCheckpoint:
+            ReferenceId: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
+          LatestSave:
+            ReferenceId: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
+          ShouldRecomputeLatestReferences: false
+          CreatedAt: '2026-06-04T18:15:00Z'
+          DeleteReason: ''
+        EventTime: '2026-06-04T18:15:00Z'
+        CorrelationId: cli-20260604T181500Z-0001
+        Properties:
+          Path: /branch/get
+    ReferenceReturnValue:
+      description: Grace response envelope whose ReturnValue contains a reference.
+      type: object
+      properties:
+        ReturnValue:
+          $ref: '#/ReferenceApiDto'
+        EventTime:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant'
+        CorrelationId:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/CorrelationId'
+        Properties:
+          type: object
+          additionalProperties:
+            type: string
+      required: [ReturnValue, EventTime, CorrelationId, Properties]
+      example: &referenceReturnValueExample
+        ReturnValue:
+          Class: ReferenceDto
+          ReferenceId: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
+          BranchId: de7bf47d-23ae-4599-af68-68a317ea390d
+          DirectoryId: 33a4e36b-828f-4fae-9343-50b6560dc842
+          Sha256Hash: 805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243
+          ReferenceType: Commit
+          ReferenceText: Capture release candidate.
+          CreatedAt: '2026-06-04T18:15:00Z'
+        EventTime: '2026-06-04T18:15:00Z'
+        CorrelationId: cli-20260604T181500Z-0001
+        Properties:
+          Path: /branch/getReference
+    ReferenceListReturnValue:
+      description: Grace response envelope whose ReturnValue contains references.
+      type: object
+      properties:
+        ReturnValue:
+          type: array
+          items:
+            $ref: '#/ReferenceApiDto'
+        EventTime:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant'
+        CorrelationId:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/CorrelationId'
+        Properties:
+          type: object
+          additionalProperties:
+            type: string
+      required: [ReturnValue, EventTime, CorrelationId, Properties]
+      example:
+        ReturnValue:
+          - Class: ReferenceDto
+            ReferenceId: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
+            BranchId: de7bf47d-23ae-4599-af68-68a317ea390d
+            DirectoryId: 33a4e36b-828f-4fae-9343-50b6560dc842
+            Sha256Hash: 805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243
+            ReferenceType: Commit
+            ReferenceText: Capture release candidate.
+            CreatedAt: '2026-06-04T18:15:00Z'
+        EventTime: '2026-06-04T18:15:00Z'
+        CorrelationId: cli-20260604T181500Z-0001
+        Properties:
+          Path: /branch/getReferences
+    BranchResponse:
+      description: OK
+      content:
+        application/json:
+          schema:
+            $ref: '#/BranchReturnValue'
+          examples:
+            branch:
+              summary: Branch response envelope
+              value: *branchReturnValueExample
+    ReferenceResponse:
+      description: OK
+      content:
+        application/json:
+          schema:
+            $ref: '#/ReferenceReturnValue'
+          examples:
+            reference:
+              summary: Reference response envelope
+              value: *referenceReturnValueExample
+    ReferenceListResponse:
+      description: OK
+      content:
+        application/json:
+          schema:
+            $ref: '#/ReferenceListReturnValue'
