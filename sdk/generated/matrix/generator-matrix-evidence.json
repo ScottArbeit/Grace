@@ -177,7 +177,7 @@
       "command": "cargo check",
       "exitCode": 0,
       "evidence": [
-        "Finished `dev` profile [unoptimized + debuginfo] target(s) in 18.54s"
+        "Finished `dev` profile [unoptimized + debuginfo] target(s)"
       ]
     }
   ],

@@ -119,7 +119,12 @@ function Select-EvidenceLines {
     foreach ($line in $Lines) {
         foreach ($pattern in $patterns) {
             if ($line -match $pattern) {
-                $evidence.Add($line.Trim())
+                $evidenceLine = $line.Trim()
+                if ($evidenceLine -match '^Finished `dev` profile .* target\(s\) in ') {
+                    $evidenceLine = 'Finished `dev` profile [unoptimized + debuginfo] target(s)'
+                }
+
+                $evidence.Add($evidenceLine)
                 break
             }
         }
@@ -152,6 +157,20 @@ function New-Directory {
     param([string] $Path)
 
     New-Item -ItemType Directory -Force -Path $Path | Out-Null
+}
+
+function Write-GeneratedOutputAttributes {
+    param([string] $RepoRoot)
+
+    $attributesPath = Join-Path $RepoRoot 'sdk\generated\matrix\openapi-generator\.gitattributes'
+    New-Directory (Split-Path -Parent $attributesPath)
+    $content = @(
+        '# OpenAPI Generator prototype output is committed as raw generator evidence.',
+        '# Do not hand-edit generated files to satisfy repository whitespace style.',
+        '** -whitespace',
+        ''
+    ) -join "`n"
+    [System.IO.File]::WriteAllText($attributesPath, $content, [System.Text.UTF8Encoding]::new($false))
 }
 
 function Get-DirectoryManifestHash {
@@ -243,6 +262,17 @@ function New-MatrixEntry {
     }
 }
 
+function Set-MatrixEntryRejected {
+    param(
+        [object] $Entry,
+        [string] $Outcome,
+        [string] $Conclusion
+    )
+
+    $Entry['outcome'] = $Outcome
+    $Entry['conclusion'] = $Conclusion
+}
+
 $repoRoot = Get-RepoRoot
 $projection = Join-Path $repoRoot 'src\OpenAPI\Grace.OpenAPI.3.1.2.yaml'
 $matrixRoot = Join-Path $repoRoot 'sdk\generated\matrix'
@@ -264,6 +294,7 @@ $toolVersions = [ordered]@{
 $kiotaPath = Get-KiotaPath $repoRoot
 $toolVersions.kiota = (& $kiotaPath --version 2>&1 | Select-Object -First 1).ToString().Trim()
 $npxExecutable = if ($IsWindows) { 'npx.cmd' } else { 'npx' }
+$npmExecutable = if ($IsWindows) { 'npm.cmd' } else { 'npm' }
 $nswagVersionResult = Invoke-CapturedNative $npxExecutable @('--yes', 'nswag', 'version') $repoRoot
 $nswagVersionLine = $nswagVersionResult.output | Where-Object { $_ -match '^NSwag version:' } | Select-Object -First 1
 $toolVersions.nswag = if ($null -ne $nswagVersionLine) { $nswagVersionLine.ToString().Trim() } else { 'unavailable' }
@@ -331,6 +362,7 @@ $entries.Add((New-MatrixEntry 'NSwag' '.NET' 'npx --yes nswag openapi2csclient' 
 
 if (-not $SkipGeneration) {
     Remove-OwnedOutput $repoRoot 'sdk\generated\matrix\openapi-generator'
+    Write-GeneratedOutputAttributes $repoRoot
 
     $openApiTypeScriptPath = 'sdk\generated\matrix\openapi-generator\typescript-fetch'
     $openApiTypeScript = Invoke-OpenApiGenerator $repoRoot 'typescript-fetch' $openApiTypeScriptPath @(
@@ -373,9 +405,9 @@ if (-not $SkipGeneration) {
 }
 
 if (-not $SkipProbes) {
-    $npmInstall = Invoke-CapturedNative 'npm.cmd' @('install', '--ignore-scripts') `
+    $npmInstall = Invoke-CapturedNative $npmExecutable @('install', '--ignore-scripts') `
         (Join-Path $repoRoot 'sdk\generated\matrix\openapi-generator\typescript-fetch')
-    $npmBuild = Invoke-CapturedNative 'npm.cmd' @('run', 'build') `
+    $npmBuild = Invoke-CapturedNative $npmExecutable @('run', 'build') `
         (Join-Path $repoRoot 'sdk\generated\matrix\openapi-generator\typescript-fetch')
     $probeEntries.Add([ordered]@{
         name = 'TypeScript generated client import/build'
@@ -434,6 +466,59 @@ foreach ($relativePath in @(
 $matrixEntries = @($entries.ToArray())
 $probes = @($probeEntries.ToArray())
 $deterministicRegeneration = @($deterministicEntries.ToArray())
+$acceptanceFailures = New-Object System.Collections.Generic.List[string]
+
+foreach ($entry in $matrixEntries) {
+    if ($entry.generator -eq 'OpenAPI Generator' -and $entry.outcome -eq 'Accepted with guardrails' -and
+        $entry.exitCode -ne 0) {
+        Set-MatrixEntryRejected $entry 'Rejected after generation failure' `
+            'Generation command failed, so this accepted proof point is not satisfied.'
+        $acceptanceFailures.Add("$($entry.generator) $($entry.language) generation failed with exit code $($entry.exitCode).")
+    }
+}
+
+if ($SkipProbes) {
+    foreach ($entry in $matrixEntries) {
+        if ($entry.generator -eq 'OpenAPI Generator' -and $entry.outcome -eq 'Accepted with guardrails') {
+            Set-MatrixEntryRejected $entry 'Not accepted; probes skipped' `
+                'Compile/import probes were skipped, so this accepted proof point is not satisfied.'
+            $acceptanceFailures.Add("$($entry.generator) $($entry.language) probes were skipped.")
+        }
+    }
+}
+else {
+    $probeExpectations = @(
+        @{ name = 'TypeScript generated client import/build'; language = 'TypeScript' },
+        @{ name = 'Python generated client import/build'; language = 'Python' },
+        @{ name = 'Rust generated client cargo check'; language = 'Rust' }
+    )
+
+    foreach ($expectation in $probeExpectations) {
+        $probe = $probes | Where-Object { $_.name -eq $expectation.name } | Select-Object -First 1
+        $entry = $matrixEntries |
+            Where-Object { $_.generator -eq 'OpenAPI Generator' -and $_.language -eq $expectation.language } |
+            Select-Object -First 1
+
+        if ($null -eq $probe) {
+            if ($null -ne $entry -and $entry.outcome -eq 'Accepted with guardrails') {
+                Set-MatrixEntryRejected $entry 'Not accepted; probe missing' `
+                    'Required compile/import probe did not run, so this accepted proof point is not satisfied.'
+            }
+
+            $acceptanceFailures.Add("$($expectation.language) accepted proof point is missing its required probe.")
+            continue
+        }
+
+        if ($probe.exitCode -ne 0) {
+            if ($null -ne $entry -and $entry.outcome -eq 'Accepted with guardrails') {
+                Set-MatrixEntryRejected $entry 'Rejected after probe failure' `
+                    "Required $($expectation.name) probe failed, so this accepted proof point is not satisfied."
+            }
+
+            $acceptanceFailures.Add("$($expectation.language) probe failed with exit code $($probe.exitCode).")
+        }
+    }
+}
 
 $evidence = [ordered]@{
     schemaVersion = 1
@@ -457,3 +542,7 @@ $evidencePath = Join-Path $matrixRoot 'generator-matrix-evidence.json'
 $evidenceJson = $evidence | ConvertTo-Json -Depth 20
 [System.IO.File]::WriteAllText($evidencePath, ($evidenceJson -replace "`r`n", "`n") + "`n", [System.Text.UTF8Encoding]::new($false))
 Write-Host "Wrote $([IO.Path]::GetRelativePath($repoRoot, $evidencePath))."
+
+if ($acceptanceFailures.Count -gt 0) {
+    throw "Generator matrix accepted proof points failed: $($acceptanceFailures -join '; ')"
+}

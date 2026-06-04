@@ -69,6 +69,8 @@ errors in `DirectoryVersion`, `FileVersion`, `DiffPiece`, `FileDiff`, `FileSyste
 - Python generated client: editable install and `import grace_generated_openapi_probe` passed.
 - Rust generated client: `cargo check` passed.
 
+The matrix runner exits nonzero if an accepted OpenAPI Generator command or required accepted-language probe fails.
+
 ## Deterministic regeneration
 
 The runner records manifest hashes over generated files after cleanup of volatile build output:
