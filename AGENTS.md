@@ -61,12 +61,26 @@ completed sub-issues are checked.
 - Prefer vertical slices with focused tests and `pwsh ./scripts/validate.ps1 -Fast` as the normal validation gate.
 - Use `pwsh ./scripts/validate.ps1 -Full` when Aspire, emulators, storage, Service Bus, Cosmos DB, Redis,
   deployment/runtime behavior, or cross-service integration is affected.
-- Order validation to avoid duplicate builds. Run formatters before validation. If the slice will run
-  `pwsh ./scripts/validate.ps1 -Fast`, do not also run separate full-solution `dotnet build` or broad `dotnet test`
-  commands unless there is a specific diagnostic reason; prefer only the narrow focused tests that prove the changed
-  behavior, then `validate -Fast`.
-- When a focused test command uses `--no-build`, run the matching Release build for that project after formatting and
-  before the `--no-build` test command.
+- Order validation to avoid duplicate builds. Run targeted Fantomas formatting or checks before validation for touched
+  F# files, then choose exactly one final build/test gate. If the slice will run
+  `pwsh ./scripts/validate.ps1 -Fast` or `pwsh ./scripts/validate.ps1 -Full`, do not also ask workers to routinely run
+  project-specific `dotnet build` plus `dotnet test --no-build`; `validate` is the final build/test gate.
+- Focused project build/test is appropriate for RED evidence, failure diagnosis, skipped-validate workflows, tests
+  outside the selected validate profile, or issues that explicitly require a focused-only gate. When a focused test
+  command uses `--no-build`, run the matching Release build for that project after formatting and before the
+  `--no-build` test command.
+- Freshness or generated-file update workers follow the same validation ladder: formatting or freshness checks first,
+  then exactly one final build/test gate. If `validate -Fast` or `validate -Full` runs, do not also run routine focused
+  build/test commands.
+- Treat parallel work as two separate decisions: product/DAG independence and merge/write-set independence. Run
+  branches in parallel only when their write sets are disjoint enough to avoid predictable churn. Serialize or
+  merge-queue branches that touch shared project files such as `*.fsproj`, `Startup.Server.fs`, or the same test/helper
+  files. For broad waves, consider a preparatory compile-item or file-scaffold slice before later branches edit
+  separate files.
+- Before the Grace completion review gate, update the branch against current `origin/main`, verify ahead/behind,
+  verify the scoped diff and that no unexpected deletions are present, run the chosen validation gate, then spawn the
+  final review-only sibling. Review on a stale branch is exploratory pre-review and does not satisfy the completion
+  gate.
 - Commit after each completed slice and keep pull requests focused and reviewable.
 - When acting as the main implementation orchestrator, delegate all coding and fixing tasks to worker subagents and use
   fresh review-only subagents for code review. The main orchestrator must not implement, repair, inspect or validate

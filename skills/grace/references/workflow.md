@@ -33,9 +33,14 @@ For non-trivial tracked work:
 1. Claim the issue and create an issue-owned branch/worktree from latest `origin/main`.
 1. Inspect `git status --short --branch` before editing.
 1. Work in vertical slices through the closest stable public boundary.
-1. Run the focused validation first, then the selected repo validation profile.
+1. Run formatting or freshness checks first, then exactly one final build/test gate.
 1. Commit after each completed slice.
 1. Open a normal ready-for-review PR. Do not open draft PRs unless the user asks for a draft.
+
+For parallel work, separate product/DAG independence from merge/write-set independence. Parallelize only when the
+expected write sets are disjoint enough to avoid predictable churn. Serialize or merge-queue branches that touch shared
+project files such as `*.fsproj`, `Startup.Server.fs`, or the same test/helper files. For broad waves, consider a
+preparatory compile-item or file-scaffold slice before later branches edit separate files.
 
 ## Orchestration And Review
 
@@ -77,6 +82,19 @@ git diff --check
 
 Run `-Full` for Aspire integration, emulators, storage, Cosmos DB, Service Bus, Redis, runtime delivery, or
 cross-service behavior.
+
+Use the validation ladder from `docs/Development process.md`: run targeted Fantomas formatting or checks before
+validation for touched F# files, run freshness checks when needed, then choose exactly one final build/test gate. If
+`validate -Fast` or `validate -Full` will run, do not also ask workers to routinely run project-specific
+`dotnet build` plus `dotnet test --no-build`; `validate` is the final build/test gate.
+
+Focused project build/test remains appropriate for RED evidence, failure diagnosis, skipped-validate workflows, tests
+outside the selected validate profile, or explicitly focused-only issues. Freshness/update workers follow the same
+rule: formatting or freshness checks first, then one final build/test gate.
+
+Before the Grace completion review gate, update the branch against current `origin/main`, verify ahead/behind, verify
+the scoped diff and that no unexpected deletions are present, run the chosen validation gate, then spawn the final
+review-only sibling. Review on a stale branch is exploratory pre-review and does not satisfy completion.
 
 ## Merge Cleanup
 
