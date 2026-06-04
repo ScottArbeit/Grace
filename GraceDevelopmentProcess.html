@@ -381,6 +381,7 @@
             <li>Use <code>pwsh ./scripts/validate.ps1 -Fast</code> as the normal validation gate.</li>
             <li>Use <code>-Full</code> when Aspire, integration, emulators, or cross-service behavior changes.</li>
             <li>Keep the fork and PR contribution path for outside contributors.</li>
+            <li>Use epic integration branches when the whole epic is the production-safe unit for <code>main</code>.</li>
             <li>Map final integration language to Grace's promotion model: candidates, gates, attestations, and review reports.</li>
           </ul>
         </div>
@@ -491,6 +492,13 @@ Definition of done:</code></pre>
             For normal contribution work, use a focused branch and PR. For large or parallel work, prefer a task-owned
             worktree so unrelated work and existing dirty files stay isolated. If the user has asked to work in the
             current checkout, inspect <code>git status</code> first and avoid overwriting unrelated changes.
+          </p>
+          <p>
+            For epics, choose the merge strategy in the parent issue. Use direct-to-<code>main</code> slices only when
+            each sub-issue is independently production-safe. When intermediate states are not production-safe, create an
+            <code>epic/&lt;parent-issue&gt;-&lt;slug&gt;</code> integration branch from <code>origin/main</code>, target
+            sub-issue PRs to that branch, keep it refreshed and validated, and open the final epic-to-<code>main</code>
+            PR as the production release candidate.
           </p>
         </article>
 

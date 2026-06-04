@@ -26,10 +26,17 @@ update the issue before editing the new paths.
   sub-issues for each implementation step, assign each sub-issue's parent issue relationship to the epic in GitHub
   Relationships, and include a DAG in the parent issue that shows dependencies and parallelization opportunities. As
   each sub-issue completes, update the epic checklist.
+- During epic planning, choose the merge strategy. Direct-to-`main` slices are appropriate only when each sub-issue is
+  independently production-safe. If `main` is production-bound or intermediate states are not independently
+  production-safe, create an `epic/<parent-issue>-<slug>` integration branch from `origin/main`, branch sub-issue
+  worktrees from the current `origin/epic/...`, open sub-issue PRs to the epic branch, keep that branch refreshed from
+  `origin/main`, and use the final epic-to-`main` PR as the production release candidate.
 - Before assigning or starting a sub-issue, require the minimum detail gate: invariant tuple, forbidden implementation
   shapes, expected tests, and high-risk adversarial examples. The issue should be contextual enough for an
   implementation agent to succeed from the issue body alone without hidden project context.
-- Create or switch to an issue-owned branch/worktree from latest `origin/main` before editing implementation files.
+- Create or switch to an issue-owned branch/worktree from the selected base before editing implementation files: latest
+  `origin/main` for direct-to-`main` slices, or current `origin/epic/...` for sub-issues under an explicitly declared
+  epic integration branch.
 - When a task assigns a worktree different from the thread workspace root, every `apply_patch` filename must be an
   absolute path under the assigned worktree. After the first patch, verify git status in both locations.
 - Prefer vertical slices that prove one public behavior at a time through the closest stable boundary.
@@ -52,7 +59,8 @@ update the issue before editing the new paths.
 - Before the Grace completion review gate, update the branch against current `origin/main`, verify ahead/behind,
   verify the scoped diff and that no unexpected deletions are present, run the chosen validation gate, then spawn the
   final review-only sibling. Review on a stale branch is exploratory pre-review and does not satisfy the completion
-  gate.
+  gate. For sub-issue PRs targeting an epic integration branch, run that freshness gate against the current epic branch;
+  for the final epic-to-`main` PR, run it against current `origin/main`.
 - Resolve all compilation errors before considering a task complete.
 - Run impacted tests for each task and fix failures introduced by your changes.
 - Create a new git commit after each completed task to keep review scope clear.

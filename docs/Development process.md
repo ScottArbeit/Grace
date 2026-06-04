@@ -49,6 +49,34 @@ while still creating predictable merge churn. Before assigning parallel branches
 - For broad waves, consider a preparatory compile-item or file-scaffold slice, then let later branches edit separate
   files.
 
+### Epic Merge Strategy
+
+During epic planning, choose the merge strategy and record it in the parent issue.
+
+- `direct-to-main`: Use this only when every sub-issue is independently production-safe and may be deployed from
+  `main` before the rest of the epic lands.
+- `epic-integration-branch`: Use this when `main` is production-bound, when intermediate states are not independently
+  production-safe, or when the whole epic is the coherent unit intended for `main`.
+
+For `epic-integration-branch`, create `epic/<parent-issue>-<short-slug>` from current `origin/main`. Sub-issue
+branches and worktrees start from the current `origin/epic/<parent-issue>-<short-slug>`, and sub-issue pull requests
+target the epic branch. The epic branch is an integration branch, not a production deployment branch. The final
+ready-for-review pull request from the epic branch to `main` is the production release candidate for the epic.
+
+When using an epic integration branch:
+
+- Keep the parent issue DAG, checklist, and merge strategy clear about which sub-issues target the epic branch.
+- Keep the epic branch refreshed from `origin/main`, especially before later sub-issue waves and before the final
+  epic-to-`main` pull request.
+- Ensure CI validates pull requests targeting `epic/**`, or record the CI gap and required local validation in the
+  parent issue before assigning workers.
+- Treat each sub-issue as complete when it is reviewed, validated, merged to the epic branch, and cleaned up.
+- Treat the epic as complete only after the final epic-to-`main` pull request is reviewed, validated against current
+  `origin/main`, merged to `main`, and cleaned up.
+- Manually link sub-issue pull requests or branches to their issues when needed. GitHub closing keywords are only
+  reliable for pull requests targeting the repository's default branch, so sub-issue closure may need to happen through
+  explicit issue updates or the final epic-to-`main` pull request.
+
 The parent issue must also include a sub-issue checklist. As sub-issues complete, update that checklist so completed
 sub-issues are checked.
 
@@ -115,8 +143,11 @@ Definition of done:
 
 ## Workspace
 
-After the GitHub issue exists, claim it before editing and create an issue-owned branch and worktree from the latest
-`origin/main`.
+After the GitHub issue exists, claim it before editing and create an issue-owned branch and worktree from the selected
+base:
+
+- direct-to-`main` issue: use the latest `origin/main`
+- sub-issue under an epic integration branch: use the current `origin/epic/<parent-issue>-<short-slug>`
 
 Post a claim comment before editing:
 
@@ -163,6 +194,16 @@ Recommended worktree shape:
 git fetch origin
 git worktree add ../Grace-gh-184 -b agent/184-short-slug origin/main
 Set-Location ../Grace-gh-184
+```
+
+Epic integration branch shape:
+
+```powershell
+git fetch origin
+git worktree add ../Grace-epic-184 -b epic/184-short-slug origin/main
+git push -u origin epic/184-short-slug
+git worktree add ../Grace-gh-185 -b agent/185-short-slug origin/epic/184-short-slug
+Set-Location ../Grace-gh-185
 ```
 
 Always inspect the current state before editing:
@@ -494,7 +535,13 @@ comments as the review loop continues:
 - rollback or recovery notes when the change touches runtime or data
 - useful AI prompts used for diagnosis or implementation, when contributing externally
 
-Before the Grace completion review gate, update the branch against current `origin/main`, then verify:
+Before the Grace completion review gate, update the branch against its required base:
+
+- direct-to-`main` issue branch: current `origin/main`
+- sub-issue branch targeting an epic integration branch: current `origin/epic/<parent-issue>-<short-slug>`
+- final epic-to-`main` branch: current `origin/main`
+
+Then verify:
 
 - ahead/behind status shows the branch is current enough for a blocking review decision
 - the scoped diff still contains only the intended write set
@@ -540,5 +587,9 @@ After merge or promotion:
 4. Run `git fetch --prune` and `git pull --ff-only` in the local repo so `main` is up to date.
 5. Update the task record with final status and follow-ups.
 6. Leave unrelated local changes untouched.
+
+For epic integration branch mode, sub-issue cleanup retires the sub-issue branch and worktree after the sub-issue PR is
+merged to the epic branch. Final epic cleanup also retires the epic branch and worktree after the epic-to-`main` PR is
+merged and local `main` is fast-forwarded.
 
 When the user says "PR is merged" or uses equivalent wording, treat that as a request to perform this cleanup sequence.

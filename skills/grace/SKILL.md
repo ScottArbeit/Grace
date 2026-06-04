@@ -43,6 +43,9 @@ Read these files on demand:
   webhooks, approval policies, approval requests, UploadSessions, FileManifests, ContentBlocks, and
   ManifestContributionWorkflows.
 - Keep changes vertically sliced through the nearest public boundary whenever possible.
+- For multi-step epics, choose the merge strategy during planning. Use direct-to-`main` slices only when each sub-issue
+  is independently production-safe; otherwise use the `epic/<parent-issue>-<slug>` integration branch mode described in
+  `references/workflow.md`.
 - Coordinate across `Grace.Types`, `Grace.Shared`, `Grace.Server`, `Grace.Actors`, `Grace.SDK`, `Grace.CLI`, and tests
   when one surface changes another.
 - Prefer `pwsh ./scripts/validate.ps1 -Fast`; use `-Full` when Aspire, emulators, Service Bus, storage, Redis,
