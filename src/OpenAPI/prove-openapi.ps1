@@ -458,6 +458,105 @@ function Assert-OperationTextMatches {
     }
 }
 
+function Get-OpenApiNamedBlock {
+    param(
+        [string] $Text,
+        [string] $Name
+    )
+
+    $lines = [regex]::Split($Text, '\r?\n')
+    $blockLinePattern = "^(?<indent>\s*)$([regex]::Escape($Name)):\s*(?:#.*)?$"
+    $blockStart = -1
+    $blockIndent = -1
+
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        $match = [regex]::Match($lines[$i], $blockLinePattern)
+        if ($match.Success) {
+            $blockStart = $i
+            $blockIndent = $match.Groups['indent'].Value.Length
+            break
+        }
+    }
+
+    if ($blockStart -lt 0) {
+        return $null
+    }
+
+    $blockEnd = $lines.Count
+    for ($i = $blockStart + 1; $i -lt $lines.Count; $i++) {
+        if ([string]::IsNullOrWhiteSpace($lines[$i])) {
+            continue
+        }
+
+        $indent = Get-YamlIndentLength $lines[$i]
+        if ($indent -le $blockIndent) {
+            $blockEnd = $i
+            break
+        }
+    }
+
+    return [pscustomobject]@{
+        Lines = @($lines[$blockStart..($blockEnd - 1)])
+        Text = ($lines[$blockStart..($blockEnd - 1)] -join [Environment]::NewLine)
+        Indent = $blockIndent
+    }
+}
+
+function Assert-OpenApiResponseIsRawStringDictionary {
+    param(
+        [string] $Text,
+        [string] $ResponseName,
+        [string] $MessagePrefix
+    )
+
+    $responseBlock = Get-OpenApiNamedBlock $Text $ResponseName
+    if ($null -eq $responseBlock) {
+        Add-Failure "$MessagePrefix response component is missing."
+        return
+    }
+
+    $responseText = [string] $responseBlock.Text
+    foreach ($forbiddenProperty in @('ReturnValue', 'EventTime', 'CorrelationId', 'Properties')) {
+        if ($responseText -match "(?m)^\s+$([regex]::Escape($forbiddenProperty)):\s*") {
+            Add-Failure "$MessagePrefix response must be a raw id-to-name dictionary, not an envelope or DTO array."
+            return
+        }
+    }
+
+    foreach ($forbiddenReference in @('OrganizationDto', 'RepositoryDto')) {
+        if ($responseText.Contains($forbiddenReference, [StringComparison]::Ordinal)) {
+            Add-Failure "$MessagePrefix response must be a raw id-to-name dictionary, not an envelope or DTO array."
+            return
+        }
+    }
+
+    if ($responseText -notmatch "(?m)^\s+schema:\s*$" -or
+        $responseText -notmatch "(?m)^\s+type:\s*object\s*$" -or
+        $responseText -notmatch "(?m)^\s+additionalProperties:\s*$" -or
+        $responseText -notmatch "(?m)^\s+type:\s*string\s*$") {
+        Add-Failure "$MessagePrefix response must model application/json as a raw object with string additionalProperties."
+    }
+}
+
+function Assert-OpenApiNamedBlockDoesNotContain {
+    param(
+        [string] $Text,
+        [string] $BlockName,
+        [string] $ForbiddenNeedle,
+        [string] $Message
+    )
+
+    $block = Get-OpenApiNamedBlock $Text $BlockName
+    if ($null -eq $block) {
+        Add-Failure "OpenAPI block '$BlockName' is missing."
+        return
+    }
+
+    if ([string] $block.Text -match "(?m)^\s+$([regex]::Escape($ForbiddenNeedle)):\s*") {
+        Add-Failure $Message
+    }
+}
+
 function Get-YamlIndentLength {
     param([string] $Line)
 
@@ -868,6 +967,205 @@ function Test-OpenApiBranchReferenceDiffDetails {
     }
 }
 
+function Test-OpenApiOwnerOrganizationRepositoryDirectoryDetails {
+    param(
+        [string] $OpenApiRoot,
+        [object[]] $Operations
+    )
+
+    $expectedOperations = @(
+        [pscustomobject]@{ File = 'Owner.Paths.OpenAPI.yaml'; OperationId = 'CreateOwner'; Tag = 'Owners'; Response = 'OwnerCommandResponse' },
+        [pscustomobject]@{ File = 'Owner.Paths.OpenAPI.yaml'; OperationId = 'SetOwnerName'; Tag = 'Owners'; Response = 'OwnerCommandResponse' },
+        [pscustomobject]@{ File = 'Owner.Paths.OpenAPI.yaml'; OperationId = 'SetOwnerType'; Tag = 'Owners'; Response = 'OwnerCommandResponse' },
+        [pscustomobject]@{ File = 'Owner.Paths.OpenAPI.yaml'; OperationId = 'SetOwnerSearchVisibility'; Tag = 'Owners'; Response = 'OwnerCommandResponse' },
+        [pscustomobject]@{ File = 'Owner.Paths.OpenAPI.yaml'; OperationId = 'SetOwnerDescription'; Tag = 'Owners'; Response = 'OwnerCommandResponse' },
+        [pscustomobject]@{ File = 'Owner.Paths.OpenAPI.yaml'; OperationId = 'ListOwnerOrganizations'; Tag = 'Owners'; Response = 'OwnerOrganizationsResponse' },
+        [pscustomobject]@{ File = 'Owner.Paths.OpenAPI.yaml'; OperationId = 'DeleteOwner'; Tag = 'Owners'; Response = 'OwnerCommandResponse' },
+        [pscustomobject]@{ File = 'Owner.Paths.OpenAPI.yaml'; OperationId = 'UndeleteOwner'; Tag = 'Owners'; Response = 'OwnerCommandResponse' },
+        [pscustomobject]@{ File = 'Owner.Paths.OpenAPI.yaml'; OperationId = 'GetOwner'; Tag = 'Owners'; Response = 'OwnerResponse' },
+
+        [pscustomobject]@{ File = 'Organization.Paths.OpenAPI.yaml'; OperationId = 'CreateOrganization'; Tag = 'Organizations'; Response = 'OrganizationCommandResponse' },
+        [pscustomobject]@{ File = 'Organization.Paths.OpenAPI.yaml'; OperationId = 'SetOrganizationName'; Tag = 'Organizations'; Response = 'OrganizationCommandResponse' },
+        [pscustomobject]@{ File = 'Organization.Paths.OpenAPI.yaml'; OperationId = 'SetOrganizationType'; Tag = 'Organizations'; Response = 'OrganizationCommandResponse' },
+        [pscustomobject]@{ File = 'Organization.Paths.OpenAPI.yaml'; OperationId = 'SetOrganizationSearchVisibility'; Tag = 'Organizations'; Response = 'OrganizationCommandResponse' },
+        [pscustomobject]@{ File = 'Organization.Paths.OpenAPI.yaml'; OperationId = 'SetOrganizationDescription'; Tag = 'Organizations'; Response = 'OrganizationCommandResponse' },
+        [pscustomobject]@{ File = 'Organization.Paths.OpenAPI.yaml'; OperationId = 'ListOrganizationRepositories'; Tag = 'Organizations'; Response = 'OrganizationRepositoriesResponse' },
+        [pscustomobject]@{ File = 'Organization.Paths.OpenAPI.yaml'; OperationId = 'DeleteOrganization'; Tag = 'Organizations'; Response = 'OrganizationCommandResponse' },
+        [pscustomobject]@{ File = 'Organization.Paths.OpenAPI.yaml'; OperationId = 'UndeleteOrganization'; Tag = 'Organizations'; Response = 'OrganizationCommandResponse' },
+        [pscustomobject]@{ File = 'Organization.Paths.OpenAPI.yaml'; OperationId = 'GetOrganization'; Tag = 'Organizations'; Response = 'OrganizationResponse' },
+
+        [pscustomobject]@{ File = 'Repository.Paths.OpenAPI.yaml'; OperationId = 'CreateRepository'; Tag = 'Repositories'; Response = 'RepositoryCommandResponse' },
+        [pscustomobject]@{ File = 'Repository.Paths.OpenAPI.yaml'; OperationId = 'SetRepositoryVisibility'; Tag = 'Repositories'; Response = 'RepositoryCommandResponse' },
+        [pscustomobject]@{ File = 'Repository.Paths.OpenAPI.yaml'; OperationId = 'SetRepositoryName'; Tag = 'Repositories'; Response = 'RepositoryCommandResponse' },
+        [pscustomobject]@{ File = 'Repository.Paths.OpenAPI.yaml'; OperationId = 'SetRepositorySaveDays'; Tag = 'Repositories'; Response = 'RepositoryCommandResponse' },
+        [pscustomobject]@{ File = 'Repository.Paths.OpenAPI.yaml'; OperationId = 'SetRepositoryCheckpointDays'; Tag = 'Repositories'; Response = 'RepositoryCommandResponse' },
+        [pscustomobject]@{ File = 'Repository.Paths.OpenAPI.yaml'; OperationId = 'SetRepositoryStatus'; Tag = 'Repositories'; Response = 'RepositoryCommandResponse' },
+        [pscustomobject]@{ File = 'Repository.Paths.OpenAPI.yaml'; OperationId = 'SetRepositoryDefaultServerApiVersion'; Tag = 'Repositories'; Response = 'RepositoryCommandResponse' },
+        [pscustomobject]@{ File = 'Repository.Paths.OpenAPI.yaml'; OperationId = 'SetRepositoryRecordSaves'; Tag = 'Repositories'; Response = 'RepositoryCommandResponse' },
+        [pscustomobject]@{ File = 'Repository.Paths.OpenAPI.yaml'; OperationId = 'SetRepositoryDescription'; Tag = 'Repositories'; Response = 'RepositoryCommandResponse' },
+        [pscustomobject]@{ File = 'Repository.Paths.OpenAPI.yaml'; OperationId = 'DeleteRepository'; Tag = 'Repositories'; Response = 'RepositoryCommandResponse' },
+        [pscustomobject]@{ File = 'Repository.Paths.OpenAPI.yaml'; OperationId = 'UndeleteRepository'; Tag = 'Repositories'; Response = 'RepositoryCommandResponse' },
+        [pscustomobject]@{ File = 'Repository.Paths.OpenAPI.yaml'; OperationId = 'RepositoryExists'; Tag = 'Repositories'; Response = 'RepositoryBooleanResponse' },
+        [pscustomobject]@{ File = 'Repository.Paths.OpenAPI.yaml'; OperationId = 'RepositoryIsEmpty'; Tag = 'Repositories'; Response = 'RepositoryBooleanResponse' },
+        [pscustomobject]@{ File = 'Repository.Paths.OpenAPI.yaml'; OperationId = 'GetRepository'; Tag = 'Repositories'; Response = 'RepositoryResponse' },
+        [pscustomobject]@{ File = 'Repository.Paths.OpenAPI.yaml'; OperationId = 'ListRepositoryBranches'; Tag = 'Repositories'; Response = 'RepositoryBranchesResponse' },
+        [pscustomobject]@{ File = 'Repository.Paths.OpenAPI.yaml'; OperationId = 'ListRepositoryReferencesByReferenceId'; Tag = 'Repositories'; Response = 'RepositoryReferencesResponse' },
+        [pscustomobject]@{ File = 'Repository.Paths.OpenAPI.yaml'; OperationId = 'ListRepositoryBranchesByBranchId'; Tag = 'Repositories'; Response = 'RepositoryBranchesResponse' },
+
+        [pscustomobject]@{ File = 'Directory.Paths.OpenAPI.yaml'; OperationId = 'CreateDirectoryVersion'; Tag = 'Directories'; Response = 'DirectoryCommandResponse' },
+        [pscustomobject]@{ File = 'Directory.Paths.OpenAPI.yaml'; OperationId = 'GetDirectoryVersion'; Tag = 'Directories'; Response = 'DirectoryVersionResponse' },
+        [pscustomobject]@{ File = 'Directory.Paths.OpenAPI.yaml'; OperationId = 'ListDirectoryVersionsRecursive'; Tag = 'Directories'; Response = 'DirectoryVersionListResponse' },
+        [pscustomobject]@{ File = 'Directory.Paths.OpenAPI.yaml'; OperationId = 'ListDirectoryVersionsById'; Tag = 'Directories'; Response = 'DirectoryVersionListResponse' },
+        [pscustomobject]@{ File = 'Directory.Paths.OpenAPI.yaml'; OperationId = 'GetDirectoryVersionBySha256Hash'; Tag = 'Directories'; Response = 'DirectoryVersionResponse' },
+        [pscustomobject]@{ File = 'Directory.Paths.OpenAPI.yaml'; OperationId = 'SaveDirectoryVersions'; Tag = 'Directories'; Response = 'DirectoryCommandResponse' }
+    )
+
+    $familyFiles = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($file in @('Owner.Paths.OpenAPI.yaml', 'Organization.Paths.OpenAPI.yaml', 'Repository.Paths.OpenAPI.yaml', 'Directory.Paths.OpenAPI.yaml')) {
+        [void] $familyFiles.Add($file)
+    }
+
+    $genericOperationIds = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($operationId in @('Create', 'Get', 'Delete', 'List', 'Update', 'Set', 'Exists', 'IsEmpty', 'Save')) {
+        [void] $genericOperationIds.Add($operationId)
+    }
+
+    foreach ($operation in @($Operations | Where-Object { $familyFiles.Contains($_.File) })) {
+        $location = "$($operation.File):$($operation.LineNumber) $($operation.Method.ToUpperInvariant()) $($operation.Path)"
+
+        if ([string]::IsNullOrWhiteSpace([string] $operation.OperationId)) {
+            Add-Failure "Owner/organization/repository/directory OpenAPI operation is missing an SDK-friendly operationId: $location"
+            continue
+        }
+
+        if ($genericOperationIds.Contains([string] $operation.OperationId)) {
+            Add-Failure "Owner/organization/repository/directory OpenAPI operationId '$($operation.OperationId)' is too generic for SDK generation: $location"
+        }
+
+        if (-not $operation.HasTag) {
+            Add-Failure "Owner/organization/repository/directory OpenAPI operation is missing its primary SDK tag: $location"
+        }
+
+        if (-not ($operation.Has400 -and $operation.Has500)) {
+            Add-Failure "Owner/organization/repository/directory OpenAPI operation is missing reusable 400/500 error responses: $location"
+        }
+
+        Assert-OperationTextMatches `
+            $operation `
+            "(?s)responses:\s*.*?'200':\s*.*?\`$ref:\s*'\./(?:Owner|Organization|Repository|Directory)\.Components\.OpenAPI\.yaml#/" `
+            "Owner/organization/repository/directory operation must use a family success response component: $location"
+
+        Assert-OperationHasJsonRequestExample `
+            $operation `
+            "Owner/organization/repository/directory operation with a JSON request body must include an example: $location"
+
+        Assert-OperationSha256ExamplesAreValid $operation @()
+    }
+
+    foreach ($expected in $expectedOperations) {
+        $operation = Get-RequiredOpenApiOperation $Operations $expected.File $expected.OperationId
+
+        Assert-OperationTextMatches `
+            $operation `
+            "(?s)tags:\s*-\s+$($expected.Tag)\b" `
+            "Operation '$($expected.OperationId)' must carry primary SDK tag '$($expected.Tag)'."
+
+        $componentFilePrefix = $expected.File -replace '\.Paths\.OpenAPI\.yaml$', ''
+        Assert-OperationTextMatches `
+            $operation `
+            "(?s)responses:\s*.*?'200':\s*.*?\`$ref:\s*'\./$([regex]::Escape($componentFilePrefix))\.Components\.OpenAPI\.yaml#/$($expected.Response)'" `
+            "Operation '$($expected.OperationId)' must use '$($expected.Response)' for its 200 envelope."
+    }
+
+    foreach ($commandExpectation in @(
+            [pscustomobject]@{ File = 'Owner.Components.OpenAPI.yaml'; Schema = 'OwnerCommandReturnValue' },
+            [pscustomobject]@{ File = 'Organization.Components.OpenAPI.yaml'; Schema = 'OrganizationCommandReturnValue' },
+            [pscustomobject]@{ File = 'Repository.Components.OpenAPI.yaml'; Schema = 'RepositoryCommandReturnValue' },
+            [pscustomobject]@{ File = 'Directory.Components.OpenAPI.yaml'; Schema = 'DirectoryCommandReturnValue' }
+        )) {
+        $componentsText = Get-Content -LiteralPath (Join-Path $OpenApiRoot $commandExpectation.File) -Raw
+        Assert-OpenApiSchemaPropertyIsString `
+            $componentsText `
+            $commandExpectation.Schema `
+            'ReturnValue' `
+            "$($commandExpectation.Schema) must model command success ReturnValue as a string."
+    }
+
+    $repositoryComponentsText = Get-Content -LiteralPath (Join-Path $OpenApiRoot 'Repository.Components.OpenAPI.yaml') -Raw
+    foreach ($requiredRepositoryContract in @(
+            'ObjectStorageProvider:',
+            'RepositoryBooleanReturnValue:',
+            'RepositoryBranchesReturnValue:',
+            'RepositoryReferencesReturnValue:'
+        )) {
+        Assert-TextContains $repositoryComponentsText $requiredRepositoryContract "Repository OpenAPI components are missing '$requiredRepositoryContract'."
+    }
+
+    Assert-OperationTextMatches `
+        ([pscustomobject]@{ OperationText = $repositoryComponentsText }) `
+        "(?s)RepositoryBooleanReturnValue:\s*.*?ReturnValue:\s*.*?type:\s*boolean" `
+        'RepositoryBooleanReturnValue must keep exists/isEmpty ReturnValue as boolean.'
+
+    $directoryComponentsText = Get-Content -LiteralPath (Join-Path $OpenApiRoot 'Directory.Components.OpenAPI.yaml') -Raw
+    foreach ($requiredDirectoryContract in @(
+            'DirectoryVersionId:',
+            'DirectoryVersionApiDto:',
+            'DirectoryVersionReturnValue:',
+            'DirectoryVersionListReturnValue:'
+        )) {
+        Assert-TextContains $directoryComponentsText $requiredDirectoryContract "Directory OpenAPI components are missing '$requiredDirectoryContract'."
+    }
+
+    if ($directoryComponentsText -match '(DirectoryVersionCommand|DirectoryVersionEvent|DirectoryEvent|Actor)') {
+        Add-Failure 'Directory OpenAPI components must expose public parameter/DTO shapes, not internal actor command/event shapes.'
+    }
+
+    $ownerComponentsText = Get-Content -LiteralPath (Join-Path $OpenApiRoot 'Owner.Components.OpenAPI.yaml') -Raw
+    $organizationComponentsText = Get-Content -LiteralPath (Join-Path $OpenApiRoot 'Organization.Components.OpenAPI.yaml') -Raw
+    $dtoComponentsText = Get-Content -LiteralPath (Join-Path $OpenApiRoot 'Dto.Components.OpenAPI.yaml') -Raw
+
+    Assert-OpenApiResponseIsRawStringDictionary `
+        $ownerComponentsText `
+        'OwnerOrganizationsResponse' `
+        '/owner/listOrganizations'
+
+    Assert-OpenApiResponseIsRawStringDictionary `
+        $organizationComponentsText `
+        'OrganizationRepositoriesResponse' `
+        '/organization/listRepositories'
+
+    Assert-OpenApiNamedBlockDoesNotContain `
+        $ownerComponentsText `
+        'OwnerReturnValue' `
+        'Organizations' `
+        'OwnerReturnValue examples must not include non-existent OwnerDto.Organizations.'
+
+    Assert-OpenApiNamedBlockDoesNotContain `
+        $organizationComponentsText `
+        'OrganizationReturnValue' `
+        'Repositories' `
+        'OrganizationReturnValue examples must not include non-existent OrganizationDto.Repositories.'
+
+    Assert-OpenApiNamedBlockDoesNotContain `
+        $dtoComponentsText `
+        'OwnerDto' `
+        'Organizations' `
+        'OwnerDto schema must not include non-existent Organizations.'
+
+    Assert-OpenApiNamedBlockDoesNotContain `
+        $dtoComponentsText `
+        'OrganizationDto' `
+        'Repositories' `
+        'OrganizationDto schema must not include non-existent Repositories.'
+
+    $getBySha256HashOperation = Get-RequiredOpenApiOperation $Operations 'Directory.Paths.OpenAPI.yaml' 'GetDirectoryVersionBySha256Hash'
+    Assert-OperationSha256ExamplesAreValid $getBySha256HashOperation @('Sha256Hash')
+    Assert-OperationTextMatches `
+        $getBySha256HashOperation `
+        "(?s)responses:\s*.*?'200':\s*.*?\`$ref:\s*'\./Directory\.Components\.OpenAPI\.yaml#/DirectoryVersionResponse'" `
+        'GetDirectoryVersionBySha256Hash must use the server-returned directory-version DTO envelope.'
+}
+
 function Test-OpenApiSharedContractDetails {
     param(
         [string] $OpenApiRoot,
@@ -950,6 +1248,7 @@ function Test-OpenApiSharedContractDetails {
     }
 
     Test-OpenApiBranchReferenceDiffDetails $OpenApiRoot $Operations
+    Test-OpenApiOwnerOrganizationRepositoryDirectoryDetails $OpenApiRoot $Operations
 }
 
 function Test-OpenApiQuality {

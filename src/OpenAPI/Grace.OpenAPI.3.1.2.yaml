@@ -1351,1179 +1351,1282 @@ paths:
           $ref: '#/components/responses/500'
   /directory/create:
     post:
+      tags:
+        - Directories
       summary: Create a new directory version.
-      description: |
-        ### Validation rules
-
-        - `DirectoryVersion.DirectoryId` should be a valid and non-empty GUID.
-        - `DirectoryVersion.RepositoryId` should be a valid and non-empty GUID.
-        - The repository specified by `DirectoryVersion.RepositoryId` should exist.
-
-        ### Errors and Problem Details
-
-        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      description: Creates a directory version for the repository.
+      operationId: CreateDirectoryVersion
       requestBody:
         required: true
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/CreateParameters'
+            examples:
+              createDirectoryVersion:
+                summary: Create a directory version
+                value:
+                  CorrelationId: cli-20260604T181500Z-0001
+                  Principal: user:alice
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                  RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                  DirectoryVersionId: 33a4e36b-828f-4fae-9343-50b6560dc842
+                  DirectoryVersion:
+                    Class: DirectoryVersion
+                    DirectoryVersionId: 33a4e36b-828f-4fae-9343-50b6560dc842
+                    OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                    OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                    RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                    RelativePath: src
+                    Sha256Hash: 805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243
+                    Directories: []
+                    Files: []
+                    Size: 0
+                    CreatedAt: '2026-06-04T18:15:00Z'
+                    HashesValidated: true
       responses:
         '200':
-          $ref: '#/components/responses/200'
+          $ref: '#/components/responses/DirectoryCommandResponse'
         '400':
           $ref: '#/components/responses/400'
         '500':
           $ref: '#/components/responses/500'
   /directory/get:
     post:
+      tags:
+        - Directories
       summary: Get a directory version.
-      description: |
-        ### Validation rules
-
-        - `RepositoryId` should be a valid and non-empty GUID.
-        - `DirectoryId` should be a valid and non-empty GUID.
-        - The repository specified by `RepositoryId` should exist.
-        - The directory specified by `DirectoryId` should exist.
-
-        ### Errors and Problem Details
-
-        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      description: Gets a directory version DTO.
+      operationId: GetDirectoryVersion
       requestBody:
         required: true
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/GetParameters'
+            examples:
+              getDirectoryVersion:
+                summary: Get a directory version
+                value:
+                  CorrelationId: cli-20260604T181500Z-0001
+                  Principal: user:alice
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                  RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                  DirectoryVersionId: 33a4e36b-828f-4fae-9343-50b6560dc842
       responses:
         '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/DirectoryVersion'
+          $ref: '#/components/responses/DirectoryVersionResponse'
         '400':
           $ref: '#/components/responses/400'
         '500':
           $ref: '#/components/responses/500'
   /directory/getDirectoryVersionsRecursive:
     post:
-      summary: Get a directory version and all of its children.
-      description: |
-        ### Validation rules
-
-        - `RepositoryId` should be a valid and non-empty GUID.
-        - `DirectoryId` should be a valid and non-empty GUID.
-        - The repository specified by `RepositoryId` should exist.
-        - The directory specified by `DirectoryId` should exist.
-
-        ### Errors and Problem Details
-
-        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      tags:
+        - Directories
+      summary: List a directory version and its children.
+      description: Gets a directory version and all recursive child directory versions.
+      operationId: ListDirectoryVersionsRecursive
       requestBody:
         required: true
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/GetParameters'
+            examples:
+              listDirectoryVersionsRecursive:
+                summary: List recursive directory versions
+                value:
+                  CorrelationId: cli-20260604T181500Z-0001
+                  Principal: user:alice
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                  RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                  DirectoryVersionId: 33a4e36b-828f-4fae-9343-50b6560dc842
       responses:
         '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                type: array
-                $ref: '#/components/schemas/DirectoryVersion'
+          $ref: '#/components/responses/DirectoryVersionListResponse'
         '400':
           $ref: '#/components/responses/400'
         '500':
           $ref: '#/components/responses/500'
   /directory/getByDirectoryIds:
     post:
-      summary: Get a list of directory versions by directory IDs.
-      description: |
-        ### Validation rules
-
-        - `RepositoryId` should be a valid and non-empty GUID.
-        - The repository specified by `RepositoryId` should exist.
-        - The directories specified by `DirectoryIds` should exist.
-
-        ### Errors and Problem Details
-
-        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      tags:
+        - Directories
+      summary: List directory versions by id.
+      description: Gets directory version DTOs by directory version ids.
+      operationId: ListDirectoryVersionsById
       requestBody:
         required: true
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/GetByDirectoryIdsParameters'
+            examples:
+              listDirectoryVersionsById:
+                summary: List directory versions by id
+                value:
+                  CorrelationId: cli-20260604T181500Z-0001
+                  Principal: user:alice
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                  RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                  DirectoryVersionId: 33a4e36b-828f-4fae-9343-50b6560dc842
+                  DirectoryIds:
+                    - 33a4e36b-828f-4fae-9343-50b6560dc842
       responses:
         '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                type: array
-                $ref: '#/components/schemas/DirectoryVersion'
+          $ref: '#/components/responses/DirectoryVersionListResponse'
         '400':
           $ref: '#/components/responses/400'
         '500':
           $ref: '#/components/responses/500'
   /directory/getBySha256Hash:
     post:
-      summary: Get a directory version by its SHA256 hash.
-      description: |
-        ### Validation rules
-
-        - `DirectoryId` should be a valid and non-empty GUID.
-        - `RepositoryId` should be a valid and non-empty GUID.
-        - `Sha256Hash` should not be empty.
-        - The repository specified by `RepositoryId` should exist.
-
-        ### Errors and Problem Details
-
-        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      tags:
+        - Directories
+      summary: Get a directory version by SHA-256 hash.
+      description: Gets a directory version DTO by SHA-256 hash.
+      operationId: GetDirectoryVersionBySha256Hash
       requestBody:
         required: true
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/GetBySha256HashParameters'
+            examples:
+              getDirectoryVersionBySha256Hash:
+                summary: Get a directory version by SHA-256
+                value:
+                  CorrelationId: cli-20260604T181500Z-0001
+                  Principal: user:alice
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                  RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                  DirectoryVersionId: 33a4e36b-828f-4fae-9343-50b6560dc842
+                  Sha256Hash: 805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243
       responses:
         '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Sha256Hash'
+          $ref: '#/components/responses/DirectoryVersionResponse'
         '400':
           $ref: '#/components/responses/400'
         '500':
           $ref: '#/components/responses/500'
   /directory/saveDirectoryVersions:
     post:
-      summary: Save a list of directory versions.
-      description: |
-        ### Validation rules
-
-        - Each `DirectoryVersion` in the `DirectoryVersions` list should have valid properties:
-          - `DirectoryVersion.DirectoryId` should be a valid and non-empty GUID.
-          - `DirectoryVersion.RepositoryId` should be a valid and non-empty GUID.
-          - `DirectoryVersion.Sha256Hash` should not be empty.
-          - `DirectoryVersion.RelativePath` must not be empty.
-          - The repository specified by `DirectoryVersion.RepositoryId` should exist.
-
-        ### Errors and Problem Details
-
-        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      tags:
+        - Directories
+      summary: Save directory versions.
+      description: Saves a list of directory versions.
+      operationId: SaveDirectoryVersions
       requestBody:
         required: true
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/SaveDirectoryVersionsParameters'
+            examples:
+              saveDirectoryVersions:
+                summary: Save directory versions
+                value:
+                  CorrelationId: cli-20260604T181500Z-0001
+                  Principal: user:alice
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                  RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                  DirectoryVersionId: 33a4e36b-828f-4fae-9343-50b6560dc842
+                  DirectoryVersions:
+                    - Class: DirectoryVersion
+                      DirectoryVersionId: 33a4e36b-828f-4fae-9343-50b6560dc842
+                      OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                      OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                      RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                      RelativePath: src
+                      Sha256Hash: 805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243
+                      Directories: []
+                      Files: []
+                      Size: 0
+                      CreatedAt: '2026-06-04T18:15:00Z'
+                      HashesValidated: true
       responses:
         '200':
-          $ref: '#/components/responses/200'
+          $ref: '#/components/responses/DirectoryCommandResponse'
         '400':
           $ref: '#/components/responses/400'
         '500':
           $ref: '#/components/responses/500'
   /organization/create:
     post:
+      tags:
+        - Organizations
       summary: Create an organization.
-      description: |
-        ### Validation rules
-        - `OwnerId` must be a valid non-empty `Guid`.
-        - `OwnerName` must be a valid Grace name.
-        - Either `OwnerId` or `OwnerName` must be provided.
-        - `OrganizationId` is required and must not be empty.
-        - `OrganizationId` must be a valid non-empty `Guid`.
-        - `OrganizationName` is required and must not be empty.
-        - `OrganizationName` must be a valid Grace name.
-        - The specified `OwnerId` or `OwnerName` must exist.
-        - The specified `OrganizationId` must not already exist.
-
-        ### Errors and Problem Details
-        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      description: Creates an organization under an owner.
+      operationId: CreateOrganization
       requestBody:
         required: true
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/CreateOrganizationParameters'
+            examples:
+              createOrganization:
+                summary: Create an organization
+                value:
+                  CorrelationId: cli-20260604T181500Z-0001
+                  Principal: user:alice
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                  OrganizationName: alice-org
       responses:
         '200':
-          $ref: '#/components/responses/200'
+          $ref: '#/components/responses/OrganizationCommandResponse'
         '400':
           $ref: '#/components/responses/400'
         '500':
           $ref: '#/components/responses/500'
   /organization/setName:
     post:
+      tags:
+        - Organizations
       summary: Set the name of an organization.
-      description: |
-        ### Validation rules
-        - `OrganizationId` is required and must not be empty.
-        - `OrganizationId` must be a valid non-empty `Guid`.
-        - `OrganizationName` must be a valid Grace name.
-        - `NewName` is required and must not be empty.
-        - `NewName` must be a valid Grace name.
-        - The specified `OrganizationId` must exist.
-        - The specified organization must not be deleted.
-
-        ### Errors and Problem Details
-        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      description: Renames an organization that exists and has not been deleted.
+      operationId: SetOrganizationName
       requestBody:
         required: true
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/SetOrganizationNameParameters'
+            examples:
+              setOrganizationName:
+                summary: Rename an organization
+                value:
+                  CorrelationId: cli-20260604T181500Z-0001
+                  Principal: user:alice
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                  OrganizationName: alice-org
+                  NewName: alice-platform
       responses:
         '200':
-          $ref: '#/components/responses/200'
+          $ref: '#/components/responses/OrganizationCommandResponse'
         '400':
           $ref: '#/components/responses/400'
         '500':
           $ref: '#/components/responses/500'
   /organization/setType:
     post:
-      summary: Set the type of an organization (Public, Private).
-      description: |
-        ### Validation rules
-        - `OrganizationId` is required and must not be empty.
-        - `OrganizationId` must be a valid non-empty `Guid`.
-        - `OrganizationName` must be a valid Grace name.
-        - `OrganizationType` is required and must be a valid organization type.
-        - The specified `OrganizationId` must exist.
-        - The specified organization must not be deleted.
-
-        ### Errors and Problem Details
-        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      tags:
+        - Organizations
+      summary: Set the organization type.
+      description: Sets the organization type to a public or private value accepted by the server.
+      operationId: SetOrganizationType
       requestBody:
         required: true
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/SetOrganizationTypeParameters'
+            examples:
+              setOrganizationType:
+                summary: Set organization type
+                value:
+                  CorrelationId: cli-20260604T181500Z-0001
+                  Principal: user:alice
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                  OrganizationName: alice-org
+                  OrganizationType: Public
       responses:
         '200':
-          $ref: '#/components/responses/200'
+          $ref: '#/components/responses/OrganizationCommandResponse'
         '400':
           $ref: '#/components/responses/400'
         '500':
           $ref: '#/components/responses/500'
   /organization/setSearchVisibility:
     post:
-      summary: Set the search visibility of an organization (Visible, Hidden).
-      description: |
-        ### Validation rules
-        - `OrganizationId` is required and must not be empty.
-        - `OrganizationId` must be a valid non-empty `Guid`.
-        - `OrganizationName` must be a valid Grace name.
-        - `SearchVisibility` is required and must be a valid search visibility option.
-        - The specified `OrganizationId` must exist.
-        - The specified organization must not be deleted.
-
-        ### Errors and Problem Details
-        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      tags:
+        - Organizations
+      summary: Set organization search visibility.
+      description: Sets whether the organization appears in search results.
+      operationId: SetOrganizationSearchVisibility
       requestBody:
         required: true
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/SetOrganizationSearchVisibilityParameters'
+            examples:
+              setOrganizationSearchVisibility:
+                summary: Set organization search visibility
+                value:
+                  CorrelationId: cli-20260604T181500Z-0001
+                  Principal: user:alice
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                  OrganizationName: alice-org
+                  SearchVisibility: Visible
       responses:
         '200':
-          $ref: '#/components/responses/200'
+          $ref: '#/components/responses/OrganizationCommandResponse'
         '400':
           $ref: '#/components/responses/400'
         '500':
           $ref: '#/components/responses/500'
   /organization/setDescription:
     post:
-      summary: Set the description of an organization.
-      description: |
-        ### Validation rules
-        - `OrganizationId` is required and must not be empty.
-        - `OrganizationId` must be a valid non-empty `Guid`.
-        - `Description` is required and must not be empty.
-        - The specified `OrganizationId` must exist.
-        - The specified organization must not be deleted.
-
-        ### Errors and Problem Details
-        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      tags:
+        - Organizations
+      summary: Set the organization's description.
+      description: Sets the organization description.
+      operationId: SetOrganizationDescription
       requestBody:
         required: true
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/SetOrganizationDescriptionParameters'
+            examples:
+              setOrganizationDescription:
+                summary: Set organization description
+                value:
+                  CorrelationId: cli-20260604T181500Z-0001
+                  Principal: user:alice
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                  OrganizationName: alice-org
+                  Description: Engineering organization for Alice's projects.
       responses:
         '200':
-          $ref: '#/components/responses/200'
+          $ref: '#/components/responses/OrganizationCommandResponse'
         '400':
           $ref: '#/components/responses/400'
         '500':
           $ref: '#/components/responses/500'
   /organization/listRepositories:
     post:
-      summary: List the repositories of an organization.
-      description: |
-        ### Validation rules
-        - `OrganizationId` is required and must not be empty.
-        - `OrganizationId` must be a valid non-empty `Guid`.
-        - `OrganizationName` must be a valid Grace name.
-        - The specified `OrganizationId` must exist.
-        - The specified organization must not be deleted.
-
-        ### Errors and Problem Details
-        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      tags:
+        - Organizations
+      summary: List repositories of an organization.
+      description: Lists repositories associated with the organization.
+      operationId: ListOrganizationRepositories
       requestBody:
         required: true
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/ListRepositoriesParameters'
+            examples:
+              listOrganizationRepositories:
+                summary: List repositories for an organization
+                value:
+                  CorrelationId: cli-20260604T181500Z-0001
+                  Principal: user:alice
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                  OrganizationName: alice-org
       responses:
         '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  type: array
-                  $ref: '#/components/schemas/RepositoryDto'
+          $ref: '#/components/responses/OrganizationRepositoriesResponse'
         '400':
           $ref: '#/components/responses/400'
         '500':
           $ref: '#/components/responses/500'
   /organization/delete:
     post:
+      tags:
+        - Organizations
       summary: Delete an organization.
-      description: |
-        ### Validation rules
-        - `OrganizationId` is required and must not be empty.
-        - `OrganizationId` must be a valid non-empty `Guid`.
-        - `OrganizationName` must be a valid Grace name.
-        - `DeleteReason` is required and must not be empty.
-        - The specified `OrganizationId` must exist.
-        - The specified organization must not be deleted.
-
-        ### Errors and Problem Details
-        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      description: Logically deletes an organization that exists and has not already been deleted.
+      operationId: DeleteOrganization
       requestBody:
         required: true
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/DeleteOrganizationParameters'
+            examples:
+              deleteOrganization:
+                summary: Delete an organization
+                value:
+                  CorrelationId: cli-20260604T181500Z-0001
+                  Principal: user:alice
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                  OrganizationName: alice-org
+                  Force: false
+                  DeleteReason: Organization retired.
       responses:
         '200':
-          $ref: '#/components/responses/200'
+          $ref: '#/components/responses/OrganizationCommandResponse'
         '400':
           $ref: '#/components/responses/400'
         '500':
           $ref: '#/components/responses/500'
   /organization/undelete:
     post:
+      tags:
+        - Organizations
       summary: Undelete a previously deleted organization.
-      description: |
-        ### Validation rules
-        - `OrganizationId` is required and must not be empty.
-        - `OrganizationId` must be a valid non-empty `Guid`.
-        - `OrganizationName` must be a valid Grace name.
-        - Either `OrganizationId` or `OrganizationName` must be provided.
-        - The specified `OrganizationId` must exist.
-        - The specified organization must be deleted.
-
-        ### Errors and Problem Details
-        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      description: Restores a logically deleted organization.
+      operationId: UndeleteOrganization
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/OrganizationParameters'
+              $ref: '#/components/schemas/UndeleteOrganizationParameters'
+            examples:
+              undeleteOrganization:
+                summary: Restore an organization
+                value:
+                  CorrelationId: cli-20260604T181500Z-0001
+                  Principal: user:alice
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                  OrganizationName: alice-org
       responses:
         '200':
-          $ref: '#/components/responses/200'
+          $ref: '#/components/responses/OrganizationCommandResponse'
         '400':
           $ref: '#/components/responses/400'
         '500':
           $ref: '#/components/responses/500'
   /organization/get:
     post:
+      tags:
+        - Organizations
       summary: Get an organization.
-      description: |
-        ### Validation rules
-        - `OrganizationId` is required and must not be empty.
-        - `OrganizationId` must be a valid non-empty `Guid`.
-        - `OrganizationName` must be a valid Grace name.
-        - The specified `OrganizationId` must exist.
-        - The specified organization must not be deleted.
-
-        ### Errors and Problem Details
-        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      description: Gets organization metadata.
+      operationId: GetOrganization
       requestBody:
         required: true
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/GetOrganizationParameters'
+            examples:
+              getOrganization:
+                summary: Get an organization
+                value:
+                  CorrelationId: cli-20260604T181500Z-0001
+                  Principal: user:alice
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                  OrganizationName: alice-org
+                  IncludeDeleted: false
       responses:
         '200':
-          $ref: '#/components/responses/200'
+          $ref: '#/components/responses/OrganizationResponse'
         '400':
           $ref: '#/components/responses/400'
         '500':
           $ref: '#/components/responses/500'
   /owner/create:
     post:
+      tags:
+        - Owners
       summary: Create an owner.
-      description: |
-        ### Validation rules
-
-        - `OwnerId` must not be empty.
-        - `OwnerId` must be a valid GUID.
-        - `OwnerName` must not be empty.
-        - `OwnerName` must be a valid Grace name.
-        - Owner with the same `OwnerId` must not already exist.
-        - Owner with the same `OwnerName` must not already exist.
-
-        ### Errors and Problem Details
-        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      description: Creates an owner with the specified id and name.
+      operationId: CreateOwner
       requestBody:
         required: true
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/CreateOwnerParameters'
+            examples:
+              createOwner:
+                summary: Create an owner
+                value:
+                  CorrelationId: cli-20260604T181500Z-0001
+                  Principal: user:alice
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OwnerName: alice
       responses:
         '200':
-          $ref: '#/components/responses/200'
+          $ref: '#/components/responses/OwnerCommandResponse'
         '400':
           $ref: '#/components/responses/400'
         '500':
           $ref: '#/components/responses/500'
   /owner/setName:
     post:
+      tags:
+        - Owners
       summary: Set the name of an owner.
-      description: |
-        ### Validation rules
-
-        - `OwnerId` must be a valid GUID.
-        - `OwnerName` must be a valid Grace name.
-        - Either `OwnerId` or `OwnerName` must be provided.
-        - `NewName` must not be empty.
-        - `NewName` must be a valid Grace name.
-        - Owner with the specified `OwnerId` or `OwnerName` must exist and not be deleted.
-        - Owner with the specified `NewName` must not already exist.
-
-        ### Errors and Problem Details
-        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      description: Renames an owner that exists and has not been deleted.
+      operationId: SetOwnerName
       requestBody:
         required: true
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/SetOwnerNameParameters'
+            examples:
+              setOwnerName:
+                summary: Rename an owner
+                value:
+                  CorrelationId: cli-20260604T181500Z-0001
+                  Principal: user:alice
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OwnerName: alice
+                  NewName: alice-renamed
       responses:
         '200':
-          $ref: '#/components/responses/200'
+          $ref: '#/components/responses/OwnerCommandResponse'
         '400':
           $ref: '#/components/responses/400'
         '500':
           $ref: '#/components/responses/500'
   /owner/setType:
     post:
-      summary: Set the owner type (Public, Private).
-      description: |
-        ### Validation rules
-
-        - `OwnerId` must be a valid GUID.
-        - `OwnerName` must be a valid Grace name.
-        - Either `OwnerId` or `OwnerName` must be provided.
-        - `OwnerType` must not be empty.
-        - `OwnerType` must be a valid owner type.
-        - Owner with the specified `OwnerId` or `OwnerName` must exist and not be deleted.
-
-        ### Errors and Problem Details
-        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      tags:
+        - Owners
+      summary: Set the owner type.
+      description: Sets the owner type to a public or private value accepted by the server.
+      operationId: SetOwnerType
       requestBody:
         required: true
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/SetOwnerTypeParameters'
+            examples:
+              setOwnerType:
+                summary: Set owner type
+                value:
+                  CorrelationId: cli-20260604T181500Z-0001
+                  Principal: user:alice
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OwnerName: alice
+                  OwnerType: Public
       responses:
         '200':
-          $ref: '#/components/responses/200'
+          $ref: '#/components/responses/OwnerCommandResponse'
         '400':
           $ref: '#/components/responses/400'
         '500':
           $ref: '#/components/responses/500'
   /owner/setSearchVisibility:
     post:
-      summary: Set the owner search visibility (Visible, NotVisible).
-      description: |
-        ### Validation rules
-
-        - `OwnerId` must be a valid GUID.
-        - `OwnerName` must be a valid Grace name.
-        - Either `OwnerId` or `OwnerName` must be provided.
-        - `SearchVisibility` must be a valid search visibility.
-        - Owner with the specified `OwnerId` or `OwnerName` must exist and not be deleted.
-
-        ### Errors and Problem Details
-        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      tags:
+        - Owners
+      summary: Set owner search visibility.
+      description: Sets whether the owner appears in search results.
+      operationId: SetOwnerSearchVisibility
       requestBody:
         required: true
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/SetOwnerSearchVisibilityParameters'
+            examples:
+              setOwnerSearchVisibility:
+                summary: Set owner search visibility
+                value:
+                  CorrelationId: cli-20260604T181500Z-0001
+                  Principal: user:alice
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OwnerName: alice
+                  SearchVisibility: Visible
       responses:
         '200':
-          $ref: '#/components/responses/200'
+          $ref: '#/components/responses/OwnerCommandResponse'
         '400':
           $ref: '#/components/responses/400'
         '500':
           $ref: '#/components/responses/500'
   /owner/setDescription:
     post:
+      tags:
+        - Owners
       summary: Set the owner's description.
-      description: |
-        ### Validation rules
-
-        - `OwnerId` must be a valid GUID.
-        - `OwnerName` must be a valid Grace name.
-        - Either `OwnerId` or `OwnerName` must be provided.
-        - `Description` must not be empty.
-        - Owner with the specified `OwnerId` or `OwnerName` must exist and not be deleted.
-
-        ### Errors and Problem Details
-        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      description: Sets the owner description.
+      operationId: SetOwnerDescription
       requestBody:
         required: true
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/SetOwnerDescriptionParameters'
+            examples:
+              setOwnerDescription:
+                summary: Set owner description
+                value:
+                  CorrelationId: cli-20260604T181500Z-0001
+                  Principal: user:alice
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OwnerName: alice
+                  Description: Source control owner for Alice's projects.
       responses:
         '200':
-          $ref: '#/components/responses/200'
+          $ref: '#/components/responses/OwnerCommandResponse'
         '400':
           $ref: '#/components/responses/400'
         '500':
           $ref: '#/components/responses/500'
   /owner/listOrganizations:
     post:
+      tags:
+        - Owners
       summary: List the organizations for an owner.
-      description: |
-        ### Validation rules
-
-        - `OwnerId` must be a valid GUID.
-
-        ### Errors and Problem Details
-        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      description: Lists organizations associated with the owner.
+      operationId: ListOwnerOrganizations
       requestBody:
         required: true
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/ListOrganizationsParameters'
+            examples:
+              listOwnerOrganizations:
+                summary: List organizations for an owner
+                value:
+                  CorrelationId: cli-20260604T181500Z-0001
+                  Principal: user:alice
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OwnerName: alice
       responses:
         '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                type: array
-                $ref: '#/components/schemas/OrganizationDto'
+          $ref: '#/components/responses/OwnerOrganizationsResponse'
         '400':
           $ref: '#/components/responses/400'
         '500':
           $ref: '#/components/responses/500'
   /owner/delete:
     post:
+      tags:
+        - Owners
       summary: Delete an owner.
-      description: |
-        ### Validation rules
-
-        - `OwnerId` must be a valid GUID.
-        - `OwnerName` must be a valid Grace name.
-        - Either `OwnerId` or `OwnerName` must be provided.
-        - `DeleteReason` must not be empty.
-        - Owner with the specified `OwnerId` or `OwnerName` must exist and not be deleted.
-
-        ### Errors and Problem Details
-        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      description: Logically deletes an owner that exists and has not already been deleted.
+      operationId: DeleteOwner
       requestBody:
         required: true
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/DeleteOwnerParameters'
+            examples:
+              deleteOwner:
+                summary: Delete an owner
+                value:
+                  CorrelationId: cli-20260604T181500Z-0001
+                  Principal: user:alice
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OwnerName: alice
+                  Force: false
+                  DeleteReason: Owner retired.
       responses:
         '200':
-          $ref: '#/components/responses/200'
+          $ref: '#/components/responses/OwnerCommandResponse'
         '400':
           $ref: '#/components/responses/400'
         '500':
           $ref: '#/components/responses/500'
   /owner/undelete:
     post:
-      summary: Undelete a previously-deleted owner.
-      description: |
-        ### Validation rules
-
-        - `OwnerId` must be a valid GUID.
-        - `OwnerName` must be a valid Grace name.
-        - Either `OwnerId` or `OwnerName` must be provided.
-        - Owner with the specified `OwnerId` or `OwnerName` must exist and be deleted.
-
-        ### Errors and Problem Details
-        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      tags:
+        - Owners
+      summary: Undelete a previously deleted owner.
+      description: Restores a logically deleted owner.
+      operationId: UndeleteOwner
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/OwnerParameters'
+              $ref: '#/components/schemas/UndeleteOwnerParameters'
+            examples:
+              undeleteOwner:
+                summary: Restore an owner
+                value:
+                  CorrelationId: cli-20260604T181500Z-0001
+                  Principal: user:alice
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OwnerName: alice
       responses:
         '200':
-          $ref: '#/components/responses/200'
+          $ref: '#/components/responses/OwnerCommandResponse'
         '400':
           $ref: '#/components/responses/400'
         '500':
           $ref: '#/components/responses/500'
   /owner/get:
     post:
+      tags:
+        - Owners
       summary: Get an owner.
-      description: |
-        ### Validation rules
-
-        - `OwnerId` must be a valid GUID.
-
-        ### Errors and Problem Details
-        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      description: Gets owner metadata.
+      operationId: GetOwner
       requestBody:
         required: true
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/GetOwnerParameters'
+            examples:
+              getOwner:
+                summary: Get an owner
+                value:
+                  CorrelationId: cli-20260604T181500Z-0001
+                  Principal: user:alice
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OwnerName: alice
+                  IncludeDeleted: false
       responses:
         '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/OwnerDto'
+          $ref: '#/components/responses/OwnerResponse'
         '400':
           $ref: '#/components/responses/400'
         '500':
           $ref: '#/components/responses/500'
   /repository/create:
     post:
+      tags:
+        - Repositories
       summary: Create a new repository.
-      description: |
-        This endpoint creates a new repository.
-
-        ### Validation rules
-        - The `OwnerId` must be a valid and non-empty GUID.
-        - The `OwnerName` must be a valid Grace name.
-        - Either `OwnerId` or `OwnerName` must be provided.
-        - The `OrganizationId` must be a valid and non-empty GUID.
-        - The `OrganizationName` must be a valid Grace name.
-        - Either `OrganizationId` or `OrganizationName` must be provided.
-        - The `RepositoryId` must not be empty.
-        - The `RepositoryId` must be a valid and non-empty GUID.
-        - The `RepositoryName` must not be empty.
-        - The `RepositoryName` must be a valid Grace name.
-        - The `OwnerId` must correspond to an existing owner.
-        - The `OrganizationId` must correspond to an existing organization.
-
-        ### Errors and Problem Details
-        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      description: Creates a repository in an organization.
+      operationId: CreateRepository
       requestBody:
         required: true
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/CreateRepositoryParameters'
+            examples:
+              createRepository:
+                summary: Create a repository
+                value:
+                  CorrelationId: cli-20260604T181500Z-0001
+                  Principal: user:alice
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                  RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                  RepositoryName: sample-repository
+                  ObjectStorageProvider: AzureBlobStorage
       responses:
         '200':
-          $ref: '#/components/responses/200'
+          $ref: '#/components/responses/RepositoryCommandResponse'
         '400':
           $ref: '#/components/responses/400'
         '500':
           $ref: '#/components/responses/500'
   /repository/setVisibility:
     post:
-      summary: Sets the search visibility of the repository.
-      description: |
-        This endpoint sets the search visibility of a repository.
-
-        ### Validation rules
-        - Either `RepositoryId` or `RepositoryName` must be provided.
-        - The `Visibility` value must be valid.
-        - The repository must exist.
-        - The repository must not be deleted.
-
-        ### Errors and Problem Details
-        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      tags:
+        - Repositories
+      summary: Set repository visibility.
+      description: Sets whether the repository is public or private.
+      operationId: SetRepositoryVisibility
       requestBody:
         required: true
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/SetRepositoryVisibilityParameters'
+            examples:
+              setRepositoryVisibility:
+                summary: Set repository visibility
+                value:
+                  CorrelationId: cli-20260604T181500Z-0001
+                  Principal: user:alice
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                  RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                  RepositoryName: sample-repository
+                  ObjectStorageProvider: AzureBlobStorage
+                  Visibility: Private
       responses:
         '200':
-          $ref: '#/components/responses/200'
+          $ref: '#/components/responses/RepositoryCommandResponse'
+        '400':
+          $ref: '#/components/responses/400'
+        '500':
+          $ref: '#/components/responses/500'
+  /repository/setName:
+    post:
+      tags:
+        - Repositories
+      summary: Set the name of a repository.
+      description: Renames a repository that exists and has not been deleted.
+      operationId: SetRepositoryName
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetRepositoryNameParameters'
+            examples:
+              setRepositoryName:
+                summary: Rename a repository
+                value:
+                  CorrelationId: cli-20260604T181500Z-0001
+                  Principal: user:alice
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                  RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                  RepositoryName: sample-repository
+                  ObjectStorageProvider: AzureBlobStorage
+                  NewName: sample-repository-renamed
+      responses:
+        '200':
+          $ref: '#/components/responses/RepositoryCommandResponse'
         '400':
           $ref: '#/components/responses/400'
         '500':
           $ref: '#/components/responses/500'
   /repository/setSaveDays:
     post:
-      summary: Sets the number of days to keep saves in the repository.
-      description: |
-        This endpoint sets the number of days to keep saves in a repository.
-
-        ### Validation rules
-        - Either `RepositoryId` or `RepositoryName` must be provided.
-        - The `SaveDays` value must be valid.
-        - The repository must exist.
-        - The repository must not be deleted.
-
-        ### Errors and Problem Details
-        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      tags:
+        - Repositories
+      summary: Set save retention.
+      description: Sets the number of days to keep saves in the repository.
+      operationId: SetRepositorySaveDays
       requestBody:
         required: true
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/SetSaveDaysParameters'
+            examples:
+              setRepositorySaveDays:
+                summary: Set save retention
+                value:
+                  CorrelationId: cli-20260604T181500Z-0001
+                  Principal: user:alice
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                  RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                  RepositoryName: sample-repository
+                  ObjectStorageProvider: AzureBlobStorage
+                  SaveDays: 30
       responses:
         '200':
-          $ref: '#/components/responses/200'
+          $ref: '#/components/responses/RepositoryCommandResponse'
         '400':
           $ref: '#/components/responses/400'
         '500':
           $ref: '#/components/responses/500'
   /repository/setCheckpointDays:
     post:
-      summary: Sets the number of days to keep checkpoints in the repository.
-      description: |
-        This endpoint sets the number of days to keep checkpoints in a repository.
-
-        ### Validation rules
-        - Either `RepositoryId` or `RepositoryName` must be provided.
-        - The `CheckpointDays` value must be valid.
-        - The repository must exist.
-        - The repository must not be deleted.
-
-        ### Errors and Problem Details
-        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      tags:
+        - Repositories
+      summary: Set checkpoint retention.
+      description: Sets the number of days to keep checkpoints in the repository.
+      operationId: SetRepositoryCheckpointDays
       requestBody:
         required: true
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/SetCheckpointDaysParameters'
+            examples:
+              setRepositoryCheckpointDays:
+                summary: Set checkpoint retention
+                value:
+                  CorrelationId: cli-20260604T181500Z-0001
+                  Principal: user:alice
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                  RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                  RepositoryName: sample-repository
+                  ObjectStorageProvider: AzureBlobStorage
+                  CheckpointDays: 90
       responses:
         '200':
-          $ref: '#/components/responses/200'
+          $ref: '#/components/responses/RepositoryCommandResponse'
         '400':
           $ref: '#/components/responses/400'
         '500':
           $ref: '#/components/responses/500'
   /repository/setStatus:
     post:
-      summary: Sets the status of the repository (Public, Private).
-      description: |
-        This endpoint sets the status of a repository.
-
-        ### Validation rules
-        - Either `RepositoryId` or `RepositoryName` must be provided.
-        - The `Status` value must be a valid repository status.
-        - The repository must exist.
-        - The repository must not be deleted.
-
-        ### Errors and Problem Details
-        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      tags:
+        - Repositories
+      summary: Set repository status.
+      description: Sets the repository operational status.
+      operationId: SetRepositoryStatus
       requestBody:
         required: true
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/SetRepositoryStatusParameters'
+            examples:
+              setRepositoryStatus:
+                summary: Set repository status
+                value:
+                  CorrelationId: cli-20260604T181500Z-0001
+                  Principal: user:alice
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                  RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                  RepositoryName: sample-repository
+                  ObjectStorageProvider: AzureBlobStorage
+                  Status: Active
       responses:
         '200':
-          $ref: '#/components/responses/200'
+          $ref: '#/components/responses/RepositoryCommandResponse'
         '400':
           $ref: '#/components/responses/400'
         '500':
           $ref: '#/components/responses/500'
   /repository/setDefaultServerApiVersion:
     post:
-      summary: Sets the default server API version for the repository.
-      description: |
-        This endpoint sets the default server API version for a repository.
-
-        ### Validation rules
-        - Either `RepositoryId` or `RepositoryName` must be provided.
-        - The `DefaultServerApiVersion` must not be empty.
-        - The repository must exist.
-        - The repository must not be deleted.
-
-        ### Errors and Problem Details
-        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      tags:
+        - Repositories
+      summary: Set the default server API version.
+      description: Sets the default server API version clients should use for the repository.
+      operationId: SetRepositoryDefaultServerApiVersion
       requestBody:
         required: true
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/SetDefaultServerApiVersionParameters'
+            examples:
+              setRepositoryDefaultServerApiVersion:
+                summary: Set default server API version
+                value:
+                  CorrelationId: cli-20260604T181500Z-0001
+                  Principal: user:alice
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                  RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                  RepositoryName: sample-repository
+                  ObjectStorageProvider: AzureBlobStorage
+                  DefaultServerApiVersion: '2026-06-04'
       responses:
         '200':
-          $ref: '#/components/responses/200'
+          $ref: '#/components/responses/RepositoryCommandResponse'
         '400':
           $ref: '#/components/responses/400'
         '500':
           $ref: '#/components/responses/500'
   /repository/setRecordSaves:
     post:
-      summary: Sets whether or not to keep saves in the repository.
-      description: |
-        This endpoint sets whether or not to keep saves in a repository.
-
-        ### Validation rules
-        - Either `RepositoryId` or `RepositoryName` must be provided.
-        - The repository must exist.
-        - The repository must not be deleted.
-
-        ### Errors and Problem Details
-        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      tags:
+        - Repositories
+      summary: Set whether saves are recorded.
+      description: Sets the repository default for whether save references should be kept.
+      operationId: SetRepositoryRecordSaves
       requestBody:
         required: true
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/RecordSavesParameters'
+            examples:
+              setRepositoryRecordSaves:
+                summary: Enable save recording
+                value:
+                  CorrelationId: cli-20260604T181500Z-0001
+                  Principal: user:alice
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                  RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                  RepositoryName: sample-repository
+                  ObjectStorageProvider: AzureBlobStorage
+                  RecordSaves: true
       responses:
         '200':
-          $ref: '#/components/responses/200'
+          $ref: '#/components/responses/RepositoryCommandResponse'
         '400':
           $ref: '#/components/responses/400'
         '500':
           $ref: '#/components/responses/500'
   /repository/setDescription:
     post:
-      summary: Sets the description of the repository.
-      description: |
-        This endpoint sets the description of a repository.
-
-        ### Validation rules
-        - Either `RepositoryId` or `RepositoryName` must be provided.
-        - The `Description` must not be empty.
-        - The repository must exist.
-        - The repository must not be deleted.
-
-        ### Errors and Problem Details
-        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      tags:
+        - Repositories
+      summary: Set repository description.
+      description: Sets the repository description.
+      operationId: SetRepositoryDescription
       requestBody:
         required: true
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/SetRepositoryDescriptionParameters'
+            examples:
+              setRepositoryDescription:
+                summary: Set repository description
+                value:
+                  CorrelationId: cli-20260604T181500Z-0001
+                  Principal: user:alice
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                  RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                  RepositoryName: sample-repository
+                  ObjectStorageProvider: AzureBlobStorage
+                  Description: Repository for release candidates.
       responses:
         '200':
-          $ref: '#/components/responses/200'
+          $ref: '#/components/responses/RepositoryCommandResponse'
         '400':
           $ref: '#/components/responses/400'
         '500':
           $ref: '#/components/responses/500'
   /repository/delete:
     post:
-      summary: Deletes the repository.
-      description: |
-        This endpoint deletes a repository.
-
-        ### Validation rules
-        - Either `RepositoryId` or `RepositoryName` must be provided.
-        - The `DeleteReason` must not be empty.
-        - The repository must exist.
-        - The repository must not be deleted.
-
-        ### Errors and Problem Details
-        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      tags:
+        - Repositories
+      summary: Delete a repository.
+      description: Logically deletes a repository that exists and has not already been deleted.
+      operationId: DeleteRepository
       requestBody:
         required: true
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/DeleteRepositoryParameters'
+            examples:
+              deleteRepository:
+                summary: Delete a repository
+                value:
+                  CorrelationId: cli-20260604T181500Z-0001
+                  Principal: user:alice
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                  RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                  RepositoryName: sample-repository
+                  ObjectStorageProvider: AzureBlobStorage
+                  Force: false
+                  DeleteReason: Repository retired.
       responses:
         '200':
-          $ref: '#/components/responses/200'
+          $ref: '#/components/responses/RepositoryCommandResponse'
         '400':
           $ref: '#/components/responses/400'
         '500':
           $ref: '#/components/responses/500'
   /repository/undelete:
     post:
-      summary: Undeletes a previously-deleted repository.
-      description: |
-        This endpoint undeletes a previously-deleted repository.
-
-        ### Validation rules
-        - Either `RepositoryId` or `RepositoryName` must be provided.
-        - The repository must exist.
-        - The repository must be deleted.
-
-        ### Errors and Problem Details
-        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      tags:
+        - Repositories
+      summary: Undelete a previously deleted repository.
+      description: Restores a logically deleted repository.
+      operationId: UndeleteRepository
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/RepositoryParameters'
+              $ref: '#/components/schemas/UndeleteRepositoryParameters'
+            examples:
+              undeleteRepository:
+                summary: Restore a repository
+                value:
+                  CorrelationId: cli-20260604T181500Z-0001
+                  Principal: user:alice
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                  RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                  RepositoryName: sample-repository
+                  ObjectStorageProvider: AzureBlobStorage
       responses:
         '200':
-          $ref: '#/components/responses/200'
+          $ref: '#/components/responses/RepositoryCommandResponse'
         '400':
           $ref: '#/components/responses/400'
         '500':
           $ref: '#/components/responses/500'
   /repository/exists:
     post:
-      summary: Checks if a repository exists with the given parameters.
-      description: |
-        This endpoint checks if a repository exists based on the provided parameters.
-
-        ### Validation rules
-        - Either `RepositoryId` or `RepositoryName` must be provided.
-        - The `OwnerId` must be a valid and non-empty GUID.
-        - The `OwnerName` must be a valid Grace name.
-        - Either `OwnerId` or `OwnerName` must be provided.
-        - The `OrganizationId` must be a valid and non-empty GUID.
-        - The `OrganizationName` must be a valid Grace name.
-        - Either `OrganizationId` or `OrganizationName` must be provided.
-        - The `RepositoryId` must be a valid and non-empty GUID.
-        - The repository ID must not exist.
-
-        ### Errors and Problem Details
-        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      tags:
+        - Repositories
+      summary: Check whether a repository exists.
+      description: Checks whether a repository exists for the supplied selector values.
+      operationId: RepositoryExists
       requestBody:
         required: true
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/RepositoryParameters'
+            examples:
+              repositoryExists:
+                summary: Check repository existence
+                value:
+                  CorrelationId: cli-20260604T181500Z-0001
+                  Principal: user:alice
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                  RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                  RepositoryName: sample-repository
+                  ObjectStorageProvider: AzureBlobStorage
       responses:
         '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                type: boolean
+          $ref: '#/components/responses/RepositoryBooleanResponse'
         '400':
           $ref: '#/components/responses/400'
         '500':
           $ref: '#/components/responses/500'
   /repository/isEmpty:
     post:
-      summary: Checks if a repository is empty.
-      description: |
-        This endpoint checks if a repository is empty, meaning it has just been created and has no data.
-
-        ### Validation rules
-        - Either `RepositoryId` or `RepositoryName` must be provided.
-        - The `OwnerId` must be a valid and non-empty GUID.
-        - The `OwnerName` must be a valid Grace name.
-        - Either `OwnerId` or `OwnerName` must be provided.
-        - The `OrganizationId` must be a valid and non-empty GUID.
-        - The `OrganizationName` must be a valid Grace name.
-        - Either `OrganizationId` or `OrganizationName` must be provided.
-        - The `RepositoryId` must be a valid and non-empty GUID.
-        - The repository ID must not exist.
-
-        ### Errors and Problem Details
-        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      tags:
+        - Repositories
+      summary: Check whether a repository is empty.
+      description: Checks whether a repository has no content yet.
+      operationId: RepositoryIsEmpty
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/RepositoryParameters'
+              $ref: '#/components/schemas/IsEmptyParameters'
+            examples:
+              repositoryIsEmpty:
+                summary: Check whether a repository is empty
+                value:
+                  CorrelationId: cli-20260604T181500Z-0001
+                  Principal: user:alice
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                  RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                  RepositoryName: sample-repository
+                  ObjectStorageProvider: AzureBlobStorage
       responses:
         '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                type: boolean
+          $ref: '#/components/responses/RepositoryBooleanResponse'
         '400':
           $ref: '#/components/responses/400'
         '500':
           $ref: '#/components/responses/500'
   /repository/get:
     post:
-      summary: Gets a repository.
-      description: |
-        This endpoint retrieves the details of a repository.
-
-        ### Validation rules
-        - Either `RepositoryId` or `RepositoryName` must be provided.
-        - The `OwnerId` must be a valid and non-empty GUID.
-        - The `OwnerName` must be a valid Grace name.
-        - Either `OwnerId` or `OwnerName` must be provided.
-        - The `OrganizationId` must be a valid and non-empty GUID.
-        - The `OrganizationName` must be a valid Grace name.
-        - Either `OrganizationId` or `OrganizationName` must be provided.
-        - The `RepositoryId` must be a valid and non-empty GUID.
-        - The `RepositoryName` must not be empty.
-        - The repository ID must not exist.
-
-        ### Errors and Problem Details
-        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      tags:
+        - Repositories
+      summary: Get a repository.
+      description: Gets repository metadata.
+      operationId: GetRepository
       requestBody:
         required: true
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/RepositoryParameters'
+            examples:
+              getRepository:
+                summary: Get a repository
+                value:
+                  CorrelationId: cli-20260604T181500Z-0001
+                  Principal: user:alice
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                  RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                  RepositoryName: sample-repository
+                  ObjectStorageProvider: AzureBlobStorage
       responses:
         '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/RepositoryDto'
+          $ref: '#/components/responses/RepositoryResponse'
         '400':
           $ref: '#/components/responses/400'
         '500':
           $ref: '#/components/responses/500'
   /repository/getBranches:
     post:
-      summary: Gets a repository's branches.
-      description: |
-        This endpoint retrieves the branches of a repository.
-
-        ### Validation rules
-        - The `OwnerId` must be a valid and non-empty GUID.
-        - The `OwnerName` must be a valid Grace name.
-        - Either `OwnerId` or `OwnerName` must be provided.
-        - The `OrganizationId` must be a valid and non-empty GUID.
-        - The `OrganizationName` must be a valid Grace name.
-        - Either `OrganizationId` or `OrganizationName` must be provided.
-        - The `RepositoryId` must be a valid and non-empty GUID.
-        - Either `RepositoryId` or `RepositoryName` must be provided.
-        - The `MaxCount` must be a number between 1 and 1000 (inclusive).
-        - The repository ID must not exist.
-
-        ### Errors and Problem Details
-        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      tags:
+        - Repositories
+      summary: List repository branches.
+      description: Gets branches for the repository.
+      operationId: ListRepositoryBranches
       requestBody:
         required: true
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/GetBranchesParameters'
+            examples:
+              listRepositoryBranches:
+                summary: List repository branches
+                value:
+                  CorrelationId: cli-20260604T181500Z-0001
+                  Principal: user:alice
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                  RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                  RepositoryName: sample-repository
+                  ObjectStorageProvider: AzureBlobStorage
+                  IncludeDeleted: false
+                  MaxCount: 50
       responses:
         '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                type: array
-                $ref: '#/components/schemas/BranchDto'
+          $ref: '#/components/responses/RepositoryBranchesResponse'
         '400':
           $ref: '#/components/responses/400'
         '500':
           $ref: '#/components/responses/500'
   /repository/getReferencesByReferenceId:
     post:
-      summary: Gets a list of references by reference IDs.
-      description: |
-        This endpoint retrieves a list of references based on the provided reference IDs.
-
-        ### Validation rules
-        - The `OwnerId` must be a valid and non-empty GUID.
-        - The `OwnerName` must be a valid Grace name.
-        - Either `OwnerId` or `OwnerName` must be provided.
-        - The `OrganizationId` must be a valid and non-empty GUID.
-        - The `OrganizationName` must be a valid Grace name.
-        - Either `OrganizationId` or `OrganizationName` must be provided.
-        - The `RepositoryId` must be a valid and non-empty GUID.
-        - Either `RepositoryId` or `RepositoryName` must be provided.
-        - The `ReferenceIds` must not be empty.
-        - The `MaxCount` must be a number between 1 and 1000 (inclusive).
-        - The repository ID must not exist.
-
-        ### Errors and Problem Details
-        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      tags:
+        - Repositories
+      summary: List references by reference id.
+      description: Gets references in the repository by reference ids.
+      operationId: ListRepositoryReferencesByReferenceId
       requestBody:
         required: true
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/GetReferencesByReferenceIdParameters'
+            examples:
+              listRepositoryReferencesByReferenceId:
+                summary: List references by id
+                value:
+                  CorrelationId: cli-20260604T181500Z-0001
+                  Principal: user:alice
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                  RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                  RepositoryName: sample-repository
+                  ObjectStorageProvider: AzureBlobStorage
+                  ReferenceIds:
+                    - c8f9bac8-d489-46c7-917f-b36b7d9efa9a
+                  MaxCount: 50
       responses:
         '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                type: array
-                $ref: '#/components/schemas/ReferenceDto'
+          $ref: '#/components/responses/RepositoryReferencesResponse'
         '400':
           $ref: '#/components/responses/400'
         '500':
           $ref: '#/components/responses/500'
   /repository/getBranchesByBranchId:
     post:
-      summary: Gets a list of branches by branch IDs.
-      description: |
-        This endpoint retrieves a list of branches based on the provided branch IDs.
-
-        ### Validation rules
-        - The `OwnerId` must be a valid and non-empty GUID.
-        - The `OwnerName` must be a valid Grace name.
-        - Either `OwnerId` or `OwnerName` must be provided.
-        - The `OrganizationId` must be a valid and non-empty GUID.
-        - The `OrganizationName` must be a valid Grace name.
-        - Either `OrganizationId` or `OrganizationName` must be provided.
-        - The `RepositoryId` must be a valid and non-empty GUID.
-        - Either `RepositoryId` or `RepositoryName` must be provided.
-        - The `BranchIds` must not be empty.
-        - The `MaxCount` must be a number between 1 and 1000 (inclusive).
-        - The repository ID must not exist.
-
-        ### Errors and Problem Details
-        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      tags:
+        - Repositories
+      summary: List branches by branch id.
+      description: Gets branches in the repository by branch ids.
+      operationId: ListRepositoryBranchesByBranchId
       requestBody:
         required: true
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/GetBranchesByBranchIdParameters'
+            examples:
+              listRepositoryBranchesByBranchId:
+                summary: List branches by id
+                value:
+                  CorrelationId: cli-20260604T181500Z-0001
+                  Principal: user:alice
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                  RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                  RepositoryName: sample-repository
+                  ObjectStorageProvider: AzureBlobStorage
+                  IncludeDeleted: false
+                  MaxCount: 50
+                  BranchIds:
+                    - de7bf47d-23ae-4599-af68-68a317ea390d
       responses:
         '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                type: array
-                $ref: '#/components/schemas/BranchDto'
+          $ref: '#/components/responses/RepositoryBranchesResponse'
         '400':
           $ref: '#/components/responses/400'
         '500':
@@ -3462,66 +3565,72 @@ components:
             Sha256Hash2:
               $ref: '#/components/schemas/Sha256Hash'
     DirectoryParameters:
-      description: Parameters for many endpoints in the /directory path.
+      description: Parameters shared by public endpoints in the /directory route family.
       type: object
-      properties:
-        DirectoryId:
-          type: string
-          description: Unique identifier of the directory.
       allOf:
         - $ref: '#/components/schemas/CommonParameters'
+      properties:
+        OwnerId:
+          $ref: '#/components/schemas/OwnerId'
+        OwnerName:
+          $ref: '#/components/schemas/OwnerName'
+        OrganizationId:
+          $ref: '#/components/schemas/OrganizationId'
+        OrganizationName:
+          $ref: '#/components/schemas/OrganizationName'
+        RepositoryId:
+          $ref: '#/components/schemas/RepositoryId'
+        RepositoryName:
+          $ref: '#/components/schemas/RepositoryName'
+        DirectoryVersionId:
+          $ref: '#/components/schemas/DirectoryVersionId'
+      example:
+        CorrelationId: cli-20260604T181500Z-0001
+        Principal: user:alice
+        OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+        OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+        RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+        DirectoryVersionId: 33a4e36b-828f-4fae-9343-50b6560dc842
     CreateParameters:
       description: Parameters for the /directory/create endpoint.
-      type: object
-      properties:
-        DirectoryVersion:
-          $ref: '#/components/schemas/DirectoryVersion'
       allOf:
         - $ref: '#/components/schemas/DirectoryParameters'
+        - type: object
+          properties:
+            DirectoryVersion:
+              $ref: '#/components/schemas/DirectoryVersion'
     GetParameters:
-      description: Parameters for the /directory/get endpoint.
-      type: object
-      properties:
-        RepositoryId:
-          type: string
-          description: Unique identifier of the repository.
+      description: Parameters for /directory/get and recursive directory-version lookups.
       allOf:
         - $ref: '#/components/schemas/DirectoryParameters'
     GetByDirectoryIdsParameters:
       description: Parameters for the /directory/getByDirectoryIds endpoint.
-      type: object
-      properties:
-        RepositoryId:
-          type: string
-          description: Unique identifier of the repository.
-        DirectoryIds:
-          type: array
-          items:
-            $ref: '#/components/schemas/DirectoryId'
       allOf:
         - $ref: '#/components/schemas/DirectoryParameters'
+        - type: object
+          properties:
+            DirectoryIds:
+              type: array
+              items:
+                $ref: '#/components/schemas/DirectoryVersionId'
     GetBySha256HashParameters:
       description: Parameters for the /directory/getBySha256Hash endpoint.
-      type: object
-      properties:
-        RepositoryId:
-          type: string
-          description: Unique identifier of the repository.
-        Sha256Hash:
-          type: string
-          description: The SHA256 hash value.
       allOf:
         - $ref: '#/components/schemas/DirectoryParameters'
+        - type: object
+          properties:
+            Sha256Hash:
+              $ref: '#/components/schemas/Sha256Hash'
     SaveDirectoryVersionsParameters:
       description: Parameters for the /directory/saveDirectoryVersions endpoint.
-      type: object
-      properties:
-        DirectoryVersions:
-          type: array
-          items:
-            $ref: '#/components/schemas/DirectoryVersion'
       allOf:
         - $ref: '#/components/schemas/DirectoryParameters'
+        - type: object
+          properties:
+            DirectoryVersions:
+              type: array
+              items:
+                $ref: '#/components/schemas/DirectoryVersion'
     BranchDto:
       description: (automatically generated)
       type: object
@@ -3612,10 +3721,6 @@ components:
           type: string
         SearchVisibility:
           $ref: '#/components/schemas/SearchVisibility'
-        Repositories:
-          type: object
-          additionalProperties:
-            $ref: '#/components/schemas/RepositoryName'
         CreatedAt:
           $ref: '#/components/schemas/Instant'
         UpdatedAt:
@@ -3646,10 +3751,6 @@ components:
           type: string
         SearchVisibility:
           $ref: '#/components/schemas/SearchVisibility'
-        Organizations:
-          type: object
-          additionalProperties:
-            $ref: '#/components/schemas/OrganizationName'
         CreatedAt:
           $ref: '#/components/schemas/Instant'
         UpdatedAt:
@@ -3722,18 +3823,24 @@ components:
         CheckpointDays:
           type: number
     OrganizationParameters:
-      description: Parameters for many endpoints in the /organization path.
+      description: Parameters shared by public endpoints in the /organization route family.
+      type: object
       allOf:
         - $ref: '#/components/schemas/CommonParameters'
       properties:
         OwnerId:
-          type: string
+          $ref: '#/components/schemas/OwnerId'
         OwnerName:
-          type: string
+          $ref: '#/components/schemas/OwnerName'
         OrganizationId:
-          type: string
+          $ref: '#/components/schemas/OrganizationId'
         OrganizationName:
-          type: string
+          $ref: '#/components/schemas/OrganizationName'
+      example:
+        CorrelationId: cli-20260604T181500Z-0001
+        Principal: user:alice
+        OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+        OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
     CreateOrganizationParameters:
       description: Parameters for the /organization/create endpoint.
       allOf:
@@ -3742,39 +3849,48 @@ components:
       description: Parameters for the /organization/setName endpoint.
       allOf:
         - $ref: '#/components/schemas/OrganizationParameters'
-      properties:
-        NewName:
-          type: string
+        - type: object
+          properties:
+            NewName:
+              $ref: '#/components/schemas/OrganizationName'
     SetOrganizationTypeParameters:
       description: Parameters for the /organization/setType endpoint.
       allOf:
         - $ref: '#/components/schemas/OrganizationParameters'
-      properties:
-        OrganizationType:
-          type: string
+        - type: object
+          properties:
+            OrganizationType:
+              $ref: '#/components/schemas/OrganizationType'
     SetOrganizationSearchVisibilityParameters:
       description: Parameters for the /organization/setSearchVisibility endpoint.
       allOf:
         - $ref: '#/components/schemas/OrganizationParameters'
-      properties:
-        SearchVisibility:
-          type: string
+        - type: object
+          properties:
+            SearchVisibility:
+              $ref: '#/components/schemas/SearchVisibility'
     SetOrganizationDescriptionParameters:
       description: Parameters for the /organization/setDescription endpoint.
       allOf:
         - $ref: '#/components/schemas/OrganizationParameters'
-      properties:
-        Description:
-          type: string
+        - type: object
+          properties:
+            Description:
+              type: string
+              maxLength: 2048
+              example: Engineering organization for Alice's projects.
     DeleteOrganizationParameters:
       description: Parameters for the /organization/delete endpoint.
       allOf:
         - $ref: '#/components/schemas/OrganizationParameters'
-      properties:
-        Force:
-          type: boolean
-        DeleteReason:
-          type: string
+        - type: object
+          properties:
+            Force:
+              type: boolean
+              example: false
+            DeleteReason:
+              type: string
+              example: Organization retired.
     UndeleteOrganizationParameters:
       description: Parameters for the /organization/undelete endpoint.
       allOf:
@@ -3783,19 +3899,29 @@ components:
       description: Parameters for the /organization/get endpoint.
       allOf:
         - $ref: '#/components/schemas/OrganizationParameters'
+        - type: object
+          properties:
+            IncludeDeleted:
+              type: boolean
+              example: false
     ListRepositoriesParameters:
       description: Parameters for the /organization/listRepositories endpoint.
       allOf:
         - $ref: '#/components/schemas/OrganizationParameters'
     OwnerParameters:
-      description: Parameters for many endpoints in the /owner path.
+      description: Parameters shared by public endpoints in the /owner route family.
+      type: object
       allOf:
         - $ref: '#/components/schemas/CommonParameters'
       properties:
         OwnerId:
-          type: string
+          $ref: '#/components/schemas/OwnerId'
         OwnerName:
-          type: string
+          $ref: '#/components/schemas/OwnerName'
+      example:
+        CorrelationId: cli-20260604T181500Z-0001
+        Principal: user:alice
+        OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
     CreateOwnerParameters:
       description: Parameters for the /owner/create endpoint.
       allOf:
@@ -3804,39 +3930,48 @@ components:
       description: Parameters for the /owner/setName endpoint.
       allOf:
         - $ref: '#/components/schemas/OwnerParameters'
-      properties:
-        NewName:
-          type: string
+        - type: object
+          properties:
+            NewName:
+              $ref: '#/components/schemas/OwnerName'
     SetOwnerTypeParameters:
       description: Parameters for the /owner/setType endpoint.
       allOf:
         - $ref: '#/components/schemas/OwnerParameters'
-      properties:
-        OwnerType:
-          type: string
+        - type: object
+          properties:
+            OwnerType:
+              $ref: '#/components/schemas/OwnerType'
     SetOwnerSearchVisibilityParameters:
       description: Parameters for the /owner/setSearchVisibility endpoint.
       allOf:
         - $ref: '#/components/schemas/OwnerParameters'
-      properties:
-        SearchVisibility:
-          type: string
+        - type: object
+          properties:
+            SearchVisibility:
+              $ref: '#/components/schemas/SearchVisibility'
     SetOwnerDescriptionParameters:
       description: Parameters for the /owner/setDescription endpoint.
       allOf:
         - $ref: '#/components/schemas/OwnerParameters'
-      properties:
-        Description:
-          type: string
+        - type: object
+          properties:
+            Description:
+              type: string
+              maxLength: 2048
+              example: Source control owner for Alice's projects.
     DeleteOwnerParameters:
       description: Parameters for the /owner/delete endpoint.
       allOf:
         - $ref: '#/components/schemas/OwnerParameters'
-      properties:
-        Force:
-          type: boolean
-        DeleteReason:
-          type: string
+        - type: object
+          properties:
+            Force:
+              type: boolean
+              example: false
+            DeleteReason:
+              type: string
+              example: Owner retired.
     UndeleteOwnerParameters:
       description: Parameters for the /owner/undelete endpoint.
       allOf:
@@ -3845,6 +3980,11 @@ components:
       description: Parameters for the /owner/get endpoint.
       allOf:
         - $ref: '#/components/schemas/OwnerParameters'
+        - type: object
+          properties:
+            IncludeDeleted:
+              type: boolean
+              example: false
     ListOrganizationsParameters:
       description: Parameters for the /owner/listOrganizations endpoint.
       allOf:
@@ -3873,25 +4013,37 @@ components:
         ReferenceType: Commit
         ReferenceText: Capture release candidate.
     RepositoryParameters:
-      description: Parameters for many endpoints in the /repository path.
+      description: Parameters shared by public endpoints in the /repository route family.
       type: object
+      allOf:
+        - $ref: '#/components/schemas/CommonParameters'
       properties:
         OwnerId:
-          type: string
+          $ref: '#/components/schemas/OwnerId'
         OwnerName:
-          type: string
+          $ref: '#/components/schemas/OwnerName'
         OrganizationId:
-          type: string
+          $ref: '#/components/schemas/OrganizationId'
         OrganizationName:
-          type: string
+          $ref: '#/components/schemas/OrganizationName'
         RepositoryId:
-          type: string
+          $ref: '#/components/schemas/RepositoryId'
         RepositoryName:
-          type: string
+          $ref: '#/components/schemas/RepositoryName'
+      example:
+        CorrelationId: cli-20260604T181500Z-0001
+        Principal: user:alice
+        OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+        OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+        RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
     CreateRepositoryParameters:
       description: Parameters for the /repository/create endpoint.
       allOf:
         - $ref: '#/components/schemas/RepositoryParameters'
+        - type: object
+          properties:
+            ObjectStorageProvider:
+              $ref: '#/components/schemas/ObjectStorageProvider'
     IsEmptyParameters:
       description: Parameters for the /repository/isEmpty endpoint.
       allOf:
@@ -3900,114 +4052,156 @@ components:
       description: Parameters for the /repository/init endpoint.
       allOf:
         - $ref: '#/components/schemas/RepositoryParameters'
-      properties:
-        GraceConfig:
-          type: string
+        - type: object
+          properties:
+            GraceConfig:
+              type: string
+              example: '{}'
     SetRepositoryVisibilityParameters:
       description: Parameters for the /repository/setVisibility endpoint.
       allOf:
         - $ref: '#/components/schemas/RepositoryParameters'
-      properties:
-        Visibility:
-          type: string
+        - type: object
+          properties:
+            Visibility:
+              $ref: '#/components/schemas/RepositoryVisibility'
     SetRepositoryStatusParameters:
       description: Parameters for the /repository/setStatus endpoint.
       allOf:
         - $ref: '#/components/schemas/RepositoryParameters'
-      properties:
-        Status:
-          type: string
+        - type: object
+          properties:
+            Status:
+              $ref: '#/components/schemas/RepositoryStatus'
     RecordSavesParameters:
-      description: Parameters for the /repository/recordSaves endpoint.
+      description: Parameters for the /repository/setRecordSaves endpoint.
       allOf:
         - $ref: '#/components/schemas/RepositoryParameters'
-      properties:
-        RecordSaves:
-          type: boolean
+        - type: object
+          properties:
+            RecordSaves:
+              type: boolean
+              example: true
     SetSaveDaysParameters:
       description: Parameters for the /repository/setSaveDays endpoint.
       allOf:
         - $ref: '#/components/schemas/RepositoryParameters'
-      properties:
-        SaveDays:
-          type: number
+        - type: object
+          properties:
+            SaveDays:
+              type: number
+              format: float
+              minimum: 0
+              example: 30
     SetCheckpointDaysParameters:
-      description: Parameters for the /repository/setCheckpointDays
+      description: Parameters for the /repository/setCheckpointDays endpoint.
       allOf:
         - $ref: '#/components/schemas/RepositoryParameters'
-      properties:
-        CheckpointDays:
-          type: number
+        - type: object
+          properties:
+            CheckpointDays:
+              type: number
+              format: float
+              minimum: 0
+              example: 90
     SetRepositoryDescriptionParameters:
       description: Parameters for the /repository/setDescription endpoint.
       allOf:
         - $ref: '#/components/schemas/RepositoryParameters'
-      properties:
-        Description:
-          type: string
+        - type: object
+          properties:
+            Description:
+              type: string
+              maxLength: 2048
+              example: Repository for release candidates.
     SetDefaultServerApiVersionParameters:
       description: Parameters for the /repository/setDefaultServerApiVersion endpoint.
       allOf:
         - $ref: '#/components/schemas/RepositoryParameters'
-      properties:
-        DefaultServerApiVersion:
-          type: string
+        - type: object
+          properties:
+            DefaultServerApiVersion:
+              type: string
+              example: '2026-06-04'
     SetRepositoryNameParameters:
       description: Parameters for the /repository/setName endpoint.
       allOf:
         - $ref: '#/components/schemas/RepositoryParameters'
-      properties:
-        NewName:
-          type: string
+        - type: object
+          properties:
+            NewName:
+              $ref: '#/components/schemas/RepositoryName'
     DeleteRepositoryParameters:
       description: Parameters for the /repository/delete endpoint.
       allOf:
         - $ref: '#/components/schemas/RepositoryParameters'
-      properties:
-        Force:
-          type: boolean
-        DeleteReason:
-          type: string
+        - type: object
+          properties:
+            Force:
+              type: boolean
+              example: false
+            DeleteReason:
+              type: string
+              example: Repository retired.
     EnablePromotionTypeParameters:
-      description: Parameters for enabling promotion type.
+      description: Parameters for repository promotion type feature toggles.
       allOf:
         - $ref: '#/components/schemas/RepositoryParameters'
-      properties:
-        Enabled:
-          type: boolean
+        - type: object
+          properties:
+            Enabled:
+              type: boolean
+              example: true
     GetReferencesByReferenceIdParameters:
       description: Parameters for the /repository/getReferencesByReferenceId endpoint.
       allOf:
         - $ref: '#/components/schemas/RepositoryParameters'
-      properties:
-        ReferenceIds:
-          type: array
-          items:
-            $ref: '#/components/schemas/ReferenceId'
-        MaxCount:
-          type: integer
+        - type: object
+          properties:
+            ReferenceIds:
+              type: array
+              items:
+                $ref: '#/components/schemas/ReferenceId'
+            MaxCount:
+              type: integer
+              format: int32
+              minimum: 1
+              maximum: 1000
+              example: 50
     GetBranchesParameters:
-      description: Parameters for the /repository/getBranched endpoint.
+      description: Parameters for the /repository/getBranches endpoint.
       allOf:
         - $ref: '#/components/schemas/RepositoryParameters'
-      properties:
-        IncludeDeleted:
-          type: boolean
-        MaxCount:
-          type: integer
+        - type: object
+          properties:
+            IncludeDeleted:
+              type: boolean
+              example: false
+            MaxCount:
+              type: integer
+              format: int32
+              minimum: 1
+              maximum: 1000
+              example: 50
     GetBranchesByBranchIdParameters:
       description: Parameters for the /repository/getBranchesByBranchId endpoint.
       allOf:
         - $ref: '#/components/schemas/RepositoryParameters'
-      properties:
-        BranchIds:
-          type: array
-          items:
-            $ref: '#/components/schemas/BranchId'
-        MaxCount:
-          type: integer
-        IncludeDeleted:
-          type: boolean
+        - type: object
+          properties:
+            BranchIds:
+              type: array
+              items:
+                $ref: '#/components/schemas/BranchId'
+            MaxCount:
+              type: integer
+              format: int32
+              minimum: 1
+              maximum: 1000
+              example: 50
+            IncludeDeleted:
+              type: boolean
+              example: false
     UndeleteRepositoryParameters:
       description: Parameters for the /repository/undelete endpoint.
       allOf:
@@ -5137,6 +5331,331 @@ components:
         Properties:
           DirectoryVersionId1: 33a4e36b-828f-4fae-9343-50b6560dc842
           DirectoryVersionId2: 66b7b8c2-8d2f-4f04-951c-6b3486c4e5d1
+    DirectoryVersionId:
+      type: string
+      format: uuid
+      example: 33a4e36b-828f-4fae-9343-50b6560dc842
+    DirectoryCommandReturnValue:
+      description: Grace response envelope returned by directory command endpoints.
+      type: object
+      properties:
+        ReturnValue:
+          type: string
+          example: Uploaded new directory versions.
+        EventTime:
+          $ref: '#/components/schemas/Instant'
+        CorrelationId:
+          $ref: '#/components/schemas/CorrelationId'
+        Properties:
+          type: object
+          additionalProperties:
+            type: string
+      required:
+        - ReturnValue
+        - EventTime
+        - CorrelationId
+        - Properties
+      example:
+        ReturnValue: Uploaded new directory versions.
+        EventTime: '2026-06-04T18:15:00Z'
+        CorrelationId: cli-20260604T181500Z-0001
+        Properties:
+          Path: /directory/saveDirectoryVersions
+          RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+    DirectoryVersionApiDto:
+      description: Public directory version DTO returned by directory query endpoints.
+      type: object
+      properties:
+        DirectoryVersion:
+          $ref: '#/components/schemas/DirectoryVersion'
+        RecursiveSize:
+          type: integer
+          format: int64
+          example: 4096
+        DeletedAt:
+          $ref: '#/components/schemas/Instant'
+          nullable: true
+        DeleteReason:
+          type: string
+          example: ''
+        HashesValidated:
+          type: boolean
+          example: true
+    DirectoryVersionReturnValue:
+      description: Grace response envelope whose ReturnValue contains a directory version DTO.
+      type: object
+      properties:
+        ReturnValue:
+          $ref: '#/components/schemas/DirectoryVersionApiDto'
+        EventTime:
+          $ref: '#/components/schemas/Instant'
+        CorrelationId:
+          $ref: '#/components/schemas/CorrelationId'
+        Properties:
+          type: object
+          additionalProperties:
+            type: string
+      required:
+        - ReturnValue
+        - EventTime
+        - CorrelationId
+        - Properties
+    DirectoryVersionListReturnValue:
+      description: Grace response envelope whose ReturnValue contains directory version DTOs.
+      type: object
+      properties:
+        ReturnValue:
+          type: array
+          items:
+            $ref: '#/components/schemas/DirectoryVersionApiDto'
+        EventTime:
+          $ref: '#/components/schemas/Instant'
+        CorrelationId:
+          $ref: '#/components/schemas/CorrelationId'
+        Properties:
+          type: object
+          additionalProperties:
+            type: string
+      required:
+        - ReturnValue
+        - EventTime
+        - CorrelationId
+        - Properties
+    OrganizationCommandReturnValue:
+      description: Grace response envelope returned by organization command endpoints.
+      type: object
+      properties:
+        ReturnValue:
+          type: string
+          example: Organization command succeeded.
+        EventTime:
+          $ref: '#/components/schemas/Instant'
+        CorrelationId:
+          $ref: '#/components/schemas/CorrelationId'
+        Properties:
+          type: object
+          additionalProperties:
+            type: string
+      required:
+        - ReturnValue
+        - EventTime
+        - CorrelationId
+        - Properties
+      example:
+        ReturnValue: Organization command succeeded.
+        EventTime: '2026-06-04T18:15:00Z'
+        CorrelationId: cli-20260604T181500Z-0001
+        Properties:
+          Path: /organization/create
+          OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+          OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+    OrganizationReturnValue:
+      description: Grace response envelope whose ReturnValue contains an organization DTO.
+      type: object
+      properties:
+        ReturnValue:
+          $ref: '#/components/schemas/OrganizationDto'
+        EventTime:
+          $ref: '#/components/schemas/Instant'
+        CorrelationId:
+          $ref: '#/components/schemas/CorrelationId'
+        Properties:
+          type: object
+          additionalProperties:
+            type: string
+      required:
+        - ReturnValue
+        - EventTime
+        - CorrelationId
+        - Properties
+      example:
+        ReturnValue:
+          Class: OrganizationDto
+          OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+          OrganizationName: alice-org
+          OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+          OrganizationType: Public
+          Description: Engineering organization for Alice's projects.
+          SearchVisibility: Visible
+          CreatedAt: '2026-06-04T18:15:00Z'
+          DeleteReason: ''
+        EventTime: '2026-06-04T18:15:00Z'
+        CorrelationId: cli-20260604T181500Z-0001
+        Properties:
+          Path: /organization/get
+          OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+          OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+    OwnerCommandReturnValue:
+      description: Grace response envelope returned by owner command endpoints.
+      type: object
+      properties:
+        ReturnValue:
+          type: string
+          example: Owner command succeeded.
+        EventTime:
+          $ref: '#/components/schemas/Instant'
+        CorrelationId:
+          $ref: '#/components/schemas/CorrelationId'
+        Properties:
+          type: object
+          additionalProperties:
+            type: string
+      required:
+        - ReturnValue
+        - EventTime
+        - CorrelationId
+        - Properties
+      example:
+        ReturnValue: Owner command succeeded.
+        EventTime: '2026-06-04T18:15:00Z'
+        CorrelationId: cli-20260604T181500Z-0001
+        Properties:
+          Path: /owner/create
+          OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+    OwnerReturnValue:
+      description: Grace response envelope whose ReturnValue contains an owner DTO.
+      type: object
+      properties:
+        ReturnValue:
+          $ref: '#/components/schemas/OwnerDto'
+        EventTime:
+          $ref: '#/components/schemas/Instant'
+        CorrelationId:
+          $ref: '#/components/schemas/CorrelationId'
+        Properties:
+          type: object
+          additionalProperties:
+            type: string
+      required:
+        - ReturnValue
+        - EventTime
+        - CorrelationId
+        - Properties
+      example:
+        ReturnValue:
+          Class: OwnerDto
+          OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+          OwnerName: alice
+          OwnerType: Public
+          Description: Source control owner for Alice's projects.
+          SearchVisibility: Visible
+          CreatedAt: '2026-06-04T18:15:00Z'
+          DeleteReason: ''
+        EventTime: '2026-06-04T18:15:00Z'
+        CorrelationId: cli-20260604T181500Z-0001
+        Properties:
+          Path: /owner/get
+          OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+    RepositoryCommandReturnValue:
+      description: Grace response envelope returned by repository command endpoints.
+      type: object
+      properties:
+        ReturnValue:
+          type: string
+          example: Repository command succeeded.
+        EventTime:
+          $ref: '#/components/schemas/Instant'
+        CorrelationId:
+          $ref: '#/components/schemas/CorrelationId'
+        Properties:
+          type: object
+          additionalProperties:
+            type: string
+      required:
+        - ReturnValue
+        - EventTime
+        - CorrelationId
+        - Properties
+      example:
+        ReturnValue: Repository command succeeded.
+        EventTime: '2026-06-04T18:15:00Z'
+        CorrelationId: cli-20260604T181500Z-0001
+        Properties:
+          Path: /repository/create
+          OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+          OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+          RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+    RepositoryBooleanReturnValue:
+      description: Grace response envelope whose ReturnValue contains a boolean repository query result.
+      type: object
+      properties:
+        ReturnValue:
+          type: boolean
+          example: true
+        EventTime:
+          $ref: '#/components/schemas/Instant'
+        CorrelationId:
+          $ref: '#/components/schemas/CorrelationId'
+        Properties:
+          type: object
+          additionalProperties:
+            type: string
+      required:
+        - ReturnValue
+        - EventTime
+        - CorrelationId
+        - Properties
+    RepositoryReturnValue:
+      description: Grace response envelope whose ReturnValue contains a repository DTO.
+      type: object
+      properties:
+        ReturnValue:
+          $ref: '#/components/schemas/RepositoryDto'
+        EventTime:
+          $ref: '#/components/schemas/Instant'
+        CorrelationId:
+          $ref: '#/components/schemas/CorrelationId'
+        Properties:
+          type: object
+          additionalProperties:
+            type: string
+      required:
+        - ReturnValue
+        - EventTime
+        - CorrelationId
+        - Properties
+    RepositoryBranchesReturnValue:
+      description: Grace response envelope whose ReturnValue contains branch DTOs.
+      type: object
+      properties:
+        ReturnValue:
+          type: array
+          items:
+            $ref: '#/components/schemas/BranchDto'
+        EventTime:
+          $ref: '#/components/schemas/Instant'
+        CorrelationId:
+          $ref: '#/components/schemas/CorrelationId'
+        Properties:
+          type: object
+          additionalProperties:
+            type: string
+      required:
+        - ReturnValue
+        - EventTime
+        - CorrelationId
+        - Properties
+    RepositoryReferencesReturnValue:
+      description: Grace response envelope whose ReturnValue contains reference DTOs.
+      type: object
+      properties:
+        ReturnValue:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReferenceDto'
+        EventTime:
+          $ref: '#/components/schemas/Instant'
+        CorrelationId:
+          $ref: '#/components/schemas/CorrelationId'
+        Properties:
+          type: object
+          additionalProperties:
+            type: string
+      required:
+        - ReturnValue
+        - EventTime
+        - CorrelationId
+        - Properties
     GraceReturnValueBase:
       description: Common metadata returned with successful Grace responses.
       type: object
@@ -5860,12 +6379,6 @@ components:
       scheme: bearer
       bearerFormat: JWT
   responses:
-    '200':
-      description: OK
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/GraceReturnValue'
     '400':
       description: Bad Request
       content:
@@ -6115,3 +6628,182 @@ components:
                 Properties:
                   DirectoryVersionId1: 33a4e36b-828f-4fae-9343-50b6560dc842
                   DirectoryVersionId2: 66b7b8c2-8d2f-4f04-951c-6b3486c4e5d1
+    DirectoryCommandResponse:
+      description: OK
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/DirectoryCommandReturnValue'
+          examples:
+            directoryCommand:
+              summary: Directory command response envelope
+              value:
+                ReturnValue: Uploaded new directory versions.
+                EventTime: '2026-06-04T18:15:00Z'
+                CorrelationId: cli-20260604T181500Z-0001
+                Properties:
+                  Path: /directory/saveDirectoryVersions
+                  RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+    DirectoryVersionResponse:
+      description: OK
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/DirectoryVersionReturnValue'
+    DirectoryVersionListResponse:
+      description: OK
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/DirectoryVersionListReturnValue'
+    OrganizationCommandResponse:
+      description: OK
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/OrganizationCommandReturnValue'
+          examples:
+            organizationCommand:
+              summary: Organization command response envelope
+              value:
+                ReturnValue: Organization command succeeded.
+                EventTime: '2026-06-04T18:15:00Z'
+                CorrelationId: cli-20260604T181500Z-0001
+                Properties:
+                  Path: /organization/create
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+    OrganizationRepositoriesResponse:
+      description: OK
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties:
+              type: string
+          examples:
+            repositories:
+              summary: Organization repository id-to-name dictionary
+              value:
+                ab6f35ef-6e01-440b-8f9b-c343a5272095: sample-repository
+    OrganizationResponse:
+      description: OK
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/OrganizationReturnValue'
+          examples:
+            organization:
+              summary: Organization response envelope
+              value:
+                ReturnValue:
+                  Class: OrganizationDto
+                  OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                  OrganizationName: alice-org
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OrganizationType: Public
+                  Description: Engineering organization for Alice's projects.
+                  SearchVisibility: Visible
+                  CreatedAt: '2026-06-04T18:15:00Z'
+                  DeleteReason: ''
+                EventTime: '2026-06-04T18:15:00Z'
+                CorrelationId: cli-20260604T181500Z-0001
+                Properties:
+                  Path: /organization/get
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+    OwnerCommandResponse:
+      description: OK
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/OwnerCommandReturnValue'
+          examples:
+            ownerCommand:
+              summary: Owner command response envelope
+              value:
+                ReturnValue: Owner command succeeded.
+                EventTime: '2026-06-04T18:15:00Z'
+                CorrelationId: cli-20260604T181500Z-0001
+                Properties:
+                  Path: /owner/create
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+    OwnerOrganizationsResponse:
+      description: OK
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties:
+              type: string
+          examples:
+            organizations:
+              summary: Owner organization id-to-name dictionary
+              value:
+                e35d64a9-b990-44f5-bf02-32ad7d15630c: alice-org
+    OwnerResponse:
+      description: OK
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/OwnerReturnValue'
+          examples:
+            owner:
+              summary: Owner response envelope
+              value:
+                ReturnValue:
+                  Class: OwnerDto
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OwnerName: alice
+                  OwnerType: Public
+                  Description: Source control owner for Alice's projects.
+                  SearchVisibility: Visible
+                  CreatedAt: '2026-06-04T18:15:00Z'
+                  DeleteReason: ''
+                EventTime: '2026-06-04T18:15:00Z'
+                CorrelationId: cli-20260604T181500Z-0001
+                Properties:
+                  Path: /owner/get
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+    RepositoryCommandResponse:
+      description: OK
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/RepositoryCommandReturnValue'
+          examples:
+            repositoryCommand:
+              summary: Repository command response envelope
+              value:
+                ReturnValue: Repository command succeeded.
+                EventTime: '2026-06-04T18:15:00Z'
+                CorrelationId: cli-20260604T181500Z-0001
+                Properties:
+                  Path: /repository/create
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                  RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+    RepositoryBooleanResponse:
+      description: OK
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/RepositoryBooleanReturnValue'
+    RepositoryResponse:
+      description: OK
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/RepositoryReturnValue'
+    RepositoryBranchesResponse:
+      description: OK
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/RepositoryBranchesReturnValue'
+    RepositoryReferencesResponse:
+      description: OK
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/RepositoryReferencesReturnValue'
