@@ -1,0 +1,78 @@
+{
+  "schemaVersion": 1,
+  "generatedBy": "grace-sdk-harness",
+  "generatorVersion": "0.1.0",
+  "generatorPinned": true,
+  "generatedClientBoundary": "internal-behind-facades",
+  "sourceProjection": "src/OpenAPI/Grace.OpenAPI.3.1.2.yaml",
+  "sourceProjectionSha256": "e2be4a02d2f63a3b9f4cdabe7f615ba0a5c98673618c132d063b9bbf4273f590",
+  "openApiVersion": "3.1.2",
+  "apiContractVersion": "2023-10-01",
+  "pathCount": 102,
+  "toolVersions": [
+    {
+      "command": "pwsh",
+      "available": true,
+      "version": "PowerShell 7.6.2",
+      "exitCode": 0
+    },
+    {
+      "command": "dotnet",
+      "available": true,
+      "version": "10.0.103",
+      "exitCode": 0
+    },
+    {
+      "command": "node",
+      "available": true,
+      "version": "v24.3.0",
+      "exitCode": 0
+    },
+    {
+      "command": "npm",
+      "available": true,
+      "version": "11.10.1",
+      "exitCode": 0
+    },
+    {
+      "command": "python",
+      "available": true,
+      "version": "Python 3.14.5",
+      "exitCode": 0
+    },
+    {
+      "command": "cargo",
+      "available": true,
+      "version": "cargo 1.96.0 (30a34c682 2026-05-25)",
+      "exitCode": 0
+    },
+    {
+      "command": "rustc",
+      "available": true,
+      "version": "rustc 1.96.0 (ac68faa20 2026-05-25)",
+      "exitCode": 0
+    }
+  ],
+  "generatedFiles": [
+    {
+      "path": "sdk/typescript/grace/src/internal/generated/grace-raw-client-metadata.ts",
+      "kind": "typescript-generated-metadata"
+    },
+    {
+      "path": "sdk/python/grace-sdk/src/grace_sdk/_generated/grace_raw_client_metadata.py",
+      "kind": "python-generated-metadata"
+    },
+    {
+      "path": "sdk/python/grace-sdk/src/grace_sdk/_generated/__init__.py",
+      "kind": "python-generated-package"
+    },
+    {
+      "path": "sdk/rust/grace-sdk/src/generated.rs",
+      "kind": "rust-generated-metadata"
+    },
+    {
+      "path": "sdk/dotnet/Grace.Sdk.Harness/Internal/Generated/GraceRawClientMetadata.cs",
+      "kind": "dotnet-generated-metadata"
+    }
+  ]
+}
