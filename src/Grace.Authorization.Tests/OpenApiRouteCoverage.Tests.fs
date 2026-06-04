@@ -1,5 +1,6 @@
 namespace Grace.Authorization.Tests
 
+open Grace.Shared
 open NUnit.Framework
 open System
 open System.IO
@@ -11,6 +12,14 @@ type OpenApiRouteCoverageTests() =
     let openApiMainPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "OpenAPI", "Main.OpenAPI.yaml"))
 
     let openApiPathRegex = Regex("^  (?<path>/[^:]+):\\s*$", RegexOptions.Compiled)
+    let openApiVersionRegex = Regex("""^  version: "(?<version>[^"]+)"\s*$""", RegexOptions.Compiled)
+
+    let openApiVersion () =
+        File.ReadAllLines(openApiMainPath)
+        |> Array.pick (fun line ->
+            let matchItem = openApiVersionRegex.Match(line)
+
+            if matchItem.Success then Some matchItem.Groups["version"].Value else None)
 
     let openApiPaths () =
         File.ReadAllLines(openApiMainPath)
@@ -48,3 +57,6 @@ type OpenApiRouteCoverageTests() =
                 |> String.concat Environment.NewLine
 
             Assert.Fail($"OpenAPI is missing ADR-0001 storage routes:{Environment.NewLine}{missingText}")
+
+    [<Test>]
+    member _.OpenApiInfoVersionMatchesCurrentApiContractVersion() = Assert.That(openApiVersion (), Is.EqualTo(ApiContractVersion.CurrentReleased))

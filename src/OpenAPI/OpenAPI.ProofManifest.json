@@ -40,11 +40,11 @@
     },
     {
       "path": "Grace.OpenAPI.yaml",
-      "sha256": "8473aba3021394ac423d973f3404b44d26ee7743ad08fe9cfe54f704517a1145"
+      "sha256": "9a00870e06320e7ea0b00b604da2d8429168197533b5bde47df10c37d9f137ca"
     },
     {
       "path": "Main.OpenAPI.yaml",
-      "sha256": "6f16430397a78769c29aeb6316ccfb34ad2d80c6aeb001e2a0453f2e5ba79ea6"
+      "sha256": "8ac337d0d7b866447fc8d6dac30d6d74d775619f28e87487b12103af33ae8922"
     },
     {
       "path": "Organization.Components.OpenAPI.yaml",

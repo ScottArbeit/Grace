@@ -70,6 +70,7 @@
 		<Compile Include="Middleware\Fake.Middleware.fs" />
 		<Compile Include="Middleware\HttpSecurityHeaders.Middleware.fs" />
 		<Compile Include="Middleware\CorrelationId.Middleware.fs" />
+		<Compile Include="Middleware\ApiVersionAlias.Middleware.fs" />
 		<Compile Include="Middleware\ValidateIds.Decisions.fs" />
 		<Compile Include="Middleware\ValidateIds.Middleware.fs" />
 		<Compile Include="Middleware\LogRequestHeaders.Middleware.fs" />

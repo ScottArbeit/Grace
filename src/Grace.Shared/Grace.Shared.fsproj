@@ -18,6 +18,7 @@
         <None Include="instructions.md" />
         <Compile Include="Extensions.Shared.fs" />
         <Compile Include="Constants.Shared.fs" />
+        <Compile Include="ApiContractVersion.Shared.fs" />
         <Compile Include="AzureEnvironment.Shared.fs" />
         <Compile Include="Resources\Text\Languages.Resources.fs" />
         <Compile Include="Resources\Text\en-US.fs" />

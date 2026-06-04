@@ -21,7 +21,7 @@ info:
   license:
     name: MIT
     url: https://opensource.org/licenses/MIT
-  version: '0.1'
+  version: '2023-10-01'
 servers:
   - url: http://localhost:5000
     description: Local development server
