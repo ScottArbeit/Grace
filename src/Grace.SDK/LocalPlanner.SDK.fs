@@ -1,7 +1,7 @@
 namespace Grace.SDK
 
 open Grace.Shared
-open Grace.Types.Types
+open Grace.Types.Common
 open System
 open System.Collections.Generic
 open System.IO

@@ -12,7 +12,7 @@ open System.Security.Claims
 open System.Text.Json
 open System.Threading
 open System.Threading.Tasks
-open Grace.Types.Types
+open Grace.Types.Common
 open Grace.Types
 open FSharp.Control
 open Grace.Shared.Validation.Errors

@@ -7,7 +7,7 @@ open Grace.Shared.Parameters.Webhook
 open Grace.Shared.Utilities
 open Grace.Types
 open Grace.Types.Authorization
-open Grace.Types.Types
+open Grace.Types.Common
 open Grace.Types.Webhooks
 open Microsoft.AspNetCore.Http
 open Microsoft.Extensions.Configuration

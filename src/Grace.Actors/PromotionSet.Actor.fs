@@ -19,7 +19,7 @@ open Grace.Types.PromotionSet
 open Grace.Types.Queue
 open Grace.Types.Reference
 open Grace.Types.Reminder
-open Grace.Types.Types
+open Grace.Types.Common
 open Grace.Types.Validation
 open Grace.Types.Webhooks
 open Microsoft.Extensions.Logging

@@ -9,7 +9,7 @@ open Grace.Shared.Client
 open Grace.Shared.Client.Configuration
 open Grace.Shared.Parameters.Common
 open Grace.Shared.Utilities
-open Grace.Types.Types
+open Grace.Types.Common
 open Microsoft.Identity.Client.Extensions.Msal
 open Spectre.Console
 open NodaTime

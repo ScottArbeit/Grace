@@ -4,7 +4,7 @@ open Grace.Actors.Constants
 open Grace.Actors.Context
 open Grace.Actors.Interfaces
 open Grace.Actors.Services
-open Grace.Types.Types
+open Grace.Types.Common
 open Grace.Shared.Utilities
 open Microsoft.Extensions.Logging
 open Orleans
@@ -31,14 +31,14 @@ module WorkItemNumber =
             Task.CompletedTask
 
         interface IWorkItemNumberActor with
-            member this.GetWorkItemId(workItemNumber: WorkItemNumber) correlationId =
+            member this.GetWorkItemId (workItemNumber: WorkItemNumber) correlationId =
                 this.correlationId <- correlationId
 
                 match cachedWorkItemIds.TryGetValue workItemNumber with
                 | true, workItemId -> Some workItemId |> returnTask
                 | false, _ -> None |> returnTask
 
-            member this.SetWorkItemId(workItemNumber: WorkItemNumber) (workItemId: WorkItemId) correlationId =
+            member this.SetWorkItemId (workItemNumber: WorkItemNumber) (workItemId: WorkItemId) correlationId =
                 this.correlationId <- correlationId
 
                 if workItemNumber > 0L && workItemId <> Guid.Empty then

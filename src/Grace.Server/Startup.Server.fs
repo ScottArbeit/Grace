@@ -21,7 +21,7 @@ open Grace.Server.Security.TestAuth
 open Grace.Shared.Converters
 open Grace.Shared.Parameters
 open Grace.Types.Automation
-open Grace.Types.Types
+open Grace.Types.Common
 open Grace.Types.Authorization
 open Grace.Types.PersonalAccessToken
 open Microsoft.AspNetCore.Authentication

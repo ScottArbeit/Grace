@@ -17,7 +17,7 @@ open Grace.Types.Automation
 open Grace.Types.Events
 open Grace.Types.Queue
 open Grace.Types.Reference
-open Grace.Types.Types
+open Grace.Types.Common
 open Grace.Types.Validation
 open Microsoft.AspNetCore.Builder
 open Microsoft.AspNetCore.SignalR

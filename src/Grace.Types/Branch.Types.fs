@@ -4,7 +4,7 @@ open Grace.Shared
 open Grace.Shared.Constants
 open Grace.Shared.Utilities
 open Grace.Types.Reference
-open Grace.Types.Types
+open Grace.Types.Common
 open NodaTime
 open Orleans
 open System

@@ -1,6 +1,6 @@
 namespace Grace.Shared
 
-open Grace.Types.Types
+open Grace.Types.Common
 
 module StorageKeys =
     [<Literal>]

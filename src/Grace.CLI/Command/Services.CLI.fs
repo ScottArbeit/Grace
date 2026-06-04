@@ -9,7 +9,7 @@ open Grace.Shared
 open Grace.Shared.Constants
 open Grace.Shared.Parameters.DirectoryVersion
 open Grace.Shared.Services
-open Grace.Types.Types
+open Grace.Types.Common
 open Grace.Shared.Utilities
 open Grace.Shared.Validation.Errors
 open NodaTime
@@ -99,7 +99,12 @@ module Services =
         if String.IsNullOrWhiteSpace assembly.Location then
             $"{assembly.GetName().Version}"
         else
-            let fileVersion = FileVersionInfo.GetVersionInfo(assembly.Location).FileVersion
+            let fileVersion =
+                FileVersionInfo
+                    .GetVersionInfo(
+                        assembly.Location
+                    )
+                    .FileVersion
 
             if String.IsNullOrWhiteSpace fileVersion then
                 $"{assembly.GetName().Version}"

@@ -4,7 +4,7 @@ open Grace.Shared
 open Grace.Shared.ReviewNotes
 open Grace.Types.Policy
 open Grace.Types.Review
-open Grace.Types.Types
+open Grace.Types.Common
 open NUnit.Framework
 open System
 

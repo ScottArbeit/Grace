@@ -7,7 +7,7 @@ open Grace.Actors.Types
 open Grace.Shared
 open Grace.Shared.Constants
 open Grace.Shared.Utilities
-open Grace.Types.Types
+open Grace.Types.Common
 open Microsoft.Azure.Cosmos
 open Microsoft.Extensions.Caching.Memory
 open Microsoft.Extensions.ObjectPool

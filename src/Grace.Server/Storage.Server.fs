@@ -19,7 +19,7 @@ open Grace.Shared.Client.Configuration
 open Grace.Shared.Validation.Errors
 open Grace.Types.UploadSession
 open Grace.Types.Repository
-open Grace.Types.Types
+open Grace.Types.Common
 open Microsoft.AspNetCore.Http
 open Microsoft.Extensions.Logging
 open System

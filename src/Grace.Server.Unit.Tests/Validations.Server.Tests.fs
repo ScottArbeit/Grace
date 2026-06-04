@@ -165,7 +165,7 @@ type Validations() =
     [<Test>]
     member this.``string is member of discriminated union returns Ok``() =
         let result =
-            (DiscriminatedUnion.isMemberOf<Types.ReferenceType, TestError> "Checkpoint" TestError.TestFailed)
+            (DiscriminatedUnion.isMemberOf<Common.ReferenceType, TestError> "Checkpoint" TestError.TestFailed)
                 .Result
 
         Assert.That(result, Is.EqualTo(Common.okResult))
@@ -173,7 +173,7 @@ type Validations() =
     [<Test>]
     member this.``string is not member of discriminated union returns Error``() =
         let result =
-            (DiscriminatedUnion.isMemberOf<Types.ReferenceType, TestError> "Not a member" TestError.TestFailed)
+            (DiscriminatedUnion.isMemberOf<Common.ReferenceType, TestError> "Not a member" TestError.TestFailed)
                 .Result
 
         Assert.That(result, Is.EqualTo(Common.errorResult))

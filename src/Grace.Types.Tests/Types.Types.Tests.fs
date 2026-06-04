@@ -2,7 +2,7 @@ namespace Grace.Types.Tests
 
 open Grace.Shared
 open Grace.Shared.Utilities
-open Grace.Types.Types
+open Grace.Types.Common
 open Grace.Types.Repository
 open MessagePack
 open NUnit.Framework

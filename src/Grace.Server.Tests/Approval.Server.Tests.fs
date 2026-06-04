@@ -5,7 +5,7 @@ open Grace.Server.Tests.Services
 open Grace.Shared
 open Grace.Shared.Utilities
 open Grace.Types
-open Grace.Types.Types
+open Grace.Types.Common
 open Grace.Types.Webhooks
 open NUnit.Framework
 open System

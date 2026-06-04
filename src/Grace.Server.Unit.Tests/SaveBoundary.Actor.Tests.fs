@@ -3,7 +3,7 @@ namespace Grace.Server.Tests
 open Grace.Shared
 open Grace.Types.ManifestContributionWorkflow
 open Grace.Types.RepositoryContentCounter
-open Grace.Types.Types
+open Grace.Types.Common
 open NodaTime
 open NUnit.Framework
 open System
@@ -79,7 +79,7 @@ type SaveBoundaryActorTests() =
     let directoryWith (files: FileVersion seq) =
         let fileList = List<FileVersion>(files)
 
-        Grace.Types.Types.DirectoryVersion.Create
+        Grace.Types.Common.DirectoryVersion.Create
             directoryVersionId
             ownerId
             organizationId

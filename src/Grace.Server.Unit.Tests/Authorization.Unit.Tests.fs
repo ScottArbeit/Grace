@@ -3,7 +3,7 @@ namespace Grace.Server.Tests
 open Grace.Shared.Authorization
 open Grace.Shared.Utilities
 open Grace.Types.Authorization
-open Grace.Types.Types
+open Grace.Types.Common
 open NUnit.Framework
 open System
 open System.Collections.Generic

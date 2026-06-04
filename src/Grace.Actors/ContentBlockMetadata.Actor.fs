@@ -7,7 +7,7 @@ open Grace.Actors.Services
 open Grace.Shared
 open Grace.Shared.Utilities
 open Grace.Types.ContentBlockMetadata
-open Grace.Types.Types
+open Grace.Types.Common
 open Microsoft.Extensions.Logging
 open Orleans
 open Orleans.Runtime

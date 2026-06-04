@@ -1,7 +1,7 @@
 namespace Grace.Types
 
 open Grace.Types
-open Grace.Types.Types
+open Grace.Types.Common
 open Grace.Shared.Utilities
 open NodaTime
 open Orleans

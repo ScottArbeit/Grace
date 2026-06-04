@@ -7,7 +7,7 @@ open Grace.Shared.Constants
 open Grace.Shared.Utilities
 open Grace.Types.PersonalAccessToken
 open Grace.Types.Auth
-open Grace.Types.Types
+open Grace.Types.Common
 open NUnit.Framework
 open System
 open System.Net

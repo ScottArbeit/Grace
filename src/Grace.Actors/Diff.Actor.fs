@@ -18,7 +18,7 @@ open Grace.Shared.Diff
 open Grace.Types.Reminder
 open Grace.Types.Repository
 open Grace.Types.Diff
-open Grace.Types.Types
+open Grace.Types.Common
 open Grace.Shared.Utilities
 open Microsoft.Extensions.Logging
 open NodaTime

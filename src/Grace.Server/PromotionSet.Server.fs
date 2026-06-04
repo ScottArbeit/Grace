@@ -10,7 +10,7 @@ open Grace.Shared.Validation.Common
 open Grace.Shared.Validation.Errors
 open Grace.Shared.Validation.Utilities
 open Grace.Types.PromotionSet
-open Grace.Types.Types
+open Grace.Types.Common
 open Grace.Types.Webhooks
 open Grace.Shared.Utilities
 open Microsoft.AspNetCore.Http

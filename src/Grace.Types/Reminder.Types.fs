@@ -8,7 +8,7 @@ open Grace.Types.Organization
 open Grace.Types.Owner
 open Grace.Types.Reference
 open Grace.Types.Repository
-open Grace.Types.Types
+open Grace.Types.Common
 open Grace.Types.UploadSession
 open NodaTime
 open Orleans

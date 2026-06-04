@@ -19,7 +19,7 @@ open Grace.Types.Events
 open Grace.Types.Reminder
 open Grace.Types.Repository
 open Grace.Types.DirectoryVersion
-open Grace.Types.Types
+open Grace.Types.Common
 open Microsoft.Extensions.Logging
 open Microsoft.Extensions.ObjectPool
 open NodaTime

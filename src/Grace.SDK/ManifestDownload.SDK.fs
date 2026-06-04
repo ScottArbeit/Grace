@@ -5,7 +5,7 @@ open Grace.Shared
 open Grace.Shared.Parameters.Storage
 open Grace.Shared.Utilities
 open Grace.Shared.Validation.Errors
-open Grace.Types.Types
+open Grace.Types.Common
 open System
 open System.IO
 open System.Threading.Tasks

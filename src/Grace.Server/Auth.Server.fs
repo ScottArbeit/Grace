@@ -10,7 +10,7 @@ open Grace.Shared.Parameters.Auth
 open Grace.Shared.Utilities
 open Grace.Types.Auth
 open Grace.Types.PersonalAccessToken
-open Grace.Types.Types
+open Grace.Types.Common
 open Microsoft.AspNetCore.Authentication
 open Microsoft.AspNetCore.Http
 open Microsoft.Extensions.Configuration

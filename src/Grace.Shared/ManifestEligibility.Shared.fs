@@ -1,6 +1,6 @@
 namespace Grace.Shared
 
-open Grace.Types.Types
+open Grace.Types.Common
 open System
 open System.IO
 open System.IO.Compression

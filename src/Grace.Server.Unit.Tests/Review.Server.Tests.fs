@@ -64,7 +64,7 @@ type ReviewProjectionTests() =
         let secondResultTask = Review.resolveCandidateIdentityProjectionWith resolvePromotionSet parameters
         let secondResult = secondResultTask.GetAwaiter().GetResult()
 
-        let getDeterministicShape (result: Result<CandidateIdentityProjectionResult, Grace.Types.Types.GraceError>) =
+        let getDeterministicShape (result: Result<CandidateIdentityProjectionResult, Grace.Types.Common.GraceError>) =
             match result with
             | Error error -> $"error:{error.Error}:{error.CorrelationId}:{error.Properties.Count}"
             | Ok projection ->

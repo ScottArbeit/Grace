@@ -10,7 +10,7 @@ open Grace.Actors.Interfaces
 open Grace.Actors.Services
 open Grace.Server.ApplicationContext
 open Grace.Shared.Constants
-open Grace.Types.Types
+open Grace.Types.Common
 open Grace.Shared.Utilities
 open Grace.Shared.Validation
 open Microsoft.AspNetCore.Http

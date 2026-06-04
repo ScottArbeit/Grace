@@ -1,6 +1,6 @@
 namespace Grace.Shared
 
-open Grace.Types.Types
+open Grace.Types.Common
 open Grace.Shared.Utilities
 open Microsoft.Extensions.Logging
 open Microsoft.Extensions.ObjectPool

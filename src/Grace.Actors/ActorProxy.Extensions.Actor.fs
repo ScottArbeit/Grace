@@ -7,7 +7,7 @@ open Grace.Actors.Interfaces
 open Grace.Actors.Timing
 open Grace.Actors.Types
 open Grace.Shared
-open Grace.Types.Types
+open Grace.Types.Common
 open Grace.Types.Webhooks
 open Grace.Shared.Utilities
 open Orleans

@@ -4,7 +4,7 @@ open FsCheck
 open Grace.Shared.Authorization
 open Grace.Shared.Utilities
 open Grace.Types.Authorization
-open Grace.Types.Types
+open Grace.Types.Common
 open NUnit.Framework
 open System
 open System.Reflection
@@ -39,14 +39,7 @@ type AuthorizationSemanticsTests() =
         |> Array.toList
 
     let createAssignment scope roleId =
-        {
-            Principal = principal
-            Scope = scope
-            RoleId = roleId
-            Source = "test"
-            SourceDetail = None
-            CreatedAt = getCurrentInstant ()
-        }
+        { Principal = principal; Scope = scope; RoleId = roleId; Source = "test"; SourceDetail = None; CreatedAt = getCurrentInstant () }
 
     let scopeKind scope =
         match scope with
@@ -76,24 +69,13 @@ type AuthorizationSemanticsTests() =
                     for operation in allOperations do
                         let assignments = [ createAssignment scope role.RoleId ]
 
-                        let result =
-                            checkPermission
-                                roleCatalog
-                                assignments
-                                []
-                                [ principal ]
-                                Set.empty
-                                operation
-                                resource
+                        let result = checkPermission roleCatalog assignments [] [ principal ] Set.empty operation resource
 
                         let expectedAllowed =
                             role.AllowedOperations.Contains operation
                             && role.AppliesTo.Contains(scopeKind scope)
 
-                        if expectedAllowed then
-                            assertAllowed result
-                        else
-                            assertDenied result
+                        if expectedAllowed then assertAllowed result else assertDenied result
 
     [<Test>]
     member _.RepoAdminIncludesBranchAdmin() =
@@ -145,21 +127,9 @@ type AuthorizationSemanticsTests() =
             let assignment = createAssignment scope "RepoAdmin"
             let baseResult = checkPermission roleCatalog [ assignment ] [] [ principal ] Set.empty operation resource
 
-            let extraAssignment =
-                {
-                    assignment with
-                        Principal = otherPrincipal
-                }
+            let extraAssignment = { assignment with Principal = otherPrincipal }
 
-            let withExtra =
-                checkPermission
-                    roleCatalog
-                    [ extraAssignment; assignment ]
-                    []
-                    [ principal ]
-                    Set.empty
-                    operation
-                    resource
+            let withExtra = checkPermission roleCatalog [ extraAssignment; assignment ] [] [ principal ] Set.empty operation resource
 
             baseResult = withExtra
 
@@ -173,18 +143,9 @@ type AuthorizationSemanticsTests() =
             let assignment = createAssignment scope "RepoAdmin"
             let baseResult = checkPermission roleCatalog [ assignment ] [] [ principal ] Set.empty operation resource
 
-            let unrelatedAssignment =
-                createAssignment (Scope.Branch(ownerId, organizationId, repositoryId, branchId)) "RepoAdmin"
+            let unrelatedAssignment = createAssignment (Scope.Branch(ownerId, organizationId, repositoryId, branchId)) "RepoAdmin"
 
-            let withUnrelated =
-                checkPermission
-                    roleCatalog
-                    [ unrelatedAssignment; assignment ]
-                    []
-                    [ principal ]
-                    Set.empty
-                    operation
-                    resource
+            let withUnrelated = checkPermission roleCatalog [ unrelatedAssignment; assignment ] [] [ principal ] Set.empty operation resource
 
             baseResult = withUnrelated
 
@@ -200,15 +161,7 @@ type AuthorizationSemanticsTests() =
 
             let mixedCaseAssignment = createAssignment scope "rEpOrEaDeR"
 
-            let withMixedCase =
-                checkPermission
-                    roleCatalog
-                    [ mixedCaseAssignment ]
-                    []
-                    [ principal ]
-                    Set.empty
-                    operation
-                    resource
+            let withMixedCase = checkPermission roleCatalog [ mixedCaseAssignment ] [] [ principal ] Set.empty operation resource
 
             baseResult = withMixedCase
 
@@ -226,18 +179,9 @@ type AuthorizationSemanticsTests() =
                 let baseAssignment = createAssignment scope "RepoReader"
                 let extraAssignment = createAssignment scope "RepoAdmin"
 
-                let baseResult =
-                    checkPermission roleCatalog [ baseAssignment ] [] [ principal ] Set.empty operation resource
+                let baseResult = checkPermission roleCatalog [ baseAssignment ] [] [ principal ] Set.empty operation resource
 
-                let withExtra =
-                    checkPermission
-                        roleCatalog
-                        [ extraAssignment; baseAssignment ]
-                        []
-                        [ principal ]
-                        Set.empty
-                        operation
-                        resource
+                let withExtra = checkPermission roleCatalog [ extraAssignment; baseAssignment ] [] [ principal ] Set.empty operation resource
 
                 match baseResult with
                 | Allowed _ ->

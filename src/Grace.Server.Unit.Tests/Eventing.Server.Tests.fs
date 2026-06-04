@@ -7,7 +7,7 @@ open Grace.Types.Events
 open Grace.Types.PromotionSet
 open Grace.Types.Queue
 open Grace.Types.Reference
-open Grace.Types.Types
+open Grace.Types.Common
 open Grace.Types.WorkItem
 open NodaTime
 open NUnit.Framework

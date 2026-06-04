@@ -2,7 +2,7 @@ namespace Grace.Shared.Parameters
 
 open Grace.Shared.Parameters.Common
 open Grace.Shared
-open Grace.Types.Types
+open Grace.Types.Common
 open NodaTime
 open System
 open System.Collections.Generic

@@ -3,7 +3,7 @@ namespace Grace.Shared
 open Grace.Shared.Utilities
 open Grace.Types.Policy
 open Grace.Types.Review
-open Grace.Types.Types
+open Grace.Types.Common
 open NodaTime
 open System
 open System.Security.Cryptography

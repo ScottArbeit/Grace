@@ -2,7 +2,7 @@ namespace Grace.Server.Tests
 
 open Grace.Server.Middleware
 open Grace.Shared.Validation.Errors
-open Grace.Types.Types
+open Grace.Types.Common
 open Microsoft.AspNetCore.Http
 open NUnit.Framework
 open System

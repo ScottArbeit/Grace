@@ -4,7 +4,7 @@ open Grace.Server.Security
 open Grace.Shared
 open Grace.Shared.Parameters
 open Grace.Types.Authorization
-open Grace.Types.Types
+open Grace.Types.Common
 open NUnit.Framework
 open System
 

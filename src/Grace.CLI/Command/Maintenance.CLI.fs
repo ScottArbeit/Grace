@@ -12,7 +12,7 @@ open Grace.Shared.Parameters.Storage
 open Grace.Shared.Constants
 open Grace.Shared.Utilities
 open Grace.Shared.Validation.Errors
-open Grace.Types.Types
+open Grace.Types.Common
 open Spectre.Console
 open System
 open System.Collections.Concurrent
@@ -126,12 +126,9 @@ module Maintenance =
         |> Option.orElse rootHashFromStatusMeta
 
     let private getShortHash (sha256Hash: Sha256Hash) =
-        if String.IsNullOrWhiteSpace(sha256Hash) then
-            String.Empty
-        elif sha256Hash.Length <= 8 then
-            sha256Hash
-        else
-            sha256Hash.Substring(0, 8)
+        if String.IsNullOrWhiteSpace(sha256Hash) then String.Empty
+        elif sha256Hash.Length <= 8 then sha256Hash
+        else sha256Hash.Substring(0, 8)
 
     let private writeRootShaSummary (graceStatus: GraceStatus) =
         match tryGetRootSha256Hash graceStatus with

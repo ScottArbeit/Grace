@@ -4,7 +4,7 @@ open Grace.Shared
 open Grace.Shared.Utilities
 open Grace.Types.Artifact
 open Grace.Types.Automation
-open Grace.Types.Types
+open Grace.Types.Common
 open NodaTime
 open Orleans
 open System

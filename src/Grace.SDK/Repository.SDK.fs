@@ -6,7 +6,7 @@ open Grace.Shared.Utilities
 open Grace.Types.Branch
 open Grace.Types.Reference
 open Grace.Types.Repository
-open Grace.Types.Types
+open Grace.Types.Common
 open System
 open System.Collections.Generic
 open System.Threading.Tasks

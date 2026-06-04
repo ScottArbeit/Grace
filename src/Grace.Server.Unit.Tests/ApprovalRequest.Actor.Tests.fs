@@ -3,7 +3,7 @@ namespace Grace.Server.Tests
 open Grace.Actors.ApprovalRequest
 open Grace.Server
 open Grace.Shared.Utilities
-open Grace.Types.Types
+open Grace.Types.Common
 open Grace.Types.Webhooks
 open NUnit.Framework
 open System

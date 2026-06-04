@@ -8,7 +8,7 @@ open Grace.Shared.Parameters.Storage
 open Grace.Shared.Utilities
 open Grace.Shared.Validation.Errors
 open Grace.Types.ContentBlockMetadata
-open Grace.Types.Types
+open Grace.Types.Common
 open Grace.Types.UploadSession
 open NUnit.Framework
 open System

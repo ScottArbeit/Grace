@@ -1,7 +1,7 @@
 namespace Grace.Shared.Parameters
 
 open Grace.Shared.Parameters.Common
-open Grace.Types.Types
+open Grace.Types.Common
 open System
 
 module Branch =

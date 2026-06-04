@@ -2,7 +2,7 @@ namespace Grace.Types.Tests
 
 open FsCheck
 open Grace.Shared
-open Grace.Types.Types
+open Grace.Types.Common
 open NUnit.Framework
 open System
 open System.Text

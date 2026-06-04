@@ -2,7 +2,7 @@ namespace Grace.Shared
 
 open Grace.Shared.Utilities
 open Grace.Types.Authorization
-open Grace.Types.Types
+open Grace.Types.Common
 open System
 
 module Authorization =

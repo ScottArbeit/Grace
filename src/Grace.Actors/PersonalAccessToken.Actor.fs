@@ -7,7 +7,7 @@ open Grace.Shared
 open Grace.Shared.Constants
 open Grace.Shared.Utilities
 open Grace.Types.PersonalAccessToken
-open Grace.Types.Types
+open Grace.Types.Common
 open Microsoft.Extensions.Logging
 open NodaTime
 open Orleans

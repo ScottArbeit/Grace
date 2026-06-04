@@ -7,7 +7,7 @@ open Grace.Actors.Types
 open Grace.Server.ApplicationContext
 open Grace.Shared
 open Grace.Types.Reminder
-open Grace.Types.Types
+open Grace.Types.Common
 open Grace.Shared.Utilities
 open Microsoft.Extensions.Hosting
 open Microsoft.Extensions.Logging

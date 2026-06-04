@@ -7,7 +7,7 @@ open Grace.Shared
 open Grace.Shared.Utilities
 open Grace.Types.Queue
 open Grace.Types.PromotionSet
-open Grace.Types.Types
+open Grace.Types.Common
 open Grace.Types.Webhooks
 open NodaTime
 open NUnit.Framework

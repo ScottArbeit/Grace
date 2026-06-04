@@ -8,7 +8,7 @@ open Grace.Actors.Types
 open Grace.Server.ApplicationContext
 open Grace.Shared
 open Grace.Shared.Utilities
-open Grace.Types.Types
+open Grace.Types.Common
 open Microsoft.Extensions.Logging
 open Orleans
 open Orleans.Hosting

@@ -2,7 +2,7 @@ namespace Grace.Types.Tests
 
 open System.Text
 open Grace.Shared
-open Grace.Types.Types
+open Grace.Types.Common
 open NUnit.Framework
 
 [<Parallelizable(ParallelScope.All)>]

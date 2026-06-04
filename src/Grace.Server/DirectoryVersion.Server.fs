@@ -12,7 +12,7 @@ open Grace.Shared
 open Grace.Shared.Parameters.DirectoryVersion
 open Grace.Shared.Resources.Text
 open Grace.Types.DirectoryVersion
-open Grace.Types.Types
+open Grace.Types.Common
 open Grace.Shared.Utilities
 open Grace.Shared.Validation.Common
 open Grace.Shared.Validation.Errors

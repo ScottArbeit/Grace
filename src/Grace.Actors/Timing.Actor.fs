@@ -2,7 +2,7 @@ namespace Grace.Actors
 
 open Grace.Actors.Context
 open Grace.Actors.Types
-open Grace.Types.Types
+open Grace.Types.Common
 open Grace.Shared.Utilities
 open System
 open System.Collections.Generic

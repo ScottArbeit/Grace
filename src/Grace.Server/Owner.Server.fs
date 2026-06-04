@@ -15,7 +15,7 @@ open Grace.Shared.Parameters.Owner
 open Grace.Shared.Validation.Common
 open Grace.Shared.Validation.Utilities
 open Grace.Shared.Validation.Errors
-open Grace.Types.Types
+open Grace.Types.Common
 open Grace.Shared.Utilities
 open Microsoft.AspNetCore.Http
 open Microsoft.Azure.Cosmos

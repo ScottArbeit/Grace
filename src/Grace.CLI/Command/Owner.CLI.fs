@@ -10,7 +10,7 @@ open Grace.Shared.Client.Configuration
 open Grace.Shared.Client.Theme
 open Grace.Shared.Validation
 open Grace.Shared.Validation.Errors
-open Grace.Types.Types
+open Grace.Types.Common
 open NodaTime
 open System
 open System.Collections.Generic

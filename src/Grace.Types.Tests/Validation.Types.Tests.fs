@@ -1,6 +1,6 @@
 namespace Grace.Types.Tests
 
-open Grace.Types.Types
+open Grace.Types.Common
 open Grace.Types.Validation
 open NUnit.Framework
 open NodaTime

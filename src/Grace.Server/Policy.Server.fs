@@ -14,7 +14,7 @@ open Grace.Shared.Validation.Common
 open Grace.Shared.Validation.Errors
 open Grace.Shared.Validation.Utilities
 open Grace.Types.Policy
-open Grace.Types.Types
+open Grace.Types.Common
 open Grace.Shared.Utilities
 open Microsoft.AspNetCore.Http
 open Microsoft.Extensions.Logging

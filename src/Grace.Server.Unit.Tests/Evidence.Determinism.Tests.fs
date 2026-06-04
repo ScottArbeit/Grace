@@ -4,7 +4,7 @@ open DiffPlex.DiffBuilder.Model
 open Grace.Shared
 open Grace.Types.Diff
 open Grace.Types.Review
-open Grace.Types.Types
+open Grace.Types.Common
 open NUnit.Framework
 open NodaTime
 open System

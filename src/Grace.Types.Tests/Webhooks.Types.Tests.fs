@@ -3,7 +3,7 @@ namespace Grace.Types.Tests
 open Grace.Shared
 open Grace.Types.ExternalWebhookEventRegistry
 open Grace.Types.PromotionSet
-open Grace.Types.Types
+open Grace.Types.Common
 open Grace.Types.Webhooks
 open NodaTime
 open NUnit.Framework

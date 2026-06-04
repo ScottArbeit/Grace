@@ -16,7 +16,7 @@ open Grace.Types
 open Grace.Types.Organization
 open Grace.Types.Owner
 open Grace.Types.Reminder
-open Grace.Types.Types
+open Grace.Types.Common
 open Microsoft.Extensions.Logging
 open NodaTime
 open Orleans

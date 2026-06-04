@@ -1,6 +1,6 @@
 namespace Grace.Types.Tests
 
-open Grace.Types.Types
+open Grace.Types.Common
 open Grace.Types.WorkItem
 open NodaTime
 open NUnit.Framework
@@ -43,16 +43,7 @@ type WorkItemTypesTests() =
 
         let createdEvent =
             {
-                Event =
-                    WorkItemEventType.Created(
-                        workItemId,
-                        workItemNumber,
-                        Guid.NewGuid(),
-                        Guid.NewGuid(),
-                        Guid.NewGuid(),
-                        "Title",
-                        "Description"
-                    )
+                Event = WorkItemEventType.Created(workItemId, workItemNumber, Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "Title", "Description")
                 Metadata = metadata createdAt
             }
 

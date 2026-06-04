@@ -5,7 +5,7 @@ open Grace.Shared.Utilities
 open Grace.Types
 open Grace.Types.Events
 open Grace.Types.PromotionSet
-open Grace.Types.Types
+open Grace.Types.Common
 open Grace.Types.Webhooks
 open Microsoft.Extensions.Configuration
 open Microsoft.Extensions.Hosting

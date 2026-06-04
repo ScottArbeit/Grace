@@ -3,7 +3,7 @@ namespace Grace.CLI.LocalStateDb.Worker
 open System
 open System.Threading.Tasks
 open Grace.CLI
-open Grace.Types.Types
+open Grace.Types.Common
 open NodaTime
 
 module Program =

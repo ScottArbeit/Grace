@@ -5,7 +5,7 @@ open Grace.Server.ApplicationContext
 open Grace.Server.Services
 open Grace.Shared.Utilities
 open Grace.Types.Authorization
-open Grace.Types.Types
+open Grace.Types.Common
 open Microsoft.AspNetCore.Http
 open Microsoft.Extensions.DependencyInjection
 open Microsoft.Extensions.Logging

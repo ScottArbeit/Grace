@@ -14,7 +14,7 @@ open Grace.Types.Events
 open Grace.Types.Reminder
 open Grace.Types.Repository
 open Grace.Types.Organization
-open Grace.Types.Types
+open Grace.Types.Common
 open Grace.Shared.Validation.Errors
 open Microsoft.Extensions.Logging
 open NodaTime

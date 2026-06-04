@@ -10,7 +10,7 @@ open Grace.Server.ApplicationContext
 open Grace.Shared
 open Grace.Shared.AzureEnvironment
 open Grace.Shared.Constants
-open Grace.Types.Types
+open Grace.Types.Common
 open Grace.Shared.Utilities
 open MessagePack
 open Microsoft.AspNetCore

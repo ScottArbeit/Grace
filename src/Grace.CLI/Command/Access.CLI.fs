@@ -13,7 +13,7 @@ open Grace.Shared.Parameters.Common
 open Grace.Shared.Utilities
 open Grace.Shared.Validation.Errors
 open Grace.Types.Authorization
-open Grace.Types.Types
+open Grace.Types.Common
 open Spectre.Console
 open Spectre.Console.Json
 open System

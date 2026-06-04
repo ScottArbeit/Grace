@@ -4,7 +4,7 @@ open Grace.Server.Tests.Services
 open Grace.Shared
 open Grace.Shared.Utilities
 open Grace.Types.UploadSession
-open Grace.Types.Types
+open Grace.Types.Common
 open NUnit.Framework
 open System
 open System.Net

@@ -4,7 +4,7 @@ open Grace.Server
 open Grace.Shared.Parameters.Policy
 open Grace.Shared.Validation.Errors
 open Grace.Shared.Validation.Utilities
-open Grace.Types.Types
+open Grace.Types.Common
 open Grace.Types.Validation
 open NUnit.Framework
 open NodaTime

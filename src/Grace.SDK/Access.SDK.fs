@@ -4,7 +4,7 @@ open Grace.SDK.Common
 open Grace.Shared.Parameters.Access
 open Grace.Shared.Parameters.Common
 open Grace.Types.Authorization
-open Grace.Types.Types
+open Grace.Types.Common
 
 type Access() =
 
