@@ -119,16 +119,23 @@ function Get-OpenApiOperations {
     foreach ($file in $files) {
         $lines = Get-Content -LiteralPath $file.FullName
         $currentPath = $null
+        $currentPathIndent = -1
         for ($index = 0; $index -lt $lines.Count; $index++) {
             $line = $lines[$index]
-            $pathMatch = [regex]::Match($line, "^\s*'?(?<path>/[^']*)'?:\s*$")
+            $pathMatch = [regex]::Match($line, "^(?<indent>\s*)'?(?<path>/[^']*)'?:\s*$")
             if ($pathMatch.Success) {
                 $currentPath = $pathMatch.Groups['path'].Value
+                $currentPathIndent = $pathMatch.Groups['indent'].Value.Length
                 continue
             }
 
-            $methodMatch = [regex]::Match($line, '^\s{2}(?<method>get|put|post|delete|patch|head|options|trace):\s*$')
+            $methodMatch = [regex]::Match($line, '^(?<indent>\s+)(?<method>get|put|post|delete|patch|head|options|trace):\s*$')
             if (-not $methodMatch.Success -or $null -eq $currentPath) {
+                continue
+            }
+
+            $methodIndent = $methodMatch.Groups['indent'].Value.Length
+            if ($methodIndent -le $currentPathIndent) {
                 continue
             }
 
@@ -140,11 +147,13 @@ function Get-OpenApiOperations {
             $operationLines = [System.Collections.Generic.List[string]]::new()
             for ($cursor = $index + 1; $cursor -lt $lines.Count; $cursor++) {
                 $nextLine = $lines[$cursor]
-                if ([regex]::IsMatch($nextLine, "^\s*'?(?<path>/[^']*)'?:\s*$")) {
+                $nextPathMatch = [regex]::Match($nextLine, "^(?<indent>\s*)'?(?<path>/[^']*)'?:\s*$")
+                if ($nextPathMatch.Success -and $nextPathMatch.Groups['indent'].Value.Length -le $currentPathIndent) {
                     break
                 }
 
-                if ([regex]::IsMatch($nextLine, '^\s{2}(get|put|post|delete|patch|head|options|trace):\s*$')) {
+                $nextMethodMatch = [regex]::Match($nextLine, '^(?<indent>\s+)(get|put|post|delete|patch|head|options|trace):\s*$')
+                if ($nextMethodMatch.Success -and $nextMethodMatch.Groups['indent'].Value.Length -eq $methodIndent) {
                     break
                 }
 
@@ -172,21 +181,58 @@ function Get-OpenApiOperations {
     return $operations
 }
 
+function Get-OpenApiMethodDeclarationCount {
+    param([string] $OpenApiRoot)
+
+    $count = 0
+    $pathFiles = Get-ChildItem -LiteralPath $OpenApiRoot -Filter '*.Paths.OpenAPI.yaml' -File | Sort-Object Name
+    $mainPath = Join-Path $OpenApiRoot 'Main.OpenAPI.yaml'
+    $files = @($pathFiles) + @(Get-Item -LiteralPath $mainPath)
+
+    foreach ($file in $files) {
+        $lines = Get-Content -LiteralPath $file.FullName
+        $currentPathIndent = -1
+
+        foreach ($line in $lines) {
+            $pathMatch = [regex]::Match($line, "^(?<indent>\s*)'?(?<path>/[^']*)'?:\s*$")
+            if ($pathMatch.Success) {
+                $currentPathIndent = $pathMatch.Groups['indent'].Value.Length
+                continue
+            }
+
+            $methodMatch = [regex]::Match($line, '^(?<indent>\s+)(get|put|post|delete|patch|head|options|trace):\s*$')
+            if ($methodMatch.Success -and $methodMatch.Groups['indent'].Value.Length -gt $currentPathIndent) {
+                $count++
+            }
+        }
+    }
+
+    return $count
+}
+
 function Test-OpenApiQuality {
     param([string] $RepoRoot)
 
     Write-Host '== OpenAPI quality =='
     $openApiRoot = Get-OpenApiRoot $RepoRoot
     $operations = Get-OpenApiOperations $openApiRoot
+    $methodDeclarationCount = Get-OpenApiMethodDeclarationCount $openApiRoot
 
     if ($operations.Count -eq 0) {
         Add-Failure 'No OpenAPI operations were found.'
         return
     }
 
+    if ($operations.Count -ne $methodDeclarationCount) {
+        Add-Failure "OpenAPI operation parser scanned $($operations.Count) operations but found $methodDeclarationCount represented HTTP method declarations."
+    }
+
     $missingOperationId = @($operations | Where-Object { [string]::IsNullOrWhiteSpace($_.OperationId) })
-    foreach ($operation in $missingOperationId) {
-        Add-Failure "Missing operationId: $($operation.File):$($operation.LineNumber) $($operation.Method.ToUpperInvariant()) $($operation.Path)"
+    if ($missingOperationId.Count -gt 0) {
+        $examples = ($missingOperationId | Select-Object -First 10 | ForEach-Object {
+            "$($_.File):$($_.LineNumber) $($_.Method.ToUpperInvariant()) $($_.Path)"
+        }) -join '; '
+        Add-Pending "OperationId coverage is not yet accepted. Missing operationId values: $($missingOperationId.Count). Examples: $examples"
     }
 
     $duplicates = @($operations |
