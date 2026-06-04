@@ -373,6 +373,7 @@ function Get-OpenApiOperations {
                 Method = $method
                 LineNumber = $index + 1
                 OperationId = if ($operationIdMatch.Success) { $operationIdMatch.Groups['id'].Value } else { $null }
+                OperationText = $operationText
                 HasTag = $operationText -match "(?m)^\s+tags:\s*$" -and $operationText -match "(?m)^\s+-\s+[A-Za-z][A-Za-z0-9 ._-]*\s*$"
                 HasResponses = $responsesMatch.Success
                 Has400 = $operationText -match "(?m)^\s+'400':\s*$"
@@ -411,6 +412,132 @@ function Get-OpenApiMethodDeclarationCount {
     }
 
     return $count
+}
+
+function Assert-TextContains {
+    param(
+        [string] $Text,
+        [string] $Needle,
+        [string] $Message
+    )
+
+    if (-not $Text.Contains($Needle, [StringComparison]::Ordinal)) {
+        Add-Failure $Message
+    }
+}
+
+function Get-RequiredOpenApiOperation {
+    param(
+        [object[]] $Operations,
+        [string] $File,
+        [string] $OperationId
+    )
+
+    $matches = @($Operations | Where-Object { $_.File -eq $File -and $_.OperationId -eq $OperationId })
+    if ($matches.Count -eq 1) {
+        return $matches[0]
+    }
+
+    Add-Failure "Expected exactly one OpenAPI operation '$OperationId' in $File, found $($matches.Count)."
+    return $null
+}
+
+function Assert-OperationTextMatches {
+    param(
+        [object] $Operation,
+        [string] $Pattern,
+        [string] $Message
+    )
+
+    if ($null -eq $Operation) {
+        return
+    }
+
+    if ([string] $Operation.OperationText -notmatch $Pattern) {
+        Add-Failure $Message
+    }
+}
+
+function Test-OpenApiSharedContractDetails {
+    param(
+        [string] $OpenApiRoot,
+        [object[]] $Operations
+    )
+
+    $headersFile = Join-Path $OpenApiRoot 'Transport.Headers.OpenAPI.yaml'
+    if (-not (Test-Path -LiteralPath $headersFile -PathType Leaf)) {
+        Add-Failure 'Reusable transport header components are not represented yet; no header contract is accepted.'
+        return
+    }
+
+    $headersText = Get-Content -LiteralPath $headersFile -Raw
+    foreach ($requiredHeader in @(
+            'name: X-Correlation-Id',
+            'name: X-Api-Version',
+            'name: X-Grace-Client-Type',
+            'name: X-Grace-Client-Version',
+            'UploadSessionLifecycleState:',
+            'name: x-grace-webhook-delivery-id',
+            'name: x-grace-webhook-event-name',
+            'name: x-grace-webhook-event-version',
+            'name: x-grace-webhook-timestamp',
+            'name: x-grace-webhook-signature-key-id',
+            'name: x-grace-webhook-payload-sha256',
+            'name: x-grace-webhook-signature',
+            'not authentication proof'
+        )) {
+        Assert-TextContains $headersText $requiredHeader "Reusable header contract is missing '$requiredHeader'."
+    }
+
+    if ($headersText -match '(?m)^\s+Webhook(?:DeliveryId|EventName|EventVersion|Timestamp|SignatureKeyId|PayloadSha256|Signature):\s*$') {
+        Add-Failure 'Outbound webhook headers must not be represented only as components.headers aliases without exact wire names.'
+    }
+
+    $sharedText = Get-Content -LiteralPath (Join-Path $OpenApiRoot 'Shared.Components.OpenAPI.yaml') -Raw
+    foreach ($requiredGraceErrorPart in @(
+            'Grace domain error envelope',
+            'Authentication challenges and framework authorization',
+            'required:',
+            '- Error',
+            '- EventTime',
+            '- CorrelationId',
+            '- Properties'
+        )) {
+        Assert-TextContains $sharedText $requiredGraceErrorPart "GraceError contract is missing '$requiredGraceErrorPart'."
+    }
+
+    Assert-TextContains $sharedText 'distinct from the X-Correlation-Id transport header' 'Body CorrelationId must be documented as distinct from the transport header.'
+
+    $responsesText = Get-Content -LiteralPath (Join-Path $OpenApiRoot 'Responses.OpenAPI.yaml') -Raw
+    Assert-TextContains $responsesText "Shared.Components.OpenAPI.yaml#/components/schemas/GraceError" 'Reusable 400/500 responses must reference GraceError.'
+    Assert-TextContains $responsesText "'401':" 'Reusable 401 authentication response must be present.'
+    Assert-TextContains $responsesText 'WWW-Authenticate:' 'Reusable 401 response must document the auth challenge header.'
+    Assert-TextContains $responsesText "'403':" 'Reusable 403 authorization response must be present.'
+    Assert-TextContains $responsesText 'value: Forbidden.' 'Reusable 403 response must stay distinct from GraceError.'
+
+    foreach ($operationId in @('GetDownloadUri', 'GetContentBlockUploadUri', 'GetContentBlockDownloadUri')) {
+        $operation = Get-RequiredOpenApiOperation $Operations 'Storage.Paths.OpenAPI.yaml' $operationId
+        Assert-OperationTextMatches `
+            $operation `
+            "(?s)responses:\s*.*?'200':\s*.*?content:\s*.*?text/plain:" `
+            "Storage raw URI operation '$operationId' must keep its own 200 response as text/plain."
+    }
+
+    foreach ($operationId in @('CreateApprovalPolicy', 'ApproveApprovalRequest')) {
+        $operation = Get-RequiredOpenApiOperation $Operations 'Approval.Paths.OpenAPI.yaml' $operationId
+        Assert-OperationTextMatches `
+            $operation `
+            "(?s)requestBody:\s*.*?content:\s*.*?application/json:\s*.*?examples:" `
+            "Approval operation '$operationId' must include an application/json example in its own request body."
+    }
+
+    foreach ($operationId in @('CreateWebhookRule', 'TestWebhookRule')) {
+        $operation = Get-RequiredOpenApiOperation $Operations 'Webhook.Paths.OpenAPI.yaml' $operationId
+        Assert-OperationTextMatches `
+            $operation `
+            "(?s)requestBody:\s*.*?content:\s*.*?application/json:\s*.*?examples:" `
+            "Webhook operation '$operationId' must include an application/json example in its own request body."
+    }
 }
 
 function Test-OpenApiQuality {
@@ -469,10 +596,7 @@ function Test-OpenApiQuality {
         Add-Pending "Error response coverage is not yet accepted. Missing 400/500 pairs: $($missingErrorResponses.Count). Examples: $examples"
     }
 
-    $headersFile = Join-Path $openApiRoot 'Transport.Headers.OpenAPI.yaml'
-    if (-not (Test-Path -LiteralPath $headersFile -PathType Leaf)) {
-        Add-Pending 'Reusable transport header components are not represented yet; no header contract is accepted.'
-    }
+    Test-OpenApiSharedContractDetails $openApiRoot $operations
 
     Add-Pass "Scanned $($operations.Count) OpenAPI operations for operationId, tag, response, and header proof scaffolding."
 }

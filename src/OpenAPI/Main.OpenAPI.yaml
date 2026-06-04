@@ -616,6 +616,38 @@ components:
     RepositoryStatus:
       $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/RepositoryStatus'
 
+  parameters:
+    CorrelationIdHeader:
+      $ref: 'Transport.Headers.OpenAPI.yaml#/components/parameters/CorrelationIdHeader'
+    ApiVersionHeader:
+      $ref: 'Transport.Headers.OpenAPI.yaml#/components/parameters/ApiVersionHeader'
+    ClientTypeHeader:
+      $ref: 'Transport.Headers.OpenAPI.yaml#/components/parameters/ClientTypeHeader'
+    ClientVersionHeader:
+      $ref: 'Transport.Headers.OpenAPI.yaml#/components/parameters/ClientVersionHeader'
+    WebhookDeliveryIdHeader:
+      $ref: 'Transport.Headers.OpenAPI.yaml#/components/parameters/WebhookDeliveryIdHeader'
+    WebhookEventNameHeader:
+      $ref: 'Transport.Headers.OpenAPI.yaml#/components/parameters/WebhookEventNameHeader'
+    WebhookEventVersionHeader:
+      $ref: 'Transport.Headers.OpenAPI.yaml#/components/parameters/WebhookEventVersionHeader'
+    WebhookTimestampHeader:
+      $ref: 'Transport.Headers.OpenAPI.yaml#/components/parameters/WebhookTimestampHeader'
+    WebhookSignatureKeyIdHeader:
+      $ref: 'Transport.Headers.OpenAPI.yaml#/components/parameters/WebhookSignatureKeyIdHeader'
+    WebhookPayloadSha256Header:
+      $ref: 'Transport.Headers.OpenAPI.yaml#/components/parameters/WebhookPayloadSha256Header'
+    WebhookSignatureHeader:
+      $ref: 'Transport.Headers.OpenAPI.yaml#/components/parameters/WebhookSignatureHeader'
+
+  headers:
+    CorrelationId:
+      $ref: 'Transport.Headers.OpenAPI.yaml#/components/headers/CorrelationId'
+    UploadSessionLifecycleState:
+      $ref: 'Transport.Headers.OpenAPI.yaml#/components/headers/UploadSessionLifecycleState'
+    UploadSessionLifecycleReason:
+      $ref: 'Transport.Headers.OpenAPI.yaml#/components/headers/UploadSessionLifecycleReason'
+
   securitySchemes:
     api_key:
       type: apiKey
