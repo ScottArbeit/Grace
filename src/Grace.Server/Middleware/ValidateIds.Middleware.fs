@@ -7,9 +7,6 @@ open Grace.Server.Validations
 open Grace.Shared
 open Grace.Types.Types
 open Grace.Shared.Utilities
-open Grace.Shared.Validation
-open Grace.Shared.Validation.Errors
-open Grace.Shared.Validation.Utilities
 open Microsoft.AspNetCore.Http
 open Microsoft.Extensions.Caching.Memory
 open Microsoft.Extensions.Logging
@@ -128,201 +125,128 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                             |> ignore
 
                         // Get Owner information.
-                        if entityProperties.OwnerId.IsSome
-                           && entityProperties.OwnerName.IsSome then
+                        if ValidateIdsDecisions.shouldValidateEntity None entityProperties.OwnerId entityProperties.OwnerName then
                             // Get the values from the request body.
                             let ownerIdString = entityProperties.OwnerId.Value.GetValue(requestBody) :?> string
                             let ownerName = entityProperties.OwnerName.Value.GetValue(requestBody) :?> string
 
-                            let validations =
-                                if path.Equals("/owner/create", StringComparison.InvariantCultureIgnoreCase) then
-                                    [|
-                                        Common.String.isNotEmpty ownerIdString OwnerError.OwnerIdIsRequired
-                                        Common.Guid.isValidAndNotEmptyGuid ownerIdString OwnerError.InvalidOwnerId
-                                        Common.String.isNotEmpty ownerName OwnerError.OwnerNameIsRequired
-                                        Common.String.isValidGraceName ownerName OwnerError.InvalidOwnerName
-                                        Common.Input.eitherIdOrNameMustBeProvided ownerIdString ownerName OwnerError.EitherOwnerIdOrOwnerNameRequired
-                                    |]
-                                else
-                                    [|
-                                        Common.Guid.isValidAndNotEmptyGuid ownerIdString OwnerError.InvalidOwnerId
-                                        Common.String.isValidGraceName ownerName OwnerError.InvalidOwnerName
-                                        Common.Input.eitherIdOrNameMustBeProvided ownerIdString ownerName OwnerError.EitherOwnerIdOrOwnerNameRequired
-                                    |]
+                            let validationMode = ValidateIdsDecisions.validationModeForPath ValidateIdsDecisions.EntityKind.Owner path
 
-                            match! getFirstError validations with
-                            | Some error -> badRequest <- Some(GraceError.Create (OwnerError.getErrorMessage error) correlationId)
+                            match!
+                                ValidateIdsDecisions.getEntityValidationErrorMessage
+                                    ValidateIdsDecisions.EntityKind.Owner
+                                    validationMode
+                                    ownerIdString
+                                    ownerName
+                                with
+                            | Some error -> badRequest <- Some(GraceError.Create error correlationId)
                             | None ->
-                                if path.Equals("/owner/create", StringComparison.InvariantCultureIgnoreCase) then
+                                if validationMode = ValidateIdsDecisions.EntityValidationMode.Create then
                                     // If we're creating a new Owner, we don't need to resolve the Id.
-                                    graceIds <- { graceIds with OwnerId = Guid.Parse(ownerIdString); OwnerIdString = ownerIdString; HasOwner = true }
+                                    graceIds <- ValidateIdsDecisions.withEntityId ValidateIdsDecisions.EntityKind.Owner ownerIdString graceIds
                                 else
                                     // Resolve the OwnerId based on the provided Id and Name.
                                     match! resolveOwnerId ownerIdString ownerName correlationId with
                                     | Some resolvedOwnerId ->
-                                        graceIds <- { graceIds with OwnerId = Guid.Parse(resolvedOwnerId); OwnerIdString = resolvedOwnerId; HasOwner = true }
+                                        graceIds <- ValidateIdsDecisions.withEntityId ValidateIdsDecisions.EntityKind.Owner resolvedOwnerId graceIds
                                     | None ->
-                                        badRequest <-
-                                            if not <| String.IsNullOrEmpty(ownerIdString) then
-                                                Some(GraceError.Create (getErrorMessage OwnerError.OwnerIdDoesNotExist) correlationId)
-                                            else
-                                                Some(GraceError.Create (getErrorMessage OwnerError.OwnerDoesNotExist) correlationId)
+                                        let error = ValidateIdsDecisions.notFoundErrorMessage ValidateIdsDecisions.EntityKind.Owner ownerIdString
+
+                                        badRequest <- Some(GraceError.Create error correlationId)
 
                         // Get Organization information.
-                        if badRequest.IsNone
-                           && entityProperties.OrganizationId.IsSome
-                           && entityProperties.OrganizationName.IsSome then
+                        if ValidateIdsDecisions.shouldValidateEntity badRequest entityProperties.OrganizationId entityProperties.OrganizationName then
                             // Get the values from the request body.
                             let organizationIdString = entityProperties.OrganizationId.Value.GetValue(requestBody) :?> string
                             let organizationName = entityProperties.OrganizationName.Value.GetValue(requestBody) :?> string
 
-                            let validations =
-                                if path.Equals("/organization/create", StringComparison.InvariantCultureIgnoreCase) then
-                                    [|
-                                        Common.String.isNotEmpty organizationIdString OrganizationError.OrganizationIdIsRequired
-                                        Common.Guid.isValidAndNotEmptyGuid organizationIdString OrganizationError.InvalidOrganizationId
-                                        Common.String.isNotEmpty organizationName OrganizationError.OrganizationNameIsRequired
-                                        Common.String.isValidGraceName organizationName OrganizationError.InvalidOrganizationName
-                                        Common.Input.eitherIdOrNameMustBeProvided
-                                            organizationIdString
-                                            organizationName
-                                            OrganizationError.EitherOrganizationIdOrOrganizationNameRequired
-                                    |]
-                                else
-                                    [|
-                                        Common.Guid.isValidAndNotEmptyGuid organizationIdString OrganizationError.InvalidOrganizationId
-                                        Common.String.isValidGraceName organizationName OrganizationError.InvalidOrganizationName
-                                        Common.Input.eitherIdOrNameMustBeProvided
-                                            organizationIdString
-                                            organizationName
-                                            OrganizationError.EitherOrganizationIdOrOrganizationNameRequired
-                                    |]
+                            let validationMode = ValidateIdsDecisions.validationModeForPath ValidateIdsDecisions.EntityKind.Organization path
 
-                            match! getFirstError validations with
-                            | Some error -> badRequest <- Some(GraceError.Create (OrganizationError.getErrorMessage error) correlationId)
+                            match!
+                                ValidateIdsDecisions.getEntityValidationErrorMessage
+                                    ValidateIdsDecisions.EntityKind.Organization
+                                    validationMode
+                                    organizationIdString
+                                    organizationName
+                                with
+                            | Some error -> badRequest <- Some(GraceError.Create error correlationId)
                             | None ->
-                                if path.Equals("/organization/create", StringComparison.InvariantCultureIgnoreCase) then
+                                if validationMode = ValidateIdsDecisions.EntityValidationMode.Create then
                                     // If we're creating a new Organization, we don't need to resolve the Id.
-                                    graceIds <-
-                                        { graceIds with
-                                            OrganizationId = Guid.Parse(organizationIdString)
-                                            OrganizationIdString = organizationIdString
-                                            HasOrganization = true
-                                        }
+                                    graceIds <- ValidateIdsDecisions.withEntityId ValidateIdsDecisions.EntityKind.Organization organizationIdString graceIds
                                 else
                                     // Resolve the OrganizationId based on the provided Id and Name.
                                     match! resolveOrganizationId graceIds.OwnerId organizationIdString organizationName correlationId with
                                     | Some resolvedOrganizationId ->
                                         graceIds <-
-                                            { graceIds with
-                                                OrganizationId = Guid.Parse(resolvedOrganizationId)
-                                                OrganizationIdString = resolvedOrganizationId
-                                                HasOrganization = true
-                                            }
+                                            ValidateIdsDecisions.withEntityId ValidateIdsDecisions.EntityKind.Organization resolvedOrganizationId graceIds
                                     | None ->
-                                        badRequest <-
-                                            if not <| String.IsNullOrEmpty(organizationIdString) then
-                                                Some(GraceError.Create (getErrorMessage OrganizationError.OrganizationIdDoesNotExist) correlationId)
-                                            else
-                                                Some(GraceError.Create (getErrorMessage OrganizationError.OrganizationDoesNotExist) correlationId)
+                                        let error = ValidateIdsDecisions.notFoundErrorMessage ValidateIdsDecisions.EntityKind.Organization organizationIdString
+
+                                        badRequest <- Some(GraceError.Create error correlationId)
 
                         // Get repository information.
-                        if badRequest.IsNone
-                           && entityProperties.RepositoryId.IsSome
-                           && entityProperties.RepositoryName.IsSome then
+                        if ValidateIdsDecisions.shouldValidateEntity badRequest entityProperties.RepositoryId entityProperties.RepositoryName then
                             // Get the values from the request body.
                             let repositoryIdString = entityProperties.RepositoryId.Value.GetValue(requestBody) :?> string
                             let repositoryName = entityProperties.RepositoryName.Value.GetValue(requestBody) :?> string
 
-                            let validations =
-                                if path.Equals("/repository/create", StringComparison.InvariantCultureIgnoreCase) then
-                                    [|
-                                        Common.String.isNotEmpty repositoryIdString RepositoryError.RepositoryIdIsRequired
-                                        Common.Guid.isValidAndNotEmptyGuid repositoryIdString RepositoryError.InvalidRepositoryId
-                                        Common.String.isNotEmpty repositoryName RepositoryError.RepositoryNameIsRequired
-                                        Common.String.isValidGraceName repositoryName RepositoryError.InvalidRepositoryName
-                                        Common.Input.eitherIdOrNameMustBeProvided repositoryIdString repositoryName EitherRepositoryIdOrRepositoryNameRequired
-                                    |]
-                                else
-                                    [|
-                                        Common.Guid.isValidAndNotEmptyGuid repositoryIdString RepositoryError.InvalidRepositoryId
-                                        Common.String.isValidGraceName repositoryName RepositoryError.InvalidRepositoryName
-                                        Common.Input.eitherIdOrNameMustBeProvided repositoryIdString repositoryName EitherRepositoryIdOrRepositoryNameRequired
-                                    |]
+                            let validationMode = ValidateIdsDecisions.validationModeForPath ValidateIdsDecisions.EntityKind.Repository path
 
-                            match! getFirstError validations with
-                            | Some error -> badRequest <- Some(GraceError.Create (RepositoryError.getErrorMessage error) correlationId)
+                            match!
+                                ValidateIdsDecisions.getEntityValidationErrorMessage
+                                    ValidateIdsDecisions.EntityKind.Repository
+                                    validationMode
+                                    repositoryIdString
+                                    repositoryName
+                                with
+                            | Some error -> badRequest <- Some(GraceError.Create error correlationId)
                             | None ->
-                                if path.Equals("/repository/create", StringComparison.InvariantCultureIgnoreCase) then
+                                if validationMode = ValidateIdsDecisions.EntityValidationMode.Create then
                                     // If we're creating a new Repository, we don't need to resolve the Id.
-                                    graceIds <-
-                                        { graceIds with
-                                            RepositoryId = Guid.Parse(repositoryIdString)
-                                            RepositoryIdString = repositoryIdString
-                                            HasRepository = true
-                                        }
+                                    graceIds <- ValidateIdsDecisions.withEntityId ValidateIdsDecisions.EntityKind.Repository repositoryIdString graceIds
                                 else
                                     // Resolve the RepositoryId based on the provided Id and Name.
                                     match! resolveRepositoryId graceIds.OwnerId graceIds.OrganizationId repositoryIdString repositoryName correlationId with
                                     | Some resolvedRepositoryId ->
                                         graceIds <-
-                                            { graceIds with
-                                                RepositoryId = resolvedRepositoryId
-                                                RepositoryIdString = $"{resolvedRepositoryId}"
-                                                HasRepository = true
-                                            }
+                                            ValidateIdsDecisions.withEntityId ValidateIdsDecisions.EntityKind.Repository $"{resolvedRepositoryId}" graceIds
                                     | None ->
-                                        badRequest <-
-                                            if not <| String.IsNullOrEmpty(repositoryIdString) then
-                                                Some(GraceError.Create (getErrorMessage RepositoryError.RepositoryIdDoesNotExist) correlationId)
-                                            else
-                                                Some(GraceError.Create (getErrorMessage RepositoryError.RepositoryDoesNotExist) correlationId)
+                                        let error = ValidateIdsDecisions.notFoundErrorMessage ValidateIdsDecisions.EntityKind.Repository repositoryIdString
+
+                                        badRequest <- Some(GraceError.Create error correlationId)
 
                         // Get branch information.
-                        if badRequest.IsNone
-                           && entityProperties.BranchId.IsSome
-                           && entityProperties.BranchName.IsSome then
+                        if ValidateIdsDecisions.shouldValidateEntity badRequest entityProperties.BranchId entityProperties.BranchName then
                             // Get the values from the request body.
                             let branchIdString = entityProperties.BranchId.Value.GetValue(requestBody) :?> string
                             let branchName = entityProperties.BranchName.Value.GetValue(requestBody) :?> string
 
-                            let validations =
-                                if path.Equals("/branch/create", StringComparison.InvariantCultureIgnoreCase) then
-                                    [|
-                                        Common.String.isNotEmpty branchIdString BranchError.BranchIdIsRequired
-                                        Common.Guid.isValidAndNotEmptyGuid branchIdString BranchError.InvalidBranchId
-                                        Common.String.isNotEmpty branchName BranchError.BranchNameIsRequired
-                                        Common.String.isValidGraceName branchName BranchError.InvalidBranchName
-                                        Common.Input.eitherIdOrNameMustBeProvided branchIdString branchName BranchError.EitherBranchIdOrBranchNameRequired
-                                    |]
-                                else
-                                    [|
-                                        Common.Guid.isValidAndNotEmptyGuid branchIdString BranchError.InvalidBranchId
-                                        Common.String.isValidGraceName branchName BranchError.InvalidBranchName
-                                        Common.Input.eitherIdOrNameMustBeProvided branchIdString branchName BranchError.EitherBranchIdOrBranchNameRequired
-                                    |]
+                            let validationMode = ValidateIdsDecisions.validationModeForPath ValidateIdsDecisions.EntityKind.Branch path
 
-                            match! getFirstError validations with
-                            | Some error -> badRequest <- Some(GraceError.Create (BranchError.getErrorMessage error) correlationId)
+                            match!
+                                ValidateIdsDecisions.getEntityValidationErrorMessage
+                                    ValidateIdsDecisions.EntityKind.Branch
+                                    validationMode
+                                    branchIdString
+                                    branchName
+                                with
+                            | Some error -> badRequest <- Some(GraceError.Create error correlationId)
                             | None ->
                                 // If we're creating a new Branch, we don't need to resolve the Id.
-                                if path.Equals("/branch/create", StringComparison.InvariantCultureIgnoreCase) then
-                                    let mutable branchId = Guid.Empty
-                                    Guid.TryParse(branchIdString, &branchId) |> ignore
-                                    graceIds <- { graceIds with BranchId = branchId; BranchIdString = branchIdString; HasBranch = true }
+                                if validationMode = ValidateIdsDecisions.EntityValidationMode.Create then
+                                    graceIds <- ValidateIdsDecisions.withEntityId ValidateIdsDecisions.EntityKind.Branch branchIdString graceIds
                                 else
                                     // Resolve the BranchId based on the provided Id and Name.
                                     match!
                                         resolveBranchId graceIds.OwnerId graceIds.OrganizationId graceIds.RepositoryId branchIdString branchName correlationId
                                         with
                                     | Some resolvedBranchId ->
-                                        graceIds <- { graceIds with BranchId = resolvedBranchId; BranchIdString = $"{resolvedBranchId}"; HasBranch = true }
+                                        graceIds <- ValidateIdsDecisions.withEntityId ValidateIdsDecisions.EntityKind.Branch $"{resolvedBranchId}" graceIds
                                     | None ->
-                                        badRequest <-
-                                            if not <| String.IsNullOrEmpty(branchIdString) then
-                                                Some(GraceError.Create (getErrorMessage BranchError.BranchIdDoesNotExist) correlationId)
-                                            else
-                                                Some(GraceError.Create (getErrorMessage BranchError.BranchDoesNotExist) correlationId)
+                                        let error = ValidateIdsDecisions.notFoundErrorMessage ValidateIdsDecisions.EntityKind.Branch branchIdString
+
+                                        badRequest <- Some(GraceError.Create error correlationId)
 
                     // Add the parsed Id's and Names to the HttpContext.
                     context.Items.Add(nameof GraceIds, graceIds)
