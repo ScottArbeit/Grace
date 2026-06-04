@@ -1,17 +1,16 @@
-import { rawClientMetadata } from "./internal/generated/grace-raw-client-metadata.js";
-
-export interface GraceClientContractMetadata {
-  readonly apiContractVersion: string;
-  readonly openApiProjectionSha256: string;
-}
-
-export class GraceClient {
-  public readonly contract: GraceClientContractMetadata;
-
-  public constructor() {
-    this.contract = {
-      apiContractVersion: rawClientMetadata.apiContractVersion,
-      openApiProjectionSha256: rawClientMetadata.openApiProjectionSha256,
-    };
-  }
-}
+export {
+  GraceClient,
+  type GraceClientContractMetadata,
+  type GraceClientOptions,
+  type GraceClientRequest,
+  type GraceClientResponse,
+  type GraceClientAuthProvider,
+} from "./facade/grace-client.js";
+export { GraceError, type GraceErrorBody } from "./facade/grace-error.js";
+export {
+  DEFAULT_GRACE_BASE_URL,
+  GRACE_CLIENT_TYPE,
+  GRACE_CLIENT_VERSION,
+  GRACE_HEADER_NAMES,
+} from "./facade/headers.js";
+export type { GraceLifecycleDiagnostics } from "./facade/lifecycle.js";
