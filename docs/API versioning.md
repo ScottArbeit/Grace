@@ -8,7 +8,8 @@ Grace keeps these version identifiers separate:
 - Protocol vector suite version: the version for protocol compatibility fixtures.
 
 Released SDK clients send the current released HTTP API contract version by default. A client may opt into `latest` or
-`edge`, but those aliases are explicit overrides for development and compatibility testing, not release defaults.
+`edge`, but those aliases are explicit overrides for development and compatibility testing, not release defaults. Grace
+Server maps those aliases to the current released API contract version before ASP.NET API version parsing.
 
 The static OpenAPI document uses the HTTP API contract version in `info.version`. When the HTTP contract changes, update
 the shared API contract version constant and the OpenAPI version together so generated clients and runtime defaults stay

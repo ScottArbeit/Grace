@@ -1926,6 +1926,7 @@ module Application =
                 .UseMiddleware<CorrelationIdMiddleware>()
                 .UseMiddleware<LogRequestHeadersMiddleware>()
                 .UseStaticFiles()
+                .UseMiddleware<ApiVersionAliasMiddleware>()
                 .UseRouting()
                 .UseAuthentication()
                 .UseMiddleware<LogAuthorizationFailureMiddleware>()
