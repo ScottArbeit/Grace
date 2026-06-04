@@ -196,6 +196,22 @@ module Constants =
     [<Literal>]
     let ClientVersionHeaderKey = "X-Grace-Client-Version"
 
+    /// The response header that exposes SDK lifecycle status for recognized Grace clients.
+    [<Literal>]
+    let SdkLifecycleStatusHeaderKey = "X-Grace-SDK-Lifecycle"
+
+    /// The response header that explains SDK lifecycle status for recognized Grace clients.
+    [<Literal>]
+    let SdkLifecycleMessageHeaderKey = "X-Grace-SDK-Lifecycle-Message"
+
+    /// The response header that advertises the minimum supported SDK client version.
+    [<Literal>]
+    let SdkLifecycleMinimumVersionHeaderKey = "X-Grace-SDK-Minimum-Version"
+
+    /// The response header that advertises the recommended SDK client version.
+    [<Literal>]
+    let SdkLifecycleRecommendedVersionHeaderKey = "X-Grace-SDK-Recommended-Version"
+
     /// Environment variables used by Grace.
     module EnvironmentVariables =
         /// The environment variable that contains the Application Insights connection string.
