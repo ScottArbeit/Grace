@@ -3721,10 +3721,6 @@ components:
           type: string
         SearchVisibility:
           $ref: '#/components/schemas/SearchVisibility'
-        Repositories:
-          type: object
-          additionalProperties:
-            $ref: '#/components/schemas/RepositoryName'
         CreatedAt:
           $ref: '#/components/schemas/Instant'
         UpdatedAt:
@@ -3755,10 +3751,6 @@ components:
           type: string
         SearchVisibility:
           $ref: '#/components/schemas/SearchVisibility'
-        Organizations:
-          type: object
-          additionalProperties:
-            $ref: '#/components/schemas/OrganizationName'
         CreatedAt:
           $ref: '#/components/schemas/Instant'
         UpdatedAt:

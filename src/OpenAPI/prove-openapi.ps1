@@ -1122,6 +1122,7 @@ function Test-OpenApiOwnerOrganizationRepositoryDirectoryDetails {
 
     $ownerComponentsText = Get-Content -LiteralPath (Join-Path $OpenApiRoot 'Owner.Components.OpenAPI.yaml') -Raw
     $organizationComponentsText = Get-Content -LiteralPath (Join-Path $OpenApiRoot 'Organization.Components.OpenAPI.yaml') -Raw
+    $dtoComponentsText = Get-Content -LiteralPath (Join-Path $OpenApiRoot 'Dto.Components.OpenAPI.yaml') -Raw
 
     Assert-OpenApiResponseIsRawStringDictionary `
         $ownerComponentsText `
@@ -1144,6 +1145,18 @@ function Test-OpenApiOwnerOrganizationRepositoryDirectoryDetails {
         'OrganizationReturnValue' `
         'Repositories' `
         'OrganizationReturnValue examples must not include non-existent OrganizationDto.Repositories.'
+
+    Assert-OpenApiNamedBlockDoesNotContain `
+        $dtoComponentsText `
+        'OwnerDto' `
+        'Organizations' `
+        'OwnerDto schema must not include non-existent Organizations.'
+
+    Assert-OpenApiNamedBlockDoesNotContain `
+        $dtoComponentsText `
+        'OrganizationDto' `
+        'Repositories' `
+        'OrganizationDto schema must not include non-existent Repositories.'
 
     $getBySha256HashOperation = Get-RequiredOpenApiOperation $Operations 'Directory.Paths.OpenAPI.yaml' 'GetDirectoryVersionBySha256Hash'
     Assert-OperationSha256ExamplesAreValid $getBySha256HashOperation @('Sha256Hash')
