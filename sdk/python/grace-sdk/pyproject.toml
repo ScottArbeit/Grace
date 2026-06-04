@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "grace-sdk"
 version = "0.0.0.dev9"
-description = "Facade-first Grace Python SDK package harness."
+description = "Facade-first Grace Python SDK proof harness; supported facade behavior is deferred."
 requires-python = ">=3.11"
 authors = [{ name = "Grace" }]
 

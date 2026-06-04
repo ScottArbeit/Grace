@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 1,
+  "issue": 227,
+  "language": "Python",
+  "maturity": {
+    "packageFacadeHarness": "implemented proof harness",
+    "rawGeneratedClient": "accepted proof with guardrails",
+    "supportedFacade": "deferred",
+    "stableRawGeneratedPackage": "rejected"
+  },
+  "generator": {
+    "name": "OpenAPI Generator",
+    "image": "openapitools/openapi-generator-cli:v7.22.0",
+    "language": "python",
+    "requiredOptions": [
+      "--skip-validate-spec",
+      "--additional-properties=packageName=grace_generated_openapi_probe,projectName=grace-generated-openapi-probe,packageVersion=0.0.0"
+    ]
+  },
+  "sourceProjection": {
+    "path": "src/OpenAPI/Grace.OpenAPI.3.1.2.yaml",
+    "sha256": "e2be4a02d2f63a3b9f4cdabe7f615ba0a5c98673618c132d063b9bbf4273f590"
+  },
+  "rawGeneratedClient": {
+    "path": "sdk/generated/matrix/openapi-generator/python",
+    "manifestSha256": "73de59d2d284a81afd75553b620781e76c9fecc693b039fab502d37cd71cd72d",
+    "proofCommand": "python -m pip install -e . --quiet; python -c \"import grace_generated_openapi_probe; from grace_generated_openapi_probe.api_client import ApiClient; print(grace_generated_openapi_probe.__version__); print(ApiClient.__name__)\"",
+    "lastObservedResult": {
+      "exitCode": 0,
+      "stdout": [
+        "0.0.0",
+        "ApiClient"
+      ]
+    }
+  },
+  "facadeHarness": {
+    "path": "sdk/python/grace-sdk",
+    "proofCommand": "python ./smoke/import_facade.py",
+    "lastObservedResult": {
+      "exitCode": 0,
+      "stdout": [
+        "Python facade import OK (2023-10-01)."
+      ]
+    }
+  },
+  "guardrails": [
+    "Generated raw-client output is prototype evidence only.",
+    "Supported Python facade behavior remains deferred until facade operations and tests are implemented.",
+    "OpenAPI Generator acceptance depends on --skip-validate-spec until projection schema-shape debt is fixed."
+  ]
+}
