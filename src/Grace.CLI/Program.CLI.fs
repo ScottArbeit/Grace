@@ -9,7 +9,7 @@ open Grace.Shared.Client.Configuration
 open Grace.Shared.Converters
 open Grace.Shared.Resources.Text
 open Grace.Shared.Resources.Utilities
-open Grace.Types.Types
+open Grace.Types.Common
 open Grace.Shared.Utilities
 open Grace.Shared.Validation
 open Microsoft.Extensions.Logging

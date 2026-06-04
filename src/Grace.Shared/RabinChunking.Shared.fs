@@ -1,6 +1,6 @@
 namespace Grace.Shared
 
-open Grace.Types.Types
+open Grace.Types.Common
 open System
 
 /// Pure content-defined chunking for the pinned grace-rabin-blake3-64k-v1 suite.

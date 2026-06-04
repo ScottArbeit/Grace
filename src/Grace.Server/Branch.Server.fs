@@ -14,7 +14,7 @@ open Grace.Shared.Parameters.Branch
 open Grace.Types
 open Grace.Types.Branch
 open Grace.Types.Diff
-open Grace.Types.Types
+open Grace.Types.Common
 open Grace.Shared.Utilities
 open Grace.Shared.Validation.Common
 open Grace.Shared.Validation.Errors

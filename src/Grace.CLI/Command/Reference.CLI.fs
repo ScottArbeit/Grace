@@ -15,7 +15,7 @@ open Grace.Shared.Parameters.Storage
 open Grace.Shared.Services
 open Grace.Types.Branch
 open Grace.Types.Reference
-open Grace.Types.Types
+open Grace.Types.Common
 open Grace.Shared.Utilities
 open NodaTime
 open NodaTime.TimeZones
@@ -209,8 +209,7 @@ module Reference =
 
     let private valueOrEmpty (value: string) = if String.IsNullOrWhiteSpace(value) then String.Empty else value
 
-    let private ReferenceValidations (parseResult: ParseResult) =
-        Ok parseResult
+    let private ReferenceValidations (parseResult: ParseResult) = Ok parseResult
 
     let printContents (parseResult: ParseResult) (directoryVersions: IEnumerable<DirectoryVersion>) =
         let longestRelativePath =

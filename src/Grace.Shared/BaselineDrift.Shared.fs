@@ -2,7 +2,7 @@ namespace Grace.Shared
 
 open Grace.Types.Policy
 open Grace.Types.Review
-open Grace.Types.Types
+open Grace.Types.Common
 
 module BaselineDrift =
     type BaselineDriftResult = { IsMeaningful: bool; AffectedPaths: RelativePath list; AffectedChapterIds: ChapterId list; AffectedFindingIds: FindingId list }

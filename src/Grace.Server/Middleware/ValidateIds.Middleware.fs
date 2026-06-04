@@ -5,7 +5,7 @@ open Grace.Server
 open Grace.Server.Services
 open Grace.Server.Validations
 open Grace.Shared
-open Grace.Types.Types
+open Grace.Types.Common
 open Grace.Shared.Utilities
 open Microsoft.AspNetCore.Http
 open Microsoft.Extensions.Caching.Memory

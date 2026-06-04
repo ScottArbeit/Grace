@@ -26,7 +26,7 @@ open Grace.Types.Reminder
 open Grace.Types.Repository
 open Grace.Types.Organization
 open Grace.Types.Owner
-open Grace.Types.Types
+open Grace.Types.Common
 open Grace.Types.Validation
 open Grace.Shared.Utilities
 open Microsoft.Azure.Cosmos

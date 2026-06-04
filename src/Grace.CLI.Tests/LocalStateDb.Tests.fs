@@ -5,7 +5,7 @@ open Grace.CLI
 open Grace.Shared.Client.Configuration
 open Grace.Shared
 open Grace.Shared.Utilities
-open Grace.Types.Types
+open Grace.Types.Common
 open Microsoft.Data.Sqlite
 open NodaTime
 open NUnit.Framework

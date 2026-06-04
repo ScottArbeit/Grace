@@ -9,7 +9,7 @@ open Grace.Shared
 open Grace.Shared.Parameters.Access
 open Grace.Shared.Utilities
 open Grace.Types.Authorization
-open Grace.Types.Types
+open Grace.Types.Common
 open Microsoft.AspNetCore.Http
 open Microsoft.Extensions.DependencyInjection
 open Microsoft.Extensions.Logging

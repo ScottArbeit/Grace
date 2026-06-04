@@ -10,7 +10,7 @@ open Grace.Shared.Utilities
 open Grace.Shared.Validation.Common
 open Grace.Shared.Validation.Errors
 open Grace.Shared.Validation.Utilities
-open Grace.Types.Types
+open Grace.Types.Common
 open Grace.Types.Validation
 open Microsoft.AspNetCore.Http
 open NodaTime

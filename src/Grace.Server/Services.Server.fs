@@ -10,7 +10,7 @@ open Grace.Shared
 open Grace.Shared.Constants
 open Grace.Shared.Parameters.Common
 open Grace.Shared.Resources.Text
-open Grace.Types.Types
+open Grace.Types.Common
 open Grace.Shared.Utilities
 open Microsoft.AspNetCore.Http
 open Microsoft.Extensions.Caching.Memory
@@ -57,8 +57,7 @@ module Services =
 
     let private tryCreateClientType (context: HttpContext) =
         match tryGetHeader context Constants.ClientTypeHeaderKey, tryGetHeader context Constants.ClientVersionHeaderKey with
-        | Some clientType, Some clientVersion when clientType.Equals("CLI", StringComparison.OrdinalIgnoreCase) ->
-            Some(ClientType.CLI clientVersion)
+        | Some clientType, Some clientVersion when clientType.Equals("CLI", StringComparison.OrdinalIgnoreCase) -> Some(ClientType.CLI clientVersion)
         | _ -> None
 
     let private getPrincipalName (context: HttpContext) =

@@ -8,7 +8,7 @@ open Grace.Shared.Client.Configuration
 open Grace.Shared.Parameters.Storage
 open Grace.Shared.Utilities
 open Grace.Shared.Validation.Errors
-open Grace.Types.Types
+open Grace.Types.Common
 open NUnit.Framework
 open System
 open System.Collections.Generic

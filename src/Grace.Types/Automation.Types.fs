@@ -1,7 +1,7 @@
 namespace Grace.Types
 
 open Grace.Shared.Utilities
-open Grace.Types.Types
+open Grace.Types.Common
 open NodaTime
 open Orleans
 open System
@@ -84,13 +84,7 @@ module Automation =
             WasIdempotentReplay: bool
         }
 
-        static member Default =
-            {
-                Session = AgentSessionInfo.Default
-                Message = String.Empty
-                OperationId = String.Empty
-                WasIdempotentReplay = false
-            }
+        static member Default = { Session = AgentSessionInfo.Default; Message = String.Empty; OperationId = String.Empty; WasIdempotentReplay = false }
 
     [<GenerateSerializer>]
     type AgentSessionListResult =
@@ -100,12 +94,7 @@ module Automation =
             Message: string
         }
 
-        static member Default =
-            {
-                Sessions = []
-                Count = 0
-                Message = String.Empty
-            }
+        static member Default = { Sessions = []; Count = 0; Message = String.Empty }
 
     [<GenerateSerializer>]
     type AutomationEventEnvelope =

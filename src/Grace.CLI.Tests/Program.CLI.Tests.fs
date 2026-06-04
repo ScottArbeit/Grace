@@ -438,7 +438,7 @@ namespace Grace.CLI.Tests
 
 open FsUnit
 open Grace.CLI
-open Grace.Types.Types
+open Grace.Types.Common
 open NUnit.Framework
 open System
 

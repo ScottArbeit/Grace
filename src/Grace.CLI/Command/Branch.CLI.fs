@@ -18,7 +18,7 @@ open Grace.Shared.Validation.Errors
 open Grace.Types.Branch
 open Grace.Types.DirectoryVersion
 open Grace.Types.Reference
-open Grace.Types.Types
+open Grace.Types.Common
 open NodaTime
 open NodaTime.TimeZones
 open Spectre.Console

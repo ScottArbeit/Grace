@@ -28,7 +28,7 @@ type DirectoryVersion() =
 
     /// Retrieves the Uri to download the .zip file for a specific DirectoryVersion.
     static member public GetZipFile(parameters: GetZipFileParameters) =
-        postServer<GetZipFileParameters, Types.UriWithSharedAccessSignature> (
+        postServer<GetZipFileParameters, Common.UriWithSharedAccessSignature> (
             parameters |> ensureCorrelationIdIsSet,
             $"directory/{nameof (DirectoryVersion.GetZipFile)}"
         )

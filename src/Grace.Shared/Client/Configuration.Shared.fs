@@ -2,7 +2,7 @@ namespace Grace.Shared.Client
 
 open Grace.Shared.Client.Theme
 open Grace.Shared
-open Grace.Types.Types
+open Grace.Types.Common
 open Grace.Shared.Utilities
 open System
 open System.Collections.Generic
@@ -175,8 +175,7 @@ module Configuration =
 
         graceConfiguration.ObjectDirectory <- Path.GetFullPath(Path.Combine(graceConfigurationDirectory, Constants.GraceObjectsDirectory))
 
-        let graceLocalStateDbPath =
-            Path.Combine(graceConfiguration.GraceDirectory, Constants.GraceLocalStateDbFileName)
+        let graceLocalStateDbPath = Path.Combine(graceConfiguration.GraceDirectory, Constants.GraceLocalStateDbFileName)
 
         graceConfiguration.GraceStatusFile <- graceLocalStateDbPath
         graceConfiguration.GraceObjectCacheFile <- graceLocalStateDbPath

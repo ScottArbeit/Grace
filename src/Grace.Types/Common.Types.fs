@@ -19,7 +19,7 @@ open Microsoft.Extensions.ObjectPool
 open System.Text.Json.Serialization
 open MessagePack
 
-module Types =
+module Common =
 
     // Domain nouns
     /// The Id of the branch.

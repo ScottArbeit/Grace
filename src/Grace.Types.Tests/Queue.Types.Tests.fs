@@ -2,7 +2,7 @@ namespace Grace.Types.Tests
 
 open Grace.Types.Policy
 open Grace.Types.Queue
-open Grace.Types.Types
+open Grace.Types.Common
 open NodaTime
 open NUnit.Framework
 open System

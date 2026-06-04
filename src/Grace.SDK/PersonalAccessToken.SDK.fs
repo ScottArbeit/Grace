@@ -7,7 +7,7 @@ open Grace.Shared.Parameters.Auth
 open Grace.Shared.Services
 open Grace.Shared.Utilities
 open Grace.Types.PersonalAccessToken
-open Grace.Types.Types
+open Grace.Types.Common
 open System
 open System.Net
 open System.Net.Http

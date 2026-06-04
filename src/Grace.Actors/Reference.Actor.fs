@@ -17,7 +17,7 @@ open Grace.Types.ManifestContributionWorkflow
 open Grace.Types.Reference
 open Grace.Types.Reminder
 open Grace.Types.RepositoryContentCounter
-open Grace.Types.Types
+open Grace.Types.Common
 open Microsoft.Extensions.Logging
 open NodaTime
 open Orleans

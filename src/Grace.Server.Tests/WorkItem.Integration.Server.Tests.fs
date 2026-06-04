@@ -8,7 +8,7 @@ open Grace.Shared.Utilities
 open Grace.Shared.Validation.Errors
 open Grace.Types.Artifact
 open Grace.Types.PersonalAccessToken
-open Grace.Types.Types
+open Grace.Types.Common
 open Grace.Types.WorkItem
 open NUnit.Framework
 open System

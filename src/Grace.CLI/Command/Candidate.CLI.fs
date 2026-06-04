@@ -6,7 +6,7 @@ open Grace.CLI.Text
 open Grace.SDK
 open Grace.Shared
 open Grace.Shared.Utilities
-open Grace.Types.Types
+open Grace.Types.Common
 open Spectre.Console
 open System
 open System.CommandLine

@@ -65,7 +65,7 @@ reopens that boundary. Generated approval requests are seeded or produced by pol
 Key files:
 
 - `CONTEXT.md`
-- `src/Grace.Types/Types.Types.fs`
+- `src/Grace.Types/Common.Types.fs`
 - `src/Grace.Types/UploadSession.Types.fs`
 - `src/Grace.Types/ContentBlockMetadata.Types.fs`
 - `src/Grace.Types/ManifestContributionWorkflow.Types.fs`

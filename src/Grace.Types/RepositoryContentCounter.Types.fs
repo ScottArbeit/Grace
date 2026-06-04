@@ -2,7 +2,7 @@ namespace Grace.Types
 
 open Grace.Shared
 open Grace.Shared.Utilities
-open Grace.Types.Types
+open Grace.Types.Common
 open Orleans
 open System
 open System.Runtime.Serialization

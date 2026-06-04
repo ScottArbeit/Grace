@@ -4,7 +4,7 @@ open Grace.SDK.Common
 open Grace.Shared
 open Grace.Types.Diff
 open Grace.Shared.Parameters.Diff
-open Grace.Types.Types
+open Grace.Types.Common
 open System
 open System.Threading.Tasks
 

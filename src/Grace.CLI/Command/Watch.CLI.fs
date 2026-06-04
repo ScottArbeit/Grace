@@ -8,7 +8,7 @@ open Grace.Shared
 open Grace.Shared.Client.Configuration
 open Grace.Shared.Parameters.Branch
 open Grace.Shared.Services
-open Grace.Types.Types
+open Grace.Types.Common
 open Grace.Shared.Utilities
 open Microsoft.AspNetCore.Http.Connections
 open Microsoft.AspNetCore.SignalR.Client

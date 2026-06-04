@@ -2,7 +2,7 @@ namespace Grace.Shared.Parameters
 
 open Grace.Shared.Parameters.Common
 open Grace.Types.ContentBlockMetadata
-open Grace.Types.Types
+open Grace.Types.Common
 open Grace.Types.UploadSession
 open NodaTime
 open System

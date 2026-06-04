@@ -11,7 +11,7 @@ open Grace.Shared
 open Grace.Shared.Client.Configuration
 open Grace.Types.Branch
 open Grace.Types.Reference
-open Grace.Types.Types
+open Grace.Types.Common
 open Grace.Shared.Utilities
 open Grace.Shared.Validation.Errors
 open Spectre.Console

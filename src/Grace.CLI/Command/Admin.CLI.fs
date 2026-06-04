@@ -10,7 +10,7 @@ open Grace.Shared
 open Grace.Shared.Parameters
 open Grace.Shared.Parameters.Reminder
 open Grace.Types.Reminder
-open Grace.Types.Types
+open Grace.Types.Common
 open Grace.Shared.Utilities
 open Grace.Shared.Client.Configuration
 open Grace.Shared.Validation.Errors

@@ -12,7 +12,7 @@ open Grace.Shared.Constants
 open Grace.Shared.Utilities
 open Grace.Shared.Validation.Errors
 open Grace.Types.Events
-open Grace.Types.Types
+open Grace.Types.Common
 open Grace.Types.WorkItem
 open Microsoft.Extensions.Logging
 open NodaTime

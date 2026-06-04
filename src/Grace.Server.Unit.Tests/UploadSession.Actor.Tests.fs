@@ -3,7 +3,7 @@ namespace Grace.Server.Tests
 open Grace.Shared
 open Grace.Types.ContentBlockMetadata
 open Grace.Types.Reminder
-open Grace.Types.Types
+open Grace.Types.Common
 open Grace.Types.UploadSession
 open NodaTime
 open NUnit.Framework

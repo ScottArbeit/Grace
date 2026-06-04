@@ -4,7 +4,7 @@ open Grace.Server.ApplicationContext
 open Grace.Shared.Utilities
 open Grace.Types.Policy
 open Grace.Types.Review
-open Grace.Types.Types
+open Grace.Types.Common
 open Microsoft.Extensions.Caching.Memory
 open System
 open System.Security.Cryptography

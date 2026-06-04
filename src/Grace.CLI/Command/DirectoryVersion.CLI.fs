@@ -14,7 +14,7 @@ open Grace.Types.Reference
 open Grace.Shared.Parameters.Branch
 open Grace.Shared.Parameters.DirectoryVersion
 open Grace.Shared.Services
-open Grace.Types.Types
+open Grace.Types.Common
 open Grace.Shared.Utilities
 open Grace.Shared.Validation
 open Grace.Shared.Validation.Errors

@@ -9,7 +9,7 @@ open Grace.Shared.Utilities
 open Grace.Types.Events
 open Grace.Types.Policy
 open Grace.Types.Reference
-open Grace.Types.Types
+open Grace.Types.Common
 open Grace.Types.Validation
 open Microsoft.Extensions.Logging
 open System

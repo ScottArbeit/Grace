@@ -43,7 +43,7 @@ module PersonalAccessToken =
             [<Id 0u>]
             TokenId: PersonalAccessTokenId
             [<Id 1u>]
-            UserId: Types.UserId
+            UserId: Common.UserId
             [<Id 2u>]
             Claims: string list
             [<Id 3u>]

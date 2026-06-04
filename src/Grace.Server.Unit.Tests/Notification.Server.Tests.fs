@@ -1,7 +1,7 @@
 namespace Grace.Server.Tests
 
 open Grace.Server.Notification
-open Grace.Types.Types
+open Grace.Types.Common
 open NUnit.Framework
 
 [<Parallelizable(ParallelScope.All)>]

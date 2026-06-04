@@ -15,7 +15,7 @@ using System.IO;
 using System.Net;
 using System.Net.Sockets;
 using System.Text.Json;
-using static Grace.Types.Types;
+using static Grace.Types.Common;
 using static Shared::Grace.Shared.Constants;
 
 public partial class Program

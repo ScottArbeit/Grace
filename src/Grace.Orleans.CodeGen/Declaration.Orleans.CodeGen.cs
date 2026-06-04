@@ -3,7 +3,7 @@
 //   serialization code for them. Weird, but it works.
 
 // This line gets everything from Grace.Types.
-[assembly: GenerateCodeForDeclaringAssembly(typeof(Grace.Types.Types.OwnerType))]
+[assembly: GenerateCodeForDeclaringAssembly(typeof(Grace.Types.Common.OwnerType))]
 
 // This line gets everything from Grace.Actors.
 [assembly: GenerateCodeForDeclaringAssembly(typeof(Grace.Actors.Owner.OwnerActor))]

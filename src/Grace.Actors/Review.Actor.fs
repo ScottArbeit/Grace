@@ -13,7 +13,7 @@ open Grace.Shared.Utilities
 open Grace.Shared.Validation.Errors
 open Grace.Types.Events
 open Grace.Types.Review
-open Grace.Types.Types
+open Grace.Types.Common
 open Microsoft.Extensions.Logging
 open NodaTime
 open Orleans

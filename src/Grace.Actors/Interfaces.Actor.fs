@@ -24,7 +24,7 @@ open Grace.Types.Artifact
 open Grace.Types.UploadSession
 open Grace.Types.Webhooks
 open Grace.Types.WorkItem
-open Grace.Types.Types
+open Grace.Types.Common
 open Grace.Shared.Utilities
 open NodaTime
 open Orleans

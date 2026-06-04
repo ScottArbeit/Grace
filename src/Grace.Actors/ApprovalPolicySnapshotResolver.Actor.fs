@@ -1,7 +1,7 @@
 namespace Grace.Actors
 
 open Grace.Types.PromotionSet
-open Grace.Types.Types
+open Grace.Types.Common
 open System.Threading.Tasks
 
 type IApprovalPolicySnapshotResolver =

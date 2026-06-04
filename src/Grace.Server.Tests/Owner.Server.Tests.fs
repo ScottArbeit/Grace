@@ -15,7 +15,7 @@ open System.Threading.Tasks
 open System.IO
 open System.Text
 open System.Diagnostics
-open Grace.Types.Types
+open Grace.Types.Common
 open System.Net.Http
 
 [<Parallelizable(ParallelScope.All)>]

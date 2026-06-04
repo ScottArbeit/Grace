@@ -3,7 +3,7 @@ namespace Grace
 open Grace.SDK
 open Grace.Shared
 open Grace.Shared.Parameters
-open Grace.Types.Types
+open Grace.Types.Common
 open Grace.Shared.Utilities
 open Spectre.Console
 open System

@@ -2,7 +2,7 @@ namespace Grace.Types.Tests
 
 open Grace.Shared
 open Grace.Shared.Utilities
-open Grace.Types.Types
+open Grace.Types.Common
 open Grace.Types.Repository
 open MessagePack
 open NUnit.Framework
@@ -91,7 +91,7 @@ module ManifestEligibilityTestData =
         |]
 
 [<Parallelizable(ParallelScope.All)>]
-type TypesTypesTests() =
+type CommonTypesTests() =
     [<Test>]
     member _.ManifestEligibilityPolicyDefaultUsesOneMiBThresholdAndEightKiBScanWindow() =
         let policy = ManifestEligibilityPolicy.Default

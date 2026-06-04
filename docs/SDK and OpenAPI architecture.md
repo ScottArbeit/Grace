@@ -145,7 +145,7 @@ The scope includes:
 - `src/OpenAPI/Storage.Paths.OpenAPI.yaml`
 - `src/Grace.Server/Startup.Server.fs`
 - `src/Grace.Shared/Constants.Shared.fs`
-- `src/Grace.Types/Types.Types.fs`
+- `src/Grace.Types/Common.Types.fs`
 - `src/Grace.SDK/ClientIdentity.SDK.fs`
 - `src/Grace.SDK/Common.SDK.fs`
 - `src/Grace.CLI/Command/Services.CLI.fs`
@@ -165,7 +165,7 @@ The scope includes:
   product build version from HTTP API contract version.
 - Server API versioning packages and wiring already exist. `src/Grace.Server/Startup.Server.fs:1858-1878` sets
   API version readers and explorer defaults. `src/Grace.Shared/Constants.Shared.fs:189` defines
-  `X-Api-Version`. `src/Grace.Types/Types.Types.fs:1208-1217` defines `ServerApiVersions` as
+  `X-Api-Version`. `src/Grace.Types/Common.Types.fs:1210-1217` defines `ServerApiVersions` as
   `V2022-02-01`, `Latest`, and `Edge`.
 - Client identity headers already exist. `src/Grace.Shared/Constants.Shared.fs:193-197` defines
   `X-Grace-Client-Type` and `X-Grace-Client-Version`; `src/Grace.SDK/ClientIdentity.SDK.fs:21-37` applies

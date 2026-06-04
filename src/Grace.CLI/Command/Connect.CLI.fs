@@ -13,7 +13,7 @@ open Grace.Types.Branch
 open Grace.Types.Organization
 open Grace.Types.Reference
 open Grace.Types.Repository
-open Grace.Types.Types
+open Grace.Types.Common
 open Grace.Shared.Validation.Common
 open Grace.Shared.Validation.Errors
 open System

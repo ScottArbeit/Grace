@@ -1,7 +1,7 @@
 namespace Grace.Types.Tests
 
 open Grace.Shared.Utilities
-open Grace.Types.Types
+open Grace.Types.Common
 open NodaTime
 open NUnit.Framework
 open System.Collections.Generic

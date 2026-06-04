@@ -10,7 +10,7 @@ open Grace.Types.PromotionSet
 open Grace.Types.Queue
 open Grace.Types.Reference
 open Grace.Types.Review
-open Grace.Types.Types
+open Grace.Types.Common
 open Grace.Types.Validation
 open Grace.Types.WorkItem
 open System

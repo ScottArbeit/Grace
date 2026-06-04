@@ -9,7 +9,7 @@ open Grace.Shared.Utilities
 open Grace.Shared.Validation.Errors
 open Grace.Types.Policy
 open Grace.Types.Review
-open Grace.Types.Types
+open Grace.Types.Common
 open Spectre.Console
 open System
 open System.CommandLine

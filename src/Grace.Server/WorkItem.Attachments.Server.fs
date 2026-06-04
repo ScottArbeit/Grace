@@ -2,7 +2,7 @@ namespace Grace.Server
 
 open Grace.Shared.Parameters.WorkItem
 open Grace.Types.Artifact
-open Grace.Types.Types
+open Grace.Types.Common
 open Grace.Types.WorkItem
 open System
 open System.Collections.Generic

@@ -3,7 +3,7 @@ namespace Grace.Shared
 open Grace.Shared.Parameters.Storage
 open Grace.Types.ContentBlockMetadata
 open Grace.Types.Repository
-open Grace.Types.Types
+open Grace.Types.Common
 open Grace.Types.UploadSession
 open NodaTime
 open System

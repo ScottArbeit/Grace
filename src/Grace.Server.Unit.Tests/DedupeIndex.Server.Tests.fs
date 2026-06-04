@@ -4,7 +4,7 @@ open Grace.Server
 open Grace.Shared
 open Grace.Shared.Parameters.Storage
 open Grace.Types.ContentBlockMetadata
-open Grace.Types.Types
+open Grace.Types.Common
 open Grace.Types.UploadSession
 open NodaTime
 open NUnit.Framework

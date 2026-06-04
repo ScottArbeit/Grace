@@ -1,7 +1,7 @@
 namespace Grace.Shared
 
 open Blake3
-open Grace.Types.Types
+open Grace.Types.Common
 open System
 open System.Text
 open System.Text.RegularExpressions

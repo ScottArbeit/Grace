@@ -3,7 +3,7 @@ namespace Grace.Server.Security
 open Grace.Shared
 open Grace.Shared.Parameters
 open Grace.Types.Authorization
-open Grace.Types.Types
+open Grace.Types.Common
 open System
 
 module internal StorageAuthorizationResources =

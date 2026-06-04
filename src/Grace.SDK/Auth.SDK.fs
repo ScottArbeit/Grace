@@ -4,7 +4,7 @@ open Grace.Shared
 open Grace.Shared.Services
 open Grace.Shared.Utilities
 open Grace.Types.Auth
-open Grace.Types.Types
+open Grace.Types.Common
 open System
 open System.Net.Http
 open System.Net.Http.Headers

@@ -2,7 +2,7 @@ namespace Grace.Server.Tests
 
 open Grace.Server
 open Grace.Types.Artifact
-open Grace.Types.Types
+open Grace.Types.Common
 open Grace.Types.WorkItem
 open NodaTime
 open NUnit.Framework

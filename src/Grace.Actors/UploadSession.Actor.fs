@@ -9,7 +9,7 @@ open Grace.Shared.Constants
 open Grace.Shared.Utilities
 open Grace.Types.ContentBlockMetadata
 open Grace.Types.Reminder
-open Grace.Types.Types
+open Grace.Types.Common
 open Grace.Types.UploadSession
 open Microsoft.Extensions.Logging
 open NodaTime

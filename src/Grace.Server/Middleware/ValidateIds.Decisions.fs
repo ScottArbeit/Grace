@@ -1,6 +1,6 @@
 namespace Grace.Server.Middleware
 
-open Grace.Types.Types
+open Grace.Types.Common
 open Grace.Shared.Validation
 open Grace.Shared.Validation.Errors
 open Grace.Shared.Validation.Utilities

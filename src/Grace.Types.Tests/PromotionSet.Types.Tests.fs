@@ -1,7 +1,7 @@
 namespace Grace.Types.Tests
 
 open Grace.Types.PromotionSet
-open Grace.Types.Types
+open Grace.Types.Common
 open NodaTime
 open NUnit.Framework
 open System

@@ -1,7 +1,7 @@
 namespace Grace.Server.Tests
 
 open Grace.Types.ManifestContributionWorkflow
-open Grace.Types.Types
+open Grace.Types.Common
 open NodaTime
 open NUnit.Framework
 open System

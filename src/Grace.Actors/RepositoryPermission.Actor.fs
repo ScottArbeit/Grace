@@ -6,7 +6,7 @@ open Grace.Actors.Interfaces
 open Grace.Shared.Constants
 open Grace.Shared.Utilities
 open Grace.Types.Authorization
-open Grace.Types.Types
+open Grace.Types.Common
 open Microsoft.Extensions.Logging
 open Orleans
 open Orleans.Runtime

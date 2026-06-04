@@ -1,7 +1,7 @@
 namespace Grace.Actors
 
 open Grace.Actors.Constants
-open Grace.Types.Types
+open Grace.Types.Common
 open Grace.Shared.Utilities
 open NodaTime
 open Orleans

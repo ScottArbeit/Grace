@@ -203,7 +203,7 @@ module ApprovalRequest =
                                     }
                                 RequiredResponder = parameters.RequiredResponder
                                 Status = ApprovalRequestStatus.Pending
-                                CreatedBy = Grace.Types.Types.UserId parameters.CreatedBy
+                                CreatedBy = Grace.Types.Common.UserId parameters.CreatedBy
                                 CreatedAt = getCurrentInstant ()
                             }
 
@@ -215,7 +215,7 @@ module ApprovalRequest =
                     return!
                         context
                         |> Services.result400BadRequest (
-                            Grace.Types.Types.GraceError.CreateWithException ex "Approval request seed failed." (Services.getCorrelationId context)
+                            Grace.Types.Common.GraceError.CreateWithException ex "Approval request seed failed." (Services.getCorrelationId context)
                         )
             }
 

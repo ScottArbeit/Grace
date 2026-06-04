@@ -466,7 +466,7 @@ open Grace.Server.Tests.Services
 open Grace.Shared
 open Grace.Shared.Utilities
 open Grace.Types.Authorization
-open Grace.Types.Types
+open Grace.Types.Common
 open NUnit.Framework
 open System
 open System.Collections.Generic
@@ -862,7 +862,7 @@ open Grace.Server.Tests.Services
 open Grace.Shared
 open Grace.Shared.Utilities
 open Grace.Types.Branch
-open Grace.Types.Types
+open Grace.Types.Common
 open NUnit.Framework
 open System
 open System.Net
@@ -902,7 +902,10 @@ type EndpointAuthorizationTests() =
 
     let getDefaultBranchAsync (repositoryId: string) =
         task {
-            let repositoryIndex = repositoryIds |> Array.findIndex (fun candidate -> candidate = repositoryId)
+            let repositoryIndex =
+                repositoryIds
+                |> Array.findIndex (fun candidate -> candidate = repositoryId)
+
             let branchId = repositoryDefaultBranchIds[repositoryIndex]
             let parameters = Parameters.Branch.GetBranchParameters()
             parameters.OwnerId <- ownerId
@@ -927,7 +930,9 @@ type EndpointAuthorizationTests() =
                     let returnValue = deserialize<GraceReturnValue<BranchDto>> responseBody
                     let branchDto = returnValue.ReturnValue
 
-                    if branchDto.BranchId <> Guid.Empty && branchDto.LatestPromotion.ReferenceId <> Guid.Empty then
+                    if branchDto.BranchId <> Guid.Empty
+                       && branchDto.LatestPromotion.ReferenceId
+                          <> Guid.Empty then
                         branch <- Some branchDto
 
                 if branch.IsNone then

@@ -7,7 +7,7 @@ open Grace.Shared.Validation.Utilities
 open Grace.Types.Artifact
 open Grace.Shared.Parameters.WorkItem
 open Grace.Shared.Validation.Errors
-open Grace.Types.Types
+open Grace.Types.Common
 open Grace.Types.WorkItem
 open NUnit.Framework
 open NodaTime

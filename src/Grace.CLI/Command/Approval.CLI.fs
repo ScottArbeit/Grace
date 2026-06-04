@@ -6,7 +6,7 @@ open Grace.CLI.Text
 open Grace.Shared
 open Grace.Shared.Utilities
 open Grace.Shared.Validation.Errors
-open Grace.Types.Types
+open Grace.Types.Common
 open Grace.Types.Webhooks
 open Spectre.Console
 open System

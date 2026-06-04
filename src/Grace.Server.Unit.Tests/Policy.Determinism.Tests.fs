@@ -2,7 +2,7 @@ namespace Grace.Server.Tests
 
 open Grace.Shared.Utilities
 open Grace.Types.Policy
-open Grace.Types.Types
+open Grace.Types.Common
 open NUnit.Framework
 open System
 open System.Security.Cryptography

@@ -7,7 +7,7 @@ open Grace.CLI.Text
 open Grace.Shared.Client.Configuration
 open Grace.Types.Branch
 open Grace.Types.Reference
-open Grace.Types.Types
+open Grace.Types.Common
 open NUnit.Framework
 open System
 

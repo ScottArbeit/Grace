@@ -8,7 +8,7 @@ open Grace.Shared
 open Grace.Shared.Utilities
 open Grace.Shared.Validation.Errors
 open Grace.Types.Queue
-open Grace.Types.Types
+open Grace.Types.Common
 open Spectre.Console
 open System
 open System.CommandLine
