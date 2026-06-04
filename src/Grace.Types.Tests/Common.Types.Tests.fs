@@ -91,7 +91,7 @@ module ManifestEligibilityTestData =
         |]
 
 [<Parallelizable(ParallelScope.All)>]
-type TypesTypesTests() =
+type CommonTypesTests() =
     [<Test>]
     member _.ManifestEligibilityPolicyDefaultUsesOneMiBThresholdAndEightKiBScanWindow() =
         let policy = ManifestEligibilityPolicy.Default
