@@ -15,6 +15,18 @@
       "manifest-validation.v1.json",
       "eligibility.v1.json"
     ],
+    "tier4LocalIntegration": {
+      "capabilities": [
+        "facade-transfer-progress-diagnostics"
+      ],
+      "nonClaims": [
+        "manifest-upload",
+        "contentblock-transfer",
+        "direct-storage-deduplication",
+        "resumable-upload-download",
+        "offline-watch"
+      ]
+    },
     "runtimeBoundary": "native-typescript-node-no-dotnet-runtime"
   },
   "exports": {

@@ -129,7 +129,33 @@ Eligibility helpers expose the default policy boundary, but automatic manifest u
 this package slice. Use Tier 2 `uploadFile` for simple whole-file transfer until a later Tier 4 integration slice wires
 the protocol helpers into end-to-end storage workflows.
 
+## Narrow Tier 4 Local Integration: Transfer Progress
+
+The TypeScript Node facade now implements one selected Tier 4 local integration capability: sanitized local progress
+milestones for the existing whole-file transfer helpers.
+
+`uploadFile` and `downloadFile` accept `onProgress` callbacks. The callback receives milestone events when the Grace API
+has issued a storage URI, when the local storage transfer starts, and when the local storage transfer completes.
+
+```ts
+await grace.uploadFile({
+  filePath: "C:/work/hello.txt",
+  onProgress: (event) => console.log(event.stage, event.bytesTransferred, event.totalBytes),
+  relativePath: "docs/hello.txt",
+  repositoryName: "repo",
+});
+```
+
+Progress events are intentionally sanitized. They include the operation, milestone stage, repository-relative path,
+byte counts, and final transfer status, but do not include local absolute file paths, storage URIs, bearer tokens, SAS
+query strings, or auth headers. If a progress callback throws, the helper rejects and does not continue to the next
+storage-transfer step.
+
+This is a narrow Tier 4 claim. The package still does not claim manifest upload, ContentBlock transfer, direct-storage
+deduplication, resumable upload/download, offline watch behavior, or hosted storage parity.
+
 ## Current Scope
 
 This package is a TypeScript Node facade with Tier 1 API request support, Tier 2 simple whole-file transfer helpers, and
-Tier 3 Grace Protocol v1 vector support. Tier 4 local integration behavior is intentionally not claimed here.
+Tier 3 Grace Protocol v1 vector support. Its Tier 4 local integration scope is limited to sanitized local progress
+milestones for the Tier 2 whole-file facade transfer helpers.
