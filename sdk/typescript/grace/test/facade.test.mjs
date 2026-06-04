@@ -199,6 +199,68 @@ test("Tier 2 upload requests a server-issued URI and uploads local bytes without
   }
 });
 
+test("Tier 4 local progress for upload reports sanitized milestones only", async () => {
+  const temp = await mkdtemp(join(tmpdir(), "grace-upload-progress-"));
+  const sourcePath = join(temp, "secret-local-file.txt");
+  const credentialBearingUri = "https://storage.example.test/upload/private?sig=secret-token&sp=rw";
+  await writeFile(sourcePath, "hello grace");
+
+  const progressEvents = [];
+  const client = new GraceClient({
+    auth: "grace-api-token",
+    fetch: async (url) => {
+      if (url.toString() === "http://localhost:5000/storage/getUploadUri") {
+        return jsonResponse({ "docs/hello.txt": credentialBearingUri });
+      }
+
+      assert.equal(url.toString(), credentialBearingUri);
+      return new Response(undefined, { status: 201 });
+    },
+  });
+
+  try {
+    await client.uploadFile({
+      filePath: sourcePath,
+      onProgress: (event) => progressEvents.push(event),
+      relativePath: "docs/hello.txt",
+      repositoryName: "repo",
+    });
+
+    assert.deepEqual(progressEvents, [
+      {
+        bytesTransferred: 0,
+        operation: "upload",
+        relativePath: "docs/hello.txt",
+        stage: "api-requested",
+        totalBytes: 11,
+      },
+      {
+        bytesTransferred: 0,
+        operation: "upload",
+        relativePath: "docs/hello.txt",
+        stage: "transfer-started",
+        totalBytes: 11,
+      },
+      {
+        bytesTransferred: 11,
+        operation: "upload",
+        relativePath: "docs/hello.txt",
+        stage: "transfer-completed",
+        status: 201,
+        totalBytes: 11,
+      },
+    ]);
+
+    const serializedProgress = JSON.stringify(progressEvents);
+    assert.equal(serializedProgress.includes(sourcePath), false);
+    assert.equal(serializedProgress.includes(credentialBearingUri), false);
+    assert.equal(serializedProgress.includes("secret-token"), false);
+    assert.equal(serializedProgress.includes("grace-api-token"), false);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
 test("Tier 2 download requests a raw text URI and writes bytes to an existing output path", async () => {
   const temp = await mkdtemp(join(tmpdir(), "grace-download-"));
   const outputPath = join(temp, "hello.txt");
@@ -246,6 +308,70 @@ test("Tier 2 download requests a raw text URI and writes bytes to an existing ou
     assert.equal(result.uriRequest.lifecycle.recommendedVersion, "0.0.0-s12");
     assert.equal(result.transfer.lifecycle.uploadSessionReason, "whole-file-download");
     assert.equal(calls.length, 2);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test("Tier 4 local progress for download reports sanitized milestones only", async () => {
+  const temp = await mkdtemp(join(tmpdir(), "grace-download-progress-"));
+  const outputPath = join(temp, "secret-output.txt");
+  const credentialBearingUri = "https://storage.example.test/download/private?sig=secret-download-token";
+
+  const progressEvents = [];
+  const client = new GraceClient({
+    fetch: async (url) => {
+      if (url.toString() === "http://localhost:5000/storage/getDownloadUri") {
+        return textResponse(credentialBearingUri);
+      }
+
+      assert.equal(url.toString(), credentialBearingUri);
+      return new Response("downloaded bytes", { status: 200 });
+    },
+  });
+
+  try {
+    await client.downloadFile({
+      fileVersion: {
+        RelativePath: "docs/hello.txt",
+        Sha256Hash: "abc123",
+        IsBinary: true,
+        Size: 16,
+      },
+      onProgress: (event) => progressEvents.push(event),
+      outputPath,
+      repositoryName: "repo",
+    });
+
+    assert.deepEqual(progressEvents, [
+      {
+        bytesTransferred: 0,
+        operation: "download",
+        relativePath: "docs/hello.txt",
+        stage: "api-requested",
+        totalBytes: 16,
+      },
+      {
+        bytesTransferred: 0,
+        operation: "download",
+        relativePath: "docs/hello.txt",
+        stage: "transfer-started",
+        totalBytes: 16,
+      },
+      {
+        bytesTransferred: 16,
+        operation: "download",
+        relativePath: "docs/hello.txt",
+        stage: "transfer-completed",
+        status: 200,
+        totalBytes: 16,
+      },
+    ]);
+
+    const serializedProgress = JSON.stringify(progressEvents);
+    assert.equal(serializedProgress.includes(outputPath), false);
+    assert.equal(serializedProgress.includes(credentialBearingUri), false);
+    assert.equal(serializedProgress.includes("secret-download-token"), false);
   } finally {
     await rm(temp, { recursive: true, force: true });
   }
@@ -316,6 +442,43 @@ test("Tier 2 transfer rejects local path problems before contacting Grace", asyn
   );
 
   assert.equal(calls.length, 0);
+});
+
+test("Tier 4 local progress callback exceptions stop transfer before credential-bearing storage use", async () => {
+  const temp = await mkdtemp(join(tmpdir(), "grace-progress-fail-"));
+  const sourcePath = join(temp, "hello.txt");
+  await writeFile(sourcePath, "hello grace");
+
+  const calls = [];
+  const client = new GraceClient({
+    fetch: async (url) => {
+      calls.push(url.toString());
+
+      if (url.toString() === "http://localhost:5000/storage/getUploadUri") {
+        return jsonResponse({ "docs/hello.txt": "https://storage.example.test/upload?sig=must-not-be-used" });
+      }
+
+      throw new Error("Storage transfer should not start after a progress callback failure.");
+    },
+  });
+
+  try {
+    await assert.rejects(
+      client.uploadFile({
+        filePath: sourcePath,
+        onProgress: () => {
+          throw new Error("progress failed");
+        },
+        relativePath: "docs/hello.txt",
+        repositoryName: "repo",
+      }),
+      /progress failed/,
+    );
+
+    assert.deepEqual(calls, ["http://localhost:5000/storage/getUploadUri"]);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
 });
 
 test("Tier 2 transfer honors cancellation signals", async () => {

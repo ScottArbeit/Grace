@@ -79,6 +79,7 @@ export interface GraceUploadFileRequest extends GraceStorageScope {
   readonly relativePath: string;
   readonly correlationId?: string;
   readonly contentType?: string;
+  readonly onProgress?: GraceTransferProgressHandler;
   readonly signal?: AbortSignal;
 }
 
@@ -87,6 +88,7 @@ export interface GraceDownloadFileRequest extends GraceStorageScope {
   readonly outputPath: string;
   readonly correlationId?: string;
   readonly allowOverwrite?: boolean;
+  readonly onProgress?: GraceTransferProgressHandler;
   readonly signal?: AbortSignal;
 }
 
@@ -95,6 +97,21 @@ export interface GraceTransferStep {
   readonly headers: Headers;
   readonly lifecycle: GraceLifecycleDiagnostics;
 }
+
+export type GraceTransferOperation = "upload" | "download";
+
+export type GraceTransferProgressStage = "api-requested" | "transfer-started" | "transfer-completed";
+
+export interface GraceTransferProgressEvent {
+  readonly operation: GraceTransferOperation;
+  readonly stage: GraceTransferProgressStage;
+  readonly relativePath: string;
+  readonly bytesTransferred: number;
+  readonly totalBytes?: number;
+  readonly status?: number;
+}
+
+export type GraceTransferProgressHandler = (event: GraceTransferProgressEvent) => void | Promise<void>;
 
 export interface GraceUploadFileResult {
   readonly fileVersion: GraceFileVersion;
@@ -180,8 +197,24 @@ export class GraceClient {
       signal: request.signal,
     });
 
+    await emitProgress(request.onProgress, {
+      bytesTransferred: 0,
+      operation: "upload",
+      relativePath: fileVersion.RelativePath,
+      stage: "api-requested",
+      totalBytes: fileVersion.Size,
+    });
+
     const uploadUri = readUploadUri(uriRequest.body, request.relativePath);
     const fileBytes = await readFile(request.filePath);
+    await emitProgress(request.onProgress, {
+      bytesTransferred: 0,
+      operation: "upload",
+      relativePath: fileVersion.RelativePath,
+      stage: "transfer-started",
+      totalBytes: fileBytes.byteLength,
+    });
+
     const response = await this.transferFetch(uploadUri, {
       body: new Blob([fileBytes]),
       headers: createUploadHeaders(request.contentType),
@@ -194,6 +227,15 @@ export class GraceClient {
     if (!response.ok) {
       throw GraceError.fromResponse(response, transfer.body, transfer.lifecycle);
     }
+
+    await emitProgress(request.onProgress, {
+      bytesTransferred: fileBytes.byteLength,
+      operation: "upload",
+      relativePath: fileVersion.RelativePath,
+      stage: "transfer-completed",
+      status: transfer.status,
+      totalBytes: fileBytes.byteLength,
+    });
 
     return {
       fileVersion,
@@ -225,10 +267,27 @@ export class GraceClient {
       throw new Error("Grace did not return a download URI.");
     }
 
+    const normalizedFileVersion = normalizeFileVersion(request.fileVersion);
+    await emitProgress(request.onProgress, {
+      bytesTransferred: 0,
+      operation: "download",
+      relativePath: normalizedFileVersion.RelativePath,
+      stage: "api-requested",
+      totalBytes: normalizedFileVersion.Size,
+    });
+
     const response = await this.transferFetch(uriRequest.body, {
       method: "GET",
       signal: request.signal,
     });
+    await emitProgress(request.onProgress, {
+      bytesTransferred: 0,
+      operation: "download",
+      relativePath: normalizedFileVersion.RelativePath,
+      stage: "transfer-started",
+      totalBytes: normalizedFileVersion.Size,
+    });
+
     const transfer = await readTransferStep(response);
 
     if (!response.ok) {
@@ -237,10 +296,18 @@ export class GraceClient {
 
     const bytes = transfer.bytes ?? new Uint8Array();
     await writeFile(request.outputPath, bytes);
+    await emitProgress(request.onProgress, {
+      bytesTransferred: bytes.byteLength,
+      operation: "download",
+      relativePath: normalizedFileVersion.RelativePath,
+      stage: "transfer-completed",
+      status: transfer.status,
+      totalBytes: normalizedFileVersion.Size ?? bytes.byteLength,
+    });
 
     return {
       bytesWritten: bytes.byteLength,
-      fileVersion: normalizeFileVersion(request.fileVersion),
+      fileVersion: normalizedFileVersion,
       outputPath: request.outputPath,
       uriRequest,
       transfer,
@@ -444,6 +511,14 @@ async function readTransferStep(response: Response): Promise<GraceTransferStep &
     lifecycle,
     status: response.status,
   };
+}
+
+async function emitProgress(handler: GraceTransferProgressHandler | undefined, event: GraceTransferProgressEvent): Promise<void> {
+  if (!handler) {
+    return;
+  }
+
+  await handler(event);
 }
 
 async function assertOutputPathIsWritable(outputPath: string, allowOverwrite: boolean): Promise<void> {
