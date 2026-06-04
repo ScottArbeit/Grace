@@ -697,6 +697,12 @@ generator as accepted unless deterministic regeneration, compile/import, transpo
 Do not describe OpenAPI as SDK-grade unless response shapes, media types, errors, headers, examples, tags, versioning,
 source/derived freshness, and runtime evidence are all covered.
 
+The final S17 audit for epic #211 is recorded in
+[SDK OpenAPI final audit](SDK%20OpenAPI%20final%20audit.md). That audit is the release matrix and traceability record
+for the current `epic/211-sdk-openapi` branch. It intentionally keeps TypeScript Tier 4 scoped to the proven
+`facade-transfer-progress-diagnostics` capability, keeps Python and Rust at proof-harness maturity, and does not claim
+browser TypeScript support or SDK-grade OpenAPI completion while quality gates remain pending.
+
 ### Specification self-critique
 
 - Strongest part: the compatibility model cleanly separates SDK SemVer, date-based HTTP API versions, and protocol
