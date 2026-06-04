@@ -1,5 +1,8 @@
 import { rawClientMetadata } from "../internal/generated/grace-raw-client-metadata.js";
 import { GraceRawClient } from "../internal/generated/grace-raw-client.js";
+import { createHash } from "node:crypto";
+import { stat, readFile, writeFile } from "node:fs/promises";
+import { dirname } from "node:path";
 import { GraceError } from "./grace-error.js";
 import {
   DEFAULT_GRACE_BASE_URL,
@@ -44,6 +47,72 @@ export interface GraceClientResponse<TBody = unknown> {
   readonly lifecycle: GraceLifecycleDiagnostics;
 }
 
+export interface GraceStorageScope {
+  readonly ownerId?: string;
+  readonly ownerName?: string;
+  readonly organizationId?: string;
+  readonly organizationName?: string;
+  readonly repositoryId?: string;
+  readonly repositoryName?: string;
+  readonly principal?: string;
+}
+
+export interface GraceFileVersion {
+  readonly Class?: "FileVersion" | string;
+  readonly RelativePath: string;
+  readonly Sha256Hash: string;
+  readonly IsBinary?: boolean;
+  readonly Size?: number;
+  readonly CreatedAt?: string;
+  readonly BlobUri?: string;
+  readonly ContentReference?: GraceFileContentReference;
+}
+
+export interface GraceFileContentReference {
+  readonly Class?: "FileContentReference" | string;
+  readonly ReferenceType: "WholeFileContent" | "FileManifest" | string;
+  readonly Manifest?: unknown;
+}
+
+export interface GraceUploadFileRequest extends GraceStorageScope {
+  readonly filePath: string;
+  readonly relativePath: string;
+  readonly correlationId?: string;
+  readonly contentType?: string;
+  readonly signal?: AbortSignal;
+}
+
+export interface GraceDownloadFileRequest extends GraceStorageScope {
+  readonly fileVersion: GraceFileVersion;
+  readonly outputPath: string;
+  readonly correlationId?: string;
+  readonly allowOverwrite?: boolean;
+  readonly signal?: AbortSignal;
+}
+
+export interface GraceTransferStep {
+  readonly status: number;
+  readonly headers: Headers;
+  readonly lifecycle: GraceLifecycleDiagnostics;
+}
+
+export interface GraceUploadFileResult {
+  readonly fileVersion: GraceFileVersion;
+  readonly relativePath: string;
+  readonly sha256Hash: string;
+  readonly size: number;
+  readonly uriRequest: GraceClientResponse<Record<string, string>>;
+  readonly transfer: GraceTransferStep;
+}
+
+export interface GraceDownloadFileResult {
+  readonly fileVersion: GraceFileVersion;
+  readonly outputPath: string;
+  readonly bytesWritten: number;
+  readonly uriRequest: GraceClientResponse<string>;
+  readonly transfer: GraceTransferStep;
+}
+
 export class GraceClient {
   public readonly contract: GraceClientContractMetadata;
   public readonly baseUrl: string;
@@ -53,6 +122,7 @@ export class GraceClient {
   private readonly correlationId?: string | (() => string | Promise<string>);
   private readonly defaultHeaders: Headers;
   private readonly rawClient: GraceRawClient;
+  private readonly transferFetch: typeof fetch;
 
   public constructor(options: GraceClientOptions = {}) {
     this.contract = {
@@ -66,6 +136,7 @@ export class GraceClient {
     this.correlationId = options.correlationId;
     this.defaultHeaders = new Headers(options.headers);
     this.rawClient = new GraceRawClient(options.fetch);
+    this.transferFetch = options.fetch ?? globalThis.fetch;
   }
 
   public async request<TBody = unknown>(request: GraceClientRequest): Promise<GraceClientResponse<TBody>> {
@@ -97,8 +168,83 @@ export class GraceClient {
     };
   }
 
-  public unsupportedFileTransfer(): never {
-    throw new Error("Tier 2 file transfer is not implemented by the TypeScript Node Tier 1 facade.");
+  public async uploadFile(request: GraceUploadFileRequest): Promise<GraceUploadFileResult> {
+    const fileVersion = await createWholeFileVersion(request.filePath, request.relativePath);
+    const correlationId = request.correlationId ?? (await resolveValue(this.correlationId));
+    const uriRequest = await this.request<Record<string, string>>({
+      body: createStorageParameters({ ...request, correlationId }, {
+        FileVersions: [fileVersion],
+      }),
+      correlationId,
+      path: "/storage/getUploadUri",
+      signal: request.signal,
+    });
+
+    const uploadUri = readUploadUri(uriRequest.body, request.relativePath);
+    const fileBytes = await readFile(request.filePath);
+    const response = await this.transferFetch(uploadUri, {
+      body: new Blob([fileBytes]),
+      headers: createUploadHeaders(request.contentType),
+      method: "PUT",
+      signal: request.signal,
+    });
+
+    const transfer = await readTransferStep(response);
+
+    if (!response.ok) {
+      throw GraceError.fromResponse(response, transfer.body, transfer.lifecycle);
+    }
+
+    return {
+      fileVersion,
+      relativePath: fileVersion.RelativePath,
+      sha256Hash: fileVersion.Sha256Hash,
+      size: fileVersion.Size ?? fileBytes.byteLength,
+      uriRequest,
+      transfer,
+    };
+  }
+
+  public async downloadFile(request: GraceDownloadFileRequest): Promise<GraceDownloadFileResult> {
+    await assertOutputPathIsWritable(request.outputPath, request.allowOverwrite ?? false);
+    const correlationId = request.correlationId ?? (await resolveValue(this.correlationId));
+
+    const uriRequest = await this.request<string>({
+      body: createStorageParameters({ ...request, correlationId }, {
+        FileVersion: normalizeFileVersion(request.fileVersion),
+      }),
+      correlationId,
+      headers: {
+        Accept: "text/plain",
+      },
+      path: "/storage/getDownloadUri",
+      signal: request.signal,
+    });
+
+    if (typeof uriRequest.body !== "string" || uriRequest.body.trim() === "") {
+      throw new Error("Grace did not return a download URI.");
+    }
+
+    const response = await this.transferFetch(uriRequest.body, {
+      method: "GET",
+      signal: request.signal,
+    });
+    const transfer = await readTransferStep(response);
+
+    if (!response.ok) {
+      throw GraceError.fromResponse(response, transfer.body, transfer.lifecycle);
+    }
+
+    const bytes = transfer.bytes ?? new Uint8Array();
+    await writeFile(request.outputPath, bytes);
+
+    return {
+      bytesWritten: bytes.byteLength,
+      fileVersion: normalizeFileVersion(request.fileVersion),
+      outputPath: request.outputPath,
+      uriRequest,
+      transfer,
+    };
   }
 
   private createUrl(path: string, query?: GraceClientRequest["query"]): URL {
@@ -174,4 +320,166 @@ function serializeBody(body: unknown, headers: Headers): BodyInit | undefined {
   }
 
   return JSON.stringify(body);
+}
+
+async function createWholeFileVersion(filePath: string, relativePath: string): Promise<GraceFileVersion> {
+  let fileInfo;
+
+  try {
+    fileInfo = await stat(filePath);
+  } catch {
+    throw new Error("Input file does not exist.");
+  }
+
+  if (!fileInfo.isFile()) {
+    throw new Error("Input path must be a file.");
+  }
+
+  if (!relativePath || relativePath.trim() === "") {
+    throw new Error("Relative path is required.");
+  }
+
+  const fileBytes = await readFile(filePath);
+  const sha256Hash = createHash("sha256").update(fileBytes).digest("hex");
+
+  return {
+    BlobUri: "",
+    Class: "FileVersion",
+    ContentReference: {
+      Class: "FileContentReference",
+      Manifest: null,
+      ReferenceType: "WholeFileContent",
+    },
+    CreatedAt: fileInfo.mtime.toISOString(),
+    IsBinary: true,
+    RelativePath: normalizeRelativePath(relativePath),
+    Sha256Hash: sha256Hash,
+    Size: fileInfo.size,
+  };
+}
+
+function normalizeFileVersion(fileVersion: GraceFileVersion): GraceFileVersion {
+  if (!fileVersion.RelativePath || fileVersion.RelativePath.trim() === "") {
+    throw new Error("FileVersion.RelativePath is required.");
+  }
+
+  if (!fileVersion.Sha256Hash || fileVersion.Sha256Hash.trim() === "") {
+    throw new Error("FileVersion.Sha256Hash is required.");
+  }
+
+  return {
+    BlobUri: fileVersion.BlobUri ?? "",
+    Class: fileVersion.Class ?? "FileVersion",
+    ContentReference: fileVersion.ContentReference ?? {
+      Class: "FileContentReference",
+      Manifest: null,
+      ReferenceType: "WholeFileContent",
+    },
+    CreatedAt: fileVersion.CreatedAt,
+    IsBinary: fileVersion.IsBinary ?? true,
+    RelativePath: normalizeRelativePath(fileVersion.RelativePath),
+    Sha256Hash: fileVersion.Sha256Hash,
+    Size: fileVersion.Size,
+  };
+}
+
+function createStorageParameters(scope: GraceStorageScope & { readonly correlationId?: string }, body: Record<string, unknown>): Record<string, unknown> {
+  return removeUndefined({
+    CorrelationId: scope.correlationId,
+    OwnerId: scope.ownerId,
+    OwnerName: scope.ownerName,
+    OrganizationId: scope.organizationId,
+    OrganizationName: scope.organizationName,
+    Principal: scope.principal,
+    RepositoryId: scope.repositoryId,
+    RepositoryName: scope.repositoryName,
+    ...body,
+  });
+}
+
+function readUploadUri(uriMap: Record<string, string>, relativePath: string): string {
+  const normalizedRelativePath = normalizeRelativePath(relativePath);
+  const uploadUri = uriMap[normalizedRelativePath] ?? uriMap[`/${normalizedRelativePath}`];
+
+  if (!uploadUri || uploadUri.trim() === "") {
+    throw new Error("Grace did not return an upload URI for the requested file.");
+  }
+
+  return uploadUri;
+}
+
+function createUploadHeaders(contentType?: string): Headers {
+  const headers = new Headers();
+  headers.set("Content-Type", contentType ?? "application/octet-stream");
+  headers.set("x-ms-blob-type", "BlockBlob");
+  return headers;
+}
+
+async function readTransferStep(response: Response): Promise<GraceTransferStep & { readonly body?: unknown; readonly bytes?: Uint8Array }> {
+  const lifecycle = parseLifecycleDiagnostics(response.headers);
+  const contentType = response.headers.get("Content-Type") ?? "";
+
+  if (!response.ok) {
+    const text = await response.text();
+    const body = contentType.toLowerCase().includes("application/json") && text ? JSON.parse(text) : text;
+    return {
+      body,
+      headers: response.headers,
+      lifecycle,
+      status: response.status,
+    };
+  }
+
+  if (response.status === 204 || response.status === 201) {
+    return {
+      headers: response.headers,
+      lifecycle,
+      status: response.status,
+    };
+  }
+
+  return {
+    bytes: new Uint8Array(await response.arrayBuffer()),
+    headers: response.headers,
+    lifecycle,
+    status: response.status,
+  };
+}
+
+async function assertOutputPathIsWritable(outputPath: string, allowOverwrite: boolean): Promise<void> {
+  if (!outputPath || outputPath.trim() === "") {
+    throw new Error("Output path is required.");
+  }
+
+  try {
+    const parent = await stat(dirname(outputPath));
+    if (!parent.isDirectory()) {
+      throw new Error("Output directory does not exist.");
+    }
+  } catch {
+    throw new Error("Output directory does not exist.");
+  }
+
+  try {
+    const existingOutput = await stat(outputPath);
+    if (existingOutput.isDirectory()) {
+      throw new Error("Output path must be a file.");
+    }
+
+    if (!allowOverwrite) {
+      throw new Error("Output file already exists.");
+    }
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("Output ")) {
+      throw error;
+    }
+  }
+}
+
+function normalizeRelativePath(relativePath: string): string {
+  return relativePath.replace(/\\/g, "/").replace(/^\/+/, "");
+}
+
+function removeUndefined(value: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(value).filter((entry) => entry[1] !== undefined));
 }

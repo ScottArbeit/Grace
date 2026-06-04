@@ -1,8 +1,7 @@
 # Grace TypeScript Node SDK
 
-`@grace/sdk` exposes the first TypeScript Node facade for Grace Tier 1 API calls. The public compatibility promise lives
-on `GraceClient`; generated raw-client artifacts stay internal unless a future diagnostic export explicitly says
-otherwise.
+`@grace/sdk` exposes the first TypeScript Node facade for Grace API calls. The public compatibility promise lives on
+`GraceClient`; generated raw-client artifacts stay internal unless a future diagnostic export explicitly says otherwise.
 
 Browser TypeScript support is out of scope for this milestone.
 
@@ -35,6 +34,38 @@ const owner = await grace.request({
 console.log(owner.body);
 ```
 
+## Tier 2 Simple File Transfer
+
+The TypeScript Node facade includes Tier 2 whole-file compatibility helpers:
+
+- `uploadFile` reads one local file, computes its SHA-256 hash, asks Grace for a server-issued whole-file upload URI,
+  and uploads the bytes to that URI.
+- `downloadFile` asks Grace for a raw text whole-file download URI and writes the downloaded bytes to an existing output
+  directory.
+
+These helpers are intentionally simple. They do not implement the manifest protocol, ContentBlock transfer,
+deduplication, or Tier 3/Tier 4 behavior.
+
+```ts
+const upload = await grace.uploadFile({
+  filePath: "C:/work/hello.txt",
+  relativePath: "docs/hello.txt",
+  repositoryName: "repo",
+});
+
+const download = await grace.downloadFile({
+  fileVersion: upload.fileVersion,
+  outputPath: "C:/work/downloaded-hello.txt",
+  repositoryName: "repo",
+});
+
+console.log(download.bytesWritten);
+```
+
+Grace auth, API version, correlation, lifecycle, and client identity headers apply to the Grace API requests that issue
+transfer URIs. The follow-up storage transfer uses only the server-issued URI and does not attach Grace bearer tokens or
+client identity headers to the storage request.
+
 ## Transport Defaults
 
 `GraceClient` sends these headers on every request:
@@ -61,5 +92,5 @@ Non-2xx responses throw `GraceError`. The error preserves:
 
 ## Current Scope
 
-This package is a TypeScript Node Tier 1 facade. Tier 2 file transfer and Tier 3 protocol behavior are intentionally not
-implemented here.
+This package is a TypeScript Node facade with Tier 1 API request support and Tier 2 simple whole-file transfer helpers.
+Tier 3 manifest protocol behavior is intentionally not implemented here.
