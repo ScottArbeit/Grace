@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet('All', 'Freshness', 'Quality', 'SdkPackage', 'ProtocolVectors')]
+    [ValidateSet('All', 'Freshness', 'CanonicalVersion', 'Projections', 'Quality', 'SdkPackage', 'ProtocolVectors')]
     [string] $Check = 'All',
 
     [switch] $AllowPending
@@ -49,21 +49,92 @@ function Get-OpenApiRoot {
     return Join-Path $RepoRoot 'src/OpenAPI'
 }
 
+function Get-FileSha256 {
+    param([string] $Path)
+    return (Get-FileHash -Algorithm SHA256 -LiteralPath $Path).Hash.ToLowerInvariant()
+}
+
+function Get-StringSha256 {
+    param([string] $Text)
+
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($Text)
+        return [System.Convert]::ToHexString($sha.ComputeHash($bytes)).ToLowerInvariant()
+    }
+    finally {
+        $sha.Dispose()
+    }
+}
+
+function Get-OpenApiManifest {
+    param([string] $OpenApiRoot)
+
+    $manifestPath = Join-Path $OpenApiRoot 'OpenAPI.ProofManifest.json'
+
+    if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
+        Add-Failure "Missing OpenAPI proof manifest: $manifestPath"
+        return $null
+    }
+
+    $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+    if ($manifest.schemaVersion -notin @(1, 2)) {
+        Add-Failure "Unsupported OpenAPI proof manifest schemaVersion '$($manifest.schemaVersion)'."
+    }
+
+    return $manifest
+}
+
+function Get-GeneratedArtifactPaths {
+    param([object] $Manifest)
+
+    $artifactPaths = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    if ($null -eq $Manifest) {
+        return $artifactPaths
+    }
+
+    $generatedArtifactsProperty = $Manifest.PSObject.Properties['generatedArtifacts']
+    if ($null -eq $generatedArtifactsProperty -or $null -eq $generatedArtifactsProperty.Value) {
+        return $artifactPaths
+    }
+
+    foreach ($artifact in $Manifest.generatedArtifacts) {
+        [void] $artifactPaths.Add([string] $artifact.path)
+    }
+
+    return $artifactPaths
+}
+
+function Get-CanonicalSourceDigest {
+    param([object[]] $CanonicalSourceFiles)
+
+    $digestInput = ($CanonicalSourceFiles |
+        Sort-Object path |
+        ForEach-Object { "$($_.path):$($_.sha256)" }) -join "`n"
+
+    return Get-StringSha256 $digestInput
+}
+
+function Get-OpenApiVersion {
+    param([string] $Path)
+
+    $firstLine = Get-Content -LiteralPath $Path -TotalCount 1
+    $match = [regex]::Match($firstLine, '^openapi:\s*(?<version>\S+)\s*$')
+    if (-not $match.Success) {
+        return $null
+    }
+
+    return $match.Groups['version'].Value
+}
+
 function Test-OpenApiFreshness {
     param([string] $RepoRoot)
 
     Write-Host '== OpenAPI freshness =='
     $openApiRoot = Get-OpenApiRoot $RepoRoot
-    $manifestPath = Join-Path $openApiRoot 'OpenAPI.ProofManifest.json'
-
-    if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
-        Add-Failure "Missing OpenAPI proof manifest: $manifestPath"
+    $manifest = Get-OpenApiManifest $openApiRoot
+    if ($null -eq $manifest) {
         return
-    }
-
-    $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
-    if ($manifest.schemaVersion -ne 1) {
-        Add-Failure "Unsupported OpenAPI proof manifest schemaVersion '$($manifest.schemaVersion)'."
     }
 
     $expectedFiles = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
@@ -76,13 +147,15 @@ function Test-OpenApiFreshness {
             continue
         }
 
-        $actualHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $sourcePath).Hash.ToLowerInvariant()
+        $actualHash = Get-FileSha256 $sourcePath
         if ($actualHash -ne ([string] $entry.sha256).ToLowerInvariant()) {
             Add-Failure "OpenAPI source hash is stale for $($entry.path). Expected $($entry.sha256), actual $actualHash."
         }
     }
 
+    $generatedArtifactPaths = Get-GeneratedArtifactPaths $manifest
     $actualFiles = Get-ChildItem -LiteralPath $openApiRoot -Filter '*.OpenAPI.yaml' -File |
+        Where-Object { -not $generatedArtifactPaths.Contains($_.Name) } |
         Sort-Object Name |
         ForEach-Object { $_.Name }
 
@@ -96,11 +169,125 @@ function Test-OpenApiFreshness {
         Write-Host '[INFO] No generated OpenAPI/client artifacts are declared; this scaffold accepts no generated-client freshness.'
     }
     else {
-        $declaredArtifacts = ($manifest.generatedArtifacts | ForEach-Object { [string] $_.path }) -join ', '
-        Add-Pending "Generated artifact freshness is not accepted yet. Declared artifacts require a future verifier that recomputes source digests, validates generator/tool-version provenance, and rejects hand-edited derived output. Declared: $declaredArtifacts"
+        $canonicalSourceDigest = Get-CanonicalSourceDigest @($manifest.canonicalSourceFiles)
+        foreach ($artifact in $manifest.generatedArtifacts) {
+            $artifactPath = Join-Path $openApiRoot ([string] $artifact.path)
+            if (-not (Test-Path -LiteralPath $artifactPath -PathType Leaf)) {
+                Add-Failure "Generated OpenAPI artifact is missing: $($artifact.path)"
+                continue
+            }
+
+            $actualHash = Get-FileSha256 $artifactPath
+            if ($actualHash -ne ([string] $artifact.sha256).ToLowerInvariant()) {
+                Add-Failure "Generated OpenAPI artifact hash is stale for $($artifact.path). Expected $($artifact.sha256), actual $actualHash."
+            }
+
+            if ($null -eq $artifact.sourceDigest -or [string]::IsNullOrWhiteSpace([string] $artifact.sourceDigest)) {
+                Add-Failure "Generated OpenAPI artifact is missing sourceDigest provenance: $($artifact.path)"
+            }
+            elseif (([string] $artifact.sourceDigest).ToLowerInvariant() -ne $canonicalSourceDigest) {
+                Add-Failure "Generated OpenAPI artifact sourceDigest is stale for $($artifact.path). Expected $($artifact.sourceDigest), actual $canonicalSourceDigest."
+            }
+
+            if ($null -eq $artifact.generator -or [string]::IsNullOrWhiteSpace([string] $artifact.generator)) {
+                Add-Failure "Generated OpenAPI artifact is missing generator provenance: $($artifact.path)"
+            }
+
+            if ($null -eq $artifact.command -or [string]::IsNullOrWhiteSpace([string] $artifact.command)) {
+                Add-Failure "Generated OpenAPI artifact is missing regeneration command provenance: $($artifact.path)"
+            }
+        }
     }
 
     Add-Pass "OpenAPI proof manifest covers $($expectedFiles.Count) canonical source files."
+}
+
+function Test-OpenApiCanonicalVersion {
+    param([string] $RepoRoot)
+
+    Write-Host '== OpenAPI canonical version =='
+    $openApiRoot = Get-OpenApiRoot $RepoRoot
+    $manifest = Get-OpenApiManifest $openApiRoot
+    if ($null -eq $manifest) {
+        return
+    }
+
+    $canonicalOpenApiVersionProperty = $manifest.PSObject.Properties['canonicalOpenApiVersion']
+    if ($null -eq $canonicalOpenApiVersionProperty) {
+        Add-Failure 'OpenAPI manifest is missing canonicalOpenApiVersion.'
+    }
+    elseif ($canonicalOpenApiVersionProperty.Value -ne '3.2.0') {
+        Add-Failure "OpenAPI manifest canonicalOpenApiVersion is '$($canonicalOpenApiVersionProperty.Value)' instead of '3.2.0'."
+    }
+
+    foreach ($entry in $manifest.canonicalSourceFiles) {
+        $sourcePath = Join-Path $openApiRoot ([string] $entry.path)
+        if (-not (Test-Path -LiteralPath $sourcePath -PathType Leaf)) {
+            continue
+        }
+
+        $version = Get-OpenApiVersion $sourcePath
+        if ($null -ne $version -and $version -ne '3.2.0') {
+            Add-Failure "Canonical OpenAPI entrypoint $($entry.path) declares '$version' instead of '3.2.0'."
+        }
+    }
+
+    Add-Pass 'Canonical OpenAPI source declares OpenAPI 3.2.0.'
+}
+
+function Test-OpenApiProjections {
+    param([string] $RepoRoot)
+
+    Write-Host '== OpenAPI projections =='
+    $openApiRoot = Get-OpenApiRoot $RepoRoot
+    $manifest = Get-OpenApiManifest $openApiRoot
+    if ($null -eq $manifest) {
+        return
+    }
+
+    $bundlePath = Join-Path $openApiRoot 'Grace.OpenAPI.yaml'
+    $projectionPath = Join-Path $openApiRoot 'Grace.OpenAPI.3.1.2.yaml'
+    $lossReportPath = Join-Path $openApiRoot 'Grace.OpenAPI.3.1.2.loss-report.json'
+
+    foreach ($requiredPath in @($bundlePath, $projectionPath, $lossReportPath)) {
+        if (-not (Test-Path -LiteralPath $requiredPath -PathType Leaf)) {
+            Add-Failure "Missing required OpenAPI derived artifact: $requiredPath"
+            return
+        }
+    }
+
+    $bundleVersion = Get-OpenApiVersion $bundlePath
+    if ($bundleVersion -ne '3.2.0') {
+        Add-Failure "Canonical OpenAPI bundle declares '$bundleVersion' instead of '3.2.0'."
+    }
+
+    $projectionVersion = Get-OpenApiVersion $projectionPath
+    if ($projectionVersion -ne '3.1.2') {
+        Add-Failure "Generator compatibility projection declares '$projectionVersion' instead of '3.1.2'."
+    }
+
+    $bundleText = Get-Content -LiteralPath $bundlePath -Raw
+    $projectionText = Get-Content -LiteralPath $projectionPath -Raw
+    $reconstitutedCanonical = $projectionText -replace '\Aopenapi:\s*3\.1\.2', 'openapi: 3.2.0'
+    if ($reconstitutedCanonical -ne $bundleText) {
+        Add-Failure 'Generator projection drifted beyond the recorded OpenAPI version downgrade.'
+    }
+
+    $lossReport = Get-Content -LiteralPath $lossReportPath -Raw | ConvertFrom-Json
+    $downgrade = @($lossReport.transformations | Where-Object { $_.kind -eq 'openapi-version-downgrade' })
+    if ($downgrade.Count -ne 1) {
+        Add-Failure 'Projection loss report must record exactly one openapi-version-downgrade transformation.'
+    }
+
+    if ($lossReport.projectionArtifact -ne 'Grace.OpenAPI.3.1.2.yaml') {
+        Add-Failure "Projection loss report points at '$($lossReport.projectionArtifact)' instead of 'Grace.OpenAPI.3.1.2.yaml'."
+    }
+
+    if ($lossReport.lostSemantics.Count -lt 1) {
+        Add-Failure 'Projection loss report must describe lost semantics.'
+    }
+
+    Add-Pass 'OpenAPI derived bundle, generator projection, and loss report are present and loss-aware.'
 }
 
 function Get-OpenApiOperations {
@@ -305,11 +492,15 @@ $repoRoot = Get-RepoRoot
 switch ($Check) {
     'All' {
         Test-OpenApiFreshness $repoRoot
+        Test-OpenApiCanonicalVersion $repoRoot
+        Test-OpenApiProjections $repoRoot
         Test-OpenApiQuality $repoRoot
         Test-SdkPackageProof $repoRoot
         Test-ProtocolVectorProof $repoRoot
     }
     'Freshness' { Test-OpenApiFreshness $repoRoot }
+    'CanonicalVersion' { Test-OpenApiCanonicalVersion $repoRoot }
+    'Projections' { Test-OpenApiProjections $repoRoot }
     'Quality' { Test-OpenApiQuality $repoRoot }
     'SdkPackage' { Test-SdkPackageProof $repoRoot }
     'ProtocolVectors' { Test-ProtocolVectorProof $repoRoot }

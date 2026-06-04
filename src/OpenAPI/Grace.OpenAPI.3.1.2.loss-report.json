@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "sourceArtifact": "Grace.OpenAPI.yaml",
+  "projectionArtifact": "Grace.OpenAPI.3.1.2.yaml",
+  "projectionTarget": "openapi-generator-compatibility",
+  "projectionOpenApiVersion": "3.1.2",
+  "generatorTool": "@redocly/cli",
+  "generatorToolVersion": "2.31.6",
+  "transformations": [
+    {
+      "kind": "openapi-version-downgrade",
+      "from": "3.2.0",
+      "to": "3.1.2",
+      "lossCategory": "compatibility-metadata",
+      "description": "The generator projection declares OpenAPI 3.1.2 because some SDK generators lag canonical OpenAPI 3.2.0 support."
+    }
+  ],
+  "lostSemantics": [
+    "The projection does not advertise that the canonical Grace API contract is OpenAPI 3.2.0."
+  ],
+  "nonLossChanges": [
+    "All content other than the root openapi version line is copied from the freshly bundled canonical artifact."
+  ]
+}
