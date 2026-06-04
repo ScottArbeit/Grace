@@ -11,13 +11,56 @@
       content:
         application/json:
           schema:
-            $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/ProblemDetails'
+            $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/GraceError'
+          examples:
+            domainValidation:
+              summary: Grace domain validation error
+              value:
+                Error: OwnerId is required.
+                EventTime: '2026-06-04T18:15:00Z'
+                CorrelationId: cli-20260604T181500Z-0001
+                Properties:
+                  Path: /owner/get
+    '401':
+      description: Unauthorized
+      headers:
+        WWW-Authenticate:
+          description: Authentication challenge emitted by the configured ASP.NET Core authentication handler.
+          schema:
+            type: string
+          example: Bearer
+      content:
+        text/plain:
+          schema:
+            type: string
+          examples:
+            emptyChallenge:
+              summary: Framework authentication challenge
+              value: ''
+    '403':
+      description: Forbidden
+      content:
+        text/plain:
+          schema:
+            type: string
+          examples:
+            forbidden:
+              summary: Framework authorization failure
+              value: Forbidden.
     '500':
       description: Internal Server Error
       content:
         application/json:
           schema:
-            $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/ProblemDetails'
+            $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/GraceError'
+          examples:
+            domainException:
+              summary: Grace domain exception envelope
+              value:
+                Error: Object storage provider failed.
+                EventTime: '2026-06-04T18:15:00Z'
+                CorrelationId: cli-20260604T181500Z-0001
+                Properties: {}
     'OK':
       description: OK
       content:

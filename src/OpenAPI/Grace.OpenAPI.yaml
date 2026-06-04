@@ -50,6 +50,24 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/CreateApprovalPolicyParameters'
+            examples:
+              promotionSetPolicy:
+                summary: Require an approver before promotion-set apply
+                value:
+                  CorrelationId: cli-20260604T181500Z-0001
+                  Principal: user:alice
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                  RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                  TargetBranchId: de7bf47d-23ae-4599-af68-68a317ea390d
+                  Name: Main branch release approval
+                  Subject: promotion-set.apply
+                  RequiredResponder: user:bob
+                  NotificationUrl: https://approvals.example.net/grace
+                  NotificationUrlSafety: PublicHttps
+                  AcknowledgeUnsafeLocalDevelopment: false
+                  TimeoutSeconds: 3600
+                  OnTimeout: Reject
       responses:
         '200':
           $ref: '#/components/responses/ApprovalPolicyResponse'
@@ -240,6 +258,19 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/ApproveApprovalRequestParameters'
+            examples:
+              approveRequest:
+                summary: Approve a workflow-generated approval request
+                value:
+                  CorrelationId: cli-20260604T181500Z-0001
+                  Principal: user:bob
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                  RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                  TargetBranchId: de7bf47d-23ae-4599-af68-68a317ea390d
+                  ApprovalRequestId: 5f9ed4df-d6df-4a65-a5d0-2830d62512c1
+                  Reason: Release criteria satisfied.
+                  ClientDecisionId: bob-approval-20260604-001
       responses:
         '200':
           $ref: '#/components/responses/ApprovalRequestResponse'
@@ -297,6 +328,26 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/CreateWebhookRuleParameters'
+            examples:
+              promotionSetWebhook:
+                summary: Deliver promotion-set events to an HTTPS endpoint
+                value:
+                  CorrelationId: cli-20260604T181500Z-0001
+                  Principal: user:alice
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                  RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                  TargetBranchId: de7bf47d-23ae-4599-af68-68a317ea390d
+                  Name: Promotion applied webhook
+                  EventName: promotion-set.applied
+                  EventVersion: 1
+                  Url: https://hooks.example.net/grace
+                  UrlSafety: PublicHttps
+                  AcknowledgeUnsafeLocalDevelopment: false
+                  SigningSecretVersion: secret-v1
+                  MaxAttempts: 8
+                  InitialDelaySeconds: 30
+                  MaxDelaySeconds: 3600
       responses:
         '200':
           $ref: '#/components/responses/WebhookRuleResponse'
@@ -430,6 +481,18 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/TestWebhookRuleParameters'
+            examples:
+              testDelivery:
+                summary: Create a test webhook delivery
+                value:
+                  CorrelationId: cli-20260604T181500Z-0001
+                  Principal: user:alice
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                  RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                  TargetBranchId: de7bf47d-23ae-4599-af68-68a317ea390d
+                  WebhookRuleId: 73c9c3c8-5159-4e31-9280-e1b95e20db77
+                  DedupeKey: manual-test-20260604-001
       responses:
         '200':
           $ref: '#/components/responses/WebhookDeliveryResponse'
@@ -3602,6 +3665,10 @@ paths:
             text/plain:
               schema:
                 $ref: '#/components/schemas/UriString'
+              examples:
+                signedDownloadUri:
+                  summary: Raw object-storage download URI
+                  value: https://storage.example.net/grace/repo/file.txt?sv=2023-11-03&sig=example
         '400':
           $ref: '#/components/responses/400'
         '500':
@@ -3624,6 +3691,10 @@ paths:
             text/plain:
               schema:
                 $ref: '#/components/schemas/UriString'
+              examples:
+                signedContentBlockUploadUri:
+                  summary: Raw ContentBlock upload URI
+                  value: https://storage.example.net/grace/content-blocks/ab/cd?sv=2023-11-03&sig=example
         '400':
           $ref: '#/components/responses/400'
         '500':
@@ -3646,6 +3717,10 @@ paths:
             text/plain:
               schema:
                 $ref: '#/components/schemas/UriString'
+              examples:
+                signedContentBlockDownloadUri:
+                  summary: Raw ContentBlock download URI
+                  value: https://storage.example.net/grace/content-blocks/ab/cd?sv=2023-11-03&sig=example
         '400':
           $ref: '#/components/responses/400'
         '500':
@@ -5276,7 +5351,8 @@ components:
       example: MyBranch
     CorrelationId:
       type: string
-      description: If you don't provide a CorrelationId, a Guid will be generated for you. (You're welcome.) CorrelationId's are just strings; feel free to send any kind of CorrelationId you prefer.
+      description: Body DTO correlation id copied into Grace command/event metadata after request parsing. This field is distinct from the X-Correlation-Id transport header, which correlates the HTTP request/response exchange.
+      example: cli-20260604T181500Z-0001
     ContainerName:
       type: string
       description: The name of the container must be a valid Grace name. (See the Grace documentation for more information.)
@@ -5364,7 +5440,7 @@ components:
       properties:
         CorrelationId:
           type: string
-          description: A unique identifier for correlating logs and telemetry.
+          description: Body DTO correlation id copied into Grace command/event metadata after request parsing. This field is distinct from the X-Correlation-Id transport header.
         Principal:
           type: string
           description: The entity on whose behalf the action is being performed.
@@ -5451,19 +5527,34 @@ components:
           additionalProperties:
             type: string
     GraceError:
+      description: Grace domain error envelope returned by command handlers. Authentication challenges and framework authorization failures use their HTTP-specific response shapes instead of this domain error envelope.
       type: object
       properties:
         Error:
           type: string
+          example: OwnerId is required.
         EventTime:
           type: string
           format: date-time
+          example: '2026-06-04T18:15:00Z'
         CorrelationId:
           type: string
+          example: cli-20260604T181500Z-0001
         Properties:
           type: object
           additionalProperties:
             type: string
+      required:
+        - Error
+        - EventTime
+        - CorrelationId
+        - Properties
+      example:
+        Error: OwnerId is required.
+        EventTime: '2026-06-04T18:15:00Z'
+        CorrelationId: cli-20260604T181500Z-0001
+        Properties:
+          Path: /owner/get
     GraceResult:
       oneOf:
         - - $ref: '#/components/schemas/GraceReturnValue'
@@ -6267,7 +6358,7 @@ components:
         - $ref: '#/components/schemas/UploadSessionDedupeDiscoveryIssuedEvent'
         - $ref: '#/components/schemas/UploadSessionReuseRangesClaimedEvent'
     ClientType:
-      description: The Grace client version string for the client that initiated an API request.
+      description: The Grace client identity type/version recorded for diagnostics. Client identity headers are not authentication proof and must not be used as authorization evidence.
       type: string
     UploadSessionEvent:
       description: Event emitted by the upload-session actor, paired with event metadata.
@@ -6308,6 +6399,95 @@ components:
         - Rejected
         - Expired
         - Stale
+  parameters:
+    CorrelationIdHeader:
+      name: X-Correlation-Id
+      in: header
+      required: false
+      description: Optional transport correlation header. When omitted, Grace generates a correlation id and returns it in the response header. This transport header is distinct from body DTO CorrelationId fields, which are copied into command/event metadata after request parsing.
+      schema:
+        type: string
+      example: cli-20260604T181500Z-0001
+    ApiVersionHeader:
+      name: X-Api-Version
+      in: header
+      required: false
+      description: Optional Grace API contract version requested by SDK clients. Supported values are released date versions such as 2023-10-01 or explicit override aliases such as latest and edge.
+      schema:
+        type: string
+        pattern: ^(20[0-9]{2}-[0-9]{2}-[0-9]{2}|latest|edge)$
+      example: '2023-10-01'
+    ClientTypeHeader:
+      name: X-Grace-Client-Type
+      in: header
+      required: false
+      description: Optional client identity type used for diagnostics and event metadata. This header is not authentication proof; authorization is evaluated from the configured authentication principal and Grace authorization policy.
+      schema:
+        type: string
+      example: CLI
+    ClientVersionHeader:
+      name: X-Grace-Client-Version
+      in: header
+      required: false
+      description: Optional client identity version paired with X-Grace-Client-Type for diagnostics and event metadata. This header is not authentication proof.
+      schema:
+        type: string
+      example: 0.42.0
+  headers:
+    CorrelationId:
+      description: Transport correlation id for the HTTP request/response exchange.
+      schema:
+        type: string
+      example: cli-20260604T181500Z-0001
+    UploadSessionLifecycleState:
+      description: Diagnostic lifecycle state for manifest upload-session responses. Invalid or unknown values must be treated as diagnostics only and must not be used as authentication or authorization proof.
+      schema:
+        $ref: '#/components/schemas/UploadSessionLifecycleState'
+      example: Finalized
+    UploadSessionLifecycleReason:
+      description: Optional diagnostic explanation for a lifecycle-state response header.
+      schema:
+        type: string
+      example: manifest-finalized
+    WebhookDeliveryId:
+      description: Unique webhook delivery id included with outbound webhook requests.
+      schema:
+        type: string
+        format: uuid
+      example: 7a93f7b4-df35-49eb-86e1-49d95745f2e4
+    WebhookEventName:
+      description: Grace event name included with outbound webhook requests.
+      schema:
+        type: string
+      example: promotion-set.applied
+    WebhookEventVersion:
+      description: Grace event contract version included with outbound webhook requests.
+      schema:
+        type: integer
+      example: 1
+    WebhookTimestamp:
+      description: UTC timestamp used in webhook signature material.
+      schema:
+        type: string
+        format: date-time
+      example: '2026-06-04T18:15:00Z'
+    WebhookSignatureKeyId:
+      description: Webhook signing secret version used to compute the signature.
+      schema:
+        type: string
+      example: secret-v1
+    WebhookPayloadSha256:
+      description: Lowercase SHA-256 hex digest of the outbound webhook payload bytes.
+      schema:
+        type: string
+        pattern: ^[a-f0-9]{64}$
+      example: 8f2a559490e4a9bb1a4fcd73d4a0fb701ff61e942d7b6b3f42e4612d48e6a7fb
+    WebhookSignature:
+      description: HMAC-SHA256 webhook signature over the signed delivery material.
+      schema:
+        type: string
+        pattern: ^sha256=[a-f0-9]{64}$
+      example: sha256=2a98f6d8e9be1e9b6d1bd06c0de24d73a6d73c1f9f8ce845f7b8cb11d7e4b15c
   securitySchemes:
     api_key:
       type: apiKey
@@ -6329,13 +6509,30 @@ components:
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/ProblemDetails'
+            $ref: '#/components/schemas/GraceError'
+          examples:
+            domainValidation:
+              summary: Grace domain validation error
+              value:
+                Error: OwnerId is required.
+                EventTime: '2026-06-04T18:15:00Z'
+                CorrelationId: cli-20260604T181500Z-0001
+                Properties:
+                  Path: /owner/get
     '500':
       description: Internal Server Error
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/ProblemDetails'
+            $ref: '#/components/schemas/GraceError'
+          examples:
+            domainException:
+              summary: Grace domain exception envelope
+              value:
+                Error: Object storage provider failed.
+                EventTime: '2026-06-04T18:15:00Z'
+                CorrelationId: cli-20260604T181500Z-0001
+                Properties: {}
     ApprovalPolicyResponse:
       description: OK
       content:
