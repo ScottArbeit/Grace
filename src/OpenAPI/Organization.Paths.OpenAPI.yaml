@@ -1,30 +1,28 @@
   /organization/create:
     post:
+      tags:
+        - Organizations
       summary: Create an organization.
-      description: |
-        ### Validation rules
-        - `OwnerId` must be a valid non-empty `Guid`.
-        - `OwnerName` must be a valid Grace name.
-        - Either `OwnerId` or `OwnerName` must be provided.
-        - `OrganizationId` is required and must not be empty.
-        - `OrganizationId` must be a valid non-empty `Guid`.
-        - `OrganizationName` is required and must not be empty.
-        - `OrganizationName` must be a valid Grace name.
-        - The specified `OwnerId` or `OwnerName` must exist.
-        - The specified `OrganizationId` must not already exist.
-
-        ### Errors and Problem Details
-        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
-
+      description: Creates an organization under an owner.
+      operationId: CreateOrganization
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: Organization.Components.OpenAPI.yaml#/CreateOrganizationParameters
+              $ref: './Organization.Components.OpenAPI.yaml#/CreateOrganizationParameters'
+            examples:
+              createOrganization:
+                summary: Create an organization
+                value: &organizationBaseExample
+                  CorrelationId: cli-20260604T181500Z-0001
+                  Principal: user:alice
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                  OrganizationName: alice-org
       responses:
         '200':
-          $ref: './Responses.OpenAPI.yaml#/200'
+          $ref: './Organization.Components.OpenAPI.yaml#/OrganizationCommandResponse'
         '400':
           $ref: './Responses.OpenAPI.yaml#/400'
         '500':
@@ -32,29 +30,26 @@
 
   /organization/setName:
     post:
+      tags:
+        - Organizations
       summary: Set the name of an organization.
-      description: |
-        ### Validation rules
-        - `OrganizationId` is required and must not be empty.
-        - `OrganizationId` must be a valid non-empty `Guid`.
-        - `OrganizationName` must be a valid Grace name.
-        - `NewName` is required and must not be empty.
-        - `NewName` must be a valid Grace name.
-        - The specified `OrganizationId` must exist.
-        - The specified organization must not be deleted.
-
-        ### Errors and Problem Details
-        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
-
+      description: Renames an organization that exists and has not been deleted.
+      operationId: SetOrganizationName
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: Organization.Components.OpenAPI.yaml#/SetOrganizationNameParameters
+              $ref: './Organization.Components.OpenAPI.yaml#/SetOrganizationNameParameters'
+            examples:
+              setOrganizationName:
+                summary: Rename an organization
+                value:
+                  <<: *organizationBaseExample
+                  NewName: alice-platform
       responses:
         '200':
-          $ref: './Responses.OpenAPI.yaml#/200'
+          $ref: './Organization.Components.OpenAPI.yaml#/OrganizationCommandResponse'
         '400':
           $ref: './Responses.OpenAPI.yaml#/400'
         '500':
@@ -62,28 +57,26 @@
 
   /organization/setType:
     post:
-      summary: Set the type of an organization (Public, Private).
-      description: |
-        ### Validation rules
-        - `OrganizationId` is required and must not be empty.
-        - `OrganizationId` must be a valid non-empty `Guid`.
-        - `OrganizationName` must be a valid Grace name.
-        - `OrganizationType` is required and must be a valid organization type.
-        - The specified `OrganizationId` must exist.
-        - The specified organization must not be deleted.
-
-        ### Errors and Problem Details
-        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
-
+      tags:
+        - Organizations
+      summary: Set the organization type.
+      description: Sets the organization type to a public or private value accepted by the server.
+      operationId: SetOrganizationType
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: Organization.Components.OpenAPI.yaml#/SetOrganizationTypeParameters
+              $ref: './Organization.Components.OpenAPI.yaml#/SetOrganizationTypeParameters'
+            examples:
+              setOrganizationType:
+                summary: Set organization type
+                value:
+                  <<: *organizationBaseExample
+                  OrganizationType: Public
       responses:
         '200':
-          $ref: './Responses.OpenAPI.yaml#/200'
+          $ref: './Organization.Components.OpenAPI.yaml#/OrganizationCommandResponse'
         '400':
           $ref: './Responses.OpenAPI.yaml#/400'
         '500':
@@ -91,28 +84,26 @@
 
   /organization/setSearchVisibility:
     post:
-      summary: Set the search visibility of an organization (Visible, Hidden).
-      description: |
-        ### Validation rules
-        - `OrganizationId` is required and must not be empty.
-        - `OrganizationId` must be a valid non-empty `Guid`.
-        - `OrganizationName` must be a valid Grace name.
-        - `SearchVisibility` is required and must be a valid search visibility option.
-        - The specified `OrganizationId` must exist.
-        - The specified organization must not be deleted.
-
-        ### Errors and Problem Details
-        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
-
+      tags:
+        - Organizations
+      summary: Set organization search visibility.
+      description: Sets whether the organization appears in search results.
+      operationId: SetOrganizationSearchVisibility
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: Organization.Components.OpenAPI.yaml#/SetOrganizationSearchVisibilityParameters
+              $ref: './Organization.Components.OpenAPI.yaml#/SetOrganizationSearchVisibilityParameters'
+            examples:
+              setOrganizationSearchVisibility:
+                summary: Set organization search visibility
+                value:
+                  <<: *organizationBaseExample
+                  SearchVisibility: Visible
       responses:
         '200':
-          $ref: './Responses.OpenAPI.yaml#/200'
+          $ref: './Organization.Components.OpenAPI.yaml#/OrganizationCommandResponse'
         '400':
           $ref: './Responses.OpenAPI.yaml#/400'
         '500':
@@ -120,27 +111,26 @@
 
   /organization/setDescription:
     post:
-      summary: Set the description of an organization.
-      description: |
-        ### Validation rules
-        - `OrganizationId` is required and must not be empty.
-        - `OrganizationId` must be a valid non-empty `Guid`.
-        - `Description` is required and must not be empty.
-        - The specified `OrganizationId` must exist.
-        - The specified organization must not be deleted.
-
-        ### Errors and Problem Details
-        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
-
+      tags:
+        - Organizations
+      summary: Set the organization's description.
+      description: Sets the organization description.
+      operationId: SetOrganizationDescription
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: Organization.Components.OpenAPI.yaml#/SetOrganizationDescriptionParameters
+              $ref: './Organization.Components.OpenAPI.yaml#/SetOrganizationDescriptionParameters'
+            examples:
+              setOrganizationDescription:
+                summary: Set organization description
+                value:
+                  <<: *organizationBaseExample
+                  Description: Engineering organization for Alice's projects.
       responses:
         '200':
-          $ref: './Responses.OpenAPI.yaml#/200'
+          $ref: './Organization.Components.OpenAPI.yaml#/OrganizationCommandResponse'
         '400':
           $ref: './Responses.OpenAPI.yaml#/400'
         '500':
@@ -148,35 +138,24 @@
 
   /organization/listRepositories:
     post:
-      summary: List the repositories of an organization.
-      description: |
-        ### Validation rules
-        - `OrganizationId` is required and must not be empty.
-        - `OrganizationId` must be a valid non-empty `Guid`.
-        - `OrganizationName` must be a valid Grace name.
-        - The specified `OrganizationId` must exist.
-        - The specified organization must not be deleted.
-
-        ### Errors and Problem Details
-        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
-
+      tags:
+        - Organizations
+      summary: List repositories of an organization.
+      description: Lists repositories associated with the organization.
+      operationId: ListOrganizationRepositories
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: Organization.Components.OpenAPI.yaml#/ListRepositoriesParameters
+              $ref: './Organization.Components.OpenAPI.yaml#/ListRepositoriesParameters'
+            examples:
+              listOrganizationRepositories:
+                summary: List repositories for an organization
+                value: *organizationBaseExample
       responses:
         '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  type: array
-                  $ref: Dto.Components.OpenAPI.yaml#/RepositoryDto
-
+          $ref: './Organization.Components.OpenAPI.yaml#/OrganizationRepositoriesResponse'
         '400':
           $ref: './Responses.OpenAPI.yaml#/400'
         '500':
@@ -184,28 +163,27 @@
 
   /organization/delete:
     post:
+      tags:
+        - Organizations
       summary: Delete an organization.
-      description: |
-        ### Validation rules
-        - `OrganizationId` is required and must not be empty.
-        - `OrganizationId` must be a valid non-empty `Guid`.
-        - `OrganizationName` must be a valid Grace name.
-        - `DeleteReason` is required and must not be empty.
-        - The specified `OrganizationId` must exist.
-        - The specified organization must not be deleted.
-
-        ### Errors and Problem Details
-        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
-
+      description: Logically deletes an organization that exists and has not already been deleted.
+      operationId: DeleteOrganization
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: Organization.Components.OpenAPI.yaml#/DeleteOrganizationParameters
+              $ref: './Organization.Components.OpenAPI.yaml#/DeleteOrganizationParameters'
+            examples:
+              deleteOrganization:
+                summary: Delete an organization
+                value:
+                  <<: *organizationBaseExample
+                  Force: false
+                  DeleteReason: Organization retired.
       responses:
         '200':
-          $ref: './Responses.OpenAPI.yaml#/200'
+          $ref: './Organization.Components.OpenAPI.yaml#/OrganizationCommandResponse'
         '400':
           $ref: './Responses.OpenAPI.yaml#/400'
         '500':
@@ -213,28 +191,24 @@
 
   /organization/undelete:
     post:
+      tags:
+        - Organizations
       summary: Undelete a previously deleted organization.
-      description: |
-        ### Validation rules
-        - `OrganizationId` is required and must not be empty.
-        - `OrganizationId` must be a valid non-empty `Guid`.
-        - `OrganizationName` must be a valid Grace name.
-        - Either `OrganizationId` or `OrganizationName` must be provided.
-        - The specified `OrganizationId` must exist.
-        - The specified organization must be deleted.
-
-        ### Errors and Problem Details
-        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
-
+      description: Restores a logically deleted organization.
+      operationId: UndeleteOrganization
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: Organization.Components.OpenAPI.yaml#/OrganizationParameters
+              $ref: './Organization.Components.OpenAPI.yaml#/UndeleteOrganizationParameters'
+            examples:
+              undeleteOrganization:
+                summary: Restore an organization
+                value: *organizationBaseExample
       responses:
         '200':
-          $ref: './Responses.OpenAPI.yaml#/200'
+          $ref: './Organization.Components.OpenAPI.yaml#/OrganizationCommandResponse'
         '400':
           $ref: './Responses.OpenAPI.yaml#/400'
         '500':
@@ -242,27 +216,26 @@
 
   /organization/get:
     post:
+      tags:
+        - Organizations
       summary: Get an organization.
-      description: |
-        ### Validation rules
-        - `OrganizationId` is required and must not be empty.
-        - `OrganizationId` must be a valid non-empty `Guid`.
-        - `OrganizationName` must be a valid Grace name.
-        - The specified `OrganizationId` must exist.
-        - The specified organization must not be deleted.
-
-        ### Errors and Problem Details
-        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
-
+      description: Gets organization metadata.
+      operationId: GetOrganization
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: Organization.Components.OpenAPI.yaml#/GetOrganizationParameters
+              $ref: './Organization.Components.OpenAPI.yaml#/GetOrganizationParameters'
+            examples:
+              getOrganization:
+                summary: Get an organization
+                value:
+                  <<: *organizationBaseExample
+                  IncludeDeleted: false
       responses:
         '200':
-          $ref: './Responses.OpenAPI.yaml#/200'
+          $ref: './Organization.Components.OpenAPI.yaml#/OrganizationResponse'
         '400':
           $ref: './Responses.OpenAPI.yaml#/400'
         '500':

@@ -1,66 +1,167 @@
+    DirectoryVersionId:
+      type: string
+      format: uuid
+      example: 33a4e36b-828f-4fae-9343-50b6560dc842
     DirectoryParameters:
-      description: Parameters for many endpoints in the /directory path.
+      description: Parameters shared by public endpoints in the /directory route family.
       type: object
-      properties:
-        DirectoryId:
-          type: string
-          description: Unique identifier of the directory.
       allOf:
         - $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/CommonParameters'
-    
+      properties:
+        OwnerId:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/OwnerId'
+        OwnerName:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/OwnerName'
+        OrganizationId:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/OrganizationId'
+        OrganizationName:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/OrganizationName'
+        RepositoryId:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/RepositoryId'
+        RepositoryName:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/RepositoryName'
+        DirectoryVersionId:
+          $ref: '#/DirectoryVersionId'
+      example: &directoryBaseExample
+        CorrelationId: cli-20260604T181500Z-0001
+        Principal: user:alice
+        OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+        OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+        RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+        DirectoryVersionId: 33a4e36b-828f-4fae-9343-50b6560dc842
     CreateParameters:
       description: Parameters for the /directory/create endpoint.
+      allOf:
+        - $ref: '#/DirectoryParameters'
+        - type: object
+          properties:
+            DirectoryVersion:
+              $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/DirectoryVersion'
+    GetParameters:
+      description: Parameters for /directory/get and recursive directory-version lookups.
+      allOf:
+        - $ref: '#/DirectoryParameters'
+    GetByDirectoryIdsParameters:
+      description: Parameters for the /directory/getByDirectoryIds endpoint.
+      allOf:
+        - $ref: '#/DirectoryParameters'
+        - type: object
+          properties:
+            DirectoryIds:
+              type: array
+              items:
+                $ref: '#/DirectoryVersionId'
+    GetBySha256HashParameters:
+      description: Parameters for the /directory/getBySha256Hash endpoint.
+      allOf:
+        - $ref: '#/DirectoryParameters'
+        - type: object
+          properties:
+            Sha256Hash:
+              $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Sha256Hash'
+    SaveDirectoryVersionsParameters:
+      description: Parameters for the /directory/saveDirectoryVersions endpoint.
+      allOf:
+        - $ref: '#/DirectoryParameters'
+        - type: object
+          properties:
+            DirectoryVersions:
+              type: array
+              items:
+                $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/DirectoryVersion'
+    DirectoryVersionApiDto:
+      description: Public directory version DTO returned by directory query endpoints.
       type: object
       properties:
         DirectoryVersion:
           $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/DirectoryVersion'
-      allOf:
-        - $ref: './Directory.Components.OpenAPI.yaml#/DirectoryParameters'
-    
-    GetParameters:
-      description: Parameters for the /directory/get endpoint.
+        RecursiveSize:
+          type: integer
+          format: int64
+          example: 4096
+        DeletedAt:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant'
+          nullable: true
+        DeleteReason:
+          type: string
+          example: ''
+        HashesValidated:
+          type: boolean
+          example: true
+    DirectoryCommandReturnValue:
+      description: Grace response envelope returned by directory command endpoints.
       type: object
       properties:
-        RepositoryId:
+        ReturnValue:
           type: string
-          description: Unique identifier of the repository.
-      allOf:
-        - $ref: './Directory.Components.OpenAPI.yaml#/DirectoryParameters'
-    
-    GetByDirectoryIdsParameters:
-      description: Parameters for the /directory/getByDirectoryIds endpoint.
+          example: Uploaded new directory versions.
+        EventTime:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant'
+        CorrelationId:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/CorrelationId'
+        Properties:
+          type: object
+          additionalProperties:
+            type: string
+      required: [ReturnValue, EventTime, CorrelationId, Properties]
+      example: &directoryCommandReturnValueExample
+        ReturnValue: Uploaded new directory versions.
+        EventTime: '2026-06-04T18:15:00Z'
+        CorrelationId: cli-20260604T181500Z-0001
+        Properties:
+          Path: /directory/saveDirectoryVersions
+          RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+    DirectoryVersionReturnValue:
+      description: Grace response envelope whose ReturnValue contains a directory version DTO.
       type: object
       properties:
-        RepositoryId:
-          type: string
-          description: Unique identifier of the repository.
-        DirectoryIds:
+        ReturnValue:
+          $ref: '#/DirectoryVersionApiDto'
+        EventTime:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant'
+        CorrelationId:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/CorrelationId'
+        Properties:
+          type: object
+          additionalProperties:
+            type: string
+      required: [ReturnValue, EventTime, CorrelationId, Properties]
+    DirectoryVersionListReturnValue:
+      description: Grace response envelope whose ReturnValue contains directory version DTOs.
+      type: object
+      properties:
+        ReturnValue:
           type: array
           items:
-            $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/DirectoryId'
-      allOf:
-        - $ref: './Directory.Components.OpenAPI.yaml#/DirectoryParameters'
-    
-    GetBySha256HashParameters:
-      description: Parameters for the /directory/getBySha256Hash endpoint.
-      type: object
-      properties:
-        RepositoryId:
-          type: string
-          description: Unique identifier of the repository.
-        Sha256Hash:
-          type: string
-          description: The SHA256 hash value.
-      allOf:
-        - $ref: './Directory.Components.OpenAPI.yaml#/DirectoryParameters'
-    
-    SaveDirectoryVersionsParameters:
-      description: Parameters for the /directory/saveDirectoryVersions endpoint.
-      type: object
-      properties:
-        DirectoryVersions:
-          type: array
-          items:
-            $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/DirectoryVersion'
-      allOf:
-        - $ref: './Directory.Components.OpenAPI.yaml#/DirectoryParameters'
+            $ref: '#/DirectoryVersionApiDto'
+        EventTime:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant'
+        CorrelationId:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/CorrelationId'
+        Properties:
+          type: object
+          additionalProperties:
+            type: string
+      required: [ReturnValue, EventTime, CorrelationId, Properties]
+    DirectoryCommandResponse:
+      description: OK
+      content:
+        application/json:
+          schema:
+            $ref: '#/DirectoryCommandReturnValue'
+          examples:
+            directoryCommand:
+              summary: Directory command response envelope
+              value: *directoryCommandReturnValueExample
+    DirectoryVersionResponse:
+      description: OK
+      content:
+        application/json:
+          schema:
+            $ref: '#/DirectoryVersionReturnValue'
+    DirectoryVersionListResponse:
+      description: OK
+      content:
+        application/json:
+          schema:
+            $ref: '#/DirectoryVersionListReturnValue'

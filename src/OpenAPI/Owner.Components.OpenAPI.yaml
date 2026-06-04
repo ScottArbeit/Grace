@@ -1,62 +1,179 @@
     OwnerParameters:
-      description: Parameters for many endpoints in the /owner path.
+      description: Parameters shared by public endpoints in the /owner route family.
+      type: object
       allOf:
         - $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/CommonParameters'
       properties:
         OwnerId:
-          type: string
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/OwnerId'
         OwnerName:
-          type: string
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/OwnerName'
+      example: &ownerBaseExample
+        CorrelationId: cli-20260604T181500Z-0001
+        Principal: user:alice
+        OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
     CreateOwnerParameters:
       description: Parameters for the /owner/create endpoint.
       allOf:
-        - $ref: 'Owner.Components.OpenAPI.yaml#/OwnerParameters'
+        - $ref: '#/OwnerParameters'
     SetOwnerNameParameters:
       description: Parameters for the /owner/setName endpoint.
       allOf:
-        - $ref: 'Owner.Components.OpenAPI.yaml#/OwnerParameters'
-      properties:
-        NewName:
-          type: string
+        - $ref: '#/OwnerParameters'
+        - type: object
+          properties:
+            NewName:
+              $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/OwnerName'
     SetOwnerTypeParameters:
       description: Parameters for the /owner/setType endpoint.
       allOf:
-        - $ref: 'Owner.Components.OpenAPI.yaml#/OwnerParameters'
-      properties:
-        OwnerType:
-          type: string
+        - $ref: '#/OwnerParameters'
+        - type: object
+          properties:
+            OwnerType:
+              $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/OwnerType'
     SetOwnerSearchVisibilityParameters:
       description: Parameters for the /owner/setSearchVisibility endpoint.
       allOf:
-        - $ref: 'Owner.Components.OpenAPI.yaml#/OwnerParameters'
-      properties:
-        SearchVisibility:
-          type: string
+        - $ref: '#/OwnerParameters'
+        - type: object
+          properties:
+            SearchVisibility:
+              $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/SearchVisibility'
     SetOwnerDescriptionParameters:
       description: Parameters for the /owner/setDescription endpoint.
       allOf:
-        - $ref: 'Owner.Components.OpenAPI.yaml#/OwnerParameters'
-      properties:
-        Description:
-          type: string
+        - $ref: '#/OwnerParameters'
+        - type: object
+          properties:
+            Description:
+              type: string
+              maxLength: 2048
+              example: Source control owner for Alice's projects.
     GetOwnerParameters:
       description: Parameters for the /owner/get endpoint.
       allOf:
-        - $ref: 'Owner.Components.OpenAPI.yaml#/OwnerParameters'
+        - $ref: '#/OwnerParameters'
+        - type: object
+          properties:
+            IncludeDeleted:
+              type: boolean
+              example: false
     DeleteOwnerParameters:
       description: Parameters for the /owner/delete endpoint.
       allOf:
-        - $ref: 'Owner.Components.OpenAPI.yaml#/OwnerParameters'
-      properties:
-        Force:
-          type: boolean
-        DeleteReason:
-          type: string
+        - $ref: '#/OwnerParameters'
+        - type: object
+          properties:
+            Force:
+              type: boolean
+              example: false
+            DeleteReason:
+              type: string
+              example: Owner retired.
     UndeleteOwnerParameters:
       description: Parameters for the /owner/undelete endpoint.
       allOf:
-        - $ref: 'Owner.Components.OpenAPI.yaml#/OwnerParameters'
+        - $ref: '#/OwnerParameters'
     ListOrganizationsParameters:
       description: Parameters for the /owner/listOrganizations endpoint.
       allOf:
-        - $ref: 'Owner.Components.OpenAPI.yaml#/OwnerParameters'
+        - $ref: '#/OwnerParameters'
+    OwnerCommandReturnValue:
+      description: Grace response envelope returned by owner command endpoints.
+      type: object
+      properties:
+        ReturnValue:
+          type: string
+          example: Owner command succeeded.
+        EventTime:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant'
+        CorrelationId:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/CorrelationId'
+        Properties:
+          type: object
+          additionalProperties:
+            type: string
+      required: [ReturnValue, EventTime, CorrelationId, Properties]
+      example: &ownerCommandReturnValueExample
+        ReturnValue: Owner command succeeded.
+        EventTime: '2026-06-04T18:15:00Z'
+        CorrelationId: cli-20260604T181500Z-0001
+        Properties:
+          Path: /owner/create
+          OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+    OwnerReturnValue:
+      description: Grace response envelope whose ReturnValue contains an owner DTO.
+      type: object
+      properties:
+        ReturnValue:
+          $ref: 'Dto.Components.OpenAPI.yaml#/OwnerDto'
+        EventTime:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant'
+        CorrelationId:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/CorrelationId'
+        Properties:
+          type: object
+          additionalProperties:
+            type: string
+      required: [ReturnValue, EventTime, CorrelationId, Properties]
+      example: &ownerReturnValueExample
+        ReturnValue:
+          Class: OwnerDto
+          OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+          OwnerName: alice
+          OwnerType: Public
+          Description: Source control owner for Alice's projects.
+          SearchVisibility: Visible
+          Organizations:
+            alice-org: e35d64a9-b990-44f5-bf02-32ad7d15630c
+          CreatedAt: '2026-06-04T18:15:00Z'
+          DeleteReason: ''
+        EventTime: '2026-06-04T18:15:00Z'
+        CorrelationId: cli-20260604T181500Z-0001
+        Properties:
+          Path: /owner/get
+          OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+    OwnerOrganizationsReturnValue:
+      description: Grace response envelope whose ReturnValue contains the owner's organizations.
+      type: object
+      properties:
+        ReturnValue:
+          type: array
+          items:
+            $ref: 'Dto.Components.OpenAPI.yaml#/OrganizationDto'
+        EventTime:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant'
+        CorrelationId:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/CorrelationId'
+        Properties:
+          type: object
+          additionalProperties:
+            type: string
+      required: [ReturnValue, EventTime, CorrelationId, Properties]
+    OwnerCommandResponse:
+      description: OK
+      content:
+        application/json:
+          schema:
+            $ref: '#/OwnerCommandReturnValue'
+          examples:
+            ownerCommand:
+              summary: Owner command response envelope
+              value: *ownerCommandReturnValueExample
+    OwnerResponse:
+      description: OK
+      content:
+        application/json:
+          schema:
+            $ref: '#/OwnerReturnValue'
+          examples:
+            owner:
+              summary: Owner response envelope
+              value: *ownerReturnValueExample
+    OwnerOrganizationsResponse:
+      description: OK
+      content:
+        application/json:
+          schema:
+            $ref: '#/OwnerOrganizationsReturnValue'

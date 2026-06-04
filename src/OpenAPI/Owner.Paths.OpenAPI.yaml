@@ -1,246 +1,240 @@
   /owner/create:
     post:
+      tags:
+        - Owners
       summary: Create an owner.
-      description: |
-        ### Validation rules
-        
-        - `OwnerId` must not be empty.
-        - `OwnerId` must be a valid GUID.
-        - `OwnerName` must not be empty.
-        - `OwnerName` must be a valid Grace name.
-        - Owner with the same `OwnerId` must not already exist.
-        - Owner with the same `OwnerName` must not already exist.
-
-        ### Errors and Problem Details
-        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      description: Creates an owner with the specified id and name.
+      operationId: CreateOwner
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: 'Owner.Components.OpenAPI.yaml#/CreateOwnerParameters'
+              $ref: './Owner.Components.OpenAPI.yaml#/CreateOwnerParameters'
+            examples:
+              createOwner:
+                summary: Create an owner
+                value: &ownerBaseExample
+                  CorrelationId: cli-20260604T181500Z-0001
+                  Principal: user:alice
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OwnerName: alice
       responses:
         '200':
-          $ref: './Responses.OpenAPI.yaml#/200'
+          $ref: './Owner.Components.OpenAPI.yaml#/OwnerCommandResponse'
         '400':
           $ref: './Responses.OpenAPI.yaml#/400'
         '500':
           $ref: './Responses.OpenAPI.yaml#/500'
+
   /owner/setName:
     post:
+      tags:
+        - Owners
       summary: Set the name of an owner.
-      description: |
-        ### Validation rules
-        
-        - `OwnerId` must be a valid GUID.
-        - `OwnerName` must be a valid Grace name.
-        - Either `OwnerId` or `OwnerName` must be provided.
-        - `NewName` must not be empty.
-        - `NewName` must be a valid Grace name.
-        - Owner with the specified `OwnerId` or `OwnerName` must exist and not be deleted.
-        - Owner with the specified `NewName` must not already exist.
-
-        ### Errors and Problem Details
-        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      description: Renames an owner that exists and has not been deleted.
+      operationId: SetOwnerName
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: Owner.Components.OpenAPI.yaml#/SetOwnerNameParameters
+              $ref: './Owner.Components.OpenAPI.yaml#/SetOwnerNameParameters'
+            examples:
+              setOwnerName:
+                summary: Rename an owner
+                value:
+                  <<: *ownerBaseExample
+                  NewName: alice-renamed
       responses:
         '200':
-          $ref: './Responses.OpenAPI.yaml#/200'
+          $ref: './Owner.Components.OpenAPI.yaml#/OwnerCommandResponse'
         '400':
           $ref: './Responses.OpenAPI.yaml#/400'
         '500':
           $ref: './Responses.OpenAPI.yaml#/500'
+
   /owner/setType:
     post:
-      summary: Set the owner type (Public, Private).
-      description: |
-        ### Validation rules
-        
-        - `OwnerId` must be a valid GUID.
-        - `OwnerName` must be a valid Grace name.
-        - Either `OwnerId` or `OwnerName` must be provided.
-        - `OwnerType` must not be empty.
-        - `OwnerType` must be a valid owner type.
-        - Owner with the specified `OwnerId` or `OwnerName` must exist and not be deleted.
-
-        ### Errors and Problem Details
-        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      tags:
+        - Owners
+      summary: Set the owner type.
+      description: Sets the owner type to a public or private value accepted by the server.
+      operationId: SetOwnerType
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: Owner.Components.OpenAPI.yaml#/SetOwnerTypeParameters
+              $ref: './Owner.Components.OpenAPI.yaml#/SetOwnerTypeParameters'
+            examples:
+              setOwnerType:
+                summary: Set owner type
+                value:
+                  <<: *ownerBaseExample
+                  OwnerType: Public
       responses:
         '200':
-          $ref: './Responses.OpenAPI.yaml#/200'
+          $ref: './Owner.Components.OpenAPI.yaml#/OwnerCommandResponse'
         '400':
           $ref: './Responses.OpenAPI.yaml#/400'
         '500':
           $ref: './Responses.OpenAPI.yaml#/500'
+
   /owner/setSearchVisibility:
     post:
-      summary: Set the owner search visibility (Visible, NotVisible).
-      description: |
-        ### Validation rules
-        
-        - `OwnerId` must be a valid GUID.
-        - `OwnerName` must be a valid Grace name.
-        - Either `OwnerId` or `OwnerName` must be provided.
-        - `SearchVisibility` must be a valid search visibility.
-        - Owner with the specified `OwnerId` or `OwnerName` must exist and not be deleted.
-
-        ### Errors and Problem Details
-        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      tags:
+        - Owners
+      summary: Set owner search visibility.
+      description: Sets whether the owner appears in search results.
+      operationId: SetOwnerSearchVisibility
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: Owner.Components.OpenAPI.yaml#/SetOwnerSearchVisibilityParameters
+              $ref: './Owner.Components.OpenAPI.yaml#/SetOwnerSearchVisibilityParameters'
+            examples:
+              setOwnerSearchVisibility:
+                summary: Set owner search visibility
+                value:
+                  <<: *ownerBaseExample
+                  SearchVisibility: Visible
       responses:
         '200':
-          $ref: './Responses.OpenAPI.yaml#/200'
+          $ref: './Owner.Components.OpenAPI.yaml#/OwnerCommandResponse'
         '400':
           $ref: './Responses.OpenAPI.yaml#/400'
         '500':
           $ref: './Responses.OpenAPI.yaml#/500'
+
   /owner/setDescription:
     post:
+      tags:
+        - Owners
       summary: Set the owner's description.
-      description: |
-        ### Validation rules
-        
-        - `OwnerId` must be a valid GUID.
-        - `OwnerName` must be a valid Grace name.
-        - Either `OwnerId` or `OwnerName` must be provided.
-        - `Description` must not be empty.
-        - Owner with the specified `OwnerId` or `OwnerName` must exist and not be deleted.
-
-        ### Errors and Problem Details
-        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      description: Sets the owner description.
+      operationId: SetOwnerDescription
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: Owner.Components.OpenAPI.yaml#/SetOwnerDescriptionParameters
+              $ref: './Owner.Components.OpenAPI.yaml#/SetOwnerDescriptionParameters'
+            examples:
+              setOwnerDescription:
+                summary: Set owner description
+                value:
+                  <<: *ownerBaseExample
+                  Description: Source control owner for Alice's projects.
       responses:
         '200':
-          $ref: './Responses.OpenAPI.yaml#/200'
+          $ref: './Owner.Components.OpenAPI.yaml#/OwnerCommandResponse'
         '400':
           $ref: './Responses.OpenAPI.yaml#/400'
         '500':
           $ref: './Responses.OpenAPI.yaml#/500'
+
   /owner/listOrganizations:
     post:
+      tags:
+        - Owners
       summary: List the organizations for an owner.
-      description: |
-        ### Validation rules
-        
-        - `OwnerId` must be a valid GUID.
-
-        ### Errors and Problem Details
-        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      description: Lists organizations associated with the owner.
+      operationId: ListOwnerOrganizations
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: Owner.Components.OpenAPI.yaml#/ListOrganizationsParameters
+              $ref: './Owner.Components.OpenAPI.yaml#/ListOrganizationsParameters'
+            examples:
+              listOwnerOrganizations:
+                summary: List organizations for an owner
+                value: *ownerBaseExample
       responses:
         '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                type: array
-                $ref: Dto.Components.OpenAPI.yaml#/OrganizationDto
+          $ref: './Owner.Components.OpenAPI.yaml#/OwnerOrganizationsResponse'
         '400':
           $ref: './Responses.OpenAPI.yaml#/400'
         '500':
           $ref: './Responses.OpenAPI.yaml#/500'
+
   /owner/delete:
     post:
+      tags:
+        - Owners
       summary: Delete an owner.
-      description: |
-        ### Validation rules
-        
-        - `OwnerId` must be a valid GUID.
-        - `OwnerName` must be a valid Grace name.
-        - Either `OwnerId` or `OwnerName` must be provided.
-        - `DeleteReason` must not be empty.
-        - Owner with the specified `OwnerId` or `OwnerName` must exist and not be deleted.
-
-        ### Errors and Problem Details
-        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      description: Logically deletes an owner that exists and has not already been deleted.
+      operationId: DeleteOwner
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: Owner.Components.OpenAPI.yaml#/DeleteOwnerParameters
+              $ref: './Owner.Components.OpenAPI.yaml#/DeleteOwnerParameters'
+            examples:
+              deleteOwner:
+                summary: Delete an owner
+                value:
+                  <<: *ownerBaseExample
+                  Force: false
+                  DeleteReason: Owner retired.
       responses:
         '200':
-          $ref: './Responses.OpenAPI.yaml#/200'
+          $ref: './Owner.Components.OpenAPI.yaml#/OwnerCommandResponse'
         '400':
           $ref: './Responses.OpenAPI.yaml#/400'
         '500':
           $ref: './Responses.OpenAPI.yaml#/500'
+
   /owner/undelete:
     post:
-      summary: Undelete a previously-deleted owner.
-      description: |
-        ### Validation rules
-        
-        - `OwnerId` must be a valid GUID.
-        - `OwnerName` must be a valid Grace name.
-        - Either `OwnerId` or `OwnerName` must be provided.
-        - Owner with the specified `OwnerId` or `OwnerName` must exist and be deleted.
-
-        ### Errors and Problem Details
-        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      tags:
+        - Owners
+      summary: Undelete a previously deleted owner.
+      description: Restores a logically deleted owner.
+      operationId: UndeleteOwner
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: Owner.Components.OpenAPI.yaml#/OwnerParameters
+              $ref: './Owner.Components.OpenAPI.yaml#/UndeleteOwnerParameters'
+            examples:
+              undeleteOwner:
+                summary: Restore an owner
+                value: *ownerBaseExample
       responses:
         '200':
-          $ref: './Responses.OpenAPI.yaml#/200'
+          $ref: './Owner.Components.OpenAPI.yaml#/OwnerCommandResponse'
         '400':
           $ref: './Responses.OpenAPI.yaml#/400'
         '500':
           $ref: './Responses.OpenAPI.yaml#/500'
+
   /owner/get:
     post:
+      tags:
+        - Owners
       summary: Get an owner.
-      description: |
-        ### Validation rules
-        
-        - `OwnerId` must be a valid GUID.
-
-        ### Errors and Problem Details
-        Error responses will be in the problem details JSON format, as defined in [RFC 7807](https://www.rfc-editor.org/rfc/rfc7807).
+      description: Gets owner metadata.
+      operationId: GetOwner
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: Owner.Components.OpenAPI.yaml#/GetOwnerParameters
+              $ref: './Owner.Components.OpenAPI.yaml#/GetOwnerParameters'
+            examples:
+              getOwner:
+                summary: Get an owner
+                value:
+                  <<: *ownerBaseExample
+                  IncludeDeleted: false
       responses:
         '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: Dto.Components.OpenAPI.yaml#/OwnerDto
+          $ref: './Owner.Components.OpenAPI.yaml#/OwnerResponse'
         '400':
           $ref: './Responses.OpenAPI.yaml#/400'
         '500':

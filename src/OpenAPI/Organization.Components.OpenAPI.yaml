@@ -1,66 +1,187 @@
     OrganizationParameters:
-      description: Parameters for many endpoints in the /organization path.
+      description: Parameters shared by public endpoints in the /organization route family.
+      type: object
       allOf:
         - $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/CommonParameters'
       properties:
         OwnerId:
-          type: string
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/OwnerId'
         OwnerName:
-          type: string
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/OwnerName'
         OrganizationId:
-          type: string
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/OrganizationId'
         OrganizationName:
-          type: string
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/OrganizationName'
+      example: &organizationBaseExample
+        CorrelationId: cli-20260604T181500Z-0001
+        Principal: user:alice
+        OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+        OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
     CreateOrganizationParameters:
       description: Parameters for the /organization/create endpoint.
       allOf:
-        - $ref: 'Organization.Components.OpenAPI.yaml#/OrganizationParameters'
+        - $ref: '#/OrganizationParameters'
     SetOrganizationNameParameters:
       description: Parameters for the /organization/setName endpoint.
       allOf:
-        - $ref: 'Organization.Components.OpenAPI.yaml#/OrganizationParameters'
-      properties:
-        NewName:
-          type: string
+        - $ref: '#/OrganizationParameters'
+        - type: object
+          properties:
+            NewName:
+              $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/OrganizationName'
     SetOrganizationTypeParameters:
       description: Parameters for the /organization/setType endpoint.
       allOf:
-        - $ref: 'Organization.Components.OpenAPI.yaml#/OrganizationParameters'
-      properties:
-        OrganizationType:
-          type: string
+        - $ref: '#/OrganizationParameters'
+        - type: object
+          properties:
+            OrganizationType:
+              $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/OrganizationType'
     SetOrganizationSearchVisibilityParameters:
       description: Parameters for the /organization/setSearchVisibility endpoint.
       allOf:
-        - $ref: 'Organization.Components.OpenAPI.yaml#/OrganizationParameters'
-      properties:
-        SearchVisibility:
-          type: string
+        - $ref: '#/OrganizationParameters'
+        - type: object
+          properties:
+            SearchVisibility:
+              $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/SearchVisibility'
     SetOrganizationDescriptionParameters:
       description: Parameters for the /organization/setDescription endpoint.
       allOf:
-        - $ref: 'Organization.Components.OpenAPI.yaml#/OrganizationParameters'
-      properties:
-        Description:
-          type: string
+        - $ref: '#/OrganizationParameters'
+        - type: object
+          properties:
+            Description:
+              type: string
+              maxLength: 2048
+              example: Engineering organization for Alice's projects.
     DeleteOrganizationParameters:
       description: Parameters for the /organization/delete endpoint.
       allOf:
-        - $ref: 'Organization.Components.OpenAPI.yaml#/OrganizationParameters'
-      properties:
-        Force:
-          type: boolean
-        DeleteReason:
-          type: string
+        - $ref: '#/OrganizationParameters'
+        - type: object
+          properties:
+            Force:
+              type: boolean
+              example: false
+            DeleteReason:
+              type: string
+              example: Organization retired.
     UndeleteOrganizationParameters:
       description: Parameters for the /organization/undelete endpoint.
       allOf:
-        - $ref: 'Organization.Components.OpenAPI.yaml#/OrganizationParameters'
+        - $ref: '#/OrganizationParameters'
     GetOrganizationParameters:
       description: Parameters for the /organization/get endpoint.
       allOf:
-        - $ref: 'Organization.Components.OpenAPI.yaml#/OrganizationParameters'
+        - $ref: '#/OrganizationParameters'
+        - type: object
+          properties:
+            IncludeDeleted:
+              type: boolean
+              example: false
     ListRepositoriesParameters:
       description: Parameters for the /organization/listRepositories endpoint.
       allOf:
-        - $ref: 'Organization.Components.OpenAPI.yaml#/OrganizationParameters'
+        - $ref: '#/OrganizationParameters'
+    OrganizationCommandReturnValue:
+      description: Grace response envelope returned by organization command endpoints.
+      type: object
+      properties:
+        ReturnValue:
+          type: string
+          example: Organization command succeeded.
+        EventTime:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant'
+        CorrelationId:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/CorrelationId'
+        Properties:
+          type: object
+          additionalProperties:
+            type: string
+      required: [ReturnValue, EventTime, CorrelationId, Properties]
+      example: &organizationCommandReturnValueExample
+        ReturnValue: Organization command succeeded.
+        EventTime: '2026-06-04T18:15:00Z'
+        CorrelationId: cli-20260604T181500Z-0001
+        Properties:
+          Path: /organization/create
+          OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+          OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+    OrganizationReturnValue:
+      description: Grace response envelope whose ReturnValue contains an organization DTO.
+      type: object
+      properties:
+        ReturnValue:
+          $ref: 'Dto.Components.OpenAPI.yaml#/OrganizationDto'
+        EventTime:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant'
+        CorrelationId:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/CorrelationId'
+        Properties:
+          type: object
+          additionalProperties:
+            type: string
+      required: [ReturnValue, EventTime, CorrelationId, Properties]
+      example: &organizationReturnValueExample
+        ReturnValue:
+          Class: OrganizationDto
+          OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+          OrganizationName: alice-org
+          OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+          OrganizationType: Public
+          Description: Engineering organization for Alice's projects.
+          SearchVisibility: Visible
+          Repositories:
+            sample-repository: ab6f35ef-6e01-440b-8f9b-c343a5272095
+          CreatedAt: '2026-06-04T18:15:00Z'
+          DeleteReason: ''
+        EventTime: '2026-06-04T18:15:00Z'
+        CorrelationId: cli-20260604T181500Z-0001
+        Properties:
+          Path: /organization/get
+          OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+          OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+    OrganizationRepositoriesReturnValue:
+      description: Grace response envelope whose ReturnValue contains repositories for an organization.
+      type: object
+      properties:
+        ReturnValue:
+          type: array
+          items:
+            $ref: 'Dto.Components.OpenAPI.yaml#/RepositoryDto'
+        EventTime:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant'
+        CorrelationId:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/CorrelationId'
+        Properties:
+          type: object
+          additionalProperties:
+            type: string
+      required: [ReturnValue, EventTime, CorrelationId, Properties]
+    OrganizationCommandResponse:
+      description: OK
+      content:
+        application/json:
+          schema:
+            $ref: '#/OrganizationCommandReturnValue'
+          examples:
+            organizationCommand:
+              summary: Organization command response envelope
+              value: *organizationCommandReturnValueExample
+    OrganizationResponse:
+      description: OK
+      content:
+        application/json:
+          schema:
+            $ref: '#/OrganizationReturnValue'
+          examples:
+            organization:
+              summary: Organization response envelope
+              value: *organizationReturnValueExample
+    OrganizationRepositoriesResponse:
+      description: OK
+      content:
+        application/json:
+          schema:
+            $ref: '#/OrganizationRepositoriesReturnValue'
