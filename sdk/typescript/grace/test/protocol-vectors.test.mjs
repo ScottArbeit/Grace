@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import {
   computeBlake3Hex,
+  computeBlake3Bytes,
   computeChunkAddress,
   computeContentBlockAddress,
   computeManifestAddress,
@@ -105,6 +106,9 @@ test("ContentBlock payload vectors decode and reject corruption", async () => {
   const badFooter = Buffer.from(root.contentBlocks[0].payloadBase64, "base64");
   badFooter[badFooter.length - 1] ^= 0x01;
   assert.throws(() => decodeContentBlock(badFooter), /footer magic/);
+
+  const negativePhysicalOffset = compactBlockWithPhysicalOffset(root.contentBlocks[0].payloadBase64, -1n);
+  assert.throws(() => decodeContentBlock(negativePhysicalOffset), /physical offset cannot be negative/);
 });
 
 test("manifest validation reconstructs valid vector and rejects corruption cases", async () => {
@@ -262,4 +266,15 @@ function createRejectionCases(root, manifest, payloads) {
     ["missing-content-block", manifest, [payloads.find((payload) => payload.address === alpha.address)]],
     ["content-block-address-mismatch", manifest, mismatchedPayloads],
   ];
+}
+
+function compactBlockWithPhysicalOffset(payloadBase64, physicalOffset) {
+  const payload = Buffer.from(payloadBase64, "base64");
+  const footerStart = payload.length - 44;
+  const trailerLength = payload.readUInt32LE(footerStart);
+  const trailerStart = footerStart - trailerLength;
+  payload.writeBigInt64LE(physicalOffset, trailerStart + 16);
+  const trailer = payload.subarray(trailerStart, footerStart);
+  payload.set(computeBlake3Bytes(trailer), footerStart + 4);
+  return payload;
 }

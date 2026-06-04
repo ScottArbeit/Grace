@@ -157,6 +157,10 @@ export function decodeContentBlock(payload: BufferSource): GraceDecodedContentBl
       const address = bytesToHex(trailer.subarray(recordOffset + 12, recordOffset + 44));
       const nextDataOffset = dataOffset + length;
 
+      if (physicalOffset < 0n) {
+        throw new Error(`Chunk ${index} physical offset cannot be negative.`);
+      }
+
       if (length === 0) {
         throw new Error(`Chunk ${index} length must be positive.`);
       }
