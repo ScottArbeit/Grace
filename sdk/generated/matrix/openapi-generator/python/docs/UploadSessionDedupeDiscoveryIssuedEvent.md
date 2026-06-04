@@ -1,0 +1,29 @@
+# UploadSessionDedupeDiscoveryIssuedEvent
+
+
+## Properties
+
+Name | Type | Description | Notes
+------------ | ------------- | ------------- | -------------
+**dedupe_discovery_issued** | [**UploadSessionDedupeDiscoveryIssuedEventDedupeDiscoveryIssued**](UploadSessionDedupeDiscoveryIssuedEventDedupeDiscoveryIssued.md) |  | 
+
+## Example
+
+```python
+from grace_generated_openapi_probe.models.upload_session_dedupe_discovery_issued_event import UploadSessionDedupeDiscoveryIssuedEvent
+
+# TODO update the JSON string below
+json = "{}"
+# create an instance of UploadSessionDedupeDiscoveryIssuedEvent from a JSON string
+upload_session_dedupe_discovery_issued_event_instance = UploadSessionDedupeDiscoveryIssuedEvent.from_json(json)
+# print the JSON string representation of the object
+print(UploadSessionDedupeDiscoveryIssuedEvent.to_json())
+
+# convert the object into a dict
+upload_session_dedupe_discovery_issued_event_dict = upload_session_dedupe_discovery_issued_event_instance.to_dict()
+# create an instance of UploadSessionDedupeDiscoveryIssuedEvent from a dict
+upload_session_dedupe_discovery_issued_event_from_dict = UploadSessionDedupeDiscoveryIssuedEvent.from_dict(upload_session_dedupe_discovery_issued_event_dict)
+```
+[[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
+
+

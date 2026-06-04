@@ -1,0 +1,11 @@
+/* tslint:disable */
+/* eslint-disable */
+export * from './ApprovalsApi';
+export * from './BranchesApi';
+export * from './DefaultApi';
+export * from './DiffsApi';
+export * from './DirectoriesApi';
+export * from './OrganizationsApi';
+export * from './OwnersApi';
+export * from './RepositoriesApi';
+export * from './WebhooksApi';
