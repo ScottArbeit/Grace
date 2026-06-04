@@ -178,6 +178,28 @@
             IncludeDeleted:
               type: boolean
               example: false
+    BranchCommandReturnValue:
+      description: Grace response envelope returned by branch command endpoints.
+      type: object
+      properties:
+        ReturnValue:
+          type: string
+          example: Branch command succeeded.
+        EventTime:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant'
+        CorrelationId:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/CorrelationId'
+        Properties:
+          type: object
+          additionalProperties:
+            type: string
+      required: [ReturnValue, EventTime, CorrelationId, Properties]
+      example: &branchCommandReturnValueExample
+        ReturnValue: Branch command succeeded.
+        EventTime: '2026-06-04T18:15:00Z'
+        CorrelationId: cli-20260604T181500Z-0001
+        Properties:
+          Path: /branch/create
     ReferenceApiDto:
       description: Public reference DTO returned through branch reference endpoints.
       type: object
@@ -397,6 +419,16 @@
         CorrelationId: cli-20260604T181500Z-0001
         Properties:
           Path: /branch/getReferences
+    BranchCommandResponse:
+      description: OK
+      content:
+        application/json:
+          schema:
+            $ref: '#/BranchCommandReturnValue'
+          examples:
+            branchCommand:
+              summary: Branch command response envelope
+              value: *branchCommandReturnValueExample
     BranchResponse:
       description: OK
       content:

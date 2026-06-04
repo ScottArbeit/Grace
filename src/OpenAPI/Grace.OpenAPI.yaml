@@ -569,7 +569,7 @@ paths:
                     - Tag
       responses:
         '200':
-          $ref: '#/components/responses/BranchResponse'
+          $ref: '#/components/responses/BranchCommandResponse'
         '400':
           $ref: '#/components/responses/400'
         '500':
@@ -606,7 +606,7 @@ paths:
                   BasedOn: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
       responses:
         '200':
-          $ref: '#/components/responses/BranchResponse'
+          $ref: '#/components/responses/BranchCommandResponse'
         '400':
           $ref: '#/components/responses/400'
         '500':
@@ -639,7 +639,7 @@ paths:
                   Message: Capture release candidate.
       responses:
         '200':
-          $ref: '#/components/responses/BranchResponse'
+          $ref: '#/components/responses/BranchCommandResponse'
         '400':
           $ref: '#/components/responses/400'
         '500':
@@ -672,7 +672,7 @@ paths:
                   Message: Commit release candidate.
       responses:
         '200':
-          $ref: '#/components/responses/BranchResponse'
+          $ref: '#/components/responses/BranchCommandResponse'
         '400':
           $ref: '#/components/responses/400'
         '500':
@@ -705,7 +705,7 @@ paths:
                   Message: Checkpoint release candidate.
       responses:
         '200':
-          $ref: '#/components/responses/BranchResponse'
+          $ref: '#/components/responses/BranchCommandResponse'
         '400':
           $ref: '#/components/responses/400'
         '500':
@@ -738,7 +738,7 @@ paths:
                   Message: Save release candidate.
       responses:
         '200':
-          $ref: '#/components/responses/BranchResponse'
+          $ref: '#/components/responses/BranchCommandResponse'
         '400':
           $ref: '#/components/responses/400'
         '500':
@@ -771,7 +771,7 @@ paths:
                   Message: Tag release candidate.
       responses:
         '200':
-          $ref: '#/components/responses/BranchResponse'
+          $ref: '#/components/responses/BranchCommandResponse'
         '400':
           $ref: '#/components/responses/400'
         '500':
@@ -802,7 +802,7 @@ paths:
                   Enabled: true
       responses:
         '200':
-          $ref: '#/components/responses/BranchResponse'
+          $ref: '#/components/responses/BranchCommandResponse'
         '400':
           $ref: '#/components/responses/400'
         '500':
@@ -833,7 +833,7 @@ paths:
                   Enabled: true
       responses:
         '200':
-          $ref: '#/components/responses/BranchResponse'
+          $ref: '#/components/responses/BranchCommandResponse'
         '400':
           $ref: '#/components/responses/400'
         '500':
@@ -864,7 +864,7 @@ paths:
                   Enabled: true
       responses:
         '200':
-          $ref: '#/components/responses/BranchResponse'
+          $ref: '#/components/responses/BranchCommandResponse'
         '400':
           $ref: '#/components/responses/400'
         '500':
@@ -895,7 +895,7 @@ paths:
                   Enabled: true
       responses:
         '200':
-          $ref: '#/components/responses/BranchResponse'
+          $ref: '#/components/responses/BranchCommandResponse'
         '400':
           $ref: '#/components/responses/400'
         '500':
@@ -926,7 +926,7 @@ paths:
                   Enabled: true
       responses:
         '200':
-          $ref: '#/components/responses/BranchResponse'
+          $ref: '#/components/responses/BranchCommandResponse'
         '400':
           $ref: '#/components/responses/400'
         '500':
@@ -961,7 +961,7 @@ paths:
                   NewParentBranchId: 11111111-1111-1111-1111-111111111111
       responses:
         '200':
-          $ref: '#/components/responses/BranchResponse'
+          $ref: '#/components/responses/BranchCommandResponse'
         '400':
           $ref: '#/components/responses/400'
         '500':
@@ -4781,6 +4781,32 @@ components:
         - RetryScheduled
         - Failed
         - DeadLettered
+    BranchCommandReturnValue:
+      description: Grace response envelope returned by branch command endpoints.
+      type: object
+      properties:
+        ReturnValue:
+          type: string
+          example: Branch command succeeded.
+        EventTime:
+          $ref: '#/components/schemas/Instant'
+        CorrelationId:
+          $ref: '#/components/schemas/CorrelationId'
+        Properties:
+          type: object
+          additionalProperties:
+            type: string
+      required:
+        - ReturnValue
+        - EventTime
+        - CorrelationId
+        - Properties
+      example:
+        ReturnValue: Branch command succeeded.
+        EventTime: '2026-06-04T18:15:00Z'
+        CorrelationId: cli-20260604T181500Z-0001
+        Properties:
+          Path: /branch/create
     ReferenceApiDto:
       description: Public reference DTO returned through branch reference endpoints.
       type: object
@@ -5013,11 +5039,12 @@ components:
         Properties:
           Path: /branch/getReferences
     DiffPopulateReturnValue:
-      description: Grace response envelope whose ReturnValue indicates whether the diff actor was populated.
+      description: Grace response envelope returned when the diff actor is populated.
       type: object
       properties:
         ReturnValue:
-          type: boolean
+          type: string
+          example: 'DiffActor.Compute: populated.'
         EventTime:
           $ref: '#/components/schemas/Instant'
         CorrelationId:
@@ -5032,7 +5059,7 @@ components:
         - CorrelationId
         - Properties
       example:
-        ReturnValue: true
+        ReturnValue: 'DiffActor.Compute: populated.'
         EventTime: '2026-06-04T18:15:00Z'
         CorrelationId: cli-20260604T181500Z-0001
         Properties:
@@ -5964,6 +5991,21 @@ components:
                     type: array
                     items:
                       $ref: '#/components/schemas/WebhookDelivery'
+    BranchCommandResponse:
+      description: OK
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/BranchCommandReturnValue'
+          examples:
+            branchCommand:
+              summary: Branch command response envelope
+              value:
+                ReturnValue: Branch command succeeded.
+                EventTime: '2026-06-04T18:15:00Z'
+                CorrelationId: cli-20260604T181500Z-0001
+                Properties:
+                  Path: /branch/create
     BranchResponse:
       description: OK
       content:

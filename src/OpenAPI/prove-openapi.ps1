@@ -544,6 +544,34 @@ function Test-OpenApiBranchReferenceDiffDetails {
         [pscustomobject]@{ File = 'Diff.Paths.OpenAPI.yaml'; OperationId = 'GetDiffBySha256Hash'; Tag = 'Diffs' }
     )
 
+    $branchCommandOperationIds = @(
+        'CreateBranch',
+        'RebaseBranch',
+        'PromoteBranch',
+        'CommitBranch',
+        'CheckpointBranch',
+        'SaveBranch',
+        'TagBranch',
+        'EnableBranchPromotion',
+        'EnableBranchCommit',
+        'EnableBranchCheckpoint',
+        'EnableBranchSave',
+        'EnableBranchTag',
+        'DeleteBranch'
+    )
+
+    $branchQueryResponses = @(
+        [pscustomobject]@{ OperationId = 'GetBranch'; Response = 'BranchResponse' },
+        [pscustomobject]@{ OperationId = 'GetParentBranch'; Response = 'BranchResponse' },
+        [pscustomobject]@{ OperationId = 'GetBranchReference'; Response = 'ReferenceResponse' },
+        [pscustomobject]@{ OperationId = 'ListBranchReferences'; Response = 'ReferenceListResponse' },
+        [pscustomobject]@{ OperationId = 'ListBranchPromotions'; Response = 'ReferenceListResponse' },
+        [pscustomobject]@{ OperationId = 'ListBranchCommits'; Response = 'ReferenceListResponse' },
+        [pscustomobject]@{ OperationId = 'ListBranchCheckpoints'; Response = 'ReferenceListResponse' },
+        [pscustomobject]@{ OperationId = 'ListBranchSaves'; Response = 'ReferenceListResponse' },
+        [pscustomobject]@{ OperationId = 'ListBranchTags'; Response = 'ReferenceListResponse' }
+    )
+
     $familyFiles = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
     foreach ($file in @('Branch.Paths.OpenAPI.yaml', 'Diff.Paths.OpenAPI.yaml')) {
         [void] $familyFiles.Add($file)
@@ -602,15 +630,59 @@ function Test-OpenApiBranchReferenceDiffDetails {
     $getDiffBySha256HashOperation = Get-RequiredOpenApiOperation $Operations 'Diff.Paths.OpenAPI.yaml' 'GetDiffBySha256Hash'
     Assert-OperationSha256ExamplesAreValid $getDiffBySha256HashOperation @('Sha256Hash1', 'Sha256Hash2')
 
+    foreach ($operationId in $branchCommandOperationIds) {
+        $operation = Get-RequiredOpenApiOperation $Operations 'Branch.Paths.OpenAPI.yaml' $operationId
+
+        Assert-OperationTextMatches `
+            $operation `
+            "(?s)responses:\s*.*?'200':\s*.*?\`$ref:\s*'\./Branch\.Components\.OpenAPI\.yaml#/BranchCommandResponse'" `
+            "Branch command operation '$operationId' must use the string-returning BranchCommandResponse envelope."
+
+        if ($null -ne $operation -and [string] $operation.OperationText -match 'Branch\.Components\.OpenAPI\.yaml#/BranchResponse') {
+            Add-Failure "Branch command operation '$operationId' must not use the BranchApiDto BranchResponse envelope."
+        }
+    }
+
+    foreach ($expectedResponse in $branchQueryResponses) {
+        $operation = Get-RequiredOpenApiOperation $Operations 'Branch.Paths.OpenAPI.yaml' $expectedResponse.OperationId
+
+        Assert-OperationTextMatches `
+            $operation `
+            "(?s)responses:\s*.*?'200':\s*.*?\`$ref:\s*'\./Branch\.Components\.OpenAPI\.yaml#/$($expectedResponse.Response)'" `
+            "Branch query operation '$($expectedResponse.OperationId)' must use '$($expectedResponse.Response)' instead of a command string envelope."
+
+        if ($null -ne $operation -and [string] $operation.OperationText -match 'Branch\.Components\.OpenAPI\.yaml#/BranchCommandResponse') {
+            Add-Failure "Branch query operation '$($expectedResponse.OperationId)' must not use the string-returning BranchCommandResponse envelope."
+        }
+    }
+
+    $populateDiffOperation = Get-RequiredOpenApiOperation $Operations 'Diff.Paths.OpenAPI.yaml' 'PopulateDiff'
+    Assert-OperationTextMatches `
+        $populateDiffOperation `
+        "(?s)responses:\s*.*?'200':\s*.*?\`$ref:\s*'\./Diff\.Components\.OpenAPI\.yaml#/DiffPopulateResponse'" `
+        "PopulateDiff must use the string-returning DiffPopulateResponse envelope."
+
     $branchComponentsText = Get-Content -LiteralPath (Join-Path $OpenApiRoot 'Branch.Components.OpenAPI.yaml') -Raw
     foreach ($requiredBranchContract in @(
             'DirectoryVersionId:',
+            'BranchCommandReturnValue:',
+            'BranchCommandResponse:',
             'BranchReturnValue:',
             'ReferenceReturnValue:',
             'ReferenceListReturnValue:'
         )) {
         Assert-TextContains $branchComponentsText $requiredBranchContract "Branch OpenAPI components are missing '$requiredBranchContract'."
     }
+
+    Assert-OperationTextMatches `
+        ([pscustomobject]@{ OperationText = $branchComponentsText }) `
+        "(?s)BranchCommandReturnValue:\s*.*?ReturnValue:\s*.*?type:\s*string" `
+        'BranchCommandReturnValue must model command success ReturnValue as a string.'
+
+    Assert-OperationTextMatches `
+        ([pscustomobject]@{ OperationText = $branchComponentsText }) `
+        "(?s)BranchReturnValue:\s*.*?ReturnValue:\s*.*?\`$ref:\s*'#/BranchApiDto'" `
+        'BranchReturnValue must keep branch query ReturnValue as BranchApiDto.'
 
     $diffComponentsText = Get-Content -LiteralPath (Join-Path $OpenApiRoot 'Diff.Components.OpenAPI.yaml') -Raw
     foreach ($requiredDiffContract in @(
@@ -620,6 +692,15 @@ function Test-OpenApiBranchReferenceDiffDetails {
             'DiffPopulateReturnValue:'
         )) {
         Assert-TextContains $diffComponentsText $requiredDiffContract "Diff OpenAPI components are missing '$requiredDiffContract'."
+    }
+
+    Assert-OperationTextMatches `
+        ([pscustomobject]@{ OperationText = $diffComponentsText }) `
+        "(?s)DiffPopulateReturnValue:\s*.*?ReturnValue:\s*.*?type:\s*string" `
+        'DiffPopulateReturnValue must model populate success ReturnValue as a string.'
+
+    if ($diffComponentsText -match '(?s)DiffPopulateReturnValue:\s*.*?ReturnValue:\s*.*?type:\s*boolean') {
+        Add-Failure 'DiffPopulateReturnValue must not model populate success ReturnValue as boolean.'
     }
 
     $referenceComponentsText = Get-Content -LiteralPath (Join-Path $OpenApiRoot 'Reference.Components.OpenAPI.yaml') -Raw

@@ -29,7 +29,7 @@
                     - Tag
       responses:
         '200':
-          $ref: './Branch.Components.OpenAPI.yaml#/BranchResponse'
+          $ref: './Branch.Components.OpenAPI.yaml#/BranchCommandResponse'
         '400':
           $ref: './Responses.OpenAPI.yaml#/400'
         '500':
@@ -57,7 +57,7 @@
                   BasedOn: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
       responses:
         '200':
-          $ref: './Branch.Components.OpenAPI.yaml#/BranchResponse'
+          $ref: './Branch.Components.OpenAPI.yaml#/BranchCommandResponse'
         '400':
           $ref: './Responses.OpenAPI.yaml#/400'
         '500':
@@ -91,7 +91,7 @@
                   Message: Capture release candidate.
       responses:
         '200':
-          $ref: './Branch.Components.OpenAPI.yaml#/BranchResponse'
+          $ref: './Branch.Components.OpenAPI.yaml#/BranchCommandResponse'
         '400':
           $ref: './Responses.OpenAPI.yaml#/400'
         '500':
@@ -118,7 +118,7 @@
                   Message: Commit release candidate.
       responses:
         '200':
-          $ref: './Branch.Components.OpenAPI.yaml#/BranchResponse'
+          $ref: './Branch.Components.OpenAPI.yaml#/BranchCommandResponse'
         '400':
           $ref: './Responses.OpenAPI.yaml#/400'
         '500':
@@ -145,7 +145,7 @@
                   Message: Checkpoint release candidate.
       responses:
         '200':
-          $ref: './Branch.Components.OpenAPI.yaml#/BranchResponse'
+          $ref: './Branch.Components.OpenAPI.yaml#/BranchCommandResponse'
         '400':
           $ref: './Responses.OpenAPI.yaml#/400'
         '500':
@@ -172,7 +172,7 @@
                   Message: Save release candidate.
       responses:
         '200':
-          $ref: './Branch.Components.OpenAPI.yaml#/BranchResponse'
+          $ref: './Branch.Components.OpenAPI.yaml#/BranchCommandResponse'
         '400':
           $ref: './Responses.OpenAPI.yaml#/400'
         '500':
@@ -199,7 +199,7 @@
                   Message: Tag release candidate.
       responses:
         '200':
-          $ref: './Branch.Components.OpenAPI.yaml#/BranchResponse'
+          $ref: './Branch.Components.OpenAPI.yaml#/BranchCommandResponse'
         '400':
           $ref: './Responses.OpenAPI.yaml#/400'
         '500':
@@ -231,7 +231,7 @@
                   Enabled: true
       responses:
         '200':
-          $ref: './Branch.Components.OpenAPI.yaml#/BranchResponse'
+          $ref: './Branch.Components.OpenAPI.yaml#/BranchCommandResponse'
         '400':
           $ref: './Responses.OpenAPI.yaml#/400'
         '500':
@@ -256,7 +256,7 @@
                 value: *enableFeatureExample
       responses:
         '200':
-          $ref: './Branch.Components.OpenAPI.yaml#/BranchResponse'
+          $ref: './Branch.Components.OpenAPI.yaml#/BranchCommandResponse'
         '400':
           $ref: './Responses.OpenAPI.yaml#/400'
         '500':
@@ -281,7 +281,7 @@
                 value: *enableFeatureExample
       responses:
         '200':
-          $ref: './Branch.Components.OpenAPI.yaml#/BranchResponse'
+          $ref: './Branch.Components.OpenAPI.yaml#/BranchCommandResponse'
         '400':
           $ref: './Responses.OpenAPI.yaml#/400'
         '500':
@@ -306,7 +306,7 @@
                 value: *enableFeatureExample
       responses:
         '200':
-          $ref: './Branch.Components.OpenAPI.yaml#/BranchResponse'
+          $ref: './Branch.Components.OpenAPI.yaml#/BranchCommandResponse'
         '400':
           $ref: './Responses.OpenAPI.yaml#/400'
         '500':
@@ -331,7 +331,7 @@
                 value: *enableFeatureExample
       responses:
         '200':
-          $ref: './Branch.Components.OpenAPI.yaml#/BranchResponse'
+          $ref: './Branch.Components.OpenAPI.yaml#/BranchCommandResponse'
         '400':
           $ref: './Responses.OpenAPI.yaml#/400'
         '500':
@@ -361,7 +361,7 @@
                   NewParentBranchId: 11111111-1111-1111-1111-111111111111
       responses:
         '200':
-          $ref: './Branch.Components.OpenAPI.yaml#/BranchResponse'
+          $ref: './Branch.Components.OpenAPI.yaml#/BranchCommandResponse'
         '400':
           $ref: './Responses.OpenAPI.yaml#/400'
         '500':
