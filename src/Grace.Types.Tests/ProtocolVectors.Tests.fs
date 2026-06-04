@@ -133,6 +133,7 @@ type ProtocolVectorsTests() =
                 address)
 
         let blockFormat = ProtocolVectorsTests.StringProperty "format" contentBlock
+        Assert.That(blockFormat, Is.EqualTo(ContentBlockFormat.FormatName))
 
         Assert.That(ContentAddress.contentBlockPreimage blockFormat chunkAddresses, Is.EqualTo(ProtocolVectorsTests.StringProperty "preimage" contentBlock))
 

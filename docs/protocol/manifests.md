@@ -55,9 +55,40 @@ happy-path-only.
 
 `grace-contentblock-v1` payloads are `chunk-bytes || trailer || footer`.
 
-The data section is the logical chunk payloads concatenated in order. The trailer records the format magic, version,
-flags, chunk count, physical offsets, chunk lengths, and chunk addresses. The footer records the trailer length, BLAKE3
-checksum of the trailer, and footer magic.
+The data section is the logical chunk payloads concatenated in ordinal order. It has no per-chunk delimiter; chunk
+lengths come from the trailer. The trailer and footer use fixed-width little-endian integer fields. BLAKE3 addresses
+and checksums are the raw 32-byte digest bytes, not UTF-8 hex strings.
+
+Trailer layout:
+
+| Offset | Width | Encoding | Field |
+| ------ | ----- | -------- | ----- |
+| 0 | 8 | ASCII bytes | Trailer magic `GCB1META` |
+| 8 | 2 | UInt16 little-endian | Version, currently `1` |
+| 10 | 2 | UInt16 little-endian | Reserved flags, currently `0` |
+| 12 | 4 | UInt32 little-endian | Chunk count |
+| 16 | 44 * chunk count | Repeated record | Chunk table |
+
+Each 44-byte chunk record is:
+
+| Offset Within Record | Width | Encoding | Field |
+| -------------------- | ----- | -------- | ----- |
+| 0 | 8 | Int64 little-endian | Source physical offset for the chunk |
+| 8 | 4 | UInt32 little-endian | Logical chunk length in bytes |
+| 12 | 32 | Raw bytes | ChunkAddress digest bytes |
+
+Footer layout:
+
+| Offset | Width | Encoding | Field |
+| ------ | ----- | -------- | ----- |
+| 0 | 4 | UInt32 little-endian | Trailer length in bytes |
+| 4 | 32 | Raw bytes | BLAKE3 digest bytes of the complete trailer |
+| 36 | 8 | ASCII bytes | Footer magic `GCB1END!` |
+
+The footer is always 44 bytes. To decode a payload, read the last 44 bytes as the footer, verify the footer magic, read
+the trailer length, locate the trailer immediately before the footer, verify the trailer checksum, parse the trailer
+magic/version/flags/count, and then use each chunk record's length to slice the data section from offset zero in ordinal
+order. The concatenated slices are the decoded logical payload.
 
 Physical offsets and encoded lengths validate the payload; they do not affect `ContentBlockAddress` except through the
 compact block format name in the address preimage.
