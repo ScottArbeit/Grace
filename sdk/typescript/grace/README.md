@@ -43,8 +43,7 @@ The TypeScript Node facade includes Tier 2 whole-file compatibility helpers:
 - `downloadFile` asks Grace for a raw text whole-file download URI and writes the downloaded bytes to an existing output
   directory.
 
-These helpers are intentionally simple. They do not implement the manifest protocol, ContentBlock transfer,
-deduplication, or Tier 3/Tier 4 behavior.
+These helpers are intentionally simple. They do not perform manifest upload, ContentBlock transfer, or deduplication.
 
 ```ts
 const upload = await grace.uploadFile({
@@ -90,7 +89,47 @@ Non-2xx responses throw `GraceError`. The error preserves:
   `X-Grace-Client-Recommended-Version`, and `X-Grace-Client-Update-Url`.
 - Upload-session lifecycle diagnostics when returned by storage endpoints.
 
+## Tier 3 Protocol Vectors
+
+The package implements the Grace Protocol v1 deterministic helpers needed by the published vector suite:
+
+- BLAKE3 chunk, ContentBlock, and FileManifest address calculation.
+- Canonical lowercase 64-hex address validation.
+- `grace-contentblock-v1` compact block encoding and decoding.
+- FileManifest reconstruction validation that rejects corrupt payloads, stale manifest addresses, block range gaps or
+  reordering, missing ContentBlocks, mismatched ContentBlock addresses, wrong chunking suites, and file-content hash
+  mismatches.
+- Default manifest eligibility boundary decisions.
+
+The supported vector suite is declared in `package.json` as `graceProtocol.vectorSuite = "grace-protocol-v1"`, with
+the currently supported files:
+
+- `content-addresses.v1.json`
+- `manifest-validation.v1.json`
+- `eligibility.v1.json`
+
+The implementation is native TypeScript/Node and uses a JavaScript BLAKE3 dependency. It does not load .NET assemblies
+or shell out to `dotnet` at runtime.
+
+```ts
+import {
+  computeChunkAddress,
+  decodeContentBlock,
+  validateFileManifest,
+} from "@grace/sdk";
+
+const address = computeChunkAddress(new TextEncoder().encode("alpha chunk"));
+const decoded = decodeContentBlock(compactBlockPayload);
+const reconstructed = validateFileManifest(fileManifest, contentBlockPayloads);
+
+console.log(address, decoded.address, reconstructed.bytes.byteLength);
+```
+
+Eligibility helpers expose the default policy boundary, but automatic manifest upload parity remains out of scope for
+this package slice. Use Tier 2 `uploadFile` for simple whole-file transfer until a later Tier 4 integration slice wires
+the protocol helpers into end-to-end storage workflows.
+
 ## Current Scope
 
-This package is a TypeScript Node facade with Tier 1 API request support and Tier 2 simple whole-file transfer helpers.
-Tier 3 manifest protocol behavior is intentionally not implemented here.
+This package is a TypeScript Node facade with Tier 1 API request support, Tier 2 simple whole-file transfer helpers, and
+Tier 3 Grace Protocol v1 vector support. Tier 4 local integration behavior is intentionally not claimed here.
