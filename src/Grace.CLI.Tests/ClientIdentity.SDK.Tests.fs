@@ -65,7 +65,11 @@ type ClientIdentitySdkTests() =
             Console.SetOut(originalOut)
             setAnsiConsoleOutput originalOut
 
-    let parseNormalOutput () = GraceCommand.rootCommand.Parse([| "--output"; "Normal" |])
+    let parseOutput outputFormat = GraceCommand.rootCommand.Parse([| "--output"; outputFormat |])
+
+    let parseNormalOutput () = parseOutput "Normal"
+
+    let parseVerboseOutput () = parseOutput "Verbose"
 
     let addLifecycleHeaders
         (response: HttpResponseMessage)
@@ -266,4 +270,36 @@ type ClientIdentitySdkTests() =
         Assert.That(output, Does.Contain("Update to Grace CLI/SDK version 0.1.0 or newer."))
         Assert.That(output, Does.Contain("Unsupported-after value from server could not be parsed: not-a-date."))
         Assert.That(output, Does.Contain("Update URL from server was not HTTPS and was not displayed."))
+        Assert.That(output, Does.Not.Contain("http://example.test/update"))
+
+    [<Test>]
+    member _.CliVerboseSuccessOutputRedactsNonHttpsLifecycleUpdateUrl() =
+        let parseResult = parseVerboseOutput ()
+        let properties = lifecycleProperties "deprecated" "2026-12-01" "0.1.0" (Some "0.2.0") "http://example.test/update"
+        let returnValue = GraceReturnValue.Create "ok" "corr-verbose-success"
+        returnValue.enhance properties |> ignore
+
+        let output =
+            captureOutput (fun () ->
+                Common.renderOutput parseResult (Ok returnValue)
+                |> ignore)
+
+        Assert.That(output, Does.Contain("Properties:"))
+        Assert.That(output, Does.Contain(ClientIdentity.LifecycleStatusPropertyKey))
+        Assert.That(output, Does.Not.Contain("http://example.test/update"))
+
+    [<Test>]
+    member _.CliVerboseErrorOutputRedactsNonHttpsLifecycleUpdateUrl() =
+        let parseResult = parseVerboseOutput ()
+        let properties = lifecycleProperties "unsupported" "2026-12-01" "0.1.0" (Some "0.2.0") "http://example.test/update"
+        let error = GraceError.Create "UnsupportedClientVersion" "corr-verbose-error"
+        error.enhance properties |> ignore
+
+        let output =
+            captureOutput (fun () ->
+                Common.renderOutput parseResult (Error error)
+                |> ignore)
+
+        Assert.That(output, Does.Contain("UnsupportedClientVersion"))
+        Assert.That(output, Does.Contain(ClientIdentity.LifecycleStatusPropertyKey))
         Assert.That(output, Does.Not.Contain("http://example.test/update"))

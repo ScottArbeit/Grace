@@ -465,6 +465,23 @@ module Common =
         | Some value -> value.Equals("true", StringComparison.OrdinalIgnoreCase)
         | None -> false
 
+    let private sanitizeLifecyclePropertiesForHumanOutput (properties: Dictionary<string, obj>) =
+        let sanitized = Dictionary<string, obj>()
+        let updateUrlIsHttps = isTrueProperty properties ClientIdentity.LifecycleUpdateUrlIsHttpsPropertyKey
+
+        if not (isNull properties) then
+            properties
+            |> Seq.iter (fun kvp ->
+                if
+                    kvp.Key.Equals(ClientIdentity.LifecycleUpdateUrlPropertyKey, StringComparison.Ordinal)
+                    && not updateUrlIsHttps
+                then
+                    ()
+                else
+                    sanitized[kvp.Key] <- kvp.Value)
+
+        sanitized
+
     let private appendIfSome (lines: ResizeArray<string>) label value =
         match value with
         | Some value -> lines.Add($"{label}: {value}")
@@ -550,7 +567,9 @@ module Common =
 
                 AnsiConsole.MarkupLine($"""[{Colors.Verbose}]CorrelationId: "{graceReturnValue.CorrelationId}"[/]""")
 
-                AnsiConsole.MarkupLine($"""[{Colors.Verbose}]Properties: {Markup.Escape(serialize graceReturnValue.Properties)}[/]""")
+                let properties = sanitizeLifecyclePropertiesForHumanOutput graceReturnValue.Properties
+
+                AnsiConsole.MarkupLine($"""[{Colors.Verbose}]Properties: {Markup.Escape(serialize properties)}[/]""")
 
                 AnsiConsole.WriteLine()
             | Normal -> () // Return unit because in the Normal case, we expect to print output within each command.
@@ -582,7 +601,16 @@ module Common =
             | Verbose ->
                 AnsiConsole.MarkupLine($"[{Colors.Error}]{Markup.Escape(errorText)}[/]")
                 AnsiConsole.WriteLine()
-                AnsiConsole.MarkupLine($"[{Colors.Verbose}]{Markup.Escape(json)}[/]")
+
+                let sanitizedError = { error with Properties = sanitizeLifecyclePropertiesForHumanOutput error.Properties }
+
+                let verboseJson =
+                    if error.Error.Contains("Stack trace") then
+                        json
+                    else
+                        Uri.UnescapeDataString(serialize sanitizedError)
+
+                AnsiConsole.MarkupLine($"[{Colors.Verbose}]{Markup.Escape(verboseJson)}[/]")
                 AnsiConsole.WriteLine()
             | Normal -> AnsiConsole.MarkupLine($"[{Colors.Error}]{Markup.Escape(errorText)}[/]")
 
