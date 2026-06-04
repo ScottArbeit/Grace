@@ -481,6 +481,53 @@ test("Tier 4 local progress callback exceptions stop transfer before credential-
   }
 });
 
+test("Tier 4 download progress callback exceptions stop before credential-bearing storage use", async () => {
+  const temp = await mkdtemp(join(tmpdir(), "grace-download-progress-fail-"));
+  const outputPath = join(temp, "hello.txt");
+  const calls = [];
+  const progressStages = [];
+
+  const client = new GraceClient({
+    fetch: async (url) => {
+      calls.push(url.toString());
+
+      if (url.toString() === "http://localhost:5000/storage/getDownloadUri") {
+        return textResponse("https://storage.example.test/download?sig=must-not-be-used");
+      }
+
+      throw new Error("Storage transfer should not start after a progress callback failure.");
+    },
+  });
+
+  try {
+    await assert.rejects(
+      client.downloadFile({
+        fileVersion: {
+          RelativePath: "docs/hello.txt",
+          Sha256Hash: "abc123",
+          IsBinary: true,
+          Size: 16,
+        },
+        onProgress: (event) => {
+          progressStages.push(event.stage);
+
+          if (event.stage === "transfer-started") {
+            throw new Error("download progress failed");
+          }
+        },
+        outputPath,
+        repositoryName: "repo",
+      }),
+      /download progress failed/,
+    );
+
+    assert.deepEqual(progressStages, ["api-requested", "transfer-started"]);
+    assert.deepEqual(calls, ["http://localhost:5000/storage/getDownloadUri"]);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
 test("Tier 2 transfer honors cancellation signals", async () => {
   const temp = await mkdtemp(join(tmpdir(), "grace-transfer-cancel-"));
   const sourcePath = join(temp, "hello.txt");

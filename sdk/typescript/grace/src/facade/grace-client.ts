@@ -276,16 +276,17 @@ export class GraceClient {
       totalBytes: normalizedFileVersion.Size,
     });
 
-    const response = await this.transferFetch(uriRequest.body, {
-      method: "GET",
-      signal: request.signal,
-    });
     await emitProgress(request.onProgress, {
       bytesTransferred: 0,
       operation: "download",
       relativePath: normalizedFileVersion.RelativePath,
       stage: "transfer-started",
       totalBytes: normalizedFileVersion.Size,
+    });
+
+    const response = await this.transferFetch(uriRequest.body, {
+      method: "GET",
+      signal: request.signal,
     });
 
     const transfer = await readTransferStep(response);
