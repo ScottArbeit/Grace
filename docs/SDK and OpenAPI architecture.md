@@ -463,10 +463,11 @@ The first server-side lifecycle policy recognizes Grace CLI/SDK client identity 
 
 Recognized deprecated clients continue through normal request handling and receive response headers:
 
-- `X-Grace-SDK-Lifecycle: deprecated`
-- `X-Grace-SDK-Lifecycle-Message`
-- `X-Grace-SDK-Minimum-Version`
-- `X-Grace-SDK-Recommended-Version`
+- `X-Grace-Client-Support-Status: deprecated`
+- `X-Grace-Client-Unsupported-After`
+- `X-Grace-Client-Min-Version`
+- `X-Grace-Client-Recommended-Version`
+- `X-Grace-Client-Update-Url`
 
 Recognized unsupported clients receive `426 Upgrade Required` with the same lifecycle headers and a structured
 `GraceError` whose `Error` value is `UnsupportedClientVersion`. Missing, unknown, or malformed client identity

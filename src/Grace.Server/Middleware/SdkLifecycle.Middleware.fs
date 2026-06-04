@@ -23,6 +23,12 @@ module SdkLifecyclePolicy =
     let RecommendedCliVersion = "0.2.0"
 
     [<Literal>]
+    let CliUnsupportedAfter = "2026-12-01"
+
+    [<Literal>]
+    let CliUpdateUrl = "https://github.com/ScottArbeit/Grace/releases"
+
+    [<Literal>]
     let DeprecatedStatus = "deprecated"
 
     [<Literal>]
@@ -30,9 +36,18 @@ module SdkLifecyclePolicy =
 
     type ClientIdentity = { ClientType: string option; ClientVersion: string option }
 
-    type LifecycleHeaders = { Status: string; Message: string; MinimumSupportedVersion: string; RecommendedVersion: string }
+    type LifecycleHeaders = { Status: string; UnsupportedAfter: string; MinimumSupportedVersion: string; RecommendedVersion: string; UpdateUrl: string }
 
-    type UnsupportedClient = { ClientType: string; ClientVersion: string; MinimumSupportedVersion: string; RecommendedVersion: string; Message: string }
+    type UnsupportedClient =
+        {
+            ClientType: string
+            ClientVersion: string
+            UnsupportedAfter: string
+            MinimumSupportedVersion: string
+            RecommendedVersion: string
+            UpdateUrl: string
+            Message: string
+        }
 
     type LifecycleDecision =
         | Continue
@@ -60,8 +75,10 @@ module SdkLifecyclePolicy =
                     {
                         ClientType = KnownClientTypeCli
                         ClientVersion = clientVersion
+                        UnsupportedAfter = CliUnsupportedAfter
                         MinimumSupportedVersion = MinimumSupportedCliVersion
                         RecommendedVersion = RecommendedCliVersion
+                        UpdateUrl = CliUpdateUrl
                         Message = $"Grace CLI/SDK version {clientVersion} is no longer supported. Update to version {RecommendedCliVersion} or newer."
                     }: UnsupportedClient
                 )
@@ -69,9 +86,10 @@ module SdkLifecyclePolicy =
                 ContinueWithHeaders
                     {
                         Status = DeprecatedStatus
-                        Message = $"Grace CLI/SDK version {clientVersion} is deprecated. Update to version {RecommendedCliVersion} or newer."
+                        UnsupportedAfter = CliUnsupportedAfter
                         MinimumSupportedVersion = MinimumSupportedCliVersion
                         RecommendedVersion = RecommendedCliVersion
+                        UpdateUrl = CliUpdateUrl
                     }
             | Some _ -> Continue
             | None -> Continue
@@ -99,8 +117,8 @@ type SdkLifecycleMiddleware(next: RequestDelegate) =
         ] <- StringValues(headers.Status)
 
         response.Headers[
-            Constants.SdkLifecycleMessageHeaderKey
-        ] <- StringValues(headers.Message)
+            Constants.SdkLifecycleUnsupportedAfterHeaderKey
+        ] <- StringValues(headers.UnsupportedAfter)
 
         response.Headers[
             Constants.SdkLifecycleMinimumVersionHeaderKey
@@ -110,14 +128,18 @@ type SdkLifecycleMiddleware(next: RequestDelegate) =
             Constants.SdkLifecycleRecommendedVersionHeaderKey
         ] <- StringValues(headers.RecommendedVersion)
 
+        response.Headers[
+            Constants.SdkLifecycleUpdateUrlHeaderKey
+        ] <- StringValues(headers.UpdateUrl)
+
     let setUnsupportedLifecycleHeaders (response: HttpResponse) (unsupportedClient: SdkLifecyclePolicy.UnsupportedClient) =
         response.Headers[
             Constants.SdkLifecycleStatusHeaderKey
         ] <- StringValues(SdkLifecyclePolicy.UnsupportedStatus)
 
         response.Headers[
-            Constants.SdkLifecycleMessageHeaderKey
-        ] <- StringValues(unsupportedClient.Message)
+            Constants.SdkLifecycleUnsupportedAfterHeaderKey
+        ] <- StringValues(unsupportedClient.UnsupportedAfter)
 
         response.Headers[
             Constants.SdkLifecycleMinimumVersionHeaderKey
@@ -127,14 +149,20 @@ type SdkLifecycleMiddleware(next: RequestDelegate) =
             Constants.SdkLifecycleRecommendedVersionHeaderKey
         ] <- StringValues(unsupportedClient.RecommendedVersion)
 
+        response.Headers[
+            Constants.SdkLifecycleUpdateUrlHeaderKey
+        ] <- StringValues(unsupportedClient.UpdateUrl)
+
     let createUnsupportedClientError (context: HttpContext) (unsupportedClient: SdkLifecyclePolicy.UnsupportedClient) =
         let error = GraceError.Create "UnsupportedClientVersion" (getCorrelationId context)
 
         error
             .enhance("clientType", unsupportedClient.ClientType)
             .enhance("clientVersion", unsupportedClient.ClientVersion)
+            .enhance("unsupportedAfter", unsupportedClient.UnsupportedAfter)
             .enhance("minimumSupportedVersion", unsupportedClient.MinimumSupportedVersion)
             .enhance("recommendedVersion", unsupportedClient.RecommendedVersion)
+            .enhance("updateUrl", unsupportedClient.UpdateUrl)
             .enhance ("message", unsupportedClient.Message)
 
     member _.Invoke(context: HttpContext) =

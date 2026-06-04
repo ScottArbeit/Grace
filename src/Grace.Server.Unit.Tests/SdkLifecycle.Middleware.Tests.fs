@@ -29,9 +29,10 @@ type SdkLifecyclePolicyTests() =
         match decision with
         | SdkLifecyclePolicy.ContinueWithHeaders headers ->
             Assert.That(headers.Status, Is.EqualTo(SdkLifecyclePolicy.DeprecatedStatus))
+            Assert.That(headers.UnsupportedAfter, Is.EqualTo(SdkLifecyclePolicy.CliUnsupportedAfter))
             Assert.That(headers.MinimumSupportedVersion, Is.EqualTo(SdkLifecyclePolicy.MinimumSupportedCliVersion))
             Assert.That(headers.RecommendedVersion, Is.EqualTo(SdkLifecyclePolicy.RecommendedCliVersion))
-            Assert.That(headers.Message, Does.Contain("deprecated"))
+            Assert.That(headers.UpdateUrl, Is.EqualTo(SdkLifecyclePolicy.CliUpdateUrl))
         | other -> Assert.Fail($"Expected deprecated lifecycle headers, got {other}.")
 
     [<Test>]
@@ -42,8 +43,10 @@ type SdkLifecyclePolicyTests() =
         | SdkLifecyclePolicy.RejectUnsupported unsupportedClient ->
             Assert.That(unsupportedClient.ClientType, Is.EqualTo(SdkLifecyclePolicy.KnownClientTypeCli))
             Assert.That(unsupportedClient.ClientVersion, Is.EqualTo("0.0.9"))
+            Assert.That(unsupportedClient.UnsupportedAfter, Is.EqualTo(SdkLifecyclePolicy.CliUnsupportedAfter))
             Assert.That(unsupportedClient.MinimumSupportedVersion, Is.EqualTo(SdkLifecyclePolicy.MinimumSupportedCliVersion))
             Assert.That(unsupportedClient.RecommendedVersion, Is.EqualTo(SdkLifecyclePolicy.RecommendedCliVersion))
+            Assert.That(unsupportedClient.UpdateUrl, Is.EqualTo(SdkLifecyclePolicy.CliUpdateUrl))
             Assert.That(unsupportedClient.Message, Does.Contain("no longer supported"))
         | other -> Assert.Fail($"Expected unsupported lifecycle rejection, got {other}.")
 
@@ -108,9 +111,10 @@ type SdkLifecycleMiddlewareTests() =
             Assert.That(nextInvoked, Is.True)
             Assert.That(context.Response.StatusCode, Is.EqualTo(StatusCodes.Status200OK))
             Assert.That(getHeader context Constants.SdkLifecycleStatusHeaderKey, Is.EqualTo(SdkLifecyclePolicy.DeprecatedStatus))
+            Assert.That(getHeader context Constants.SdkLifecycleUnsupportedAfterHeaderKey, Is.EqualTo(SdkLifecyclePolicy.CliUnsupportedAfter))
             Assert.That(getHeader context Constants.SdkLifecycleMinimumVersionHeaderKey, Is.EqualTo(SdkLifecyclePolicy.MinimumSupportedCliVersion))
             Assert.That(getHeader context Constants.SdkLifecycleRecommendedVersionHeaderKey, Is.EqualTo(SdkLifecyclePolicy.RecommendedCliVersion))
-            Assert.That(getHeader context Constants.SdkLifecycleMessageHeaderKey, Does.Contain("deprecated"))
+            Assert.That(getHeader context Constants.SdkLifecycleUpdateUrlHeaderKey, Is.EqualTo(SdkLifecyclePolicy.CliUpdateUrl))
         }
 
     [<Test>]
@@ -132,7 +136,8 @@ type SdkLifecycleMiddlewareTests() =
 
             Assert.That(context.Response.StatusCode, Is.EqualTo(StatusCodes.Status400BadRequest))
             Assert.That(getHeader context Constants.SdkLifecycleStatusHeaderKey, Is.EqualTo(SdkLifecyclePolicy.DeprecatedStatus))
-            Assert.That(getHeader context Constants.SdkLifecycleMessageHeaderKey, Does.Contain("deprecated"))
+            Assert.That(getHeader context Constants.SdkLifecycleUnsupportedAfterHeaderKey, Is.EqualTo(SdkLifecyclePolicy.CliUnsupportedAfter))
+            Assert.That(getHeader context Constants.SdkLifecycleUpdateUrlHeaderKey, Is.EqualTo(SdkLifecyclePolicy.CliUpdateUrl))
             Assert.That(responseBody context, Is.EqualTo("downstream validation failed"))
         }
 
@@ -162,6 +167,7 @@ type SdkLifecycleMiddlewareTests() =
             Assert.That(error.CorrelationId, Is.EqualTo("corr-sdk-lifecycle"))
             Assert.That(error.Properties[ "clientType" ].ToString(), Is.EqualTo("CLI"))
             Assert.That(error.Properties[ "clientVersion" ].ToString(), Is.EqualTo("0.0.9"))
+            Assert.That(error.Properties[ "unsupportedAfter" ].ToString(), Is.EqualTo(SdkLifecyclePolicy.CliUnsupportedAfter))
 
             Assert.That(
                 error
@@ -176,6 +182,8 @@ type SdkLifecycleMiddlewareTests() =
                     .ToString(),
                 Is.EqualTo(SdkLifecyclePolicy.RecommendedCliVersion)
             )
+
+            Assert.That(error.Properties[ "updateUrl" ].ToString(), Is.EqualTo(SdkLifecyclePolicy.CliUpdateUrl))
         }
 
     [<Test>]
