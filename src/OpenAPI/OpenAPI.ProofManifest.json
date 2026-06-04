@@ -1,0 +1,111 @@
+{
+  "schemaVersion": 1,
+  "canonicalSourceRoot": "src/OpenAPI",
+  "canonicalSourceFiles": [
+    {
+      "path": "Approval.Components.OpenAPI.yaml",
+      "sha256": "71e38e251dbc6b22f693500c577190f79c779e40923f6b6f030ce0e8d43ad643"
+    },
+    {
+      "path": "Approval.Paths.OpenAPI.yaml",
+      "sha256": "b31f21d1ba523013b2a38d01c8fab254f2dee5e11e865437d579d9fb346a4073"
+    },
+    {
+      "path": "Branch.Components.OpenAPI.yaml",
+      "sha256": "fdf8683cd64552708779f9777aadf8389afc9dd84363622f476b9e015d054b4e"
+    },
+    {
+      "path": "Branch.Paths.OpenAPI.yaml",
+      "sha256": "2cd3e76766031419663328c7b640900000f50df1e1690f5ba7c814777ea56eda"
+    },
+    {
+      "path": "Diff.Components.OpenAPI.yaml",
+      "sha256": "26d2d7b5381fb88fbedec3bcd5a133ec6bd13f738ba39f7abe0871b3e5f3f5d3"
+    },
+    {
+      "path": "Diff.Paths.OpenAPI.yaml",
+      "sha256": "d35c91ae7a894db61703627b25f5583c6bf9159cca065a3e9abd8273dd714e67"
+    },
+    {
+      "path": "Directory.Components.OpenAPI.yaml",
+      "sha256": "d696ab0589dee5f321b041a90aec20e61c7ee80cd9ead7c6fd8a51657173038a"
+    },
+    {
+      "path": "Directory.Paths.OpenAPI.yaml",
+      "sha256": "669ee20859628404b597907c53034b2cba3e21c20a5a5dc116ce682c7bdf0817"
+    },
+    {
+      "path": "Dto.Components.OpenAPI.yaml",
+      "sha256": "f9bd41b00867ca40b94a99a6590739f421649409bcbbe28bad92063f7be227ed"
+    },
+    {
+      "path": "Grace.OpenAPI.yaml",
+      "sha256": "8473aba3021394ac423d973f3404b44d26ee7743ad08fe9cfe54f704517a1145"
+    },
+    {
+      "path": "Main.OpenAPI.yaml",
+      "sha256": "6f16430397a78769c29aeb6316ccfb34ad2d80c6aeb001e2a0453f2e5ba79ea6"
+    },
+    {
+      "path": "Organization.Components.OpenAPI.yaml",
+      "sha256": "6dc80c9e15ca314e14e264f23f742ff669b11f9887105d589e7c1371584efe16"
+    },
+    {
+      "path": "Organization.Paths.OpenAPI.yaml",
+      "sha256": "41de66035db6846ba7414cd49dab306ea49795c2806d85ee40af17933bbc99e1"
+    },
+    {
+      "path": "Owner.Components.OpenAPI.yaml",
+      "sha256": "ab94095469fab50b4895db3ad341fe281b61c3336089b40848fbb2a5cffab794"
+    },
+    {
+      "path": "Owner.Paths.OpenAPI.yaml",
+      "sha256": "e885e320fa6ba99c1539b4529400c2fb614301c4a001e6a6b648876b967d6e42"
+    },
+    {
+      "path": "Reference.Components.OpenAPI.yaml",
+      "sha256": "b4ddef354bd804dbc297054b81bde947ef8e3847dd2ca50cfaaf3bce49eb34d5"
+    },
+    {
+      "path": "Repository.Components.OpenAPI.yaml",
+      "sha256": "9c3f1e5a2474bea3f242c7bd25b61b650c982bd53b799fb0736272298eab1c45"
+    },
+    {
+      "path": "Repository.Paths.OpenAPI.yaml",
+      "sha256": "11e2c20a8cd2f408615e85be5e3825a83f03b47513c13e14781b090c5c9662f0"
+    },
+    {
+      "path": "Responses.OpenAPI.yaml",
+      "sha256": "94f8b1ae3e0d90ec021c45b9690fbc1ded371934b58b5fb675dbe19c009ee201"
+    },
+    {
+      "path": "Shared.Components.OpenAPI.yaml",
+      "sha256": "9158efe1d2cd838078e7946e456e3bce4b6d1426b76750763dabfc231232c20c"
+    },
+    {
+      "path": "Shared2.Components.OpenAPI.yaml",
+      "sha256": "c7b9f29275eb2e485d498a84b06ce0bb3c4d80bb812d7dce586d0f58f84dda76"
+    },
+    {
+      "path": "Storage.Components.OpenAPI.yaml",
+      "sha256": "f6d7df0e3b791d0fb372e799543e998fe03929715622d6efee3f3574b4930e38"
+    },
+    {
+      "path": "Storage.Paths.OpenAPI.yaml",
+      "sha256": "4c651c02dd6cb8661acd78bd538c366db0439ce15ac485e79b9249212add7759"
+    },
+    {
+      "path": "Webhook.Components.OpenAPI.yaml",
+      "sha256": "43bbd5ed2cf5c2bbd92f55ba358ad1b95eae6017d7c22fb73e36fc1ebba2af3d"
+    },
+    {
+      "path": "Webhook.Paths.OpenAPI.yaml",
+      "sha256": "86370a041b63500f604ef7920783be6d85f82c97b62f9aaf1216f701a29572fb"
+    }
+  ],
+  "generatedArtifacts": [],
+  "pendingProofs": [
+    "SDK package export/import proof",
+    "Protocol vector proof"
+  ]
+}
