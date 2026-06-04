@@ -31,6 +31,12 @@ type WorkItemServerUnitTests() =
         |> Async.AwaitTask
         |> Async.RunSynchronously
 
+    let getValidationError validations =
+        validations
+        |> getFirstError
+        |> Async.AwaitTask
+        |> Async.RunSynchronously
+
     let applyCasePattern (pattern: bool array) (value: string) =
         let toggles = if isNull pattern then [||] else pattern
 
@@ -90,13 +96,19 @@ type WorkItemServerUnitTests() =
 
         let validations = WorkItem.validateLinkReferenceParameters parameters
 
-        let error =
-            validations
-            |> getFirstError
-            |> Async.AwaitTask
-            |> Async.RunSynchronously
+        let error = validations |> getValidationError
 
         Assert.That(error, Is.EqualTo(Some WorkItemError.InvalidReferenceId))
+
+    [<Test>]
+    member _.LinkReferenceValidationAcceptsValidParameters() =
+        let parameters = LinkReferenceParameters(WorkItemId = Guid.NewGuid().ToString(), ReferenceId = Guid.NewGuid().ToString())
+
+        let validations = WorkItem.validateLinkReferenceParameters parameters
+
+        let error = validations |> getValidationError
+
+        Assert.That(error, Is.EqualTo(None: WorkItemError option))
 
     [<Test>]
     member _.WorkItemIdentifierValidationAcceptsPositiveNumber() =
@@ -125,6 +137,25 @@ type WorkItemServerUnitTests() =
         Assert.That(result, Is.EqualTo(Ok(): Result<unit, WorkItemError>))
 
     [<Test>]
+    member _.WorkItemIdentifierValidationAcceptsUppercaseGuid() =
+        let workItemId = Guid.NewGuid().ToString().ToUpperInvariant()
+
+        let result =
+            WorkItem.validateWorkItemIdentifier workItemId
+            |> runValidation
+
+        Assert.That(result, Is.EqualTo(Ok(): Result<unit, WorkItemError>))
+
+    [<Test>]
+    member _.WorkItemIdentifierValidationAcceptsVeryLargePositiveNumber() =
+        let result =
+            Int64.MaxValue.ToString()
+            |> WorkItem.validateWorkItemIdentifier
+            |> runValidation
+
+        Assert.That(result, Is.EqualTo(Ok(): Result<unit, WorkItemError>))
+
+    [<Test>]
     member _.WorkItemIdentifierValidationRejectsInvalidIdentifier() =
         let result =
             WorkItem.validateWorkItemIdentifier "not-a-guid-or-number"
@@ -138,13 +169,19 @@ type WorkItemServerUnitTests() =
 
         let validations = WorkItem.validateLinkPromotionSetParameters parameters
 
-        let error =
-            validations
-            |> getFirstError
-            |> Async.AwaitTask
-            |> Async.RunSynchronously
+        let error = validations |> getValidationError
 
         Assert.That(error, Is.EqualTo(Some WorkItemError.InvalidPromotionSetId))
+
+    [<Test>]
+    member _.LinkPromotionSetValidationAcceptsValidParameters() =
+        let parameters = LinkPromotionSetParameters(WorkItemId = Guid.NewGuid().ToString(), PromotionSetId = Guid.NewGuid().ToString())
+
+        let validations = WorkItem.validateLinkPromotionSetParameters parameters
+
+        let error = validations |> getValidationError
+
+        Assert.That(error, Is.EqualTo(None: WorkItemError option))
 
     [<Test>]
     member _.LinkArtifactValidationRejectsInvalidArtifactId() =
@@ -152,13 +189,19 @@ type WorkItemServerUnitTests() =
 
         let validations = WorkItem.validateLinkArtifactParameters parameters
 
-        let error =
-            validations
-            |> getFirstError
-            |> Async.AwaitTask
-            |> Async.RunSynchronously
+        let error = validations |> getValidationError
 
         Assert.That(error, Is.EqualTo(Some WorkItemError.InvalidArtifactId))
+
+    [<Test>]
+    member _.LinkArtifactValidationAcceptsValidParameters() =
+        let parameters = LinkArtifactParameters(WorkItemId = Guid.NewGuid().ToString(), ArtifactId = Guid.NewGuid().ToString())
+
+        let validations = WorkItem.validateLinkArtifactParameters parameters
+
+        let error = validations |> getValidationError
+
+        Assert.That(error, Is.EqualTo(None: WorkItemError option))
 
     [<Test>]
     member _.AddSummaryValidationAcceptsGuidIdentifier() =
@@ -311,13 +354,99 @@ type WorkItemServerUnitTests() =
 
         let validations = WorkItem.validateRemoveArtifactTypeLinksParameters parameters
 
-        let error =
-            validations
-            |> getFirstError
-            |> Async.AwaitTask
-            |> Async.RunSynchronously
+        let error = validations |> getValidationError
 
         Assert.That(error, Is.EqualTo(Some WorkItemError.InvalidArtifactType))
+
+    [<Test>]
+    member _.ShowAttachmentValidationRejectsMissingAttachmentType() =
+        let parameters = ShowWorkItemAttachmentParameters(WorkItemId = Guid.NewGuid().ToString(), AttachmentType = String.Empty)
+
+        let validations = WorkItem.validateShowWorkItemAttachmentParameters parameters
+
+        let error = validations |> getValidationError
+
+        Assert.That(error, Is.EqualTo(Some WorkItemError.InvalidArtifactType))
+
+    [<Test>]
+    member _.ListAttachmentValidationAcceptsValidParameters() =
+        let parameters = ListWorkItemAttachmentsParameters(WorkItemId = Guid.NewGuid().ToString())
+
+        let validations = WorkItem.validateListWorkItemAttachmentsParameters parameters
+
+        let error = validations |> getValidationError
+
+        Assert.That(error, Is.EqualTo(None: WorkItemError option))
+
+    [<Test>]
+    member _.ShowAttachmentValidationAcceptsValidParameters() =
+        let parameters = ShowWorkItemAttachmentParameters(WorkItemId = Guid.NewGuid().ToString(), AttachmentType = "summary")
+
+        let validations = WorkItem.validateShowWorkItemAttachmentParameters parameters
+
+        let error = validations |> getValidationError
+
+        Assert.That(error, Is.EqualTo(None: WorkItemError option))
+
+    [<Test>]
+    member _.DownloadAttachmentValidationAcceptsValidParameters() =
+        let parameters = DownloadWorkItemAttachmentParameters(WorkItemId = Guid.NewGuid().ToString(), ArtifactId = Guid.NewGuid().ToString())
+
+        let validations = WorkItem.validateDownloadWorkItemAttachmentParameters parameters
+
+        let error = validations |> getValidationError
+
+        Assert.That(error, Is.EqualTo(None: WorkItemError option))
+
+    [<Test>]
+    member _.DownloadAttachmentValidationRejectsMissingArtifactId() =
+        let parameters = DownloadWorkItemAttachmentParameters(WorkItemId = Guid.NewGuid().ToString(), ArtifactId = String.Empty)
+
+        let validations = WorkItem.validateDownloadWorkItemAttachmentParameters parameters
+
+        let error = validations |> getValidationError
+
+        Assert.That(error, Is.EqualTo(Some WorkItemError.InvalidArtifactId))
+
+    [<Test>]
+    member _.DownloadAttachmentValidationRejectsEmptyGuidArtifactId() =
+        let parameters = DownloadWorkItemAttachmentParameters(WorkItemId = Guid.NewGuid().ToString(), ArtifactId = Guid.Empty.ToString())
+
+        let validations = WorkItem.validateDownloadWorkItemAttachmentParameters parameters
+
+        let error = validations |> getValidationError
+
+        Assert.That(error, Is.EqualTo(Some WorkItemError.InvalidArtifactId))
+
+    [<Test>]
+    member _.DownloadAttachmentValidationRejectsInvalidArtifactId() =
+        let parameters = DownloadWorkItemAttachmentParameters(WorkItemId = Guid.NewGuid().ToString(), ArtifactId = "not-a-guid")
+
+        let validations = WorkItem.validateDownloadWorkItemAttachmentParameters parameters
+
+        let error = validations |> getValidationError
+
+        Assert.That(error, Is.EqualTo(Some WorkItemError.InvalidArtifactId))
+
+    [<Test>]
+    member _.RemoveArtifactTypeValidationAcceptsKnownAliases() =
+        let aliases =
+            [
+                "summary"
+                "agentsummary"
+                "prompt"
+                "notes"
+                "reviewnotes"
+            ]
+
+        for alias in aliases do
+            let parameters = RemoveArtifactTypeLinksParameters(WorkItemId = Guid.NewGuid().ToString(), ArtifactType = alias)
+
+            let validations = WorkItem.validateRemoveArtifactTypeLinksParameters parameters
+
+            let error = validations |> getValidationError
+
+            Assert.That(error, Is.EqualTo(None: WorkItemError option), $"Expected artifact type alias '{alias}' to pass validation.")
 
     [<Test>]
     member _.ParseRemovableArtifactTypeHandlesAliases() =

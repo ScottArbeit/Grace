@@ -390,6 +390,7 @@ module WorkItem =
     let internal validateDownloadWorkItemAttachmentParameters (parameters: DownloadWorkItemAttachmentParameters) =
         [|
             validateWorkItemIdentifier parameters.WorkItemId
+            String.isNotEmpty parameters.ArtifactId WorkItemError.InvalidArtifactId
             Guid.isValidAndNotEmptyGuid parameters.ArtifactId WorkItemError.InvalidArtifactId
         |]
 
