@@ -34,11 +34,25 @@ update the issue before editing the new paths.
   absolute path under the assigned worktree. After the first patch, verify git status in both locations.
 - Prefer vertical slices that prove one public behavior at a time through the closest stable boundary.
 - Validate changes with `pwsh ./scripts/validate.ps1 -Fast` (use `-Full` for Aspire integration coverage).
-- Order validation to avoid duplicate builds. Run formatters before validation. If `validate -Fast` will run, do not
-  also run separate full-solution `dotnet build` or broad `dotnet test` commands unless there is a specific diagnostic
-  reason; prefer only the narrow focused tests that prove the changed behavior, then `validate -Fast`.
-- If running commands manually instead of `validate -Fast`, use `dotnet build --configuration Release` and
-  `dotnet test --no-build`; build the focused project before any project-specific `--no-build` test command.
+- Order validation to avoid duplicate builds. Run targeted Fantomas formatting or checks before validation for touched
+  F# files, then choose exactly one final build/test gate. If `validate -Fast` or `validate -Full` will run, do not also
+  ask workers to routinely run project-specific `dotnet build` plus `dotnet test --no-build`; `validate` is the final
+  build/test gate.
+- Focused project build/test is appropriate for RED evidence, failure diagnosis, skipped-validate workflows, tests
+  outside the selected validate profile, or explicitly focused-only issues. If running commands manually instead of
+  `validate`, use `dotnet build --configuration Release` and `dotnet test --no-build`; build the focused project before
+  any project-specific `--no-build` test command.
+- Freshness or generated-file update workers follow the same validation ladder: formatting or freshness checks first,
+  then exactly one final build/test gate. If `validate -Fast` or `validate -Full` runs, do not also run routine focused
+  build/test commands.
+- Product/DAG independence is not the same as merge/write-set independence. Parallelize branches only when their write
+  sets are disjoint enough to avoid predictable churn. Serialize or merge-queue branches that touch shared project
+  files such as `*.fsproj`, `Startup.Server.fs`, or the same test/helper files. For broad waves, consider a
+  preparatory compile-item or file-scaffold slice before later branches edit separate files.
+- Before the Grace completion review gate, update the branch against current `origin/main`, verify ahead/behind,
+  verify the scoped diff and that no unexpected deletions are present, run the chosen validation gate, then spawn the
+  final review-only sibling. Review on a stale branch is exploratory pre-review and does not satisfy the completion
+  gate.
 - Resolve all compilation errors before considering a task complete.
 - Run impacted tests for each task and fix failures introduced by your changes.
 - Create a new git commit after each completed task to keep review scope clear.

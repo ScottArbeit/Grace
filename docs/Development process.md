@@ -40,6 +40,15 @@ The parent issue for a multi-step implementation plan must include a DAG that sh
 - steps that can run in parallel
 - the expected integration order when parallel branches converge
 
+Treat that product DAG as necessary but not sufficient for parallel execution. A step can be behaviorally independent
+while still creating predictable merge churn. Before assigning parallel branches, compare the expected write sets:
+
+- Parallelize only when branches are disjoint enough to avoid routine conflict resolution.
+- Serialize or merge-queue branches that touch shared project files such as `*.fsproj`, `Startup.Server.fs`, or the
+  same test/helper files.
+- For broad waves, consider a preparatory compile-item or file-scaffold slice, then let later branches edit separate
+  files.
+
 The parent issue must also include a sub-issue checklist. As sub-issues complete, update that checklist so completed
 sub-issues are checked.
 
@@ -394,20 +403,30 @@ pwsh ./scripts/validate.ps1 -Full
 Use `-Fast` for the normal development loop. Use `-Full` when the change touches Aspire integration coverage, emulators,
 storage, Cosmos DB, Service Bus, Redis, cross-service behavior, or deployment/runtime behavior.
 
-Avoid duplicate builds. `validate.ps1 -Fast` already restores, builds the solution, and runs the configured fast test
-projects. If a worker is going to run `validate -Fast`, it should not also run a separate full-solution
-`dotnet build` or broad `dotnet test` as a routine step. Use this efficient order instead:
+Avoid duplicate builds. The validation ladder is:
 
 1. Run Fantomas formatting or targeted Fantomas checks for touched F# files.
-2. Run the narrow focused test command that proves the changed behavior, if that focused test is outside the fast gate
-   or gives faster defect localization. When the focused command uses `--no-build`, first run the matching
-   `dotnet build --configuration Release <project>` command so the test assembly exists and reflects the current
-   source.
-3. Run `pwsh ./scripts/validate.ps1 -Fast`.
+2. Run any required freshness or generated-file checks.
+3. Choose exactly one final build/test gate.
 4. Run `git diff --check`.
 
-Use separate `dotnet build` or broad `dotnet test` commands only when diagnosing a failure, when `validate -Fast` is
-being intentionally skipped, or when a required focused test project is not covered by the fast gate.
+`validate.ps1 -Fast` and `validate.ps1 -Full` already restore, build the solution, and run the selected test projects.
+If a worker is going to run `validate -Fast` or `validate -Full`, do not also prompt it to routinely run a
+project-specific `dotnet build` plus `dotnet test --no-build`. The selected `validate` command is the final build/test
+gate.
+
+Focused project build/test is still appropriate when it is the right evidence for the slice:
+
+- RED evidence before a code change.
+- Failure diagnosis or faster defect localization after a failing broad gate.
+- A skipped-validate workflow where the task record explicitly accepts the narrower gate.
+- Tests outside the selected validate profile.
+- Issues that explicitly require focused-only validation.
+
+When a focused command uses `--no-build`, first run the matching
+`dotnet build --configuration Release <project>` command so the test assembly exists and reflects the current source.
+Use separate broad `dotnet build` or broad `dotnet test` commands only when diagnosing a failure or when `validate` is
+being intentionally skipped.
 
 If running commands manually, the high-level fallback is:
 
@@ -430,9 +449,10 @@ order is:
 
 1. Apply the code change.
 2. Run Fantomas on the touched files, or run the repo-standard recursive Fantomas command when the edit is broad.
-3. Build the focused project before any focused `dotnet test --no-build` command, then run focused tests and
-   `validate -Fast` using the non-duplicative validation order above.
-4. Run `git diff --check`.
+3. Run focused project build/test only when it is needed for RED evidence, failure diagnosis, tests outside the selected
+   validate profile, skipped-validate workflows, or explicitly focused-only issues.
+4. Run exactly one final build/test gate, normally `validate -Fast` or `validate -Full`.
+5. Run `git diff --check`.
 
 Avoid running the full test suite before formatting, then discovering Fantomas rewrote files and forcing another
 build/test cycle.
@@ -473,6 +493,16 @@ comments as the review loop continues:
 - residual risk
 - rollback or recovery notes when the change touches runtime or data
 - useful AI prompts used for diagnosis or implementation, when contributing externally
+
+Before the Grace completion review gate, update the branch against current `origin/main`, then verify:
+
+- ahead/behind status shows the branch is current enough for a blocking review decision
+- the scoped diff still contains only the intended write set
+- no unexpected deletions were introduced during the update
+- the chosen validation gate has passed on the refreshed branch
+
+Only then spawn the final fresh local review-only sibling subagent. A review-only pass on a stale branch is useful
+exploratory pre-review, but it does not satisfy the completion review gate.
 
 Open normal ready-for-review pull requests for Grace implementation work. Do not open draft pull requests unless the
 maintainer explicitly asks for a draft.
