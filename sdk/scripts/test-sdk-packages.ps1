@@ -24,32 +24,42 @@ function Invoke-Step {
     Push-Location $WorkingDirectory
     try {
         & $Command
-        if ($LASTEXITCODE -ne 0) {
-            throw "$Name failed with exit code $LASTEXITCODE."
-        }
     }
     finally {
         Pop-Location
     }
 }
 
+function Invoke-NativeCommand {
+    param(
+        [string] $FilePath,
+        [string[]] $ArgumentList
+    )
+
+    & $FilePath @ArgumentList
+    if ($LASTEXITCODE -ne 0) {
+        $commandText = @($FilePath) + $ArgumentList -join ' '
+        throw "Native command failed with exit code $LASTEXITCODE`: $commandText"
+    }
+}
+
 $repoRoot = Get-RepoRoot
 
 Invoke-Step 'TypeScript facade import smoke' (Join-Path $repoRoot 'sdk/typescript/grace') {
-    npm ci --ignore-scripts
-    npm run smoke
+    Invoke-NativeCommand -FilePath 'npm.cmd' -ArgumentList @('ci', '--ignore-scripts')
+    Invoke-NativeCommand -FilePath 'npm.cmd' -ArgumentList @('run', 'smoke')
 }
 
 Invoke-Step 'Python facade import smoke' (Join-Path $repoRoot 'sdk/python/grace-sdk') {
-    python ./smoke/import_facade.py
+    Invoke-NativeCommand -FilePath 'python' -ArgumentList @('./smoke/import_facade.py')
 }
 
 Invoke-Step '.NET facade build smoke' (Join-Path $repoRoot 'sdk/dotnet/Grace.Sdk.Harness') {
-    dotnet build --nologo
+    Invoke-NativeCommand -FilePath 'dotnet' -ArgumentList @('build', '--nologo')
 }
 
 Invoke-Step 'Rust facade test smoke' (Join-Path $repoRoot 'sdk/rust/grace-sdk') {
-    cargo test
+    Invoke-NativeCommand -FilePath 'cargo' -ArgumentList @('test')
 }
 
 Write-Host 'SDK package import/export smoke tests passed.'

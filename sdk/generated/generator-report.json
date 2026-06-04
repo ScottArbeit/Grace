@@ -9,49 +9,15 @@
   "openApiVersion": "3.1.2",
   "apiContractVersion": "2023-10-01",
   "pathCount": 102,
-  "toolVersions": [
-    {
-      "command": "pwsh",
-      "available": true,
-      "version": "PowerShell 7.6.2",
-      "exitCode": 0
-    },
-    {
-      "command": "dotnet",
-      "available": true,
-      "version": "10.0.103",
-      "exitCode": 0
-    },
-    {
-      "command": "node",
-      "available": true,
-      "version": "v24.3.0",
-      "exitCode": 0
-    },
-    {
-      "command": "npm",
-      "available": true,
-      "version": "11.10.1",
-      "exitCode": 0
-    },
-    {
-      "command": "python",
-      "available": true,
-      "version": "Python 3.14.5",
-      "exitCode": 0
-    },
-    {
-      "command": "cargo",
-      "available": true,
-      "version": "cargo 1.96.0 (30a34c682 2026-05-25)",
-      "exitCode": 0
-    },
-    {
-      "command": "rustc",
-      "available": true,
-      "version": "rustc 1.96.0 (ac68faa20 2026-05-25)",
-      "exitCode": 0
-    }
+  "toolVersionDiagnostics": "console-only",
+  "toolVersionCommands": [
+    "pwsh",
+    "dotnet",
+    "node",
+    "npm",
+    "python",
+    "cargo",
+    "rustc"
   ],
   "generatedFiles": [
     {

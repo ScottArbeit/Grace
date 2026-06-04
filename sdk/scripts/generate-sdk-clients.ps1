@@ -71,6 +71,20 @@ function Get-CommandVersion {
     }
 }
 
+function Write-ToolVersionDiagnostics {
+    param([object[]] $ToolVersions)
+
+    Write-Host 'Observed SDK harness tool versions (diagnostic only; not part of freshness):'
+    foreach ($tool in $ToolVersions) {
+        if ($tool.available) {
+            Write-Host "  $($tool.command): $($tool.version)"
+        }
+        else {
+            Write-Host "  $($tool.command): unavailable"
+        }
+    }
+}
+
 function Get-OpenApiMetadata {
     param([string] $ProjectionPath)
 
@@ -218,7 +232,8 @@ $report = [ordered]@{
     openApiVersion = $metadata.openApiVersion
     apiContractVersion = $metadata.apiContractVersion
     pathCount = $metadata.pathCount
-    toolVersions = $toolVersions
+    toolVersionDiagnostics = 'console-only'
+    toolVersionCommands = @($toolVersions | ForEach-Object { $_.command })
     generatedFiles = @($generatedFiles |
         Where-Object { $_.kind -ne 'generator-report' } |
         ForEach-Object {
@@ -231,6 +246,7 @@ $report = [ordered]@{
 
 $reportJson = $report | ConvertTo-Json -Depth 10
 $generatedFiles[0].text = "$reportJson`n"
+Write-ToolVersionDiagnostics $toolVersions
 
 if ($Mode -eq 'Generate') {
     foreach ($file in $generatedFiles) {
