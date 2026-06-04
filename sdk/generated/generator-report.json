@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "generatedBy": "grace-sdk-harness",
+  "generatorVersion": "0.1.0",
+  "generatorPinned": true,
+  "generatedClientBoundary": "internal-behind-facades",
+  "sourceProjection": "src/OpenAPI/Grace.OpenAPI.3.1.2.yaml",
+  "sourceProjectionSha256": "e2be4a02d2f63a3b9f4cdabe7f615ba0a5c98673618c132d063b9bbf4273f590",
+  "openApiVersion": "3.1.2",
+  "apiContractVersion": "2023-10-01",
+  "pathCount": 102,
+  "toolVersionDiagnostics": "console-only",
+  "toolVersionCommands": [
+    "pwsh",
+    "dotnet",
+    "node",
+    "npm",
+    "python",
+    "cargo",
+    "rustc"
+  ],
+  "generatedFiles": [
+    {
+      "path": "sdk/typescript/grace/src/internal/generated/grace-raw-client-metadata.ts",
+      "kind": "typescript-generated-metadata"
+    },
+    {
+      "path": "sdk/python/grace-sdk/src/grace_sdk/_generated/grace_raw_client_metadata.py",
+      "kind": "python-generated-metadata"
+    },
+    {
+      "path": "sdk/python/grace-sdk/src/grace_sdk/_generated/__init__.py",
+      "kind": "python-generated-package"
+    },
+    {
+      "path": "sdk/rust/grace-sdk/src/generated.rs",
+      "kind": "rust-generated-metadata"
+    },
+    {
+      "path": "sdk/dotnet/Grace.Sdk.Harness/Internal/Generated/GraceRawClientMetadata.cs",
+      "kind": "dotnet-generated-metadata"
+    }
+  ]
+}
