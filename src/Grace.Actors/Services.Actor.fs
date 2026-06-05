@@ -126,14 +126,17 @@ module Services =
             blobUri
 
     let private createBlobContainerClientFromEndpoint containerName =
-        match sharedKeyCredential.Value with
-        | Some credential ->
-            let containerUri =
-                Uri($"{AzureEnvironment.storageEndpoints.BlobEndpoint.AbsoluteUri.TrimEnd('/')}/{containerName}")
-                |> normalizeLocalAzuriteBlobUri AzureEnvironment.storageEndpoints.AccountName
+        if AzureEnvironment.useManagedIdentityForStorage then
+            Context.blobServiceClient.GetBlobContainerClient(containerName)
+        else
+            match sharedKeyCredential.Value with
+            | Some credential ->
+                let containerUri =
+                    Uri($"{AzureEnvironment.storageEndpoints.BlobEndpoint.AbsoluteUri.TrimEnd('/')}/{containerName}")
+                    |> normalizeLocalAzuriteBlobUri AzureEnvironment.storageEndpoints.AccountName
 
-            BlobContainerClient(containerUri, credential)
-        | None -> Context.blobServiceClient.GetBlobContainerClient(containerName)
+                BlobContainerClient(containerUri, credential)
+            | None -> Context.blobServiceClient.GetBlobContainerClient(containerName)
 
     /// Logger instance for the Services.Actor module.
     let private log = loggerFactory.CreateLogger("Services.Actor")
