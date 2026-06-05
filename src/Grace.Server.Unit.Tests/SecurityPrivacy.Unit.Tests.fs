@@ -42,7 +42,7 @@ type SecurityPrivacyUnitTests() =
         let parsed = PersonalAccessTokenAuth.parseAuthorizationHeader $"Bearer {token}"
 
         match parsed with
-        | PersonalAccessTokenAuth.ParsedGracePersonalAccessToken (userId, tokenId, secret) ->
+        | PersonalAccessTokenAuth.ParsedGracePersonalAccessToken(userId, tokenId, secret) ->
             Assert.That(userId, Is.EqualTo("user-1"))
             Assert.That(tokenId, Is.EqualTo(Guid.Parse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")))
             Assert.That(secret, Has.Length.EqualTo(32))
@@ -63,31 +63,26 @@ type SecurityPrivacyUnitTests() =
         Assert.That(
             claims |> Seq.map (fun claim -> claim.Type),
             Is.EquivalentTo(
-                [
-                    PrincipalMapper.GraceUserIdClaim
-                    PrincipalMapper.GraceClaim
-                    PrincipalMapper.GraceClaim
-                    PrincipalMapper.GraceGroupIdClaim
-                ]
+                [ PrincipalMapper.GraceUserIdClaim
+                  PrincipalMapper.GraceClaim
+                  PrincipalMapper.GraceClaim
+                  PrincipalMapper.GraceGroupIdClaim ]
             )
         )
 
-        Assert.That(
-            claims
-            |> Seq.exists (fun claim -> claim.Value = "user-1"),
-            Is.True
-        )
+        Assert.That(claims |> Seq.exists (fun claim -> claim.Value = "user-1"), Is.True)
 
     [<Test>]
     member _.TelemetryClaimsAllowlistRedactsIdentityAndDropsSecretBearingClaims() =
         let principal =
-            createPrincipal [ Claim(PrincipalMapper.GraceUserIdClaim, "user-secret-id")
-                              Claim(PrincipalMapper.GraceClaim, "RepositoryRead")
-                              Claim(PrincipalMapper.GraceGroupIdClaim, "group-1")
-                              Claim("roles", "Admin")
-                              Claim("email", "person@example.test")
-                              Claim("access_token", "raw-provider-token")
-                              Claim("Authorization", "Bearer raw-pat") ]
+            createPrincipal
+                [ Claim(PrincipalMapper.GraceUserIdClaim, "user-secret-id")
+                  Claim(PrincipalMapper.GraceClaim, "RepositoryRead")
+                  Claim(PrincipalMapper.GraceGroupIdClaim, "group-1")
+                  Claim("roles", "Admin")
+                  Claim("email", "person@example.test")
+                  Claim("access_token", "raw-provider-token")
+                  Claim("Authorization", "Bearer raw-pat") ]
 
         let claimsTag = TelemetryEnrichment.safeClaimsTag principal
 
@@ -111,6 +106,25 @@ type SecurityPrivacyUnitTests() =
         Assert.That(cookie, Is.EqualTo("[REDACTED]"))
         Assert.That(customToken, Is.EqualTo("[REDACTED]"))
         Assert.That(safe, Is.EqualTo("correlation-1"))
+
+    [<TestCase("X-API-Key", "provider-key")>]
+    [<TestCase("Api-Key", "provider-key")>]
+    [<TestCase("OpenAI-Api-Key", "provider-key")>]
+    [<TestCase("Client-Secret", "client-secret")>]
+    [<TestCase("client_secret", "client-secret")>]
+    [<TestCase("X-Signing-Secret", "signing-secret")>]
+    [<TestCase("X-Grace-Webhook-Signature", "sha256=signature")>]
+    [<TestCase("X-Amz-Credential", "aws-credential")>]
+    member _.RequestHeaderRedactionCoversProviderKeysSigningSecretsSignaturesAndCredentials(headerName: string, value: string) =
+        let redacted = RequestHeaderRedaction.redactHeaderValue headerName value
+
+        Assert.That(redacted, Is.EqualTo("[REDACTED]"))
+
+    [<Test>]
+    member _.RequestHeaderRedactionKeepsUsefulNonSensitiveHeadersVisible() =
+        let correlationId = RequestHeaderRedaction.redactHeaderValue "X-Correlation-Id" "correlation-1"
+
+        Assert.That(correlationId, Is.EqualTo("correlation-1"))
 
     [<TestCase(ValidateIdsDecisions.EntityKind.Owner, true)>]
     [<TestCase(ValidateIdsDecisions.EntityKind.Owner, false)>]

@@ -14,9 +14,16 @@ open System.Text
 module RequestHeaderRedaction =
 
     let isSensitiveHeader (name: string) =
+        let normalizedName = name.Replace("-", String.Empty).Replace("_", String.Empty)
+
         name.Equals("Authorization", StringComparison.OrdinalIgnoreCase)
         || name.Equals("Cookie", StringComparison.OrdinalIgnoreCase)
-        || name.Contains("token", StringComparison.OrdinalIgnoreCase)
+        || normalizedName.Contains("token", StringComparison.OrdinalIgnoreCase)
+        || normalizedName.Contains("apikey", StringComparison.OrdinalIgnoreCase)
+        || normalizedName.Contains("clientsecret", StringComparison.OrdinalIgnoreCase)
+        || normalizedName.Contains("signingsecret", StringComparison.OrdinalIgnoreCase)
+        || normalizedName.Contains("signature", StringComparison.OrdinalIgnoreCase)
+        || normalizedName.Contains("credential", StringComparison.OrdinalIgnoreCase)
 
     let redactHeaderValue name value = if isSensitiveHeader name then "[REDACTED]" else value
 
@@ -32,7 +39,7 @@ type LogRequestHeadersMiddleware(next: RequestDelegate) =
 #if DEBUG
         let middlewareTraceHeader = context.Request.Headers["X-MiddlewareTraceIn"]
 
-        context.Request.Headers[ "X-MiddlewareTraceIn" ] <- $"{middlewareTraceHeader}{nameof LogRequestHeadersMiddleware} --> "
+        context.Request.Headers["X-MiddlewareTraceIn"] <- $"{middlewareTraceHeader}{nameof LogRequestHeadersMiddleware} --> "
 #endif
         //let path = context.Request.Path.ToString()
 
@@ -61,6 +68,6 @@ type LogRequestHeadersMiddleware(next: RequestDelegate) =
 #if DEBUG
         let middlewareTraceOutHeader = context.Request.Headers["X-MiddlewareTraceOut"]
 
-        context.Request.Headers[ "X-MiddlewareTraceOut" ] <- $"{middlewareTraceOutHeader}{nameof LogRequestHeadersMiddleware} --> "
+        context.Request.Headers["X-MiddlewareTraceOut"] <- $"{middlewareTraceOutHeader}{nameof LogRequestHeadersMiddleware} --> "
 #endif
         nextTask
