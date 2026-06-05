@@ -241,17 +241,26 @@ module GraceCommand =
                     token.Equals(OptionName.Output, StringComparison.OrdinalIgnoreCase)
                     || token.Equals("-o", StringComparison.OrdinalIgnoreCase)
                 then
-                    index + 1 < tokens.Length
-                    && tokens[index + 1]
-                        .Equals("Json", StringComparison.OrdinalIgnoreCase)
+                    if index + 1 < tokens.Length
+                       && tokens[index + 1]
+                           .Equals("Json", StringComparison.OrdinalIgnoreCase) then
+                        true
+                    else
+                        loop (index + 2)
                 elif token.StartsWith(outputEqualsPrefix, StringComparison.OrdinalIgnoreCase) then
-                    token
+                    if token
                         .Substring(outputEqualsPrefix.Length)
-                        .Equals("Json", StringComparison.OrdinalIgnoreCase)
+                           .Equals("Json", StringComparison.OrdinalIgnoreCase) then
+                        true
+                    else
+                        loop (index + 1)
                 elif token.StartsWith("-o=", StringComparison.OrdinalIgnoreCase) then
-                    token
+                    if token
                         .Substring("-o=".Length)
-                        .Equals("Json", StringComparison.OrdinalIgnoreCase)
+                           .Equals("Json", StringComparison.OrdinalIgnoreCase) then
+                        true
+                    else
+                        loop (index + 1)
                 else
                     loop (index + 1)
 

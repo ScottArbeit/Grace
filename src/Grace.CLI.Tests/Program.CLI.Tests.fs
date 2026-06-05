@@ -545,6 +545,21 @@ module HelpDoesNotReadConfigTests =
             |> should contain "graceconfig.json")
 
     [<Test>]
+    let ``earlier non-json output token does not mask later json intent`` () =
+        withTempDir (fun _ ->
+            let exitCode, standardOut, standardError =
+                runWithCapturedStdoutAndStderr [| "--output"
+                                                  "Normal"
+                                                  "--output=Json"
+                                                  "branch"
+                                                  "get" |]
+
+            exitCode |> should equal -1
+            standardError |> should equal String.Empty
+
+            assertJsonErrorOutput standardOut |> ignore)
+
+    [<Test>]
     let ``parse error in json mode emits one error document on stdout`` () =
         withTempDir (fun _ ->
             let exitCode, standardOut, standardError =
