@@ -69,9 +69,8 @@ When using an epic integration branch:
 - Treat each sub-issue as complete when it is reviewed, validated, merged to the epic branch, and cleaned up.
 - Treat the epic as complete only after the final epic-to-`main` pull request is reviewed, validated against current
   `origin/main`, merged to `main`, and cleaned up.
-- Manually link sub-issue pull requests or branches to their issues when needed. GitHub closing keywords are only
-  reliable for pull requests targeting the repository's default branch, so sub-issue closure may need to happen through
-  explicit issue updates or the final epic-to-`main` pull request.
+- Make sure every sub-issue pull request links to its sub-issue in the pull request body. Use non-closing wording for
+  pull requests that target the epic branch, then close the sub-issue manually after merge when the slice is complete.
 
 The parent issue must also include a sub-issue checklist. As sub-issues complete, update that checklist so completed
 sub-issues are checked.
@@ -511,6 +510,12 @@ Keep documentation close to the behavior it describes. Use the root `README.md` 
 for project-specific conventions.
 
 ## Review And Integration
+
+Every pull request must link its related GitHub issue in the pull request body at creation time. For pull requests
+targeting `main`, use a GitHub closing keyword such as `Closes #123` when the merge should close the issue. For pull
+requests targeting an epic integration branch, use non-closing wording such as `Related to #123` or `Part of #249`;
+GitHub closing keywords are only reliable for the repository's default branch, so close the sub-issue manually after the
+pull request merges to the epic branch.
 
 When opening or updating a pull request, include the evidence available at that point and keep adding standalone
 comments as the review loop continues:
