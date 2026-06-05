@@ -209,6 +209,11 @@ type DirectoryVersionServer() =
 
             let! fetchedRoot = DirectoryVersionServerTestHelpers.getDirectoryVersionAsync repositoryId rootId
             DirectoryVersionServerTestHelpers.assertDirectoryVersionDto root fetchedRoot
+            Assert.That(fetchedRoot.DirectoryVersion.Directories, Has.Count.EqualTo(1))
+            Assert.That(fetchedRoot.DirectoryVersion.Directories, Does.Contain(childId))
+
+            let! fetchedChild = DirectoryVersionServerTestHelpers.getDirectoryVersionAsync repositoryId childId
+            DirectoryVersionServerTestHelpers.assertDirectoryVersionDto child fetchedChild
 
             let missingId = Guid.NewGuid()
 
