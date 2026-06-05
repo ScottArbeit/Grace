@@ -45,6 +45,10 @@ module ValidateIdsDecisions =
         | Create = 0
         | Existing = 1
 
+    type BadRequestResponseContract = { StatusCode: int; Error: GraceError }
+
+    let badRequestResponse error = { StatusCode = StatusCodes.Status400BadRequest; Error = error }
+
     /// Paths that we want to ignore, because they won't have Ids and Names in the body.
     let ignoredPaths =
         [
