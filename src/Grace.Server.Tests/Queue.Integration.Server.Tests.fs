@@ -177,7 +177,7 @@ module private QueueIntegrationTestHelpers =
             return policySnapshotId
         }
 
-    let getQueueAsync (repositoryId: string) (branchId: string) =
+    let getQueueWithBodyAsync (repositoryId: string) (branchId: string) =
         task {
             let! response = postAsync "/queue/status" (createJsonContent (queueStatusParameters repositoryId branchId))
             let! body = response.Content.ReadAsStringAsync()
@@ -196,18 +196,31 @@ module private QueueIntegrationTestHelpers =
                     body
 
             try
-                return deserialize<PromotionQueue> queueJson
+                return deserialize<PromotionQueue> queueJson, body
             with
             | ex ->
                 Assert.Fail($"Expected queue status JSON to deserialize as PromotionQueue. Body: {body}. Error: {ex.Message}")
-                return PromotionQueue.Default
+                return PromotionQueue.Default, body
         }
 
-    let postOkAsync (route: string) (content: HttpContent) =
+    let getQueueAsync repositoryId branchId =
+        task {
+            let! queue, _body = getQueueWithBodyAsync repositoryId branchId
+            return queue
+        }
+
+    let postOkWithBodyAsync (route: string) (content: HttpContent) =
         task {
             let! response = postAsync route content
             let! body = response.Content.ReadAsStringAsync()
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK), body)
+            return body
+        }
+
+    let postOkAsync route content =
+        task {
+            let! _body = postOkWithBodyAsync route content
+            return ()
         }
 
     let assertBadRequestContainsAsync expectedText (response: HttpResponseMessage) =
@@ -229,16 +242,17 @@ type QueueApiIntegrationTests() =
             let! policySnapshotId = QueueIntegrationTestHelpers.seedPolicySnapshotAsync repositoryId branchId
             let! promotionSetId = QueueIntegrationTestHelpers.createPromotionSetAsync repositoryId branchId
 
-            do!
-                QueueIntegrationTestHelpers.postOkAsync
+            let! enqueueBody =
+                QueueIntegrationTestHelpers.postOkWithBodyAsync
                     "/queue/enqueue"
                     (createJsonContent (QueueIntegrationTestHelpers.enqueueParameters repositoryId branchId promotionSetId policySnapshotId))
 
-            let! enqueued = QueueIntegrationTestHelpers.getQueueAsync repositoryId branchId
-            Assert.That(enqueued.TargetBranchId, Is.EqualTo(branch.BranchId))
-            Assert.That(enqueued.PolicySnapshotId, Is.EqualTo(PolicySnapshotId policySnapshotId))
-            Assert.That(enqueued.State, Is.EqualTo(QueueState.Idle))
-            Assert.That(enqueued.PromotionSetIds, Does.Contain(Guid.Parse promotionSetId))
+            let! enqueued, enqueuedBody = QueueIntegrationTestHelpers.getQueueWithBodyAsync repositoryId branchId
+            let lifecycleMessage = $"Enqueue body: {enqueueBody}{Environment.NewLine}Status body: {enqueuedBody}"
+            Assert.That(enqueued.TargetBranchId, Is.EqualTo(branch.BranchId), lifecycleMessage)
+            Assert.That(enqueued.PolicySnapshotId, Is.EqualTo(PolicySnapshotId policySnapshotId), lifecycleMessage)
+            Assert.That(enqueued.State, Is.EqualTo(QueueState.Idle), lifecycleMessage)
+            Assert.That(enqueued.PromotionSetIds, Does.Contain(Guid.Parse promotionSetId), lifecycleMessage)
 
             do!
                 QueueIntegrationTestHelpers.postOkAsync

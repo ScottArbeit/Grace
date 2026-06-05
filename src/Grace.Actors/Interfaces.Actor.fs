@@ -414,8 +414,26 @@ module Interfaces =
         /// Returns the current state of the promotion queue.
         abstract member Get: correlationId: CorrelationId -> Task<PromotionQueue>
 
+        /// Returns the current state of the promotion queue as JSON for route callers.
+        abstract member GetForRoute: correlationId: CorrelationId -> Task<string>
+
         /// Returns the list of events handled by this promotion queue.
         abstract member GetEvents: correlationId: CorrelationId -> Task<IReadOnlyList<PromotionQueueEvent>>
+
+        /// Initializes the queue from route-supplied primitive parameters.
+        abstract member InitializeForRoute: targetBranchId: BranchId -> policySnapshotId: string -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
+
+        /// Enqueues a promotion set from route-supplied primitive parameters.
+        abstract member EnqueueForRoute: promotionSetId: PromotionSetId -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
+
+        /// Dequeues a promotion set from route-supplied primitive parameters.
+        abstract member DequeueForRoute: promotionSetId: PromotionSetId -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
+
+        /// Pauses the queue through the actor-backed route path.
+        abstract member PauseForRoute: eventMetadata: EventMetadata -> Task<GraceResult<string>>
+
+        /// Resumes the queue through the actor-backed route path.
+        abstract member ResumeForRoute: eventMetadata: EventMetadata -> Task<GraceResult<string>>
 
         /// Validates incoming commands and converts them to events that are stored in the database.
         abstract member Handle: command: PromotionQueueCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
