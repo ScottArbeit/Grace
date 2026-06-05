@@ -562,6 +562,38 @@ type AccessControl() =
             return returnValue.ReturnValue
         }
 
+    let revokeRoleAsync (client: HttpClient) ownerId organizationId repositoryId scopeKind roleId principalId =
+        task {
+            let parameters = Parameters.Access.RevokeRoleParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.PrincipalType <- "User"
+            parameters.PrincipalId <- principalId
+            parameters.ScopeKind <- scopeKind
+            parameters.RoleId <- roleId
+            parameters.CorrelationId <- generateCorrelationId ()
+
+            let! response = client.PostAsync("/access/revokeRole", createJsonContent parameters)
+            response.EnsureSuccessStatusCode() |> ignore
+        }
+
+    let listRoleAssignmentsAsync (client: HttpClient) ownerId organizationId repositoryId scopeKind =
+        task {
+            let parameters = Parameters.Access.ListRoleAssignmentsParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.ScopeKind <- scopeKind
+            parameters.CorrelationId <- generateCorrelationId ()
+
+            let! response = client.PostAsync("/access/listRoleAssignments", createJsonContent parameters)
+            let! responseText = response.Content.ReadAsStringAsync()
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK), responseText)
+            let returnValue = deserialize<GraceReturnValue<RoleAssignment list>> responseText
+            return returnValue.ReturnValue
+        }
+
     let createClientWithClaims (claims: string list) =
         let client = new HttpClient()
         client.BaseAddress <- Client.BaseAddress
@@ -624,6 +656,60 @@ type AccessControl() =
             match repoBRead with
             | Allowed _ -> ()
             | Denied reason -> Assert.Fail($"Expected repoB read to be allowed. {reason}")
+        }
+
+    [<Test>]
+    member _.GrantListRevokeUpdatesStoredAssignmentsAndPermissionCheck() =
+        task {
+            let! organizationId = createOrganizationAsync Client
+            let! repositoryId = createRepositoryAsync Client organizationId
+            let principalId = $"{Guid.NewGuid()}"
+
+            do! grantRoleAsync Client ownerId organizationId "" "org" "OrgAdmin" testUserId
+            do! grantRoleAsync Client ownerId organizationId repositoryId "repo" "RepoReader" principalId
+
+            let! afterGrant = listRoleAssignmentsAsync Client ownerId organizationId repositoryId "repo"
+
+            let granted =
+                afterGrant
+                |> List.tryFind (fun assignment ->
+                    assignment.Principal.PrincipalId = principalId
+                    && assignment.RoleId = "RepoReader"
+                    && assignment.Source = "test")
+
+            Assert.That(granted.IsSome, Is.True)
+
+            match granted.Value.Scope with
+            | Scope.Repository (storedOwnerId, storedOrganizationId, storedRepositoryId) ->
+                Assert.That(storedOwnerId, Is.EqualTo(Guid.Parse(ownerId)))
+                Assert.That(storedOrganizationId, Is.EqualTo(Guid.Parse(organizationId)))
+                Assert.That(storedRepositoryId, Is.EqualTo(Guid.Parse(repositoryId)))
+            | other -> Assert.Fail($"Expected repository scope, got {other}.")
+
+            use principalClient = createClientWithUserId principalId
+            let! allowedPermission = checkPermissionAsync principalClient ownerId organizationId repositoryId "repo" "RepoRead" ""
+
+            match allowedPermission with
+            | Allowed reason -> Assert.That(reason, Does.Contain("RepoRead"))
+            | Denied reason -> Assert.Fail($"Expected repo read to be allowed after grant. {reason}")
+
+            do! revokeRoleAsync Client ownerId organizationId repositoryId "repo" "RepoReader" principalId
+
+            let! afterRevoke = listRoleAssignmentsAsync Client ownerId organizationId repositoryId "repo"
+
+            let stillPresent =
+                afterRevoke
+                |> List.exists (fun assignment ->
+                    assignment.Principal.PrincipalId = principalId
+                    && assignment.RoleId = "RepoReader")
+
+            Assert.That(stillPresent, Is.False)
+
+            let! deniedPermission = checkPermissionAsync principalClient ownerId organizationId repositoryId "repo" "RepoRead" ""
+
+            match deniedPermission with
+            | Denied reason -> Assert.That(reason, Does.Contain("RepoRead"))
+            | Allowed reason -> Assert.Fail($"Expected repo read to be denied after revoke. {reason}")
         }
 
     [<Test>]

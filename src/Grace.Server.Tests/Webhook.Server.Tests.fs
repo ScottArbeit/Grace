@@ -116,6 +116,16 @@ module private WebhookTestHelpers =
             return! deserializeContent<WebhookRule> createResponse
         }
 
+    let assertRuleMatchesScope (repositoryId: string) (branchId: string) (rule: WebhookRule) =
+        Assert.That(rule.Class, Is.EqualTo(nameof WebhookRule))
+        Assert.That(rule.Scope.OwnerId, Is.EqualTo(Guid.Parse(ownerId)))
+        Assert.That(rule.Scope.OrganizationId, Is.EqualTo(Guid.Parse(organizationId)))
+        Assert.That(rule.Scope.RepositoryId, Is.EqualTo(Guid.Parse(repositoryId)))
+        Assert.That(rule.Scope.TargetBranchId, Is.EqualTo(Some(Guid.Parse(branchId))))
+        Assert.That(rule.EventName, Is.EqualTo(ExternalWebhookEventRegistry.PromotionSetAppliedName))
+        Assert.That(rule.EventVersion, Is.EqualTo(1))
+        Assert.That(rule.SigningSecretVersion, Is.EqualTo("test-secret-v1"))
+
 [<NonParallelizable>]
 type WebhookApiIntegrationTests() =
 
@@ -138,6 +148,8 @@ type WebhookApiIntegrationTests() =
             Assert.That(created.Status, Is.EqualTo(WebhookRuleStatus.Disabled))
             Assert.That(created.Url.Url, Is.EqualTo("https://example.com/grace-webhook"))
             Assert.That(created.Url.Safety, Is.EqualTo(OutboundUrlSafety.PublicHttps))
+            Assert.That(created.CreatedBy, Is.EqualTo(adminUser))
+            WebhookTestHelpers.assertRuleMatchesScope repositoryId branchId created
 
             let showParameters =
                 WebhookTestHelpers.ruleIdParameters<Parameters.Webhook.ShowWebhookRuleParameters> repositoryId branchId (created.WebhookRuleId.ToString())
@@ -147,6 +159,29 @@ type WebhookApiIntegrationTests() =
 
             let! enableResponse = adminClient.PostAsync("/webhook/rule/enable", createJsonContent enableParameters)
             Assert.That(enableResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+            let! enabled = deserializeContent<WebhookRule> enableResponse
+            Assert.That(enabled.Status, Is.EqualTo(WebhookRuleStatus.Enabled))
+            WebhookTestHelpers.assertRuleMatchesScope repositoryId branchId enabled
+
+            let! showEnabledResponse = adminClient.PostAsync("/webhook/rule/show", createJsonContent showParameters)
+            Assert.That(showEnabledResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+            let! shownEnabled = deserializeContent<WebhookRule> showEnabledResponse
+            Assert.That(shownEnabled.WebhookRuleId, Is.EqualTo(created.WebhookRuleId))
+            Assert.That(shownEnabled.Status, Is.EqualTo(WebhookRuleStatus.Enabled))
+            WebhookTestHelpers.assertRuleMatchesScope repositoryId branchId shownEnabled
+
+            let! listRulesResponse =
+                adminClient.PostAsync("/webhook/rule/list", createJsonContent (WebhookTestHelpers.listRuleParameters repositoryId branchId))
+
+            Assert.That(listRulesResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+            let! listedRules = deserializeContent<WebhookRule array> listRulesResponse
+
+            let listedRule =
+                listedRules
+                |> Array.find (fun rule -> rule.WebhookRuleId = created.WebhookRuleId)
+
+            Assert.That(listedRule.Status, Is.EqualTo(WebhookRuleStatus.Enabled))
+            WebhookTestHelpers.assertRuleMatchesScope repositoryId branchId listedRule
 
             let testParameters =
                 WebhookTestHelpers.ruleIdParameters<Parameters.Webhook.TestWebhookRuleParameters> repositoryId branchId (created.WebhookRuleId.ToString())
@@ -159,6 +194,9 @@ type WebhookApiIntegrationTests() =
             Assert.That(testDelivery.Status, Is.EqualTo(WebhookDeliveryStatus.Pending))
             Assert.That(testDelivery.WebhookRuleId, Is.EqualTo(created.WebhookRuleId))
             Assert.That(testDelivery.DedupeKey, Is.EqualTo("test-dedupe-key"))
+            Assert.That(testDelivery.EventName, Is.EqualTo(ExternalWebhookEventRegistry.PromotionSetAppliedName))
+            Assert.That(testDelivery.EventVersion, Is.EqualTo(1))
+            Assert.That(testDelivery.AttemptCount, Is.EqualTo(0))
 
             let! listResponse =
                 adminClient.PostAsync(
@@ -182,6 +220,10 @@ type WebhookApiIntegrationTests() =
                 )
 
             Assert.That(showDeliveryResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+            let! shownDelivery = deserializeContent<WebhookDelivery> showDeliveryResponse
+            Assert.That(shownDelivery.WebhookDeliveryId, Is.EqualTo(testDelivery.WebhookDeliveryId))
+            Assert.That(shownDelivery.WebhookRuleId, Is.EqualTo(created.WebhookRuleId))
+            Assert.That(shownDelivery.DedupeKey, Is.EqualTo(testDelivery.DedupeKey))
 
             let disableParameters =
                 WebhookTestHelpers.ruleIdParameters<Parameters.Webhook.DisableWebhookRuleParameters> repositoryId branchId (created.WebhookRuleId.ToString())
@@ -191,12 +233,19 @@ type WebhookApiIntegrationTests() =
 
             let! showResponse = adminClient.PostAsync("/webhook/rule/show", createJsonContent showParameters)
             Assert.That(showResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+            let! shownBeforeDisable = deserializeContent<WebhookRule> showResponse
+            Assert.That(shownBeforeDisable.Status, Is.EqualTo(WebhookRuleStatus.Enabled))
 
             let! disableResponse = adminClient.PostAsync("/webhook/rule/disable", createJsonContent disableParameters)
             Assert.That(disableResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+            let! disabled = deserializeContent<WebhookRule> disableResponse
+            Assert.That(disabled.Status, Is.EqualTo(WebhookRuleStatus.Disabled))
+            Assert.That(disabled.UpdatedAt.IsSome, Is.True)
 
             let! deleteResponse = adminClient.PostAsync("/webhook/rule/delete", createJsonContent deleteParameters)
             Assert.That(deleteResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+            let! deleted = deserializeContent<WebhookRule> deleteResponse
+            Assert.That(deleted.Status, Is.EqualTo(WebhookRuleStatus.Deleted))
         }
 
     [<Test>]
