@@ -20,7 +20,7 @@ open System.Threading.Tasks
 
 module Artifact =
 
-    type ArtifactActor([<PersistentState(StateName.Artifact, Constants.GraceActorStorage)>] state: IPersistentState<List<ArtifactEvent>>) =
+    type ArtifactActor([<PersistentState(StateName.Artifact, Constants.GraceActorStorage)>] eventState: IPersistentState<List<ArtifactEvent>>) =
         inherit Grain()
 
         static let actorName = ActorName.Artifact
@@ -34,10 +34,10 @@ module Artifact =
         override this.OnActivateAsync(ct) =
             let activateStartTime = getCurrentInstant ()
 
-            logActorActivation log this.IdentityString activateStartTime (getActorActivationMessage state.RecordExists)
+            logActorActivation log this.IdentityString activateStartTime (getActorActivationMessage eventState.RecordExists)
 
             artifact <-
-                state.State
+                eventState.State
                 |> Seq.fold (fun dto event -> ArtifactMetadata.UpdateDto event dto) artifact
 
             Task.CompletedTask
@@ -47,12 +47,14 @@ module Artifact =
                 let correlationId = artifactEvent.Metadata.CorrelationId
 
                 try
-                    state.State.Add(artifactEvent)
-                    do! state.WriteStateAsync()
-
-                    artifact <-
+                    let updatedArtifact =
                         artifact
                         |> ArtifactMetadata.UpdateDto artifactEvent
+
+                    eventState.State.Add(artifactEvent)
+                    do! eventState.WriteStateAsync()
+
+                    artifact <- updatedArtifact
 
                     let graceEvent = GraceEvent.ArtifactEvent artifactEvent
                     do! publishGraceEvent graceEvent artifactEvent.Metadata
@@ -102,33 +104,41 @@ module Artifact =
             member this.GetEvents correlationId =
                 this.correlationId <- correlationId
 
-                state.State :> IReadOnlyList<ArtifactEvent>
+                eventState.State :> IReadOnlyList<ArtifactEvent>
                 |> returnTask
 
             member this.Handle command metadata =
                 let isValid (artifactCommand: ArtifactCommand) (eventMetadata: EventMetadata) =
                     task {
-                        if state.State.Exists(fun ev -> ev.Metadata.CorrelationId = eventMetadata.CorrelationId) then
+                        if eventState.State.Exists(fun ev -> ev.Metadata.CorrelationId = eventMetadata.CorrelationId) then
                             return Error(GraceError.Create "Duplicate correlation ID for Artifact command." eventMetadata.CorrelationId)
                         else
-                            match artifactCommand with
-                            | ArtifactCommand.Create _ when artifact.ArtifactId <> ArtifactId.Empty ->
+                            match artifactCommand.Command with
+                            | command when not (String.Equals(command, ArtifactCommandNames.Create, StringComparison.OrdinalIgnoreCase)) ->
+                                return
+                                    Error(
+                                        (GraceError.Create "Unsupported Artifact command." eventMetadata.CorrelationId)
+                                            .enhance ("Command", artifactCommand.Command)
+                                    )
+                            | command when
+                                String.Equals(command, ArtifactCommandNames.Create, StringComparison.OrdinalIgnoreCase)
+                                && artifact.ArtifactId <> ArtifactId.Empty
+                                ->
                                 return Error(GraceError.Create "Artifact already exists." eventMetadata.CorrelationId)
                             | _ -> return Ok artifactCommand
                     }
 
                 let processCommand (artifactCommand: ArtifactCommand) (eventMetadata: EventMetadata) =
                     task {
-                        let eventType =
-                            match artifactCommand with
-                            | ArtifactCommand.Create artifactDto -> ArtifactEventType.Created artifactDto
+                        let artifact = artifactCommand.ToCreated()
 
-                        let artifactEvent: ArtifactEvent = { Event = eventType; Metadata = eventMetadata }
+                        let artifactEvent = ArtifactEvent.FromCreated(ArtifactEventNames.Created, artifact, eventMetadata)
+
                         return! this.ApplyEvent artifactEvent
                     }
 
                 task {
-                    currentCommand <- getDiscriminatedUnionCaseName command
+                    currentCommand <- command.Command
                     this.correlationId <- metadata.CorrelationId
 
                     match! isValid command metadata with

@@ -583,7 +583,7 @@ module WorkItem =
 
             let! persistedArtifactMetadataResult =
                 task {
-                    match! artifactActorProxy.Handle (ArtifactCommand.Create artifactMetadata) metadata with
+                    match! artifactActorProxy.Handle (ArtifactCommand.Create(ArtifactCreated.FromMetadata artifactMetadata)) metadata with
                     | Ok _ -> return Ok artifactMetadata
                     | Error graceError when isRecoverableArtifactCreateError graceError ->
                         match! artifactActorProxy.Get metadata.CorrelationId with

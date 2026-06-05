@@ -215,22 +215,25 @@ type EndpointAuthorizationManifestTests() =
 
     [<Test>]
     member _.SelectedWorkItemRoutesUseExpectedPolicies() =
-        assertRouteSecurity "POST" "/work/create" (Authorized(Operation.RepoWrite, ResourceKind.Repository))
-
         [
+            "POST", "/work/create"
             "POST", "/work/add-summary"
-            "POST", "/work/get"
             "POST", "/work/link/artifact"
             "POST", "/work/link/promotion-set"
             "POST", "/work/link/reference"
-            "POST", "/work/links/list"
-            "POST", "/work/attachments/list"
-            "POST", "/work/attachments/show"
-            "POST", "/work/attachments/download"
             "POST", "/work/links/remove/artifact"
             "POST", "/work/links/remove/artifact-type"
             "POST", "/work/links/remove/promotion-set"
             "POST", "/work/links/remove/reference"
             "POST", "/work/update"
         ]
-        |> assertRoutesUseSecurity Authenticated
+        |> assertRoutesUseSecurity (Authorized(Operation.RepoWrite, ResourceKind.Repository))
+
+        [
+            "POST", "/work/get"
+            "POST", "/work/links/list"
+            "POST", "/work/attachments/list"
+            "POST", "/work/attachments/show"
+            "POST", "/work/attachments/download"
+        ]
+        |> assertRoutesUseSecurity (Authorized(Operation.RepoRead, ResourceKind.Repository))

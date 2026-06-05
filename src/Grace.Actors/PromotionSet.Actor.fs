@@ -1457,7 +1457,8 @@ module PromotionSet =
 
                     let artifactActorProxy = Artifact.CreateActorProxy artifactId promotionSetDto.RepositoryId this.correlationId
 
-                    match! artifactActorProxy.Handle (ArtifactCommand.Create artifactMetadata) (this.WithActorMetadata metadata) with
+                    match! artifactActorProxy.Handle (ArtifactCommand.Create(ArtifactCreated.FromMetadata artifactMetadata)) (this.WithActorMetadata metadata)
+                        with
                     | Ok _ ->
                         match! this.UploadArtifactPayload(blobPath, reportJson, metadata) with
                         | Ok () -> return Option.Some artifactId
