@@ -1280,7 +1280,10 @@ module Application =
                                |> addMetadata typeof<Policy.GetPolicyParameters>
 
                                route "/acknowledge" Policy.Acknowledge
-                               |> addMetadata typeof<Policy.AcknowledgePolicyParameters> ]
+                               |> addMetadata typeof<Policy.AcknowledgePolicyParameters>
+
+                               route "/_seedSnapshot" Policy.SeedSnapshot
+                               |> addMetadata typeof<Policy.SeedPolicySnapshotParameters> ]
                     ]
                 subRoute
                     "/review"

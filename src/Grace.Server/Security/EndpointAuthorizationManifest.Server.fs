@@ -152,6 +152,7 @@ module EndpointAuthorizationManifest =
             endpoint "POST" "/owner/undelete" Authenticated
             endpoint "POST" "/policy/acknowledge" Authenticated
             endpoint "POST" "/policy/current" Authenticated
+            endpoint "POST" "/policy/_seedSnapshot" Authenticated
             endpoint "POST" "/queue/dequeue" Authenticated
             endpoint "POST" "/queue/enqueue" Authenticated
             endpoint "POST" "/queue/pause" Authenticated

@@ -145,6 +145,20 @@ type EndpointAuthorizationManifestTests() =
         assertRouteSecurity "POST" "/approval/request/_seedGenerated" Authenticated
 
     [<Test>]
+    member _.PolicyAndQueueRoutesUseAuthenticatedAccess() =
+        [
+            "POST", "/policy/acknowledge"
+            "POST", "/policy/current"
+            "POST", "/policy/_seedSnapshot"
+            "POST", "/queue/dequeue"
+            "POST", "/queue/enqueue"
+            "POST", "/queue/pause"
+            "POST", "/queue/resume"
+            "POST", "/queue/status"
+        ]
+        |> assertRoutesUseSecurity Authenticated
+
+    [<Test>]
     member _.WebhookRoutesUseExpectedRepositoryPolicies() =
         [
             "POST", "/webhook/rule/create"
