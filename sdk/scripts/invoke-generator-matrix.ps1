@@ -403,6 +403,34 @@ if (-not $SkipGeneration) {
         'Facade required; raw Rust surface is broad and not ready for stable package publication.' `
         $openApiRustPath))
 }
+else {
+    $existingEvidencePath = Join-Path $matrixRoot 'generator-matrix-evidence.json'
+    if (-not (Test-Path -LiteralPath $existingEvidencePath -PathType Leaf)) {
+        throw "Cannot skip generation because existing matrix evidence is missing: $existingEvidencePath"
+    }
+
+    $existingEvidence = Get-Content -LiteralPath $existingEvidencePath -Raw | ConvertFrom-Json
+    $existingProjectionHash = [string] $existingEvidence.sourceProjectionSha256
+    $currentProjectionHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $projection).Hash.ToLowerInvariant()
+    if ($existingProjectionHash.ToLowerInvariant() -ne $currentProjectionHash) {
+        throw "Cannot skip generation because existing matrix evidence is stale for $projection. Expected $existingProjectionHash, actual $currentProjectionHash."
+    }
+
+    foreach ($entry in @($existingEvidence.matrix | Where-Object { $_.generator -eq 'OpenAPI Generator' })) {
+        $entries.Add([ordered]@{
+            generator = [string] $entry.generator
+            language = [string] $entry.language
+            command = [string] $entry.command
+            exitCode = [int] $entry.exitCode
+            outcome = [string] $entry.outcome
+            conclusion = [string] $entry.conclusion
+            outputPath = [string] $entry.outputPath
+            evidence = @($entry.evidence)
+            transportPolicySupport = [string] $entry.transportPolicySupport
+            facadeFit = [string] $entry.facadeFit
+        })
+    }
+}
 
 if (-not $SkipProbes) {
     $npmInstall = Invoke-CapturedNative $npmExecutable @('install', '--ignore-scripts') `
@@ -545,6 +573,28 @@ else {
     $residualRisks.Add('Rust feasibility is not proven by this run until the Rust cargo-check probe passes.')
 }
 
+$acceptedTier = if ($acceptanceFailures.Count -eq 0) {
+    'raw-openapi-generator-behind-facades'
+}
+else {
+    'none'
+}
+
+$pendingSdkGradeRationale = if ($acceptanceFailures.Count -eq 0) {
+    'OpenAPI Generator TypeScript, Python, and Rust compile/import probes pass only with --skip-validate-spec; Kiota and NSwag remain rejected on schema-shape debt, so no SDK-grade generated-client package is accepted.'
+}
+else {
+    'At least one accepted OpenAPI Generator raw-client proof point failed generation or compile/import probing; no generated-client tier is accepted by this run.'
+}
+
+$traceability = [ordered]@{
+    'B-043' = 'OpenAPI proof now validates committed generator matrix evidence as the raw generated-client acceptance path.'
+    'B-044' = 'Stable SDK package export/import proof remains pending until package metadata, facade exports, import execution, and generator isolation are verified.'
+    'drift-002' = 'Canonical source and generator projection SHA-256 values are rechecked before accepting matrix evidence.'
+    'drift-006' = 'Kiota and NSwag rejection evidence is retained and prevents any SDK-grade generated-client claim.'
+    'drift-008' = 'OpenAPI Generator TypeScript, Python, and Rust compile/import probes define the accepted guardrailed raw-client tier.'
+}
+
 $evidence = [ordered]@{
     schemaVersion = 1
     issue = 221
@@ -556,6 +606,10 @@ $evidence = [ordered]@{
     probes = $probes
     deterministicRegeneration = $deterministicRegeneration
     overallConclusion = $overallConclusion
+    acceptedTier = $acceptedTier
+    sdkGradeGeneratedClientAccepted = $false
+    pendingSdkGradeRationale = $pendingSdkGradeRationale
+    traceability = $traceability
     residualRisks = @($residualRisks.ToArray())
 }
 

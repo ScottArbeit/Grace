@@ -196,6 +196,16 @@
     }
   ],
   "overallConclusion": "OpenAPI Generator is the only evaluated tool that produced compile/importable TS, Python, and Rust output, and only with --skip-validate-spec. Kiota and NSwag are rejected until OpenAPI schema-shape debt is fixed.",
+  "acceptedTier": "raw-openapi-generator-behind-facades",
+  "sdkGradeGeneratedClientAccepted": false,
+  "pendingSdkGradeRationale": "OpenAPI Generator TypeScript, Python, and Rust compile/import probes pass only with --skip-validate-spec; Kiota and NSwag remain rejected on schema-shape debt, so no SDK-grade generated-client package is accepted.",
+  "traceability": {
+    "B-043": "OpenAPI proof now validates committed generator matrix evidence as the raw generated-client acceptance path.",
+    "B-044": "Stable SDK package export/import proof remains pending until package metadata, facade exports, import execution, and generator isolation are verified.",
+    "drift-002": "Canonical source and generator projection SHA-256 values are rechecked before accepting matrix evidence.",
+    "drift-006": "Kiota and NSwag rejection evidence is retained and prevents any SDK-grade generated-client claim.",
+    "drift-008": "OpenAPI Generator TypeScript, Python, and Rust compile/import probes define the accepted guardrailed raw-client tier."
+  },
   "residualRisks": [
     "OpenAPI validation errors remain in DirectoryVersion, FileVersion, DiffPiece, FileDiff, FileSystemDifference, and GraceResult shapes.",
     "OpenAPI Generator output is accepted only as a raw-client proof point behind facades, not as a stable package surface.",
