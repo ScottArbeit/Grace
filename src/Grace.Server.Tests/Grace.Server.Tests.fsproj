@@ -32,6 +32,10 @@
     <Compile Include="WorkItem.Integration.Server.Tests.fs" />
     <Compile Include="Policy.Server.Tests.fs" />
     <Compile Include="Queue.Integration.Server.Tests.fs" />
+    <Compile Include="PromotionSet.Integration.Server.Tests.fs" />
+    <Compile Include="Review.Integration.Server.Tests.fs" />
+    <Compile Include="ValidationSet.Integration.Server.Tests.fs" />
+    <Compile Include="ValidationResult.Integration.Server.Tests.fs" />
     <Compile Include="Auth.Server.Tests.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
