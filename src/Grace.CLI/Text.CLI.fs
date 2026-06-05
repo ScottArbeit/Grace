@@ -121,6 +121,12 @@ module Text =
         let Output = "--output"
 
         [<Literal>]
+        let Schema = "--schema"
+
+        [<Literal>]
+        let Examples = "--examples"
+
+        [<Literal>]
         let Overwrite = "--overwrite"
 
         [<Literal>]
