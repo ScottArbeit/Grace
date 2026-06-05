@@ -36,6 +36,7 @@
     <Compile Include="WebhookApproval.CLI.Parsing.Tests.fs" />
     <Compile Include="WebhookApproval.CLI.Tests.fs" />
     <Compile Include="PromotionSet.CLI.Tests.fs" />
+    <Compile Include="CommandOutputContract.CLI.Tests.fs" />
     <Compile Include="Watch.Tests.fs" />
     <Compile Include="LocalPlanner.SDK.Tests.fs" />
     <Compile Include="ManifestUpload.SDK.Tests.fs" />
