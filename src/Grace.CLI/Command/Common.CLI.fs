@@ -86,6 +86,26 @@ module Common =
             ))
                 .AcceptOnlyFromAmong(listCases<OutputFormat> ())
 
+        let schema =
+            new Option<bool>(
+                OptionName.Schema,
+                Required = false,
+                Description = "Emit the machine-readable JSON contract schema for the selected command.",
+                Arity = ArgumentArity.Zero,
+                Recursive = true,
+                DefaultValueFactory = (fun _ -> false)
+            )
+
+        let examples =
+            new Option<bool>(
+                OptionName.Examples,
+                Required = false,
+                Description = "Emit representative machine-readable JSON examples for the selected command.",
+                Arity = ArgumentArity.Zero,
+                Recursive = true,
+                DefaultValueFactory = (fun _ -> false)
+            )
+
     /// Gets the correlationId value from the command's ParseResult.
     let getCorrelationId (parseResult: ParseResult) = Services.resolveCorrelationId parseResult
 
