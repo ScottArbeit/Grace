@@ -921,20 +921,37 @@ module GraceCommand =
             else
                 let firstToken = if isCaseInsensitive then args[ 0 ].ToLowerInvariant() else args[0]
 
+                let normalizeOutputEqualsToken (arg: string) =
+                    let outputEqualsPrefix = $"{OptionName.Output}="
+
+                    if arg.StartsWith(outputEqualsPrefix, StringComparison.OrdinalIgnoreCase) then
+                        $"{OptionName.Output}={arg.Substring(outputEqualsPrefix.Length)}"
+                    else
+                        arg
+
                 let properCasedArgs =
                     args
                     |> Array.map (fun arg ->
-                        if isCaseInsensitive && arg.StartsWith("--") then
-                            let equalsIndex = arg.IndexOf("=", StringComparison.Ordinal)
+                        let normalizedArg = normalizeOutputEqualsToken arg
+
+                        if
+                            isCaseInsensitive
+                            && normalizedArg.StartsWith("--")
+                        then
+                            let equalsIndex = normalizedArg.IndexOf("=", StringComparison.Ordinal)
 
                             if equalsIndex > 0 then
-                                let optionName = arg.Substring(0, equalsIndex).ToLowerInvariant()
-                                let optionValue = arg.Substring(equalsIndex)
+                                let optionName =
+                                    normalizedArg
+                                        .Substring(0, equalsIndex)
+                                        .ToLowerInvariant()
+
+                                let optionValue = normalizedArg.Substring(equalsIndex)
                                 $"{optionName}{optionValue}"
                             else
-                                arg.ToLowerInvariant()
+                                normalizedArg.ToLowerInvariant()
                         else
-                            arg)
+                            normalizedArg)
 
                 if aliases.ContainsKey(firstToken) then
                     let newArgs = List<string>()
