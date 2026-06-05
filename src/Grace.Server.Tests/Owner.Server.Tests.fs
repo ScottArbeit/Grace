@@ -16,6 +16,7 @@ open System.IO
 open System.Text
 open System.Diagnostics
 open Grace.Types.Common
+open Grace.Types
 open System.Net.Http
 
 [<Parallelizable(ParallelScope.All)>]
@@ -26,21 +27,57 @@ type Owner() =
             .Create(fun builder -> builder.AddConsole().AddDebug() |> ignore)
             .CreateLogger("Owner.Server.Tests")
 
+    let createOwnerAsync () =
+        task {
+            let createdOwnerId = $"{Guid.NewGuid()}"
+            let parameters = Parameters.Owner.CreateOwnerParameters()
+            parameters.OwnerId <- createdOwnerId
+            parameters.OwnerName <- $"AssertionOwner{Guid.NewGuid():N}"
+            parameters.CorrelationId <- generateCorrelationId ()
+
+            let! response = Client.PostAsync("/owner/create", createJsonContent parameters)
+            let! responseText = response.Content.ReadAsStringAsync()
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK), responseText)
+            return createdOwnerId
+        }
+
+    let getOwnerAsync ownerId =
+        task {
+            let parameters = Parameters.Owner.GetOwnerParameters()
+            parameters.OwnerId <- ownerId
+            parameters.CorrelationId <- generateCorrelationId ()
+
+            let! response = Client.PostAsync("/owner/get", createJsonContent parameters)
+            let! responseText = response.Content.ReadAsStringAsync()
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK), responseText)
+            Assert.That(response.Content.Headers.ContentType.MediaType, Is.EqualTo("application/json"))
+
+            let returnValue = deserialize<GraceReturnValue<Owner.OwnerDto>> responseText
+            return returnValue.ReturnValue
+        }
+
     member val public TestContext = TestContext.CurrentContext with get, set
 
     [<Test>]
     [<Repeat(1)>]
     member public this.SetDescriptionWithValidValues() =
         task {
+            let! createdOwnerId = createOwnerAsync ()
             let parameters = Parameters.Owner.SetOwnerDescriptionParameters()
+            let expectedDescription = $"Description set at {getCurrentInstantGeneral ()}."
 
-            parameters.Description <- $"Description set at {getCurrentInstantGeneral ()}."
-            parameters.OwnerId <- ownerId
+            parameters.Description <- expectedDescription
+            parameters.OwnerId <- createdOwnerId
+            parameters.CorrelationId <- generateCorrelationId ()
 
             let! response = Client.PostAsync("/owner/setDescription", createJsonContent parameters)
-            let! content = response.Content.ReadAsStringAsync()
             response.EnsureSuccessStatusCode() |> ignore
-            Assert.That(content.Length, Is.GreaterThan(0))
+            let! returnValue = deserializeContent<GraceReturnValue<string>> response
+            Assert.That(returnValue.CorrelationId, Is.Not.Empty)
+
+            let! stored = getOwnerAsync createdOwnerId
+            Assert.That(stored.OwnerId, Is.EqualTo(Guid.Parse(createdOwnerId)))
+            Assert.That(stored.Description, Is.EqualTo(expectedDescription))
         }
 
     [<Test>]
@@ -101,13 +138,29 @@ type Owner() =
     [<Repeat(1)>]
     member public this.SetDescriptionWithInvalidDescription() =
         task {
+            let! createdOwnerId = createOwnerAsync ()
+            let baseline = "Owner description should survive invalid update."
+
+            let validParameters = Parameters.Owner.SetOwnerDescriptionParameters()
+            validParameters.Description <- baseline
+            validParameters.OwnerId <- createdOwnerId
+            validParameters.CorrelationId <- generateCorrelationId ()
+
+            let! validResponse = Client.PostAsync("/owner/setDescription", createJsonContent validParameters)
+            validResponse.EnsureSuccessStatusCode() |> ignore
+
             let parameters = Parameters.Owner.SetOwnerDescriptionParameters()
             parameters.Description <- "a".PadRight(2049, 'a')
-            parameters.OwnerId <- ownerId
+            parameters.OwnerId <- createdOwnerId
+            parameters.CorrelationId <- generateCorrelationId ()
             let! response = Client.PostAsync("/owner/setDescription", createJsonContent parameters)
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
             let! error = deserializeContent<GraceError> response
             Assert.That(error.Error, Is.EqualTo(getErrorMessage OwnerError.DescriptionIsTooLong))
+            Assert.That(error.CorrelationId, Is.Not.Empty)
+
+            let! stored = getOwnerAsync createdOwnerId
+            Assert.That(stored.Description, Is.EqualTo(baseline))
         }
 
     [<Test>]
@@ -159,14 +212,19 @@ type Owner() =
     [<Repeat(1)>]
     member public this.SetSearchVisibilityToVisible() =
         task {
+            let! createdOwnerId = createOwnerAsync ()
             let parameters = Parameters.Owner.SetOwnerSearchVisibilityParameters()
             parameters.SearchVisibility <- "Visible"
-            parameters.OwnerId <- ownerId
+            parameters.OwnerId <- createdOwnerId
+            parameters.CorrelationId <- generateCorrelationId ()
             let! response = Client.PostAsync("/owner/setSearchVisibility", createJsonContent parameters)
             response.EnsureSuccessStatusCode() |> ignore
             let! returnValue = deserializeContent<GraceReturnValue<string>> response
             let ownerGuid = Common.requireGuidProperty (nameof OwnerId) returnValue.Properties[nameof OwnerId]
-            Assert.That(ownerGuid, Is.EqualTo(Guid.Parse(ownerId)))
+            Assert.That(ownerGuid, Is.EqualTo(Guid.Parse(createdOwnerId)))
+
+            let! stored = getOwnerAsync createdOwnerId
+            Assert.That(stored.SearchVisibility, Is.EqualTo(SearchVisibility.Visible))
         }
 
     [<Test>]
@@ -240,14 +298,19 @@ type Owner() =
     [<Repeat(1)>]
     member public this.SetNameToValidName() =
         task {
+            let! createdOwnerId = createOwnerAsync ()
             let parameters = Parameters.Owner.SetOwnerNameParameters()
             parameters.NewName <- $"NewOwnerName{rnd.NextInt64()}"
-            parameters.OwnerId <- ownerId
+            parameters.OwnerId <- createdOwnerId
+            parameters.CorrelationId <- generateCorrelationId ()
             let! response = Client.PostAsync("/owner/setName", createJsonContent parameters)
             response.EnsureSuccessStatusCode() |> ignore
             let! returnValue = deserializeContent<GraceReturnValue<string>> response
             let ownerGuid = Common.requireGuidProperty (nameof OwnerId) returnValue.Properties[nameof OwnerId]
-            Assert.That(ownerGuid, Is.EqualTo(Guid.Parse(ownerId)))
+            Assert.That(ownerGuid, Is.EqualTo(Guid.Parse(createdOwnerId)))
+
+            let! stored = getOwnerAsync createdOwnerId
+            Assert.That(stored.OwnerName, Is.EqualTo(parameters.NewName))
         }
 
     [<Test>]

@@ -277,9 +277,23 @@ type General() =
     [<Test>]
     member public _.RootPathReturnsValue() =
         task {
-            let! response = Services.Client.GetAsync("/")
+            let correlationId = generateCorrelationId ()
+            use request = new HttpRequestMessage(HttpMethod.Get, "/")
+            request.Headers.Add(Constants.CorrelationIdHeaderKey, correlationId)
+
+            let! response = Services.Client.SendAsync(request)
             let! content = response.Content.ReadAsStringAsync()
             Console.WriteLine($"{content}")
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+            Assert.That(response.Content.Headers.ContentType.MediaType, Is.EqualTo("text/html"))
+            Assert.That(response.Headers.Contains(Constants.CorrelationIdHeaderKey), Is.True)
+
+            Assert.That(
+                response.Headers.GetValues(Constants.CorrelationIdHeaderKey)
+                |> Seq.head,
+                Is.EqualTo(correlationId)
+            )
+
             Assert.That(content, Does.Contain("Grace"))
         }
 
@@ -291,4 +305,25 @@ type General() =
 
             let! response = client.GetAsync("/metrics")
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized))
+            Assert.That(response.Content.Headers.ContentLength.GetValueOrDefault(), Is.EqualTo(0L))
+        }
+
+    [<Test>]
+    member public _.MetricsRequiresSystemAdminAndReturnsPrometheusText() =
+        task {
+            use nonAdminClient = new HttpClient()
+            nonAdminClient.BaseAddress <- Services.Client.BaseAddress
+            nonAdminClient.DefaultRequestHeaders.Add("x-grace-user-id", $"{Guid.NewGuid()}")
+
+            let! denied = nonAdminClient.GetAsync("/metrics")
+            Assert.That(denied.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden))
+            let! deniedBody = denied.Content.ReadAsStringAsync()
+            Assert.That(deniedBody, Does.Contain("SystemAdmin"))
+
+            let! response = Services.Client.GetAsync("/metrics")
+            let! content = response.Content.ReadAsStringAsync()
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+            Assert.That(response.Content.Headers.ContentType.MediaType, Is.EqualTo("text/plain"))
+            Assert.That(content, Does.Contain("# HELP"))
+            Assert.That(content, Does.Contain("# TYPE"))
         }

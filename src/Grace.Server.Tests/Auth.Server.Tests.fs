@@ -26,15 +26,21 @@ type AuthEndpoints() =
         task {
             let! response = Client.GetAsync("/auth/login")
             response.EnsureSuccessStatusCode() |> ignore
+            Assert.That(response.Content.Headers.ContentType.MediaType, Is.EqualTo("text/html"))
             let! body = response.Content.ReadAsStringAsync()
+            Assert.That(body, Does.StartWith("<!doctype html>"))
+            Assert.That(body, Does.Contain("<title>Grace Login</title>"))
             Assert.That(body, Does.Contain("Interactive browser login is not available on the server in this phase."))
+            Assert.That(body, Does.Contain("grace auth login"))
         }
 
     [<Test>]
     member _.LoginProviderReturnsNotFoundWhenNotConfigured() =
         task {
             let! response = Client.GetAsync("/auth/login/microsoft")
+            let! body = response.Content.ReadAsStringAsync()
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.NotFound))
+            Assert.That(body, Does.Contain("Login provider not available."))
         }
 
     [<Test>]

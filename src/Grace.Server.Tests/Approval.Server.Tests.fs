@@ -163,6 +163,15 @@ module private ApprovalTestHelpers =
             return! deserializeContent<ApprovalPolicy> createResponse
         }
 
+    let assertPolicyMatchesScope (repositoryId: string) (branchId: string) (policy: ApprovalPolicy) =
+        Assert.That(policy.Class, Is.EqualTo(nameof ApprovalPolicy))
+        Assert.That(policy.Scope.OwnerId, Is.EqualTo(Guid.Parse(ownerId)))
+        Assert.That(policy.Scope.OrganizationId, Is.EqualTo(Guid.Parse(organizationId)))
+        Assert.That(policy.Scope.RepositoryId, Is.EqualTo(Guid.Parse(repositoryId)))
+        Assert.That(policy.Scope.TargetBranchId, Is.EqualTo(Guid.Parse(branchId)))
+        Assert.That(policy.Subject, Is.EqualTo("promotion"))
+        Assert.That(policy.RequiredResponder, Is.EqualTo("role:ApprovalResponder"))
+
 [<NonParallelizable>]
 type ApprovalApiIntegrationTests() =
 
@@ -188,6 +197,9 @@ type ApprovalApiIntegrationTests() =
 
             let! created = deserializeContent<ApprovalPolicy> createResponse
             Assert.That(created.Status, Is.EqualTo(ApprovalPolicyStatus.Disabled))
+            ApprovalTestHelpers.assertPolicyMatchesScope repositoryId branchId created
+            Assert.That(created.Version, Is.EqualTo(1))
+            Assert.That(created.CreatedBy, Is.EqualTo(adminUser))
 
             let showParameters = ApprovalTestHelpers.showPolicyParameters repositoryId branchId (created.ApprovalPolicyId.ToString())
             let! enableResponse = adminClient.PostAsync("/approval/policy/enable", createJsonContent showParameters)
@@ -195,17 +207,52 @@ type ApprovalApiIntegrationTests() =
 
             let! showResponse = adminClient.PostAsync("/approval/policy/show", createJsonContent showParameters)
             Assert.That(showResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+            let! enabled = deserializeContent<ApprovalPolicy> showResponse
+            ApprovalTestHelpers.assertPolicyMatchesScope repositoryId branchId enabled
+            Assert.That(enabled.ApprovalPolicyId, Is.EqualTo(created.ApprovalPolicyId))
+            Assert.That(enabled.Status, Is.EqualTo(ApprovalPolicyStatus.Enabled))
 
             let! evaluateResponse =
                 adminClient.PostAsync("/approval/policy/evaluate", createJsonContent (ApprovalTestHelpers.createPolicyParameters repositoryId branchId))
 
             Assert.That(evaluateResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+            let! evaluated = deserializeContent<ApprovalPolicy array> evaluateResponse
+
+            Assert.That(
+                evaluated
+                |> Array.map (fun policy -> policy.ApprovalPolicyId),
+                Does.Contain(created.ApprovalPolicyId)
+            )
+
+            let evaluatedPolicy =
+                evaluated
+                |> Array.find (fun policy -> policy.ApprovalPolicyId = created.ApprovalPolicyId)
+
+            Assert.That(evaluatedPolicy.Status, Is.EqualTo(ApprovalPolicyStatus.Enabled))
+            ApprovalTestHelpers.assertPolicyMatchesScope repositoryId branchId evaluatedPolicy
+
+            let! listResponse =
+                adminClient.PostAsync("/approval/policy/list", createJsonContent (ApprovalTestHelpers.listPolicyParameters repositoryId branchId))
+
+            Assert.That(listResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+            let! listed = deserializeContent<ApprovalPolicy array> listResponse
+
+            Assert.That(
+                listed
+                |> Array.map (fun policy -> policy.ApprovalPolicyId),
+                Does.Contain(created.ApprovalPolicyId)
+            )
 
             let! disableResponse = adminClient.PostAsync("/approval/policy/disable", createJsonContent showParameters)
             Assert.That(disableResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+            let! disabled = deserializeContent<ApprovalPolicy> disableResponse
+            Assert.That(disabled.Status, Is.EqualTo(ApprovalPolicyStatus.Disabled))
+            Assert.That(disabled.UpdatedAt.IsSome, Is.True)
 
             let! deleteResponse = adminClient.PostAsync("/approval/policy/delete", createJsonContent showParameters)
             Assert.That(deleteResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+            let! deleted = deserializeContent<ApprovalPolicy> deleteResponse
+            Assert.That(deleted.Status, Is.EqualTo(ApprovalPolicyStatus.Deleted))
         }
 
     [<Test>]
