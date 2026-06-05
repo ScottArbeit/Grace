@@ -11,6 +11,15 @@ open Microsoft.Extensions.ObjectPool
 open System
 open System.Text
 
+module RequestHeaderRedaction =
+
+    let isSensitiveHeader (name: string) =
+        name.Equals("Authorization", StringComparison.OrdinalIgnoreCase)
+        || name.Equals("Cookie", StringComparison.OrdinalIgnoreCase)
+        || name.Contains("token", StringComparison.OrdinalIgnoreCase)
+
+    let redactHeaderValue name value = if isSensitiveHeader name then "[REDACTED]" else value
+
 /// Checks the incoming request for an X-Correlation-Id header. If there's no CorrelationId header, it generates one and adds it to the response headers.
 type LogRequestHeadersMiddleware(next: RequestDelegate) =
 
@@ -34,14 +43,9 @@ type LogRequestHeadersMiddleware(next: RequestDelegate) =
             let sb = stringBuilderPool.Get()
 
             try
-                let isSensitiveHeader (name: string) =
-                    name.Equals("Authorization", StringComparison.OrdinalIgnoreCase)
-                    || name.Equals("Cookie", StringComparison.OrdinalIgnoreCase)
-                    || name.Contains("token", StringComparison.OrdinalIgnoreCase)
-
                 context.Request.Headers
                 |> Seq.iter (fun kv ->
-                    let value = if isSensitiveHeader kv.Key then "[REDACTED]" else kv.Value.ToString()
+                    let value = RequestHeaderRedaction.redactHeaderValue kv.Key (kv.Value.ToString())
                     sb.AppendLine($"{kv.Key} = {value}") |> ignore)
 
                 log.LogDebug("Request headers: {headers}", sb.ToString())
