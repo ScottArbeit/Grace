@@ -21,6 +21,7 @@
     <Compile Include="Slop.Server.Tests.fs" />
     <Compile Include="Owner.Server.Tests.fs" />
     <Compile Include="Repository.Server.Tests.fs" />
+    <Compile Include="Branch.Server.Tests.fs" />
     <Compile Include="Approval.Server.Tests.fs" />
     <Compile Include="Webhook.Server.Tests.fs" />
     <Compile Include="Access.Server.Tests.fs" />
