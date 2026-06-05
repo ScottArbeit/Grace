@@ -112,6 +112,32 @@ module Services =
             AzureEnvironment.storageAccountKey
             |> Option.map (fun accountKey -> StorageSharedKeyCredential(AzureEnvironment.storageEndpoints.AccountName, accountKey))
 
+    let private normalizeLocalAzuriteBlobUri (accountName: string) (blobUri: Uri) =
+        let accountPathPrefix = $"/{accountName}/"
+
+        if
+            blobUri.Host.Equals("localhost", StringComparison.OrdinalIgnoreCase)
+            && blobUri.AbsolutePath.StartsWith(accountPathPrefix, StringComparison.OrdinalIgnoreCase)
+        then
+            let builder = UriBuilder(blobUri)
+            builder.Host <- IPAddress.Loopback.ToString()
+            builder.Uri
+        else
+            blobUri
+
+    let private createBlobContainerClientFromEndpoint containerName =
+        if AzureEnvironment.useManagedIdentityForStorage then
+            Context.blobServiceClient.GetBlobContainerClient(containerName)
+        else
+            match sharedKeyCredential.Value with
+            | Some credential ->
+                let containerUri =
+                    Uri($"{AzureEnvironment.storageEndpoints.BlobEndpoint.AbsoluteUri.TrimEnd('/')}/{containerName}")
+                    |> normalizeLocalAzuriteBlobUri AzureEnvironment.storageEndpoints.AccountName
+
+                BlobContainerClient(containerUri, credential)
+            | None -> Context.blobServiceClient.GetBlobContainerClient(containerName)
+
     /// Logger instance for the Services.Actor module.
     let private log = loggerFactory.CreateLogger("Services.Actor")
 
@@ -240,7 +266,7 @@ module Services =
                     key,
                     fun cacheEntry ->
                         task {
-                            let blobContainerClient = Context.blobServiceClient.GetBlobContainerClient(containerName)
+                            let blobContainerClient = createBlobContainerClientFromEndpoint containerName
                             let ownerActorProxy = Owner.CreateActorProxy repositoryDto.OwnerId CorrelationId.Empty
                             let! ownerDto = ownerActorProxy.Get correlationId
                             let organizationActorProxy = Organization.CreateActorProxy repositoryDto.OrganizationId CorrelationId.Empty
@@ -289,13 +315,18 @@ module Services =
         task {
             let! blobContainerClient = getContainerClient repositoryDto correlationId
 
+            let blobUri =
+                Uri($"{blobContainerClient.Uri.AbsoluteUri.TrimEnd('/')}/{blobName}")
+                |> normalizeLocalAzuriteBlobUri AzureEnvironment.storageEndpoints.AccountName
+
             let blobSasBuilder =
                 BlobSasBuilder(
                     permissions = permission,
                     expiresOn = DateTimeOffset.UtcNow.Add(TimeSpan.FromMinutes(SharedAccessSignatureExpiration)),
                     StartsOn = DateTimeOffset.UtcNow.Subtract(TimeSpan.FromSeconds(15.0)),
                     BlobContainerName = blobContainerClient.Name,
-                    BlobName = blobName
+                    BlobName = blobName,
+                    Resource = "b"
                 )
 
             let! sasUri =
@@ -313,22 +344,36 @@ module Services =
                         let! userDelegationKey = blobServiceClient.GetUserDelegationKeyAsync(userDelegationKeyOptions)
 
                         let sasQueryParameters = blobSasBuilder.ToSasQueryParameters(userDelegationKey.Value, blobServiceClient.AccountName)
-                        return Uri($"{blobContainerClient.Uri}/{blobName}?{sasQueryParameters}")
+                        return Uri($"{blobUri}?{sasQueryParameters}")
                     }
                 else
                     task {
                         match sharedKeyCredential.Value with
                         | Some credential ->
-                            let sasQueryParameters = blobSasBuilder.ToSasQueryParameters(credential)
-                            return Uri($"{blobContainerClient.Uri}/{blobName}?{sasQueryParameters}")
-                        | None when blobContainerClient.CanGenerateSasUri -> return blobContainerClient.GenerateSasUri(blobSasBuilder)
-                        | None ->
-                            return
-                                raise (
-                                    InvalidOperationException(
-                                        "Azure Blob shared key is not configured and the current blob client cannot generate SAS. Configure grace__azure_storage__key, include AccountKey in grace__azure_storage__connectionstring, or enable managed identity for storage."
-                                    )
+                            let fullUriBlobClient = BlobClient(blobUri, credential)
+
+                            // Let the SDK parse path-style Azurite container/blob names from the full URI.
+                            let fullUriBlobSasBuilder =
+                                BlobSasBuilder(
+                                    permissions = permission,
+                                    expiresOn = blobSasBuilder.ExpiresOn,
+                                    StartsOn = blobSasBuilder.StartsOn,
+                                    Resource = "b"
                                 )
+
+                            return fullUriBlobClient.GenerateSasUri(fullUriBlobSasBuilder)
+                        | None ->
+                            let blobClient = blobContainerClient.GetBlobClient blobName
+
+                            if blobClient.CanGenerateSasUri then
+                                return blobClient.GenerateSasUri(blobSasBuilder)
+                            else
+                                return
+                                    raise (
+                                        InvalidOperationException(
+                                            "Azure Blob shared key is not configured and the current blob client cannot generate SAS. Configure grace__azure_storage__key, include AccountKey in grace__azure_storage__connectionstring, or enable managed identity for storage."
+                                        )
+                                    )
                     }
 
             return UriWithSharedAccessSignature($"{sasUri}")
@@ -364,7 +409,9 @@ module Services =
          ||| BlobSasPermissions.Tag
          ||| BlobSasPermissions.Read)
 
-    let azureBlobCreatePermissions = BlobSasPermissions.Create
+    let azureBlobCreatePermissions =
+        (BlobSasPermissions.Create
+         ||| BlobSasPermissions.Write)
 
     /// Gets a full Uri, including shared access signature, for writing from the object storage provider.
     let getUriWithWriteSharedAccessSignature (repositoryDto: RepositoryDto) (blobName: string) (correlationId: CorrelationId) =

@@ -205,6 +205,68 @@ type DedupeIndexServerTests() =
         Assert.That(result.IsPartial, Is.True)
 
     [<Test>]
+    member _.DiscoveryDeduplicatesAndCapsKeyChunksWithoutMakingEmptyResultsAuthoritative() =
+        let duplicateBlock = encodedBlock "duplicate-requested" 12
+        let matchingChunk = (decodedChunkAddresses duplicateBlock)[0]
+
+        let requested =
+            [|
+                yield matchingChunk
+                yield matchingChunk
+                yield String.Empty
+                for index in 0 .. MaxDiscoveryKeyChunkAddresses + 10 do
+                    yield $"missing-key-{index:D3}"
+            |]
+
+        let result = discover Array.empty requested
+
+        Assert.That(result.RequestedKeyChunkCount, Is.EqualTo(requested.Length))
+        Assert.That(result.AcceptedKeyChunkCount, Is.EqualTo(MaxDiscoveryKeyChunkAddresses))
+        Assert.That(result.CandidateContentBlocks, Is.Empty)
+        Assert.That(result.Policy.EmptyResponseMeansAbsent, Is.False)
+        Assert.That(result.Policy.IsAuthoritative, Is.False)
+        Assert.That(result.IsPartial, Is.True)
+        Assert.That(result.Message, Does.Contain("non-authoritative"))
+
+    [<Test>]
+    member _.DiscoveryResponseBudgetTruncatesProtectedWindowsAndMarksPartial() =
+        let blocks =
+            [|
+                for index in
+                    0 .. MaxResponseProtectedChunks
+                         / MinimumAcceptedReuseRunLength
+                         + 8 do
+                    encodedBlock $"budget-{index:D4}" MinimumAcceptedReuseRunLength
+            |]
+
+        let records =
+            blocks
+            |> Array.mapi (fun index block ->
+                let manifest = manifestFor block
+                let metadata = metadataFor 1 (int64 index + 1L) block
+                DedupeIndex.recordsAfterFinalize (sourceFor (finalizedSession manifest) manifest block metadata))
+            |> Array.concat
+
+        let requested =
+            blocks
+            |> Array.map (fun block -> (decodedChunkAddresses block)[0])
+
+        let result = discover records requested
+
+        let protectedChunkCount =
+            result.CandidateContentBlocks
+            |> Array.sumBy (fun candidate -> candidate.ProtectedChunkAddresses.Length)
+
+        Assert.That(result.CandidateContentBlocks, Is.Not.Empty)
+        Assert.That(protectedChunkCount, Is.LessThanOrEqualTo(MaxResponseProtectedChunks))
+        Assert.That(result.CandidateContentBlocks.Length, Is.LessThan(records.Length))
+        Assert.That(result.IsPartial, Is.True)
+
+        for candidate in result.CandidateContentBlocks do
+            for rawChunkAddress in requested do
+                Assert.That(candidate.ProtectedChunkAddresses, Has.None.EqualTo(rawChunkAddress))
+
+    [<Test>]
     member _.StaleIndexCandidatesStillRequireAuthoritativeRangeClaims() =
         let block = encodedBlock "stale" 12
         let manifest = manifestFor block
