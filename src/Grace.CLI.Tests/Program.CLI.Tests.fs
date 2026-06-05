@@ -80,6 +80,7 @@ open NUnit.Framework
 open Spectre.Console
 open System
 open System.IO
+open System.Text.Json
 
 [<NonParallelizable>]
 module HelpDoesNotReadConfigTests =
@@ -215,6 +216,116 @@ module HelpDoesNotReadConfigTests =
 
             output
             |> should not' (contain "00000000-0000-0000-0000-0000000000000"))
+
+    [<Test>]
+    let ``schema emits registry-derived json without requiring config`` () =
+        withTempDir (fun root ->
+            let exitCode, output =
+                runWithCapturedOutput [| "repository"
+                                         "init"
+                                         "--schema" |]
+
+            exitCode |> should equal 0
+
+            use document = JsonDocument.Parse(output)
+            let rootElement = document.RootElement
+
+            rootElement.GetProperty("Kind").GetString()
+            |> should equal "schema"
+
+            rootElement
+                .GetProperty("ContractVersion")
+                .GetString()
+            |> should equal "cli-json-v1"
+
+            rootElement
+                .GetProperty("Command")
+                .GetProperty("Id")
+                .GetString()
+            |> should equal "repository.init"
+
+            rootElement
+                .GetProperty("Registry")
+                .GetProperty("CurrentJsonBehavior")
+                .GetString()
+            |> should equal "PartialManualSuccess"
+
+            rootElement
+                .GetProperty("Schema")
+                .GetProperty("Status")
+                .GetString()
+            |> should equal "registry-placeholder"
+
+            Directory.Exists(Path.Combine(root, ".grace"))
+            |> should equal false)
+
+    [<Test>]
+    let ``examples emit registry-derived json and ignore output mode`` () =
+        withTempDir (fun _ ->
+            let exitCode, output =
+                runWithCapturedOutput [| "--output"
+                                         "Json"
+                                         "workitem"
+                                         "show"
+                                         "--examples" |]
+
+            exitCode |> should equal 0
+
+            use document = JsonDocument.Parse(output)
+            let rootElement = document.RootElement
+
+            rootElement.GetProperty("Kind").GetString()
+            |> should equal "examples"
+
+            rootElement
+                .GetProperty("Command")
+                .GetProperty("Id")
+                .GetString()
+            |> should equal "workitem.show"
+
+            let examples = rootElement.GetProperty("Examples")
+            examples.GetArrayLength() |> should equal 2
+
+            examples[0].GetProperty("Document").GetProperty(
+                "ReturnValue"
+            )
+                .ValueKind
+            |> should equal JsonValueKind.Object)
+
+    [<Test>]
+    let ``unsupported introspection emits json error envelope`` () =
+        withTempDir (fun _ ->
+            let exitCode, output = runWithCapturedOutput [| "--schema" |]
+
+            exitCode |> should equal -1
+
+            use document = JsonDocument.Parse(output)
+            let rootElement = document.RootElement
+
+            rootElement.GetProperty("Error").GetString()
+            |> should contain "does not have CLI output contract metadata"
+
+            rootElement
+                .GetProperty("CorrelationId")
+                .GetString()
+            |> should not' (equal String.Empty))
+
+    [<Test>]
+    let ``schema and examples together emit json error envelope`` () =
+        withTempDir (fun _ ->
+            let exitCode, output =
+                runWithCapturedOutput [| "repository"
+                                         "init"
+                                         "--schema"
+                                         "--examples" |]
+
+            exitCode |> should equal -1
+
+            use document = JsonDocument.Parse(output)
+            let rootElement = document.RootElement
+
+            rootElement.GetProperty("Error").GetString()
+            |> should equal "--schema and --examples cannot be used together.")
 
     [<Test>]
     let ``verbose parse result shows resolved ids`` () =

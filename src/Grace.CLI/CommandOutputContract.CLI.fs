@@ -76,6 +76,168 @@ module CommandOutputContract =
             Features: MachineReadableFeatures
         }
 
+    type IntrospectionKind =
+        | Schema
+        | Examples
+
+    type CommandIdentityDocument = { Id: string; Path: string list; GroupPath: string list; Name: string }
+
+    type CommandRegistryDocument =
+        {
+            RouteDisposition: string
+            CurrentJsonBehavior: string
+            Category: string
+            ExecutionScope: string
+            Mutating: bool
+            EnvelopeContract: string
+            JsonMode: string
+            Schema: string
+            Examples: string
+            Select: string
+        }
+
+    type CommandSchemaDocument = { Status: string; Source: string; Envelope: string; ReturnValueDisposition: string; Notes: string list }
+
+    type CommandExampleDocument = { Name: string; Description: string; Document: obj }
+
+    type CommandIntrospectionDocument =
+        {
+            Kind: string
+            ContractVersion: string
+            Command: CommandIdentityDocument
+            Registry: CommandRegistryDocument
+            Schema: CommandSchemaDocument option
+            Examples: CommandExampleDocument list
+        }
+
+    let private unionName value = $"{value}"
+
+    let private routeDispositionText (disposition: RouteDisposition) =
+        match disposition with
+        | Routed -> "Routed"
+        | SourceOnlyUnrouted reason -> $"SourceOnlyUnrouted: {reason}"
+
+    let private outputDtoDispositionText (disposition: OutputDtoDisposition) =
+        match disposition with
+        | ReuseExistingApiOrSdkDto -> "ReuseExistingApiOrSdkDto"
+        | RequiresCliDto -> "RequiresCliDto"
+        | NoServerDto -> "NoServerDto"
+
+    let private envelopeContractText (contract: EnvelopeContract) =
+        match contract with
+        | ExistingGraceResultEnvelope disposition -> $"ExistingGraceResultEnvelope: {outputDtoDispositionText disposition}"
+        | MigrationRequiredToGraceResultEnvelope disposition -> $"MigrationRequiredToGraceResultEnvelope: {outputDtoDispositionText disposition}"
+        | SourceOnlyUnsupported reason -> $"SourceOnlyUnsupported: {reason}"
+
+    let private returnValueDispositionText (contract: EnvelopeContract) =
+        match contract with
+        | ExistingGraceResultEnvelope disposition
+        | MigrationRequiredToGraceResultEnvelope disposition -> outputDtoDispositionText disposition
+        | SourceOnlyUnsupported reason -> $"Unsupported: {reason}"
+
+    let private commandDocument (identity: CommandIdentity) =
+        { Id = identity.CommandId; Path = identity.CommandPath; GroupPath = identity.GroupPath; Name = identity.CommandName }
+
+    let private registryDocument (entry: CommandContractEntry) =
+        {
+            RouteDisposition = routeDispositionText entry.RouteDisposition
+            CurrentJsonBehavior = unionName entry.CurrentJsonBehavior
+            Category = unionName entry.Category
+            ExecutionScope = unionName entry.ExecutionScope
+            Mutating = entry.Mutating
+            EnvelopeContract = envelopeContractText entry.EnvelopeContract
+            JsonMode = unionName entry.Features.JsonMode
+            Schema = unionName entry.Features.Schema
+            Examples = unionName entry.Features.Examples
+            Select = unionName entry.Features.Select
+        }
+
+    let private schemaDocument (entry: CommandContractEntry) =
+        {
+            Status = "registry-placeholder"
+            Source = "CommandOutputContract"
+            Envelope = "GraceReturnValue<T> on success; GraceError on error"
+            ReturnValueDisposition = returnValueDispositionText entry.EnvelopeContract
+            Notes =
+                [
+                    "S2 emits registry-derived introspection metadata only."
+                    "S4 will replace this placeholder with command DTO-derived schema details."
+                    "This path is inert and does not execute the command action."
+                ]
+        }
+
+    let private successExample (entry: CommandContractEntry) =
+        let returnValue =
+            match entry.EnvelopeContract with
+            | ExistingGraceResultEnvelope ReuseExistingApiOrSdkDto -> box {| Shape = "existing-api-or-sdk-dto" |}
+            | ExistingGraceResultEnvelope RequiresCliDto -> box {| Shape = "cli-dto" |}
+            | MigrationRequiredToGraceResultEnvelope ReuseExistingApiOrSdkDto -> box {| Shape = "existing-api-or-sdk-dto-requires-migration" |}
+            | MigrationRequiredToGraceResultEnvelope RequiresCliDto -> box {| Shape = "cli-dto-requires-migration" |}
+            | ExistingGraceResultEnvelope NoServerDto
+            | MigrationRequiredToGraceResultEnvelope NoServerDto -> box {| Shape = "no-server-dto" |}
+            | SourceOnlyUnsupported reason -> box {| Unsupported = reason |}
+
+        {
+            Name = "success-envelope-shape"
+            Description = "Representative GraceReturnValue<T> envelope shape; command-specific ReturnValue details are deferred to S4."
+            Document =
+                box
+                    {|
+                        ReturnValue = returnValue
+                        EventTime = "2026-06-05T00:00:00Z"
+                        CorrelationId = "correlation-id"
+                        Properties =
+                            [|
+                                {| Key = "cli.contractVersion"; Value = "cli-json-v1" |}
+                                {| Key = "cli.commandId"; Value = entry.Identity.CommandId |}
+                                {| Key = "cli.introspectionSource"; Value = "CommandOutputContract" |}
+                            |]
+                    |}
+        }
+
+    let private errorExample (entry: CommandContractEntry) =
+        {
+            Name = "error-envelope-shape"
+            Description = "Representative GraceError envelope shape."
+            Document =
+                box
+                    {|
+                        Exception = null
+                        Error = "error message"
+                        EventTime = "2026-06-05T00:00:00Z"
+                        CorrelationId = "correlation-id"
+                        Properties =
+                            [|
+                                {| Key = "cli.contractVersion"; Value = "cli-json-v1" |}
+                                {| Key = "cli.commandId"; Value = entry.Identity.CommandId |}
+                                {| Key = "cli.introspectionSource"; Value = "CommandOutputContract" |}
+                            |]
+                    |}
+        }
+
+    let introspectionDocument (kind: IntrospectionKind) (entry: CommandContractEntry) =
+        {
+            Kind =
+                match kind with
+                | Schema -> "schema"
+                | Examples -> "examples"
+            ContractVersion = "cli-json-v1"
+            Command = commandDocument entry.Identity
+            Registry = registryDocument entry
+            Schema =
+                match kind with
+                | Schema -> Some(schemaDocument entry)
+                | Examples -> None
+            Examples =
+                match kind with
+                | Schema -> []
+                | Examples ->
+                    [
+                        successExample entry
+                        errorExample entry
+                    ]
+        }
+
     let private featuresFor behavior =
         match behavior with
         | UnroutedSourceOnly ->

@@ -44,6 +44,8 @@ module Configuration =
 
 module GraceCommand =
 
+    exception private IntrospectionExit of int
+
     type OptionToUpdate = { optionAlias: string; display: string; displayOnCreate: string; createParentCommand: string }
 
     /// Built-in aliases for Grace commands.
@@ -137,6 +139,53 @@ module GraceCommand =
             gatherAllOptions parentCommand allOptions
         else
             allOptions
+
+    let private commandIdentityFromCommand (command: Command) =
+        let parents =
+            command.Parents.OfType<Command>()
+            |> Seq.toList
+            |> List.rev
+            |> List.filter (fun parent -> not (parent :? RootCommand))
+            |> List.map (fun parent -> parent.Name)
+
+        CommandOutputContract.commandIdentity parents command.Name
+
+    let private tryGetBoolOption (parseResult: ParseResult) (optionName: string) =
+        let result = parseResult.GetResult(optionName)
+
+        if isNull result then false else parseResult.GetValue<bool>(optionName)
+
+    let private introspectionRequest (parseResult: ParseResult) =
+        let schema = tryGetBoolOption parseResult OptionName.Schema
+        let examples = tryGetBoolOption parseResult OptionName.Examples
+
+        match schema, examples with
+        | false, false -> None
+        | true, false -> Some(Ok CommandOutputContract.IntrospectionKind.Schema)
+        | false, true -> Some(Ok CommandOutputContract.IntrospectionKind.Examples)
+        | true, true -> Some(Error "--schema and --examples cannot be used together.")
+
+    let private writeJsonStdout value = Console.Out.WriteLine(serialize value)
+
+    let private writeIntrospectionError parseResult message =
+        let error = GraceError.Create message (getCorrelationId parseResult)
+        writeJsonStdout error
+        -1
+
+    let private handleIntrospectionRequest (parseResult: ParseResult) kind =
+        let command = parseResult.CommandResult.Command
+        let identity = commandIdentityFromCommand command
+
+        match CommandOutputContract.tryFind identity with
+        | Some entry ->
+            match entry.RouteDisposition with
+            | CommandOutputContract.Routed ->
+                let document = CommandOutputContract.introspectionDocument kind entry
+                writeJsonStdout document
+                0
+            | CommandOutputContract.SourceOnlyUnrouted reason ->
+                writeIntrospectionError parseResult $"Command '{identity.CommandId}' is not routed for CLI introspection. {reason}"
+        | None -> writeIntrospectionError parseResult $"Command '{identity.CommandId}' does not have CLI output contract metadata."
 
     let private replaceDefaultValue (line: string) (defaultValueText: string) =
         let startIndex = line.IndexOf("[default:", StringComparison.OrdinalIgnoreCase)
@@ -566,6 +615,8 @@ module GraceCommand =
         rootCommand.Options.Add(Options.correlationId)
         rootCommand.Options.Add(Options.source)
         rootCommand.Options.Add(Options.output)
+        rootCommand.Options.Add(Options.schema)
+        rootCommand.Options.Add(Options.examples)
 
         // Add subcommands.
         rootCommand.Subcommands.Add(Connect.Build)
@@ -769,6 +820,7 @@ module GraceCommand =
             let mutable parseResult: ParseResult = null
             let mutable returnValue: int = 0
             let mutable parseSucceeded: bool = false
+            let mutable isIntrospection: bool = false
 
             try
                 try
@@ -781,6 +833,17 @@ module GraceCommand =
                     // Write the ParseResult to Services as global context for the CLI.
                     Services.parseResult <- parseResult
                     LocalStateDb.setVerbose (parseResult |> verbose)
+
+                    match introspectionRequest parseResult with
+                    | Some (Ok kind) ->
+                        isIntrospection <- true
+                        returnValue <- handleIntrospectionRequest parseResult kind
+                        raise (IntrospectionExit returnValue)
+                    | Some (Error message) ->
+                        isIntrospection <- true
+                        returnValue <- writeIntrospectionError parseResult message
+                        raise (IntrospectionExit returnValue)
+                    | None -> ()
 
                     let helpAction =
                         match parseResult.Action with
@@ -1054,6 +1117,7 @@ module GraceCommand =
 
                     return returnValue
                 with
+                | IntrospectionExit exitCode -> return exitCode
                 | ex ->
                     AnsiConsole.WriteException ex
                     //logToAnsiConsole Colors.Error $"ex.Message: {ex.Message}"
@@ -1067,17 +1131,18 @@ module GraceCommand =
                     (finishTime - startTime).TotalMilliseconds
                     |> int64
 
-                HistoryStorage.tryRecordInvocation
-                    {
-                        argvOriginal = argvOriginal
-                        argvNormalized = argvNormalized
-                        cwd = Environment.CurrentDirectory
-                        exitCode = returnValue
-                        durationMs = durationMs
-                        parseSucceeded = parseSucceeded
-                        timestampUtc = startTime
-                        source = resolveInvocationSource parseResult
-                    }
+                if not isIntrospection then
+                    HistoryStorage.tryRecordInvocation
+                        {
+                            argvOriginal = argvOriginal
+                            argvNormalized = argvNormalized
+                            cwd = Environment.CurrentDirectory
+                            exitCode = returnValue
+                            durationMs = durationMs
+                            parseSucceeded = parseSucceeded
+                            timestampUtc = startTime
+                            source = resolveInvocationSource parseResult
+                        }
 
                 // If this was grace watch, delete the inter-process communication file.
                 if not <| isNull (parseResult)
