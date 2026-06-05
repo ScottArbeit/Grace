@@ -30,6 +30,8 @@
     <Compile Include="Diff.Server.Tests.fs" />
     <Compile Include="Reminder.Server.Tests.fs" />
     <Compile Include="WorkItem.Integration.Server.Tests.fs" />
+    <Compile Include="Policy.Server.Tests.fs" />
+    <Compile Include="Queue.Integration.Server.Tests.fs" />
     <Compile Include="Auth.Server.Tests.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>

@@ -287,7 +287,22 @@ module Queue =
                         Guid.isValidAndNotEmptyGuid parameters.TargetBranchId QueueError.InvalidTargetBranchId
                     |]
 
-                let query (context: HttpContext) _ (actorProxy: IPromotionQueueActor) = actorProxy.Get(getCorrelationId context)
+                let query (context: HttpContext) _ (actorProxy: IPromotionQueueActor) =
+                    task {
+                        let! queue = actorProxy.Get(getCorrelationId context)
+
+                        return
+                            { queue with
+                                PromotionSetIds = if isNull (box queue.PromotionSetIds) then [] else queue.PromotionSetIds
+                                RunningPromotionSetId =
+                                    if isNull (box queue.RunningPromotionSetId) then
+                                        None
+                                    else
+                                        queue.RunningPromotionSetId
+                                State = if isNull (box queue.State) then QueueState.Idle else queue.State
+                                UpdatedAt = if isNull (box queue.UpdatedAt) then None else queue.UpdatedAt
+                            }
+                    }
 
                 let! parameters = context |> parse<QueueStatusParameters>
                 parameters.OwnerId <- graceIds.OwnerIdString
@@ -379,8 +394,9 @@ module Queue =
                                     return! context |> result400BadRequest graceError
                                 else
                                     let initializeCommand = PromotionQueueCommand.Initialize(targetBranchId, PolicySnapshotId parameters.PolicySnapshotId)
+                                    let initializeMetadata = { metadata with CorrelationId = $"{correlationId}:initialize" }
 
-                                    match! actorProxy.Handle initializeCommand metadata with
+                                    match! actorProxy.Handle initializeCommand initializeMetadata with
                                     | Error error -> return! context |> result400BadRequest error
                                     | Ok _ -> return! runEnqueue ()
                             else
