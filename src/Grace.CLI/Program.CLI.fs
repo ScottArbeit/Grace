@@ -245,6 +245,10 @@ module GraceCommand =
                        && tokens[index + 1]
                            .Equals("Json", StringComparison.OrdinalIgnoreCase) then
                         true
+                    elif index + 1 < tokens.Length
+                         && tokens[index + 1]
+                             .StartsWith("-", StringComparison.Ordinal) then
+                        loop (index + 1)
                     else
                         loop (index + 2)
                 elif token.StartsWith(outputEqualsPrefix, StringComparison.OrdinalIgnoreCase) then

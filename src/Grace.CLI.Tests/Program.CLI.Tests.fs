@@ -560,6 +560,36 @@ module HelpDoesNotReadConfigTests =
             assertJsonErrorOutput standardOut |> ignore)
 
     [<Test>]
+    let ``malformed split output option does not mask later long json intent`` () =
+        withTempDir (fun _ ->
+            let exitCode, standardOut, standardError =
+                runWithCapturedStdoutAndStderr [| "--output"
+                                                  "--output"
+                                                  "Json"
+                                                  "branch"
+                                                  "get" |]
+
+            exitCode |> should equal -1
+            standardError |> should equal String.Empty
+
+            assertJsonErrorOutput standardOut |> ignore)
+
+    [<Test>]
+    let ``malformed split output option does not mask later short json intent`` () =
+        withTempDir (fun _ ->
+            let exitCode, standardOut, standardError =
+                runWithCapturedStdoutAndStderr [| "-o"
+                                                  "-o"
+                                                  "Json"
+                                                  "branch"
+                                                  "get" |]
+
+            exitCode |> should equal -1
+            standardError |> should equal String.Empty
+
+            assertJsonErrorOutput standardOut |> ignore)
+
+    [<Test>]
     let ``parse error in json mode emits one error document on stdout`` () =
         withTempDir (fun _ ->
             let exitCode, standardOut, standardError =
