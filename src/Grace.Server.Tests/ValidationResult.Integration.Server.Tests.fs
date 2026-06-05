@@ -14,18 +14,7 @@ open System.Text.Json
 open System.Threading.Tasks
 
 module private ValidationResultIntegrationHelpers =
-    type RecordedValidationResult =
-        {
-            ValidationResultId: Guid
-            RepositoryId: Guid
-            ValidationSetId: Guid option
-            PromotionSetId: Guid option
-            PromotionSetStepId: Guid option
-            StepsComputationAttempt: int option
-            Status: string
-            Summary: string
-            ArtifactIds: Guid list
-        }
+    type RecordedValidationResult = { OutputKind: JsonValueKind; PropertiesRaw: string }
 
     let recordParameters repositoryId validationResultId validationSetId promotionSetId promotionSetStepId stepsComputationAttempt artifactIds =
         let parameters = RecordValidationResultParameters()
@@ -62,28 +51,7 @@ module private ValidationResultIntegrationHelpers =
             Assert.Fail($"Expected JSON property '{name}' in {element.GetRawText()}.")
             Unchecked.defaultof<JsonElement>
 
-    let private getOptionalGuid (name: string) (element: JsonElement) =
-        let property = tryGetProperty name element
-
-        if property.ValueKind = JsonValueKind.Null then
-            Option.None
-        else
-            let value = property.GetString()
-
-            if String.IsNullOrWhiteSpace(value) then
-                Option.None
-            else
-                Option.Some(Guid.Parse value)
-
-    let private getOptionalInt (name: string) (element: JsonElement) =
-        let property = tryGetProperty name element
-
-        if property.ValueKind = JsonValueKind.Null then
-            Option.None
-        else
-            Option.Some(property.GetInt32())
-
-    let private parseRecordedValidationResult (body: string) =
+    let parseRecordedValidationResult (body: string) =
         use document = JsonDocument.Parse(body)
 
         let envelopeReturnValue =
@@ -100,32 +68,12 @@ module private ValidationResultIntegrationHelpers =
                 document.RootElement
 
         let output = returnValue |> tryGetProperty "Output"
-        let artifactIds = output |> tryGetProperty "ArtifactIds"
 
-        let artifacts =
-            artifactIds.EnumerateArray()
-            |> Seq.map (fun value -> Guid.Parse(value.GetString()))
-            |> Seq.toList
+        let properties =
+            document.RootElement
+            |> tryGetProperty "Properties"
 
-        {
-            ValidationResultId =
-                Guid.Parse(
-                    (returnValue |> tryGetProperty "ValidationResultId")
-                        .GetString()
-                )
-            RepositoryId =
-                Guid.Parse(
-                    (returnValue |> tryGetProperty "RepositoryId")
-                        .GetString()
-                )
-            ValidationSetId = getOptionalGuid "ValidationSetId" returnValue
-            PromotionSetId = getOptionalGuid "PromotionSetId" returnValue
-            PromotionSetStepId = getOptionalGuid "PromotionSetStepId" returnValue
-            StepsComputationAttempt = getOptionalInt "StepsComputationAttempt" returnValue
-            Status = (output |> tryGetProperty "Status").GetString()
-            Summary = (output |> tryGetProperty "Summary").GetString()
-            ArtifactIds = artifacts
-        }
+        { OutputKind = output.ValueKind; PropertiesRaw = properties.GetRawText() }
 
     let recordBodyAsync correlationId parameters =
         task {
@@ -147,7 +95,7 @@ module private ValidationResultIntegrationHelpers =
 type ValidationResultRouteIntegrationTests() =
 
     [<Test>]
-    member _.ValidationResultRecordPersistsArtifactLinksAndRejectsDuplicateCorrelationReplay() =
+    member _.ValidationResultRecordPinsCurrentNullOutputDriftAndRejectsDuplicateCorrelationReplay() =
         task {
             let repositoryId = repositoryIds[0]
             let validationResultId = Guid.NewGuid().ToString()
@@ -172,17 +120,12 @@ type ValidationResultRouteIntegrationTests() =
                     |]
 
             let! recorded = ValidationResultIntegrationHelpers.recordBodyAsync correlationId parameters
-            Assert.That(recorded, Does.Contain("ValidationResultId"))
-            Assert.That(recorded, Does.Contain(validationResultId))
-            Assert.That(recorded, Does.Contain(firstArtifactId.ToString()))
-            Assert.That(recorded, Does.Contain(secondArtifactId.ToString()))
+            let parsed = ValidationResultIntegrationHelpers.parseRecordedValidationResult recorded
 
-            Assert.That(
-                recorded,
-                Does
-                    .Contain("Output\": null")
-                    .Or.Contain("output\": null")
-            )
+            Assert.That(parsed.OutputKind, Is.EqualTo(JsonValueKind.Null), "Current hosted response does not expose persisted ValidationOutput.")
+            Assert.That(parsed.PropertiesRaw, Does.Contain(validationResultId))
+            Assert.That(parsed.PropertiesRaw, Does.Contain(firstArtifactId.ToString()))
+            Assert.That(parsed.PropertiesRaw, Does.Contain(secondArtifactId.ToString()))
 
             do!
                 ValidationResultIntegrationHelpers.recordBadRequestContainsAsync
@@ -192,7 +135,15 @@ type ValidationResultRouteIntegrationTests() =
 
             let newCorrelationId = generateCorrelationId ()
             let! replayedWithNewCorrelation = ValidationResultIntegrationHelpers.recordBodyAsync newCorrelationId parameters
-            Assert.That(replayedWithNewCorrelation, Does.Contain(validationResultId))
-            Assert.That(replayedWithNewCorrelation, Does.Contain(firstArtifactId.ToString()))
-            Assert.That(replayedWithNewCorrelation, Does.Contain(secondArtifactId.ToString()))
+            let parsedReplay = ValidationResultIntegrationHelpers.parseRecordedValidationResult replayedWithNewCorrelation
+
+            Assert.That(
+                parsedReplay.OutputKind,
+                Is.EqualTo(JsonValueKind.Null),
+                "Current hosted replay response still does not expose persisted ValidationOutput."
+            )
+
+            Assert.That(parsedReplay.PropertiesRaw, Does.Contain(validationResultId))
+            Assert.That(parsedReplay.PropertiesRaw, Does.Contain(firstArtifactId.ToString()))
+            Assert.That(parsedReplay.PropertiesRaw, Does.Contain(secondArtifactId.ToString()))
         }

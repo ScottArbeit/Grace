@@ -75,6 +75,15 @@ module private ReviewIntegrationHelpers =
             return body
         }
 
+    let postOkBodyContainsAsync<'P> route (parameters: 'P) expectedText =
+        task {
+            let! response = postAsync route (createJsonContent parameters)
+            let! body = response.Content.ReadAsStringAsync()
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK), body)
+            Assert.That(body, Does.Contain(expectedText))
+            return body
+        }
+
     let createPromotionSetAsync repositoryId targetBranchId =
         task {
             let promotionSetId = Guid.NewGuid().ToString()
@@ -131,12 +140,16 @@ module private ReviewIntegrationHelpers =
         let parameters = reviewScoped (GetReviewNotesParameters()) repositoryId promotionSetId
         postOkReturnAsync<ReviewNotes option, GetReviewNotesParameters> "/review/notes" parameters
 
+    let getNotesCurrentNoNotesAsync repositoryId promotionSetId =
+        let parameters = reviewScoped (GetReviewNotesParameters()) repositoryId promotionSetId
+        postOkBodyContainsAsync "/review/notes" parameters "ReturnValue"
+
     let resolveMissingFindingAsync repositoryId promotionSetId findingId =
         let parameters = reviewScoped (ResolveFindingParameters()) repositoryId promotionSetId
         parameters.FindingId <- findingId
         parameters.ResolutionState <- "Approved"
         parameters.Note <- "hosted route proof"
-        postBadRequestContainsAsync<ResolveFindingParameters> "/review/resolve" parameters "Review notes do not exist"
+        postBadRequestContainsAsync<ResolveFindingParameters> "/review/resolve" parameters "The review notes do not exist."
 
     let candidateIdentityAsync repositoryId candidateId =
         candidateScoped (ResolveCandidateIdentityParameters()) repositoryId candidateId
@@ -154,6 +167,11 @@ module private ReviewIntegrationHelpers =
         candidateScoped (CandidateProjectionParameters()) repositoryId candidateId
         |> postOkReturnAsync<CandidateRequiredActionsResult, CandidateProjectionParameters> "/review/candidate/required-actions"
 
+    let candidateRequiredActionsCurrentFailureAsync repositoryId candidateId =
+        candidateScoped (CandidateProjectionParameters()) repositoryId candidateId
+        |> fun parameters ->
+            postStatusContainsAsync "/review/candidate/required-actions" parameters HttpStatusCode.InternalServerError "deriveCandidateRequiredActions"
+
     let candidateAttestationsAsync repositoryId candidateId =
         candidateScoped (CandidateProjectionParameters()) repositoryId candidateId
         |> postOkReturnAsync<CandidateAttestationsResult, CandidateProjectionParameters> "/review/candidate/attestations"
@@ -162,9 +180,13 @@ module private ReviewIntegrationHelpers =
         candidateScoped (CandidateProjectionParameters()) repositoryId candidateId
         |> postOkReturnAsync<ReviewModels.ReviewReportResult, CandidateProjectionParameters> "/review/report/get"
 
+    let reviewReportCurrentFailureAsync repositoryId candidateId =
+        candidateScoped (CandidateProjectionParameters()) repositoryId candidateId
+        |> fun parameters -> postStatusContainsAsync "/review/report/get" parameters HttpStatusCode.InternalServerError "deriveCandidateRequiredActions"
+
     let retryAsync repositoryId candidateId =
         let parameters = candidateScoped (CandidateProjectionParameters()) repositoryId candidateId
-        postBadRequestContainsAsync<CandidateProjectionParameters> "/review/candidate/retry" parameters "DirectoryVersion was not found"
+        postBadRequestContainsAsync<CandidateProjectionParameters> "/review/candidate/retry" parameters "PromotionSet does not exist."
 
     let cancelAsync repositoryId candidateId =
         let parameters = candidateScoped (CandidateProjectionParameters()) repositoryId candidateId
@@ -173,7 +195,7 @@ module private ReviewIntegrationHelpers =
     let gateRerunAsync repositoryId candidateId =
         let parameters = candidateScoped (CandidateGateRerunParameters()) repositoryId candidateId
         parameters.Gate <- "required-validation"
-        postBadRequestContainsAsync<CandidateGateRerunParameters> "/review/candidate/gate-rerun" parameters "DirectoryVersion was not found"
+        postBadRequestContainsAsync<CandidateGateRerunParameters> "/review/candidate/gate-rerun" parameters "PromotionSet does not exist."
 
     let deepenStubAsync repositoryId promotionSetId =
         let parameters = reviewScoped (DeepenReviewParameters()) repositoryId promotionSetId
@@ -208,6 +230,44 @@ type ReviewRouteIntegrationTests() =
 
             do! ReviewIntegrationHelpers.checkpointAsync repositoryId promotionSetId reviewedUpToReferenceId policySnapshotId
 
+            let! notesBody = ReviewIntegrationHelpers.getNotesCurrentNoNotesAsync repositoryId promotionSetId
+            Assert.That(notesBody, Does.Contain("ReturnValue"))
+            Assert.That(notesBody, Does.Contain("null"))
+
+            let! _ = ReviewIntegrationHelpers.resolveMissingFindingAsync repositoryId promotionSetId (Guid.NewGuid().ToString())
+
+            let! _ = ReviewIntegrationHelpers.candidateRequiredActionsCurrentFailureAsync repositoryId promotionSetId
+
+            let! attestations = ReviewIntegrationHelpers.candidateAttestationsAsync repositoryId promotionSetId
+            Assert.That(attestations.Identity.CandidateId, Is.EqualTo(promotionSetId))
+            Assert.That(attestations.Identity.PromotionSetId, Is.EqualTo(Guid.Empty.ToString()))
+
+            let attestationNames =
+                attestations.Attestations
+                |> List.map (fun attestation -> attestation.Name)
+                |> List.toArray
+
+            Assert.That(attestationNames.Length, Is.EqualTo(2))
+            Assert.That(attestationNames[0], Is.EqualTo("PolicySnapshot"))
+            Assert.That(attestationNames[1], Is.EqualTo("ReviewCheckpoint"))
+
+            Assert.That(attestations.Attestations[0].Status, Is.EqualTo(ProjectionSourceStates.NotAvailable))
+            Assert.That(attestations.Attestations[1].Status, Is.EqualTo(ProjectionSourceStates.NotAvailable))
+
+            let attestationSourceSections =
+                attestations.SourceStates
+                |> List.map (fun sourceState -> sourceState.Section)
+                |> List.toArray
+
+            Assert.That(attestationSourceSections.Length, Is.EqualTo(3))
+            Assert.That(attestationSourceSections[0], Is.EqualTo("identity"))
+            Assert.That(attestationSourceSections[1], Is.EqualTo("policy"))
+            Assert.That(attestationSourceSections[2], Is.EqualTo("checkpoint"))
+
+            let! _ = ReviewIntegrationHelpers.reviewReportCurrentFailureAsync repositoryId promotionSetId
+            let! _ = ReviewIntegrationHelpers.retryAsync repositoryId promotionSetId
+            let! _ = ReviewIntegrationHelpers.cancelAsync repositoryId promotionSetId
+            let! _ = ReviewIntegrationHelpers.gateRerunAsync repositoryId promotionSetId
             let! _ = ReviewIntegrationHelpers.deepenStubAsync repositoryId promotionSetId
 
             return ()

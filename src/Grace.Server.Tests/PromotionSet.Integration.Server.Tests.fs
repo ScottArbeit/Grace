@@ -54,25 +54,44 @@ module private PromotionSetIntegrationHelpers =
             return body
         }
 
-    let private deserializeRouteValue<'T> (body: string) =
-        use document = JsonDocument.Parse(body)
-        let mutable returnValue = Unchecked.defaultof<JsonElement>
+    let private requireProperty (name: string) (element: JsonElement) =
+        let mutable property = Unchecked.defaultof<JsonElement>
 
-        if (document.RootElement.TryGetProperty("ReturnValue", &returnValue)
-            || document.RootElement.TryGetProperty("returnValue", &returnValue))
-           && returnValue.ValueKind = JsonValueKind.Object then
-            deserialize<GraceReturnValue<'T>> body
-            |> fun value -> value.ReturnValue
-        elif returnValue.ValueKind = JsonValueKind.Null then
-            Assert.Fail($"Route returned null returnValue. Body: {body}")
-            Unchecked.defaultof<'T>
+        if element.TryGetProperty(name, &property) then
+            property
+        elif element.TryGetProperty($"{Char.ToLowerInvariant(name[0])}{name.Substring(1)}", &property) then
+            property
         else
-            try
-                deserialize<'T> body
-            with
-            | ex ->
-                Assert.Fail($"Failed to deserialize direct route value. Body: {body}. Error: {ex.Message}")
-                Unchecked.defaultof<'T>
+            Assert.Fail($"Expected JSON property '{name}' in {element.GetRawText()}.")
+            Unchecked.defaultof<JsonElement>
+
+    let assertEventSequence (body: string) (promotionSetId: string) (expectedNames: string array) =
+        use document = JsonDocument.Parse(body)
+
+        let returnValue =
+            document.RootElement
+            |> requireProperty "ReturnValue"
+
+        let eventNames =
+            returnValue.EnumerateArray()
+            |> Seq.map (fun eventEnvelope ->
+                let eventElement = eventEnvelope |> requireProperty "Event"
+                let eventProperty = eventElement.EnumerateObject() |> Seq.exactlyOne
+                eventProperty.Name)
+            |> Seq.toArray
+
+        let actorIds =
+            returnValue.EnumerateArray()
+            |> Seq.map (fun eventEnvelope ->
+                let metadata = eventEnvelope |> requireProperty "Metadata"
+                let properties = metadata |> requireProperty "Properties"
+
+                (properties |> requireProperty "ActorId")
+                    .GetString())
+            |> Seq.toArray
+
+        Assert.That(eventNames, Is.EqualTo<string array>(expectedNames))
+        Assert.That(actorIds |> Array.forall ((=) promotionSetId), Is.True)
 
     let getPromotionSetAsync repositoryId promotionSetId =
         task {
@@ -99,14 +118,6 @@ module private PromotionSetIntegrationHelpers =
             parameters.TargetBranchId <- targetBranchId
             let! _ = postOkAsync "/promotion-set/create" parameters
             return promotionSetId
-        }
-
-    let unusedAsync () =
-        task {
-            let parameters = scoped (GetPromotionSetParameters()) String.Empty String.Empty
-            let! response = postAsync "/promotion-set/get" (createJsonContent parameters)
-            let! value = deserializeContent<GraceReturnValue<PromotionSetDto>> response
-            return value.ReturnValue
         }
 
     let updateInputPromotionsAsync repositoryId promotionSetId promotionPointers =
@@ -187,9 +198,18 @@ type PromotionSetRouteIntegrationTests() =
             Assert.That(updated, Does.Contain("JsonEnumLikeUnionConverter"))
 
             let! eventsBeforeDelete = PromotionSetIntegrationHelpers.getEventsAsync repositoryId promotionSetId
-            Assert.That(eventsBeforeDelete, Does.Contain("created"))
-            Assert.That(eventsBeforeDelete, Does.Contain("inputPromotionsUpdated"))
-            Assert.That(eventsBeforeDelete, Does.Contain("recomputeFailed"))
+
+            PromotionSetIntegrationHelpers.assertEventSequence
+                eventsBeforeDelete
+                promotionSetId
+                [|
+                    "created"
+                    "recomputeStarted"
+                    "stepsUpdated"
+                    "inputPromotionsUpdated"
+                    "recomputeStarted"
+                    "recomputeFailed"
+                |]
 
             let! _ = PromotionSetIntegrationHelpers.resolveConflictsCurrentFailureAsync repositoryId promotionSetId (Guid.NewGuid().ToString())
 
@@ -200,5 +220,19 @@ type PromotionSetRouteIntegrationTests() =
             Assert.That(deleted, Does.Contain("JsonEnumLikeUnionConverter"))
 
             let! eventsAfterDelete = PromotionSetIntegrationHelpers.getEventsAsync repositoryId promotionSetId
-            Assert.That(eventsAfterDelete, Does.Contain("logicalDeleted"))
+
+            PromotionSetIntegrationHelpers.assertEventSequence
+                eventsAfterDelete
+                promotionSetId
+                [|
+                    "created"
+                    "recomputeStarted"
+                    "stepsUpdated"
+                    "inputPromotionsUpdated"
+                    "recomputeStarted"
+                    "recomputeFailed"
+                    "recomputeStarted"
+                    "recomputeFailed"
+                    "logicalDeleted"
+                |]
         }
