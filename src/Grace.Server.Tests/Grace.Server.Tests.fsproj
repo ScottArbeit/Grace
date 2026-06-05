@@ -26,6 +26,9 @@
     <Compile Include="Webhook.Server.Tests.fs" />
     <Compile Include="Access.Server.Tests.fs" />
     <Compile Include="Storage.Server.Tests.fs" />
+    <Compile Include="DirectoryVersion.Server.Tests.fs" />
+    <Compile Include="Diff.Server.Tests.fs" />
+    <Compile Include="Reminder.Server.Tests.fs" />
     <Compile Include="WorkItem.Integration.Server.Tests.fs" />
     <Compile Include="Auth.Server.Tests.fs" />
     <Compile Include="Program.fs" />
