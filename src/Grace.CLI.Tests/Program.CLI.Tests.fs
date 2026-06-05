@@ -129,6 +129,23 @@ module HelpDoesNotReadConfigTests =
 
         JsonDocument.Parse(output)
 
+    let private assertJsonErrorOutput (standardOut: string) =
+        use document = parseJsonOutput standardOut
+        let rootElement = document.RootElement
+        let error = rootElement.GetProperty("Error").GetString()
+
+        error |> should not' (equal String.Empty)
+
+        standardOut
+        |> should not' (contain "Exception in isOutputFormat")
+
+        standardOut
+        |> should not' (contain "graceconfig.json is not found")
+
+        standardOut |> should not' (contain "Elapsed:")
+
+        error
+
     let private captureStdoutAndStderr (action: unit -> unit) =
         use standardOutWriter = new StringWriter()
         use standardErrorWriter = new StringWriter()
@@ -500,6 +517,34 @@ module HelpDoesNotReadConfigTests =
             standardOut |> should not' (contain "Elapsed:"))
 
     [<Test>]
+    let ``missing config in json equals mode emits one error document on stdout`` () =
+        withTempDir (fun _ ->
+            let exitCode, standardOut, standardError =
+                runWithCapturedStdoutAndStderr [| "--output=Json"
+                                                  "branch"
+                                                  "get" |]
+
+            exitCode |> should equal -1
+            standardError |> should equal String.Empty
+
+            assertJsonErrorOutput standardOut
+            |> should contain "graceconfig.json")
+
+    [<Test>]
+    let ``missing config in mixed-case json equals mode emits one error document on stdout`` () =
+        withTempDir (fun _ ->
+            let exitCode, standardOut, standardError =
+                runWithCapturedStdoutAndStderr [| "--OUTPUT=Json"
+                                                  "branch"
+                                                  "get" |]
+
+            exitCode |> should equal -1
+            standardError |> should equal String.Empty
+
+            assertJsonErrorOutput standardOut
+            |> should contain "graceconfig.json")
+
+    [<Test>]
     let ``parse error in json mode emits one error document on stdout`` () =
         withTempDir (fun _ ->
             let exitCode, standardOut, standardError =
@@ -517,6 +562,49 @@ module HelpDoesNotReadConfigTests =
 
             rootElement.GetProperty("Error").GetString()
             |> should contain "Unrecognized command or argument")
+
+    [<Test>]
+    let ``parse error in json equals mode emits one error document on stdout`` () =
+        withTempDir (fun _ ->
+            let exitCode, standardOut, standardError =
+                runWithCapturedStdoutAndStderr [| "--output=Json"
+                                                  "repository"
+                                                  "init"
+                                                  "--definitely-not-an-option" |]
+
+            exitCode |> should equal -1
+            standardError |> should equal String.Empty
+
+            assertJsonErrorOutput standardOut
+            |> should contain "Unrecognized command or argument")
+
+    [<Test>]
+    let ``short equals json output spelling emits json error envelope`` () =
+        withTempDir (fun _ ->
+            let exitCode, standardOut, standardError =
+                runWithCapturedStdoutAndStderr [| "-o=Json"
+                                                  "repository"
+                                                  "init"
+                                                  "--definitely-not-an-option" |]
+
+            exitCode |> should equal -1
+            standardError |> should equal String.Empty
+
+            assertJsonErrorOutput standardOut |> ignore)
+
+    [<Test>]
+    let ``lowercase json value is rejected with json error envelope`` () =
+        withTempDir (fun _ ->
+            let exitCode, standardOut, standardError =
+                runWithCapturedStdoutAndStderr [| "--output=json"
+                                                  "repository"
+                                                  "init" |]
+
+            exitCode |> should equal -1
+            standardError |> should equal String.Empty
+
+            assertJsonErrorOutput standardOut
+            |> should contain "json")
 
     [<Test>]
     let ``catch all exception in json mode emits one error document on stdout`` () =

@@ -235,6 +235,7 @@ module GraceCommand =
                 false
             else
                 let token = tokens[index]
+                let outputEqualsPrefix = $"{OptionName.Output}="
 
                 if
                     token.Equals(OptionName.Output, StringComparison.OrdinalIgnoreCase)
@@ -242,6 +243,14 @@ module GraceCommand =
                 then
                     index + 1 < tokens.Length
                     && tokens[index + 1]
+                        .Equals("Json", StringComparison.OrdinalIgnoreCase)
+                elif token.StartsWith(outputEqualsPrefix, StringComparison.OrdinalIgnoreCase) then
+                    token
+                        .Substring(outputEqualsPrefix.Length)
+                        .Equals("Json", StringComparison.OrdinalIgnoreCase)
+                elif token.StartsWith("-o=", StringComparison.OrdinalIgnoreCase) then
+                    token
+                        .Substring("-o=".Length)
                         .Equals("Json", StringComparison.OrdinalIgnoreCase)
                 else
                     loop (index + 1)
@@ -903,7 +912,14 @@ module GraceCommand =
                     args
                     |> Array.map (fun arg ->
                         if isCaseInsensitive && arg.StartsWith("--") then
-                            arg.ToLowerInvariant()
+                            let equalsIndex = arg.IndexOf("=", StringComparison.Ordinal)
+
+                            if equalsIndex > 0 then
+                                let optionName = arg.Substring(0, equalsIndex).ToLowerInvariant()
+                                let optionValue = arg.Substring(equalsIndex)
+                                $"{optionName}{optionValue}"
+                            else
+                                arg.ToLowerInvariant()
                         else
                             arg)
 
