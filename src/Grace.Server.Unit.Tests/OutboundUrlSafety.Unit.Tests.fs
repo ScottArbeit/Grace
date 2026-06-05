@@ -5,6 +5,7 @@ open NUnit.Framework
 open System
 open System.Collections.Generic
 open System.Net
+open System.Net.Sockets
 open System.Text
 open Grace.Shared.Utilities
 
@@ -226,6 +227,26 @@ type OutboundUrlSafetyUnit() =
 
         validateOutsideDevelopment emptyConfiguration (publicRequest "https://mapped-public.example.test/events")
         |> assertRejected (ValidationFailure.UnsafeHostRejected "8.8.8.8")
+
+    [<Test>]
+    member _.ResolverFailureRejectsHostWithoutAcceptingOutboundUrl() =
+        let mutable resolverCalls = 0
+
+        let resolver (host: string) =
+            resolverCalls <- resolverCalls + 1
+            Assert.That(host, Is.EqualTo("timeout.example.test"))
+            raise (SocketException(11001))
+
+        let result = OutboundUrlPolicy.validateWithResolver resolver false emptyConfiguration (publicRequest "https://timeout.example.test/events?token=secret")
+
+        Assert.That(resolverCalls, Is.EqualTo(1))
+
+        match result with
+        | Error (ValidationFailure.UnsafeHostRejected host) ->
+            Assert.That(host, Is.EqualTo("timeout.example.test"))
+            Assert.That(host, Does.Not.Contain("secret"))
+        | Error failure -> Assert.Fail(sprintf "Expected UnsafeHostRejected but got %A." failure)
+        | Ok value -> Assert.Fail($"Expected URL to be rejected but got {value.ScopedUrl.Url}.")
 
     [<Test>]
     member _.PublicHostnamesCarryResolvedAddressesForAddressPinning() =

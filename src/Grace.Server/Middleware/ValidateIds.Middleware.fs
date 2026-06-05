@@ -258,8 +258,9 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                 let duration_ms = getDurationRightAligned_ms startTime
 
                 if Option.isSome badRequest then
-                    let error = badRequest.Value
-                    context.Items.Add("BadRequest", error.Error)
+                    let contract = ValidateIdsDecisions.badRequestResponse badRequest.Value
+                    let error = contract.Error
+                    context.Items.Add("BadRequest", contract.Error.Error)
 
                     log.LogWarning(
                         "{CurrentInstant}: Node: {hostName}; CorrelationId: {correlationId}; {currentFunction}: Path: {path}; {message}; Duration: {duration_ms}ms.",
@@ -272,7 +273,7 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
                         duration_ms
                     )
 
-                    let! _ = (context |> result400BadRequest error)
+                    let! _ = (context |> result400BadRequest contract.Error)
                     ()
                 else
                     if graceIds.HasBranch then

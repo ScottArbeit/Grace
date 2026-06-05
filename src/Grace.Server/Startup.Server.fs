@@ -1574,24 +1574,10 @@ module Application =
             let user = context.User
 
             if user.Identity.IsAuthenticated then
-                let claimsList = stringBuilderPool.Get()
-
-                try
-                    if not <| isNull user.Claims then
-                        for claim in user.Claims do
-                            claimsList.Append($"{claim.Type}:{claim.Value};")
-                            |> ignore
-
-                    if claimsList.Length > 1 then
-                        claimsList.Remove(claimsList.Length - 1, 1)
-                        |> ignore
-
-                    activity
-                        .AddTag("enduser.id", user.Identity.Name)
-                        .AddTag("enduser.claims", claimsList.ToString())
-                    |> ignore
-                finally
-                    stringBuilderPool.Return(claimsList)
+                activity
+                    .AddTag("enduser.id", Security.TelemetryEnrichment.safeEndUserId user)
+                    .AddTag("enduser.claims", Security.TelemetryEnrichment.safeClaimsTag user)
+                |> ignore
 
             activity
                 .AddTag("working_set", currentWorkingSet)
