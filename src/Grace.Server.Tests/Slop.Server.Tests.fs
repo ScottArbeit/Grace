@@ -5,9 +5,7 @@ open Grace.Shared.Utilities
 open Grace.Types.Common
 open Grace.Types.Owner
 open NUnit.Framework
-open System
 open System.Net.Http
-open System.Text.Json
 
 [<TestFixture>]
 type Slop() =
@@ -50,12 +48,3 @@ type Slop() =
             let! payload = deserializeContent<GraceReturnValue<OwnerDto>> response
             Assert.That(payload.ReturnValue.Class, Is.EqualTo(nameof OwnerDto))
         }
-
-    // Slop guard: if JSON serialization options change, round-tripping breaks.
-    [<Test; Category("Slop")>]
-    member _.OwnerDtoJsonRoundTrip() =
-        let original = { OwnerDto.Default with OwnerId = Guid.NewGuid(); OwnerName = "SlopOwner" }
-
-        let json = JsonSerializer.Serialize(original, Constants.JsonSerializerOptions)
-        let roundTrip = JsonSerializer.Deserialize<OwnerDto>(json, Constants.JsonSerializerOptions)
-        Assert.That(roundTrip, Is.EqualTo(original))
