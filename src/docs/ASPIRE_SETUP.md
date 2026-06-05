@@ -62,11 +62,16 @@ Open `http://localhost:18888` and confirm the following resources show
 
 - `azurite` – Azure Storage emulator (blob/queue/table) on ports `10000-10002`
 - `redis` – Redis cache on port `6379`
-- `cosmos-emulator` – Cosmos DB emulator on port `8081`
+- `cosmos` – Cosmos DB emulator on port `8081`
 - `servicebus-sql` – SQL Server container required by the Service Bus emulator
-- `service-bus-emulator` – Service Bus emulator (AMQP on `5672`, management UI
-  on `9200`)
+- `servicebus-emulator` – Service Bus emulator (AMQP on `5672`, management
+  endpoint on `5300`)
 - `grace-server` – HTTP `5000` / HTTPS `5001`
+
+Redis is provisioned by AppHost and its host/port are forwarded to
+`Grace.Server`. Current startup code does not enable Redis-backed SignalR, so
+Redis remains an explicit AppHost dependency pending a follow-up runtime
+decision rather than a prerequisite proven by the integration tests.
 
 ## Smoke Tests
 
@@ -88,7 +93,7 @@ Open `http://localhost:18888` and confirm the following resources show
 The .NET SDK expects a connection string that ends with
 `UseDevelopmentEmulator=true`. After the emulator finishes booting:
 
-1. Browse to `http://localhost:9200` (Service Bus emulator management portal).
+1. Browse to `http://localhost:5300` (Service Bus emulator management endpoint).
 2. Copy the `RootManageSharedAccessKey` connection string shown in the portal.
 3. Before launching Aspire, set the lowercase environment variable so
    `Grace.Server` can connect:
@@ -109,21 +114,24 @@ Linux hosts.
 
 ## Run Tests
 
-After the host is up:
+Use the repository validation script for the Aspire-backed integration suite:
 
-```bash
-cd ..\Grace.Server.Tests
-DOTNET_ENVIRONMENT=Development dotnet test --no-build
+```powershell
+pwsh ./scripts/validate.ps1 -Full
 ```
 
-Integration tests reuse the running emulators. Shut down Aspire when tests
-finish to release containers and ports.
+`Grace.Server.Tests` starts its own Aspire host, then proves storage, Cosmos DB,
+and Service Bus readiness before running server integration tests. The
+`GRACE_TEST_SKIP_SERVICEBUS=1` environment variable is not a supported
+`Grace.Server.Tests` profile today because the shared setup drains the Service
+Bus test subscription and verifies the Owner Created event.
 
 ## Troubleshooting
 
 - **Port conflicts** – Update bindings inside
-  `Grace.Aspire.AppHost/Program.cs` if ports `5000`, `5001`, `10000–10002`,
-  `8081`, `10251–10255`, `5672`, `9200`, or `21433` are already used.
+  `Grace.Aspire.AppHost/Program.Aspire.AppHost.cs` if ports `5000`, `5001`,
+  `10000–10002`, `8081`, `10251–10255`, `5672`, `5300`, or `21433` are already
+  used.
 - **Cosmos DB emulator** – First launch can take several minutes. Inspect logs
   with `docker logs cosmos-emulator`.
 - **Service Bus emulator** – The Service Bus container waits for SQL Server. If

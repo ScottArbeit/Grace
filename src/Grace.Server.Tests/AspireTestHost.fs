@@ -436,46 +436,117 @@ module AspireTestHost =
                 raise (Exception($"{resourceName} failed to start. {details}{Environment.NewLine}{logDetails}", ex))
         }
 
+    module FixtureDiagnostics =
+        let private redactConnectionStringSegments (sensitivePrefixes: string list) (connectionString: string) =
+            if String.IsNullOrWhiteSpace connectionString then
+                connectionString
+            else
+                connectionString.Split(';', StringSplitOptions.RemoveEmptyEntries)
+                |> Array.map (fun part ->
+                    match sensitivePrefixes
+                          |> List.tryFind (fun prefix -> part.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                        with
+                    | Some prefix -> $"{prefix}***"
+                    | None -> part)
+                |> String.concat ";"
+
+        let redactServiceBusConnectionString (connectionString: string) =
+            redactConnectionStringSegments
+                [
+                    "SharedAccessKey="
+                    "SharedAccessSignature="
+                ]
+                connectionString
+
+        let redactStorageConnectionString (connectionString: string) =
+            redactConnectionStringSegments
+                [
+                    "AccountKey="
+                    "SharedAccessSignature="
+                ]
+                connectionString
+
+        let redactCosmosConnectionString (connectionString: string) =
+            redactConnectionStringSegments
+                [
+                    "AccountKey="
+                    "SharedAccessSignature="
+                ]
+                connectionString
+
+        let formatEnvDiagnostics (env: Map<string, string>) =
+            let get key =
+                match env |> Map.tryFind key with
+                | Some value when not (String.IsNullOrWhiteSpace value) -> value
+                | _ -> "<missing>"
+
+            [
+                Constants.EnvironmentVariables.GraceLogDirectory
+                Constants.EnvironmentVariables.OrleansClusterId
+                Constants.EnvironmentVariables.OrleansServiceId
+                Constants.EnvironmentVariables.DiffContainerName
+                Constants.EnvironmentVariables.DirectoryVersionContainerName
+                Constants.EnvironmentVariables.ZipFileContainerName
+                Constants.EnvironmentVariables.AzureCosmosDBConnectionString
+                Constants.EnvironmentVariables.AzureStorageConnectionString
+                Constants.EnvironmentVariables.AzureServiceBusConnectionString
+            ]
+            |> List.map (fun key ->
+                if key.Equals(Constants.EnvironmentVariables.AzureCosmosDBConnectionString, StringComparison.OrdinalIgnoreCase) then
+                    let value =
+                        env
+                        |> Map.tryFind key
+                        |> Option.defaultValue String.Empty
+
+                    $"{key}={redactCosmosConnectionString value}"
+                else if key.Equals(Constants.EnvironmentVariables.AzureStorageConnectionString, StringComparison.OrdinalIgnoreCase) then
+                    let value =
+                        env
+                        |> Map.tryFind key
+                        |> Option.defaultValue String.Empty
+
+                    $"{key}={redactStorageConnectionString value}"
+                else if key.Equals(Constants.EnvironmentVariables.AzureServiceBusConnectionString, StringComparison.OrdinalIgnoreCase) then
+                    let value =
+                        env
+                        |> Map.tryFind key
+                        |> Option.defaultValue String.Empty
+
+                    $"{key}={redactServiceBusConnectionString value}"
+                else
+                    $"{key}={get key}")
+            |> String.concat "; "
+
+        let getRequiredStartupKeys skipServiceBus =
+            [
+                Constants.EnvironmentVariables.AzureCosmosDBConnectionString
+                Constants.EnvironmentVariables.AzureCosmosDBDatabaseName
+                Constants.EnvironmentVariables.AzureCosmosDBContainerName
+                Constants.EnvironmentVariables.AzureStorageConnectionString
+                if not skipServiceBus then
+                    Constants.EnvironmentVariables.AzureServiceBusConnectionString
+                    Constants.EnvironmentVariables.AzureServiceBusTopic
+                    Constants.EnvironmentVariables.AzureServiceBusSubscription
+            ]
+
+        let getMissingStartupKeys skipServiceBus (env: Map<string, string>) =
+            getRequiredStartupKeys skipServiceBus
+            |> List.filter (fun key ->
+                env
+                |> Map.tryFind key
+                |> Option.forall String.IsNullOrWhiteSpace)
+
+        let serviceBusSkipModeMessage =
+            "GRACE_TEST_SKIP_SERVICEBUS=1 is unsupported for Grace.Server.Tests because the shared setup drains the Service Bus test subscription and proves the Owner Created event."
+
     let private requireEnv (resourceName: string) (key: string) (env: Map<string, string>) =
         env
         |> Map.tryFind key
         |> Option.defaultWith (fun () -> failwith $"Missing env var '{key}' for resource '{resourceName}'.")
 
-    let private redactServiceBusConnectionString (connectionString: string) =
-        if String.IsNullOrWhiteSpace connectionString then
-            connectionString
-        else
-            connectionString.Split(';', StringSplitOptions.RemoveEmptyEntries)
-            |> Array.map (fun part ->
-                if part.StartsWith("SharedAccessKey=", StringComparison.OrdinalIgnoreCase) then
-                    "SharedAccessKey=***"
-                else
-                    part)
-            |> String.concat ";"
-
-    let private redactStorageConnectionString (connectionString: string) =
-        if String.IsNullOrWhiteSpace connectionString then
-            connectionString
-        else
-            connectionString.Split(';', StringSplitOptions.RemoveEmptyEntries)
-            |> Array.map (fun part ->
-                if part.StartsWith("AccountKey=", StringComparison.OrdinalIgnoreCase) then
-                    "AccountKey=***"
-                else
-                    part)
-            |> String.concat ";"
-
-    let private redactCosmosConnectionString (connectionString: string) =
-        if String.IsNullOrWhiteSpace connectionString then
-            connectionString
-        else
-            connectionString.Split(';', StringSplitOptions.RemoveEmptyEntries)
-            |> Array.map (fun part ->
-                if part.StartsWith("AccountKey=", StringComparison.OrdinalIgnoreCase) then
-                    "AccountKey=***"
-                else
-                    part)
-            |> String.concat ";"
+    let private redactServiceBusConnectionString = FixtureDiagnostics.redactServiceBusConnectionString
+    let private redactStorageConnectionString = FixtureDiagnostics.redactStorageConnectionString
+    let private redactCosmosConnectionString = FixtureDiagnostics.redactCosmosConnectionString
 
     let private tryGetConnValue (prefix: string) (value: string) =
         value.Split(';', StringSplitOptions.RemoveEmptyEntries)
@@ -581,48 +652,16 @@ module AspireTestHost =
         options.ServerCertificateCustomValidationCallback <- Func<X509Certificate2, X509Chain, SslPolicyErrors, bool>(fun _ _ _ -> true)
         options
 
-    let private formatEnvDiagnostics (env: Map<string, string>) =
-        let get key =
-            match env |> Map.tryFind key with
-            | Some value when not (String.IsNullOrWhiteSpace value) -> value
-            | _ -> "<missing>"
+    let private formatEnvDiagnostics = FixtureDiagnostics.formatEnvDiagnostics
 
-        [
-            Constants.EnvironmentVariables.GraceLogDirectory
-            Constants.EnvironmentVariables.OrleansClusterId
-            Constants.EnvironmentVariables.OrleansServiceId
-            Constants.EnvironmentVariables.DiffContainerName
-            Constants.EnvironmentVariables.DirectoryVersionContainerName
-            Constants.EnvironmentVariables.ZipFileContainerName
-            Constants.EnvironmentVariables.AzureCosmosDBConnectionString
-            Constants.EnvironmentVariables.AzureStorageConnectionString
-            Constants.EnvironmentVariables.AzureServiceBusConnectionString
-        ]
-        |> List.map (fun key ->
-            if key.Equals(Constants.EnvironmentVariables.AzureCosmosDBConnectionString, StringComparison.OrdinalIgnoreCase) then
-                let value =
-                    env
-                    |> Map.tryFind key
-                    |> Option.defaultValue String.Empty
+    let private requireStartupEnvironment (resourceName: string) (skipServiceBus: bool) (env: Map<string, string>) =
+        let missing = FixtureDiagnostics.getMissingStartupKeys skipServiceBus env
 
-                $"{key}={redactCosmosConnectionString value}"
-            else if key.Equals(Constants.EnvironmentVariables.AzureStorageConnectionString, StringComparison.OrdinalIgnoreCase) then
-                let value =
-                    env
-                    |> Map.tryFind key
-                    |> Option.defaultValue String.Empty
+        if not missing.IsEmpty then
+            let missingText = String.Join(", ", missing)
+            let envDetails = formatEnvDiagnostics env
 
-                $"{key}={redactStorageConnectionString value}"
-            else if key.Equals(Constants.EnvironmentVariables.AzureServiceBusConnectionString, StringComparison.OrdinalIgnoreCase) then
-                let value =
-                    env
-                    |> Map.tryFind key
-                    |> Option.defaultValue String.Empty
-
-                $"{key}={redactServiceBusConnectionString value}"
-            else
-                $"{key}={get key}")
-        |> String.concat "; "
+            failwith $"Missing required startup env var(s) for resource '{resourceName}': {missingText}. Env: {envDetails}"
 
     let private tryGetLatestLogTail (logDirectory: string) =
         try
@@ -896,6 +935,9 @@ module AspireTestHost =
             if not <| String.IsNullOrWhiteSpace bootstrapUserId then
                 Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.GraceAuthzBootstrapSystemAdminUsers, bootstrapUserId)
 
+            if shouldSkipServiceBus () then
+                invalidOp FixtureDiagnostics.serviceBusSkipModeMessage
+
             do! cleanupDockerContainersAsync ()
             let! builder = DistributedApplicationTestingBuilder.CreateAsync<Projects.Grace_Aspire_AppHost>()
             let! app = builder.BuildAsync()
@@ -982,6 +1024,8 @@ module AspireTestHost =
                 with
             | Some value when not (String.IsNullOrWhiteSpace value) -> Console.WriteLine($"AzureCosmosDBConnectionString: {redactCosmosConnectionString value}")
             | _ -> Console.WriteLine("AzureCosmosDBConnectionString: <missing>")
+
+            requireStartupEnvironment graceServerResourceName (shouldSkipServiceBus ()) env
 
             let cosmosConnectionString =
                 env
