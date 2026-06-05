@@ -102,6 +102,14 @@ module HelpDoesNotReadConfigTests =
             Console.SetOut(originalOut)
             setAnsiConsoleOutput originalOut
 
+    let private parseJsonOutput (output: string) =
+        output
+            .TrimStart()
+            .StartsWith("{", StringComparison.Ordinal)
+        |> should equal true
+
+        JsonDocument.Parse(output)
+
     let private captureOutput (action: unit -> unit) =
         use writer = new StringWriter()
         let originalOut = Console.Out
@@ -271,7 +279,7 @@ module HelpDoesNotReadConfigTests =
 
             exitCode |> should equal 0
 
-            use document = JsonDocument.Parse(output)
+            use document = parseJsonOutput output
             let rootElement = document.RootElement
 
             rootElement.GetProperty("Kind").GetString()
@@ -293,17 +301,40 @@ module HelpDoesNotReadConfigTests =
             |> should equal JsonValueKind.Object)
 
     [<Test>]
-    let ``unsupported introspection emits json error envelope`` () =
+    let ``nested command schema resolves full command id`` () =
+        withTempDir (fun _ ->
+            let exitCode, output =
+                runWithCapturedOutput [| "workitem"
+                                         "attach"
+                                         "summary"
+                                         "--schema" |]
+
+            exitCode |> should equal 0
+
+            use document = parseJsonOutput output
+            let rootElement = document.RootElement
+
+            rootElement.GetProperty("Kind").GetString()
+            |> should equal "schema"
+
+            rootElement
+                .GetProperty("Command")
+                .GetProperty("Id")
+                .GetString()
+            |> should equal "workitem.attach.summary")
+
+    [<Test>]
+    let ``root schema emits json parse error envelope`` () =
         withTempDir (fun _ ->
             let exitCode, output = runWithCapturedOutput [| "--schema" |]
 
             exitCode |> should equal -1
 
-            use document = JsonDocument.Parse(output)
+            use document = parseJsonOutput output
             let rootElement = document.RootElement
 
             rootElement.GetProperty("Error").GetString()
-            |> should contain "does not have CLI output contract metadata"
+            |> should equal "Required command was not provided."
 
             rootElement
                 .GetProperty("CorrelationId")
@@ -321,11 +352,46 @@ module HelpDoesNotReadConfigTests =
 
             exitCode |> should equal -1
 
-            use document = JsonDocument.Parse(output)
+            use document = parseJsonOutput output
             let rootElement = document.RootElement
 
             rootElement.GetProperty("Error").GetString()
             |> should equal "--schema and --examples cannot be used together.")
+
+    [<Test>]
+    let ``schema with unknown option emits json parse error envelope`` () =
+        withTempDir (fun _ ->
+            let exitCode, output =
+                runWithCapturedOutput [| "repository"
+                                         "init"
+                                         "--schema"
+                                         "--definitely-not-an-option" |]
+
+            exitCode |> should equal -1
+
+            use document = parseJsonOutput output
+            let rootElement = document.RootElement
+
+            rootElement.GetProperty("Error").GetString()
+            |> should contain "Unrecognized command or argument")
+
+    [<Test>]
+    let ``schema with invalid output emits json parse error envelope`` () =
+        withTempDir (fun _ ->
+            let exitCode, output =
+                runWithCapturedOutput [| "--output"
+                                         "Bogus"
+                                         "repository"
+                                         "init"
+                                         "--schema" |]
+
+            exitCode |> should equal -1
+
+            use document = parseJsonOutput output
+            let rootElement = document.RootElement
+
+            rootElement.GetProperty("Error").GetString()
+            |> should contain "Bogus")
 
     [<Test>]
     let ``verbose parse result shows resolved ids`` () =

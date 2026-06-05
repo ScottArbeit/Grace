@@ -140,24 +140,45 @@ module GraceCommand =
         else
             allOptions
 
-    let private commandIdentityFromCommand (command: Command) =
-        let parents =
-            command.Parents.OfType<Command>()
-            |> Seq.toList
-            |> List.rev
-            |> List.filter (fun parent -> not (parent :? RootCommand))
-            |> List.map (fun parent -> parent.Name)
+    let private commandIdentityFromCommandResult (commandResult: CommandResult) =
+        let rec loop (current: SymbolResult) (names: string list) =
+            match current with
+            | :? CommandResult as currentCommand ->
+                let nextNames =
+                    if currentCommand.Command :? RootCommand then
+                        names
+                    else
+                        currentCommand.Command.Name :: names
 
-        CommandOutputContract.commandIdentity parents command.Name
+                if isNull currentCommand.Parent then
+                    nextNames
+                else
+                    loop currentCommand.Parent nextNames
+            | _ -> names
 
-    let private tryGetBoolOption (parseResult: ParseResult) (optionName: string) =
-        let result = parseResult.GetResult(optionName)
+        let path = loop commandResult []
 
-        if isNull result then false else parseResult.GetValue<bool>(optionName)
+        match path with
+        | [] -> CommandOutputContract.commandIdentity [] commandResult.Command.Name
+        | _ ->
+            let commandName = path |> List.last
+            let groupPath = path |> List.take (path.Length - 1)
+            CommandOutputContract.commandIdentity groupPath commandName
 
-    let private introspectionRequest (parseResult: ParseResult) =
-        let schema = tryGetBoolOption parseResult OptionName.Schema
-        let examples = tryGetBoolOption parseResult OptionName.Examples
+    let private introspectionRequestFromTokens (args: string array) =
+        let tokens =
+            if isNull args then
+                Array.empty
+            else
+                args
+                |> Array.takeWhile (fun token -> not (token.Equals("--", StringComparison.Ordinal)))
+
+        let containsOption optionName =
+            tokens
+            |> Array.exists (fun token -> token.Equals(optionName, StringComparison.OrdinalIgnoreCase))
+
+        let schema = containsOption OptionName.Schema
+        let examples = containsOption OptionName.Examples
 
         match schema, examples with
         | false, false -> None
@@ -172,9 +193,24 @@ module GraceCommand =
         writeJsonStdout error
         -1
 
+    let private isIgnorableIntrospectionParseError (error: ParseError) =
+        error.Message.StartsWith("Required argument missing for command:", StringComparison.Ordinal)
+
+    let private hasBlockingIntrospectionParseErrors (parseResult: ParseResult) =
+        parseResult.Errors
+        |> Seq.exists (isIgnorableIntrospectionParseError >> not)
+
+    let private writeIntrospectionParseError (parseResult: ParseResult) =
+        let message =
+            parseResult.Errors
+            |> Seq.filter (isIgnorableIntrospectionParseError >> not)
+            |> Seq.map (fun error -> error.Message)
+            |> String.concat Environment.NewLine
+
+        writeIntrospectionError parseResult message
+
     let private handleIntrospectionRequest (parseResult: ParseResult) kind =
-        let command = parseResult.CommandResult.Command
-        let identity = commandIdentityFromCommand command
+        let identity = commandIdentityFromCommandResult parseResult.CommandResult
 
         match CommandOutputContract.tryFind identity with
         | Some entry ->
@@ -830,20 +866,28 @@ module GraceCommand =
 
                     parseResult <- rootCommand.Parse(argvToParse)
                     parseSucceeded <- parseResult.Errors.Count = 0
-                    // Write the ParseResult to Services as global context for the CLI.
-                    Services.parseResult <- parseResult
-                    LocalStateDb.setVerbose (parseResult |> verbose)
 
-                    match introspectionRequest parseResult with
+                    match introspectionRequestFromTokens argvToParse with
                     | Some (Ok kind) ->
                         isIntrospection <- true
-                        returnValue <- handleIntrospectionRequest parseResult kind
+                        Services.parseResult <- parseResult
+
+                        returnValue <-
+                            if hasBlockingIntrospectionParseErrors parseResult then
+                                writeIntrospectionParseError parseResult
+                            else
+                                handleIntrospectionRequest parseResult kind
+
                         raise (IntrospectionExit returnValue)
                     | Some (Error message) ->
                         isIntrospection <- true
+                        Services.parseResult <- parseResult
                         returnValue <- writeIntrospectionError parseResult message
                         raise (IntrospectionExit returnValue)
-                    | None -> ()
+                    | None ->
+                        // Write the ParseResult to Services as global context for the CLI.
+                        Services.parseResult <- parseResult
+                        LocalStateDb.setVerbose (parseResult |> verbose)
 
                     let helpAction =
                         match parseResult.Action with
