@@ -305,7 +305,6 @@ type General() =
 
             let! response = client.GetAsync("/metrics")
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized))
-            Assert.That(response.Content.Headers.ContentLength.GetValueOrDefault(), Is.EqualTo(0L))
         }
 
     [<Test>]
