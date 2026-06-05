@@ -1,0 +1,180 @@
+{
+  "schemaVersion": 1,
+  "description": "Classifies implemented Grace.Server routes against the public OpenAPI contract. Public contract routes are the implemented routes present in Main.OpenAPI.yaml; every implemented route omitted from OpenAPI must appear here with an explanatory non-public classification.",
+  "classifications": [
+    {
+      "classification": "staleArtifact",
+      "reason": "The legacy OpenAPI document advertises GET /openApi, but Startup.Server.fs no longer implements that route.",
+      "traceIds": [ "B-020", "B-024", "drift-001", "drift-003" ],
+      "routes": [
+        { "method": "GET", "path": "/openApi" }
+      ]
+    },
+    {
+      "classification": "intentionallyExcludedOperationalSurface",
+      "reason": "Operational liveness, metrics, root HTML, and SignalR notification surfaces are runtime operations, not the public JSON API contract.",
+      "traceIds": [ "B-024", "B-041", "surf-host", "surf-startup-admin" ],
+      "routes": [
+        { "method": "GET", "path": "/" },
+        { "method": "GET", "path": "/healthz" },
+        { "method": "GET", "path": "/metrics" },
+        { "method": "GET", "path": "/notifications" }
+      ]
+    },
+    {
+      "classification": "debugTestOnlyRoute",
+      "reason": "Debug or test support routes are implemented for local maintenance or generated approval-request seeding and are intentionally excluded from the public OpenAPI contract.",
+      "traceIds": [ "B-035", "B-041", "drift-004", "surf-approval", "surf-startup-admin" ],
+      "routes": [
+        { "method": "POST", "path": "/admin/deleteAllFromCosmosDB" },
+        { "method": "POST", "path": "/admin/deleteAllRemindersFromCosmosDB" },
+        { "method": "POST", "path": "/approval/request/_seedGenerated" }
+      ]
+    },
+    {
+      "classification": "incompleteUnimplementedSurface",
+      "reason": "The route is wired but Review.Deepen currently returns a not-implemented response, so it must not be promoted into the public OpenAPI contract yet.",
+      "traceIds": [ "B-056", "drift-005", "split-005", "surf-review-queue-promotion" ],
+      "routes": [
+        { "method": "POST", "path": "/review/deepen" }
+      ]
+    },
+    {
+      "classification": "internalOnlyContract",
+      "reason": "Access-control administration and permission-inspection routes are internal authorization operations, not public OpenAPI expansion targets for this slice.",
+      "traceIds": [ "B-020", "B-024", "B-041", "surf-startup-admin" ],
+      "routes": [
+        { "method": "GET", "path": "/access/listRoles" },
+        { "method": "POST", "path": "/access/checkPermission" },
+        { "method": "POST", "path": "/access/grantRole" },
+        { "method": "POST", "path": "/access/listPathPermissions" },
+        { "method": "POST", "path": "/access/listRoleAssignments" },
+        { "method": "POST", "path": "/access/removePathPermission" },
+        { "method": "POST", "path": "/access/revokeRole" },
+        { "method": "POST", "path": "/access/upsertPathPermission" }
+      ]
+    },
+    {
+      "classification": "internalOnlyContract",
+      "reason": "Authentication, personal access token, and OIDC bootstrap routes are server identity flows kept outside the current public OpenAPI route expansion.",
+      "traceIds": [ "B-020", "B-024", "drift-003", "surf-host" ],
+      "routes": [
+        { "method": "GET", "path": "/auth/login" },
+        { "method": "GET", "path": "/auth/login/%s" },
+        { "method": "GET", "path": "/auth/logout" },
+        { "method": "GET", "path": "/auth/me" },
+        { "method": "GET", "path": "/auth/oidc/config" },
+        { "method": "POST", "path": "/auth/token/create" },
+        { "method": "POST", "path": "/auth/token/list" },
+        { "method": "POST", "path": "/auth/token/revoke" }
+      ]
+    },
+    {
+      "classification": "internalOnlyContract",
+      "reason": "Agent session and queue routes are orchestration surfaces for Grace runtime workflows, not public OpenAPI contract routes in this issue.",
+      "traceIds": [ "B-020", "B-042", "B-056", "surf-review-queue-promotion" ],
+      "routes": [
+        { "method": "POST", "path": "/agent/session/active" },
+        { "method": "POST", "path": "/agent/session/listActive" },
+        { "method": "POST", "path": "/agent/session/start" },
+        { "method": "POST", "path": "/agent/session/status" },
+        { "method": "POST", "path": "/agent/session/stop" },
+        { "method": "POST", "path": "/queue/dequeue" },
+        { "method": "POST", "path": "/queue/enqueue" },
+        { "method": "POST", "path": "/queue/pause" },
+        { "method": "POST", "path": "/queue/resume" },
+        { "method": "POST", "path": "/queue/status" }
+      ]
+    },
+    {
+      "classification": "internalOnlyContract",
+      "reason": "Additional branch and repository management routes are implemented server operations but are not part of the current public OpenAPI surface.",
+      "traceIds": [ "B-020", "B-024", "drift-003" ],
+      "routes": [
+        { "method": "POST", "path": "/branch/assign" },
+        { "method": "POST", "path": "/branch/createExternal" },
+        { "method": "POST", "path": "/branch/enableAssign" },
+        { "method": "POST", "path": "/branch/enableAutoRebase" },
+        { "method": "POST", "path": "/branch/enableExternal" },
+        { "method": "POST", "path": "/branch/getDiffsForReferenceType" },
+        { "method": "POST", "path": "/branch/getEvents" },
+        { "method": "POST", "path": "/branch/getExternals" },
+        { "method": "POST", "path": "/branch/getRecursiveSize" },
+        { "method": "POST", "path": "/branch/getVersion" },
+        { "method": "POST", "path": "/branch/listContents" },
+        { "method": "POST", "path": "/branch/setPromotionMode" },
+        { "method": "POST", "path": "/branch/updateParentBranch" },
+        { "method": "POST", "path": "/repository/setAllowsLargeFiles" },
+        { "method": "POST", "path": "/repository/setAnonymousAccess" },
+        { "method": "POST", "path": "/repository/setConflictResolutionPolicy" },
+        { "method": "POST", "path": "/repository/setDiffCacheDays" },
+        { "method": "POST", "path": "/repository/setDirectoryVersionCacheDays" },
+        { "method": "POST", "path": "/repository/setLogicalDeleteDays" }
+      ]
+    },
+    {
+      "classification": "internalOnlyContract",
+      "reason": "Artifact, directory ZIP, policy, reminder, promotion-set, and validation-set operations are implemented internal workflow surfaces pending a separate public-contract decision.",
+      "traceIds": [ "B-020", "B-024", "B-042", "surf-review-queue-promotion" ],
+      "routes": [
+        { "method": "GET", "path": "/artifact/%O/download-uri" },
+        { "method": "POST", "path": "/artifact/create" },
+        { "method": "POST", "path": "/directory/getZipFile" },
+        { "method": "POST", "path": "/policy/acknowledge" },
+        { "method": "POST", "path": "/policy/current" },
+        { "method": "POST", "path": "/promotion-set/%O/resolve-conflicts" },
+        { "method": "POST", "path": "/promotion-set/apply" },
+        { "method": "POST", "path": "/promotion-set/create" },
+        { "method": "POST", "path": "/promotion-set/delete" },
+        { "method": "POST", "path": "/promotion-set/get" },
+        { "method": "POST", "path": "/promotion-set/get-events" },
+        { "method": "POST", "path": "/promotion-set/recompute" },
+        { "method": "POST", "path": "/promotion-set/update-input-promotions" },
+        { "method": "POST", "path": "/reminder/create" },
+        { "method": "POST", "path": "/reminder/delete" },
+        { "method": "POST", "path": "/reminder/get" },
+        { "method": "POST", "path": "/reminder/list" },
+        { "method": "POST", "path": "/reminder/reschedule" },
+        { "method": "POST", "path": "/reminder/updateTime" },
+        { "method": "POST", "path": "/validation-result/record" },
+        { "method": "POST", "path": "/validation-set/create" },
+        { "method": "POST", "path": "/validation-set/delete" },
+        { "method": "POST", "path": "/validation-set/get" },
+        { "method": "POST", "path": "/validation-set/update" }
+      ]
+    },
+    {
+      "classification": "internalOnlyContract",
+      "reason": "Review-candidate and work-item routes are implemented workflow surfaces, but their public-contract shape is deferred to a dedicated review/work planning slice.",
+      "traceIds": [ "B-020", "B-042", "B-056", "split-005", "surf-review-queue-promotion" ],
+      "routes": [
+        { "method": "POST", "path": "/review/candidate/attestations" },
+        { "method": "POST", "path": "/review/candidate/cancel" },
+        { "method": "POST", "path": "/review/candidate/gate-rerun" },
+        { "method": "POST", "path": "/review/candidate/get" },
+        { "method": "POST", "path": "/review/candidate/required-actions" },
+        { "method": "POST", "path": "/review/candidate/resolve" },
+        { "method": "POST", "path": "/review/candidate/retry" },
+        { "method": "POST", "path": "/review/checkpoint" },
+        { "method": "POST", "path": "/review/notes" },
+        { "method": "POST", "path": "/review/report/get" },
+        { "method": "POST", "path": "/review/resolve" },
+        { "method": "POST", "path": "/work/add-summary" },
+        { "method": "POST", "path": "/work/attachments/download" },
+        { "method": "POST", "path": "/work/attachments/list" },
+        { "method": "POST", "path": "/work/attachments/show" },
+        { "method": "POST", "path": "/work/create" },
+        { "method": "POST", "path": "/work/get" },
+        { "method": "POST", "path": "/work/link/artifact" },
+        { "method": "POST", "path": "/work/link/promotion-set" },
+        { "method": "POST", "path": "/work/link/reference" },
+        { "method": "POST", "path": "/work/links/list" },
+        { "method": "POST", "path": "/work/links/remove/artifact" },
+        { "method": "POST", "path": "/work/links/remove/artifact-type" },
+        { "method": "POST", "path": "/work/links/remove/promotion-set" },
+        { "method": "POST", "path": "/work/links/remove/reference" },
+        { "method": "POST", "path": "/work/update" }
+      ]
+    }
+  ]
+}
