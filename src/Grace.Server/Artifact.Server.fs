@@ -149,7 +149,7 @@ module Artifact =
                     let metadata = createMetadata context
                     let artifactActorProxy = Artifact.CreateActorProxy artifactId graceIds.RepositoryId correlationId
 
-                    match! artifactActorProxy.Handle (ArtifactCommand.Create artifactDto) metadata with
+                    match! artifactActorProxy.Handle (ArtifactCommand.Create(ArtifactCreated.FromMetadata artifactDto)) metadata with
                     | Error graceError -> return! context |> result400BadRequest graceError
                     | Ok _ ->
                         let response: ArtifactCreateResult = { ArtifactId = artifactId; UploadUri = uploadUri; BlobPath = blobPath }
