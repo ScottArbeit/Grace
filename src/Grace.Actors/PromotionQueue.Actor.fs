@@ -12,6 +12,7 @@ open Grace.Shared.Constants
 open Grace.Shared.Utilities
 open Grace.Shared.Validation.Errors
 open Grace.Types.Events
+open Grace.Types.Policy
 open Grace.Types.Queue
 open Grace.Types.Common
 open Microsoft.Extensions.Logging
@@ -102,11 +103,26 @@ module PromotionQueue =
                 this.correlationId <- correlationId
                 promotionQueue |> returnTask
 
+            member this.GetForRoute correlationId =
+                this.correlationId <- correlationId
+                serialize promotionQueue |> returnTask
+
             member this.GetEvents correlationId =
                 this.correlationId <- correlationId
 
                 state.State :> IReadOnlyList<PromotionQueueEvent>
                 |> returnTask
+
+            member this.InitializeForRoute targetBranchId policySnapshotId metadata =
+                (this :> IPromotionQueueActor).Handle (PromotionQueueCommand.Initialize(targetBranchId, PolicySnapshotId policySnapshotId)) metadata
+
+            member this.EnqueueForRoute promotionSetId metadata = (this :> IPromotionQueueActor).Handle (PromotionQueueCommand.Enqueue promotionSetId) metadata
+
+            member this.DequeueForRoute promotionSetId metadata = (this :> IPromotionQueueActor).Handle (PromotionQueueCommand.Dequeue promotionSetId) metadata
+
+            member this.PauseForRoute metadata = (this :> IPromotionQueueActor).Handle PromotionQueueCommand.Pause metadata
+
+            member this.ResumeForRoute metadata = (this :> IPromotionQueueActor).Handle PromotionQueueCommand.Resume metadata
 
             member this.Handle command metadata =
                 let isValid (command: PromotionQueueCommand) (metadata: EventMetadata) =

@@ -287,12 +287,29 @@ module Queue =
                         Guid.isValidAndNotEmptyGuid parameters.TargetBranchId QueueError.InvalidTargetBranchId
                     |]
 
-                let query (context: HttpContext) _ (actorProxy: IPromotionQueueActor) = actorProxy.Get(getCorrelationId context)
-
                 let! parameters = context |> parse<QueueStatusParameters>
                 parameters.OwnerId <- graceIds.OwnerIdString
                 parameters.OrganizationId <- graceIds.OrganizationIdString
                 parameters.RepositoryId <- graceIds.RepositoryIdString
+
+                let query (context: HttpContext) _ (actorProxy: IPromotionQueueActor) =
+                    task {
+                        let! queueJson = actorProxy.GetForRoute(getCorrelationId context)
+                        let queue = deserialize<PromotionQueue> queueJson
+
+                        return
+                            { queue with
+                                PromotionSetIds = if isNull (box queue.PromotionSetIds) then [] else queue.PromotionSetIds
+                                RunningPromotionSetId =
+                                    if isNull (box queue.RunningPromotionSetId) then
+                                        None
+                                    else
+                                        queue.RunningPromotionSetId
+                                State = if isNull (box queue.State) then QueueState.Idle else queue.State
+                                UpdatedAt = if isNull (box queue.UpdatedAt) then None else queue.UpdatedAt
+                            }
+                    }
+
                 context.Items[ "Command" ] <- "Status"
                 return! processQuery context parameters validations query
             }
@@ -301,28 +318,64 @@ module Queue =
     let Pause: HttpHandler =
         fun (_next: HttpFunc) (context: HttpContext) ->
             task {
+                let graceIds = getGraceIds context
+                let correlationId = getCorrelationId context
+
                 let validations (parameters: QueueActionParameters) =
                     [|
                         Guid.isValidAndNotEmptyGuid parameters.TargetBranchId QueueError.InvalidTargetBranchId
                     |]
 
-                let command (_: QueueActionParameters) = PromotionQueueCommand.Pause |> returnValueTask
+                let! parameters = context |> parse<QueueActionParameters>
+                let validationResults = validations parameters
+                let! validationsPassed = validationResults |> allPass
                 context.Items[ "Command" ] <- nameof Pause
-                return! processCommand context validations command
+
+                if validationsPassed then
+                    let targetBranchId = Guid.Parse(parameters.TargetBranchId)
+                    let actorProxy = PromotionQueue.CreateActorProxy targetBranchId graceIds.RepositoryId correlationId
+
+                    match! actorProxy.PauseForRoute(createMetadata context) with
+                    | Ok graceReturnValue -> return! context |> result200Ok graceReturnValue
+                    | Error graceError -> return! context |> result400BadRequest graceError
+                else
+                    let! error = validationResults |> getFirstError
+
+                    return!
+                        context
+                        |> result400BadRequest (GraceError.Create (QueueError.getErrorMessage error) correlationId)
             }
 
     /// Resumes a promotion queue.
     let Resume: HttpHandler =
         fun (_next: HttpFunc) (context: HttpContext) ->
             task {
+                let graceIds = getGraceIds context
+                let correlationId = getCorrelationId context
+
                 let validations (parameters: QueueActionParameters) =
                     [|
                         Guid.isValidAndNotEmptyGuid parameters.TargetBranchId QueueError.InvalidTargetBranchId
                     |]
 
-                let command (_: QueueActionParameters) = PromotionQueueCommand.Resume |> returnValueTask
+                let! parameters = context |> parse<QueueActionParameters>
+                let validationResults = validations parameters
+                let! validationsPassed = validationResults |> allPass
                 context.Items[ "Command" ] <- nameof Resume
-                return! processCommand context validations command
+
+                if validationsPassed then
+                    let targetBranchId = Guid.Parse(parameters.TargetBranchId)
+                    let actorProxy = PromotionQueue.CreateActorProxy targetBranchId graceIds.RepositoryId correlationId
+
+                    match! actorProxy.ResumeForRoute(createMetadata context) with
+                    | Ok graceReturnValue -> return! context |> result200Ok graceReturnValue
+                    | Error graceError -> return! context |> result400BadRequest graceError
+                else
+                    let! error = validationResults |> getFirstError
+
+                    return!
+                        context
+                        |> result400BadRequest (GraceError.Create (QueueError.getErrorMessage error) correlationId)
             }
 
     /// Enqueues a promotion set in the promotion queue.
@@ -354,6 +407,7 @@ module Queue =
                     let targetBranchId = Guid.Parse(parameters.TargetBranchId)
                     let promotionSetId = Guid.Parse(parameters.PromotionSetId)
                     let actorProxy = PromotionQueue.CreateActorProxy targetBranchId graceIds.RepositoryId correlationId
+                    let policyActorProxy = Policy.CreateActorProxy targetBranchId graceIds.RepositoryId correlationId
                     let promotionSetActorProxy = PromotionSet.CreateActorProxy promotionSetId graceIds.RepositoryId correlationId
                     let metadata = createMetadata context
 
@@ -361,11 +415,9 @@ module Queue =
                         task {
                             context.Items[ "Command" ] <- nameof Enqueue
 
-                            let command (_: EnqueueParameters) =
-                                PromotionQueueCommand.Enqueue promotionSetId
-                                |> returnValueTask
-
-                            return! processCommandWithParameters context parameters (fun _ -> [||]) command
+                            match! actorProxy.EnqueueForRoute promotionSetId metadata with
+                            | Ok graceReturnValue -> return! context |> result200Ok graceReturnValue
+                            | Error graceError -> return! context |> result400BadRequest graceError
                         }
 
                     let continueEnqueue () =
@@ -378,11 +430,39 @@ module Queue =
 
                                     return! context |> result400BadRequest graceError
                                 else
-                                    let initializeCommand = PromotionQueueCommand.Initialize(targetBranchId, PolicySnapshotId parameters.PolicySnapshotId)
+                                    let! actorCurrentPolicy = policyActorProxy.GetCurrent correlationId
 
-                                    match! actorProxy.Handle initializeCommand metadata with
-                                    | Error error -> return! context |> result400BadRequest error
-                                    | Ok _ -> return! runEnqueue ()
+                                    let currentPolicy =
+                                        match actorCurrentPolicy with
+                                        | Some snapshot when Grace.Server.Policy.isUsableSnapshot snapshot -> actorCurrentPolicy
+                                        | _ -> Grace.Server.Policy.tryGetSeededSnapshot targetBranchId
+
+                                    match currentPolicy with
+                                    | None ->
+                                        let graceError = GraceError.Create "Queue initialization requires a current policy snapshot." correlationId
+                                        return! context |> result400BadRequest graceError
+                                    | Some snapshot when
+                                        snapshot.PolicySnapshotId
+                                        <> PolicySnapshotId parameters.PolicySnapshotId
+                                        ->
+                                        let graceError = GraceError.Create "PolicySnapshotId does not match the current policy snapshot." correlationId
+
+                                        graceError.enhance ("RequestedPolicySnapshotId", parameters.PolicySnapshotId)
+                                        |> ignore
+
+                                        graceError.enhance ("CurrentPolicySnapshotId", snapshot.PolicySnapshotId)
+                                        |> ignore
+
+                                        graceError.enhance ("CurrentPolicySnapshotIdText", $"{snapshot.PolicySnapshotId}")
+                                        |> ignore
+
+                                        return! context |> result400BadRequest graceError
+                                    | Some _ ->
+                                        let initializeMetadata = { metadata with CorrelationId = $"{correlationId}:initialize" }
+
+                                        match! actorProxy.InitializeForRoute targetBranchId parameters.PolicySnapshotId initializeMetadata with
+                                        | Error error -> return! context |> result400BadRequest error
+                                        | Ok _ -> return! runEnqueue ()
                             else
                                 return! runEnqueue ()
                         }
@@ -405,16 +485,32 @@ module Queue =
     let Dequeue: HttpHandler =
         fun (_next: HttpFunc) (context: HttpContext) ->
             task {
+                let graceIds = getGraceIds context
+                let correlationId = getCorrelationId context
+
                 let validations (parameters: PromotionSetActionParameters) =
                     [|
                         Guid.isValidAndNotEmptyGuid parameters.TargetBranchId QueueError.InvalidTargetBranchId
                         Guid.isValidAndNotEmptyGuid parameters.PromotionSetId QueueError.InvalidPromotionSetId
                     |]
 
-                let command (parameters: PromotionSetActionParameters) =
-                    PromotionQueueCommand.Dequeue(Guid.Parse(parameters.PromotionSetId))
-                    |> returnValueTask
-
+                let! parameters = context |> parse<PromotionSetActionParameters>
+                let validationResults = validations parameters
+                let! validationsPassed = validationResults |> allPass
                 context.Items[ "Command" ] <- nameof Dequeue
-                return! processCommand context validations command
+
+                if validationsPassed then
+                    let targetBranchId = Guid.Parse(parameters.TargetBranchId)
+                    let promotionSetId = Guid.Parse(parameters.PromotionSetId)
+                    let actorProxy = PromotionQueue.CreateActorProxy targetBranchId graceIds.RepositoryId correlationId
+
+                    match! actorProxy.DequeueForRoute promotionSetId (createMetadata context) with
+                    | Ok graceReturnValue -> return! context |> result200Ok graceReturnValue
+                    | Error graceError -> return! context |> result400BadRequest graceError
+                else
+                    let! error = validationResults |> getFirstError
+
+                    return!
+                        context
+                        |> result400BadRequest (GraceError.Create (QueueError.getErrorMessage error) correlationId)
             }
