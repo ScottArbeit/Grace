@@ -523,13 +523,14 @@ module HelpDoesNotReadConfigTests =
         withTempDir (fun root ->
             writeInvalidConfig root
 
-            let exitCode, standardOut, _ =
+            let exitCode, standardOut, standardError =
                 runWithCapturedStdoutAndStderr [| "--output"
                                                   "Json"
                                                   "access"
                                                   "list-roles" |]
 
             exitCode |> should equal -1
+            standardError |> should equal String.Empty
 
             use document = parseJsonOutput standardOut
             let rootElement = document.RootElement
