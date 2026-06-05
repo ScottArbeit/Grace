@@ -51,17 +51,13 @@ while still creating predictable merge churn. Before assigning parallel branches
 
 ### Epic Merge Strategy
 
-During epic planning, choose the merge strategy and record it in the parent issue.
+When implementing an epic, always use an explicit epic integration branch and record that branch in the parent issue.
+Do not use direct-to-`main` epic slices.
 
-- `direct-to-main`: Use this only when every sub-issue is independently production-safe and may be deployed from
-  `main` before the rest of the epic lands.
-- `epic-integration-branch`: Use this when `main` is production-bound, when intermediate states are not independently
-  production-safe, or when the whole epic is the coherent unit intended for `main`.
-
-For `epic-integration-branch`, create `epic/<parent-issue>-<short-slug>` from current `origin/main`. Sub-issue
-branches and worktrees start from the current `origin/epic/<parent-issue>-<short-slug>`, and sub-issue pull requests
-target the epic branch. The epic branch is an integration branch, not a production deployment branch. The final
-ready-for-review pull request from the epic branch to `main` is the production release candidate for the epic.
+Create `epic/<parent-issue>-<short-slug>` from current `origin/main`. Sub-issue branches and worktrees start from the
+current `origin/epic/<parent-issue>-<short-slug>`, and sub-issue pull requests target the epic branch. The epic branch
+is an integration branch, not a production deployment branch. The final ready-for-review pull request from the epic
+branch to `main` is the production release candidate for the epic.
 
 When using an epic integration branch:
 
@@ -146,8 +142,9 @@ Definition of done:
 After the GitHub issue exists, claim it before editing, assign it to the authenticated GitHub user, and create an
 issue-owned branch and worktree from the selected base:
 
-- direct-to-`main` issue: use the latest `origin/main`
-- sub-issue under an epic integration branch: use the current `origin/epic/<parent-issue>-<short-slug>`
+- standalone non-epic issue: use the latest `origin/main`
+- sub-issue under the required epic integration branch: use the current
+  `origin/epic/<parent-issue>-<short-slug>`
 
 Post a claim comment and assign the issue to the authenticated GitHub user before editing:
 
@@ -537,7 +534,7 @@ comments as the review loop continues:
 
 Before the Grace completion review gate, update the branch against its required base:
 
-- direct-to-`main` issue branch: current `origin/main`
+- standalone non-epic issue branch: current `origin/main`
 - sub-issue branch targeting an epic integration branch: current `origin/epic/<parent-issue>-<short-slug>`
 - final epic-to-`main` branch: current `origin/main`
 

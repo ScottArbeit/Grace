@@ -36,12 +36,11 @@ For multi-step implementation plans, create an epic parent issue with linked sub
 assign each sub-issue's parent issue relationship to the epic in GitHub Relationships, and include a DAG in the parent
 issue that shows dependencies and parallelization opportunities. As sub-issues complete, update the epic checklist so
 completed sub-issues are checked.
-During epic planning, choose the merge strategy. Use direct-to-`main` slices only when each sub-issue is independently
-production-safe. When `main` is production-bound or intermediate states are not independently production-safe, create an
-`epic/<parent-issue>-<slug>` integration branch from `origin/main`, branch sub-issue worktrees from the current
-`origin/epic/...`, open sub-issue PRs to the epic branch, keep that branch refreshed from `origin/main`, and use the
-final epic-to-`main` PR as the production release candidate. Ensure CI or recorded validation covers PRs targeting
-`epic/**` before relying on the integration branch flow.
+When implementing an epic, always use an explicit epic integration branch. Create
+`epic/<parent-issue>-<slug>` from `origin/main`, branch sub-issue worktrees from the current `origin/epic/...`, open
+sub-issue PRs to the epic branch, keep that branch refreshed from `origin/main`, and use the final epic-to-`main` PR as
+the production release candidate. Do not use direct-to-`main` epic slices. Ensure CI or recorded validation covers PRs
+targeting `epic/**` before relying on the integration branch flow.
 
 ## Development Process
 
@@ -62,8 +61,8 @@ final epic-to-`main` PR as the production release candidate. Ensure CI or record
 - Declare owned paths, forbidden or sensitive paths, risk surfaces, validation, docs impact, and definition of done
   before editing.
 - After the issue exists, claim it with a comment, assign it to the authenticated GitHub user, and create an
-  issue-owned branch/worktree from the selected base before editing: latest `origin/main` for direct-to-`main` slices,
-  or current `origin/epic/...` for sub-issues under an explicitly declared epic integration branch.
+  issue-owned branch/worktree from the selected base before editing: latest `origin/main` for standalone non-epic
+  issues, or current `origin/epic/...` for sub-issues under the required epic integration branch.
 - When a task assigns a worktree different from the thread workspace root, every `apply_patch` filename must be an
   absolute path under the assigned worktree. After the first patch, verify git status in both locations.
 - Prefer vertical slices with focused tests and `pwsh ./scripts/validate.ps1 -Fast` as the normal validation gate.

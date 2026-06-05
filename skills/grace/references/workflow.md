@@ -17,10 +17,9 @@ Re-read these files during the current session before relying on older memory or
 - When asked to create issues, use the Grace agent task shape and stop before implementation unless asked to implement.
 - For tracked multi-step work, create an epic parent issue, one linked sub-issue per implementation step, native GitHub
   parent relationships, a DAG in the parent issue, and an epic checklist that is updated as sub-issues complete.
-- During epic planning, choose the merge strategy:
-  - `direct-to-main` when each sub-issue is independently production-safe.
-  - `epic-integration-branch` when `main` is production-bound, intermediate states are not independently
-    production-safe, or the full epic is the coherent unit intended for `main`.
+- When implementing an epic, always use an explicit `epic-integration-branch`. Create
+  `epic/<parent-issue>-<short-slug>` from `origin/main`, route sub-issue pull requests to that branch, and use the
+  final epic-to-`main` pull request as the production release candidate. Do not use direct-to-`main` epic slices.
 - Before assigning a sub-issue, require the minimum detail gate:
   - invariant tuple
   - forbidden implementation shapes
@@ -47,11 +46,11 @@ expected write sets are disjoint enough to avoid predictable churn. Serialize or
 project files such as `*.fsproj`, `Startup.Server.fs`, or the same test/helper files. For broad waves, consider a
 preparatory compile-item or file-scaffold slice before later branches edit separate files.
 
-For `direct-to-main`, create issue branches from `origin/main` and target pull requests to `main`. For
-`epic-integration-branch`, create `epic/<parent-issue>-<short-slug>` from `origin/main`, create sub-issue branches from
-the current `origin/epic/...`, target sub-issue PRs to the epic branch, and use the final epic-to-`main` PR as the
-production release candidate. Keep the epic branch refreshed from `origin/main`; ensure CI validates PRs targeting
-`epic/**`, or record the CI gap and required local validation before assigning workers.
+For standalone non-epic issues, create issue branches from `origin/main` and target pull requests to `main`. For epics,
+create `epic/<parent-issue>-<short-slug>` from `origin/main`, create sub-issue branches from the current
+`origin/epic/...`, target sub-issue PRs to the epic branch, and use the final epic-to-`main` PR as the production
+release candidate. Keep the epic branch refreshed from `origin/main`; ensure CI validates PRs targeting `epic/**`, or
+record the CI gap and required local validation before assigning workers.
 
 ## Orchestration And Review
 
@@ -104,10 +103,10 @@ outside the selected validate profile, or explicitly focused-only issues. Freshn
 rule: formatting or freshness checks first, then one final build/test gate.
 
 Before the Grace completion review gate, update the branch against its required base: current `origin/main` for
-direct-to-`main` issue branches, current `origin/epic/...` for sub-issue branches targeting an epic integration branch,
-and current `origin/main` for the final epic-to-`main` PR. Verify ahead/behind, verify the scoped diff and that no
-unexpected deletions are present, run the chosen validation gate, then spawn the final review-only sibling. Review on a
-stale branch is exploratory pre-review and does not satisfy completion.
+standalone non-epic issue branches, current `origin/epic/...` for sub-issue branches targeting an epic integration
+branch, and current `origin/main` for the final epic-to-`main` PR. Verify ahead/behind, verify the scoped diff and that
+no unexpected deletions are present, run the chosen validation gate, then spawn the final review-only sibling. Review on
+a stale branch is exploratory pre-review and does not satisfy completion.
 
 ## Merge Cleanup
 
