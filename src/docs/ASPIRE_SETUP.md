@@ -133,7 +133,7 @@ Bus test subscription and verifies the Owner Created event.
   `10000–10002`, `8081`, `10251–10255`, `5672`, `5300`, or `21433` are already
   used.
 - **Cosmos DB emulator** – First launch can take several minutes. Inspect logs
-  with `docker logs cosmos-emulator`.
+  with `docker logs cosmosdb-emulator`, or `docker logs cosmosdb-emulator-<suffix>` for suffixed test runs.
 - **Service Bus emulator** – The Service Bus container waits for SQL Server. If
   startup fails, check `docker logs servicebus-sql` for password or EULA issues.
 - **Missing telemetry** – `OTLP_ENDPOINT_URL` must reach
