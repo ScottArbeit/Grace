@@ -22,6 +22,8 @@
     <Compile Include="OutboundUrlSafety.Unit.Tests.fs" />
     <Compile Include="ApiVersionAlias.Middleware.Tests.fs" />
     <Compile Include="SdkLifecycle.Middleware.Tests.fs" />
+    <Compile Include="General.Server.Unit.Tests.fs" />
+    <Compile Include="Slop.Server.Unit.Tests.fs" />
     <Compile Include="MetricsAuthorization.Unit.Tests.fs" />
     <Compile Include="StorageAuthorizationResources.Unit.Tests.fs" />
     <Compile Include="ValidateIds.Decisions.Tests.fs" />
@@ -42,6 +44,7 @@
     <Compile Include="Evidence.Determinism.Tests.fs" />
     <Compile Include="ReviewNotes.Determinism.Tests.fs" />
     <Compile Include="Review.Server.Tests.fs" />
+    <Compile Include="WebhookDispatch.Server.Tests.fs" />
     <Compile Include="Queue.Server.Tests.fs" />
     <Compile Include="OrleansFilters.Server.Tests.fs" />
     <Compile Include="WorkItem.Server.Tests.fs" />
