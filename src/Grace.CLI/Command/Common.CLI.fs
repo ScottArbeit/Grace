@@ -457,6 +457,10 @@ module Common =
             )
         | _ -> box returnValue
 
+    let writeJsonStdout value = Console.Out.WriteLine(serialize value)
+
+    let writeJsonErrorStdout (error: GraceError) = writeJsonStdout error
+
     let private renderJsonReturnValue (graceReturnValue: GraceReturnValue<'T>) =
         let output =
             {|
@@ -467,6 +471,8 @@ module Common =
             |}
 
         serialize output
+
+    let writeJsonReturnValueStdout (graceReturnValue: GraceReturnValue<'T>) = Console.Out.WriteLine(renderJsonReturnValue graceReturnValue)
 
     let private tryGetProperty (properties: Dictionary<string, obj>) key =
         if isNull properties then
@@ -577,7 +583,7 @@ module Common =
             renderLifecycleWarningOnce outputFormat graceReturnValue.Properties
 
             match outputFormat with
-            | Json -> AnsiConsole.WriteLine(Markup.Escape(renderJsonReturnValue graceReturnValue))
+            | Json -> writeJsonReturnValueStdout graceReturnValue
             | Minimal -> () //AnsiConsole.MarkupLine($"""[{Colors.Highlighted}]{Markup.Escape($"{graceReturnValue.ReturnValue}")}[/]""")
             | Silent -> ()
             | Verbose ->
@@ -615,7 +621,7 @@ module Common =
                     Uri.UnescapeDataString(error.Error)
 
             match outputFormat with
-            | Json -> AnsiConsole.WriteLine($"{Markup.Escape(json)}")
+            | Json -> writeJsonErrorStdout error
             | Minimal -> AnsiConsole.MarkupLine($"[{Colors.Error}]{Markup.Escape(errorText)}[/]")
             | Silent -> ()
             | Verbose ->

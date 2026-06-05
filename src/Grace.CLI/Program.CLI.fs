@@ -26,6 +26,7 @@ open System.Diagnostics
 open System.Globalization
 open System.IO
 open System.Linq
+open System.Text.Json
 open System.Text.RegularExpressions
 open System.Threading.Tasks
 open Microsoft.Extensions.Caching.Memory
@@ -186,11 +187,9 @@ module GraceCommand =
         | false, true -> Some(Ok CommandOutputContract.IntrospectionKind.Examples)
         | true, true -> Some(Error "--schema and --examples cannot be used together.")
 
-    let private writeJsonStdout value = Console.Out.WriteLine(serialize value)
-
     let private writeIntrospectionError parseResult message =
         let error = GraceError.Create message (getCorrelationId parseResult)
-        writeJsonStdout error
+        Common.writeJsonErrorStdout error
         -1
 
     let private isIgnorableIntrospectionParseError (error: ParseError) =
@@ -217,11 +216,86 @@ module GraceCommand =
             match entry.RouteDisposition with
             | CommandOutputContract.Routed ->
                 let document = CommandOutputContract.introspectionDocument kind entry
-                writeJsonStdout document
+                Common.writeJsonStdout document
                 0
             | CommandOutputContract.SourceOnlyUnrouted reason ->
                 writeIntrospectionError parseResult $"Command '{identity.CommandId}' is not routed for CLI introspection. {reason}"
         | None -> writeIntrospectionError parseResult $"Command '{identity.CommandId}' does not have CLI output contract metadata."
+
+    let private isJsonOutputRequestedFromTokens (args: string array) =
+        let tokens =
+            if isNull args then
+                Array.empty
+            else
+                args
+                |> Array.takeWhile (fun token -> not (token.Equals("--", StringComparison.Ordinal)))
+
+        let rec loop index =
+            if index >= tokens.Length then
+                false
+            else
+                let token = tokens[index]
+
+                if
+                    token.Equals(OptionName.Output, StringComparison.OrdinalIgnoreCase)
+                    || token.Equals("-o", StringComparison.OrdinalIgnoreCase)
+                then
+                    index + 1 < tokens.Length
+                    && tokens[index + 1]
+                        .Equals("Json", StringComparison.OrdinalIgnoreCase)
+                else
+                    loop (index + 1)
+
+        loop 0
+
+    let private writeJsonParseError (parseResult: ParseResult) =
+        let message =
+            parseResult.Errors
+            |> Seq.map (fun error -> error.Message)
+            |> String.concat Environment.NewLine
+
+        let error = GraceError.Create message (getCorrelationId parseResult)
+        Common.writeJsonErrorStdout error
+        -1
+
+    let private writeJsonException (parseResult: ParseResult) (ex: exn) =
+        let correlationId =
+            if isNull parseResult then
+                generateCorrelationId ()
+            else
+                getCorrelationId parseResult
+
+        let error = GraceError.CreateWithException ex ex.Message correlationId
+        Common.writeJsonErrorStdout error
+        -1
+
+    let private tryFindGraceConfigurationFileForJsonMode () =
+        let rec loop (directory: DirectoryInfo) =
+            if isNull directory then
+                None
+            else
+                let candidate = Path.Combine(directory.FullName, Constants.GraceConfigDirectory, Constants.GraceConfigFileName)
+
+                if File.Exists candidate then Some candidate else loop directory.Parent
+
+        loop (DirectoryInfo(Environment.CurrentDirectory))
+
+    let private tryGetJsonConfigurationError (parseResult: ParseResult) =
+        if parseResult |> json then
+            match tryFindGraceConfigurationFileForJsonMode () with
+            | Some graceConfigurationFilePath ->
+                try
+                    use fileStream = new FileStream(graceConfigurationFilePath, FileMode.Open, FileAccess.Read, FileShare.Read)
+
+                    JsonSerializer.Deserialize<GraceConfiguration>(fileStream, Constants.JsonSerializerOptions)
+                    |> ignore
+
+                    None
+                with
+                | ex -> Some(GraceError.CreateWithException ex ex.Message (getCorrelationId parseResult))
+            | None -> None
+        else
+            None
 
     let private replaceDefaultValue (line: string) (defaultValueText: string) =
         let startIndex = line.IndexOf("[default:", StringComparison.OrdinalIgnoreCase)
@@ -810,10 +884,6 @@ module GraceCommand =
     [<EntryPoint>]
     let main args =
         let startTime = getCurrentInstant ()
-        Auth.configureSdkAuth ()
-        Services.configureSdkClientIdentity ()
-        Services.resetInvocationCorrelationId ()
-        Common.resetLifecycleWarningSuppression ()
 
         // Create a MemoryCache instance.
         //let memoryCacheOptions = MemoryCacheOptions(TrackStatistics = false, TrackLinkedCacheEntries = false)
@@ -860,6 +930,11 @@ module GraceCommand =
 
             try
                 try
+                    Auth.configureSdkAuth ()
+                    Services.configureSdkClientIdentity ()
+                    Services.resetInvocationCorrelationId ()
+                    Common.resetLifecycleWarningSuppression ()
+
                     //let commandLineConfiguration = ParserConfiguration rootCommand
 
                     let argvToParse = if args.Length = 0 then [| helpOptions[0] |] else argvNormalized
@@ -887,6 +962,12 @@ module GraceCommand =
                     | None ->
                         // Write the ParseResult to Services as global context for the CLI.
                         Services.parseResult <- parseResult
+
+                        if parseResult.Errors.Count > 0
+                           && isJsonOutputRequestedFromTokens argvToParse then
+                            returnValue <- writeJsonParseError parseResult
+                            raise (IntrospectionExit returnValue)
+
                         LocalStateDb.setVerbose (parseResult |> verbose)
 
                     let helpAction =
@@ -1058,63 +1139,67 @@ module GraceCommand =
                         Console.Write(finalHelpText)
                         returnValue <- invokeResult
                     else if configurationFileExists () then
-                        //parseResult <- caseInsensitiveMiddleware (rootCommand, parseResult, isCaseInsensitive)
+                        match tryGetJsonConfigurationError parseResult with
+                        | Some error ->
+                            Common.writeJsonErrorStdout error
+                            returnValue <- -1
+                        | None ->
+                            //parseResult <- caseInsensitiveMiddleware (rootCommand, parseResult, isCaseInsensitive)
 
-                        if parseResult |> hasOutput then
-                            if parseResult |> verbose then
-                                AnsiConsole.Write(
-                                    (new Rule($"[{Colors.Important}]Started: {formatInstantExtended startTime}.[/]"))
-                                        .RightJustified()
-                                )
+                            if parseResult |> hasOutput then
+                                if parseResult |> verbose then
+                                    AnsiConsole.Write(
+                                        (new Rule($"[{Colors.Important}]Started: {formatInstantExtended startTime}.[/]"))
+                                            .RightJustified()
+                                    )
 
-                            //printParseResult parseResult
-                            else
-                                AnsiConsole.Write(new Rule())
+                                //printParseResult parseResult
+                                else
+                                    AnsiConsole.Write(new Rule())
 
-                        // If this instance isn't `grace watch`, we want to check if `grace watch` is running by trying to read the IPC file.
-                        if not <| (parseResult |> isGraceWatch) then
-                            let! graceWatchStatus = getGraceWatchStatus ()
+                            // If this instance isn't `grace watch`, we want to check if `grace watch` is running by trying to read the IPC file.
+                            if not <| (parseResult |> isGraceWatch) then
+                                let! graceWatchStatus = getGraceWatchStatus ()
 
-                            match graceWatchStatus with
-                            | Some status -> Configuration.updateConfiguration { GraceWatchStatus = status }
-                            | None -> ()
+                                match graceWatchStatus with
+                                | Some status -> Configuration.updateConfiguration { GraceWatchStatus = status }
+                                | None -> ()
 
-                        // Now we can invoke the command!
-                        let! returnValue = parseResult.InvokeAsync()
+                            // Now we can invoke the command!
+                            let! invokedReturnValue = parseResult.InvokeAsync()
+                            returnValue <- invokedReturnValue
 
-                        // Stuff to do after the command has been invoked:
+                            // Stuff to do after the command has been invoked:
 
-                        // If this instance is `grace watch`, we'll actually delete the IPC file in the finally clause below, but
-                        //   we'll write the "we deleted the file" message to the console here, so it comes before the last Rule() is written.
-                        if parseResult |> isGraceWatch then
-                            logToAnsiConsole Colors.Important (getLocalizedString StringResourceName.InterprocessFileDeleted)
+                            // If this instance is `grace watch`, we'll actually delete the IPC file in the finally clause below, but
+                            //   we'll write the "we deleted the file" message to the console here, so it comes before the last Rule() is written.
+                            if parseResult |> isGraceWatch then
+                                logToAnsiConsole Colors.Important (getLocalizedString StringResourceName.InterprocessFileDeleted)
 
-                        // If we're writing output, write the final Rule() to the console.
-                        if parseResult |> hasOutput then
-                            let finishTime = getCurrentInstant ()
+                            // If we're writing output, write the final Rule() to the console.
+                            if parseResult |> hasOutput then
+                                let finishTime = getCurrentInstant ()
 
-                            let elapsed =
-                                (finishTime - startTime)
-                                    .Plus(Duration.FromMilliseconds(110.0)) // Adding 110ms for .NET Runtime startup time.
+                                let elapsed =
+                                    (finishTime - startTime)
+                                        .Plus(Duration.FromMilliseconds(110.0)) // Adding 110ms for .NET Runtime startup time.
 
-                            if parseResult |> verbose then
-                                AnsiConsole.Write(
-                                    (new Rule(
-                                        $"[{Colors.Important}]Elapsed: {elapsed.TotalSeconds:F3}s. Exit code: {returnValue}. Finished: {formatInstantExtended finishTime}[/]"
-                                    ))
-                                        .RightJustified()
-                                )
-                            else
-                                AnsiConsole.Write(
-                                    (new Rule($"[{Colors.Important}]Elapsed: {elapsed.TotalSeconds:F3}s. Exit code: {returnValue}.[/]"))
-                                        .RightJustified()
-                                )
+                                if parseResult |> verbose then
+                                    AnsiConsole.Write(
+                                        (new Rule(
+                                            $"[{Colors.Important}]Elapsed: {elapsed.TotalSeconds:F3}s. Exit code: {returnValue}. Finished: {formatInstantExtended finishTime}[/]"
+                                        ))
+                                            .RightJustified()
+                                    )
+                                else
+                                    AnsiConsole.Write(
+                                        (new Rule($"[{Colors.Important}]Elapsed: {elapsed.TotalSeconds:F3}s. Exit code: {returnValue}.[/]"))
+                                            .RightJustified()
+                                    )
 
-                            AnsiConsole.WriteLine()
+                                AnsiConsole.WriteLine()
                     else
                         // We don't have a config file, so write an error message and exit.
-                        AnsiConsole.Write(new Rule())
-
                         let comparison =
                             if isCaseInsensitive then
                                 StringComparison.InvariantCultureIgnoreCase
@@ -1146,28 +1231,41 @@ module GraceCommand =
                             returnValue <- invokedReturnValue
                             ()
                         else
-                            AnsiConsole.MarkupLine($"[{Colors.Important}]{getLocalizedString StringResourceName.GraceConfigFileNotFound}[/]")
+                            let message = getLocalizedString StringResourceName.GraceConfigFileNotFound
 
-                        let finishTime = getCurrentInstant ()
+                            if parseResult |> json then
+                                let error = GraceError.Create message (getCorrelationId parseResult)
+                                Common.writeJsonErrorStdout error
+                            else
+                                AnsiConsole.Write(new Rule())
+                                AnsiConsole.MarkupLine($"[{Colors.Important}]{message}[/]")
 
-                        let elapsed =
-                            (finishTime - startTime)
-                                .Plus(Duration.FromMilliseconds(110.0)) // Adding 110ms for .NET Runtime startup time.
+                                let finishTime = getCurrentInstant ()
 
-                        AnsiConsole.Write(
-                            (new Rule($"[{Colors.Important}]Elapsed: {elapsed.TotalSeconds:F3}s. Exit code: {returnValue}.[/]"))
-                                .RightJustified()
-                        )
+                                let elapsed =
+                                    (finishTime - startTime)
+                                        .Plus(Duration.FromMilliseconds(110.0)) // Adding 110ms for .NET Runtime startup time.
+
+                                AnsiConsole.Write(
+                                    (new Rule($"[{Colors.Important}]Elapsed: {elapsed.TotalSeconds:F3}s. Exit code: -1.[/]"))
+                                        .RightJustified()
+                                )
+
+                            returnValue <- -1
 
                     return returnValue
                 with
                 | IntrospectionExit exitCode -> return exitCode
                 | ex ->
-                    AnsiConsole.WriteException ex
-                    //logToAnsiConsole Colors.Error $"ex.Message: {ex.Message}"
-                    //logToAnsiConsole Colors.Error $"{ex.StackTrace}"
-                    returnValue <- -1
-                    return -1
+                    if isJsonOutputRequestedFromTokens argvNormalized then
+                        returnValue <- writeJsonException parseResult ex
+                    else
+                        AnsiConsole.WriteException ex
+                        //logToAnsiConsole Colors.Error $"ex.Message: {ex.Message}"
+                        //logToAnsiConsole Colors.Error $"{ex.StackTrace}"
+                        returnValue <- -1
+
+                    return returnValue
             finally
                 let finishTime = getCurrentInstant ()
 
