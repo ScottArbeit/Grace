@@ -91,18 +91,20 @@ decision rather than a prerequisite proven by the integration tests.
 ## Service Bus Emulator Connection String
 
 The .NET SDK expects a connection string that ends with
-`UseDevelopmentEmulator=true`. After the emulator finishes booting:
+`UseDevelopmentEmulator=true`. AppHost exposes the Service Bus emulator AMQP
+endpoint on `localhost:5672` and the management endpoint on `localhost:5300`;
+the management endpoint is not a portal that shows keys.
 
-1. Browse to `http://localhost:5300` (Service Bus emulator management endpoint).
-2. Copy the `RootManageSharedAccessKey` connection string shown in the portal.
-3. Before launching Aspire, set the lowercase environment variable so
-   `Grace.Server` can connect:
+When AppHost launches `grace-server`, it provides the local emulator connection
+string automatically with `SharedAccessKey=SAS_KEY_VALUE`. To launch
+`Grace.Server` manually against the local emulator, set the lowercase
+environment variable before starting the server:
 
 ```powershell
 $env:azureservicebusconnectionstring =
   "Endpoint=sb://localhost/;" +
   "SharedAccessKeyName=RootManageSharedAccessKey;" +
-  "SharedAccessKey=<SAS_KEY>;" +
+  "SharedAccessKey=SAS_KEY_VALUE;" +
   "UseDevelopmentEmulator=true;"
 
 dotnet run
