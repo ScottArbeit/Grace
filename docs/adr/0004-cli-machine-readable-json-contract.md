@@ -19,16 +19,17 @@ Grace already offers JSON output as a CLI mode, but the current behavior is not 
 The CLI has recursive `--output` option plumbing only. There is no accepted `--schema`, `--examples`, or `--select`
 contract, and the current JSON path still needs implementation work before it is stdout-clean for every command.
 
-The parent epic for this work is [#274](https://github.com/ScottArbeit/Grace/issues/274). Its source inputs are:
+The durable tracker source for this charter is [#274](https://github.com/ScottArbeit/Grace/issues/274), the parent
+epic for CLI machine-readable JSON output. That issue records the external planning inputs, the accepted boundaries,
+the child-issue DAG, and the inventory evidence used to create this ADR.
 
-- `artifacts/GraceCliMachineReadableJsonImplementationPlan.html`
-- `C:\Users\scott\Downloads\grace_cli_machine_readable_handoff.md`
-- `C:\Users\scott\Downloads\grace_cli_machine_readable_report.html`
-- `C:\Users\scott\Downloads\grace_cli_machine_readable_inventory.json`
-- Inventory SHA-256: `CA5FC683D2B6A83233808AEB3C492F6D6476CED4BD829EE15EFD41AC4E070996`
+This ADR is self-contained for S1 and later implementers. Workers do not need local Downloads files, untracked HTML
+artifacts, or any other non-repository planning artifact to understand the V1 contract or the inventory facts below.
+The original direct inventory SHA-256 recorded in #274 is
+`CA5FC683D2B6A83233808AEB3C492F6D6476CED4BD829EE15EFD41AC4E070996`.
 
-The implementation plan artifact cross-checks the direct JSON inventory against the embedded report matrix. It treats
-the direct inventory as the cleaner source for command-count and backlog detail.
+The planning inventory was cross-checked before #274 was created. The direct JSON inventory matched the embedded report
+matrix and was treated as the cleaner source for command-count and backlog detail.
 
 The current inventory found `201` CLI leaf commands:
 
@@ -229,5 +230,5 @@ stdout-clean JSON writer, schema/example generation, V1 projection, command migr
 Commands in the inventory that currently use manual JSON, human/progress output, partial/manual success behavior, or
 source-only routing must be reconciled before the epic can claim complete CLI JSON contract coverage.
 
-Documentation and pull requests for later slices should trace their evidence back to this ADR, the parent epic source
-inputs, the inventory SHA-256, and the final inventory counts recorded when the epic closes.
+Documentation and pull requests for later slices should trace their evidence back to this ADR, #274, the recorded
+inventory SHA-256, and the final inventory counts recorded when the epic closes.
