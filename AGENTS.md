@@ -41,6 +41,8 @@ When implementing an epic, always use an explicit epic integration branch. Creat
 sub-issue PRs to the epic branch, keep that branch refreshed from `origin/main`, and use the final epic-to-`main` PR as
 the production release candidate. Do not use direct-to-`main` epic slices. Ensure CI or recorded validation covers PRs
 targeting `epic/**` before relying on the integration branch flow.
+Every pull request must link its related GitHub issue in the PR body. Use `docs/Development process.md` for
+default-branch versus epic-branch wording so links stay traceable without relying on epic-branch auto-close behavior.
 
 ## Development Process
 
