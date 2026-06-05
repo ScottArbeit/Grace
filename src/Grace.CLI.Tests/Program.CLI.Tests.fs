@@ -74,8 +74,10 @@ namespace Grace.CLI.Tests
 
 open FsUnit
 open Grace.CLI
+open Grace.Shared
 open Grace.Shared.Client.Configuration
 open Grace.Shared.Utilities
+open Grace.Types.Common
 open NUnit.Framework
 open Spectre.Console
 open System
@@ -102,6 +104,23 @@ module HelpDoesNotReadConfigTests =
             Console.SetOut(originalOut)
             setAnsiConsoleOutput originalOut
 
+    let private runWithCapturedStdoutAndStderr (args: string array) =
+        use standardOutWriter = new StringWriter()
+        use standardErrorWriter = new StringWriter()
+        let originalOut = Console.Out
+        let originalError = Console.Error
+
+        try
+            Console.SetOut(standardOutWriter)
+            Console.SetError(standardErrorWriter)
+            setAnsiConsoleOutput standardOutWriter
+            let exitCode = GraceCommand.main args
+            exitCode, standardOutWriter.ToString(), standardErrorWriter.ToString()
+        finally
+            Console.SetOut(originalOut)
+            Console.SetError(originalError)
+            setAnsiConsoleOutput originalOut
+
     let private parseJsonOutput (output: string) =
         output
             .TrimStart()
@@ -110,18 +129,43 @@ module HelpDoesNotReadConfigTests =
 
         JsonDocument.Parse(output)
 
-    let private captureOutput (action: unit -> unit) =
-        use writer = new StringWriter()
+    let private assertJsonErrorOutput (standardOut: string) =
+        use document = parseJsonOutput standardOut
+        let rootElement = document.RootElement
+        let error = rootElement.GetProperty("Error").GetString()
+
+        error |> should not' (equal String.Empty)
+
+        standardOut
+        |> should not' (contain "Exception in isOutputFormat")
+
+        standardOut
+        |> should not' (contain "graceconfig.json is not found")
+
+        standardOut |> should not' (contain "Elapsed:")
+
+        error
+
+    let private captureStdoutAndStderr (action: unit -> unit) =
+        use standardOutWriter = new StringWriter()
+        use standardErrorWriter = new StringWriter()
         let originalOut = Console.Out
+        let originalError = Console.Error
 
         try
-            Console.SetOut(writer)
-            setAnsiConsoleOutput writer
+            Console.SetOut(standardOutWriter)
+            Console.SetError(standardErrorWriter)
+            setAnsiConsoleOutput standardOutWriter
             action ()
-            writer.ToString()
+            standardOutWriter.ToString(), standardErrorWriter.ToString()
         finally
             Console.SetOut(originalOut)
+            Console.SetError(originalError)
             setAnsiConsoleOutput originalOut
+
+    let private captureOutput (action: unit -> unit) =
+        let standardOut, _ = captureStdoutAndStderr action
+        standardOut
 
 
     let private withTempDir (action: string -> unit) =
@@ -392,6 +436,263 @@ module HelpDoesNotReadConfigTests =
 
             rootElement.GetProperty("Error").GetString()
             |> should contain "Bogus")
+
+    [<Test>]
+    let ``renderOutput json success writes one stdout document and no stderr`` () =
+        let parseResult = GraceCommand.rootCommand.Parse([| "--output"; "Json" |])
+        let returnValue = GraceReturnValue.Create {| Value = "ok" |} "corr-json-success"
+
+        let standardOut, standardError =
+            captureStdoutAndStderr (fun () ->
+                Common.renderOutput parseResult (Ok returnValue)
+                |> should equal 0)
+
+        standardError |> should equal String.Empty
+
+        use document = parseJsonOutput standardOut
+        let rootElement = document.RootElement
+
+        rootElement
+            .GetProperty("ReturnValue")
+            .GetProperty("Value")
+            .GetString()
+        |> should equal "ok"
+
+        rootElement
+            .GetProperty("CorrelationId")
+            .GetString()
+        |> should equal "corr-json-success"
+
+        standardOut |> should not' (contain "Elapsed:")
+
+    [<Test>]
+    let ``renderOutput json error writes GraceError envelope with shared field names`` () =
+        let parseResult = GraceCommand.rootCommand.Parse([| "--output"; "Json" |])
+        let error = GraceError.Create "central writer error" "corr-json-error"
+
+        let standardOut, standardError =
+            captureStdoutAndStderr (fun () ->
+                Common.renderOutput parseResult (Error error)
+                |> should equal -1)
+
+        standardError |> should equal String.Empty
+
+        use document = parseJsonOutput standardOut
+        let rootElement = document.RootElement
+
+        rootElement.GetProperty("Error").GetString()
+        |> should equal "central writer error"
+
+        rootElement
+            .GetProperty("CorrelationId")
+            .GetString()
+        |> should equal "corr-json-error"
+
+        let mutable camelCaseCorrelationId = Unchecked.defaultof<JsonElement>
+
+        rootElement.TryGetProperty("correlationId", &camelCaseCorrelationId)
+        |> should equal false
+
+        Constants.JsonSerializerOptions.PropertyNamingPolicy
+        |> should equal null
+
+    [<Test>]
+    let ``missing config in json mode emits one error document on stdout`` () =
+        withTempDir (fun _ ->
+            let exitCode, standardOut, standardError =
+                runWithCapturedStdoutAndStderr [| "--output"
+                                                  "Json"
+                                                  "branch"
+                                                  "get" |]
+
+            exitCode |> should equal -1
+            standardError |> should equal String.Empty
+
+            use document = parseJsonOutput standardOut
+            let rootElement = document.RootElement
+
+            rootElement.GetProperty("Error").GetString()
+            |> should contain "graceconfig.json"
+
+            standardOut |> should not' (contain "Elapsed:"))
+
+    [<Test>]
+    let ``missing config in json equals mode emits one error document on stdout`` () =
+        withTempDir (fun _ ->
+            let exitCode, standardOut, standardError =
+                runWithCapturedStdoutAndStderr [| "--output=Json"
+                                                  "branch"
+                                                  "get" |]
+
+            exitCode |> should equal -1
+            standardError |> should equal String.Empty
+
+            assertJsonErrorOutput standardOut
+            |> should contain "graceconfig.json")
+
+    [<Test>]
+    let ``missing config in mixed-case json equals mode emits one error document on stdout`` () =
+        withTempDir (fun _ ->
+            let exitCode, standardOut, standardError =
+                runWithCapturedStdoutAndStderr [| "--OUTPUT=Json"
+                                                  "branch"
+                                                  "get" |]
+
+            exitCode |> should equal -1
+            standardError |> should equal String.Empty
+
+            assertJsonErrorOutput standardOut
+            |> should contain "graceconfig.json")
+
+    [<Test>]
+    let ``earlier non-json output token does not mask later json intent`` () =
+        withTempDir (fun _ ->
+            let exitCode, standardOut, standardError =
+                runWithCapturedStdoutAndStderr [| "--output"
+                                                  "Normal"
+                                                  "--output=Json"
+                                                  "branch"
+                                                  "get" |]
+
+            exitCode |> should equal -1
+            standardError |> should equal String.Empty
+
+            assertJsonErrorOutput standardOut |> ignore)
+
+    [<Test>]
+    let ``malformed split output option does not mask later long json intent`` () =
+        withTempDir (fun _ ->
+            let exitCode, standardOut, standardError =
+                runWithCapturedStdoutAndStderr [| "--output"
+                                                  "--output"
+                                                  "Json"
+                                                  "branch"
+                                                  "get" |]
+
+            exitCode |> should equal -1
+            standardError |> should equal String.Empty
+
+            assertJsonErrorOutput standardOut |> ignore)
+
+    [<Test>]
+    let ``malformed split output option does not mask later short json intent`` () =
+        withTempDir (fun _ ->
+            let exitCode, standardOut, standardError =
+                runWithCapturedStdoutAndStderr [| "-o"
+                                                  "-o"
+                                                  "Json"
+                                                  "branch"
+                                                  "get" |]
+
+            exitCode |> should equal -1
+            standardError |> should equal String.Empty
+
+            assertJsonErrorOutput standardOut |> ignore)
+
+    [<Test>]
+    let ``parse error in json mode emits one error document on stdout`` () =
+        withTempDir (fun _ ->
+            let exitCode, standardOut, standardError =
+                runWithCapturedStdoutAndStderr [| "--output"
+                                                  "Json"
+                                                  "repository"
+                                                  "init"
+                                                  "--definitely-not-an-option" |]
+
+            exitCode |> should equal -1
+            standardError |> should equal String.Empty
+
+            use document = parseJsonOutput standardOut
+            let rootElement = document.RootElement
+
+            rootElement.GetProperty("Error").GetString()
+            |> should contain "Unrecognized command or argument")
+
+    [<Test>]
+    let ``parse error in json equals mode emits one error document on stdout`` () =
+        withTempDir (fun _ ->
+            let exitCode, standardOut, standardError =
+                runWithCapturedStdoutAndStderr [| "--output=Json"
+                                                  "repository"
+                                                  "init"
+                                                  "--definitely-not-an-option" |]
+
+            exitCode |> should equal -1
+            standardError |> should equal String.Empty
+
+            assertJsonErrorOutput standardOut
+            |> should contain "Unrecognized command or argument")
+
+    [<Test>]
+    let ``short equals json output spelling emits json error envelope`` () =
+        withTempDir (fun _ ->
+            let exitCode, standardOut, standardError =
+                runWithCapturedStdoutAndStderr [| "-o=Json"
+                                                  "repository"
+                                                  "init"
+                                                  "--definitely-not-an-option" |]
+
+            exitCode |> should equal -1
+            standardError |> should equal String.Empty
+
+            assertJsonErrorOutput standardOut |> ignore)
+
+    [<Test>]
+    let ``lowercase json value is rejected with json error envelope`` () =
+        withTempDir (fun _ ->
+            let exitCode, standardOut, standardError =
+                runWithCapturedStdoutAndStderr [| "--output=json"
+                                                  "repository"
+                                                  "init" |]
+
+            exitCode |> should equal -1
+            standardError |> should equal String.Empty
+
+            assertJsonErrorOutput standardOut
+            |> should contain "json")
+
+    [<Test>]
+    let ``catch all exception in json mode emits one error document on stdout`` () =
+        withTempDir (fun root ->
+            writeInvalidConfig root
+
+            let exitCode, standardOut, standardError =
+                runWithCapturedStdoutAndStderr [| "--output"
+                                                  "Json"
+                                                  "access"
+                                                  "list-roles" |]
+
+            exitCode |> should equal -1
+            standardError |> should equal String.Empty
+
+            use document = parseJsonOutput standardOut
+            let rootElement = document.RootElement
+
+            rootElement.GetProperty("Error").GetString()
+            |> should not' (equal String.Empty)
+
+            rootElement
+                .GetProperty("CorrelationId")
+                .GetString()
+            |> should not' (equal String.Empty)
+
+            standardOut |> should not' (contain "Exception:"))
+
+    [<Test>]
+    let ``missing config in human mode remains human oriented`` () =
+        withTempDir (fun _ ->
+            let exitCode, standardOut, _ =
+                runWithCapturedStdoutAndStderr [| "branch"
+                                                  "get" |]
+
+            exitCode |> should equal -1
+
+            standardOut
+                .TrimStart()
+                .StartsWith("{", StringComparison.Ordinal)
+            |> should equal false
+
+            standardOut |> should contain "graceconfig.json")
 
     [<Test>]
     let ``verbose parse result shows resolved ids`` () =
