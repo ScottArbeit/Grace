@@ -306,7 +306,19 @@ module HelpDoesNotReadConfigTests =
                 .GetProperty("Schema")
                 .GetProperty("Status")
                 .GetString()
-            |> should equal "registry-placeholder"
+            |> should equal "metadata-incomplete"
+
+            rootElement.GetProperty("Schema").GetProperty(
+                "SuccessSchema"
+            )
+                .GetProperty(
+                "Properties"
+            )
+                .GetProperty(
+                "ReturnValue"
+            )
+                .ValueKind
+            |> should equal JsonValueKind.Object
 
             Directory.Exists(Path.Combine(root, ".grace"))
             |> should equal false)
@@ -343,6 +355,39 @@ module HelpDoesNotReadConfigTests =
             )
                 .ValueKind
             |> should equal JsonValueKind.Object)
+
+    [<Test>]
+    let ``examples for missing dto metadata emit explicit unsupported document`` () =
+        withTempDir (fun _ ->
+            let exitCode, output =
+                runWithCapturedOutput [| "repository"
+                                         "init"
+                                         "--examples" |]
+
+            exitCode |> should equal 0
+
+            use document = parseJsonOutput output
+            let rootElement = document.RootElement
+
+            rootElement.GetProperty("Kind").GetString()
+            |> should equal "examples"
+
+            let examples = rootElement.GetProperty("Examples")
+
+            examples[ 0 ].GetProperty("Name").GetString()
+            |> should equal "metadata-incomplete"
+
+            examples[0]
+                .GetProperty("Document")
+                .GetProperty("Status")
+                .GetString()
+            |> should equal "metadata-incomplete"
+
+            examples[0]
+                .GetProperty("Document")
+                .GetProperty("CommandId")
+                .GetString()
+            |> should equal "repository.init")
 
     [<Test>]
     let ``nested command schema resolves full command id`` () =

@@ -1,6 +1,7 @@
 namespace Grace.CLI
 
 open System
+open System.Collections.Generic
 open System.CommandLine
 
 module CommandOutputContract =
@@ -64,6 +65,13 @@ module CommandOutputContract =
 
     type MachineReadableFeatures = { JsonMode: FeatureState; Schema: FeatureState; Examples: FeatureState; Select: FeatureState }
 
+    type ReturnValueMetadataStatus =
+        | SchemaReady
+        | MetadataIncomplete
+        | ContractUnsupported
+
+    type ReturnValueContract = { Name: string; Provenance: string; Status: ReturnValueMetadataStatus; Schema: obj; Example: obj; Notes: string list }
+
     type CommandContractEntry =
         {
             Identity: CommandIdentity
@@ -74,6 +82,7 @@ module CommandOutputContract =
             Mutating: bool
             EnvelopeContract: EnvelopeContract
             Features: MachineReadableFeatures
+            ReturnValueContract: ReturnValueContract
         }
 
     type IntrospectionKind =
@@ -96,7 +105,17 @@ module CommandOutputContract =
             Select: string
         }
 
-    type CommandSchemaDocument = { Status: string; Source: string; Envelope: string; ReturnValueDisposition: string; Notes: string list }
+    type CommandSchemaDocument =
+        {
+            Status: string
+            Source: string
+            Envelope: string
+            ReturnValueDisposition: string
+            ReturnValueContract: string
+            SuccessSchema: obj
+            ErrorSchema: obj
+            Notes: string list
+        }
 
     type CommandExampleDocument = { Name: string; Description: string; Document: obj }
 
@@ -111,6 +130,154 @@ module CommandOutputContract =
         }
 
     let private unionName value = $"{value}"
+
+    let private schemaObject (title: string) (properties: (string * obj) list) (required: string array) =
+        let schema = Dictionary<string, obj>(StringComparer.Ordinal)
+        schema["$schema"] <- "https://json-schema.org/draft/2020-12/schema"
+        schema["Title"] <- title
+        schema["Type"] <- "object"
+        schema["Required"] <- required
+        schema["Properties"] <- Dictionary<string, obj>(properties |> Seq.map KeyValuePair)
+        box schema
+
+    let private scalarSchema (typeName: string) = box {| Type = typeName |}
+
+    let private anySchema description = box {| Description = description |}
+
+    let private nullableObjectSchema description = box {| Type = [| "object"; "null" |]; Description = description |}
+
+    let private propertyBagSchema =
+        let propertyEntry =
+            schemaObject
+                "Grace CLI property entry"
+                [
+                    "Key", scalarSchema "string"
+                    "Value", anySchema "Safe machine-readable metadata value."
+                ]
+                [| "Key"; "Value" |]
+
+        box {| Type = "array"; Items = propertyEntry; Description = "CLI stdout representation of Grace Properties metadata." |}
+
+    let private cliProperties commandId provenance =
+        [|
+            {| Key = "cli.contractVersion"; Value = "cli-json-v1" |}
+            {| Key = "cli.commandId"; Value = commandId |}
+            {| Key = "cli.introspectionSource"; Value = provenance |}
+        |]
+
+    let private unsupportedReturnValueSchema reason =
+        schemaObject
+            "Unsupported command output contract"
+            [
+                "Status", scalarSchema "string"
+                "Reason", scalarSchema "string"
+            ]
+            [| "Status"; "Reason" |]
+
+    let private unsupportedReturnValueExample reason = box {| Status = "metadata-incomplete"; Reason = reason |}
+
+    let private stringReturnValueSchema = scalarSchema "string"
+
+    let private repositoryDtoSchema =
+        schemaObject
+            "RepositoryDto"
+            [
+                "RepositoryId", scalarSchema "string"
+                "RepositoryName", scalarSchema "string"
+                "OwnerId", scalarSchema "string"
+                "OrganizationId", scalarSchema "string"
+                "DefaultBranchId", scalarSchema "string"
+                "RepositoryType", scalarSchema "string"
+                "AnonymousAccess", scalarSchema "boolean"
+            ]
+            [|
+                "RepositoryId"
+                "RepositoryName"
+                "OwnerId"
+                "OrganizationId"
+            |]
+
+    let private workItemDtoSchema =
+        schemaObject
+            "WorkItemDto"
+            [
+                "WorkItemId", scalarSchema "string"
+                "OwnerId", scalarSchema "string"
+                "OrganizationId", scalarSchema "string"
+                "RepositoryId", scalarSchema "string"
+                "Title", scalarSchema "string"
+                "Status", scalarSchema "string"
+                "CreatedAt", scalarSchema "string"
+                "UpdatedAt", scalarSchema "string"
+            ]
+            [|
+                "WorkItemId"
+                "OwnerId"
+                "OrganizationId"
+                "RepositoryId"
+                "Title"
+                "Status"
+            |]
+
+    let private permissionCheckResultSchema =
+        schemaObject
+            "PermissionCheckResult"
+            [
+                "Allowed", scalarSchema "boolean"
+                "Reason", scalarSchema "string"
+                "MatchedAssignments", box {| Type = "array"; Items = anySchema "Matched role or path assignment." |}
+            ]
+            [| "Allowed"; "Reason" |]
+
+    let private repositoryDtoExample =
+        box
+            {|
+                RepositoryId = "00000000-0000-0000-0000-000000000001"
+                RepositoryName = "example-repository"
+                OwnerId = "00000000-0000-0000-0000-000000000002"
+                OrganizationId = "00000000-0000-0000-0000-000000000003"
+                DefaultBranchId = "00000000-0000-0000-0000-000000000004"
+                RepositoryType = "Public"
+                AnonymousAccess = false
+            |}
+
+    let private workItemDtoExample =
+        box
+            {|
+                WorkItemId = "00000000-0000-0000-0000-000000000010"
+                OwnerId = "00000000-0000-0000-0000-000000000002"
+                OrganizationId = "00000000-0000-0000-0000-000000000003"
+                RepositoryId = "00000000-0000-0000-0000-000000000001"
+                Title = "Example work item"
+                Status = "Open"
+                CreatedAt = "2026-06-05T00:00:00Z"
+                UpdatedAt = "2026-06-05T00:00:00Z"
+            |}
+
+    let private permissionCheckResultExample = box {| Allowed = true; Reason = "Matched an example role assignment."; MatchedAssignments = Array.empty<obj> |}
+
+    let private supportedReturnValueContract name provenance schema example notes =
+        { Name = name; Provenance = provenance; Status = SchemaReady; Schema = schema; Example = example; Notes = notes }
+
+    let private incompleteReturnValueContract name reason =
+        {
+            Name = name
+            Provenance = "CommandOutputContract"
+            Status = MetadataIncomplete
+            Schema = unsupportedReturnValueSchema reason
+            Example = unsupportedReturnValueExample reason
+            Notes = [ reason ]
+        }
+
+    let private unsupportedReturnValueContract name reason =
+        {
+            Name = name
+            Provenance = "CommandOutputContract"
+            Status = ContractUnsupported
+            Schema = unsupportedReturnValueSchema reason
+            Example = unsupportedReturnValueExample reason
+            Notes = [ reason ]
+        }
 
     let private routeDispositionText (disposition: RouteDisposition) =
         match disposition with
@@ -135,6 +302,54 @@ module CommandOutputContract =
         | MigrationRequiredToGraceResultEnvelope disposition -> outputDtoDispositionText disposition
         | SourceOnlyUnsupported reason -> $"Unsupported: {reason}"
 
+    let private returnValueContractFor (identity: CommandIdentity) (envelopeContract: EnvelopeContract) =
+        match identity.CommandId, envelopeContract with
+        | "repository.get", ExistingGraceResultEnvelope ReuseExistingApiOrSdkDto ->
+            supportedReturnValueContract
+                "RepositoryDto"
+                "Grace.Types.Repository.RepositoryDto"
+                repositoryDtoSchema
+                repositoryDtoExample
+                [
+                    "Representative API/SDK DTO schema for a common Grace result envelope command."
+                ]
+        | "workitem.show", ExistingGraceResultEnvelope ReuseExistingApiOrSdkDto ->
+            supportedReturnValueContract
+                "WorkItemDto"
+                "Grace.Types.WorkItem.WorkItemDto"
+                workItemDtoSchema
+                workItemDtoExample
+                [
+                    "Representative API/SDK DTO schema for a common Grace result envelope command."
+                ]
+        | "access.check", ExistingGraceResultEnvelope ReuseExistingApiOrSdkDto ->
+            supportedReturnValueContract
+                "PermissionCheckResult"
+                "Grace.Types.Authorization.PermissionCheckResult"
+                permissionCheckResultSchema
+                permissionCheckResultExample
+                [
+                    "Representative command result DTO schema for a common Grace result envelope command."
+                ]
+        | "auth.logout", ExistingGraceResultEnvelope ReuseExistingApiOrSdkDto ->
+            supportedReturnValueContract
+                "string"
+                "GraceReturnValue<string>"
+                stringReturnValueSchema
+                (box "Signed out.")
+                [
+                    "Representative scalar ReturnValue schema for a common Grace result envelope command."
+                ]
+        | _, SourceOnlyUnsupported reason -> unsupportedReturnValueContract "unsupported" reason
+        | _, MigrationRequiredToGraceResultEnvelope disposition ->
+            incompleteReturnValueContract
+                (outputDtoDispositionText disposition)
+                "This command is routed, but its JSON success path still requires migration before schema/examples can describe the emitted ReturnValue."
+        | _, ExistingGraceResultEnvelope disposition ->
+            incompleteReturnValueContract
+                (outputDtoDispositionText disposition)
+                "The registry has envelope metadata for this command, but command-specific ReturnValue schema/example metadata has not been declared yet."
+
     let private commandDocument (identity: CommandIdentity) =
         { Id = identity.CommandId; Path = identity.CommandPath; GroupPath = identity.GroupPath; Name = identity.CommandName }
 
@@ -152,46 +367,94 @@ module CommandOutputContract =
             Select = unionName entry.Features.Select
         }
 
+    let private successEnvelopeSchema (entry: CommandContractEntry) =
+        schemaObject
+            $"GraceReturnValue<{entry.ReturnValueContract.Name}>"
+            [
+                "ReturnValue", entry.ReturnValueContract.Schema
+                "EventTime", scalarSchema "string"
+                "CorrelationId", scalarSchema "string"
+                "Properties", propertyBagSchema
+            ]
+            [|
+                "ReturnValue"
+                "EventTime"
+                "CorrelationId"
+                "Properties"
+            |]
+
+    let private errorEnvelopeSchema =
+        schemaObject
+            "GraceError"
+            [
+                "Exception", nullableObjectSchema "Serialized Grace exception details, or null/default when no exception object is available."
+                "Error", scalarSchema "string"
+                "EventTime", scalarSchema "string"
+                "CorrelationId", scalarSchema "string"
+                "Properties", anySchema "GraceError serializes Properties with the shared serializer policy."
+            ]
+            [|
+                "Exception"
+                "Error"
+                "EventTime"
+                "CorrelationId"
+                "Properties"
+            |]
+
     let private schemaDocument (entry: CommandContractEntry) =
+        let status =
+            match entry.ReturnValueContract.Status with
+            | SchemaReady -> "schema-ready"
+            | MetadataIncomplete -> "metadata-incomplete"
+            | ContractUnsupported -> "unsupported"
+
         {
-            Status = "registry-placeholder"
+            Status = status
             Source = "CommandOutputContract"
-            Envelope = "GraceReturnValue<T> on success; GraceError on error"
+            Envelope = "GraceReturnValue<T> on success; GraceError on error. CLI success Properties are emitted as Key/Value entries."
             ReturnValueDisposition = returnValueDispositionText entry.EnvelopeContract
+            ReturnValueContract = entry.ReturnValueContract.Name
+            SuccessSchema = successEnvelopeSchema entry
+            ErrorSchema = errorEnvelopeSchema
             Notes =
                 [
-                    "S2 emits registry-derived introspection metadata only."
-                    "S4 will replace this placeholder with command DTO-derived schema details."
+                    "Schema is derived from CommandOutputContract registry metadata."
                     "This path is inert and does not execute the command action."
+                    yield! entry.ReturnValueContract.Notes
                 ]
         }
 
     let private successExample (entry: CommandContractEntry) =
-        let returnValue =
-            match entry.EnvelopeContract with
-            | ExistingGraceResultEnvelope ReuseExistingApiOrSdkDto -> box {| Shape = "existing-api-or-sdk-dto" |}
-            | ExistingGraceResultEnvelope RequiresCliDto -> box {| Shape = "cli-dto" |}
-            | MigrationRequiredToGraceResultEnvelope ReuseExistingApiOrSdkDto -> box {| Shape = "existing-api-or-sdk-dto-requires-migration" |}
-            | MigrationRequiredToGraceResultEnvelope RequiresCliDto -> box {| Shape = "cli-dto-requires-migration" |}
-            | ExistingGraceResultEnvelope NoServerDto
-            | MigrationRequiredToGraceResultEnvelope NoServerDto -> box {| Shape = "no-server-dto" |}
-            | SourceOnlyUnsupported reason -> box {| Unsupported = reason |}
-
         {
             Name = "success-envelope-shape"
-            Description = "Representative GraceReturnValue<T> envelope shape; command-specific ReturnValue details are deferred to S4."
+            Description = $"Representative GraceReturnValue<{entry.ReturnValueContract.Name}> envelope shape from registry metadata."
             Document =
                 box
                     {|
-                        ReturnValue = returnValue
+                        ReturnValue = entry.ReturnValueContract.Example
                         EventTime = "2026-06-05T00:00:00Z"
                         CorrelationId = "correlation-id"
-                        Properties =
-                            [|
-                                {| Key = "cli.contractVersion"; Value = "cli-json-v1" |}
-                                {| Key = "cli.commandId"; Value = entry.Identity.CommandId |}
-                                {| Key = "cli.introspectionSource"; Value = "CommandOutputContract" |}
-                            |]
+                        Properties = cliProperties entry.Identity.CommandId entry.ReturnValueContract.Provenance
+                    |}
+        }
+
+    let private incompleteMetadataExample (entry: CommandContractEntry) =
+        {
+            Name = "metadata-incomplete"
+            Description = "Explicit machine-readable metadata gap for a command that is not schema-ready."
+            Document =
+                box
+                    {|
+                        Status =
+                            match entry.ReturnValueContract.Status with
+                            | ContractUnsupported -> "unsupported"
+                            | _ -> "metadata-incomplete"
+                        CommandId = entry.Identity.CommandId
+                        ReturnValueContract = entry.ReturnValueContract.Name
+                        Reason =
+                            entry.ReturnValueContract.Notes
+                            |> String.concat " "
+                        Properties = cliProperties entry.Identity.CommandId entry.ReturnValueContract.Provenance
                     |}
         }
 
@@ -206,12 +469,7 @@ module CommandOutputContract =
                         Error = "error message"
                         EventTime = "2026-06-05T00:00:00Z"
                         CorrelationId = "correlation-id"
-                        Properties =
-                            [|
-                                {| Key = "cli.contractVersion"; Value = "cli-json-v1" |}
-                                {| Key = "cli.commandId"; Value = entry.Identity.CommandId |}
-                                {| Key = "cli.introspectionSource"; Value = "CommandOutputContract" |}
-                            |]
+                        Properties = cliProperties entry.Identity.CommandId "CommandOutputContract"
                     |}
         }
 
@@ -232,10 +490,18 @@ module CommandOutputContract =
                 match kind with
                 | Schema -> []
                 | Examples ->
-                    [
-                        successExample entry
-                        errorExample entry
-                    ]
+                    match entry.ReturnValueContract.Status with
+                    | SchemaReady ->
+                        [
+                            successExample entry
+                            errorExample entry
+                        ]
+                    | MetadataIncomplete
+                    | ContractUnsupported ->
+                        [
+                            incompleteMetadataExample entry
+                            errorExample entry
+                        ]
         }
 
     let private featuresFor behavior =
@@ -275,21 +541,26 @@ module CommandOutputContract =
         |> List.collect (loop [])
 
     let private row groupPath commandName routed mutating behavior category executionScope dtoDisposition =
+        let identity = commandIdentity groupPath commandName
+
         let routeDisposition =
             if routed then
                 Routed
             else
                 SourceOnlyUnrouted "Defined-only reference command; not attached to GraceCommand.rootCommand."
 
+        let envelopeContract = envelopeFor routed behavior dtoDisposition
+
         {
-            Identity = commandIdentity groupPath commandName
+            Identity = identity
             RouteDisposition = routeDisposition
             CurrentJsonBehavior = behavior
             Category = category
             ExecutionScope = executionScope
             Mutating = mutating
-            EnvelopeContract = envelopeFor routed behavior dtoDisposition
+            EnvelopeContract = envelopeContract
             Features = featuresFor behavior
+            ReturnValueContract = returnValueContractFor identity envelopeContract
         }
 
     let private common_renderOutput_envelope = CommonRenderOutputEnvelope
