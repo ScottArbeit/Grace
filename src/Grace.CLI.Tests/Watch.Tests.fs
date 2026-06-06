@@ -257,7 +257,7 @@ module WatchTests =
 
                 let exitCode, standardOut, standardError = runGraceProcessWithCapturedStdoutAndStderr root [| "--output"; "Json"; "watch" |]
 
-                exitCode |> should equal -1
+                Assert.That(exitCode, Is.EqualTo(-1).Or.EqualTo(255))
                 standardError |> should equal String.Empty
 
                 use document = parseJsonOutput standardOut
