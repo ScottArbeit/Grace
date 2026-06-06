@@ -1295,12 +1295,27 @@ module AspireTestHost =
             return found.Value
         }
 
-    let sendGraceEventAsync (state: TestHostState) (graceEvent: Events.GraceEvent) (metadata: Grace.Types.Common.EventMetadata) =
+    let private serviceBusSendTimeout = TimeSpan.FromSeconds(10.0)
+
+    let private sendServiceBusMessageAsync (state: TestHostState) (message: ServiceBusMessage) =
         task {
+            use cts = new CancellationTokenSource(serviceBusSendTimeout)
             let client = ServiceBusClient(state.ServiceBusConnectionString)
             use _client = client
             let sender = client.CreateSender(state.ServiceBusTopic)
 
+            try
+                do! sender.SendMessageAsync(message, cts.Token)
+            finally
+                sender
+                    .DisposeAsync()
+                    .AsTask()
+                    .GetAwaiter()
+                    .GetResult()
+        }
+
+    let sendGraceEventAsync (state: TestHostState) (graceEvent: Events.GraceEvent) (metadata: Grace.Types.Common.EventMetadata) =
+        task {
             let payload = JsonSerializer.SerializeToUtf8Bytes(graceEvent, Constants.JsonSerializerOptions)
             let message = ServiceBusMessage(payload)
             message.ContentType <- "application/json"
@@ -1317,23 +1332,18 @@ module AspireTestHost =
                 message.ApplicationProperties[ property.Key ] <- property.Value
                 index <- index + 1
 
-            do! sender.SendMessageAsync(message)
-            do! sender.DisposeAsync().AsTask()
+            do! sendServiceBusMessageAsync state message
         }
 
     let sendRawServiceBusMessageAsync (state: TestHostState) (body: string) (messageId: string) (correlationId: string) =
         task {
-            let client = ServiceBusClient(state.ServiceBusConnectionString)
-            use _client = client
-            let sender = client.CreateSender(state.ServiceBusTopic)
             let message = ServiceBusMessage(BinaryData.FromString(body))
             message.ContentType <- "application/json"
             message.Subject <- "GraceEvent"
             message.CorrelationId <- correlationId
             message.MessageId <- messageId
 
-            do! sender.SendMessageAsync(message)
-            do! sender.DisposeAsync().AsTask()
+            do! sendServiceBusMessageAsync state message
         }
 
     let tryWaitForGraceEventAsync (state: TestHostState) (timeout: TimeSpan) (predicate: Events.GraceEvent -> bool) =

@@ -174,19 +174,58 @@ module private EventingIntegrationHelpers =
             return deliveries.Length
         }
 
-    let validationResultMatches correlationId validationName (graceEvent: GraceEvent) =
+    let assertDeliveryCountRemainsAsync rule expectedCount timeout =
+        task {
+            let sw = System.Diagnostics.Stopwatch.StartNew()
+            let observedCounts = ResizeArray<int>()
+            let mutable exceeded = false
+
+            while not exceeded && sw.Elapsed < timeout do
+                let! count = deliveryCountAsync rule
+                observedCounts.Add(count)
+
+                if count > expectedCount then
+                    exceeded <- true
+                else
+                    do! Task.Delay(TimeSpan.FromMilliseconds(250.0))
+
+            let observedCountsText = String.Join(", ", observedCounts)
+
+            Assert.That(
+                exceeded,
+                Is.False,
+                $"Expected webhook delivery count to remain at {expectedCount} during the bounded duplicate processing window of {timeout.TotalSeconds:n1}s. Observed counts: {observedCountsText}"
+            )
+        }
+
+    let validationResultMatches correlationId validationName ownerId organizationId repositoryId referenceType referenceId (graceEvent: GraceEvent) =
         match graceEvent with
         | GraceEvent.ValidationResultEvent validationResultEvent ->
             validationResultEvent.Metadata.CorrelationId = correlationId
             && match validationResultEvent.Event with
                | ValidationResultEventType.Recorded result ->
                    result.ValidationName.Equals(validationName, StringComparison.OrdinalIgnoreCase)
+                   && result.OwnerId = ownerId
+                   && result.OrganizationId = organizationId
+                   && result.RepositoryId = repositoryId
                    && result.Output.Status = ValidationStatus.Pass
+                   && result.Output.Summary.Contains(getDiscriminatedUnionCaseName referenceType, StringComparison.Ordinal)
+                   && result.Output.Summary.Contains($"referenceId={referenceId}", StringComparison.Ordinal)
+                   && result.Output.ArtifactIds = []
         | _ -> false
 
     let referenceEventMatches correlationId (graceEvent: GraceEvent) =
         match graceEvent with
         | GraceEvent.ReferenceEvent referenceEvent -> referenceEvent.Metadata.CorrelationId = correlationId
+        | _ -> false
+
+    let promotionSetAppliedEventMatches correlationId terminalReferenceId (graceEvent: GraceEvent) =
+        match graceEvent with
+        | GraceEvent.PromotionSetEvent promotionSetEvent ->
+            promotionSetEvent.Metadata.CorrelationId = correlationId
+            && match promotionSetEvent.Event with
+               | PromotionSetEventType.Applied referenceId -> referenceId = terminalReferenceId
+               | _ -> false
         | _ -> false
 
 [<NonParallelizable>]
@@ -243,15 +282,30 @@ type ServiceBusEventingIntegrationTests() =
             Assert.That(firstDelivery.LastError, Is.Not.EqualTo(Microsoft.FSharp.Core.Option.None))
             Assert.That(firstDelivery.LastError.Value, Does.Not.Contain("secret"))
 
-            do! AspireTestHost.sendGraceEventAsync state graceEvent metadata
-            do! Task.Delay(TimeSpan.FromSeconds(2.0))
+            let duplicateGraceEvent, duplicateMetadata =
+                EventingIntegrationHelpers.promotionSetAppliedEvent
+                    ownerGuid
+                    organizationGuid
+                    repositoryId
+                    branchId
+                    promotionSetId
+                    terminalReferenceId
+                    (generateCorrelationId ())
 
-            let! deliveryCount = EventingIntegrationHelpers.deliveryCountAsync rule
-            Assert.That(deliveryCount, Is.EqualTo(1))
+            do! AspireTestHost.sendGraceEventAsync state duplicateGraceEvent duplicateMetadata
+
+            let! _ =
+                AspireTestHost.waitForGraceEventAsync
+                    state
+                    (TimeSpan.FromSeconds(15.0))
+                    $"duplicate PromotionSet Applied echo for dedupe key {dedupeKey}"
+                    (EventingIntegrationHelpers.promotionSetAppliedEventMatches duplicateMetadata.CorrelationId terminalReferenceId)
+
+            do! EventingIntegrationHelpers.assertDeliveryCountRemainsAsync rule 1 (TimeSpan.FromSeconds(5.0))
         }
 
     [<Test>]
-    member _.ServiceBusProcessorFailureDoesNotBlockLaterDerivedQuickScanWork() =
+    member _.MalformedServiceBusMessageDoesNotBlockLaterQuickScanWorkWithRetryOrderSignalUnavailable() =
         task {
             let state = EventingIntegrationHelpers.hostState ()
             let blockedCorrelationId = generateCorrelationId ()
@@ -271,9 +325,18 @@ type ServiceBusEventingIntegrationTests() =
                     state
                     (TimeSpan.FromSeconds(45.0))
                     $"quick-scan ValidationResultEvent for ReferenceId {referenceId}"
-                    (EventingIntegrationHelpers.validationResultMatches correlationId "quick-scan")
+                    (EventingIntegrationHelpers.validationResultMatches
+                        correlationId
+                        "quick-scan"
+                        (Guid.Parse ownerId)
+                        (Guid.Parse organizationId)
+                        repositoryId
+                        ReferenceType.Commit
+                        referenceId)
 
-            Assert.Pass("A malformed Service Bus message was abandoned without preventing the later commit event from producing quick-scan output.")
+            Assert.Pass(
+                "Hosted fixture exposes no server-subscription abandon/retry ordering signal; this proves a malformed payload does not block a later valid quick-scan event."
+            )
         }
 
     [<Test>]
@@ -295,11 +358,18 @@ type ServiceBusEventingIntegrationTests() =
                     state
                     (TimeSpan.FromSeconds(45.0))
                     $"quick-scan ValidationResultEvent for supported ReferenceId {supportedReferenceId}"
-                    (EventingIntegrationHelpers.validationResultMatches supportedCorrelationId "quick-scan")
+                    (EventingIntegrationHelpers.validationResultMatches
+                        supportedCorrelationId
+                        "quick-scan"
+                        (Guid.Parse ownerId)
+                        (Guid.Parse organizationId)
+                        repositoryId
+                        ReferenceType.Checkpoint
+                        supportedReferenceId)
 
             let unsupportedCorrelationId = generateCorrelationId ()
 
-            let unsupportedEvent, unsupportedMetadata, _ =
+            let unsupportedEvent, unsupportedMetadata, unsupportedReferenceId =
                 EventingIntegrationHelpers.referenceCreatedEvent ReferenceType.Save repositoryId branchId unsupportedCorrelationId
 
             do! AspireTestHost.sendGraceEventAsync state unsupportedEvent unsupportedMetadata
@@ -315,7 +385,14 @@ type ServiceBusEventingIntegrationTests() =
                 AspireTestHost.tryWaitForGraceEventAsync
                     state
                     (TimeSpan.FromSeconds(5.0))
-                    (EventingIntegrationHelpers.validationResultMatches unsupportedCorrelationId "quick-scan")
+                    (EventingIntegrationHelpers.validationResultMatches
+                        unsupportedCorrelationId
+                        "quick-scan"
+                        (Guid.Parse ownerId)
+                        (Guid.Parse organizationId)
+                        repositoryId
+                        ReferenceType.Save
+                        unsupportedReferenceId)
 
             Assert.That(unsupportedQuickScan, Is.EqualTo(Microsoft.FSharp.Core.Option.None))
         }
