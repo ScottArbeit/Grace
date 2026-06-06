@@ -15,6 +15,25 @@ open System.Threading.Tasks
 
 module private ApprovalTestHelpers =
 
+    let restartGraceServerAsync () =
+        let state =
+            match App with
+            | Some app ->
+                {
+                    App = app
+                    Client = Client
+                    GraceServerBaseAddress = graceServerBaseAddress
+                    ServiceBusConnectionString = serviceBusConnectionString
+                    ServiceBusTopic = serviceBusTopic
+                    ServiceBusServerSubscription = serviceBusServerSubscription
+                    ServiceBusTestSubscription = serviceBusTestSubscription
+                }
+            | None ->
+                Assert.Fail("Aspire test host was not started by the shared setup fixture.")
+                Unchecked.defaultof<TestHostState>
+
+        AspireTestHost.restartGraceServerAsync state
+
     let createAuthenticatedClient (userId: string) =
         let client = new HttpClient()
         client.BaseAddress <- Client.BaseAddress
@@ -253,6 +272,90 @@ type ApprovalApiIntegrationTests() =
             Assert.That(deleteResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK))
             let! deleted = deserializeContent<ApprovalPolicy> deleteResponse
             Assert.That(deleted.Status, Is.EqualTo(ApprovalPolicyStatus.Deleted))
+        }
+
+    [<Test>]
+    [<NonParallelizable>]
+    member _.ApprovalPolicyStoreIsProcessLocalWhileGeneratedRequestsRemainActorBackedAcrossRestart() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let branchId = repositoryDefaultBranchIds[0]
+            let adminUser = $"{Guid.NewGuid()}"
+
+            let! grantAdmin = ApprovalTestHelpers.grantRoleAsync Client "repo" ownerId organizationId repositoryId "" adminUser "RepoAdmin"
+            Assert.That(grantAdmin.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+
+            let! grantResponder = ApprovalTestHelpers.grantRoleAsync Client "branch" ownerId organizationId repositoryId branchId adminUser "ApprovalResponder"
+
+            Assert.That(grantResponder.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+
+            use adminClient = ApprovalTestHelpers.createAuthenticatedClient adminUser
+            let! created = ApprovalTestHelpers.createPolicyAsync adminClient repositoryId branchId
+            let showParameters = ApprovalTestHelpers.showPolicyParameters repositoryId branchId (created.ApprovalPolicyId.ToString())
+            let! enableResponse = adminClient.PostAsync("/approval/policy/enable", createJsonContent showParameters)
+            Assert.That(enableResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+
+            let seedParameters =
+                ApprovalTestHelpers.seedGeneratedParameters repositoryId branchId (Some(Guid.NewGuid())) created.ApprovalPolicyId $"user:{adminUser}" (Some 264)
+
+            let! seedResponse = Client.PostAsync("/approval/request/_seedGenerated", createJsonContent seedParameters)
+            let! seedText = seedResponse.Content.ReadAsStringAsync()
+            Assert.That(seedResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), seedText)
+            let seededRequest = deserialize<ApprovalRequest> seedText
+
+            let! beforeRestartPolicies =
+                adminClient.PostAsync("/approval/policy/evaluate", createJsonContent (ApprovalTestHelpers.createPolicyParameters repositoryId branchId))
+
+            Assert.That(beforeRestartPolicies.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+            let! policiesBeforeRestart = deserializeContent<ApprovalPolicy array> beforeRestartPolicies
+
+            Assert.That(
+                policiesBeforeRestart
+                |> Array.map (fun policy -> policy.ApprovalPolicyId),
+                Does.Contain(created.ApprovalPolicyId)
+            )
+
+            do! ApprovalTestHelpers.restartGraceServerAsync ()
+
+            // Contract: approval policies are process-local configuration and are intentionally lost on Grace.Server restart.
+            let! listPoliciesAfterRestart =
+                adminClient.PostAsync("/approval/policy/list", createJsonContent (ApprovalTestHelpers.listPolicyParameters repositoryId branchId))
+
+            let! listPoliciesAfterRestartText = listPoliciesAfterRestart.Content.ReadAsStringAsync()
+            Assert.That(listPoliciesAfterRestart.StatusCode, Is.EqualTo(HttpStatusCode.OK), listPoliciesAfterRestartText)
+            let policiesAfterRestart = deserialize<ApprovalPolicy array> listPoliciesAfterRestartText
+
+            Assert.That(
+                policiesAfterRestart
+                |> Array.exists (fun policy -> policy.ApprovalPolicyId = created.ApprovalPolicyId),
+                Is.False
+            )
+
+            let! evaluateAfterRestart =
+                adminClient.PostAsync("/approval/policy/evaluate", createJsonContent (ApprovalTestHelpers.createPolicyParameters repositoryId branchId))
+
+            let! evaluateAfterRestartText = evaluateAfterRestart.Content.ReadAsStringAsync()
+            Assert.That(evaluateAfterRestart.StatusCode, Is.EqualTo(HttpStatusCode.OK), evaluateAfterRestartText)
+            let evaluatedAfterRestart = deserialize<ApprovalPolicy array> evaluateAfterRestartText
+
+            Assert.That(
+                evaluatedAfterRestart
+                |> Array.exists (fun policy -> policy.ApprovalPolicyId = created.ApprovalPolicyId),
+                Is.False
+            )
+
+            let! listRequestsAfterRestart =
+                adminClient.PostAsync("/approval/request/list", createJsonContent (ApprovalTestHelpers.listRequestParameters repositoryId branchId))
+
+            let! listRequestsAfterRestartText = listRequestsAfterRestart.Content.ReadAsStringAsync()
+            Assert.That(listRequestsAfterRestart.StatusCode, Is.EqualTo(HttpStatusCode.OK), listRequestsAfterRestartText)
+            let requestsAfterRestart = deserialize<ApprovalRequest array> listRequestsAfterRestartText
+
+            Assert.That(
+                requestsAfterRestart
+                |> Array.map (fun request -> request.ApprovalRequestId),
+                Does.Contain(seededRequest.ApprovalRequestId)
+            )
         }
 
     [<Test>]

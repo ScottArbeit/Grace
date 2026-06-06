@@ -13,6 +13,25 @@ open System.Threading.Tasks
 
 module private AgentSessionTestHelpers =
 
+    let restartGraceServerAsync () =
+        let state =
+            match App with
+            | Some app ->
+                {
+                    App = app
+                    Client = Client
+                    GraceServerBaseAddress = graceServerBaseAddress
+                    ServiceBusConnectionString = serviceBusConnectionString
+                    ServiceBusTopic = serviceBusTopic
+                    ServiceBusServerSubscription = serviceBusServerSubscription
+                    ServiceBusTestSubscription = serviceBusTestSubscription
+                }
+            | None ->
+                Assert.Fail("Aspire test host was not started by the shared setup fixture.")
+                Unchecked.defaultof<TestHostState>
+
+        AspireTestHost.restartGraceServerAsync state
+
     let private postSessionAsync<'TResponse> (path: string) (parameters: obj) =
         task {
             let! response = Client.PostAsync(path, createJsonContent parameters)
@@ -229,4 +248,43 @@ type AgentSessionServerTests() =
                 do! AgentSessionTestHelpers.tryStopAsync repositoryId agentId replacementSessionId secondWorkItem
                 do! AgentSessionTestHelpers.tryStopAsync repositoryId agentId firstSessionId firstWorkItem
                 return raise ex
+        }
+
+    [<Test>]
+    [<NonParallelizable>]
+    member _.ActiveAgentSessionsAreProcessLocalAcrossRestart() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let agentId = $"agent-{Guid.NewGuid():N}"
+            let workItemId = "264"
+            let startOperationId = $"start-{Guid.NewGuid():N}"
+
+            let! started = AgentSessionTestHelpers.startAsync (AgentSessionTestHelpers.startParameters repositoryId agentId workItemId startOperationId)
+
+            Assert.That(started.ReturnValue.Session.SessionId, Is.EqualTo(startOperationId))
+            Assert.That(started.ReturnValue.Session.LifecycleState, Is.EqualTo(AgentSessionLifecycleState.Active))
+
+            let! activeBeforeRestart = AgentSessionTestHelpers.activeAsync (AgentSessionTestHelpers.activeParameters repositoryId agentId workItemId)
+            Assert.That(activeBeforeRestart.ReturnValue.Session.SessionId, Is.EqualTo(startOperationId))
+            Assert.That(activeBeforeRestart.ReturnValue.Session.LifecycleState, Is.EqualTo(AgentSessionLifecycleState.Active))
+
+            do! AgentSessionTestHelpers.restartGraceServerAsync ()
+
+            // Contract: active agent sessions are process-local coordination state and are intentionally lost on restart.
+            let! statusAfterRestart =
+                AgentSessionTestHelpers.statusAsync (AgentSessionTestHelpers.statusParameters repositoryId agentId startOperationId workItemId)
+
+            Assert.That(statusAfterRestart.ReturnValue.Session.SessionId, Is.EqualTo(startOperationId))
+            Assert.That(statusAfterRestart.ReturnValue.Session.LifecycleState, Is.EqualTo(AgentSessionLifecycleState.Inactive))
+
+            let! activeAfterRestart = AgentSessionTestHelpers.activeAsync (AgentSessionTestHelpers.activeParameters repositoryId agentId workItemId)
+            Assert.That(activeAfterRestart.ReturnValue.Session.LifecycleState, Is.EqualTo(AgentSessionLifecycleState.Inactive))
+
+            let! listedAfterRestart = AgentSessionTestHelpers.listActiveAsync (AgentSessionTestHelpers.listActiveParameters repositoryId agentId 10)
+
+            Assert.That(
+                listedAfterRestart.ReturnValue.Sessions
+                |> List.exists (fun session -> session.SessionId = startOperationId),
+                Is.False
+            )
         }
