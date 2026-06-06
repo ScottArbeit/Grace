@@ -45,10 +45,12 @@ module CommandOutputContractRegistryTests =
         |> should equal 9
 
         countBy CommonRenderOutputEnvelope
-        |> should equal 175
+        |> should equal 180
+
+        countBy ImmediateJsonErrorOnly |> should equal 1
 
         countBy HumanProgressOnlySuccess
-        |> should equal 16
+        |> should equal 10
 
         countBy PartialManualSuccess |> should equal 0
         countBy ManualJsonUnenveloped |> should equal 0
@@ -129,6 +131,9 @@ module CommandOutputContractRegistryTests =
         behaviors.Contains HumanProgressOnlySuccess
         |> should equal true
 
+        behaviors.Contains ImmediateJsonErrorOnly
+        |> should equal true
+
         behaviors.Contains ManualJsonUnenveloped
         |> should equal false
 
@@ -171,7 +176,7 @@ module CommandOutputContractRegistryTests =
             CommandOutputContract.entries
             |> List.filter (fun entry -> entry.CurrentJsonBehavior = CommonRenderOutputEnvelope)
 
-        commonEntries.Length |> should equal 175
+        commonEntries.Length |> should equal 180
 
         for entry in commonEntries do
             match entry.EnvelopeContract with
@@ -181,6 +186,41 @@ module CommandOutputContractRegistryTests =
 
             entry.Features.Select
             |> should equal ExistingBehavior
+
+    [<Test>]
+    let ``watch json mode is registered as immediate error only`` () =
+        let identity = CommandOutputContract.commandIdentity [] "watch"
+
+        match CommandOutputContract.tryFind identity with
+        | Some entry ->
+            entry.CurrentJsonBehavior
+            |> should equal ImmediateJsonErrorOnly
+
+            match entry.EnvelopeContract with
+            | JsonModeErrorOnly reason ->
+                reason
+                |> should contain "short-circuited before command execution"
+            | other -> Assert.Fail($"Expected watch to be registered as JsonModeErrorOnly, got {other}.")
+
+            entry.Features.JsonMode
+            |> should equal ExistingBehavior
+
+            entry.Features.Select
+            |> should equal RequiresMigration
+
+            entry.ReturnValueContract.Status
+            |> should equal ContractUnsupported
+
+            let schemaDocument = CommandOutputContract.introspectionDocument Schema entry
+
+            match schemaDocument.Schema with
+            | Some schema ->
+                schema.Status |> should equal "unsupported"
+
+                schema.Envelope
+                |> should contain "GraceError only in JSON mode"
+            | None -> Assert.Fail("watch schema introspection should include the explicit unsupported schema document.")
+        | None -> Assert.Fail("watch should have a registry entry.")
 
     [<Test>]
     let ``schema ready registry entries describe success and error envelopes`` () =
@@ -253,6 +293,50 @@ module CommandOutputContractRegistryTests =
                 |> should equal "string"
             | None -> Assert.Fail("Schema introspection should include a schema document.")
         | None -> Assert.Fail("auth.logout should have a registry entry.")
+
+    [<Test>]
+    let ``maintenance registry entries expose schema ready local dto metadata`` () =
+        let cases =
+            [
+                CommandOutputContract.commandIdentity [ "maintenance" ] "check-ignore-entries", "MaintenanceIgnoreEntriesDto"
+                CommandOutputContract.commandIdentity [ "maintenance" ] "list-contents", "MaintenanceListContentsDto"
+                CommandOutputContract.commandIdentity [ "maintenance" ] "scan", "MaintenanceScanDto"
+                CommandOutputContract.commandIdentity [ "maintenance" ] "stats", "MaintenanceStatsDto"
+                CommandOutputContract.commandIdentity [ "maintenance" ] "update-index", "MaintenanceStatsDto"
+            ]
+
+        for identity, expectedContract in cases do
+            match CommandOutputContract.tryFind identity with
+            | Some entry ->
+                entry.ReturnValueContract.Status
+                |> should equal SchemaReady
+
+                let schemaDocument = CommandOutputContract.introspectionDocument Schema entry
+
+                match schemaDocument.Schema with
+                | Some schema ->
+                    schema.Status |> should equal "schema-ready"
+
+                    schema.ReturnValueContract
+                    |> should equal expectedContract
+
+                    use successSchema = JsonDocument.Parse(Grace.Shared.Utilities.serialize schema.SuccessSchema)
+
+                    let returnValueSchema =
+                        successSchema
+                            .RootElement
+                            .GetProperty("properties")
+                            .GetProperty("ReturnValue")
+
+                    returnValueSchema.GetProperty("title").GetString()
+                    |> should equal expectedContract
+                | None -> Assert.Fail($"Expected schema document for {identity.CommandId}.")
+
+                let examplesDocument = CommandOutputContract.introspectionDocument Examples entry
+
+                examplesDocument.Examples[0].Name
+                |> should equal "success-envelope-shape"
+            | None -> Assert.Fail($"{identity.CommandId} should have a registry entry.")
 
     [<Test>]
     let ``metadata incomplete registry entries are explicit`` () =

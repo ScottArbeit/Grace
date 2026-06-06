@@ -49,6 +49,20 @@ module GraceCommand =
 
     type OptionToUpdate = { optionAlias: string; display: string; displayOnCreate: string; createParentCommand: string }
 
+    let private deleteGraceWatchIpcFileIfOwned () =
+        if graceWatchStatusUpdateTime <> Instant.MinValue then
+            try
+                let ipcFileName = IpcFileName()
+
+                if File.Exists(ipcFileName) then
+                    let status =
+                        File.ReadAllText(ipcFileName)
+                        |> deserialize<GraceWatchStatus>
+
+                    if status.UpdatedAt = graceWatchStatusUpdateTime then File.Delete(ipcFileName)
+            with
+            | _ -> ()
+
     /// Built-in aliases for Grace commands.
     let private aliases =
         let aliases = Dictionary<string, string seq>()
@@ -1252,58 +1266,68 @@ module GraceCommand =
                         | None ->
                             //parseResult <- caseInsensitiveMiddleware (rootCommand, parseResult, isCaseInsensitive)
 
-                            if parseResult |> hasOutput then
-                                if parseResult |> verbose then
-                                    AnsiConsole.Write(
-                                        (new Rule($"[{Colors.Important}]Started: {formatInstantExtended startTime}.[/]"))
-                                            .RightJustified()
-                                    )
+                            if (parseResult |> json)
+                               && (parseResult |> isGraceWatch) then
+                                let error =
+                                    GraceError.Create
+                                        "watch is a continuous foreground workflow; JSON mode requires a cancellation-aware automation host in this release."
+                                        (getCorrelationId parseResult)
 
-                                //printParseResult parseResult
-                                else
-                                    AnsiConsole.Write(new Rule())
+                                Common.writeJsonErrorStdout error
+                                returnValue <- -1
+                            else
+                                if parseResult |> hasOutput then
+                                    if parseResult |> verbose then
+                                        AnsiConsole.Write(
+                                            (new Rule($"[{Colors.Important}]Started: {formatInstantExtended startTime}.[/]"))
+                                                .RightJustified()
+                                        )
 
-                            // If this instance isn't `grace watch`, we want to check if `grace watch` is running by trying to read the IPC file.
-                            if not <| (parseResult |> isGraceWatch) then
-                                let! graceWatchStatus = getGraceWatchStatus ()
+                                    //printParseResult parseResult
+                                    else
+                                        AnsiConsole.Write(new Rule())
 
-                                match graceWatchStatus with
-                                | Some status -> Configuration.updateConfiguration { GraceWatchStatus = status }
-                                | None -> ()
+                                // If this instance isn't `grace watch`, we want to check if `grace watch` is running by trying to read the IPC file.
+                                if not <| (parseResult |> isGraceWatch) then
+                                    let! graceWatchStatus = getGraceWatchStatus ()
 
-                            // Now we can invoke the command!
-                            let! invokedReturnValue = parseResult.InvokeAsync()
-                            returnValue <- invokedReturnValue
+                                    match graceWatchStatus with
+                                    | Some status -> Configuration.updateConfiguration { GraceWatchStatus = status }
+                                    | None -> ()
 
-                            // Stuff to do after the command has been invoked:
+                                // Now we can invoke the command!
+                                let! invokedReturnValue = parseResult.InvokeAsync()
+                                returnValue <- invokedReturnValue
 
-                            // If this instance is `grace watch`, we'll actually delete the IPC file in the finally clause below, but
-                            //   we'll write the "we deleted the file" message to the console here, so it comes before the last Rule() is written.
-                            if parseResult |> isGraceWatch then
-                                logToAnsiConsole Colors.Important (getLocalizedString StringResourceName.InterprocessFileDeleted)
+                                // Stuff to do after the command has been invoked:
 
-                            // If we're writing output, write the final Rule() to the console.
-                            if parseResult |> hasOutput then
-                                let finishTime = getCurrentInstant ()
+                                // If this instance is `grace watch`, we'll actually delete the IPC file in the finally clause below, but
+                                //   we'll write the "we deleted the file" message to the console here, so it comes before the last Rule() is written.
+                                if parseResult |> isGraceWatch then
+                                    logToAnsiConsole Colors.Important (getLocalizedString StringResourceName.InterprocessFileDeleted)
 
-                                let elapsed =
-                                    (finishTime - startTime)
-                                        .Plus(Duration.FromMilliseconds(110.0)) // Adding 110ms for .NET Runtime startup time.
+                                // If we're writing output, write the final Rule() to the console.
+                                if parseResult |> hasOutput then
+                                    let finishTime = getCurrentInstant ()
 
-                                if parseResult |> verbose then
-                                    AnsiConsole.Write(
-                                        (new Rule(
-                                            $"[{Colors.Important}]Elapsed: {elapsed.TotalSeconds:F3}s. Exit code: {returnValue}. Finished: {formatInstantExtended finishTime}[/]"
-                                        ))
-                                            .RightJustified()
-                                    )
-                                else
-                                    AnsiConsole.Write(
-                                        (new Rule($"[{Colors.Important}]Elapsed: {elapsed.TotalSeconds:F3}s. Exit code: {returnValue}.[/]"))
-                                            .RightJustified()
-                                    )
+                                    let elapsed =
+                                        (finishTime - startTime)
+                                            .Plus(Duration.FromMilliseconds(110.0)) // Adding 110ms for .NET Runtime startup time.
 
-                                AnsiConsole.WriteLine()
+                                    if parseResult |> verbose then
+                                        AnsiConsole.Write(
+                                            (new Rule(
+                                                $"[{Colors.Important}]Elapsed: {elapsed.TotalSeconds:F3}s. Exit code: {returnValue}. Finished: {formatInstantExtended finishTime}[/]"
+                                            ))
+                                                .RightJustified()
+                                        )
+                                    else
+                                        AnsiConsole.Write(
+                                            (new Rule($"[{Colors.Important}]Elapsed: {elapsed.TotalSeconds:F3}s. Exit code: {returnValue}.[/]"))
+                                                .RightJustified()
+                                        )
+
+                                    AnsiConsole.WriteLine()
                     else
                         // We don't have a config file, so write an error message and exit.
                         let comparison =
@@ -1396,6 +1420,6 @@ module GraceCommand =
                 // If this was grace watch, delete the inter-process communication file.
                 if not <| isNull (parseResult)
                    && parseResult |> isGraceWatch then
-                    File.Delete(IpcFileName())
+                    deleteGraceWatchIpcFileIfOwned ()
         })
             .Result

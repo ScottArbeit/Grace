@@ -135,13 +135,104 @@ module Maintenance =
         | Some rootSha256Hash -> AnsiConsole.MarkupLine($"[{Colors.Highlighted}]Root SHA-256 hash: {getShortHash rootSha256Hash}[/]")
         | None -> AnsiConsole.MarkupLine($"[{Colors.Error}]Root SHA-256 hash: unavailable (root directory entry missing).[/]")
 
+    let private toStatsDto (graceStatus: GraceStatus) : LocalOutputDto.MaintenanceStatsDto =
+        let directoryCount = graceStatus.Index.Count
+
+        let fileCount =
+            graceStatus
+                .Index
+                .Values
+                .Select(fun directoryVersion -> directoryVersion.Files.Count)
+                .Sum()
+
+        let totalFileSize = graceStatus.Index.Values.Sum(fun directoryVersion -> directoryVersion.Files.Sum(fun f -> int64 f.Size))
+
+        {
+            DirectoryCount = directoryCount
+            FileCount = fileCount
+            TotalFileSize = totalFileSize
+            RootSha256Hash =
+                tryGetRootSha256Hash graceStatus
+                |> Option.map string
+        }
+
+    let private toListContentsDto listDirectories listFiles (graceStatus: GraceStatus) : LocalOutputDto.MaintenanceListContentsDto =
+        let directories =
+            if listDirectories then
+                graceStatus.Index.Values
+                |> Seq.sortBy (fun directoryVersion -> directoryVersion.RelativePath)
+                |> Seq.map (fun directoryVersion ->
+                    let files =
+                        if listFiles then
+                            directoryVersion.Files
+                            |> Seq.sortBy (fun file -> file.RelativePath)
+                            |> Seq.map (fun file ->
+                                {
+                                    LocalOutputDto.MaintenanceListContentsFileDto.RelativePath = string file.RelativePath
+                                    FileName = file.FileInfo.Name
+                                    Sha256Hash = string file.Sha256Hash
+                                    Size = int64 file.Size
+                                    LastWriteTimeUtc = file.LastWriteTimeUtc
+                                }: LocalOutputDto.MaintenanceListContentsFileDto)
+                            |> Seq.toArray
+                        else
+                            Array.empty
+
+                    ({
+                         LocalOutputDto.MaintenanceListContentsDirectoryDto.RelativePath = string directoryVersion.RelativePath
+                         DirectoryVersionId = directoryVersion.DirectoryVersionId
+                         Sha256Hash = string directoryVersion.Sha256Hash
+                         Size = int64 directoryVersion.Size
+                         LastWriteTimeUtc = directoryVersion.LastWriteTimeUtc
+                         Files = files
+                     }: LocalOutputDto.MaintenanceListContentsDirectoryDto))
+                |> Seq.toArray
+            else
+                Array.empty
+
+        { Summary = toStatsDto graceStatus; Directories = directories }
+
+    let private toScanDto (differences: List<FileSystemDifference>) (newDirectoryVersions: List<LocalDirectoryVersion>) : LocalOutputDto.MaintenanceScanDto =
+        {
+            DifferenceCount = differences.Count
+            Differences =
+                differences
+                |> Seq.map (fun difference ->
+                    ({
+                         LocalOutputDto.MaintenanceScanDifferenceDto.DifferenceType = getDiscriminatedUnionCaseName difference.DifferenceType
+                         FileSystemEntryType = getDiscriminatedUnionCaseName difference.FileSystemEntryType
+                         RelativePath = string difference.RelativePath
+                     }: LocalOutputDto.MaintenanceScanDifferenceDto))
+                |> Seq.toArray
+            NewDirectoryVersionCount = newDirectoryVersions.Count
+            NewDirectoryVersions =
+                newDirectoryVersions
+                |> Seq.map (fun directoryVersion ->
+                    ({
+                         LocalOutputDto.MaintenanceScanDirectoryVersionDto.DirectoryVersionId = directoryVersion.DirectoryVersionId
+                         RelativePath = string directoryVersion.RelativePath
+                         Sha256Hash = string directoryVersion.Sha256Hash
+                     }: LocalOutputDto.MaintenanceScanDirectoryVersionDto))
+                |> Seq.toArray
+        }
+
+    let private renderLocalJson parseResult dto =
+        Ok(GraceReturnValue.Create dto (getCorrelationId parseResult))
+        |> renderOutput parseResult
+
     let private updateIndexHandler (parseResult: ParseResult) =
         task {
             try
                 if parseResult |> verbose then printParseResult parseResult
                 let graceIds = parseResult |> getNormalizedIdsAndNames
 
-                if parseResult |> hasOutput then
+                if parseResult |> json then
+                    let! previousGraceStatus = readGraceStatusFile ()
+                    let! graceStatus = createNewGraceStatusFile previousGraceStatus parseResult
+                    do! writeGraceStatusFile graceStatus
+                    do! upsertObjectCache graceStatus.Index.Values
+                    return renderLocalJson parseResult (toStatsDto graceStatus)
+                elif parseResult |> hasOutput then
                     let! graceStatus =
                         progress
                             .Columns(progressColumns)
@@ -536,7 +627,14 @@ module Maintenance =
 
             with
             | ex ->
-                logToAnsiConsole Colors.Error $"Exception in UpdateIndex: {ExceptionResponse.Create ex}"
+                let message = $"Exception in UpdateIndex: {ExceptionResponse.Create ex}"
+
+                if parseResult |> json then
+                    GraceError.Create message (getCorrelationId parseResult)
+                    |> writeJsonErrorStdout
+                else
+                    logToAnsiConsole Colors.Error message
+
                 return -1
         }
 
@@ -553,7 +651,12 @@ module Maintenance =
             task {
                 if parseResult |> verbose then printParseResult parseResult
 
-                if parseResult |> hasOutput then
+                if parseResult |> json then
+                    let! previousGraceStatus = readGraceStatusFile ()
+                    let! differences = scanForDifferences previousGraceStatus
+                    let! (_, newDirectoryVersions) = getNewGraceStatusAndDirectoryVersions previousGraceStatus differences
+                    return renderLocalJson parseResult (toScanDto differences newDirectoryVersions)
+                elif parseResult |> hasOutput then
                     let! (differences, newDirectoryVersions) =
                         progress
                             .Columns(progressColumns)
@@ -592,6 +695,8 @@ module Maintenance =
                     for ldv in newDirectoryVersions do
                         AnsiConsole.MarkupLine
                             $"[{Colors.Important}]SHA-256: {ldv.Sha256Hash.Substring(0, 8)}; DirectoryId: {ldv.DirectoryVersionId}; RelativePath: {ldv.RelativePath}[/]"
+
+                    return 0
                 //AnsiConsole.MarkupLine $"[{Colors.Highlighted}]Root SHA-256 hash: {rootDirectoryVersion.Sha256Hash.Substring(8)}[/]"
                 else
                     let! previousGraceStatus = readGraceStatusFile ()
@@ -611,7 +716,7 @@ module Maintenance =
                         AnsiConsole.MarkupLine
                             $"[{Colors.Important}]SHA-256: {ldv.Sha256Hash.Substring(0, 8)}; DirectoryId: {ldv.DirectoryVersionId}; RelativePath: {ldv.RelativePath}[/]"
 
-                return 0
+                    return 0
             }
 
     type Stats() =
@@ -622,25 +727,19 @@ module Maintenance =
                 if parseResult |> verbose then printParseResult parseResult
 
                 let! graceStatus = readGraceStatusFile ()
-                let directoryCount = graceStatus.Index.Count
+                let dto = toStatsDto graceStatus
 
-                let fileCount =
-                    graceStatus
-                        .Index
-                        .Values
-                        .Select(fun directoryVersion -> directoryVersion.Files.Count)
-                        .Sum()
+                if parseResult |> json then
+                    return renderLocalJson parseResult dto
+                else
+                    AnsiConsole.MarkupLine($"[{Colors.Important}]All values taken from the local Grace status file.[/]")
+                    AnsiConsole.MarkupLine($"[{Colors.Highlighted}]Number of directories: {dto.DirectoryCount}.[/]")
 
-                let totalFileSize = graceStatus.Index.Values.Sum(fun directoryVersion -> directoryVersion.Files.Sum(fun f -> int64 f.Size))
+                    AnsiConsole.MarkupLine($"[{Colors.Highlighted}]Number of files: {dto.FileCount}; total file size: {dto.TotalFileSize:N0}.[/]")
 
-                AnsiConsole.MarkupLine($"[{Colors.Important}]All values taken from the local Grace status file.[/]")
-                AnsiConsole.MarkupLine($"[{Colors.Highlighted}]Number of directories: {directoryCount}.[/]")
+                    writeRootShaSummary graceStatus
 
-                AnsiConsole.MarkupLine($"[{Colors.Highlighted}]Number of files: {fileCount}; total file size: {totalFileSize:N0}.[/]")
-
-                writeRootShaSummary graceStatus
-
-                return 0
+                    return 0
             }
 
     type ListContents() =
@@ -654,68 +753,66 @@ module Maintenance =
                 let listFiles = parseResult.GetValue(Options.listFiles)
 
                 let! graceStatus = readGraceStatusFile ()
-                let directoryCount = graceStatus.Index.Count
+                let dto = toListContentsDto listDirectories listFiles graceStatus
 
-                let fileCount =
-                    graceStatus
-                        .Index
-                        .Values
-                        .Select(fun directoryVersion -> directoryVersion.Files.Count)
-                        .Sum()
+                if parseResult |> json then
+                    return renderLocalJson parseResult dto
+                else
+                    let directoryCount = dto.Summary.DirectoryCount
 
-                let totalFileSize = graceStatus.Index.Values.Sum(fun directoryVersion -> directoryVersion.Files.Sum(fun f -> int64 f.Size))
+                    AnsiConsole.MarkupLine($"[{Colors.Important}]All values taken from the local Grace status file.[/]")
+                    AnsiConsole.MarkupLine($"[{Colors.Highlighted}]Number of directories: {directoryCount}.[/]")
 
-                AnsiConsole.MarkupLine($"[{Colors.Important}]All values taken from the local Grace status file.[/]")
-                AnsiConsole.MarkupLine($"[{Colors.Highlighted}]Number of directories: {directoryCount}.[/]")
+                    AnsiConsole.MarkupLine(
+                        $"[{Colors.Highlighted}]Number of files: {dto.Summary.FileCount}; total file size: {dto.Summary.TotalFileSize:N0}.[/]"
+                    )
 
-                AnsiConsole.MarkupLine($"[{Colors.Highlighted}]Number of files: {fileCount}; total file size: {totalFileSize:N0}.[/]")
+                    writeRootShaSummary graceStatus
 
-                writeRootShaSummary graceStatus
+                    if listDirectories then
+                        if directoryCount = 0 then
+                            AnsiConsole.MarkupLine($"[{Colors.Verbose}]No directory entries found in the local Grace status file.[/]")
+                        else
+                            let longestRelativePath = getLongestRelativePath graceStatus.Index.Values
+                            let additionalSpaces = String.replicate (longestRelativePath - 2) " "
+                            let additionalImportantDashes = String.replicate (longestRelativePath + 3) "-"
+                            let additionalDeemphasizedDashes = String.replicate 38 "-"
 
-                if listDirectories then
-                    if directoryCount = 0 then
-                        AnsiConsole.MarkupLine($"[{Colors.Verbose}]No directory entries found in the local Grace status file.[/]")
-                    else
-                        let longestRelativePath = getLongestRelativePath graceStatus.Index.Values
-                        let additionalSpaces = String.replicate (longestRelativePath - 2) " "
-                        let additionalImportantDashes = String.replicate (longestRelativePath + 3) "-"
-                        let additionalDeemphasizedDashes = String.replicate 38 "-"
+                            let sortedDirectoryVersions = graceStatus.Index.Values.OrderBy(fun dv -> dv.RelativePath)
 
-                        let sortedDirectoryVersions = graceStatus.Index.Values.OrderBy(fun dv -> dv.RelativePath)
+                            sortedDirectoryVersions
+                            |> Seq.iteri (fun i directoryVersion ->
+                                AnsiConsole.WriteLine()
 
-                        sortedDirectoryVersions
-                        |> Seq.iteri (fun i directoryVersion ->
-                            AnsiConsole.WriteLine()
-
-                            if i = 0 then
-                                AnsiConsole.MarkupLine(
-                                    $"[{Colors.Important}]Last Write Time (UTC)        SHA-256            Size  Path{additionalSpaces}[/][{Colors.Deemphasized}] (DirectoryVersionId)[/]"
-                                )
-
-                                AnsiConsole.MarkupLine(
-                                    $"[{Colors.Important}]-----------------------------------------------------{additionalImportantDashes}[/][{Colors.Deemphasized}] {additionalDeemphasizedDashes}[/]"
-                                )
-
-                            let rightAlignedDirectoryVersionId =
-                                (String.replicate
-                                    (longestRelativePath
-                                     - directoryVersion.RelativePath.Length)
-                                    " ")
-                                + $"({directoryVersion.DirectoryVersionId})"
-
-                            AnsiConsole.MarkupLine(
-                                $"[{Colors.Highlighted}]{formatDateTimeAligned directoryVersion.LastWriteTimeUtc}   {getShortSha256Hash directoryVersion.Sha256Hash}  {directoryVersion.Size, 13:N0}  /{directoryVersion.RelativePath}[/] [{Colors.Deemphasized}] {rightAlignedDirectoryVersionId}[/]"
-                            )
-
-                            if listFiles then
-                                let sortedFiles = directoryVersion.Files.OrderBy(fun f -> f.RelativePath)
-
-                                for file in sortedFiles do
+                                if i = 0 then
                                     AnsiConsole.MarkupLine(
-                                        $"[{Colors.Verbose}]{formatDateTimeAligned file.LastWriteTimeUtc}   {getShortSha256Hash file.Sha256Hash}  {file.Size, 13:N0}  |- {file.FileInfo.Name}[/]"
-                                    ))
+                                        $"[{Colors.Important}]Last Write Time (UTC)        SHA-256            Size  Path{additionalSpaces}[/][{Colors.Deemphasized}] (DirectoryVersionId)[/]"
+                                    )
 
-                return 0
+                                    AnsiConsole.MarkupLine(
+                                        $"[{Colors.Important}]-----------------------------------------------------{additionalImportantDashes}[/][{Colors.Deemphasized}] {additionalDeemphasizedDashes}[/]"
+                                    )
+
+                                let rightAlignedDirectoryVersionId =
+                                    (String.replicate
+                                        (longestRelativePath
+                                         - directoryVersion.RelativePath.Length)
+                                        " ")
+                                    + $"({directoryVersion.DirectoryVersionId})"
+
+                                AnsiConsole.MarkupLine(
+                                    $"[{Colors.Highlighted}]{formatDateTimeAligned directoryVersion.LastWriteTimeUtc}   {getShortSha256Hash directoryVersion.Sha256Hash}  {directoryVersion.Size, 13:N0}  /{directoryVersion.RelativePath}[/] [{Colors.Deemphasized}] {rightAlignedDirectoryVersionId}[/]"
+                                )
+
+                                if listFiles then
+                                    let sortedFiles = directoryVersion.Files.OrderBy(fun f -> f.RelativePath)
+
+                                    for file in sortedFiles do
+                                        AnsiConsole.MarkupLine(
+                                            $"[{Colors.Verbose}]{formatDateTimeAligned file.LastWriteTimeUtc}   {getShortSha256Hash file.Sha256Hash}  {file.Size, 13:N0}  |- {file.FileInfo.Name}[/]"
+                                        ))
+
+                    return 0
             }
 
     type CheckIgnoreEntries() =
@@ -724,18 +821,30 @@ module Maintenance =
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 if parseResult |> verbose then printParseResult parseResult
-                AnsiConsole.MarkupLine($"[{Colors.Important}]Directory ignore entries:[/]")
 
-                for dir in Current().GraceDirectoryIgnoreEntries do
-                    AnsiConsole.MarkupLine($"[{Colors.Highlighted}]  {dir}[/]")
+                let dto =
+                    ({
+                         LocalOutputDto.MaintenanceIgnoreEntriesDto.DirectoryEntries =
+                             Current().GraceDirectoryIgnoreEntries
+                             |> Seq.toArray
+                         FileEntries = Current().GraceFileIgnoreEntries |> Seq.toArray
+                     }: LocalOutputDto.MaintenanceIgnoreEntriesDto)
 
-                AnsiConsole.WriteLine()
-                AnsiConsole.MarkupLine($"[{Colors.Important}]File ignore entries:[/]")
+                if parseResult |> json then
+                    return renderLocalJson parseResult dto
+                else
+                    AnsiConsole.MarkupLine($"[{Colors.Important}]Directory ignore entries:[/]")
 
-                for file in Current().GraceFileIgnoreEntries do
-                    AnsiConsole.MarkupLine($"[{Colors.Highlighted}]  {file}[/]")
+                    for dir in dto.DirectoryEntries do
+                        AnsiConsole.MarkupLine($"[{Colors.Highlighted}]  {dir}[/]")
 
-                return 0
+                    AnsiConsole.WriteLine()
+                    AnsiConsole.MarkupLine($"[{Colors.Important}]File ignore entries:[/]")
+
+                    for file in dto.FileEntries do
+                        AnsiConsole.MarkupLine($"[{Colors.Highlighted}]  {file}[/]")
+
+                    return 0
             }
 
     let Build =

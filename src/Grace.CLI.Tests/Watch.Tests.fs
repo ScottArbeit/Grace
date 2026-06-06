@@ -5,10 +5,16 @@ open Grace.CLI
 open Grace.CLI.Command
 open Grace.Shared
 open Grace.Shared.Client.Configuration
+open Grace.Shared.Utilities
+open Grace.Types.Common
+open NodaTime
 open NUnit.Framework
 open Spectre.Console
 open System
+open System.Collections.Generic
+open System.Diagnostics
 open System.IO
+open System.Text.Json
 
 [<NonParallelizable>]
 module WatchTests =
@@ -30,6 +36,58 @@ module WatchTests =
         finally
             Console.SetOut(originalOut)
             setAnsiConsoleOutput originalOut
+
+    let private runWithCapturedStdoutAndStderr (args: string array) =
+        use standardOutWriter = new StringWriter()
+        use standardErrorWriter = new StringWriter()
+        let originalOut = Console.Out
+        let originalError = Console.Error
+
+        try
+            Console.SetOut(standardOutWriter)
+            Console.SetError(standardErrorWriter)
+            setAnsiConsoleOutput standardOutWriter
+            let exitCode = GraceCommand.main args
+            exitCode, standardOutWriter.ToString(), standardErrorWriter.ToString()
+        finally
+            Console.SetOut(originalOut)
+            Console.SetError(originalError)
+            setAnsiConsoleOutput originalOut
+
+    let private runGraceProcessWithCapturedStdoutAndStderr workingDirectory (args: string array) =
+        let cliDllPath = Path.Combine(AppContext.BaseDirectory, "grace.dll")
+
+        File.Exists(cliDllPath) |> should equal true
+
+        let startInfo = ProcessStartInfo()
+        startInfo.FileName <- "dotnet"
+        startInfo.WorkingDirectory <- workingDirectory
+        startInfo.RedirectStandardOutput <- true
+        startInfo.RedirectStandardError <- true
+        startInfo.UseShellExecute <- false
+        startInfo.CreateNoWindow <- true
+        startInfo.ArgumentList.Add(cliDllPath)
+
+        for arg in args do
+            startInfo.ArgumentList.Add(arg)
+
+        use proc = new Process()
+        proc.StartInfo <- startInfo
+
+        if not (proc.Start()) then failwith "Failed to start grace process."
+
+        let standardOut = proc.StandardOutput.ReadToEnd()
+        let standardError = proc.StandardError.ReadToEnd()
+
+        if not (proc.WaitForExit(30000)) then
+            try
+                proc.Kill(true)
+            with
+            | _ -> ()
+
+            Assert.Fail("Timed out waiting for grace process to exit.")
+
+        proc.ExitCode, standardOut, standardError
 
     let private withEnv (name: string) (value: string option) (action: unit -> unit) =
         let original = Environment.GetEnvironmentVariable(name)
@@ -67,6 +125,31 @@ module WatchTests =
                 Constants.EnvironmentVariables.GraceServerUri
             ]
             action
+
+    let private parseJsonOutput (output: string) =
+        output.StartsWith("{", StringComparison.Ordinal)
+        |> should equal true
+
+        JsonDocument.Parse(output)
+
+    let private writeLiveWatchStatusFile () =
+        let status: Services.GraceWatchStatus =
+            {
+                UpdatedAt = getCurrentInstant ()
+                RootDirectoryId = Guid.NewGuid()
+                RootDirectorySha256Hash = Sha256Hash "live-watch-root"
+                LastFileUploadInstant = Instant.MinValue
+                LastDirectoryVersionInstant = Instant.MinValue
+                DirectoryIds = HashSet<DirectoryVersionId>()
+            }
+
+        let ipcFileName = Services.IpcFileName()
+
+        Directory.CreateDirectory(Path.GetDirectoryName(ipcFileName))
+        |> ignore
+
+        File.WriteAllText(ipcFileName, serialize status)
+        ipcFileName
 
     let private withTempRepo (action: string -> unit) =
         let tempDir = Path.Combine(Path.GetTempPath(), $"grace-watch-tests-{Guid.NewGuid():N}")
@@ -137,3 +220,52 @@ module WatchTests =
 
                 output
                 |> should contain "Authentication is not configured."))
+
+    [<Test>]
+    let ``watch json auth failure emits one clean error envelope`` () =
+        withTempRepo (fun _ ->
+            clearWatchAuthEnv (fun () ->
+                let exitCode, standardOut, standardError =
+                    runWithCapturedStdoutAndStderr [| "--output"
+                                                      "Json"
+                                                      "watch" |]
+
+                exitCode |> should equal -1
+                standardError |> should equal String.Empty
+
+                standardOut
+                |> should not' (contain "SignalR Hub connection state")
+
+                standardOut |> should not' (contain "Elapsed:")
+
+                use document = parseJsonOutput standardOut
+                let root = document.RootElement
+
+                root.GetProperty("Error").GetString()
+                |> should contain "watch is a continuous foreground workflow"
+
+                let mutable returnValue = Unchecked.defaultof<JsonElement>
+
+                root.TryGetProperty("ReturnValue", &returnValue)
+                |> should equal false))
+
+    [<Test>]
+    let ``watch json error in separate process does not delete live watch ipc file`` () =
+        withTempRepo (fun root ->
+            clearWatchAuthEnv (fun () ->
+                let ipcFileName = writeLiveWatchStatusFile ()
+
+                let exitCode, standardOut, standardError = runGraceProcessWithCapturedStdoutAndStderr root [| "--output"; "Json"; "watch" |]
+
+                Assert.That(exitCode, Is.EqualTo(-1).Or.EqualTo(255))
+                standardError |> should equal String.Empty
+
+                use document = parseJsonOutput standardOut
+
+                document
+                    .RootElement
+                    .GetProperty("Error")
+                    .GetString()
+                |> should contain "watch is a continuous foreground workflow"
+
+                File.Exists(ipcFileName) |> should equal true))

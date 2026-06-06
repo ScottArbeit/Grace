@@ -88,6 +88,38 @@ module Common =
 
         type ReviewReportExportDto = { CandidateId: string; Format: string; OutputFile: string; BytesWritten: int64 }
 
+        type MaintenanceStatsDto = { DirectoryCount: int; FileCount: int; TotalFileSize: int64; RootSha256Hash: string option }
+
+        type MaintenanceListContentsFileDto = { RelativePath: string; FileName: string; Sha256Hash: string; Size: int64; LastWriteTimeUtc: DateTime }
+
+        type MaintenanceListContentsDirectoryDto =
+            {
+                RelativePath: string
+                DirectoryVersionId: Guid
+                Sha256Hash: string
+                Size: int64
+                LastWriteTimeUtc: DateTime
+                Files: MaintenanceListContentsFileDto array
+            }
+
+        type MaintenanceListContentsDto = { Summary: MaintenanceStatsDto; Directories: MaintenanceListContentsDirectoryDto array }
+
+        type MaintenanceIgnoreEntriesDto = { DirectoryEntries: string array; FileEntries: string array }
+
+        type MaintenanceScanDifferenceDto = { DifferenceType: string; FileSystemEntryType: string; RelativePath: string }
+
+        type MaintenanceScanDirectoryVersionDto = { DirectoryVersionId: Guid; RelativePath: string; Sha256Hash: string }
+
+        type MaintenanceScanDto =
+            {
+                DifferenceCount: int
+                Differences: MaintenanceScanDifferenceDto array
+                NewDirectoryVersionCount: int
+                NewDirectoryVersions: MaintenanceScanDirectoryVersionDto array
+            }
+
+        type WatchResultDto = { Started: bool; Completed: bool; Message: string; RootDirectory: string; ServerUri: string; RepositoryId: Guid; BranchId: Guid }
+
     /// The output format for the command.
     type OutputFormat =
         | Normal
