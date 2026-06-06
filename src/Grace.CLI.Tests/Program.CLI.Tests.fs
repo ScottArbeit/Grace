@@ -511,6 +511,30 @@ module HelpDoesNotReadConfigTests =
             |> should equal "workitem.attach.summary")
 
     [<Test>]
+    let ``root output json is honored for nested commands before config errors`` () =
+        withTempDir (fun _ ->
+            let exitCode, standardOut, standardError =
+                runWithCapturedStdoutAndStderr [| "--output"
+                                                  "Json"
+                                                  "agent"
+                                                  "work"
+                                                  "status" |]
+
+            exitCode |> should equal -1
+            standardError |> should equal String.Empty
+
+            use document = parseJsonOutput standardOut
+            let rootElement = document.RootElement
+
+            rootElement.GetProperty("Error").GetString()
+            |> should contain "graceconfig.json"
+
+            standardOut |> should not' (contain "Elapsed:")
+
+            standardOut
+            |> should not' (contain "Grace Version Control System"))
+
+    [<Test>]
     let ``root schema emits json parse error envelope`` () =
         withTempDir (fun _ ->
             let exitCode, output = runWithCapturedOutput [| "--schema" |]
@@ -1339,6 +1363,9 @@ module HelpDoesNotReadConfigTests =
 
             rootElement.GetProperty("Error").GetString()
             |> should not' (equal String.Empty)
+
+            rootElement.GetProperty("Exception").ValueKind
+            |> should equal JsonValueKind.Object
 
             rootElement
                 .GetProperty("CorrelationId")

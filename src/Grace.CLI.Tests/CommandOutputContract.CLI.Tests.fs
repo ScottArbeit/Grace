@@ -3,8 +3,11 @@ namespace Grace.CLI.Tests
 open FsUnit
 open Grace.CLI
 open Grace.CLI.CommandOutputContract
+open Grace.Shared
+open Grace.Types.Common
 open NUnit.Framework
 open System
+open System.IO
 open System.Text.Json
 
 [<TestFixture>]
@@ -32,6 +35,41 @@ module CommandOutputContractRegistryTests =
                 |> String.concat ", "
 
             Assert.Fail($"Set mismatch. Missing: {missing}. Extra: {extra}.")
+
+    let private captureStdout action =
+        use writer = new StringWriter()
+        let originalOut = Console.Out
+
+        try
+            Console.SetOut(writer)
+            let exitCode = action ()
+            exitCode, writer.ToString()
+        finally
+            Console.SetOut(originalOut)
+
+    let private parseJsonDocument (output: string) =
+        output
+            .TrimStart()
+            .StartsWith("{", StringComparison.Ordinal)
+        |> should equal true
+
+        JsonDocument.Parse(output)
+
+    let private assertOneJsonObjectStdout (output: string) =
+        let ansiCsiPrefix = string (char 0x1B) + "["
+
+        output.Contains(ansiCsiPrefix, StringComparison.Ordinal)
+        |> should equal false
+        output |> should not' (contain "[red]")
+        output |> should not' (contain "Elapsed:")
+
+        output
+        |> should not' (contain "Exception in isOutputFormat")
+
+        use document = parseJsonDocument output
+
+        document.RootElement.ValueKind
+        |> should equal JsonValueKind.Object
 
     [<Test>]
     let ``registry contains accepted inventory totals`` () =
@@ -186,6 +224,116 @@ module CommandOutputContractRegistryTests =
 
             entry.Features.Select
             |> should equal ExistingBehavior
+
+    [<Test>]
+    let ``every common renderer entry has recursive json option and central envelope behavior`` () =
+        let commonEntries =
+            CommandOutputContract.entries
+            |> List.filter (fun entry -> entry.CurrentJsonBehavior = CommonRenderOutputEnvelope)
+
+        commonEntries.Length |> should equal 180
+
+        for entry in commonEntries do
+            let commandPath = entry.Identity.CommandPath |> List.toArray
+            let parseArgs = Array.append [| "--output"; "Json" |] commandPath
+            let parseResult = GraceCommand.rootCommand.Parse(parseArgs)
+
+            Common.json parseResult |> should equal true
+
+            match entry.EnvelopeContract with
+            | ExistingGraceResultEnvelope (ReuseExistingApiOrSdkDto
+            | RequiresCliDto) -> ()
+            | other -> Assert.Fail($"Expected central Grace result envelope metadata for {entry.Identity.CommandId}, got {other}.")
+
+            let successValue = GraceReturnValue.Create $"success:{entry.Identity.CommandId}" $"corr-success-{entry.Identity.CommandId}"
+
+            let successExitCode, successOutput = captureStdout (fun () -> Common.renderOutput parseResult (Ok successValue))
+
+            successExitCode |> should equal 0
+            assertOneJsonObjectStdout successOutput
+
+            use successDocument = parseJsonDocument successOutput
+            let successRoot = successDocument.RootElement
+
+            successRoot.GetProperty("ReturnValue").GetString()
+            |> should equal $"success:{entry.Identity.CommandId}"
+
+            successRoot
+                .GetProperty("CorrelationId")
+                .GetString()
+            |> should equal $"corr-success-{entry.Identity.CommandId}"
+
+            let error = GraceError.Create $"error:{entry.Identity.CommandId}" $"corr-error-{entry.Identity.CommandId}"
+
+            let errorExitCode, errorOutput = captureStdout (fun () -> Common.renderOutput parseResult (Error error))
+
+            errorExitCode |> should equal -1
+            assertOneJsonObjectStdout errorOutput
+
+            use errorDocument = parseJsonDocument errorOutput
+            let errorRoot = errorDocument.RootElement
+
+            errorRoot.GetProperty("Error").GetString()
+            |> should equal $"error:{entry.Identity.CommandId}"
+
+            errorRoot.GetProperty("CorrelationId").GetString()
+            |> should equal $"corr-error-{entry.Identity.CommandId}"
+
+    [<Test>]
+    let ``representative local dto envelopes use shared serializer contract`` () =
+        let parseResult =
+            GraceCommand.rootCommand.Parse(
+                [|
+                    "--output"
+                    "Json"
+                    "maintenance"
+                    "stats"
+                |]
+            )
+
+        parseResult.Errors.Count |> should equal 0
+
+        let dto: Common.LocalOutputDto.MaintenanceStatsDto =
+            { DirectoryCount = 3; FileCount = 5; TotalFileSize = 89L; RootSha256Hash = Some "0123456789abcdef" }
+
+        let exitCode, output =
+            captureStdout (fun () ->
+                GraceReturnValue.Create dto "corr-local-dto"
+                |> Ok
+                |> Common.renderOutput parseResult)
+
+        exitCode |> should equal 0
+        assertOneJsonObjectStdout output
+
+        use document = parseJsonDocument output
+        let root = document.RootElement
+        let returnValue = root.GetProperty("ReturnValue")
+
+        returnValue
+            .GetProperty("DirectoryCount")
+            .GetInt32()
+        |> should equal 3
+
+        returnValue.GetProperty("FileCount").GetInt32()
+        |> should equal 5
+
+        returnValue
+            .GetProperty("TotalFileSize")
+            .GetInt64()
+        |> should equal 89L
+
+        returnValue
+            .GetProperty("RootSha256Hash")
+            .GetString()
+        |> should equal "0123456789abcdef"
+
+        let mutable camelCaseReturnValue = Unchecked.defaultof<JsonElement>
+
+        root.TryGetProperty("returnValue", &camelCaseReturnValue)
+        |> should equal false
+
+        Constants.JsonSerializerOptions.PropertyNamingPolicy
+        |> should equal null
 
     [<Test>]
     let ``watch json mode is registered as immediate error only`` () =
