@@ -35,6 +35,52 @@ module Common =
         member val public Json: bool = false with get, set
         member val public OutputFormat: string = String.Empty with get, set
 
+    module LocalOutputDto =
+        type AliasListItemDto = { Alias: string; CommandPath: string array; Command: string }
+
+        type AliasListDto = { Aliases: AliasListItemDto array; Count: int }
+
+        type HistoryEntryDto =
+            {
+                Id: Guid
+                TimestampUtc: NodaTime.Instant
+                CommandLine: string
+                Cwd: string
+                RepoRoot: string option
+                RepoName: string option
+                RepoBranch: string option
+                GraceVersion: string
+                ExitCode: int
+                DurationMs: int64
+                ParseSucceeded: bool
+                Source: string option
+                RedactionCount: int
+            }
+
+        type HistoryEntriesDto = { Entries: HistoryEntryDto array; Count: int; CorruptCount: int }
+
+        type HistoryRecordingDto = { Enabled: bool }
+
+        type HistoryDeleteDto = { Deleted: bool; Removed: int }
+
+        type RepositoryInitDto = { Message: string; DirectoryCount: int; FileCount: int; TotalFileSize: int64; RootSha256Hash: string }
+
+        type ConnectDto =
+            {
+                OwnerId: Guid
+                OwnerName: string
+                OrganizationId: Guid
+                OrganizationName: string
+                RepositoryId: Guid
+                RepositoryName: string
+                BranchId: Guid
+                BranchName: string
+                DefaultBranchName: string
+                RetrievedDefaultBranch: bool
+            }
+
+        type ReviewReportExportDto = { CandidateId: string; Format: string; OutputFile: string; BytesWritten: int64 }
+
     /// The output format for the command.
     type OutputFormat =
         | Normal

@@ -74,8 +74,10 @@ namespace Grace.CLI.Tests
 
 open FsUnit
 open Grace.CLI
+open Grace.CLI.Command
 open Grace.SDK
 open Grace.Shared
+open Grace.Shared.Client
 open Grace.Shared.Client.Configuration
 open Grace.Shared.Utilities
 open Grace.Types.Common
@@ -149,6 +151,44 @@ module HelpDoesNotReadConfigTests =
         standardOut |> should not' (contain "Elapsed:")
 
         error
+
+    let private assertGraceEnvelope (output: string) =
+        use document = parseJsonOutput output
+        let rootElement = document.RootElement
+
+        rootElement.GetProperty("ReturnValue").ValueKind
+        |> should equal JsonValueKind.Object
+
+        rootElement.GetProperty("EventTime").ValueKind
+        |> should equal JsonValueKind.String
+
+        rootElement.GetProperty("CorrelationId").ValueKind
+        |> should equal JsonValueKind.String
+
+        rootElement.GetProperty("Properties").ValueKind
+        |> should equal JsonValueKind.Array
+
+        rootElement.Clone()
+
+    let private withFileBackup (path: string) (action: unit -> unit) =
+        let directory = Path.GetDirectoryName(path)
+
+        if not (String.IsNullOrWhiteSpace(directory)) then
+            Directory.CreateDirectory(directory) |> ignore
+
+        let backupPath = Path.Combine(Path.GetTempPath(), $"grace-cli-test-backup-{Guid.NewGuid():N}")
+        let existed = File.Exists(path)
+
+        if existed then File.Copy(path, backupPath, true)
+
+        try
+            action ()
+        finally
+            if existed then
+                File.Copy(backupPath, path, true)
+                File.Delete(backupPath)
+            elif File.Exists(path) then
+                File.Delete(path)
 
     let private captureStdoutAndStderr (action: unit -> unit) =
         use standardOutWriter = new StringWriter()
@@ -339,7 +379,7 @@ module HelpDoesNotReadConfigTests =
                 .GetProperty("Registry")
                 .GetProperty("CurrentJsonBehavior")
                 .GetString()
-            |> should equal "PartialManualSuccess"
+            |> should equal "CommonRenderOutputEnvelope"
 
             rootElement
                 .GetProperty("Schema")
@@ -550,6 +590,125 @@ module HelpDoesNotReadConfigTests =
         standardOut |> should not' (contain "Elapsed:")
 
     [<Test>]
+    let ``alias list json emits Grace envelope`` () =
+        let exitCode, output =
+            runWithCapturedOutput [| "--output"
+                                     "Json"
+                                     "alias"
+                                     "list" |]
+
+        exitCode |> should equal 0
+
+        let rootElement = assertGraceEnvelope output
+        let returnValue = rootElement.GetProperty("ReturnValue")
+
+        returnValue.GetProperty("Count").GetInt32()
+        |> should be (greaterThan 0)
+
+        returnValue.GetProperty("Aliases").ValueKind
+        |> should equal JsonValueKind.Array
+
+        output |> should not' (contain "Grace command")
+
+    [<Test>]
+    let ``history show json emits Grace envelope`` () =
+        let exitCode, output =
+            runWithCapturedOutput [| "--output"
+                                     "Json"
+                                     "history"
+                                     "show"
+                                     "--limit"
+                                     "0" |]
+
+        exitCode |> should equal 0
+
+        let rootElement = assertGraceEnvelope output
+        let returnValue = rootElement.GetProperty("ReturnValue")
+
+        returnValue.GetProperty("Entries").ValueKind
+        |> should equal JsonValueKind.Array
+
+        returnValue.GetProperty("Count").GetInt32()
+        |> should be (greaterThanOrEqualTo 0)
+
+    [<Test>]
+    let ``history search json emits Grace envelope`` () =
+        let exitCode, output =
+            runWithCapturedOutput [| "--output"
+                                     "Json"
+                                     "history"
+                                     "search"
+                                     "workitem"
+                                     "--limit"
+                                     "0" |]
+
+        exitCode |> should equal 0
+
+        let rootElement = assertGraceEnvelope output
+
+        rootElement.GetProperty("ReturnValue").GetProperty(
+            "Entries"
+        )
+            .ValueKind
+        |> should equal JsonValueKind.Array
+
+    [<Test>]
+    let ``history validation error json emits Grace error envelope`` () =
+        let exitCode, output =
+            runWithCapturedOutput [| "--output"
+                                     "Json"
+                                     "history"
+                                     "show"
+                                     "--limit"
+                                     "-1" |]
+
+        exitCode |> should equal -1
+
+        use document = parseJsonOutput output
+
+        document
+            .RootElement
+            .GetProperty("Error")
+            .GetString()
+        |> should equal "Limit must be positive."
+
+    [<Test>]
+    let ``history on off and delete json emit Grace envelopes`` () =
+        let userConfigPath = UserConfiguration.getUserConfigurationPath ()
+        let historyPath = HistoryStorage.getHistoryFilePath ()
+
+        withFileBackup userConfigPath (fun () ->
+            withFileBackup historyPath (fun () ->
+                let onExitCode, onOutput =
+                    runWithCapturedOutput [| "--output"
+                                             "Json"
+                                             "history"
+                                             "on" |]
+
+                onExitCode |> should equal 0
+                assertGraceEnvelope onOutput |> ignore
+
+                let offExitCode, offOutput =
+                    runWithCapturedOutput [| "--output"
+                                             "Json"
+                                             "history"
+                                             "off" |]
+
+                offExitCode |> should equal 0
+                assertGraceEnvelope offOutput |> ignore
+
+                File.WriteAllText(historyPath, String.Empty)
+
+                let deleteExitCode, deleteOutput =
+                    runWithCapturedOutput [| "--output"
+                                             "Json"
+                                             "history"
+                                             "delete" |]
+
+                deleteExitCode |> should equal 0
+                assertGraceEnvelope deleteOutput |> ignore))
+
+    [<Test>]
     let ``select option makes command json-oriented`` () =
         let parseResult =
             GraceCommand.rootCommand.Parse(
@@ -737,7 +896,8 @@ module HelpDoesNotReadConfigTests =
     let ``valid select on unsupported command is json error without invoking command`` () =
         withTempDir (fun root ->
             let exitCode, standardOut, standardError =
-                runWithCapturedStdoutAndStderr [| "connect"
+                runWithCapturedStdoutAndStderr [| "history"
+                                                  "run"
                                                   "--select"
                                                   "Value" |]
 

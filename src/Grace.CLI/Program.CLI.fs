@@ -75,6 +75,22 @@ module GraceCommand =
         //aliases.Add("", [""; ""])
         aliases
 
+    let private getAliasListDto () =
+        let items: LocalOutputDto.AliasListItemDto array =
+            aliases
+            |> Seq.map (fun alias ->
+                let commandPath = alias.Value |> Seq.toArray
+                let command = String.Join(" ", commandPath)
+
+                let item: LocalOutputDto.AliasListItemDto = { Alias = $"grace {alias.Key}"; CommandPath = commandPath; Command = $"grace {command}" }
+
+                item)
+            |> Seq.sortBy (fun item -> item.Alias)
+            |> Seq.toArray
+
+        let dto: LocalOutputDto.AliasListDto = { Aliases = items; Count = items.Length }
+        dto
+
     /// The character sequences that Grace will recognize as a request for help.
     let helpOptions = [| "-h"; "/h"; "--help"; "-?"; "/?" |]
 
@@ -96,6 +112,19 @@ module GraceCommand =
             |> ignore)
 
         AnsiConsole.Write(table)
+
+    let private renderAliases (parseResult: ParseResult) =
+        if parseResult |> json then
+            let result =
+                GraceReturnValue.Create (getAliasListDto ()) (getCorrelationId parseResult)
+                |> Ok
+
+            renderOutput parseResult result
+        elif parseResult |> silent then
+            0
+        else
+            printAliases ()
+            0
 
     let internal tryGetTopLevelCommandFromArgs (args: string array) (isCaseInsensitive: bool) =
         if isNull args || args.Length = 0 then
@@ -799,7 +828,7 @@ module GraceCommand =
 
         let Alias = Command("alias", "Display aliases for Grace commands.")
         let ListAliases = Command("list", "Display aliases for Grace commands.")
-        ListAliases.SetAction(fun _ -> printAliases ())
+        ListAliases.SetAction(fun parseResult -> renderAliases parseResult)
         Alias.Subcommands.Add(ListAliases)
         rootCommand.Subcommands.Add(Alias)
         rootCommand
@@ -1289,6 +1318,7 @@ module GraceCommand =
                                 "history"
                                 "auth"
                                 "connect"
+                                "alias"
                             ]
 
                         let isAllowed =

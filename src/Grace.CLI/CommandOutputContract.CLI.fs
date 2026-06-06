@@ -528,7 +528,7 @@ module CommandOutputContract =
             row [ "agent"; "work" ] "start" true true common_renderOutput_envelope mutating_state_transition composite_local_server ReuseExistingApiOrSdkDto
             row [ "agent"; "work" ] "status" true false common_renderOutput_envelope read_list_search composite_local_server ReuseExistingApiOrSdkDto
             row [ "agent"; "work" ] "stop" true true common_renderOutput_envelope mutating_state_transition composite_local_server ReuseExistingApiOrSdkDto
-            row [ "alias" ] "list" true false human_only help_introspection local_client RequiresCliDto
+            row [ "alias" ] "list" true false common_renderOutput_envelope help_introspection local_client RequiresCliDto
             row [ "approval"; "policy" ] "create" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
             row [ "approval"; "policy" ] "delete" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
             row [ "approval"; "policy" ] "disable" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
@@ -593,7 +593,7 @@ module CommandOutputContract =
             row [ "candidate" ] "required-actions" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
             row [ "candidate" ] "retry" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
             row [ "config" ] "write" true false common_renderOutput_envelope read_or_mutating_verify local_client ReuseExistingApiOrSdkDto
-            row [] "connect" true true partial_manual_success progress_local_workflow composite_local_server RequiresCliDto
+            row [] "connect" true true common_renderOutput_envelope progress_local_workflow composite_local_server RequiresCliDto
             row [ "diff" ] "checkpoint" true true human_progress_only_success progress_local_workflow composite_local_server RequiresCliDto
             row [ "diff" ] "commit" true true human_progress_only_success progress_local_workflow composite_local_server RequiresCliDto
             row [ "diff" ] "directoryid" true true human_progress_only_success progress_local_workflow composite_local_server RequiresCliDto
@@ -601,13 +601,13 @@ module CommandOutputContract =
             row [ "diff" ] "save" true true human_progress_only_success progress_local_workflow composite_local_server RequiresCliDto
             row [ "diff" ] "sha" true true human_progress_only_success progress_local_workflow composite_local_server RequiresCliDto
             row [ "diff" ] "tag" true true human_progress_only_success progress_local_workflow composite_local_server RequiresCliDto
-            row [ "directory-version" ] "get-zip-file" true true partial_manual_success progress_local_workflow composite_local_server RequiresCliDto
-            row [ "history" ] "delete" true true manual_json_unenveloped mutating local_client RequiresCliDto
-            row [ "history" ] "off" true true manual_json_unenveloped mutating local_client RequiresCliDto
-            row [ "history" ] "on" true true manual_json_unenveloped mutating local_client RequiresCliDto
+            row [ "directory-version" ] "get-zip-file" true true common_renderOutput_envelope progress_local_workflow composite_local_server RequiresCliDto
+            row [ "history" ] "delete" true true common_renderOutput_envelope mutating local_client RequiresCliDto
+            row [ "history" ] "off" true true common_renderOutput_envelope mutating local_client RequiresCliDto
+            row [ "history" ] "on" true true common_renderOutput_envelope mutating local_client RequiresCliDto
             row [ "history" ] "run" true true human_proc_only fire_and_forget_progress local_client RequiresCliDto
-            row [ "history" ] "search" true false manual_json_unenveloped read_list_search local_client RequiresCliDto
-            row [ "history" ] "show" true false manual_json_unenveloped read_list_search local_client RequiresCliDto
+            row [ "history" ] "search" true false common_renderOutput_envelope read_list_search local_client RequiresCliDto
+            row [ "history" ] "show" true false common_renderOutput_envelope read_list_search local_client RequiresCliDto
             row [ "maintenance" ] "check-ignore-entries" true false human_progress_only_success read_list_search local_client RequiresCliDto
             row [ "maintenance" ] "list-contents" true false human_progress_only_success read_list_search local_client RequiresCliDto
             row [ "maintenance" ] "scan" true true human_progress_only_success progress_local_workflow local_client RequiresCliDto
@@ -691,7 +691,7 @@ module CommandOutputContract =
             row [ "repository" ] "delete" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
             row [ "repository" ] "get" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
             row [ "repository" ] "get-branches" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "repository" ] "init" true true partial_manual_success progress_local_workflow composite_local_server RequiresCliDto
+            row [ "repository" ] "init" true true common_renderOutput_envelope progress_local_workflow composite_local_server RequiresCliDto
             row
                 [ "repository" ]
                 "set-allows-large-files"
@@ -751,8 +751,8 @@ module CommandOutputContract =
             row [ "review" ] "deepen" true true common_renderOutput_envelope mutating_state_transition verify ReuseExistingApiOrSdkDto
             row [ "review" ] "inbox" true false common_renderOutput_envelope read_list_search verify ReuseExistingApiOrSdkDto
             row [ "review" ] "open" true true common_renderOutput_envelope mutating_state_transition verify ReuseExistingApiOrSdkDto
-            row [ "review"; "report" ] "export" true false partial_manual_success read_list_search composite_local_server RequiresCliDto
-            row [ "review"; "report" ] "show" true false partial_manual_success read_list_search composite_local_server RequiresCliDto
+            row [ "review"; "report" ] "export" true false common_renderOutput_envelope read_list_search composite_local_server RequiresCliDto
+            row [ "review"; "report" ] "show" true false common_renderOutput_envelope read_list_search composite_local_server RequiresCliDto
             row [ "review" ] "resolve" true true common_renderOutput_envelope mutating_state_transition verify ReuseExistingApiOrSdkDto
             row [] "watch" true true human_progress_only_success progress_local_workflow local_client RequiresCliDto
             row [ "webhook" ] "create" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
@@ -768,7 +768,7 @@ module CommandOutputContract =
             row [ "workitem"; "attach" ] "notes" true true common_renderOutput_envelope read_or_mutating_verify server_via_sdk ReuseExistingApiOrSdkDto
             row [ "workitem"; "attach" ] "prompt" true true common_renderOutput_envelope read_or_mutating_verify server_via_sdk ReuseExistingApiOrSdkDto
             row [ "workitem"; "attach" ] "summary" true true common_renderOutput_envelope read_or_mutating_verify server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "workitem"; "attachments" ] "download" true true partial_manual_success progress_local_workflow composite_local_server RequiresCliDto
+            row [ "workitem"; "attachments" ] "download" true true common_renderOutput_envelope progress_local_workflow composite_local_server RequiresCliDto
             row [ "workitem"; "attachments" ] "list" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
             row [ "workitem"; "attachments" ] "show" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
             row [ "workitem" ] "create" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
