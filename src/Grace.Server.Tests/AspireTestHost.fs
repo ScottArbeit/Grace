@@ -1201,6 +1201,33 @@ module AspireTestHost =
                 Console.WriteLine("Aspire host shutdown skipped to avoid test host teardown crashes.")
         }
 
+    let restartGraceServerAsync (state: TestHostState) =
+        task {
+            do! sharedStateLock.WaitAsync()
+
+            try
+                Console.WriteLine("Restarting Grace.Server Aspire project resource...")
+                let commandService = state.App.Services.GetRequiredService<ResourceCommandService>()
+                use cts = new CancellationTokenSource(defaultWaitTimeout)
+
+                let! result = commandService.ExecuteCommandAsync(graceServerResourceName, KnownResourceCommands.RestartCommand, cts.Token)
+
+                if not result.Success then
+                    let errorMessage =
+                        if not (String.IsNullOrWhiteSpace result.Message) then result.Message
+                        elif result.Canceled then "Restart command was canceled."
+                        else "Restart command failed without details."
+
+                    raise (InvalidOperationException($"Grace.Server restart failed: {errorMessage}"))
+
+                let notificationService = state.App.Services.GetRequiredService<ResourceNotificationService>()
+                do! waitForResourceHealthyAsync notificationService state.App graceServerResourceName cts.Token
+                do! waitForGraceServerHttpReadyAsync state.Client cts.Token
+                Console.WriteLine("Grace.Server Aspire project resource restart completed.")
+            finally
+                sharedStateLock.Release() |> ignore
+        }
+
     let private createServiceBusReceiver (state: TestHostState) =
         let options = ServiceBusReceiverOptions(ReceiveMode = ServiceBusReceiveMode.ReceiveAndDelete)
         let client = ServiceBusClient(state.ServiceBusConnectionString)
