@@ -177,6 +177,37 @@ Once you have `GRACE_SERVER_URI` and `GRACE_TOKEN` set, run:
 grace auth whoami
 ```
 
+### Machine-readable CLI output
+
+Agents, CI jobs, and scripts can request parseable CLI output with `--output Json`. Contracted commands emit exactly
+one JSON document to stdout, using Grace's existing `GraceReturnValue<T>` envelope on success and `GraceError` envelope
+on failure. Use `--schema` and `--examples` to inspect a command's registry-derived contract without executing it.
+
+PowerShell:
+
+```powershell
+grace --output Json maintenance stats
+grace maintenance stats --schema
+grace maintenance stats --examples
+grace --output Json maintenance stats --select DirectoryCount
+```
+
+bash / zsh:
+
+```bash
+grace --output Json maintenance stats
+grace maintenance stats --schema
+grace maintenance stats --examples
+grace --output Json maintenance stats --select DirectoryCount
+```
+
+`--select` is a V1 projection over `ReturnValue` only. Selectors such as `DirectoryCount` or
+`Summary.DirectoryCount` are valid; selectors for envelope metadata, predicates, wildcards, functions, renames,
+computed fields, and streaming output are explicit V2 deferrals.
+
+See [Machine-readable CLI output](./docs/Machine-readable%20CLI%20output.md) for agent recipes, JSON examples, final
+inventory totals, source-only commands, and V2 boundaries.
+
 ### File an issue if anything seems confusing or rough
 
 The intention is for this first-time setup to be as easy as possible. If you run into any problems, please file an issue so we can make it smoother.

@@ -9,6 +9,7 @@ open NUnit.Framework
 open System
 open System.CommandLine
 open System.IO
+open System.Text.RegularExpressions
 open System.Text.Json
 
 [<TestFixture>]
@@ -18,6 +19,10 @@ module CommandOutputContractRegistryTests =
     let private commandId (identity: CommandIdentity) = identity.CommandId
 
     let private placeholderGuid = "11111111-1111-1111-1111-111111111111"
+
+    let private repoRoot = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", ".."))
+
+    let private machineReadableDocPath = Path.Combine(repoRoot, "docs", "Machine-readable CLI output.md")
 
     let private optionPlaceholder optionName =
         match optionName with
@@ -174,6 +179,11 @@ module CommandOutputContractRegistryTests =
         document.RootElement.ValueKind
         |> should equal JsonValueKind.Object
 
+    let private countEntries predicate =
+        CommandOutputContract.entries
+        |> List.filter predicate
+        |> List.length
+
     [<Test>]
     let ``registry contains accepted inventory totals`` () =
         CommandOutputContract.entries.Length
@@ -198,6 +208,47 @@ module CommandOutputContractRegistryTests =
         countBy HumanProcOnly |> should equal 1
         countBy HumanOnly |> should equal 0
         countBy UnroutedSourceOnly |> should equal 9
+
+    [<Test>]
+    let ``final inventory dispositions cover every command exactly once`` () =
+        let jsonReady =
+            countEntries (fun entry ->
+                match entry.RouteDisposition, entry.EnvelopeContract with
+                | Routed, ExistingGraceResultEnvelope _ -> true
+                | _ -> false)
+
+        let intentionallyHumanOnly =
+            countEntries (fun entry ->
+                match entry.RouteDisposition, entry.EnvelopeContract with
+                | Routed, JsonModeErrorOnly _ -> true
+                | _ -> false)
+
+        let deferredV2 =
+            countEntries (fun entry ->
+                match entry.RouteDisposition, entry.EnvelopeContract with
+                | Routed, MigrationRequiredToGraceResultEnvelope _ -> true
+                | _ -> false)
+
+        let sourceOnly =
+            countEntries (fun entry ->
+                match entry.RouteDisposition, entry.EnvelopeContract with
+                | SourceOnlyUnrouted _, SourceOnlyUnsupported _ -> true
+                | _ -> false)
+
+        let deleted = 0
+
+        jsonReady |> should equal 180
+        intentionallyHumanOnly |> should equal 1
+        deferredV2 |> should equal 11
+        sourceOnly |> should equal 9
+        deleted |> should equal 0
+
+        jsonReady
+        + intentionallyHumanOnly
+        + deferredV2
+        + sourceOnly
+        + deleted
+        |> should equal CommandOutputContract.entries.Length
 
     [<Test>]
     let ``every live routed leaf command has one registry entry`` () =
@@ -712,3 +763,73 @@ module CommandOutputContractRegistryTests =
             errorRoot.GetProperty("CorrelationId").GetString()
             |> should equal "correlation-id"
         | None -> Assert.Fail("auth.logout should have a registry entry.")
+
+    [<Test>]
+    let ``all registry schema and example documents serialize as json`` () =
+        for entry in CommandOutputContract.entries do
+            for kind in [ Schema; Examples ] do
+                let document = CommandOutputContract.introspectionDocument kind entry
+                let json = Grace.Shared.Utilities.serialize document
+                use parsed = JsonDocument.Parse(json)
+
+                parsed.RootElement.ValueKind
+                |> should equal JsonValueKind.Object
+
+                parsed
+                    .RootElement
+                    .GetProperty("Command")
+                    .GetProperty("Id")
+                    .GetString()
+                |> should equal entry.Identity.CommandId
+
+    [<Test>]
+    let ``machine readable cli docs keep final inventory evidence current`` () =
+        let markdown = File.ReadAllText(machineReadableDocPath)
+
+        [
+            "Total leaf commands: `201`"
+            "JSON-ready routed commands: `180`"
+            "Intentionally human-only commands: `1`"
+            "Deferred routed commands with explicit V2 scope: `11`"
+            "Source-only/unrouted commands: `9`"
+            "Deleted commands: `0`"
+            "reference.assign"
+            "reference.checkpoint"
+            "reference.commit"
+            "reference.create-external"
+            "reference.delete"
+            "reference.get"
+            "reference.promote"
+            "reference.save"
+            "reference.tag"
+            "diff.checkpoint"
+            "diff.commit"
+            "diff.directoryid"
+            "diff.promotion"
+            "diff.save"
+            "diff.sha"
+            "diff.tag"
+            "history.run"
+            "maintenance.scan"
+            "maintenance.update-index"
+            "repository.init"
+            "Predicate, wildcard, function, rename, computed-field, metadata, and streaming projections"
+        ]
+        |> List.iter (fun expected ->
+            markdown.Contains(expected, StringComparison.Ordinal)
+            |> should equal true)
+
+    [<Test>]
+    let ``machine readable cli docs json snippets parse`` () =
+        let markdown = File.ReadAllText(machineReadableDocPath)
+        let matches = Regex.Matches(markdown, "```json\r?\n(?<json>.*?)\r?\n```", RegexOptions.Singleline)
+
+        matches.Count
+        |> should be (greaterThanOrEqualTo 3)
+
+        for markdownMatch in matches |> Seq.cast<Match> do
+            let json = markdownMatch.Groups["json"].Value
+            use parsed = JsonDocument.Parse(json)
+
+            parsed.RootElement.ValueKind
+            |> should not' (equal JsonValueKind.Undefined)
