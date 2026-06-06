@@ -45,15 +45,15 @@ module CommandOutputContractRegistryTests =
         |> should equal 9
 
         countBy CommonRenderOutputEnvelope
-        |> should equal 163
+        |> should equal 175
 
         countBy HumanProgressOnlySuccess
         |> should equal 16
 
-        countBy PartialManualSuccess |> should equal 6
-        countBy ManualJsonUnenveloped |> should equal 5
+        countBy PartialManualSuccess |> should equal 0
+        countBy ManualJsonUnenveloped |> should equal 0
         countBy HumanProcOnly |> should equal 1
-        countBy HumanOnly |> should equal 1
+        countBy HumanOnly |> should equal 0
         countBy UnroutedSourceOnly |> should equal 9
 
     [<Test>]
@@ -124,16 +124,16 @@ module CommandOutputContractRegistryTests =
             |> List.map (fun entry -> entry.CurrentJsonBehavior)
             |> Set.ofList
 
-        behaviors.Contains HumanOnly |> should equal true
+        behaviors.Contains HumanOnly |> should equal false
 
         behaviors.Contains HumanProgressOnlySuccess
         |> should equal true
 
         behaviors.Contains ManualJsonUnenveloped
-        |> should equal true
+        |> should equal false
 
         behaviors.Contains PartialManualSuccess
-        |> should equal true
+        |> should equal false
 
         behaviors.Contains HumanProcOnly
         |> should equal true
@@ -147,13 +147,13 @@ module CommandOutputContractRegistryTests =
             entry.Identity.CommandId |> should equal "connect"
 
             entry.CurrentJsonBehavior
-            |> should equal PartialManualSuccess
+            |> should equal CommonRenderOutputEnvelope
 
             entry.EnvelopeContract
-            |> should equal (MigrationRequiredToGraceResultEnvelope RequiresCliDto)
+            |> should equal (ExistingGraceResultEnvelope RequiresCliDto)
 
             entry.Features.JsonMode
-            |> should equal RequiresMigration
+            |> should equal ExistingBehavior
 
             entry.Features.Schema
             |> should equal FutureInertIntrospection
@@ -162,7 +162,7 @@ module CommandOutputContractRegistryTests =
             |> should equal FutureInertIntrospection
 
             entry.Features.Select
-            |> should equal FutureReturnValueProjection
+            |> should equal ExistingBehavior
         | None -> Assert.Fail("connect should have a registry entry.")
 
     [<Test>]
@@ -171,11 +171,12 @@ module CommandOutputContractRegistryTests =
             CommandOutputContract.entries
             |> List.filter (fun entry -> entry.CurrentJsonBehavior = CommonRenderOutputEnvelope)
 
-        commonEntries.Length |> should equal 163
+        commonEntries.Length |> should equal 175
 
         for entry in commonEntries do
             match entry.EnvelopeContract with
-            | ExistingGraceResultEnvelope ReuseExistingApiOrSdkDto -> ()
+            | ExistingGraceResultEnvelope (ReuseExistingApiOrSdkDto
+            | RequiresCliDto) -> ()
             | other -> Assert.Fail($"Expected existing Grace result envelope metadata for {entry.Identity.CommandId}, got {other}.")
 
             entry.Features.Select
@@ -272,7 +273,7 @@ module CommandOutputContractRegistryTests =
                 schema.Notes
                 |> should
                     contain
-                    "This command is routed, but its JSON success path still requires migration before schema/examples can describe the emitted ReturnValue."
+                    "The registry has envelope metadata for this command, but command-specific ReturnValue schema/example metadata has not been declared yet."
             | None -> Assert.Fail("Metadata-incomplete schema introspection should include a schema document.")
 
             let examplesDocument = CommandOutputContract.introspectionDocument Examples entry

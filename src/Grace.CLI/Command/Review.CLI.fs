@@ -692,7 +692,20 @@ module ReviewCommand =
 
                                     AnsiConsole.MarkupLine($"[green]Review report exported ({formatText}) to[/] {Markup.Escape(outputFile)}")
 
-                                return Ok returnValue
+                                let formatText =
+                                    match reportFormat with
+                                    | Markdown -> "markdown"
+                                    | Json -> "json"
+
+                                let output: LocalOutputDto.ReviewReportExportDto =
+                                    {
+                                        CandidateId = candidateId
+                                        Format = formatText
+                                        OutputFile = outputFile
+                                        BytesWritten = int64 (Encoding.UTF8.GetByteCount(content))
+                                    }
+
+                                return Ok(GraceReturnValue.Create output (getCorrelationId parseResult))
             with
             | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
         }
