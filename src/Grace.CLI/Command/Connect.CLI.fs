@@ -579,6 +579,34 @@ module Connect =
 
         lookup
 
+    let private writeHumanLine (parseResult: ParseResult) text =
+        if
+            not (parseResult |> json)
+            && not (parseResult |> silent)
+        then
+            AnsiConsole.MarkupLine text
+
+    let private toConnectDto
+        (ownerDto: OwnerDto)
+        (organizationDto: OrganizationDto)
+        (repositoryDto: RepositoryDto)
+        (branchDto: BranchDto)
+        (retrievedDefaultBranch: bool)
+        : LocalOutputDto.ConnectDto
+        =
+        {
+            OwnerId = ownerDto.OwnerId
+            OwnerName = ownerDto.OwnerName
+            OrganizationId = organizationDto.OrganizationId
+            OrganizationName = organizationDto.OrganizationName
+            RepositoryId = repositoryDto.RepositoryId
+            RepositoryName = repositoryDto.RepositoryName
+            BranchId = branchDto.BranchId
+            BranchName = branchDto.BranchName
+            DefaultBranchName = repositoryDto.DefaultBranchName
+            RetrievedDefaultBranch = retrievedDefaultBranch
+        }
+
     let private extractZipEntries
         (parseResult: ParseResult)
         (fileVersionsByRelativePath: Dictionary<RelativePath, FileVersion>)
@@ -588,8 +616,8 @@ module Connect =
         use zipFile = zipFile
         use zipArchive = new ZipArchive(zipFile, ZipArchiveMode.Read)
 
-        AnsiConsole.MarkupLine $"[{Colors.Important}]Streaming contents from .zip file.[/]"
-        AnsiConsole.MarkupLine $"[{Colors.Important}]Starting to write files to disk.[/]"
+        writeHumanLine parseResult $"[{Colors.Important}]Streaming contents from .zip file.[/]"
+        writeHumanLine parseResult $"[{Colors.Important}]Starting to write files to disk.[/]"
 
         let additionalEntries = ResizeArray<string>()
 
@@ -636,14 +664,14 @@ module Connect =
                         if writeObjectFile then uncompressAndWriteToFile entry objectFileInfo
 
                     if parseResult |> verbose then
-                        AnsiConsole.MarkupLine $"[{Colors.Important}]Wrote {fileVersion.RelativePath}.[/]"
+                        writeHumanLine parseResult $"[{Colors.Important}]Wrote {fileVersion.RelativePath}.[/]"
                 | false, _ -> additionalEntries.Add(entry.FullName))
 
         if additionalEntries.Count > 0
            && (parseResult |> verbose) then
-            AnsiConsole.MarkupLine $"[{Colors.Deemphasized}]Zip contained {additionalEntries.Count} additional entry(ies). Ignored.[/]"
+            writeHumanLine parseResult $"[{Colors.Deemphasized}]Zip contained {additionalEntries.Count} additional entry(ies). Ignored.[/]"
 
-        AnsiConsole.MarkupLine $"[{Colors.Important}]Finished writing files to disk.[/]"
+        writeHumanLine parseResult $"[{Colors.Important}]Finished writing files to disk.[/]"
 
     let private retrieveDefaultBranchAndWrite
         (parseResult: ParseResult)
@@ -668,7 +696,7 @@ module Connect =
                         CorrelationId = graceIds.CorrelationId
                     )
 
-                AnsiConsole.MarkupLine $"[{Colors.Important}]Retrieving all DirectoryVersions.[/]"
+                writeHumanLine parseResult $"[{Colors.Important}]Retrieving all DirectoryVersions.[/]"
 
                 let! directoryVersionsResult = DirectoryVersion.GetDirectoryVersionsRecursive(getDirectoryContentsParameters)
 
@@ -681,13 +709,13 @@ module Connect =
                         CorrelationId = graceIds.CorrelationId
                     )
 
-                AnsiConsole.MarkupLine $"[{Colors.Important}]Retrieving zip file download uri.[/]"
+                writeHumanLine parseResult $"[{Colors.Important}]Retrieving zip file download uri.[/]"
                 let! getZipFileResult = DirectoryVersion.GetZipFile(getZipFileParameters)
-                AnsiConsole.MarkupLine $"[{Colors.Important}]Finished getting zip file download uri.[/]"
+                writeHumanLine parseResult $"[{Colors.Important}]Finished getting zip file download uri.[/]"
 
                 match (directoryVersionsResult, getZipFileResult) with
                 | (Ok directoryVerionsReturnValue, Ok getZipFileReturnValue) ->
-                    AnsiConsole.MarkupLine $"[{Colors.Important}]Retrieved all DirectoryVersions.[/]"
+                    writeHumanLine parseResult $"[{Colors.Important}]Retrieved all DirectoryVersions.[/]"
 
                     let directoryVersionDtos = directoryVerionsReturnValue.ReturnValue
 
@@ -702,12 +730,12 @@ module Connect =
                     let! conflicts, filesToSkip = collectFileConflicts fileVersions force
 
                     if conflicts.Count > 0 then
-                        AnsiConsole.MarkupLine $"[{Colors.Error}]Found {conflicts.Count} conflicting file(s). Use --force to overwrite.[/]"
+                        writeHumanLine parseResult $"[{Colors.Error}]Found {conflicts.Count} conflicting file(s). Use --force to overwrite.[/]"
 
                         if parseResult |> verbose then
                             conflicts
                             |> Seq.sort
-                            |> Seq.iter (fun conflict -> AnsiConsole.MarkupLine $"[{Colors.Error}]{conflict}[/]")
+                            |> Seq.iter (fun conflict -> writeHumanLine parseResult $"[{Colors.Error}]{conflict}[/]")
 
                         return
                             (Error(GraceError.Create "Conflicting files exist in the working directory." graceIds.CorrelationId)
@@ -723,12 +751,12 @@ module Connect =
                         let! zipFile = blobClient.OpenReadAsync(bufferSize = 64 * 1024)
                         extractZipEntries parseResult fileVersionsByRelativePath filesToSkip zipFile
 
-                        AnsiConsole.MarkupLine $"[{Colors.Important}]Creating Grace Index file.[/]"
+                        writeHumanLine parseResult $"[{Colors.Important}]Creating Grace Index file.[/]"
                         let! previousGraceStatus = readGraceStatusFile ()
                         let! graceStatus = createNewGraceStatusFile previousGraceStatus parseResult
                         do! writeGraceStatusFile graceStatus
 
-                        AnsiConsole.MarkupLine $"[{Colors.Important}]Creating Grace Object Cache Index file.[/]"
+                        writeHumanLine parseResult $"[{Colors.Important}]Creating Grace Object Cache Index file.[/]"
                         do! upsertObjectCache graceStatus.Index.Values
                         return 0
                 | (Error error, _) -> return (Error error |> renderOutput parseResult)
@@ -760,13 +788,13 @@ module Connect =
 
                         match ownerOrgRepoResult with
                         | Ok (ownerDto, organizationDto, repositoryDto) ->
-                            AnsiConsole.MarkupLine $"[{Colors.Important}]Found owner, organization, and repository.[/]"
+                            writeHumanLine parseResult $"[{Colors.Important}]Found owner, organization, and repository.[/]"
 
                             let! branchResult = getBranchForConnect parseResult graceIds ownerDto organizationDto repositoryDto
 
                             match branchResult with
                             | Ok branchDto ->
-                                AnsiConsole.MarkupLine $"[{Colors.Important}]Retrieved branch {branchDto.BranchName}.[/]"
+                                writeHumanLine parseResult $"[{Colors.Important}]Retrieved branch {branchDto.BranchName}.[/]"
                                 // Write the new configuration to the config file.
                                 let newConfig = Current()
                                 newConfig.OwnerId <- ownerDto.OwnerId
@@ -781,14 +809,29 @@ module Connect =
                                 newConfig.ObjectStorageProvider <- repositoryDto.ObjectStorageProvider
                                 updateConfiguration newConfig
                                 reloadConfiguration ()
-                                AnsiConsole.MarkupLine $"[{Colors.Important}]Wrote new Grace configuration file.[/]"
+                                writeHumanLine parseResult $"[{Colors.Important}]Wrote new Grace configuration file.[/]"
 
                                 let retrieveDefaultBranch = parseResult.GetValue(Options.retrieveDefaultBranch)
 
                                 if retrieveDefaultBranch then
-                                    return! retrieveDefaultBranchAndWrite parseResult graceIds ownerDto organizationDto repositoryDto branchDto
+                                    let! retrieveExitCode = retrieveDefaultBranchAndWrite parseResult graceIds ownerDto organizationDto repositoryDto branchDto
+
+                                    if retrieveExitCode = 0 then
+                                        let output = toConnectDto ownerDto organizationDto repositoryDto branchDto true
+
+                                        return
+                                            GraceReturnValue.Create output (getCorrelationId parseResult)
+                                            |> Ok
+                                            |> renderOutput parseResult
+                                    else
+                                        return retrieveExitCode
                                 else
-                                    return 0
+                                    let output = toConnectDto ownerDto organizationDto repositoryDto branchDto false
+
+                                    return
+                                        GraceReturnValue.Create output (getCorrelationId parseResult)
+                                        |> Ok
+                                        |> renderOutput parseResult
                             | Error error -> return (Error error |> renderOutput parseResult)
                         | Error error -> return (Error error |> renderOutput parseResult)
         }

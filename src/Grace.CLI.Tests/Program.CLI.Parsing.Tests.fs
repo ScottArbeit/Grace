@@ -32,6 +32,16 @@ module CommandTokenParsingTests =
         |> should equal (Some "connect")
 
     [<Test>]
+    let ``top level command skips schema option`` () =
+        GraceCommand.tryGetTopLevelCommandFromArgs [| "--schema"; "repository"; "init" |] true
+        |> should equal (Some "repository")
+
+    [<Test>]
+    let ``top level command skips examples option`` () =
+        GraceCommand.tryGetTopLevelCommandFromArgs [| "--examples"; "workitem"; "show" |] true
+        |> should equal (Some "workitem")
+
+    [<Test>]
     let ``top level command honors end of options marker`` () =
         GraceCommand.tryGetTopLevelCommandFromArgs
             [|

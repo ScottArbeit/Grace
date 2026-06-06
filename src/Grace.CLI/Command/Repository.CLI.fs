@@ -711,10 +711,28 @@ module Repository =
 
                                     AnsiConsole.MarkupLine $"[{Colors.Highlighted}]Root SHA-256 hash: {rootDirectoryVersion.Sha256Hash.Substring(0, 8)}[/]"
 
-                                    return Ok(GraceReturnValue.Create "Initialized repository." (parseResult |> getCorrelationId))
+                                    let output: LocalOutputDto.RepositoryInitDto =
+                                        {
+                                            Message = "Initialized repository."
+                                            DirectoryCount = Some graceStatus.Index.Count
+                                            FileCount = Some fileCount
+                                            TotalFileSize = Some totalFileSize
+                                            RootSha256Hash = Some rootDirectoryVersion.Sha256Hash
+                                        }
+
+                                    return Ok(GraceReturnValue.Create output (parseResult |> getCorrelationId))
                                 else
                                     // Do the whole thing with no output
-                                    return Ok(GraceReturnValue.Create "Initialized repository." (parseResult |> getCorrelationId))
+                                    let output: LocalOutputDto.RepositoryInitDto =
+                                        {
+                                            Message = "Initialized repository."
+                                            DirectoryCount = None
+                                            FileCount = None
+                                            TotalFileSize = None
+                                            RootSha256Hash = None
+                                        }
+
+                                    return Ok(GraceReturnValue.Create output (parseResult |> getCorrelationId))
                             else
                                 return
                                     Error(GraceError.Create (RepositoryError.getErrorMessage RepositoryIsAlreadyInitialized) (parseResult |> getCorrelationId))

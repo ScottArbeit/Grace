@@ -154,6 +154,27 @@ module Watch =
             return resolveSignalRAccessTokenResult tokenResult
         }
 
+    let private renderJsonResult parseResult started completed message =
+        let configuration = Current()
+
+        let dto: LocalOutputDto.WatchResultDto =
+            {
+                Started = started
+                Completed = completed
+                Message = message
+                RootDirectory = configuration.RootDirectory
+                ServerUri = configuration.ServerUri
+                RepositoryId = configuration.RepositoryId
+                BranchId = configuration.BranchId
+            }
+
+        Ok(GraceReturnValue.Create dto (getCorrelationId parseResult))
+        |> renderOutput parseResult
+
+    let private renderJsonError parseResult message =
+        Error(GraceError.Create message (getCorrelationId parseResult))
+        |> renderOutput parseResult
+
     let private createSignalRConnection (signalRUrl: Uri) =
         HubConnectionBuilder()
             .WithAutomaticReconnect()
@@ -777,17 +798,23 @@ module Watch =
                             //logToAnsiConsole Colors.Verbose $"Memory before GC: {memoryBeforeGC:N0}; after: {Process.GetCurrentProcess().WorkingSet64:N0}."
                             previousGC <- getCurrentInstant ()
 
-                    return 0
+                    if parseResult |> json then
+                        return renderJsonResult parseResult true true "Watch completed because cancellation was requested or the timer stopped."
+                    else
+                        return 0
                 with
                 | :? HttpRequestException as httpEx when
                     httpEx.StatusCode.HasValue
                     && httpEx.StatusCode.Value = HttpStatusCode.Unauthorized
                     ->
-                    logToAnsiConsole
-                        Colors.Error
+                    let message =
                         $"SignalR negotiation failed with 401 Unauthorized. Run `grace auth login` or set {Constants.EnvironmentVariables.GraceToken}, then retry `grace watch`."
 
-                    return -1
+                    if parseResult |> json then
+                        return renderJsonError parseResult message
+                    else
+                        logToAnsiConsole Colors.Error message
+                        return -1
                 | :? InvalidOperationException as invalidOperationException when
                     invalidOperationException.Message.Contains
                         (
@@ -795,15 +822,21 @@ module Watch =
                             StringComparison.OrdinalIgnoreCase
                         )
                     ->
-                    logToAnsiConsole Colors.Error $"{Markup.Escape(invalidOperationException.Message)}"
-                    return -1
+                    if parseResult |> json then
+                        return renderJsonError parseResult invalidOperationException.Message
+                    else
+                        logToAnsiConsole Colors.Error $"{Markup.Escape(invalidOperationException.Message)}"
+                        return -1
                 | ex ->
                     //let exceptionMarkup = Markup.Escape($"{ExceptionResponse.Create ex}").Replace("\\\\", @"\").Replace("\r\n", Environment.NewLine)
                     //logToAnsiConsole Colors.Error $"{exceptionMarkup}"
-                    let exceptionSettings = ExceptionSettings(Format = ExceptionFormats.Default)
-                    // Need to fill in some exception styles here.
-                    AnsiConsole.WriteException(ex, exceptionSettings)
-                    return -1
+                    if parseResult |> json then
+                        return renderJsonError parseResult $"{ExceptionResponse.Create ex}"
+                    else
+                        let exceptionSettings = ExceptionSettings(Format = ExceptionFormats.Default)
+                        // Need to fill in some exception styles here.
+                        AnsiConsole.WriteException(ex, exceptionSettings)
+                        return -1
             }
 
     let Build =

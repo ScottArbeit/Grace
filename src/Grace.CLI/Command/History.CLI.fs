@@ -6,6 +6,7 @@ open Grace.CLI.Text
 open Grace.Shared
 open Grace.Shared.Client
 open Grace.Shared.Utilities
+open Grace.Types.Common
 open NodaTime
 open Spectre.Console
 open System
@@ -309,18 +310,47 @@ module History =
 
         AnsiConsole.Write(table)
 
+    let private toHistoryEntryDto (entry: HistoryStorage.HistoryEntry) : LocalOutputDto.HistoryEntryDto =
+        {
+            Id = entry.id
+            TimestampUtc = entry.timestampUtc
+            CommandLine = entry.commandLine
+            Cwd = entry.cwd
+            RepoRoot = entry.repoRoot
+            RepoName = entry.repoName
+            RepoBranch = entry.repoBranch
+            GraceVersion = entry.graceVersion
+            ExitCode = entry.exitCode
+            DurationMs = entry.durationMs
+            ParseSucceeded = entry.parseSucceeded
+            Source = entry.source
+            RedactionCount = entry.redactions.Length
+        }
+
     let private outputEntries (parseResult: ParseResult) (entries: HistoryStorage.HistoryEntry list) (showId: bool) (corruptCount: int) =
         if parseResult |> json then
-            let payload = serialize entries
-            AnsiConsole.WriteLine(Markup.Escape(payload))
+            let dto: LocalOutputDto.HistoryEntriesDto =
+                {
+                    Entries =
+                        entries
+                        |> List.map toHistoryEntryDto
+                        |> List.toArray
+                    Count = entries.Length
+                    CorruptCount = corruptCount
+                }
+
+            GraceReturnValue.Create dto (getCorrelationId parseResult)
+            |> Ok
+            |> renderOutput parseResult
         elif parseResult |> silent then
-            ()
+            0
         else
             if corruptCount > 0 then
                 AnsiConsole.MarkupLine($"[yellow]Skipped {corruptCount} corrupt history entries.[/]")
 
             renderTable entries showId
             AnsiConsole.WriteLine()
+            0
 
     type HistoryOn() =
         inherit AsynchronousCommandLineAction()
@@ -341,18 +371,22 @@ module History =
                 match UserConfiguration.saveUserConfiguration configuration with
                 | Ok _ ->
                     if parseResult |> json then
-                        AnsiConsole.WriteLine(Markup.Escape(serialize {| enabled = true |}))
+                        let dto: LocalOutputDto.HistoryRecordingDto = { Enabled = true }
+
+                        return
+                            GraceReturnValue.Create dto (getCorrelationId parseResult)
+                            |> Ok
+                            |> renderOutput parseResult
                     elif parseResult |> silent then
-                        ()
+                        return 0
                     else
                         AnsiConsole.MarkupLine("[green]History recording enabled.[/]")
-
-                    return 0
+                        return 0
                 | Error error ->
-                    if not (parseResult |> silent) then
-                        AnsiConsole.MarkupLine($"[red]{Markup.Escape(error)}[/]")
-
-                    return -1
+                    return
+                        GraceError.Create error (getCorrelationId parseResult)
+                        |> Error
+                        |> renderOutput parseResult
             }
 
     type HistoryOff() =
@@ -374,18 +408,22 @@ module History =
                 match UserConfiguration.saveUserConfiguration configuration with
                 | Ok _ ->
                     if parseResult |> json then
-                        AnsiConsole.WriteLine(Markup.Escape(serialize {| enabled = false |}))
+                        let dto: LocalOutputDto.HistoryRecordingDto = { Enabled = false }
+
+                        return
+                            GraceReturnValue.Create dto (getCorrelationId parseResult)
+                            |> Ok
+                            |> renderOutput parseResult
                     elif parseResult |> silent then
-                        ()
+                        return 0
                     else
                         AnsiConsole.MarkupLine("[green]History recording disabled.[/]")
-
-                    return 0
+                        return 0
                 | Error error ->
-                    if not (parseResult |> silent) then
-                        AnsiConsole.MarkupLine($"[red]{Markup.Escape(error)}[/]")
-
-                    return -1
+                    return
+                        GraceError.Create error (getCorrelationId parseResult)
+                        |> Error
+                        |> renderOutput parseResult
             }
 
     type HistoryShow() =
@@ -403,8 +441,10 @@ module History =
                 let showId = parseResult.GetValue(Options.showId)
 
                 if limit < 0 then
-                    AnsiConsole.MarkupLine("[red]Limit must be positive.[/]")
-                    return -1
+                    return
+                        GraceError.Create "Limit must be positive." (getCorrelationId parseResult)
+                        |> Error
+                        |> renderOutput parseResult
                 else
                     let sinceDuration =
                         if String.IsNullOrWhiteSpace(sinceText) then
@@ -416,8 +456,10 @@ module History =
 
                     match sinceDuration with
                     | Error error ->
-                        AnsiConsole.MarkupLine($"[red]{Markup.Escape(error)}[/]")
-                        return -1
+                        return
+                            GraceError.Create error (getCorrelationId parseResult)
+                            |> Error
+                            |> renderOutput parseResult
                     | Ok since ->
                         let readResult = HistoryStorage.readHistoryEntries ()
 
@@ -432,8 +474,7 @@ module History =
                                 (if String.IsNullOrWhiteSpace(containsText) then None else Some containsText)
                                 (if String.IsNullOrWhiteSpace(sourceText) then None else Some sourceText)
 
-                        outputEntries parseResult filtered showId readResult.CorruptCount
-                        return 0
+                        return outputEntries parseResult filtered showId readResult.CorruptCount
             }
 
     type HistorySearch() =
@@ -451,8 +492,10 @@ module History =
                 let showId = parseResult.GetValue(Options.showId)
 
                 if limit < 0 then
-                    AnsiConsole.MarkupLine("[red]Limit must be positive.[/]")
-                    return -1
+                    return
+                        GraceError.Create "Limit must be positive." (getCorrelationId parseResult)
+                        |> Error
+                        |> renderOutput parseResult
                 else
                     let sinceDuration =
                         if String.IsNullOrWhiteSpace(sinceText) then
@@ -464,8 +507,10 @@ module History =
 
                     match sinceDuration with
                     | Error error ->
-                        AnsiConsole.MarkupLine($"[red]{Markup.Escape(error)}[/]")
-                        return -1
+                        return
+                            GraceError.Create error (getCorrelationId parseResult)
+                            |> Error
+                            |> renderOutput parseResult
                     | Ok since ->
                         let readResult = HistoryStorage.readHistoryEntries ()
 
@@ -480,8 +525,7 @@ module History =
                                 (if String.IsNullOrWhiteSpace(searchText) then None else Some searchText)
                                 (if String.IsNullOrWhiteSpace(sourceText) then None else Some sourceText)
 
-                        outputEntries parseResult filtered showId readResult.CorruptCount
-                        return 0
+                        return outputEntries parseResult filtered showId readResult.CorruptCount
             }
 
     let private parseReplacements (values: string array) =
@@ -718,18 +762,22 @@ module History =
                 match HistoryStorage.clearHistory () with
                 | Ok removed ->
                     if parseResult |> json then
-                        AnsiConsole.WriteLine(Markup.Escape(serialize {| deleted = true; removed = removed |}))
+                        let dto: LocalOutputDto.HistoryDeleteDto = { Deleted = true; Removed = removed }
+
+                        return
+                            GraceReturnValue.Create dto (getCorrelationId parseResult)
+                            |> Ok
+                            |> renderOutput parseResult
                     elif parseResult |> silent then
-                        ()
+                        return 0
                     else
                         AnsiConsole.MarkupLine("[green]History cleared.[/]")
-
-                    return 0
+                        return 0
                 | Error error ->
-                    if not (parseResult |> silent) then
-                        AnsiConsole.MarkupLine($"[red]{Markup.Escape(error)}[/]")
-
-                    return -1
+                    return
+                        GraceError.Create error (getCorrelationId parseResult)
+                        |> Error
+                        |> renderOutput parseResult
             }
 
     let Build =
