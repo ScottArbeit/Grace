@@ -153,6 +153,44 @@ module MaintenanceCliTests =
             |> should equal JsonValueKind.Number)
 
     [<Test>]
+    let ``maintenance update-index json exception emits one clean error envelope`` () =
+        withTempRepo (fun root ->
+            let localStateDbPath = Path.Combine(root, Constants.GraceConfigDirectory, Constants.GraceLocalStateDbFileName)
+
+            Directory.CreateDirectory(localStateDbPath)
+            |> ignore
+
+            let exitCode, standardOut, standardError = runJsonMaintenance [| "update-index" |]
+
+            exitCode |> should equal -1
+            standardError |> should equal String.Empty
+
+            standardOut |> should not' (contain "Elapsed:")
+
+            standardOut
+            |> should not' (contain "Reading existing Grace index file")
+
+            standardOut
+            |> should not' (contain "Computing new Grace index file")
+
+            standardOut
+            |> should not' (contain "Writing new Grace index file")
+
+            standardOut
+            |> should not' (contain "Number of directories scanned")
+
+            use document = assertCleanJsonStdout standardOut
+            let rootElement = document.RootElement
+
+            rootElement.GetProperty("Error").GetString()
+            |> should contain "Exception in UpdateIndex:"
+
+            let mutable returnValue = Unchecked.defaultof<JsonElement>
+
+            rootElement.TryGetProperty("ReturnValue", &returnValue)
+            |> should equal false)
+
+    [<Test>]
     let ``maintenance scan json emits scan envelope with clean stdout`` () =
         withTempRepo (fun _ ->
             createIndex ()

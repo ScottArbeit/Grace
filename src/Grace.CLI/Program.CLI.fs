@@ -49,6 +49,20 @@ module GraceCommand =
 
     type OptionToUpdate = { optionAlias: string; display: string; displayOnCreate: string; createParentCommand: string }
 
+    let private deleteGraceWatchIpcFileIfOwned () =
+        if graceWatchStatusUpdateTime <> Instant.MinValue then
+            try
+                let ipcFileName = IpcFileName()
+
+                if File.Exists(ipcFileName) then
+                    let status =
+                        File.ReadAllText(ipcFileName)
+                        |> deserialize<GraceWatchStatus>
+
+                    if status.UpdatedAt = graceWatchStatusUpdateTime then File.Delete(ipcFileName)
+            with
+            | _ -> ()
+
     /// Built-in aliases for Grace commands.
     let private aliases =
         let aliases = Dictionary<string, string seq>()
@@ -1406,6 +1420,6 @@ module GraceCommand =
                 // If this was grace watch, delete the inter-process communication file.
                 if not <| isNull (parseResult)
                    && parseResult |> isGraceWatch then
-                    File.Delete(IpcFileName())
+                    deleteGraceWatchIpcFileIfOwned ()
         })
             .Result

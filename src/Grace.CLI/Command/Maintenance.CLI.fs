@@ -627,7 +627,14 @@ module Maintenance =
 
             with
             | ex ->
-                logToAnsiConsole Colors.Error $"Exception in UpdateIndex: {ExceptionResponse.Create ex}"
+                let message = $"Exception in UpdateIndex: {ExceptionResponse.Create ex}"
+
+                if parseResult |> json then
+                    GraceError.Create message (getCorrelationId parseResult)
+                    |> writeJsonErrorStdout
+                else
+                    logToAnsiConsole Colors.Error message
+
                 return -1
         }
 
