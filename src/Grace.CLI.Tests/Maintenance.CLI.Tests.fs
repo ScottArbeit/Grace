@@ -39,6 +39,7 @@ module MaintenanceCliTests =
         let graceDir = Path.Combine(tempDir, Constants.GraceConfigDirectory)
         Directory.CreateDirectory(graceDir) |> ignore
         File.WriteAllText(Path.Combine(graceDir, Constants.GraceConfigFileName), "{}")
+        File.WriteAllText(Path.Combine(tempDir, "tracked.txt"), "tracked content")
 
         let originalDir = Environment.CurrentDirectory
 
@@ -57,21 +58,51 @@ module MaintenanceCliTests =
                 | _ -> ()
 
     let private parseJsonOutput (output: string) =
-        output
-            .TrimStart()
-            .StartsWith("{", StringComparison.Ordinal)
+        output.StartsWith("{", StringComparison.Ordinal)
         |> should equal true
 
         JsonDocument.Parse(output)
 
+    let private assertCleanJsonStdout (standardOut: string) =
+        standardOut |> should not' (contain "Elapsed:")
+
+        standardOut
+        |> should not' (contain "Reading Grace index file")
+
+        standardOut
+        |> should not' (contain "Scanning working directory")
+
+        standardOut
+        |> should not' (contain "All values taken from the local Grace status file")
+
+        standardOut
+        |> should not' (contain "Number of differences")
+
+        standardOut
+        |> should not' (contain "Number of directories")
+
+        parseJsonOutput standardOut
+
+    let private runJsonMaintenance args = runWithCapturedStdoutAndStderr (Array.append [| "--output"; "Json"; "maintenance" |] args)
+
+    let private createIndex () =
+        let exitCode, standardOut, standardError = runJsonMaintenance [| "update-index" |]
+        exitCode |> should equal 0
+        standardError |> should equal String.Empty
+        use document = assertCleanJsonStdout standardOut
+        let returnValue = document.RootElement.GetProperty("ReturnValue")
+
+        returnValue
+            .GetProperty(
+                "DirectoryCount"
+            )
+            .ValueKind
+        |> should equal JsonValueKind.Number
+
     [<Test>]
     let ``maintenance check ignore entries json emits one clean envelope`` () =
         withTempRepo (fun _ ->
-            let exitCode, standardOut, standardError =
-                runWithCapturedStdoutAndStderr [| "--output"
-                                                  "Json"
-                                                  "maintenance"
-                                                  "check-ignore-entries" |]
+            let exitCode, standardOut, standardError = runJsonMaintenance [| "check-ignore-entries" |]
 
             exitCode |> should equal 0
             standardError |> should equal String.Empty
@@ -79,9 +110,7 @@ module MaintenanceCliTests =
             standardOut
             |> should not' (contain "Directory ignore entries:")
 
-            standardOut |> should not' (contain "Elapsed:")
-
-            use document = parseJsonOutput standardOut
+            use document = assertCleanJsonStdout standardOut
             let root = document.RootElement
 
             root.GetProperty("ReturnValue").GetProperty(
@@ -97,4 +126,117 @@ module MaintenanceCliTests =
             |> should equal JsonValueKind.Array
 
             root.GetProperty("Properties").ValueKind
+            |> should equal JsonValueKind.Array)
+
+    [<Test>]
+    let ``maintenance update-index json emits stats envelope with clean stdout`` () =
+        withTempRepo (fun _ ->
+            let exitCode, standardOut, standardError = runJsonMaintenance [| "update-index" |]
+
+            exitCode |> should equal 0
+            standardError |> should equal String.Empty
+
+            use document = assertCleanJsonStdout standardOut
+            let returnValue = document.RootElement.GetProperty("ReturnValue")
+
+            returnValue
+                .GetProperty(
+                    "DirectoryCount"
+                )
+                .ValueKind
+            |> should equal JsonValueKind.Number
+
+            returnValue.GetProperty("FileCount").ValueKind
+            |> should equal JsonValueKind.Number
+
+            returnValue.GetProperty("TotalFileSize").ValueKind
+            |> should equal JsonValueKind.Number)
+
+    [<Test>]
+    let ``maintenance scan json emits scan envelope with clean stdout`` () =
+        withTempRepo (fun _ ->
+            createIndex ()
+
+            let exitCode, standardOut, standardError = runJsonMaintenance [| "scan" |]
+
+            exitCode |> should equal 0
+            standardError |> should equal String.Empty
+
+            use document = assertCleanJsonStdout standardOut
+            let returnValue = document.RootElement.GetProperty("ReturnValue")
+
+            returnValue
+                .GetProperty(
+                    "DifferenceCount"
+                )
+                .ValueKind
+            |> should equal JsonValueKind.Number
+
+            returnValue.GetProperty("Differences").ValueKind
+            |> should equal JsonValueKind.Array
+
+            returnValue
+                .GetProperty(
+                    "NewDirectoryVersionCount"
+                )
+                .ValueKind
+            |> should equal JsonValueKind.Number
+
+            returnValue
+                .GetProperty(
+                    "NewDirectoryVersions"
+                )
+                .ValueKind
+            |> should equal JsonValueKind.Array)
+
+    [<Test>]
+    let ``maintenance stats json emits stats envelope with clean stdout`` () =
+        withTempRepo (fun _ ->
+            createIndex ()
+
+            let exitCode, standardOut, standardError = runJsonMaintenance [| "stats" |]
+
+            exitCode |> should equal 0
+            standardError |> should equal String.Empty
+
+            use document = assertCleanJsonStdout standardOut
+            let returnValue = document.RootElement.GetProperty("ReturnValue")
+
+            returnValue
+                .GetProperty(
+                    "DirectoryCount"
+                )
+                .ValueKind
+            |> should equal JsonValueKind.Number
+
+            returnValue.GetProperty("FileCount").ValueKind
+            |> should equal JsonValueKind.Number
+
+            returnValue
+                .GetProperty(
+                    "RootSha256Hash"
+                )
+                .ValueKind
+            |> should not' (equal JsonValueKind.Undefined))
+
+    [<Test>]
+    let ``maintenance list contents json emits contents envelope with clean stdout`` () =
+        withTempRepo (fun _ ->
+            createIndex ()
+
+            let exitCode, standardOut, standardError = runJsonMaintenance [| "list-contents" |]
+
+            exitCode |> should equal 0
+            standardError |> should equal String.Empty
+
+            use document = assertCleanJsonStdout standardOut
+            let returnValue = document.RootElement.GetProperty("ReturnValue")
+
+            returnValue.GetProperty("Summary").GetProperty(
+                "DirectoryCount"
+            )
+                .ValueKind
+            |> should equal JsonValueKind.Number
+
+            returnValue.GetProperty("Directories").ValueKind
             |> should equal JsonValueKind.Array)

@@ -87,9 +87,7 @@ module WatchTests =
             action
 
     let private parseJsonOutput (output: string) =
-        output
-            .TrimStart()
-            .StartsWith("{", StringComparison.Ordinal)
+        output.StartsWith("{", StringComparison.Ordinal)
         |> should equal true
 
         JsonDocument.Parse(output)

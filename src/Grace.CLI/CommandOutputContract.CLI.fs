@@ -22,6 +22,7 @@ module CommandOutputContract =
 
     type CurrentJsonBehavior =
         | CommonRenderOutputEnvelope
+        | ImmediateJsonErrorOnly
         | HumanProgressOnlySuccess
         | PartialManualSuccess
         | ManualJsonUnenveloped
@@ -54,6 +55,7 @@ module CommandOutputContract =
     type EnvelopeContract =
         | ExistingGraceResultEnvelope of dtoDisposition: OutputDtoDisposition
         | MigrationRequiredToGraceResultEnvelope of dtoDisposition: OutputDtoDisposition
+        | JsonModeErrorOnly of reason: string
         | SourceOnlyUnsupported of disposition: string
 
     type FeatureState =
@@ -156,6 +158,25 @@ module CommandOutputContract =
         schema["description"] <- description
         box schema
 
+    let private nullableStringSchema description =
+        let schema = Dictionary<string, obj>(StringComparer.Ordinal)
+        schema["type"] <- [| "string"; "null" |]
+        schema["description"] <- description
+        box schema
+
+    let private arraySchema itemSchema description =
+        let schema = Dictionary<string, obj>(StringComparer.Ordinal)
+        schema["type"] <- "array"
+        schema["items"] <- itemSchema
+        schema["description"] <- description
+        box schema
+
+    let private stringDateTimeSchema =
+        let schema = Dictionary<string, obj>(StringComparer.Ordinal)
+        schema["type"] <- "string"
+        schema["format"] <- "date-time"
+        box schema
+
     let private propertyBagSchema =
         let propertyEntry =
             schemaObject
@@ -191,6 +212,167 @@ module CommandOutputContract =
     let private unsupportedReturnValueExample reason = box {| Status = "metadata-incomplete"; Reason = reason |}
 
     let private stringReturnValueSchema = scalarSchema "string"
+
+    let private maintenanceStatsSchema =
+        schemaObject
+            "MaintenanceStatsDto"
+            [
+                "DirectoryCount", scalarSchema "integer"
+                "FileCount", scalarSchema "integer"
+                "TotalFileSize", scalarSchema "integer"
+                "RootSha256Hash", nullableStringSchema "Root directory SHA-256 hash when the local index contains or records it."
+            ]
+            [|
+                "DirectoryCount"
+                "FileCount"
+                "TotalFileSize"
+                "RootSha256Hash"
+            |]
+
+    let private maintenanceStatsExample = box {| DirectoryCount = 1; FileCount = 2; TotalFileSize = 42L; RootSha256Hash = "0123456789abcdef" |}
+
+    let private maintenanceListContentsFileSchema =
+        schemaObject
+            "MaintenanceListContentsFileDto"
+            [
+                "RelativePath", scalarSchema "string"
+                "FileName", scalarSchema "string"
+                "Sha256Hash", scalarSchema "string"
+                "Size", scalarSchema "integer"
+                "LastWriteTimeUtc", stringDateTimeSchema
+            ]
+            [|
+                "RelativePath"
+                "FileName"
+                "Sha256Hash"
+                "Size"
+                "LastWriteTimeUtc"
+            |]
+
+    let private maintenanceListContentsDirectorySchema =
+        schemaObject
+            "MaintenanceListContentsDirectoryDto"
+            [
+                "RelativePath", scalarSchema "string"
+                "DirectoryVersionId", scalarSchema "string"
+                "Sha256Hash", scalarSchema "string"
+                "Size", scalarSchema "integer"
+                "LastWriteTimeUtc", stringDateTimeSchema
+                "Files", arraySchema maintenanceListContentsFileSchema "Files in the indexed directory when file listing is enabled."
+            ]
+            [|
+                "RelativePath"
+                "DirectoryVersionId"
+                "Sha256Hash"
+                "Size"
+                "LastWriteTimeUtc"
+                "Files"
+            |]
+
+    let private maintenanceListContentsSchema =
+        schemaObject
+            "MaintenanceListContentsDto"
+            [
+                "Summary", maintenanceStatsSchema
+                "Directories", arraySchema maintenanceListContentsDirectorySchema "Indexed directories returned by maintenance list-contents."
+            ]
+            [| "Summary"; "Directories" |]
+
+    let private maintenanceListContentsExample =
+        box
+            {|
+                Summary = {| DirectoryCount = 1; FileCount = 1; TotalFileSize = 12L; RootSha256Hash = "0123456789abcdef" |}
+                Directories =
+                    [|
+                        {|
+                            RelativePath = "."
+                            DirectoryVersionId = "11111111-1111-1111-1111-111111111111"
+                            Sha256Hash = "0123456789abcdef"
+                            Size = 12L
+                            LastWriteTimeUtc = "2026-06-05T00:00:00Z"
+                            Files =
+                                [|
+                                    {|
+                                        RelativePath = "README.md"
+                                        FileName = "README.md"
+                                        Sha256Hash = "abcdef0123456789"
+                                        Size = 12L
+                                        LastWriteTimeUtc = "2026-06-05T00:00:00Z"
+                                    |}
+                                |]
+                        |}
+                    |]
+            |}
+
+    let private maintenanceIgnoreEntriesSchema =
+        schemaObject
+            "MaintenanceIgnoreEntriesDto"
+            [
+                "DirectoryEntries", arraySchema (scalarSchema "string") "Configured Grace directory ignore entries."
+                "FileEntries", arraySchema (scalarSchema "string") "Configured Grace file ignore entries."
+            ]
+            [| "DirectoryEntries"; "FileEntries" |]
+
+    let private maintenanceIgnoreEntriesExample = box {| DirectoryEntries = [| ".git"; ".grace" |]; FileEntries = [| "*.tmp" |] |}
+
+    let private maintenanceScanDifferenceSchema =
+        schemaObject
+            "MaintenanceScanDifferenceDto"
+            [
+                "DifferenceType", scalarSchema "string"
+                "FileSystemEntryType", scalarSchema "string"
+                "RelativePath", scalarSchema "string"
+            ]
+            [|
+                "DifferenceType"
+                "FileSystemEntryType"
+                "RelativePath"
+            |]
+
+    let private maintenanceScanDirectoryVersionSchema =
+        schemaObject
+            "MaintenanceScanDirectoryVersionDto"
+            [
+                "DirectoryVersionId", scalarSchema "string"
+                "RelativePath", scalarSchema "string"
+                "Sha256Hash", scalarSchema "string"
+            ]
+            [|
+                "DirectoryVersionId"
+                "RelativePath"
+                "Sha256Hash"
+            |]
+
+    let private maintenanceScanSchema =
+        schemaObject
+            "MaintenanceScanDto"
+            [
+                "DifferenceCount", scalarSchema "integer"
+                "Differences", arraySchema maintenanceScanDifferenceSchema "Detected filesystem differences compared with the local Grace index."
+                "NewDirectoryVersionCount", scalarSchema "integer"
+                "NewDirectoryVersions", arraySchema maintenanceScanDirectoryVersionSchema "Computed directory versions for detected differences."
+            ]
+            [|
+                "DifferenceCount"
+                "Differences"
+                "NewDirectoryVersionCount"
+                "NewDirectoryVersions"
+            |]
+
+    let private maintenanceScanExample =
+        box
+            {|
+                DifferenceCount = 1
+                Differences =
+                    [|
+                        {| DifferenceType = "Added"; FileSystemEntryType = "File"; RelativePath = "README.md" |}
+                    |]
+                NewDirectoryVersionCount = 1
+                NewDirectoryVersions =
+                    [|
+                        {| DirectoryVersionId = "11111111-1111-1111-1111-111111111111"; RelativePath = "."; Sha256Hash = "0123456789abcdef" |}
+                    |]
+            |}
 
     let private supportedReturnValueContract name provenance schema example notes =
         { Name = name; Provenance = provenance; Status = SchemaReady; Schema = schema; Example = example; Notes = notes }
@@ -230,16 +412,63 @@ module CommandOutputContract =
         match contract with
         | ExistingGraceResultEnvelope disposition -> $"ExistingGraceResultEnvelope: {outputDtoDispositionText disposition}"
         | MigrationRequiredToGraceResultEnvelope disposition -> $"MigrationRequiredToGraceResultEnvelope: {outputDtoDispositionText disposition}"
+        | JsonModeErrorOnly reason -> $"JsonModeErrorOnly: {reason}"
         | SourceOnlyUnsupported reason -> $"SourceOnlyUnsupported: {reason}"
 
     let private returnValueDispositionText (contract: EnvelopeContract) =
         match contract with
         | ExistingGraceResultEnvelope disposition
         | MigrationRequiredToGraceResultEnvelope disposition -> outputDtoDispositionText disposition
+        | JsonModeErrorOnly reason -> $"Unsupported: {reason}"
         | SourceOnlyUnsupported reason -> $"Unsupported: {reason}"
 
     let private returnValueContractFor (identity: CommandIdentity) (envelopeContract: EnvelopeContract) =
         match identity.CommandId, envelopeContract with
+        | "maintenance.check-ignore-entries", ExistingGraceResultEnvelope RequiresCliDto ->
+            supportedReturnValueContract
+                "MaintenanceIgnoreEntriesDto"
+                "Grace.CLI.Command.Common.LocalOutputDto"
+                maintenanceIgnoreEntriesSchema
+                maintenanceIgnoreEntriesExample
+                [
+                    "Command-specific CLI DTO emitted by maintenance check-ignore-entries in the common Grace result envelope."
+                ]
+        | "maintenance.list-contents", ExistingGraceResultEnvelope RequiresCliDto ->
+            supportedReturnValueContract
+                "MaintenanceListContentsDto"
+                "Grace.CLI.Command.Common.LocalOutputDto"
+                maintenanceListContentsSchema
+                maintenanceListContentsExample
+                [
+                    "Command-specific CLI DTO emitted by maintenance list-contents in the common Grace result envelope."
+                ]
+        | "maintenance.scan", ExistingGraceResultEnvelope RequiresCliDto ->
+            supportedReturnValueContract
+                "MaintenanceScanDto"
+                "Grace.CLI.Command.Common.LocalOutputDto"
+                maintenanceScanSchema
+                maintenanceScanExample
+                [
+                    "Command-specific CLI DTO emitted by maintenance scan in the common Grace result envelope."
+                ]
+        | "maintenance.stats", ExistingGraceResultEnvelope RequiresCliDto ->
+            supportedReturnValueContract
+                "MaintenanceStatsDto"
+                "Grace.CLI.Command.Common.LocalOutputDto"
+                maintenanceStatsSchema
+                maintenanceStatsExample
+                [
+                    "Command-specific CLI DTO emitted by maintenance stats in the common Grace result envelope."
+                ]
+        | "maintenance.update-index", ExistingGraceResultEnvelope RequiresCliDto ->
+            supportedReturnValueContract
+                "MaintenanceStatsDto"
+                "Grace.CLI.Command.Common.LocalOutputDto"
+                maintenanceStatsSchema
+                maintenanceStatsExample
+                [
+                    "Command-specific CLI DTO emitted by maintenance update-index in the common Grace result envelope after the local index is updated."
+                ]
         | "repository.get", ExistingGraceResultEnvelope ReuseExistingApiOrSdkDto ->
             incompleteReturnValueContract
                 "RepositoryDto"
@@ -261,7 +490,9 @@ module CommandOutputContract =
                 [
                     "Representative scalar ReturnValue schema for a common Grace result envelope command."
                 ]
+        | "watch", JsonModeErrorOnly reason -> unsupportedReturnValueContract "WatchResultDto" reason
         | _, SourceOnlyUnsupported reason -> unsupportedReturnValueContract "unsupported" reason
+        | _, JsonModeErrorOnly reason -> unsupportedReturnValueContract "unsupported" reason
         | _, MigrationRequiredToGraceResultEnvelope disposition ->
             incompleteReturnValueContract
                 (outputDtoDispositionText disposition)
@@ -332,7 +563,10 @@ module CommandOutputContract =
         {
             Status = status
             Source = "CommandOutputContract"
-            Envelope = "GraceReturnValue<T> on success; GraceError on error. CLI success Properties are emitted as Key/Value entries."
+            Envelope =
+                match entry.EnvelopeContract with
+                | JsonModeErrorOnly reason -> $"GraceError only in JSON mode for this release; no success ReturnValue envelope is emitted. {reason}"
+                | _ -> "GraceReturnValue<T> on success; GraceError on error. CLI success Properties are emitted as Key/Value entries."
             ReturnValueDisposition = returnValueDispositionText entry.EnvelopeContract
             ReturnValueContract = entry.ReturnValueContract.Name
             SuccessSchema = successEnvelopeSchema entry
@@ -429,6 +663,8 @@ module CommandOutputContract =
         match behavior with
         | UnroutedSourceOnly ->
             { JsonMode = UnsupportedUntilRouted; Schema = UnsupportedUntilRouted; Examples = UnsupportedUntilRouted; Select = UnsupportedUntilRouted }
+        | ImmediateJsonErrorOnly ->
+            { JsonMode = ExistingBehavior; Schema = FutureInertIntrospection; Examples = FutureInertIntrospection; Select = RequiresMigration }
         | CommonRenderOutputEnvelope ->
             { JsonMode = ExistingBehavior; Schema = FutureInertIntrospection; Examples = FutureInertIntrospection; Select = ExistingBehavior }
         | _ -> { JsonMode = RequiresMigration; Schema = FutureInertIntrospection; Examples = FutureInertIntrospection; Select = FutureReturnValueProjection }
@@ -437,6 +673,9 @@ module CommandOutputContract =
         match routed, behavior with
         | false, _ -> SourceOnlyUnsupported "Defined in source but not root-routed for V1."
         | true, CommonRenderOutputEnvelope -> ExistingGraceResultEnvelope dtoDisposition
+        | true, ImmediateJsonErrorOnly ->
+            JsonModeErrorOnly
+                "The command is routed, but --output Json is intentionally short-circuited before command execution because watch is a continuous foreground workflow."
         | true, _ -> MigrationRequiredToGraceResultEnvelope dtoDisposition
 
     let internal commandIdentity groupPath commandName = { GroupPath = groupPath; CommandName = commandName }
@@ -485,6 +724,7 @@ module CommandOutputContract =
         }
 
     let private common_renderOutput_envelope = CommonRenderOutputEnvelope
+    let private immediate_json_error_only = ImmediateJsonErrorOnly
     let private human_progress_only_success = HumanProgressOnlySuccess
     let private partial_manual_success = PartialManualSuccess
     let private manual_json_unenveloped = ManualJsonUnenveloped
@@ -754,7 +994,7 @@ module CommandOutputContract =
             row [ "review"; "report" ] "export" true false common_renderOutput_envelope read_list_search composite_local_server RequiresCliDto
             row [ "review"; "report" ] "show" true false common_renderOutput_envelope read_list_search composite_local_server RequiresCliDto
             row [ "review" ] "resolve" true true common_renderOutput_envelope mutating_state_transition verify ReuseExistingApiOrSdkDto
-            row [] "watch" true true common_renderOutput_envelope progress_local_workflow local_client RequiresCliDto
+            row [] "watch" true true immediate_json_error_only progress_local_workflow local_client RequiresCliDto
             row [ "webhook" ] "create" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
             row [ "webhook" ] "delete" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
             row [ "webhook" ] "deliveries" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto

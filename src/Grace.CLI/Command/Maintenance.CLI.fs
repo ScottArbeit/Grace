@@ -644,7 +644,12 @@ module Maintenance =
             task {
                 if parseResult |> verbose then printParseResult parseResult
 
-                if parseResult |> hasOutput then
+                if parseResult |> json then
+                    let! previousGraceStatus = readGraceStatusFile ()
+                    let! differences = scanForDifferences previousGraceStatus
+                    let! (_, newDirectoryVersions) = getNewGraceStatusAndDirectoryVersions previousGraceStatus differences
+                    return renderLocalJson parseResult (toScanDto differences newDirectoryVersions)
+                elif parseResult |> hasOutput then
                     let! (differences, newDirectoryVersions) =
                         progress
                             .Columns(progressColumns)
@@ -672,22 +677,19 @@ module Maintenance =
                                     return (differences, newDirectoryVersions)
                                 })
 
-                    if parseResult |> json then
-                        return renderLocalJson parseResult (toScanDto differences newDirectoryVersions)
-                    else
-                        AnsiConsole.MarkupLine $"[{Colors.Highlighted}]Number of differences: {differences.Count}[/]"
+                    AnsiConsole.MarkupLine $"[{Colors.Highlighted}]Number of differences: {differences.Count}[/]"
 
-                        for difference in differences do
-                            let x = sprintf "%A" difference
-                            AnsiConsole.MarkupLine $"[{Colors.Important}]{x}[/]"
+                    for difference in differences do
+                        let x = sprintf "%A" difference
+                        AnsiConsole.MarkupLine $"[{Colors.Important}]{x}[/]"
 
-                        AnsiConsole.MarkupLine $"[{Colors.Highlighted}]Number of new DirectoryVersions: {newDirectoryVersions.Count}[/]"
+                    AnsiConsole.MarkupLine $"[{Colors.Highlighted}]Number of new DirectoryVersions: {newDirectoryVersions.Count}[/]"
 
-                        for ldv in newDirectoryVersions do
-                            AnsiConsole.MarkupLine
-                                $"[{Colors.Important}]SHA-256: {ldv.Sha256Hash.Substring(0, 8)}; DirectoryId: {ldv.DirectoryVersionId}; RelativePath: {ldv.RelativePath}[/]"
+                    for ldv in newDirectoryVersions do
+                        AnsiConsole.MarkupLine
+                            $"[{Colors.Important}]SHA-256: {ldv.Sha256Hash.Substring(0, 8)}; DirectoryId: {ldv.DirectoryVersionId}; RelativePath: {ldv.RelativePath}[/]"
 
-                        return 0
+                    return 0
                 //AnsiConsole.MarkupLine $"[{Colors.Highlighted}]Root SHA-256 hash: {rootDirectoryVersion.Sha256Hash.Substring(8)}[/]"
                 else
                     let! previousGraceStatus = readGraceStatusFile ()
