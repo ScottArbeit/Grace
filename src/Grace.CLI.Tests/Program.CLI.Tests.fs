@@ -651,6 +651,25 @@ module HelpDoesNotReadConfigTests =
         |> should be (greaterThanOrEqualTo 0)
 
     [<Test>]
+    let ``history show json select failure returns nonzero error envelope`` () =
+        let exitCode, standardOut, standardError =
+            runWithCapturedStdoutAndStderr [| "--output"
+                                              "Json"
+                                              "history"
+                                              "show"
+                                              "--limit"
+                                              "0"
+                                              "--select"
+                                              "NonExistent" |]
+
+        exitCode |> should equal -1
+
+        let error = assertGraceErrorEnvelopeOnCleanStreams standardOut standardError
+
+        error
+        |> should contain "--select path 'NonExistent' was not found"
+
+    [<Test>]
     let ``history search json emits Grace envelope`` () =
         let exitCode, output =
             runWithCapturedOutput [| "--output"
@@ -670,6 +689,26 @@ module HelpDoesNotReadConfigTests =
         )
             .ValueKind
         |> should equal JsonValueKind.Array
+
+    [<Test>]
+    let ``history search json select failure returns nonzero error envelope`` () =
+        let exitCode, standardOut, standardError =
+            runWithCapturedStdoutAndStderr [| "--output"
+                                              "Json"
+                                              "history"
+                                              "search"
+                                              "workitem"
+                                              "--limit"
+                                              "0"
+                                              "--select"
+                                              "NonExistent" |]
+
+        exitCode |> should equal -1
+
+        let error = assertGraceErrorEnvelopeOnCleanStreams standardOut standardError
+
+        error
+        |> should contain "--select path 'NonExistent' was not found"
 
     [<Test>]
     let ``history validation error json emits Grace error envelope`` () =

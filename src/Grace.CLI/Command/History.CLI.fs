@@ -342,15 +342,15 @@ module History =
             GraceReturnValue.Create dto (getCorrelationId parseResult)
             |> Ok
             |> renderOutput parseResult
-            |> ignore
         elif parseResult |> silent then
-            ()
+            0
         else
             if corruptCount > 0 then
                 AnsiConsole.MarkupLine($"[yellow]Skipped {corruptCount} corrupt history entries.[/]")
 
             renderTable entries showId
             AnsiConsole.WriteLine()
+            0
 
     type HistoryOn() =
         inherit AsynchronousCommandLineAction()
@@ -474,8 +474,7 @@ module History =
                                 (if String.IsNullOrWhiteSpace(containsText) then None else Some containsText)
                                 (if String.IsNullOrWhiteSpace(sourceText) then None else Some sourceText)
 
-                        outputEntries parseResult filtered showId readResult.CorruptCount
-                        return 0
+                        return outputEntries parseResult filtered showId readResult.CorruptCount
             }
 
     type HistorySearch() =
@@ -526,8 +525,7 @@ module History =
                                 (if String.IsNullOrWhiteSpace(searchText) then None else Some searchText)
                                 (if String.IsNullOrWhiteSpace(sourceText) then None else Some sourceText)
 
-                        outputEntries parseResult filtered showId readResult.CorruptCount
-                        return 0
+                        return outputEntries parseResult filtered showId readResult.CorruptCount
             }
 
     let private parseReplacements (values: string array) =
