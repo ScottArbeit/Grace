@@ -74,6 +74,7 @@ namespace Grace.CLI.Tests
 
 open FsUnit
 open Grace.CLI
+open Grace.SDK
 open Grace.Shared
 open Grace.Shared.Client.Configuration
 open Grace.Shared.Utilities
@@ -81,7 +82,10 @@ open Grace.Types.Common
 open NUnit.Framework
 open Spectre.Console
 open System
+open System.Collections.Generic
 open System.IO
+open System.Net
+open System.Net.Http
 open System.Text.Json
 
 [<NonParallelizable>]
@@ -201,6 +205,41 @@ module HelpDoesNotReadConfigTests =
         config.BranchId <- branchId
         let json = serialize config
         File.WriteAllText(Path.Combine(graceDir, "graceconfig.json"), json)
+
+    let private addLifecycleHeaders
+        (response: HttpResponseMessage)
+        (status: string)
+        (unsupportedAfter: string)
+        (minimumVersion: string)
+        (recommendedVersion: string option)
+        (updateUrl: string)
+        =
+        response.Headers.TryAddWithoutValidation(Constants.SdkLifecycleStatusHeaderKey, status)
+        |> ignore
+
+        response.Headers.TryAddWithoutValidation(Constants.SdkLifecycleUnsupportedAfterHeaderKey, unsupportedAfter)
+        |> ignore
+
+        response.Headers.TryAddWithoutValidation(Constants.SdkLifecycleMinimumVersionHeaderKey, minimumVersion)
+        |> ignore
+
+        match recommendedVersion with
+        | Some value ->
+            response.Headers.TryAddWithoutValidation(Constants.SdkLifecycleRecommendedVersionHeaderKey, value)
+            |> ignore
+        | None -> ()
+
+        response.Headers.TryAddWithoutValidation(Constants.SdkLifecycleUpdateUrlHeaderKey, updateUrl)
+        |> ignore
+
+    let private lifecycleProperties status =
+        use response = new HttpResponseMessage(HttpStatusCode.OK)
+
+        addLifecycleHeaders response status "2026-12-01" "0.1.0" (Some "0.2.0") "https://github.com/ScottArbeit/Grace/releases"
+
+        match ClientIdentity.parseLifecycleDiagnostics response with
+        | Some diagnostics -> ClientIdentity.lifecycleDiagnosticsToProperties diagnostics
+        | None -> Dictionary<string, obj>()
 
     [<Test>]
     let ``help works with invalid config`` () =
@@ -543,6 +582,25 @@ module HelpDoesNotReadConfigTests =
         standardOut.Trim() |> should equal "\"ok\""
 
     [<Test>]
+    let ``renderOutput select success suppresses lifecycle warnings`` () =
+        let parseResult = GraceCommand.rootCommand.Parse([| "--select"; "Value" |])
+        let returnValue = GraceReturnValue.Create {| Value = "ok" |} "corr-select-lifecycle-success"
+
+        returnValue.enhance (lifecycleProperties "deprecated")
+        |> ignore
+
+        let standardOut, standardError =
+            captureStdoutAndStderr (fun () ->
+                Common.renderOutput parseResult (Ok returnValue)
+                |> should equal 0)
+
+        standardError |> should equal String.Empty
+        standardOut.Trim() |> should equal "\"ok\""
+
+        standardOut
+        |> should not' (contain "This Grace client version is deprecated.")
+
+    [<Test>]
     let ``renderOutput select writes selected object and collection json`` () =
         let parseResult = GraceCommand.rootCommand.Parse([| "--select"; "Container.Items" |])
 
@@ -634,6 +692,9 @@ module HelpDoesNotReadConfigTests =
         let parseResult = GraceCommand.rootCommand.Parse([| "--select"; "Value" |])
         let error = GraceError.Create "original failure" "corr-select-error"
 
+        error.enhance (lifecycleProperties "unsupported")
+        |> ignore
+
         let standardOut, standardError =
             captureStdoutAndStderr (fun () ->
                 Common.renderOutput parseResult (Error error)
@@ -647,10 +708,47 @@ module HelpDoesNotReadConfigTests =
         rootElement.GetProperty("Error").GetString()
         |> should equal "original failure"
 
+        standardOut
+        |> should not' (contain "This Grace client version is no longer supported.")
+
         let mutable returnValue = Unchecked.defaultof<JsonElement>
 
         rootElement.TryGetProperty("ReturnValue", &returnValue)
         |> should equal false
+
+    [<Test>]
+    let ``invalid select grammar does not invoke command`` () =
+        withTempDir (fun root ->
+            let exitCode, standardOut, standardError =
+                runWithCapturedStdoutAndStderr [| "connect"
+                                                  "--select"
+                                                  "Value[0]" |]
+
+            exitCode |> should equal -1
+            standardError |> should equal String.Empty
+
+            assertJsonErrorOutput standardOut
+            |> should contain "predicates, wildcards, functions, and expressions are not supported"
+
+            File.Exists(Path.Combine(root, ".grace", "graceconfig.json"))
+            |> should equal false)
+
+    [<Test>]
+    let ``valid select on unsupported command is json error without invoking command`` () =
+        withTempDir (fun root ->
+            let exitCode, standardOut, standardError =
+                runWithCapturedStdoutAndStderr [| "connect"
+                                                  "--select"
+                                                  "Value" |]
+
+            exitCode |> should equal -1
+            standardError |> should equal String.Empty
+
+            assertJsonErrorOutput standardOut
+            |> should contain "does not support --select in this release"
+
+            File.Exists(Path.Combine(root, ".grace", "graceconfig.json"))
+            |> should equal false)
 
     [<Test>]
     let ``renderOutput json error writes GraceError envelope with shared field names`` () =

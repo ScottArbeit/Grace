@@ -297,6 +297,22 @@ module GraceCommand =
         Common.writeJsonErrorStdout error
         -1
 
+    let private tryValidateSelectRequest (parseResult: ParseResult) =
+        match Common.tryGetSelect parseResult with
+        | None -> None
+        | Some selectorText ->
+            let correlationId = getCorrelationId parseResult
+
+            match SelectProjection.tryParse correlationId selectorText with
+            | Error error -> Some error
+            | Ok _ ->
+                let identity = commandIdentityFromCommandResult parseResult.CommandResult
+
+                match CommandOutputContract.tryFind identity with
+                | Some entry when entry.Features.Select = CommandOutputContract.ExistingBehavior -> None
+                | Some _ -> Some(GraceError.Create $"Command '{identity.CommandId}' does not support --select in this release." correlationId)
+                | None -> Some(GraceError.Create $"Command '{identity.CommandId}' does not have CLI output contract metadata for --select." correlationId)
+
     let private tryFindGraceConfigurationFileForJsonMode () =
         let rec loop (directory: DirectoryInfo) =
             if isNull directory then
@@ -1020,6 +1036,14 @@ module GraceCommand =
                            && isJsonOutputRequestedFromTokens argvToParse then
                             returnValue <- writeJsonParseError parseResult
                             raise (IntrospectionExit returnValue)
+
+                        if parseResult.Errors.Count = 0 then
+                            match tryValidateSelectRequest parseResult with
+                            | Some error ->
+                                Common.writeJsonErrorStdout error
+                                returnValue <- -1
+                                raise (IntrospectionExit returnValue)
+                            | None -> ()
 
                         LocalStateDb.setVerbose (parseResult |> verbose)
 

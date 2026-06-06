@@ -601,10 +601,11 @@ module Common =
 
             Some(normalizedStatus, String.Join(Environment.NewLine, lines))
 
-    let private renderLifecycleWarningOnce outputFormat properties =
+    let private renderLifecycleWarningOnce parseResult outputFormat properties =
         match outputFormat with
         | Json
         | Silent -> ()
+        | _ when parseResult |> hasSelect -> ()
         | _ ->
             match tryBuildLifecycleWarning properties with
             | Some (status, warningText) ->
@@ -624,7 +625,7 @@ module Common =
 
         match result with
         | Ok graceReturnValue ->
-            renderLifecycleWarningOnce outputFormat graceReturnValue.Properties
+            renderLifecycleWarningOnce parseResult outputFormat graceReturnValue.Properties
 
             match tryRenderJsonSelection parseResult graceReturnValue with
             | Some (Ok json) ->
@@ -654,7 +655,7 @@ module Common =
 
                 0
         | Error error ->
-            renderLifecycleWarningOnce outputFormat error.Properties
+            renderLifecycleWarningOnce parseResult outputFormat error.Properties
 
             let json =
                 if error.Error.Contains("Stack trace") then
