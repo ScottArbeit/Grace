@@ -127,6 +127,9 @@ module Text =
         let Examples = "--examples"
 
         [<Literal>]
+        let Select = "--select"
+
+        [<Literal>]
         let Overwrite = "--overwrite"
 
         [<Literal>]

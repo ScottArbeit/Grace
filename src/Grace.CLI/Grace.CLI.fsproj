@@ -26,6 +26,7 @@
 		<Compile Include="Log.CLI.fs" />
 		<Compile Include="Text.CLI.fs" />
 		<Compile Include="LocalStateDb.CLI.fs" />
+		<Compile Include="SelectProjection.CLI.fs" />
 		<Compile Include="Command\Services.CLI.fs" />
 		<Compile Include="Command\Common.CLI.fs" />
 		<Compile Include="Command\Auth.CLI.fs" />

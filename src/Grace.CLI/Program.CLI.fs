@@ -113,6 +113,7 @@ module GraceCommand =
                 || token.Equals(OptionName.CorrelationId, comparison)
                 || token.Equals("-c", comparison)
                 || token.Equals(OptionName.Source, comparison)
+                || token.Equals(OptionName.Select, comparison)
 
             let rec loop index =
                 if index >= args.Length then
@@ -265,6 +266,11 @@ module GraceCommand =
                         true
                     else
                         loop (index + 1)
+                elif
+                    token.Equals(OptionName.Select, StringComparison.OrdinalIgnoreCase)
+                    || token.StartsWith($"{OptionName.Select}=", StringComparison.OrdinalIgnoreCase)
+                then
+                    true
                 else
                     loop (index + 1)
 
@@ -290,6 +296,22 @@ module GraceCommand =
         let error = GraceError.CreateWithException ex ex.Message correlationId
         Common.writeJsonErrorStdout error
         -1
+
+    let private tryValidateSelectRequest (parseResult: ParseResult) =
+        match Common.tryGetSelect parseResult with
+        | None -> None
+        | Some selectorText ->
+            let correlationId = getCorrelationId parseResult
+
+            match SelectProjection.tryParse correlationId selectorText with
+            | Error error -> Some error
+            | Ok _ ->
+                let identity = commandIdentityFromCommandResult parseResult.CommandResult
+
+                match CommandOutputContract.tryFind identity with
+                | Some entry when entry.Features.Select = CommandOutputContract.ExistingBehavior -> None
+                | Some _ -> Some(GraceError.Create $"Command '{identity.CommandId}' does not support --select in this release." correlationId)
+                | None -> Some(GraceError.Create $"Command '{identity.CommandId}' does not have CLI output contract metadata for --select." correlationId)
 
     let private tryFindGraceConfigurationFileForJsonMode () =
         let rec loop (directory: DirectoryInfo) =
@@ -749,6 +771,7 @@ module GraceCommand =
         rootCommand.Options.Add(Options.output)
         rootCommand.Options.Add(Options.schema)
         rootCommand.Options.Add(Options.examples)
+        rootCommand.Options.Add(Options.select)
 
         // Add subcommands.
         rootCommand.Subcommands.Add(Connect.Build)
@@ -1013,6 +1036,14 @@ module GraceCommand =
                            && isJsonOutputRequestedFromTokens argvToParse then
                             returnValue <- writeJsonParseError parseResult
                             raise (IntrospectionExit returnValue)
+
+                        if parseResult.Errors.Count = 0 then
+                            match tryValidateSelectRequest parseResult with
+                            | Some error ->
+                                Common.writeJsonErrorStdout error
+                                returnValue <- -1
+                                raise (IntrospectionExit returnValue)
+                            | None -> ()
 
                         LocalStateDb.setVerbose (parseResult |> verbose)
 

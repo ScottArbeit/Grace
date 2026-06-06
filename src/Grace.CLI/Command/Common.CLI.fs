@@ -106,6 +106,15 @@ module Common =
                 DefaultValueFactory = (fun _ -> false)
             )
 
+        let select =
+            new Option<string>(
+                OptionName.Select,
+                Required = false,
+                Description = "Emit only the selected dot-separated ReturnValue property path as JSON.",
+                Arity = ArgumentArity.ExactlyOne,
+                Recursive = true
+            )
+
     /// Gets the correlationId value from the command's ParseResult.
     let getCorrelationId (parseResult: ParseResult) = Services.resolveCorrelationId parseResult
 
@@ -294,7 +303,27 @@ module Common =
             false
 
     /// Checks if the output format from the command line is Json.
-    let json parseResult = parseResult |> isOutputFormat Json
+    let tryGetSelect (parseResult: ParseResult) =
+        if isNull parseResult then
+            None
+        else
+            let result = parseResult.GetResult(OptionName.Select)
+
+            if isNull result then
+                None
+            else
+                try
+                    parseResult.GetValue<string>(Options.select)
+                    |> Option.ofObj
+                with
+                | :? InvalidOperationException -> None
+
+    let hasSelect parseResult = tryGetSelect parseResult |> Option.isSome
+
+    /// Checks if the command should emit machine-readable JSON.
+    let json parseResult =
+        (parseResult |> isOutputFormat Json)
+        || (parseResult |> hasSelect)
 
     /// Checks if the output format from the command line is Minimal.
     let minimal parseResult = parseResult |> isOutputFormat Minimal
@@ -474,6 +503,21 @@ module Common =
 
     let writeJsonReturnValueStdout (graceReturnValue: GraceReturnValue<'T>) = Console.Out.WriteLine(renderJsonReturnValue graceReturnValue)
 
+    let private tryRenderJsonSelection (parseResult: ParseResult) (graceReturnValue: GraceReturnValue<'T>) =
+        match tryGetSelect parseResult with
+        | None -> None
+        | Some selectorText ->
+            let correlationId = graceReturnValue.CorrelationId
+
+            match SelectProjection.tryParse correlationId selectorText with
+            | Error error -> Some(Error error)
+            | Ok selector ->
+                let returnValue = redactJsonReturnValue graceReturnValue.ReturnValue
+
+                match SelectProjection.project correlationId selector returnValue with
+                | Error error -> Some(Error error)
+                | Ok selected -> Some(Ok(SelectProjection.renderSelectedJson selected))
+
     let private tryGetProperty (properties: Dictionary<string, obj>) key =
         if isNull properties then
             None
@@ -557,10 +601,11 @@ module Common =
 
             Some(normalizedStatus, String.Join(Environment.NewLine, lines))
 
-    let private renderLifecycleWarningOnce outputFormat properties =
+    let private renderLifecycleWarningOnce parseResult outputFormat properties =
         match outputFormat with
         | Json
         | Silent -> ()
+        | _ when parseResult |> hasSelect -> ()
         | _ ->
             match tryBuildLifecycleWarning properties with
             | Some (status, warningText) ->
@@ -580,29 +625,37 @@ module Common =
 
         match result with
         | Ok graceReturnValue ->
-            renderLifecycleWarningOnce outputFormat graceReturnValue.Properties
+            renderLifecycleWarningOnce parseResult outputFormat graceReturnValue.Properties
 
-            match outputFormat with
-            | Json -> writeJsonReturnValueStdout graceReturnValue
-            | Minimal -> () //AnsiConsole.MarkupLine($"""[{Colors.Highlighted}]{Markup.Escape($"{graceReturnValue.ReturnValue}")}[/]""")
-            | Silent -> ()
-            | Verbose ->
-                AnsiConsole.WriteLine()
+            match tryRenderJsonSelection parseResult graceReturnValue with
+            | Some (Ok json) ->
+                Console.Out.WriteLine(json)
+                0
+            | Some (Error error) ->
+                writeJsonErrorStdout error
+                -1
+            | None ->
+                match outputFormat with
+                | Json -> writeJsonReturnValueStdout graceReturnValue
+                | Minimal -> () //AnsiConsole.MarkupLine($"""[{Colors.Highlighted}]{Markup.Escape($"{graceReturnValue.ReturnValue}")}[/]""")
+                | Silent -> ()
+                | Verbose ->
+                    AnsiConsole.WriteLine()
 
-                AnsiConsole.MarkupLine($"""[{Colors.Verbose}]EventTime: {formatInstantExtended graceReturnValue.EventTime}[/]""")
+                    AnsiConsole.MarkupLine($"""[{Colors.Verbose}]EventTime: {formatInstantExtended graceReturnValue.EventTime}[/]""")
 
-                AnsiConsole.MarkupLine($"""[{Colors.Verbose}]CorrelationId: "{graceReturnValue.CorrelationId}"[/]""")
+                    AnsiConsole.MarkupLine($"""[{Colors.Verbose}]CorrelationId: "{graceReturnValue.CorrelationId}"[/]""")
 
-                let properties = sanitizeLifecyclePropertiesForHumanOutput graceReturnValue.Properties
+                    let properties = sanitizeLifecyclePropertiesForHumanOutput graceReturnValue.Properties
 
-                AnsiConsole.MarkupLine($"""[{Colors.Verbose}]Properties: {Markup.Escape(serialize properties)}[/]""")
+                    AnsiConsole.MarkupLine($"""[{Colors.Verbose}]Properties: {Markup.Escape(serialize properties)}[/]""")
 
-                AnsiConsole.WriteLine()
-            | Normal -> () // Return unit because in the Normal case, we expect to print output within each command.
+                    AnsiConsole.WriteLine()
+                | Normal -> () // Return unit because in the Normal case, we expect to print output within each command.
 
-            0
+                0
         | Error error ->
-            renderLifecycleWarningOnce outputFormat error.Properties
+            renderLifecycleWarningOnce parseResult outputFormat error.Properties
 
             let json =
                 if error.Error.Contains("Stack trace") then
@@ -621,6 +674,7 @@ module Common =
                     Uri.UnescapeDataString(error.Error)
 
             match outputFormat with
+            | _ when parseResult |> hasSelect -> writeJsonErrorStdout error
             | Json -> writeJsonErrorStdout error
             | Minimal -> AnsiConsole.MarkupLine($"[{Colors.Error}]{Markup.Escape(errorText)}[/]")
             | Silent -> ()
