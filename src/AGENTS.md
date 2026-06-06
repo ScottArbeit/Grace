@@ -63,13 +63,13 @@ update the issue before editing the new paths.
 - Resolve all compilation errors before considering a task complete.
 - Run impacted tests for each task and fix failures introduced by your changes.
 - Create a new git commit after each completed task to keep review scope clear.
-- When acting as the main implementation orchestrator, delegate all coding and fixing tasks to worker subagents and use
-  fresh review-only subagents for code review. The main orchestrator must not implement, repair, inspect or validate
-  code fixes as a substitute for the worker, or commit code changes locally. If an earlier worker thread is lost,
-  compacted away, leaves uncommitted work, or cannot be resumed, assign the continuation to a fresh worker subagent with
-  the existing worktree/branch context and required validation. The main agent coordinates issues, prompts, review
-  ledgers, pull requests, CI/merge status, docs/process updates, and final integration evidence. Follow the required
-  subagent review loop in `docs/Development process.md`.
+- When acting as the main implementation orchestrator, delegate each coding task and each fix task to a fresh worker
+  subagent, and delegate each future code review task to a fresh GPT-5.3-Codex High review-only subagent. The main
+  orchestrator must not implement, repair, inspect or validate code fixes as a substitute for the worker, or commit code
+  changes locally. If an earlier worker thread is lost, compacted away, leaves uncommitted work, or cannot be resumed,
+  assign the continuation to a fresh worker subagent with the existing worktree/branch context and required validation.
+  The main agent coordinates issues, prompts, review ledgers, pull requests, CI/merge status, docs/process updates, and
+  final integration evidence. Follow the required subagent review loop in `docs/Development process.md`.
 - After the first coding subagent that works on an issue commits and pushes the new branch to origin, open a normal
   ready-for-review pull request. Keep it open while the step is still in progress so subsequent code-review findings,
   fixes, and "Reviewed And OK" notes can be recorded on the pull request instead of only on the issue.
