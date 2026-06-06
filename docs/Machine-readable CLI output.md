@@ -153,6 +153,9 @@ The deferred routed commands are not corrupt or unenveloped in current V1 output
 metadata and V2 scope because their success paths still need migration before Grace can describe stable
 `ReturnValue` schemas, examples, and projections for them. Current deferrals are:
 
+- `branch.rebase`
+- `branch.status`
+- `branch.switch`
 - `diff.checkpoint`
 - `diff.commit`
 - `diff.directoryid`
@@ -161,9 +164,6 @@ metadata and V2 scope because their success paths still need migration before Gr
 - `diff.sha`
 - `diff.tag`
 - `history.run`
-- `maintenance.scan`
-- `maintenance.update-index`
-- `repository.init`
 
 The `watch` command is not counted in those V2 routed-success migrations. It is intentionally human-only for success
 behavior because it is a continuous foreground workflow; JSON mode returns an explicit error envelope instead of

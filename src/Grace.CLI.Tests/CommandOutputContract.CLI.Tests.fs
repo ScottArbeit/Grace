@@ -184,6 +184,31 @@ module CommandOutputContractRegistryTests =
         |> List.filter predicate
         |> List.length
 
+    let private commandIdsFor predicate =
+        CommandOutputContract.entries
+        |> List.filter predicate
+        |> List.map (fun entry -> entry.Identity.CommandId)
+
+    let private markdownBulletIdsAfter (anchor: string) (markdown: string) =
+        let pattern =
+            Regex.Escape(anchor)
+            + @"\r?\n\r?\n(?<items>(?:- `[^`]+`\r?\n)+)"
+
+        let markdownMatch = Regex.Match(markdown, pattern)
+
+        markdownMatch.Success |> should equal true
+
+        markdownMatch
+            .Groups[ "items" ]
+            .Value.Split([| "\r\n"; "\n" |], StringSplitOptions.RemoveEmptyEntries)
+        |> Array.map (fun line ->
+            let itemMatch = Regex.Match(line.Trim(), @"^- `(?<id>[^`]+)`$")
+
+            itemMatch.Success |> should equal true
+
+            itemMatch.Groups["id"].Value)
+        |> Array.toList
+
     [<Test>]
     let ``registry contains accepted inventory totals`` () =
         CommandOutputContract.entries.Length
@@ -786,38 +811,52 @@ module CommandOutputContractRegistryTests =
     let ``machine readable cli docs keep final inventory evidence current`` () =
         let markdown = File.ReadAllText(machineReadableDocPath)
 
+        let jsonReady =
+            countEntries (fun entry ->
+                match entry.RouteDisposition, entry.EnvelopeContract with
+                | Routed, ExistingGraceResultEnvelope _ -> true
+                | _ -> false)
+
+        let intentionallyHumanOnly =
+            countEntries (fun entry ->
+                match entry.RouteDisposition, entry.EnvelopeContract with
+                | Routed, JsonModeErrorOnly _ -> true
+                | _ -> false)
+
+        let deferredV2 =
+            commandIdsFor (fun entry ->
+                match entry.RouteDisposition, entry.EnvelopeContract with
+                | Routed, MigrationRequiredToGraceResultEnvelope _ -> true
+                | _ -> false)
+
+        let sourceOnly =
+            commandIdsFor (fun entry ->
+                match entry.RouteDisposition, entry.EnvelopeContract with
+                | SourceOnlyUnrouted _, SourceOnlyUnsupported _ -> true
+                | _ -> false)
+
+        let deleted = 0
+
         [
-            "Total leaf commands: `201`"
-            "JSON-ready routed commands: `180`"
-            "Intentionally human-only commands: `1`"
-            "Deferred routed commands with explicit V2 scope: `11`"
-            "Source-only/unrouted commands: `9`"
-            "Deleted commands: `0`"
-            "reference.assign"
-            "reference.checkpoint"
-            "reference.commit"
-            "reference.create-external"
-            "reference.delete"
-            "reference.get"
-            "reference.promote"
-            "reference.save"
-            "reference.tag"
-            "diff.checkpoint"
-            "diff.commit"
-            "diff.directoryid"
-            "diff.promotion"
-            "diff.save"
-            "diff.sha"
-            "diff.tag"
-            "history.run"
-            "maintenance.scan"
-            "maintenance.update-index"
-            "repository.init"
+            $"Total leaf commands: `{CommandOutputContract.entries.Length}`"
+            $"JSON-ready routed commands: `{jsonReady}`"
+            $"Intentionally human-only commands: `{intentionallyHumanOnly}`"
+            $"Deferred routed commands with explicit V2 scope: `{deferredV2.Length}`"
+            $"Source-only/unrouted commands: `{sourceOnly.Length}`"
+            $"Deleted commands: `{deleted}`"
             "Predicate, wildcard, function, rename, computed-field, metadata, and streaming projections"
         ]
         |> List.iter (fun expected ->
             markdown.Contains(expected, StringComparison.Ordinal)
             |> should equal true)
+
+        let sourceOnlyInDocs =
+            markdownBulletIdsAfter "The source-only/unrouted commands are defined in source but are not attached to `GraceCommand.rootCommand` in V1:" markdown
+
+        let deferredV2InDocs = markdownBulletIdsAfter "Current deferrals are:" markdown
+
+        assertSetEqual sourceOnly sourceOnlyInDocs
+        assertSetEqual deferredV2 deferredV2InDocs
 
     [<Test>]
     let ``machine readable cli docs json snippets parse`` () =
