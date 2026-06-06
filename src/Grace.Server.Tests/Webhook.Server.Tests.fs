@@ -269,7 +269,7 @@ type WebhookApiIntegrationTests() =
 
     [<Test>]
     [<NonParallelizable>]
-    member _.WebhookRuleAndDeliveryStoresAreProcessLocalAcrossRestart() =
+    member _.WebhookRuleAndHttpObservableDeliveriesAreProcessLocalAcrossRestart() =
         task {
             let repositoryId = repositoryIds[0]
             let branchId = repositoryDefaultBranchIds[0]
@@ -314,7 +314,9 @@ type WebhookApiIntegrationTests() =
 
             do! WebhookTestHelpers.restartGraceServerAsync ()
 
-            // Contract: webhook rules and their pending or retry-scheduled deliveries are process-local and intentionally lost on restart.
+            // Contract: webhook rules are process-local. HTTP-observable pending deliveries are intentionally
+            // unavailable after restart; retry-scheduled deliveries share the same process-local store by
+            // implementation contract, but this public route remains rule-dependent.
             let! rulesAfterRestart =
                 adminClient.PostAsync("/webhook/rule/list", createJsonContent (WebhookTestHelpers.listRuleParameters repositoryId branchId))
 
