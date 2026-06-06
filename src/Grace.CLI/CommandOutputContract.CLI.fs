@@ -608,11 +608,11 @@ module CommandOutputContract =
             row [ "history" ] "run" true true human_proc_only fire_and_forget_progress local_client RequiresCliDto
             row [ "history" ] "search" true false common_renderOutput_envelope read_list_search local_client RequiresCliDto
             row [ "history" ] "show" true false common_renderOutput_envelope read_list_search local_client RequiresCliDto
-            row [ "maintenance" ] "check-ignore-entries" true false human_progress_only_success read_list_search local_client RequiresCliDto
-            row [ "maintenance" ] "list-contents" true false human_progress_only_success read_list_search local_client RequiresCliDto
-            row [ "maintenance" ] "scan" true true human_progress_only_success progress_local_workflow local_client RequiresCliDto
-            row [ "maintenance" ] "stats" true false human_progress_only_success read_list_search local_client RequiresCliDto
-            row [ "maintenance" ] "update-index" true true human_progress_only_success progress_local_workflow local_client RequiresCliDto
+            row [ "maintenance" ] "check-ignore-entries" true false common_renderOutput_envelope read_list_search local_client RequiresCliDto
+            row [ "maintenance" ] "list-contents" true false common_renderOutput_envelope read_list_search local_client RequiresCliDto
+            row [ "maintenance" ] "scan" true true common_renderOutput_envelope progress_local_workflow local_client RequiresCliDto
+            row [ "maintenance" ] "stats" true false common_renderOutput_envelope read_list_search local_client RequiresCliDto
+            row [ "maintenance" ] "update-index" true true common_renderOutput_envelope progress_local_workflow local_client RequiresCliDto
             row [ "organization" ] "create" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
             row [ "organization" ] "delete" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
             row [ "organization" ] "get" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
@@ -754,7 +754,7 @@ module CommandOutputContract =
             row [ "review"; "report" ] "export" true false common_renderOutput_envelope read_list_search composite_local_server RequiresCliDto
             row [ "review"; "report" ] "show" true false common_renderOutput_envelope read_list_search composite_local_server RequiresCliDto
             row [ "review" ] "resolve" true true common_renderOutput_envelope mutating_state_transition verify ReuseExistingApiOrSdkDto
-            row [] "watch" true true human_progress_only_success progress_local_workflow local_client RequiresCliDto
+            row [] "watch" true true common_renderOutput_envelope progress_local_workflow local_client RequiresCliDto
             row [ "webhook" ] "create" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
             row [ "webhook" ] "delete" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
             row [ "webhook" ] "deliveries" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto

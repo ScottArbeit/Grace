@@ -9,6 +9,7 @@ open NUnit.Framework
 open Spectre.Console
 open System
 open System.IO
+open System.Text.Json
 
 [<NonParallelizable>]
 module WatchTests =
@@ -29,6 +30,23 @@ module WatchTests =
             exitCode, writer.ToString()
         finally
             Console.SetOut(originalOut)
+            setAnsiConsoleOutput originalOut
+
+    let private runWithCapturedStdoutAndStderr (args: string array) =
+        use standardOutWriter = new StringWriter()
+        use standardErrorWriter = new StringWriter()
+        let originalOut = Console.Out
+        let originalError = Console.Error
+
+        try
+            Console.SetOut(standardOutWriter)
+            Console.SetError(standardErrorWriter)
+            setAnsiConsoleOutput standardOutWriter
+            let exitCode = GraceCommand.main args
+            exitCode, standardOutWriter.ToString(), standardErrorWriter.ToString()
+        finally
+            Console.SetOut(originalOut)
+            Console.SetError(originalError)
             setAnsiConsoleOutput originalOut
 
     let private withEnv (name: string) (value: string option) (action: unit -> unit) =
@@ -67,6 +85,14 @@ module WatchTests =
                 Constants.EnvironmentVariables.GraceServerUri
             ]
             action
+
+    let private parseJsonOutput (output: string) =
+        output
+            .TrimStart()
+            .StartsWith("{", StringComparison.Ordinal)
+        |> should equal true
+
+        JsonDocument.Parse(output)
 
     let private withTempRepo (action: string -> unit) =
         let tempDir = Path.Combine(Path.GetTempPath(), $"grace-watch-tests-{Guid.NewGuid():N}")
@@ -137,3 +163,31 @@ module WatchTests =
 
                 output
                 |> should contain "Authentication is not configured."))
+
+    [<Test>]
+    let ``watch json auth failure emits one clean error envelope`` () =
+        withTempRepo (fun _ ->
+            clearWatchAuthEnv (fun () ->
+                let exitCode, standardOut, standardError =
+                    runWithCapturedStdoutAndStderr [| "--output"
+                                                      "Json"
+                                                      "watch" |]
+
+                exitCode |> should equal -1
+                standardError |> should equal String.Empty
+
+                standardOut
+                |> should not' (contain "SignalR Hub connection state")
+
+                standardOut |> should not' (contain "Elapsed:")
+
+                use document = parseJsonOutput standardOut
+                let root = document.RootElement
+
+                root.GetProperty("Error").GetString()
+                |> should contain "watch is a continuous foreground workflow"
+
+                let mutable returnValue = Unchecked.defaultof<JsonElement>
+
+                root.TryGetProperty("ReturnValue", &returnValue)
+                |> should equal false))

@@ -45,10 +45,10 @@ module CommandOutputContractRegistryTests =
         |> should equal 9
 
         countBy CommonRenderOutputEnvelope
-        |> should equal 175
+        |> should equal 181
 
         countBy HumanProgressOnlySuccess
-        |> should equal 16
+        |> should equal 10
 
         countBy PartialManualSuccess |> should equal 0
         countBy ManualJsonUnenveloped |> should equal 0
@@ -171,7 +171,7 @@ module CommandOutputContractRegistryTests =
             CommandOutputContract.entries
             |> List.filter (fun entry -> entry.CurrentJsonBehavior = CommonRenderOutputEnvelope)
 
-        commonEntries.Length |> should equal 175
+        commonEntries.Length |> should equal 181
 
         for entry in commonEntries do
             match entry.EnvelopeContract with
