@@ -1,0 +1,290 @@
+namespace Grace.Server.Tests
+
+open Grace.Server.Tests.Services
+open Grace.Shared
+open Grace.Shared.Utilities
+open Grace.Types.Automation
+open Grace.Types.Common
+open NUnit.Framework
+open System
+open System.Net
+open System.Net.Http
+open System.Threading.Tasks
+
+module private AgentSessionTestHelpers =
+
+    let restartGraceServerAsync () =
+        let state =
+            match App with
+            | Some app ->
+                {
+                    App = app
+                    Client = Client
+                    GraceServerBaseAddress = graceServerBaseAddress
+                    ServiceBusConnectionString = serviceBusConnectionString
+                    ServiceBusTopic = serviceBusTopic
+                    ServiceBusServerSubscription = serviceBusServerSubscription
+                    ServiceBusTestSubscription = serviceBusTestSubscription
+                }
+            | None ->
+                Assert.Fail("Aspire test host was not started by the shared setup fixture.")
+                Unchecked.defaultof<TestHostState>
+
+        AspireTestHost.restartGraceServerAsync state
+
+    let private postSessionAsync<'TResponse> (path: string) (parameters: obj) =
+        task {
+            let! response = Client.PostAsync(path, createJsonContent parameters)
+            let! body = response.Content.ReadAsStringAsync()
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK), body)
+            return deserialize<GraceReturnValue<'TResponse>> body
+        }
+
+    let private createBaseParameters<'T when 'T :> Parameters.Common.AgentSessionParameters and 'T: (new: unit -> 'T)> repositoryId agentId agentDisplayName =
+        let parameters = new 'T()
+        parameters.OwnerId <- ownerId
+        parameters.OrganizationId <- organizationId
+        parameters.RepositoryId <- repositoryId
+        parameters.AgentId <- agentId
+        parameters.AgentDisplayName <- agentDisplayName
+        parameters.CorrelationId <- generateCorrelationId ()
+        parameters
+
+    let startParameters repositoryId agentId workItemId operationId =
+        let parameters = createBaseParameters<Parameters.Common.StartAgentSessionParameters> repositoryId agentId $"Agent {agentId}"
+
+        parameters.WorkItemIdOrNumber <- workItemId
+        parameters.PromotionSetId <- $"{Guid.NewGuid()}"
+        parameters.Source <- "server-tests"
+        parameters.OperationId <- operationId
+        parameters
+
+    let stopParameters repositoryId agentId sessionId workItemId operationId =
+        let parameters = createBaseParameters<Parameters.Common.StopAgentSessionParameters> repositoryId agentId $"Agent {agentId}"
+
+        parameters.SessionId <- sessionId
+        parameters.WorkItemIdOrNumber <- workItemId
+        parameters.StopReason <- "test complete"
+        parameters.OperationId <- operationId
+        parameters
+
+    let statusParameters repositoryId agentId sessionId workItemId =
+        let parameters = createBaseParameters<Parameters.Common.GetAgentSessionStatusParameters> repositoryId agentId $"Agent {agentId}"
+
+        parameters.SessionId <- sessionId
+        parameters.WorkItemIdOrNumber <- workItemId
+        parameters
+
+    let activeParameters repositoryId agentId workItemId =
+        let parameters = createBaseParameters<Parameters.Common.GetActiveAgentSessionParameters> repositoryId agentId $"Agent {agentId}"
+
+        parameters.WorkItemIdOrNumber <- workItemId
+        parameters
+
+    let listActiveParameters repositoryId agentId maximumSessionCount =
+        let parameters = createBaseParameters<Parameters.Common.ListActiveAgentSessionsParameters> repositoryId agentId $"Agent {agentId}"
+
+        parameters.MaximumSessionCount <- maximumSessionCount
+        parameters
+
+    let startAsync parameters = postSessionAsync<AgentSessionOperationResult> "/agent/session/start" parameters
+
+    let stopAsync parameters = postSessionAsync<AgentSessionOperationResult> "/agent/session/stop" parameters
+
+    let tryStopAsync repositoryId agentId sessionId workItemId =
+        task {
+            if not <| String.IsNullOrWhiteSpace sessionId then
+                try
+                    let parameters = stopParameters repositoryId agentId sessionId workItemId $"cleanup-stop-{Guid.NewGuid():N}"
+                    let! response = Client.PostAsync("/agent/session/stop", createJsonContent parameters)
+
+                    if not response.IsSuccessStatusCode then
+                        let! body = response.Content.ReadAsStringAsync()
+                        TestContext.Error.WriteLine($"Agent session cleanup failed: {response.StatusCode}; {body}")
+                with
+                | ex -> TestContext.Error.WriteLine($"Agent session cleanup threw: {ex}")
+        }
+
+    let statusAsync parameters = postSessionAsync<AgentSessionOperationResult> "/agent/session/status" parameters
+
+    let activeAsync parameters = postSessionAsync<AgentSessionOperationResult> "/agent/session/active" parameters
+
+    let listActiveAsync parameters = postSessionAsync<AgentSessionListResult> "/agent/session/listActive" parameters
+
+[<NonParallelizable>]
+type AgentSessionServerTests() =
+
+    [<Test>]
+    member _.AgentSessionLifecyclePreservesReplayConflictWrongRepositoryAndStopIdempotency() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let wrongRepositoryId = repositoryIds[1]
+            let agentId = $"agent-{Guid.NewGuid():N}"
+            let firstWorkItem = "262"
+            let secondWorkItem = "263"
+            let firstStartOperationId = $"start-{Guid.NewGuid():N}"
+            let mutable firstSessionId = String.Empty
+            let mutable replacementSessionId = String.Empty
+
+            try
+                let! started =
+                    AgentSessionTestHelpers.startAsync (AgentSessionTestHelpers.startParameters repositoryId agentId firstWorkItem firstStartOperationId)
+
+                firstSessionId <- started.ReturnValue.Session.SessionId
+
+                Assert.That(started.ReturnValue.WasIdempotentReplay, Is.False)
+                Assert.That(started.ReturnValue.OperationId, Is.EqualTo(firstStartOperationId))
+                Assert.That(started.ReturnValue.Session.SessionId, Is.EqualTo(firstStartOperationId))
+                Assert.That(started.ReturnValue.Session.AgentId, Is.EqualTo(agentId))
+                Assert.That(started.ReturnValue.Session.WorkItemIdOrNumber, Is.EqualTo(firstWorkItem))
+                Assert.That(started.ReturnValue.Session.Source, Is.EqualTo("server-tests"))
+                Assert.That(started.ReturnValue.Session.LifecycleState, Is.EqualTo(AgentSessionLifecycleState.Active))
+
+                let! duplicateStart =
+                    AgentSessionTestHelpers.startAsync (AgentSessionTestHelpers.startParameters repositoryId agentId firstWorkItem firstStartOperationId)
+
+                Assert.That(duplicateStart.ReturnValue.WasIdempotentReplay, Is.True)
+                Assert.That(duplicateStart.ReturnValue.Session.SessionId, Is.EqualTo(started.ReturnValue.Session.SessionId))
+
+                let conflictingStartParameters = AgentSessionTestHelpers.startParameters repositoryId agentId secondWorkItem $"start-{Guid.NewGuid():N}"
+
+                let! conflictingStart = Client.PostAsync("/agent/session/start", createJsonContent conflictingStartParameters)
+
+                let! conflictingStartBody = conflictingStart.Content.ReadAsStringAsync()
+                Assert.That(conflictingStart.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), conflictingStartBody)
+                Assert.That(conflictingStartBody, Does.Contain(firstWorkItem))
+
+                let! active = AgentSessionTestHelpers.activeAsync (AgentSessionTestHelpers.activeParameters repositoryId agentId firstWorkItem)
+
+                Assert.That(active.ReturnValue.Session.SessionId, Is.EqualTo(started.ReturnValue.Session.SessionId))
+                Assert.That(active.ReturnValue.Session.LifecycleState, Is.EqualTo(AgentSessionLifecycleState.Active))
+
+                let! listed = AgentSessionTestHelpers.listActiveAsync (AgentSessionTestHelpers.listActiveParameters repositoryId agentId 10)
+
+                Assert.That(
+                    listed.ReturnValue.Sessions
+                    |> List.exists (fun session -> session.SessionId = started.ReturnValue.Session.SessionId),
+                    Is.True
+                )
+
+                let! wrongRepositoryStatus =
+                    AgentSessionTestHelpers.statusAsync (
+                        AgentSessionTestHelpers.statusParameters wrongRepositoryId agentId started.ReturnValue.Session.SessionId firstWorkItem
+                    )
+
+                Assert.That(wrongRepositoryStatus.ReturnValue.Session.LifecycleState, Is.EqualTo(AgentSessionLifecycleState.Inactive))
+
+                let! wrongRepositoryStop =
+                    AgentSessionTestHelpers.stopAsync (
+                        AgentSessionTestHelpers.stopParameters
+                            wrongRepositoryId
+                            agentId
+                            started.ReturnValue.Session.SessionId
+                            firstWorkItem
+                            $"stop-wrong-{Guid.NewGuid():N}"
+                    )
+
+                Assert.That(wrongRepositoryStop.ReturnValue.WasIdempotentReplay, Is.True)
+                Assert.That(wrongRepositoryStop.ReturnValue.Session.LifecycleState, Is.EqualTo(AgentSessionLifecycleState.Inactive))
+
+                let! stillActive =
+                    AgentSessionTestHelpers.statusAsync (
+                        AgentSessionTestHelpers.statusParameters repositoryId agentId started.ReturnValue.Session.SessionId firstWorkItem
+                    )
+
+                Assert.That(stillActive.ReturnValue.Session.LifecycleState, Is.EqualTo(AgentSessionLifecycleState.Active))
+
+                let stopOperationId = $"stop-{Guid.NewGuid():N}"
+
+                let! stopped =
+                    AgentSessionTestHelpers.stopAsync (
+                        AgentSessionTestHelpers.stopParameters repositoryId agentId started.ReturnValue.Session.SessionId firstWorkItem stopOperationId
+                    )
+
+                Assert.That(stopped.ReturnValue.WasIdempotentReplay, Is.False)
+                Assert.That(stopped.ReturnValue.OperationId, Is.EqualTo(stopOperationId))
+                Assert.That(stopped.ReturnValue.Session.LifecycleState, Is.EqualTo(AgentSessionLifecycleState.Stopped))
+
+                let! duplicateStop =
+                    AgentSessionTestHelpers.stopAsync (
+                        AgentSessionTestHelpers.stopParameters repositoryId agentId started.ReturnValue.Session.SessionId firstWorkItem stopOperationId
+                    )
+
+                Assert.That(duplicateStop.ReturnValue.WasIdempotentReplay, Is.True)
+                Assert.That(duplicateStop.ReturnValue.Session.LifecycleState, Is.EqualTo(AgentSessionLifecycleState.Stopped))
+
+                let! inactiveAfterStop =
+                    AgentSessionTestHelpers.statusAsync (
+                        AgentSessionTestHelpers.statusParameters repositoryId agentId started.ReturnValue.Session.SessionId firstWorkItem
+                    )
+
+                Assert.That(inactiveAfterStop.ReturnValue.Session.LifecycleState, Is.EqualTo(AgentSessionLifecycleState.Inactive))
+
+                let secondStartOperationId = $"start-{Guid.NewGuid():N}"
+
+                let! replacementStart =
+                    AgentSessionTestHelpers.startAsync (AgentSessionTestHelpers.startParameters repositoryId agentId secondWorkItem secondStartOperationId)
+
+                replacementSessionId <- replacementStart.ReturnValue.Session.SessionId
+
+                Assert.That(replacementStart.ReturnValue.WasIdempotentReplay, Is.False)
+                Assert.That(replacementStart.ReturnValue.Session.SessionId, Is.EqualTo(secondStartOperationId))
+                Assert.That(replacementStart.ReturnValue.Session.WorkItemIdOrNumber, Is.EqualTo(secondWorkItem))
+                Assert.That(replacementStart.ReturnValue.Session.LifecycleState, Is.EqualTo(AgentSessionLifecycleState.Active))
+
+                let! replacementStopped =
+                    AgentSessionTestHelpers.stopAsync (
+                        AgentSessionTestHelpers.stopParameters
+                            repositoryId
+                            agentId
+                            replacementStart.ReturnValue.Session.SessionId
+                            secondWorkItem
+                            $"stop-{Guid.NewGuid():N}"
+                    )
+
+                Assert.That(replacementStopped.ReturnValue.Session.LifecycleState, Is.EqualTo(AgentSessionLifecycleState.Stopped))
+            with
+            | ex ->
+                do! AgentSessionTestHelpers.tryStopAsync repositoryId agentId replacementSessionId secondWorkItem
+                do! AgentSessionTestHelpers.tryStopAsync repositoryId agentId firstSessionId firstWorkItem
+                return raise ex
+        }
+
+    [<Test>]
+    [<NonParallelizable>]
+    member _.ActiveAgentSessionsAreProcessLocalAcrossRestart() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let agentId = $"agent-{Guid.NewGuid():N}"
+            let workItemId = "264"
+            let startOperationId = $"start-{Guid.NewGuid():N}"
+
+            let! started = AgentSessionTestHelpers.startAsync (AgentSessionTestHelpers.startParameters repositoryId agentId workItemId startOperationId)
+
+            Assert.That(started.ReturnValue.Session.SessionId, Is.EqualTo(startOperationId))
+            Assert.That(started.ReturnValue.Session.LifecycleState, Is.EqualTo(AgentSessionLifecycleState.Active))
+
+            let! activeBeforeRestart = AgentSessionTestHelpers.activeAsync (AgentSessionTestHelpers.activeParameters repositoryId agentId workItemId)
+            Assert.That(activeBeforeRestart.ReturnValue.Session.SessionId, Is.EqualTo(startOperationId))
+            Assert.That(activeBeforeRestart.ReturnValue.Session.LifecycleState, Is.EqualTo(AgentSessionLifecycleState.Active))
+
+            do! AgentSessionTestHelpers.restartGraceServerAsync ()
+
+            // Contract: active agent sessions are process-local coordination state and are intentionally lost on restart.
+            let! statusAfterRestart =
+                AgentSessionTestHelpers.statusAsync (AgentSessionTestHelpers.statusParameters repositoryId agentId startOperationId workItemId)
+
+            Assert.That(statusAfterRestart.ReturnValue.Session.SessionId, Is.EqualTo(startOperationId))
+            Assert.That(statusAfterRestart.ReturnValue.Session.LifecycleState, Is.EqualTo(AgentSessionLifecycleState.Inactive))
+
+            let! activeAfterRestart = AgentSessionTestHelpers.activeAsync (AgentSessionTestHelpers.activeParameters repositoryId agentId workItemId)
+            Assert.That(activeAfterRestart.ReturnValue.Session.LifecycleState, Is.EqualTo(AgentSessionLifecycleState.Inactive))
+
+            let! listedAfterRestart = AgentSessionTestHelpers.listActiveAsync (AgentSessionTestHelpers.listActiveParameters repositoryId agentId 10)
+
+            Assert.That(
+                listedAfterRestart.ReturnValue.Sessions
+                |> List.exists (fun session -> session.SessionId = startOperationId),
+                Is.False
+            )
+        }

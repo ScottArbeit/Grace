@@ -125,6 +125,34 @@ module Application =
                 return Resource.Repository(graceIds.OwnerId, graceIds.OrganizationId, graceIds.RepositoryId)
             }
 
+        let artifactRepositoryPermissionFromQuery (context: HttpContext) =
+            task {
+                let correlationId = Services.getCorrelationId context
+
+                let tryGetQueryGuid queryParameterName =
+                    match context.Request.Query.TryGetValue queryParameterName with
+                    | true, values when
+                        values.Count > 0
+                        && not (String.IsNullOrWhiteSpace values[0])
+                        ->
+                        let mutable parsed = Guid.Empty
+
+                        if
+                            Guid.TryParse(values[0], &parsed)
+                            && parsed <> Guid.Empty
+                        then
+                            Ok parsed
+                        else
+                            Error(GraceError.Create $"{queryParameterName} must be a non-empty GUID." correlationId)
+                    | _ -> Error(GraceError.Create $"{queryParameterName} is required." correlationId)
+
+                match tryGetQueryGuid "ownerId", tryGetQueryGuid "organizationId", tryGetQueryGuid "repositoryId" with
+                | Ok ownerId, Ok organizationId, Ok repositoryId -> return Ok(Operation.RepoRead, Resource.Repository(ownerId, organizationId, repositoryId))
+                | Error error, _, _
+                | _, Error error, _
+                | _, _, Error error -> return Error error
+            }
+
         let ownerResourceFromContext (context: HttpContext) =
             task {
                 let graceIds = Services.getGraceIds context
@@ -238,6 +266,8 @@ module Application =
         let requireRepoRead: HttpHandler = AuthorizationMiddleware.requiresPermission Operation.RepoRead repositoryResourceFromContext
 
         let requireRepoWrite: HttpHandler = AuthorizationMiddleware.requiresPermission Operation.RepoWrite repositoryResourceFromContext
+
+        let requireArtifactRepoRead: HttpHandler = AuthorizationMiddleware.requiresPermissionResolved artifactRepositoryPermissionFromQuery
 
         let requireBranchAdmin: HttpHandler = AuthorizationMiddleware.requiresPermission Operation.BranchAdmin branchResourceFromContext
 
@@ -1201,46 +1231,46 @@ module Application =
                         POST [ route "/create" (composeHandlers requireRepoWrite WorkItem.Create)
                                |> addMetadata typeof<WorkItem.CreateWorkItemParameters>
 
-                               route "/get" WorkItem.Get
+                               route "/get" (composeHandlers requireRepoRead WorkItem.Get)
                                |> addMetadata typeof<WorkItem.GetWorkItemParameters>
 
-                               route "/update" WorkItem.Update
+                               route "/update" (composeHandlers requireRepoWrite WorkItem.Update)
                                |> addMetadata typeof<WorkItem.UpdateWorkItemParameters>
 
-                               route "/add-summary" WorkItem.AddSummary
+                               route "/add-summary" (composeHandlers requireRepoWrite WorkItem.AddSummary)
                                |> addMetadata typeof<WorkItem.AddSummaryParameters>
 
-                               route "/link/reference" WorkItem.LinkReference
+                               route "/link/reference" (composeHandlers requireRepoWrite WorkItem.LinkReference)
                                |> addMetadata typeof<WorkItem.LinkReferenceParameters>
 
-                               route "/link/artifact" WorkItem.LinkArtifact
+                               route "/link/artifact" (composeHandlers requireRepoWrite WorkItem.LinkArtifact)
                                |> addMetadata typeof<WorkItem.LinkArtifactParameters>
 
-                               route "/link/promotion-set" WorkItem.LinkPromotionSet
+                               route "/link/promotion-set" (composeHandlers requireRepoWrite WorkItem.LinkPromotionSet)
                                |> addMetadata typeof<WorkItem.LinkPromotionSetParameters>
 
-                               route "/links/list" WorkItem.GetLinks
+                               route "/links/list" (composeHandlers requireRepoRead WorkItem.GetLinks)
                                |> addMetadata typeof<WorkItem.GetWorkItemLinksParameters>
 
-                               route "/attachments/list" WorkItem.ListAttachments
+                               route "/attachments/list" (composeHandlers requireRepoRead WorkItem.ListAttachments)
                                |> addMetadata typeof<WorkItem.ListWorkItemAttachmentsParameters>
 
-                               route "/attachments/show" WorkItem.ShowAttachment
+                               route "/attachments/show" (composeHandlers requireRepoRead WorkItem.ShowAttachment)
                                |> addMetadata typeof<WorkItem.ShowWorkItemAttachmentParameters>
 
-                               route "/attachments/download" WorkItem.DownloadAttachment
+                               route "/attachments/download" (composeHandlers requireRepoRead WorkItem.DownloadAttachment)
                                |> addMetadata typeof<WorkItem.DownloadWorkItemAttachmentParameters>
 
-                               route "/links/remove/reference" WorkItem.RemoveReferenceLink
+                               route "/links/remove/reference" (composeHandlers requireRepoWrite WorkItem.RemoveReferenceLink)
                                |> addMetadata typeof<WorkItem.RemoveReferenceLinkParameters>
 
-                               route "/links/remove/promotion-set" WorkItem.RemovePromotionSetLink
+                               route "/links/remove/promotion-set" (composeHandlers requireRepoWrite WorkItem.RemovePromotionSetLink)
                                |> addMetadata typeof<WorkItem.RemovePromotionSetLinkParameters>
 
-                               route "/links/remove/artifact" WorkItem.RemoveArtifactLink
+                               route "/links/remove/artifact" (composeHandlers requireRepoWrite WorkItem.RemoveArtifactLink)
                                |> addMetadata typeof<WorkItem.RemoveArtifactLinkParameters>
 
-                               route "/links/remove/artifact-type" WorkItem.RemoveArtifactTypeLinks
+                               route "/links/remove/artifact-type" (composeHandlers requireRepoWrite WorkItem.RemoveArtifactTypeLinks)
                                |> addMetadata typeof<WorkItem.RemoveArtifactTypeLinksParameters> ]
                     ]
                 subRoute
@@ -1250,7 +1280,10 @@ module Application =
                                |> addMetadata typeof<Policy.GetPolicyParameters>
 
                                route "/acknowledge" Policy.Acknowledge
-                               |> addMetadata typeof<Policy.AcknowledgePolicyParameters> ]
+                               |> addMetadata typeof<Policy.AcknowledgePolicyParameters>
+
+                               route "/_seedSnapshot" Policy.SeedSnapshot
+                               |> addMetadata typeof<Policy.SeedPolicySnapshotParameters> ]
                     ]
                 subRoute
                     "/review"
@@ -1360,10 +1393,10 @@ module Application =
                 subRoute
                     "/artifact"
                     [
-                        POST [ route "/create" Artifact.Create
+                        POST [ route "/create" (composeHandlers requireRepoWrite Artifact.Create)
                                |> addMetadata typeof<Grace.Shared.Parameters.Artifact.CreateArtifactParameters> ]
 
-                        GET [ routef "/%O/download-uri" Artifact.GetDownloadUri ]
+                        GET [ routef "/%O/download-uri" (fun artifactId -> composeHandlers requireArtifactRepoRead (Artifact.GetDownloadUri artifactId)) ]
                     ]
                 subRoute
                     "/repository"

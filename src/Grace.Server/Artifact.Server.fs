@@ -149,7 +149,7 @@ module Artifact =
                     let metadata = createMetadata context
                     let artifactActorProxy = Artifact.CreateActorProxy artifactId graceIds.RepositoryId correlationId
 
-                    match! artifactActorProxy.Handle (ArtifactCommand.Create artifactDto) metadata with
+                    match! artifactActorProxy.Handle (ArtifactCommand.Create(ArtifactCreated.FromMetadata artifactDto)) metadata with
                     | Error graceError -> return! context |> result400BadRequest graceError
                     | Ok _ ->
                         let response: ArtifactCreateResult = { ArtifactId = artifactId; UploadUri = uploadUri; BlobPath = blobPath }
@@ -180,32 +180,43 @@ module Artifact =
                 use activity = activitySource.StartActivity("GetDownloadUri", ActivityKind.Server)
                 let correlationId = getCorrelationId context
 
-                match parseGuidQueryParameter context "organizationId" ArtifactError.InvalidArtifactId with
+                match parseGuidQueryParameter context "ownerId" ArtifactError.InvalidArtifactId with
                 | Error error ->
                     return!
                         context
                         |> result400BadRequest (GraceError.Create (ArtifactError.getErrorMessage error) correlationId)
-                | Ok organizationId ->
-                    match parseGuidQueryParameter context "repositoryId" ArtifactError.InvalidArtifactId with
+                | Ok ownerId ->
+                    match parseGuidQueryParameter context "organizationId" ArtifactError.InvalidArtifactId with
                     | Error error ->
                         return!
                             context
                             |> result400BadRequest (GraceError.Create (ArtifactError.getErrorMessage error) correlationId)
-                    | Ok repositoryId ->
-                        let artifactActorProxy = Artifact.CreateActorProxy artifactId repositoryId correlationId
-
-                        match! artifactActorProxy.Get correlationId with
-                        | None ->
+                    | Ok organizationId ->
+                        match parseGuidQueryParameter context "repositoryId" ArtifactError.InvalidArtifactId with
+                        | Error error ->
                             return!
                                 context
-                                |> result400BadRequest (GraceError.Create (ArtifactError.getErrorMessage ArtifactError.ArtifactDoesNotExist) correlationId)
-                        | Some artifact ->
-                            let repositoryActorProxy = Repository.CreateActorProxy organizationId repositoryId correlationId
-                            let! repositoryDto = repositoryActorProxy.Get correlationId
-                            let! downloadUri = getUriWithReadSharedAccessSignature repositoryDto artifact.BlobPath correlationId
+                                |> result400BadRequest (GraceError.Create (ArtifactError.getErrorMessage error) correlationId)
+                        | Ok repositoryId ->
+                            let artifactActorProxy = Artifact.CreateActorProxy artifactId repositoryId correlationId
 
-                            let response: ArtifactDownloadUriResult = { ArtifactId = artifactId; DownloadUri = downloadUri }
+                            match! artifactActorProxy.Get correlationId with
+                            | Some artifact when
+                                artifact.OwnerId = ownerId
+                                && artifact.OrganizationId = organizationId
+                                && artifact.RepositoryId = repositoryId
+                                ->
+                                let repositoryActorProxy = Repository.CreateActorProxy organizationId repositoryId correlationId
+                                let! repositoryDto = repositoryActorProxy.Get correlationId
+                                let! downloadUri = getUriWithReadSharedAccessSignature repositoryDto artifact.BlobPath correlationId
 
-                            let graceReturnValue = GraceReturnValue.Create response correlationId
-                            return! context |> result200Ok graceReturnValue
+                                let response: ArtifactDownloadUriResult = { ArtifactId = artifactId; DownloadUri = downloadUri }
+
+                                let graceReturnValue = GraceReturnValue.Create response correlationId
+                                return! context |> result200Ok graceReturnValue
+                            | None
+                            | Some _ ->
+                                return!
+                                    context
+                                    |> result400BadRequest (GraceError.Create (ArtifactError.getErrorMessage ArtifactError.ArtifactDoesNotExist) correlationId)
             }

@@ -10,11 +10,12 @@ type Artifact() =
 
     static member internal BuildDownloadUriRoute(parameters: GetArtifactDownloadUriParameters) =
         let artifactId = Uri.EscapeDataString(parameters.ArtifactId.Trim())
+        let ownerId = Uri.EscapeDataString(parameters.OwnerId.Trim())
         let organizationId = Uri.EscapeDataString(parameters.OrganizationId.Trim())
         let repositoryId = Uri.EscapeDataString(parameters.RepositoryId.Trim())
         let correlationId = Uri.EscapeDataString(parameters.CorrelationId.Trim())
 
-        $"artifact/{artifactId}/download-uri?organizationId={organizationId}&repositoryId={repositoryId}&correlationId={correlationId}"
+        $"artifact/{artifactId}/download-uri?ownerId={ownerId}&organizationId={organizationId}&repositoryId={repositoryId}&correlationId={correlationId}"
 
     /// Creates artifact metadata and returns an upload URI.
     static member public Create(parameters: CreateArtifactParameters) =

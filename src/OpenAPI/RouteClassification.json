@@ -28,7 +28,8 @@
       "routes": [
         { "method": "POST", "path": "/admin/deleteAllFromCosmosDB" },
         { "method": "POST", "path": "/admin/deleteAllRemindersFromCosmosDB" },
-        { "method": "POST", "path": "/approval/request/_seedGenerated" }
+        { "method": "POST", "path": "/approval/request/_seedGenerated" },
+        { "method": "POST", "path": "/policy/_seedSnapshot" }
       ]
     },
     {

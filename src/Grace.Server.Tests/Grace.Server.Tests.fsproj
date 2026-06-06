@@ -21,11 +21,25 @@
     <Compile Include="Slop.Server.Tests.fs" />
     <Compile Include="Owner.Server.Tests.fs" />
     <Compile Include="Repository.Server.Tests.fs" />
+    <Compile Include="Branch.Server.Tests.fs" />
     <Compile Include="Approval.Server.Tests.fs" />
     <Compile Include="Webhook.Server.Tests.fs" />
+    <Compile Include="Eventing.Integration.Server.Tests.fs" />
     <Compile Include="Access.Server.Tests.fs" />
     <Compile Include="Storage.Server.Tests.fs" />
+    <Compile Include="DirectoryVersion.Server.Tests.fs" />
+    <Compile Include="Diff.Server.Tests.fs" />
+    <Compile Include="Reminder.Server.Tests.fs" />
+    <Compile Include="NotificationHub.Tests.fs" />
+    <Compile Include="AgentSession.Server.Tests.fs" />
     <Compile Include="WorkItem.Integration.Server.Tests.fs" />
+    <Compile Include="RestartDurability.Server.Tests.fs" />
+    <Compile Include="Policy.Server.Tests.fs" />
+    <Compile Include="Queue.Integration.Server.Tests.fs" />
+    <Compile Include="PromotionSet.Integration.Server.Tests.fs" />
+    <Compile Include="Review.Integration.Server.Tests.fs" />
+    <Compile Include="ValidationSet.Integration.Server.Tests.fs" />
+    <Compile Include="ValidationResult.Integration.Server.Tests.fs" />
     <Compile Include="Auth.Server.Tests.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
@@ -37,6 +51,8 @@
     <PackageReference Include="FsCheck" Version="3.3.3" />
     <PackageReference Include="FsCheck.NUnit" Version="3.3.3" />
     <PackageReference Include="FsUnit" Version="7.1.1" />
+    <PackageReference Include="Microsoft.AspNetCore.SignalR.Client" Version="10.0.8" />
+    <PackageReference Include="Microsoft.AspNetCore.SignalR.Protocols.Json" Version="10.0.8" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.5.1" />
     <PackageReference Include="NUnit" Version="4.6.1" />
     <PackageReference Include="NUnit3TestAdapter" Version="6.2.0" />

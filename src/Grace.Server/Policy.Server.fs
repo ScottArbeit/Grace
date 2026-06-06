@@ -20,6 +20,7 @@ open Microsoft.AspNetCore.Http
 open Microsoft.Extensions.Logging
 open NodaTime
 open System
+open System.Collections.Concurrent
 open System.Collections.Generic
 open System.Diagnostics
 open System.Threading.Tasks
@@ -27,9 +28,29 @@ open System.Threading.Tasks
 module Policy =
     type Validations<'T when 'T :> PolicyParameters> = 'T -> ValueTask<Result<unit, PolicyError>> array
 
+    type SeedPolicySnapshotParameters() =
+        inherit PolicyParameters()
+        member val public PolicySnapshotId = String.Empty with get, set
+
     let log = ApplicationContext.loggerFactory.CreateLogger("Policy.Server")
 
     let activitySource = new ActivitySource("Policy")
+
+    let private seededSnapshots = ConcurrentDictionary<BranchId, PolicySnapshot>()
+
+    let internal tryGetSeededSnapshot (targetBranchId: BranchId) =
+        match seededSnapshots.TryGetValue targetBranchId with
+        | true, snapshot -> Some snapshot
+        | _ -> None
+
+    let internal isUsableSnapshot (snapshot: PolicySnapshot) = not (String.IsNullOrEmpty snapshot.PolicySnapshotId)
+
+    let private seedEnabled () =
+        let isDevelopment value = String.Equals(value, "Development", StringComparison.OrdinalIgnoreCase)
+
+        Environment.GetEnvironmentVariable("GRACE_TESTING") = "1"
+        || isDevelopment (Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT"))
+        || isDevelopment (Environment.GetEnvironmentVariable("DOTNET_ENVIRONMENT"))
 
     let processCommand<'T when 'T :> PolicyParameters> (context: HttpContext) (validations: Validations<'T>) (command: 'T -> ValueTask<PolicyCommand>) =
         task {
@@ -183,6 +204,60 @@ module Policy =
             String.isNotEmpty parameters.PolicySnapshotId PolicyError.InvalidPolicySnapshotId
         |]
 
+    let internal validateSeedSnapshotParameters (parameters: SeedPolicySnapshotParameters) =
+        [|
+            Guid.isValidAndNotEmptyGuid parameters.TargetBranchId PolicyError.InvalidTargetBranchId
+            String.isNotEmpty parameters.PolicySnapshotId PolicyError.InvalidPolicySnapshotId
+        |]
+
+    let SeedSnapshot: HttpHandler =
+        fun (_next: HttpFunc) (context: HttpContext) ->
+            task {
+                if seedEnabled () |> not then
+                    return! result404NotFound context
+                else
+                    let graceIds = getGraceIds context
+                    let correlationId = getCorrelationId context
+                    let! parameters = context |> parse<SeedPolicySnapshotParameters>
+
+                    parameters.OwnerId <- graceIds.OwnerIdString
+                    parameters.OrganizationId <- graceIds.OrganizationIdString
+                    parameters.RepositoryId <- graceIds.RepositoryIdString
+
+                    let validationResults = validateSeedSnapshotParameters parameters
+                    let! validationsPassed = validationResults |> allPass
+
+                    if validationsPassed then
+                        let targetBranchId = Guid.Parse(parameters.TargetBranchId)
+                        let policySnapshotId = PolicySnapshotId parameters.PolicySnapshotId
+
+                        let snapshot =
+                            { PolicySnapshot.Default with
+                                PolicySnapshotId = policySnapshotId
+                                OwnerId = graceIds.OwnerId
+                                OrganizationId = graceIds.OrganizationId
+                                RepositoryId = graceIds.RepositoryId
+                                TargetBranchId = targetBranchId
+                                ParserVersion = "Grace.Server.Tests"
+                                SourceHash = policySnapshotId
+                                CreatedAt = getCurrentInstant ()
+                            }
+
+                        seededSnapshots[targetBranchId] <- snapshot
+
+                        let graceReturnValue =
+                            (GraceReturnValue.Create "Policy snapshot seeded." correlationId)
+                                .enhance(nameof RepositoryId, graceIds.RepositoryId)
+                                .enhance (nameof PolicySnapshotId, policySnapshotId)
+
+                        return! context |> result200Ok graceReturnValue
+                    else
+                        let! error = validationResults |> getFirstError
+                        let errorMessage = PolicyError.getErrorMessage error
+                        let graceError = GraceError.Create errorMessage correlationId
+                        return! context |> result400BadRequest graceError
+            }
+
     /// Gets the current policy snapshot.
     let GetCurrent: HttpHandler =
         fun (_next: HttpFunc) (context: HttpContext) ->
@@ -194,12 +269,21 @@ module Policy =
                         Guid.isValidAndNotEmptyGuid parameters.TargetBranchId PolicyError.InvalidTargetBranchId
                     |]
 
-                let query (context: HttpContext) _ (actorProxy: IPolicyActor) = actorProxy.GetCurrent(getCorrelationId context)
-
                 let! parameters = context |> parse<GetPolicyParameters>
                 parameters.OwnerId <- graceIds.OwnerIdString
                 parameters.OrganizationId <- graceIds.OrganizationIdString
                 parameters.RepositoryId <- graceIds.RepositoryIdString
+
+                let query (context: HttpContext) _ (actorProxy: IPolicyActor) =
+                    task {
+                        let! current = actorProxy.GetCurrent(getCorrelationId context)
+
+                        return
+                            match current with
+                            | Some snapshot when isUsableSnapshot snapshot -> current
+                            | _ -> tryGetSeededSnapshot (Guid.Parse(parameters.TargetBranchId))
+                    }
+
                 context.Items[ "Command" ] <- "GetCurrent"
                 return! processQuery context parameters validations query
             }

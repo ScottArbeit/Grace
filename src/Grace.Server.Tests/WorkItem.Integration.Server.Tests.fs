@@ -15,6 +15,7 @@ open System
 open System.Net
 open System.Net.Http
 open System.Net.Http.Headers
+open System.Text
 open System.Threading.Tasks
 
 module private WorkItemIntegrationHelpers =
@@ -28,6 +29,24 @@ module private WorkItemIntegrationHelpers =
         let client = new HttpClient()
         client.BaseAddress <- Client.BaseAddress
         client
+
+    let grantRepoRoleAsync (repositoryId: string) (principalId: string) (roleId: string) =
+        task {
+            let parameters = Parameters.Access.GrantRoleParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.PrincipalType <- "User"
+            parameters.PrincipalId <- principalId
+            parameters.ScopeKind <- "repo"
+            parameters.RoleId <- roleId
+            parameters.Source <- "test"
+            parameters.CorrelationId <- generateCorrelationId ()
+
+            let! response = Client.PostAsync("/access/grantRole", createJsonContent parameters)
+            let! body = response.Content.ReadAsStringAsync()
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK), body)
+        }
 
     let createRepositoryAsync (repositoryNamePrefix: string) =
         task {
@@ -73,7 +92,7 @@ module private WorkItemIntegrationHelpers =
             return repositoryId
         }
 
-    let createWorkItemAsync (repositoryId: string) (title: string) =
+    let createWorkItemWithIdResponseAsync (client: HttpClient) (repositoryId: string) (title: string) =
         task {
             let workItemId = Guid.NewGuid().ToString()
             let parameters = Parameters.WorkItem.CreateWorkItemParameters()
@@ -85,9 +104,33 @@ module private WorkItemIntegrationHelpers =
             parameters.Description <- "integration test work item"
             parameters.CorrelationId <- generateCorrelationId ()
 
-            let! response = Client.PostAsync("/work/create", createJsonContent parameters)
+            let! response = client.PostAsync("/work/create", createJsonContent parameters)
+            return workItemId, response
+        }
+
+    let createWorkItemResponseAsync (client: HttpClient) (repositoryId: string) (title: string) =
+        task {
+            let! _, response = createWorkItemWithIdResponseAsync client repositoryId title
+            return response
+        }
+
+    let createWorkItemAsync (repositoryId: string) (title: string) =
+        task {
+            let! workItemId, response = createWorkItemWithIdResponseAsync Client repositoryId title
             response.EnsureSuccessStatusCode() |> ignore
             return workItemId
+        }
+
+    let updateWorkItemResponseAsync (client: HttpClient) (repositoryId: string) (workItemIdentifier: string) =
+        task {
+            let parameters = Parameters.WorkItem.UpdateWorkItemParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.WorkItemId <- workItemIdentifier
+            parameters.Title <- $"Updated {Guid.NewGuid():N}"
+            parameters.CorrelationId <- generateCorrelationId ()
+            return! client.PostAsync("/work/update", createJsonContent parameters)
         }
 
     let getWorkItemResponseAsync (client: HttpClient) (repositoryId: string) (workItemIdentifier: string) =
@@ -268,6 +311,16 @@ module private WorkItemIntegrationHelpers =
             return returnValue.ReturnValue.DownloadUri
         }
 
+    let getArtifactDownloadUriResponseAsync (client: HttpClient) (repositoryId: string) (artifactId: Guid) =
+        task {
+            let correlationId = generateCorrelationId ()
+
+            let route =
+                $"/artifact/{artifactId}/download-uri?ownerId={ownerId}&organizationId={organizationId}&repositoryId={repositoryId}&correlationId={correlationId}"
+
+            return! client.GetAsync(route)
+        }
+
     let linkReferenceAsync (repositoryId: string) (workItemIdentifier: string) (referenceId: Guid) =
         task {
             let parameters = Parameters.WorkItem.LinkReferenceParameters()
@@ -296,22 +349,59 @@ module private WorkItemIntegrationHelpers =
             response.EnsureSuccessStatusCode() |> ignore
         }
 
-    let createArtifactAsync (repositoryId: string) (artifactType: string) =
+    let createArtifactResponseAsync
+        (client: HttpClient)
+        (repositoryId: string)
+        (artifactType: string)
+        (mimeType: string)
+        (size: int64)
+        (artifactId: Guid option)
+        =
         task {
             let parameters = Parameters.Artifact.CreateArtifactParameters()
             parameters.OwnerId <- ownerId
             parameters.OrganizationId <- organizationId
             parameters.RepositoryId <- repositoryId
+
+            parameters.ArtifactId <-
+                artifactId
+                |> Option.map string
+                |> Option.defaultValue String.Empty
+
             parameters.ArtifactType <- artifactType
-            parameters.MimeType <- "text/plain"
-            parameters.Size <- 16L
+            parameters.MimeType <- mimeType
+            parameters.Size <- size
             parameters.Sha256 <- ""
             parameters.CorrelationId <- generateCorrelationId ()
 
-            let! response = Client.PostAsync("/artifact/create", createJsonContent parameters)
+            return! client.PostAsync("/artifact/create", createJsonContent parameters)
+        }
+
+    let createArtifactAsync (repositoryId: string) (artifactType: string) =
+        task {
+            let! response = createArtifactResponseAsync Client repositoryId artifactType "text/plain" 16L None
             response.EnsureSuccessStatusCode() |> ignore
             let! returnValue = deserializeContent<GraceReturnValue<ArtifactCreateResult>> response
             return returnValue.ReturnValue.ArtifactId
+        }
+
+    let createArtifactResultAsync
+        (client: HttpClient)
+        (repositoryId: string)
+        (artifactType: string)
+        (mimeType: string)
+        (payload: byte array)
+        (artifactId: Guid option)
+        =
+        task {
+            let! response = createArtifactResponseAsync client repositoryId artifactType mimeType (int64 payload.Length) artifactId
+
+            if not response.IsSuccessStatusCode then
+                let! body = response.Content.ReadAsStringAsync()
+                Assert.Fail($"Expected artifact create success but got {response.StatusCode}: {body}")
+
+            let! returnValue = deserializeContent<GraceReturnValue<ArtifactCreateResult>> response
+            return returnValue.ReturnValue
         }
 
     let linkArtifactAsync (repositoryId: string) (workItemIdentifier: string) (artifactId: Guid) =
@@ -326,6 +416,31 @@ module private WorkItemIntegrationHelpers =
 
             let! response = Client.PostAsync("/work/link/artifact", createJsonContent parameters)
             response.EnsureSuccessStatusCode() |> ignore
+        }
+
+    let linkArtifactResponseAsync (client: HttpClient) (repositoryId: string) (workItemIdentifier: string) (artifactId: Guid) =
+        task {
+            let parameters = Parameters.WorkItem.LinkArtifactParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.WorkItemId <- workItemIdentifier
+            parameters.ArtifactId <- artifactId.ToString()
+            parameters.CorrelationId <- generateCorrelationId ()
+
+            return! client.PostAsync("/work/link/artifact", createJsonContent parameters)
+        }
+
+    let getLinksResponseAsync (client: HttpClient) (repositoryId: string) (workItemIdentifier: string) =
+        task {
+            let parameters = Parameters.WorkItem.GetWorkItemLinksParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.WorkItemId <- workItemIdentifier
+            parameters.CorrelationId <- generateCorrelationId ()
+
+            return! client.PostAsync("/work/links/list", createJsonContent parameters)
         }
 
     let removeReferenceLinkAsync (client: HttpClient) (repositoryId: string) (workItemIdentifier: string) (referenceId: Guid) =
@@ -374,6 +489,22 @@ module private WorkItemIntegrationHelpers =
             parameters.ArtifactType <- artifactType
             parameters.CorrelationId <- generateCorrelationId ()
             return! client.PostAsync("/work/links/remove/artifact-type", createJsonContent parameters)
+        }
+
+    let uploadBytesWithSasAsync (uploadUri: Uri) (payload: byte array) =
+        task {
+            let blobClient = Azure.Storage.Blobs.Specialized.BlockBlobClient(uploadUri)
+            use stream = new System.IO.MemoryStream(payload, writable = false)
+            let options = Azure.Storage.Blobs.Models.BlobUploadOptions()
+            let! _ = blobClient.UploadAsync(stream, options)
+            ()
+        }
+
+    let downloadBytesWithSasAsync (downloadUri: string) =
+        task {
+            let blobClient = BlobClient(Uri downloadUri)
+            let! response = blobClient.DownloadContentAsync()
+            return response.Value.Content.ToArray()
         }
 
     let createPersonalAccessTokenAsync () =
@@ -762,9 +893,10 @@ type WorkItemAttachmentEndpointsIntegrationTests() =
         task {
             let! repositoryId = WorkItemIntegrationHelpers.createRepositoryAsync "wi-attachments-download"
             let! workItemId = WorkItemIntegrationHelpers.createWorkItemAsync repositoryId "attachments download"
+            let summaryContent = "download summary content"
 
             let! addSummaryResult =
-                WorkItemIntegrationHelpers.addSummaryAsync Client repositoryId workItemId "download summary content" None None (generateCorrelationId ())
+                WorkItemIntegrationHelpers.addSummaryAsync Client repositoryId workItemId summaryContent None None (generateCorrelationId ())
 
             let! linkedOtherArtifactId = WorkItemIntegrationHelpers.createArtifactAsync repositoryId "Other"
             do! WorkItemIntegrationHelpers.linkArtifactAsync repositoryId workItemId linkedOtherArtifactId
@@ -774,7 +906,14 @@ type WorkItemAttachmentEndpointsIntegrationTests() =
 
             Assert.That(downloadResult.ArtifactId, Is.EqualTo(summaryArtifactId.ToString()))
             Assert.That(downloadResult.AttachmentType, Is.EqualTo("summary"))
+            Assert.That(downloadResult.MimeType, Is.EqualTo("text/markdown"))
+            Assert.That(downloadResult.Size, Is.EqualTo(Encoding.UTF8.GetByteCount(summaryContent)))
             Assert.That(String.IsNullOrWhiteSpace(downloadResult.DownloadUri), Is.False)
+
+            let! downloadedBytes = WorkItemIntegrationHelpers.downloadBytesWithSasAsync downloadResult.DownloadUri
+            let downloadedContent = Encoding.UTF8.GetString(downloadedBytes)
+
+            Assert.That(downloadedContent, Is.EqualTo(summaryContent))
 
             let! notLinkedResponse = WorkItemIntegrationHelpers.downloadWorkItemAttachmentResponseAsync Client repositoryId workItemId (Guid.NewGuid())
 
@@ -787,121 +926,248 @@ type WorkItemAttachmentEndpointsIntegrationTests() =
 type WorkItemLinksAuthorizationIntegrationTests() =
 
     [<Test>]
-    member _.WorkItemLinkEndpointsRequireAuthenticationAndAllowAuthenticatedUsers() =
+    member _.WorkItemAndAttachmentRoutesEnforceRepositoryPermissionsByRoleAndRepositoryScope() =
         task {
-            let! repositoryId = WorkItemIntegrationHelpers.createRepositoryAsync "wi-links-auth"
-            let! workItemId = WorkItemIntegrationHelpers.createWorkItemAsync repositoryId "auth matrix"
+            let! repositoryId = WorkItemIntegrationHelpers.createRepositoryAsync "wi-permission-target"
+            let! otherRepositoryId = WorkItemIntegrationHelpers.createRepositoryAsync "wi-permission-other"
+            let repoReader = $"{Guid.NewGuid()}"
+            let repoWriter = $"{Guid.NewGuid()}"
+            let repoAdmin = $"{Guid.NewGuid()}"
+            let crossRepoPrincipal = $"{Guid.NewGuid()}"
 
-            let summaryArtifactId = Guid.NewGuid()
+            do! WorkItemIntegrationHelpers.grantRepoRoleAsync repositoryId repoReader "RepoReader"
+            do! WorkItemIntegrationHelpers.grantRepoRoleAsync repositoryId repoWriter "RepoContributor"
+            do! WorkItemIntegrationHelpers.grantRepoRoleAsync repositoryId repoAdmin "RepoAdmin"
+            do! WorkItemIntegrationHelpers.grantRepoRoleAsync otherRepositoryId crossRepoPrincipal "RepoAdmin"
+
             use unauthenticatedClient = WorkItemIntegrationHelpers.createUnauthenticatedClient ()
-            use authenticatedClient = WorkItemIntegrationHelpers.createAuthenticatedClient $"{Guid.NewGuid()}"
+            use noRoleClient = WorkItemIntegrationHelpers.createAuthenticatedClient $"{Guid.NewGuid()}"
+            use readerClient = WorkItemIntegrationHelpers.createAuthenticatedClient repoReader
+            use writerClient = WorkItemIntegrationHelpers.createAuthenticatedClient repoWriter
+            use adminClient = WorkItemIntegrationHelpers.createAuthenticatedClient repoAdmin
+            use crossRepoClient = WorkItemIntegrationHelpers.createAuthenticatedClient crossRepoPrincipal
 
-            let calls: (string * (unit -> Task<HttpResponseMessage>)) list =
-                [
-                    "/work/links/list",
-                    (fun () ->
-                        task {
-                            let parameters = Parameters.WorkItem.GetWorkItemLinksParameters()
-                            parameters.OwnerId <- ownerId
-                            parameters.OrganizationId <- organizationId
-                            parameters.RepositoryId <- repositoryId
-                            parameters.WorkItemId <- workItemId
-                            parameters.CorrelationId <- generateCorrelationId ()
-                            return! unauthenticatedClient.PostAsync("/work/links/list", createJsonContent parameters)
-                        })
-                    "/work/attachments/list",
-                    (fun () ->
-                        task {
-                            let parameters = Parameters.WorkItem.ListWorkItemAttachmentsParameters()
-                            parameters.OwnerId <- ownerId
-                            parameters.OrganizationId <- organizationId
-                            parameters.RepositoryId <- repositoryId
-                            parameters.WorkItemId <- workItemId
-                            parameters.CorrelationId <- generateCorrelationId ()
-                            return! unauthenticatedClient.PostAsync("/work/attachments/list", createJsonContent parameters)
-                        })
-                    "/work/attachments/show",
-                    (fun () ->
-                        task {
-                            let parameters = Parameters.WorkItem.ShowWorkItemAttachmentParameters()
-                            parameters.OwnerId <- ownerId
-                            parameters.OrganizationId <- organizationId
-                            parameters.RepositoryId <- repositoryId
-                            parameters.WorkItemId <- workItemId
-                            parameters.AttachmentType <- "summary"
-                            parameters.Latest <- true
-                            parameters.CorrelationId <- generateCorrelationId ()
-                            return! unauthenticatedClient.PostAsync("/work/attachments/show", createJsonContent parameters)
-                        })
-                    "/work/attachments/download",
-                    (fun () ->
-                        task {
-                            let parameters = Parameters.WorkItem.DownloadWorkItemAttachmentParameters()
-                            parameters.OwnerId <- ownerId
-                            parameters.OrganizationId <- organizationId
-                            parameters.RepositoryId <- repositoryId
-                            parameters.WorkItemId <- workItemId
-                            parameters.ArtifactId <- summaryArtifactId.ToString()
-                            parameters.CorrelationId <- generateCorrelationId ()
-                            return! unauthenticatedClient.PostAsync("/work/attachments/download", createJsonContent parameters)
-                        })
-                    "/work/links/remove/reference",
-                    (fun () -> WorkItemIntegrationHelpers.removeReferenceLinkAsync unauthenticatedClient repositoryId workItemId (Guid.NewGuid()))
-                    "/work/links/remove/promotion-set",
-                    (fun () -> WorkItemIntegrationHelpers.removePromotionSetLinkAsync unauthenticatedClient repositoryId workItemId (Guid.NewGuid()))
-                    "/work/links/remove/artifact",
-                    (fun () -> WorkItemIntegrationHelpers.removeArtifactLinkAsync unauthenticatedClient repositoryId workItemId (Guid.NewGuid()))
-                    "/work/links/remove/artifact-type",
-                    (fun () -> WorkItemIntegrationHelpers.removeArtifactTypeLinksAsync unauthenticatedClient repositoryId workItemId "summary")
-                ]
+            let! unauthenticatedCreate = WorkItemIntegrationHelpers.createWorkItemResponseAsync unauthenticatedClient repositoryId "unauth create"
+            Assert.That(unauthenticatedCreate.StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized))
 
-            for (path, invokeUnauthenticated) in calls do
-                let! response = invokeUnauthenticated ()
-                Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized), $"Expected 401 for {path}.")
+            let! noRoleCreate = WorkItemIntegrationHelpers.createWorkItemResponseAsync noRoleClient repositoryId "no role create"
+            Assert.That(noRoleCreate.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden))
 
-            let! listAuthenticated =
-                task {
-                    let parameters = Parameters.WorkItem.GetWorkItemLinksParameters()
-                    parameters.OwnerId <- ownerId
-                    parameters.OrganizationId <- organizationId
-                    parameters.RepositoryId <- repositoryId
-                    parameters.WorkItemId <- workItemId
-                    parameters.CorrelationId <- generateCorrelationId ()
-                    return! authenticatedClient.PostAsync("/work/links/list", createJsonContent parameters)
-                }
+            let! readerCreate = WorkItemIntegrationHelpers.createWorkItemResponseAsync readerClient repositoryId "reader create"
+            Assert.That(readerCreate.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden))
 
-            Assert.That(listAuthenticated.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+            let! crossRepoCreate = WorkItemIntegrationHelpers.createWorkItemResponseAsync crossRepoClient repositoryId "cross repo create"
+            Assert.That(crossRepoCreate.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden))
 
-            let! listAttachmentsAuthenticated = WorkItemIntegrationHelpers.listWorkItemAttachmentsResponseAsync authenticatedClient repositoryId workItemId
+            let! workItemId, writerCreate = WorkItemIntegrationHelpers.createWorkItemWithIdResponseAsync writerClient repositoryId "writer create"
+            Assert.That(writerCreate.StatusCode, Is.EqualTo(HttpStatusCode.OK))
 
-            Assert.That(listAttachmentsAuthenticated.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+            let! createdWorkItem = WorkItemIntegrationHelpers.getWorkItemDtoAsync writerClient repositoryId workItemId
+            let workItemNumber = createdWorkItem.WorkItemNumber.ToString()
 
-            let! showAttachmentAuthenticated =
-                WorkItemIntegrationHelpers.showWorkItemAttachmentResponseAsync authenticatedClient repositoryId workItemId "summary" true
+            let! adminCreate = WorkItemIntegrationHelpers.createWorkItemResponseAsync adminClient repositoryId "admin create"
+            Assert.That(adminCreate.StatusCode, Is.EqualTo(HttpStatusCode.OK))
 
-            Assert.That(showAttachmentAuthenticated.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
+            let! noRoleGet = WorkItemIntegrationHelpers.getWorkItemResponseAsync noRoleClient repositoryId workItemId
+            Assert.That(noRoleGet.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden))
 
-            let! downloadAttachmentAuthenticated =
-                WorkItemIntegrationHelpers.downloadWorkItemAttachmentResponseAsync authenticatedClient repositoryId workItemId summaryArtifactId
+            let! crossRepoGet = WorkItemIntegrationHelpers.getWorkItemResponseAsync crossRepoClient repositoryId workItemId
+            Assert.That(crossRepoGet.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden))
 
-            Assert.That(downloadAttachmentAuthenticated.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
+            let! readerGet = WorkItemIntegrationHelpers.getWorkItemResponseAsync readerClient repositoryId workItemNumber
+            Assert.That(readerGet.StatusCode, Is.EqualTo(HttpStatusCode.OK))
 
-            let! removeReferenceAuthenticated = WorkItemIntegrationHelpers.removeReferenceLinkAsync authenticatedClient repositoryId workItemId (Guid.NewGuid())
+            let! writerGet = WorkItemIntegrationHelpers.getWorkItemResponseAsync writerClient repositoryId workItemId
+            Assert.That(writerGet.StatusCode, Is.EqualTo(HttpStatusCode.OK))
 
-            Assert.That(removeReferenceAuthenticated.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+            let! adminGet = WorkItemIntegrationHelpers.getWorkItemResponseAsync adminClient repositoryId workItemId
+            Assert.That(adminGet.StatusCode, Is.EqualTo(HttpStatusCode.OK))
 
-            let! removePromotionAuthenticated =
-                WorkItemIntegrationHelpers.removePromotionSetLinkAsync authenticatedClient repositoryId workItemId (Guid.NewGuid())
+            let! readerUpdate = WorkItemIntegrationHelpers.updateWorkItemResponseAsync readerClient repositoryId workItemId
+            Assert.That(readerUpdate.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden))
 
-            Assert.That(removePromotionAuthenticated.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+            let! crossRepoUpdate = WorkItemIntegrationHelpers.updateWorkItemResponseAsync crossRepoClient repositoryId workItemId
+            Assert.That(crossRepoUpdate.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden))
 
-            let! removeArtifactAuthenticated = WorkItemIntegrationHelpers.removeArtifactLinkAsync authenticatedClient repositoryId workItemId (Guid.NewGuid())
+            let! writerUpdate = WorkItemIntegrationHelpers.updateWorkItemResponseAsync writerClient repositoryId workItemId
+            Assert.That(writerUpdate.StatusCode, Is.EqualTo(HttpStatusCode.OK))
 
-            Assert.That(removeArtifactAuthenticated.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+            let! adminUpdate = WorkItemIntegrationHelpers.updateWorkItemResponseAsync adminClient repositoryId workItemId
+            Assert.That(adminUpdate.StatusCode, Is.EqualTo(HttpStatusCode.OK))
 
-            let! removeArtifactTypeAuthenticated = WorkItemIntegrationHelpers.removeArtifactTypeLinksAsync authenticatedClient repositoryId workItemId "summary"
+            let linkedArtifactId = Guid.NewGuid()
+            let! readerLink = WorkItemIntegrationHelpers.linkArtifactResponseAsync readerClient repositoryId workItemId linkedArtifactId
+            Assert.That(readerLink.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden))
 
-            Assert.That(removeArtifactTypeAuthenticated.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+            let! crossRepoLink = WorkItemIntegrationHelpers.linkArtifactResponseAsync crossRepoClient repositoryId workItemId linkedArtifactId
+            Assert.That(crossRepoLink.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden))
+
+            let! writerLink = WorkItemIntegrationHelpers.linkArtifactResponseAsync writerClient repositoryId workItemId linkedArtifactId
+            Assert.That(writerLink.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+
+            let! linksForReader = WorkItemIntegrationHelpers.getLinksResponseAsync readerClient repositoryId workItemId
+            Assert.That(linksForReader.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+
+            let! linksForNoRole = WorkItemIntegrationHelpers.getLinksResponseAsync noRoleClient repositoryId workItemId
+            Assert.That(linksForNoRole.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden))
+
+            let! linksForCrossRepo = WorkItemIntegrationHelpers.getLinksResponseAsync crossRepoClient repositoryId workItemId
+            Assert.That(linksForCrossRepo.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden))
+
+            let summaryContent = "permission matrix summary"
+
+            let! readerAddSummary =
+                WorkItemIntegrationHelpers.addSummaryResponseAsync readerClient repositoryId workItemId summaryContent None None None (generateCorrelationId ())
+
+            Assert.That(readerAddSummary.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden))
+
+            let! crossRepoAddSummary =
+                WorkItemIntegrationHelpers.addSummaryResponseAsync
+                    crossRepoClient
+                    repositoryId
+                    workItemId
+                    summaryContent
+                    None
+                    None
+                    None
+                    (generateCorrelationId ())
+
+            Assert.That(crossRepoAddSummary.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden))
+
+            let! addedSummary =
+                WorkItemIntegrationHelpers.addSummaryAsync writerClient repositoryId workItemId summaryContent None None (generateCorrelationId ())
+
+            let summaryArtifactId = Guid.Parse(addedSummary.SummaryArtifactId)
+
+            let! readerAttachments = WorkItemIntegrationHelpers.listWorkItemAttachmentsResponseAsync readerClient repositoryId workItemNumber
+            Assert.That(readerAttachments.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+
+            let! noRoleAttachments = WorkItemIntegrationHelpers.listWorkItemAttachmentsResponseAsync noRoleClient repositoryId workItemId
+            Assert.That(noRoleAttachments.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden))
+
+            let! crossRepoAttachments = WorkItemIntegrationHelpers.listWorkItemAttachmentsResponseAsync crossRepoClient repositoryId workItemId
+            Assert.That(crossRepoAttachments.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden))
+
+            let! readerShow = WorkItemIntegrationHelpers.showWorkItemAttachmentResponseAsync readerClient repositoryId workItemNumber "summary" true
+            Assert.That(readerShow.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+
+            let! noRoleShow = WorkItemIntegrationHelpers.showWorkItemAttachmentResponseAsync noRoleClient repositoryId workItemId "summary" true
+            Assert.That(noRoleShow.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden))
+
+            let! readerDownload = WorkItemIntegrationHelpers.downloadWorkItemAttachmentResponseAsync readerClient repositoryId workItemId summaryArtifactId
+            Assert.That(readerDownload.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+
+            let! noRoleDownload = WorkItemIntegrationHelpers.downloadWorkItemAttachmentResponseAsync noRoleClient repositoryId workItemId summaryArtifactId
+            Assert.That(noRoleDownload.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden))
+
+            let! readerRemoveReference = WorkItemIntegrationHelpers.removeReferenceLinkAsync readerClient repositoryId workItemId (Guid.NewGuid())
+            Assert.That(readerRemoveReference.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden))
+
+            let! writerRemoveReference = WorkItemIntegrationHelpers.removeReferenceLinkAsync writerClient repositoryId workItemId (Guid.NewGuid())
+            Assert.That(writerRemoveReference.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+
+            let! adminRemoveArtifact = WorkItemIntegrationHelpers.removeArtifactLinkAsync adminClient repositoryId workItemId linkedArtifactId
+            Assert.That(adminRemoveArtifact.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+        }
+
+    [<Test>]
+    member _.ArtifactRoutesEnforceRepositoryPermissionsAndPreserveDownloadIdentityPathAndBytes() =
+        task {
+            let! repositoryId = WorkItemIntegrationHelpers.createRepositoryAsync "artifact-permission-target"
+            let! otherRepositoryId = WorkItemIntegrationHelpers.createRepositoryAsync "artifact-permission-other"
+            let repoReader = $"{Guid.NewGuid()}"
+            let repoWriter = $"{Guid.NewGuid()}"
+            let crossRepoPrincipal = $"{Guid.NewGuid()}"
+
+            do! WorkItemIntegrationHelpers.grantRepoRoleAsync repositoryId repoReader "RepoReader"
+            do! WorkItemIntegrationHelpers.grantRepoRoleAsync repositoryId repoWriter "RepoContributor"
+            do! WorkItemIntegrationHelpers.grantRepoRoleAsync otherRepositoryId crossRepoPrincipal "RepoAdmin"
+
+            use unauthenticatedClient = WorkItemIntegrationHelpers.createUnauthenticatedClient ()
+            use noRoleClient = WorkItemIntegrationHelpers.createAuthenticatedClient $"{Guid.NewGuid()}"
+            use readerClient = WorkItemIntegrationHelpers.createAuthenticatedClient repoReader
+            use writerClient = WorkItemIntegrationHelpers.createAuthenticatedClient repoWriter
+            use crossRepoClient = WorkItemIntegrationHelpers.createAuthenticatedClient crossRepoPrincipal
+
+            let payload = Encoding.UTF8.GetBytes("artifact permission payload")
+            let artifactId = Guid.NewGuid()
+
+            let! unauthenticatedCreate =
+                WorkItemIntegrationHelpers.createArtifactResponseAsync
+                    unauthenticatedClient
+                    repositoryId
+                    "ValidationOutput"
+                    "text/plain"
+                    (int64 payload.Length)
+                    (Some artifactId)
+
+            Assert.That(unauthenticatedCreate.StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized))
+
+            let! noRoleCreate =
+                WorkItemIntegrationHelpers.createArtifactResponseAsync
+                    noRoleClient
+                    repositoryId
+                    "ValidationOutput"
+                    "text/plain"
+                    (int64 payload.Length)
+                    (Some artifactId)
+
+            Assert.That(noRoleCreate.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden))
+
+            let! readerCreate =
+                WorkItemIntegrationHelpers.createArtifactResponseAsync
+                    readerClient
+                    repositoryId
+                    "ValidationOutput"
+                    "text/plain"
+                    (int64 payload.Length)
+                    (Some artifactId)
+
+            Assert.That(readerCreate.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden))
+
+            let! crossRepoCreate =
+                WorkItemIntegrationHelpers.createArtifactResponseAsync
+                    crossRepoClient
+                    repositoryId
+                    "ValidationOutput"
+                    "text/plain"
+                    (int64 payload.Length)
+                    (Some artifactId)
+
+            Assert.That(crossRepoCreate.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden))
+
+            let! createResult =
+                WorkItemIntegrationHelpers.createArtifactResultAsync writerClient repositoryId "ValidationOutput" "text/plain" payload (Some artifactId)
+
+            Assert.That(createResult.ArtifactId, Is.EqualTo(artifactId))
+            Assert.That(createResult.BlobPath, Does.Contain(artifactId.ToString()))
+            Assert.That(createResult.BlobPath, Does.StartWith("grace-artifacts/"))
+
+            do! WorkItemIntegrationHelpers.uploadBytesWithSasAsync createResult.UploadUri payload
+
+            let! noRoleDownload = WorkItemIntegrationHelpers.getArtifactDownloadUriResponseAsync noRoleClient repositoryId artifactId
+            Assert.That(noRoleDownload.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden))
+
+            let! crossRepoDownload = WorkItemIntegrationHelpers.getArtifactDownloadUriResponseAsync crossRepoClient repositoryId artifactId
+            Assert.That(crossRepoDownload.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden))
+
+            let! mismatchedScopeDownload = WorkItemIntegrationHelpers.getArtifactDownloadUriResponseAsync crossRepoClient otherRepositoryId artifactId
+            Assert.That(mismatchedScopeDownload.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
+
+            let! mismatchedScopeBody = mismatchedScopeDownload.Content.ReadAsStringAsync()
+            Assert.That(mismatchedScopeBody, Does.Contain(ArtifactError.getErrorMessage ArtifactError.ArtifactDoesNotExist))
+
+            let! readerDownloadResponse = WorkItemIntegrationHelpers.getArtifactDownloadUriResponseAsync readerClient repositoryId artifactId
+            Assert.That(readerDownloadResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+
+            let! readerDownloadReturnValue = deserializeContent<GraceReturnValue<ArtifactDownloadUriResult>> readerDownloadResponse
+            Assert.That(readerDownloadReturnValue.ReturnValue.ArtifactId, Is.EqualTo(artifactId))
+
+            let downloadUri = readerDownloadReturnValue.ReturnValue.DownloadUri
+            Assert.That(String.IsNullOrWhiteSpace(downloadUri.AbsoluteUri), Is.False)
+
+            let! downloadedBytes = WorkItemIntegrationHelpers.downloadBytesWithSasAsync downloadUri.AbsoluteUri
+            Assert.That(Convert.ToHexString(downloadedBytes), Is.EqualTo(Convert.ToHexString(payload)))
         }
 
 [<NonParallelizable>]
