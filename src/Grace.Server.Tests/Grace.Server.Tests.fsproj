@@ -33,6 +33,7 @@
     <Compile Include="NotificationHub.Tests.fs" />
     <Compile Include="AgentSession.Server.Tests.fs" />
     <Compile Include="WorkItem.Integration.Server.Tests.fs" />
+    <Compile Include="RestartDurability.Server.Tests.fs" />
     <Compile Include="Policy.Server.Tests.fs" />
     <Compile Include="Queue.Integration.Server.Tests.fs" />
     <Compile Include="PromotionSet.Integration.Server.Tests.fs" />
