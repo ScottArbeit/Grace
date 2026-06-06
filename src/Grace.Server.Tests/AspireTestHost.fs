@@ -931,6 +931,7 @@ module AspireTestHost =
             Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.GraceAuthOidcAuthority, "https://auth.grace.test")
             Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.GraceAuthOidcAudience, "https://api.grace.test")
             Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.GraceAuthOidcCliClientId, "grace-cli-test-client")
+            Environment.SetEnvironmentVariable("grace__webhooks__outbound_urls__allow_unsafe_local_development", "true")
 
             if not <| String.IsNullOrWhiteSpace bootstrapUserId then
                 Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.GraceAuthzBootstrapSystemAdminUsers, bootstrapUserId)
@@ -1292,4 +1293,97 @@ module AspireTestHost =
                     if matchesOwnerCreated then found <- Some message
 
             return found.Value
+        }
+
+    let sendGraceEventAsync (state: TestHostState) (graceEvent: Events.GraceEvent) (metadata: Grace.Types.Common.EventMetadata) =
+        task {
+            let client = ServiceBusClient(state.ServiceBusConnectionString)
+            use _client = client
+            let sender = client.CreateSender(state.ServiceBusTopic)
+
+            let payload = JsonSerializer.SerializeToUtf8Bytes(graceEvent, Constants.JsonSerializerOptions)
+            let message = ServiceBusMessage(payload)
+            message.ContentType <- "application/json"
+            message.Subject <- "GraceEvent"
+            message.CorrelationId <- metadata.CorrelationId
+            message.MessageId <- $"{metadata.CorrelationId}-{Guid.NewGuid():N}"
+            message.ApplicationProperties[ "graceEventType" ] <- getDiscriminatedUnionFullName graceEvent
+
+            let metadataProperties = metadata.Properties |> Seq.toArray
+            let mutable index = 0
+
+            while index < metadataProperties.Length do
+                let property = metadataProperties[index]
+                message.ApplicationProperties[ property.Key ] <- property.Value
+                index <- index + 1
+
+            do! sender.SendMessageAsync(message)
+            do! sender.DisposeAsync().AsTask()
+        }
+
+    let sendRawServiceBusMessageAsync (state: TestHostState) (body: string) (messageId: string) (correlationId: string) =
+        task {
+            let client = ServiceBusClient(state.ServiceBusConnectionString)
+            use _client = client
+            let sender = client.CreateSender(state.ServiceBusTopic)
+            let message = ServiceBusMessage(BinaryData.FromString(body))
+            message.ContentType <- "application/json"
+            message.Subject <- "GraceEvent"
+            message.CorrelationId <- correlationId
+            message.MessageId <- messageId
+
+            do! sender.SendMessageAsync(message)
+            do! sender.DisposeAsync().AsTask()
+        }
+
+    let tryWaitForGraceEventAsync (state: TestHostState) (timeout: TimeSpan) (predicate: Events.GraceEvent -> bool) =
+        task {
+            let client, receiver = createServiceBusReceiver state
+            use _client = client
+            use _receiver = receiver
+
+            let sw = Stopwatch.StartNew()
+            let lastBodies = ResizeArray<string>()
+            let maxBodies = 10
+            let mutable found: Events.GraceEvent option = None
+
+            while found.IsNone && sw.Elapsed < timeout do
+                let remaining = timeout - sw.Elapsed
+
+                let waitTime =
+                    if remaining < TimeSpan.FromSeconds(1.0) then
+                        remaining
+                    else
+                        TimeSpan.FromSeconds(1.0)
+
+                let! message = receiver.ReceiveMessageAsync(waitTime)
+
+                if not (isNull message) then
+                    let body = message.Body.ToString()
+
+                    if lastBodies.Count >= maxBodies then lastBodies.RemoveAt(0)
+
+                    lastBodies.Add(body)
+
+                    try
+                        let graceEvent = JsonSerializer.Deserialize<Events.GraceEvent>(body, Constants.JsonSerializerOptions)
+
+                        if predicate graceEvent then found <- Some graceEvent
+                    with
+                    | ex -> Console.WriteLine($"Service Bus test subscription message was not a GraceEvent: {ex.Message}; Body={body}")
+
+            return found
+        }
+
+    let waitForGraceEventAsync (state: TestHostState) (timeout: TimeSpan) (description: string) (predicate: Events.GraceEvent -> bool) =
+        task {
+            match! tryWaitForGraceEventAsync state timeout predicate with
+            | Some graceEvent -> return graceEvent
+            | None ->
+                return
+                    raise (
+                        TimeoutException(
+                            $"Timed out waiting for {description} on Service Bus test subscription. Topic={state.ServiceBusTopic}; TestSubscription={state.ServiceBusTestSubscription}; Connection={redactServiceBusConnectionString state.ServiceBusConnectionString}"
+                        )
+                    )
         }
