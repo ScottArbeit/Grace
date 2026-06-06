@@ -134,17 +134,27 @@ module CommandOutputContract =
     let private schemaObject (title: string) (properties: (string * obj) list) (required: string array) =
         let schema = Dictionary<string, obj>(StringComparer.Ordinal)
         schema["$schema"] <- "https://json-schema.org/draft/2020-12/schema"
-        schema["Title"] <- title
-        schema["Type"] <- "object"
-        schema["Required"] <- required
-        schema["Properties"] <- Dictionary<string, obj>(properties |> Seq.map KeyValuePair)
+        schema["title"] <- title
+        schema["type"] <- "object"
+        schema["required"] <- required
+        schema["properties"] <- Dictionary<string, obj>(properties |> Seq.map KeyValuePair)
         box schema
 
-    let private scalarSchema (typeName: string) = box {| Type = typeName |}
+    let private scalarSchema (typeName: string) =
+        let schema = Dictionary<string, obj>(StringComparer.Ordinal)
+        schema["type"] <- typeName
+        box schema
 
-    let private anySchema description = box {| Description = description |}
+    let private anySchema description =
+        let schema = Dictionary<string, obj>(StringComparer.Ordinal)
+        schema["description"] <- description
+        box schema
 
-    let private nullableObjectSchema description = box {| Type = [| "object"; "null" |]; Description = description |}
+    let private nullableObjectSchema description =
+        let schema = Dictionary<string, obj>(StringComparer.Ordinal)
+        schema["type"] <- [| "object"; "null" |]
+        schema["description"] <- description
+        box schema
 
     let private propertyBagSchema =
         let propertyEntry =
@@ -156,7 +166,11 @@ module CommandOutputContract =
                 ]
                 [| "Key"; "Value" |]
 
-        box {| Type = "array"; Items = propertyEntry; Description = "CLI stdout representation of Grace Properties metadata." |}
+        let schema = Dictionary<string, obj>(StringComparer.Ordinal)
+        schema["type"] <- "array"
+        schema["items"] <- propertyEntry
+        schema["description"] <- "CLI stdout representation of Grace Properties metadata."
+        box schema
 
     let private cliProperties commandId provenance =
         [|
@@ -177,84 +191,6 @@ module CommandOutputContract =
     let private unsupportedReturnValueExample reason = box {| Status = "metadata-incomplete"; Reason = reason |}
 
     let private stringReturnValueSchema = scalarSchema "string"
-
-    let private repositoryDtoSchema =
-        schemaObject
-            "RepositoryDto"
-            [
-                "RepositoryId", scalarSchema "string"
-                "RepositoryName", scalarSchema "string"
-                "OwnerId", scalarSchema "string"
-                "OrganizationId", scalarSchema "string"
-                "DefaultBranchId", scalarSchema "string"
-                "RepositoryType", scalarSchema "string"
-                "AnonymousAccess", scalarSchema "boolean"
-            ]
-            [|
-                "RepositoryId"
-                "RepositoryName"
-                "OwnerId"
-                "OrganizationId"
-            |]
-
-    let private workItemDtoSchema =
-        schemaObject
-            "WorkItemDto"
-            [
-                "WorkItemId", scalarSchema "string"
-                "OwnerId", scalarSchema "string"
-                "OrganizationId", scalarSchema "string"
-                "RepositoryId", scalarSchema "string"
-                "Title", scalarSchema "string"
-                "Status", scalarSchema "string"
-                "CreatedAt", scalarSchema "string"
-                "UpdatedAt", scalarSchema "string"
-            ]
-            [|
-                "WorkItemId"
-                "OwnerId"
-                "OrganizationId"
-                "RepositoryId"
-                "Title"
-                "Status"
-            |]
-
-    let private permissionCheckResultSchema =
-        schemaObject
-            "PermissionCheckResult"
-            [
-                "Allowed", scalarSchema "boolean"
-                "Reason", scalarSchema "string"
-                "MatchedAssignments", box {| Type = "array"; Items = anySchema "Matched role or path assignment." |}
-            ]
-            [| "Allowed"; "Reason" |]
-
-    let private repositoryDtoExample =
-        box
-            {|
-                RepositoryId = "00000000-0000-0000-0000-000000000001"
-                RepositoryName = "example-repository"
-                OwnerId = "00000000-0000-0000-0000-000000000002"
-                OrganizationId = "00000000-0000-0000-0000-000000000003"
-                DefaultBranchId = "00000000-0000-0000-0000-000000000004"
-                RepositoryType = "Public"
-                AnonymousAccess = false
-            |}
-
-    let private workItemDtoExample =
-        box
-            {|
-                WorkItemId = "00000000-0000-0000-0000-000000000010"
-                OwnerId = "00000000-0000-0000-0000-000000000002"
-                OrganizationId = "00000000-0000-0000-0000-000000000003"
-                RepositoryId = "00000000-0000-0000-0000-000000000001"
-                Title = "Example work item"
-                Status = "Open"
-                CreatedAt = "2026-06-05T00:00:00Z"
-                UpdatedAt = "2026-06-05T00:00:00Z"
-            |}
-
-    let private permissionCheckResultExample = box {| Allowed = true; Reason = "Matched an example role assignment."; MatchedAssignments = Array.empty<obj> |}
 
     let private supportedReturnValueContract name provenance schema example notes =
         { Name = name; Provenance = provenance; Status = SchemaReady; Schema = schema; Example = example; Notes = notes }
@@ -305,32 +241,17 @@ module CommandOutputContract =
     let private returnValueContractFor (identity: CommandIdentity) (envelopeContract: EnvelopeContract) =
         match identity.CommandId, envelopeContract with
         | "repository.get", ExistingGraceResultEnvelope ReuseExistingApiOrSdkDto ->
-            supportedReturnValueContract
+            incompleteReturnValueContract
                 "RepositoryDto"
-                "Grace.Types.Repository.RepositoryDto"
-                repositoryDtoSchema
-                repositoryDtoExample
-                [
-                    "Representative API/SDK DTO schema for a common Grace result envelope command."
-                ]
+                "RepositoryDto metadata is incomplete: src/Grace.Types/Repository.Types.fs declares additional emitted fields that are not yet represented in the CLI contract registry."
         | "workitem.show", ExistingGraceResultEnvelope ReuseExistingApiOrSdkDto ->
-            supportedReturnValueContract
+            incompleteReturnValueContract
                 "WorkItemDto"
-                "Grace.Types.WorkItem.WorkItemDto"
-                workItemDtoSchema
-                workItemDtoExample
-                [
-                    "Representative API/SDK DTO schema for a common Grace result envelope command."
-                ]
+                "WorkItemDto metadata is incomplete: src/Grace.Types/WorkItem.Types.fs declares additional emitted fields that are not yet represented in the CLI contract registry."
         | "access.check", ExistingGraceResultEnvelope ReuseExistingApiOrSdkDto ->
-            supportedReturnValueContract
+            incompleteReturnValueContract
                 "PermissionCheckResult"
-                "Grace.Types.Authorization.PermissionCheckResult"
-                permissionCheckResultSchema
-                permissionCheckResultExample
-                [
-                    "Representative command result DTO schema for a common Grace result envelope command."
-                ]
+                "PermissionCheckResult metadata is incomplete: src/Grace.Types/Authorization.Types.fs emits the Allowed/Denied discriminated union, not an object with Allowed and Reason fields."
         | "auth.logout", ExistingGraceResultEnvelope ReuseExistingApiOrSdkDto ->
             supportedReturnValueContract
                 "string"

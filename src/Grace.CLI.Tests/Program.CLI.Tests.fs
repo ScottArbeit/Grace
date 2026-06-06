@@ -312,7 +312,7 @@ module HelpDoesNotReadConfigTests =
                 "SuccessSchema"
             )
                 .GetProperty(
-                "Properties"
+                "properties"
             )
                 .GetProperty(
                 "ReturnValue"
@@ -329,8 +329,8 @@ module HelpDoesNotReadConfigTests =
             let exitCode, output =
                 runWithCapturedOutput [| "--output"
                                          "Json"
-                                         "workitem"
-                                         "show"
+                                         "auth"
+                                         "logout"
                                          "--examples" |]
 
             exitCode |> should equal 0
@@ -345,23 +345,23 @@ module HelpDoesNotReadConfigTests =
                 .GetProperty("Command")
                 .GetProperty("Id")
                 .GetString()
-            |> should equal "workitem.show"
+            |> should equal "auth.logout"
 
             let examples = rootElement.GetProperty("Examples")
             examples.GetArrayLength() |> should equal 2
 
-            examples[0].GetProperty("Document").GetProperty(
-                "ReturnValue"
-            )
-                .ValueKind
-            |> should equal JsonValueKind.Object)
+            examples[0]
+                .GetProperty("Document")
+                .GetProperty("ReturnValue")
+                .GetString()
+            |> should equal "Signed out.")
 
     [<Test>]
     let ``examples for missing dto metadata emit explicit unsupported document`` () =
         withTempDir (fun _ ->
             let exitCode, output =
-                runWithCapturedOutput [| "repository"
-                                         "init"
+                runWithCapturedOutput [| "workitem"
+                                         "show"
                                          "--examples" |]
 
             exitCode |> should equal 0
@@ -387,7 +387,7 @@ module HelpDoesNotReadConfigTests =
                 .GetProperty("Document")
                 .GetProperty("CommandId")
                 .GetString()
-            |> should equal "repository.init")
+            |> should equal "workitem.show")
 
     [<Test>]
     let ``nested command schema resolves full command id`` () =

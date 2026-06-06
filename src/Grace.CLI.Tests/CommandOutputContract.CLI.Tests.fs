@@ -180,7 +180,7 @@ module CommandOutputContractRegistryTests =
 
     [<Test>]
     let ``schema ready registry entries describe success and error envelopes`` () =
-        let identity = CommandOutputContract.commandIdentity [ "workitem" ] "show"
+        let identity = CommandOutputContract.commandIdentity [ "auth" ] "logout"
 
         match CommandOutputContract.tryFind identity with
         | Some entry ->
@@ -188,42 +188,47 @@ module CommandOutputContractRegistryTests =
 
             document.Kind |> should equal "schema"
 
-            document.Command.Id
-            |> should equal "workitem.show"
+            document.Command.Id |> should equal "auth.logout"
 
             match document.Schema with
             | Some schema ->
                 schema.Status |> should equal "schema-ready"
 
                 schema.ReturnValueContract
-                |> should equal "WorkItemDto"
+                |> should equal "string"
 
                 use successSchema = JsonDocument.Parse(Grace.Shared.Utilities.serialize schema.SuccessSchema)
                 let successRoot = successSchema.RootElement
 
-                successRoot.GetProperty("Title").GetString()
-                |> should equal "GraceReturnValue<WorkItemDto>"
+                successRoot.GetProperty("title").GetString()
+                |> should equal "GraceReturnValue<string>"
 
-                let properties = successRoot.GetProperty("Properties")
+                let properties = successRoot.GetProperty("properties")
+
+                properties
+                    .GetProperty("ReturnValue")
+                    .GetProperty("type")
+                    .GetString()
+                |> should equal "string"
 
                 properties.GetProperty("ReturnValue").ValueKind
                 |> should equal JsonValueKind.Object
 
                 properties
                     .GetProperty("EventTime")
-                    .GetProperty("Type")
+                    .GetProperty("type")
                     .GetString()
                 |> should equal "string"
 
                 properties
                     .GetProperty("CorrelationId")
-                    .GetProperty("Type")
+                    .GetProperty("type")
                     .GetString()
                 |> should equal "string"
 
                 properties
                     .GetProperty("Properties")
-                    .GetProperty("Type")
+                    .GetProperty("type")
                     .GetString()
                 |> should equal "array"
 
@@ -231,19 +236,19 @@ module CommandOutputContractRegistryTests =
 
                 errorSchema
                     .RootElement
-                    .GetProperty("Title")
+                    .GetProperty("title")
                     .GetString()
                 |> should equal "GraceError"
 
                 errorSchema
                     .RootElement
-                    .GetProperty("Properties")
+                    .GetProperty("properties")
                     .GetProperty("Error")
-                    .GetProperty("Type")
+                    .GetProperty("type")
                     .GetString()
                 |> should equal "string"
             | None -> Assert.Fail("Schema introspection should include a schema document.")
-        | None -> Assert.Fail("workitem.show should have a registry entry.")
+        | None -> Assert.Fail("auth.logout should have a registry entry.")
 
     [<Test>]
     let ``metadata incomplete registry entries are explicit`` () =
@@ -275,8 +280,41 @@ module CommandOutputContractRegistryTests =
         | None -> Assert.Fail("repository.init should have a registry entry.")
 
     [<Test>]
+    let ``dto and union contracts are not schema ready until their full emitted shapes are declared`` () =
+        let cases =
+            [
+                CommandOutputContract.commandIdentity [ "repository" ] "get", "RepositoryDto metadata is incomplete"
+                CommandOutputContract.commandIdentity [ "workitem" ] "show", "WorkItemDto metadata is incomplete"
+                CommandOutputContract.commandIdentity [ "access" ] "check", "PermissionCheckResult metadata is incomplete"
+            ]
+
+        for identity, expectedNote in cases do
+            match CommandOutputContract.tryFind identity with
+            | Some entry ->
+                entry.ReturnValueContract.Status
+                |> should equal MetadataIncomplete
+
+                let schemaDocument = CommandOutputContract.introspectionDocument Schema entry
+
+                match schemaDocument.Schema with
+                | Some schema ->
+                    schema.Status
+                    |> should equal "metadata-incomplete"
+
+                    schema.Notes
+                    |> List.exists (fun note -> note.Contains(expectedNote, StringComparison.Ordinal))
+                    |> should equal true
+                | None -> Assert.Fail($"Expected schema document for {identity.CommandId}.")
+
+                let examplesDocument = CommandOutputContract.introspectionDocument Examples entry
+
+                examplesDocument.Examples[0].Name
+                |> should equal "metadata-incomplete"
+            | None -> Assert.Fail($"{identity.CommandId} should have a registry entry.")
+
+    [<Test>]
     let ``examples for schema ready commands parse as Grace envelopes`` () =
-        let identity = CommandOutputContract.commandIdentity [ "access" ] "check"
+        let identity = CommandOutputContract.commandIdentity [ "auth" ] "logout"
 
         match CommandOutputContract.tryFind identity with
         | Some entry ->
@@ -293,11 +331,8 @@ module CommandOutputContractRegistryTests =
             use success = JsonDocument.Parse(Grace.Shared.Utilities.serialize document.Examples[0].Document)
             let successRoot = success.RootElement
 
-            successRoot
-                .GetProperty("ReturnValue")
-                .GetProperty("Allowed")
-                .GetBoolean()
-            |> should equal true
+            successRoot.GetProperty("ReturnValue").GetString()
+            |> should equal "Signed out."
 
             let successProperties = successRoot.GetProperty("Properties")
 
@@ -317,4 +352,4 @@ module CommandOutputContractRegistryTests =
 
             errorRoot.GetProperty("CorrelationId").GetString()
             |> should equal "correlation-id"
-        | None -> Assert.Fail("access.check should have a registry entry.")
+        | None -> Assert.Fail("auth.logout should have a registry entry.")
