@@ -135,9 +135,9 @@ emits JSON regardless of `--output`.
 `--select` applies only to `ReturnValue` in V1. It never projects `EventTime`, `CorrelationId`, `Properties`,
 `Exception`, or `Error`. The V1 grammar is deliberately small:
 
-- Dot-separated property paths over `ReturnValue`.
-- Comma-separated paths when multiple fields are selected.
-- Array/list item projection only when the implementation can keep the result shape deterministic.
+- Exactly one dot-separated property path over `ReturnValue`.
+- Comma-separated multi-path selectors are rejected in V1.
+- Array/list item projection is rejected in V1.
 - No predicates.
 - No wildcards.
 - No functions.

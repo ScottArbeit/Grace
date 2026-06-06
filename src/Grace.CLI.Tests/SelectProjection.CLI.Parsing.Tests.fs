@@ -50,6 +50,14 @@ module SelectProjectionParsingTests =
             |> should equal "corr-select-parse"
 
     [<Test>]
+    let ``comma-separated multi-path selectors are rejected in V1`` () =
+        match parse "Value,Name" with
+        | Ok _ -> Assert.Fail("Expected comma-separated selector to be rejected.")
+        | Error error ->
+            error.Error
+            |> should contain "supports only dot-separated ReturnValue property names"
+
+    [<Test>]
     let ``project returns selected nested property`` () =
         match parse "Container.Value" with
         | Error error -> Assert.Fail(error.Error)
