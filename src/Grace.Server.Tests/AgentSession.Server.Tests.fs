@@ -72,6 +72,20 @@ module private AgentSessionTestHelpers =
 
     let stopAsync parameters = postSessionAsync<AgentSessionOperationResult> "/agent/session/stop" parameters
 
+    let tryStopAsync repositoryId agentId sessionId workItemId =
+        task {
+            if not <| String.IsNullOrWhiteSpace sessionId then
+                try
+                    let parameters = stopParameters repositoryId agentId sessionId workItemId $"cleanup-stop-{Guid.NewGuid():N}"
+                    let! response = Client.PostAsync("/agent/session/stop", createJsonContent parameters)
+
+                    if not response.IsSuccessStatusCode then
+                        let! body = response.Content.ReadAsStringAsync()
+                        TestContext.Error.WriteLine($"Agent session cleanup failed: {response.StatusCode}; {body}")
+                with
+                | ex -> TestContext.Error.WriteLine($"Agent session cleanup threw: {ex}")
+        }
+
     let statusAsync parameters = postSessionAsync<AgentSessionOperationResult> "/agent/session/status" parameters
 
     let activeAsync parameters = postSessionAsync<AgentSessionOperationResult> "/agent/session/active" parameters
@@ -90,104 +104,129 @@ type AgentSessionServerTests() =
             let firstWorkItem = "262"
             let secondWorkItem = "263"
             let firstStartOperationId = $"start-{Guid.NewGuid():N}"
+            let mutable firstSessionId = String.Empty
+            let mutable replacementSessionId = String.Empty
 
-            let! started = AgentSessionTestHelpers.startAsync (AgentSessionTestHelpers.startParameters repositoryId agentId firstWorkItem firstStartOperationId)
+            try
+                let! started =
+                    AgentSessionTestHelpers.startAsync (AgentSessionTestHelpers.startParameters repositoryId agentId firstWorkItem firstStartOperationId)
 
-            Assert.That(started.ReturnValue.WasIdempotentReplay, Is.False)
-            Assert.That(started.ReturnValue.OperationId, Is.EqualTo(firstStartOperationId))
-            Assert.That(started.ReturnValue.Session.SessionId, Is.EqualTo(firstStartOperationId))
-            Assert.That(started.ReturnValue.Session.AgentId, Is.EqualTo(agentId))
-            Assert.That(started.ReturnValue.Session.WorkItemIdOrNumber, Is.EqualTo(firstWorkItem))
-            Assert.That(started.ReturnValue.Session.Source, Is.EqualTo("server-tests"))
-            Assert.That(started.ReturnValue.Session.LifecycleState, Is.EqualTo(AgentSessionLifecycleState.Active))
+                firstSessionId <- started.ReturnValue.Session.SessionId
 
-            let! duplicateStart =
-                AgentSessionTestHelpers.startAsync (AgentSessionTestHelpers.startParameters repositoryId agentId firstWorkItem firstStartOperationId)
+                Assert.That(started.ReturnValue.WasIdempotentReplay, Is.False)
+                Assert.That(started.ReturnValue.OperationId, Is.EqualTo(firstStartOperationId))
+                Assert.That(started.ReturnValue.Session.SessionId, Is.EqualTo(firstStartOperationId))
+                Assert.That(started.ReturnValue.Session.AgentId, Is.EqualTo(agentId))
+                Assert.That(started.ReturnValue.Session.WorkItemIdOrNumber, Is.EqualTo(firstWorkItem))
+                Assert.That(started.ReturnValue.Session.Source, Is.EqualTo("server-tests"))
+                Assert.That(started.ReturnValue.Session.LifecycleState, Is.EqualTo(AgentSessionLifecycleState.Active))
 
-            Assert.That(duplicateStart.ReturnValue.WasIdempotentReplay, Is.True)
-            Assert.That(duplicateStart.ReturnValue.Session.SessionId, Is.EqualTo(started.ReturnValue.Session.SessionId))
+                let! duplicateStart =
+                    AgentSessionTestHelpers.startAsync (AgentSessionTestHelpers.startParameters repositoryId agentId firstWorkItem firstStartOperationId)
 
-            let conflictingStartParameters = AgentSessionTestHelpers.startParameters repositoryId agentId secondWorkItem $"start-{Guid.NewGuid():N}"
+                Assert.That(duplicateStart.ReturnValue.WasIdempotentReplay, Is.True)
+                Assert.That(duplicateStart.ReturnValue.Session.SessionId, Is.EqualTo(started.ReturnValue.Session.SessionId))
 
-            let! conflictingStart = Client.PostAsync("/agent/session/start", createJsonContent conflictingStartParameters)
+                let conflictingStartParameters = AgentSessionTestHelpers.startParameters repositoryId agentId secondWorkItem $"start-{Guid.NewGuid():N}"
 
-            let! conflictingStartBody = conflictingStart.Content.ReadAsStringAsync()
-            Assert.That(conflictingStart.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), conflictingStartBody)
-            Assert.That(conflictingStartBody, Does.Contain(firstWorkItem))
+                let! conflictingStart = Client.PostAsync("/agent/session/start", createJsonContent conflictingStartParameters)
 
-            let! active = AgentSessionTestHelpers.activeAsync (AgentSessionTestHelpers.activeParameters repositoryId agentId firstWorkItem)
+                let! conflictingStartBody = conflictingStart.Content.ReadAsStringAsync()
+                Assert.That(conflictingStart.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), conflictingStartBody)
+                Assert.That(conflictingStartBody, Does.Contain(firstWorkItem))
 
-            Assert.That(active.ReturnValue.Session.SessionId, Is.EqualTo(started.ReturnValue.Session.SessionId))
-            Assert.That(active.ReturnValue.Session.LifecycleState, Is.EqualTo(AgentSessionLifecycleState.Active))
+                let! active = AgentSessionTestHelpers.activeAsync (AgentSessionTestHelpers.activeParameters repositoryId agentId firstWorkItem)
 
-            let! listed = AgentSessionTestHelpers.listActiveAsync (AgentSessionTestHelpers.listActiveParameters repositoryId agentId 10)
+                Assert.That(active.ReturnValue.Session.SessionId, Is.EqualTo(started.ReturnValue.Session.SessionId))
+                Assert.That(active.ReturnValue.Session.LifecycleState, Is.EqualTo(AgentSessionLifecycleState.Active))
 
-            Assert.That(
-                listed.ReturnValue.Sessions
-                |> List.exists (fun session -> session.SessionId = started.ReturnValue.Session.SessionId),
-                Is.True
-            )
+                let! listed = AgentSessionTestHelpers.listActiveAsync (AgentSessionTestHelpers.listActiveParameters repositoryId agentId 10)
 
-            let! wrongRepositoryStatus =
-                AgentSessionTestHelpers.statusAsync (
-                    AgentSessionTestHelpers.statusParameters wrongRepositoryId agentId started.ReturnValue.Session.SessionId firstWorkItem
+                Assert.That(
+                    listed.ReturnValue.Sessions
+                    |> List.exists (fun session -> session.SessionId = started.ReturnValue.Session.SessionId),
+                    Is.True
                 )
 
-            Assert.That(wrongRepositoryStatus.ReturnValue.Session.LifecycleState, Is.EqualTo(AgentSessionLifecycleState.Inactive))
+                let! wrongRepositoryStatus =
+                    AgentSessionTestHelpers.statusAsync (
+                        AgentSessionTestHelpers.statusParameters wrongRepositoryId agentId started.ReturnValue.Session.SessionId firstWorkItem
+                    )
 
-            let! wrongRepositoryStop =
-                AgentSessionTestHelpers.stopAsync (
-                    AgentSessionTestHelpers.stopParameters
-                        wrongRepositoryId
-                        agentId
-                        started.ReturnValue.Session.SessionId
-                        firstWorkItem
-                        $"stop-wrong-{Guid.NewGuid():N}"
-                )
+                Assert.That(wrongRepositoryStatus.ReturnValue.Session.LifecycleState, Is.EqualTo(AgentSessionLifecycleState.Inactive))
 
-            Assert.That(wrongRepositoryStop.ReturnValue.WasIdempotentReplay, Is.True)
-            Assert.That(wrongRepositoryStop.ReturnValue.Session.LifecycleState, Is.EqualTo(AgentSessionLifecycleState.Inactive))
+                let! wrongRepositoryStop =
+                    AgentSessionTestHelpers.stopAsync (
+                        AgentSessionTestHelpers.stopParameters
+                            wrongRepositoryId
+                            agentId
+                            started.ReturnValue.Session.SessionId
+                            firstWorkItem
+                            $"stop-wrong-{Guid.NewGuid():N}"
+                    )
 
-            let! stillActive =
-                AgentSessionTestHelpers.statusAsync (
-                    AgentSessionTestHelpers.statusParameters repositoryId agentId started.ReturnValue.Session.SessionId firstWorkItem
-                )
+                Assert.That(wrongRepositoryStop.ReturnValue.WasIdempotentReplay, Is.True)
+                Assert.That(wrongRepositoryStop.ReturnValue.Session.LifecycleState, Is.EqualTo(AgentSessionLifecycleState.Inactive))
 
-            Assert.That(stillActive.ReturnValue.Session.LifecycleState, Is.EqualTo(AgentSessionLifecycleState.Active))
+                let! stillActive =
+                    AgentSessionTestHelpers.statusAsync (
+                        AgentSessionTestHelpers.statusParameters repositoryId agentId started.ReturnValue.Session.SessionId firstWorkItem
+                    )
 
-            let stopOperationId = $"stop-{Guid.NewGuid():N}"
+                Assert.That(stillActive.ReturnValue.Session.LifecycleState, Is.EqualTo(AgentSessionLifecycleState.Active))
 
-            let! stopped =
-                AgentSessionTestHelpers.stopAsync (
-                    AgentSessionTestHelpers.stopParameters repositoryId agentId started.ReturnValue.Session.SessionId firstWorkItem stopOperationId
-                )
+                let stopOperationId = $"stop-{Guid.NewGuid():N}"
 
-            Assert.That(stopped.ReturnValue.WasIdempotentReplay, Is.False)
-            Assert.That(stopped.ReturnValue.OperationId, Is.EqualTo(stopOperationId))
-            Assert.That(stopped.ReturnValue.Session.LifecycleState, Is.EqualTo(AgentSessionLifecycleState.Stopped))
+                let! stopped =
+                    AgentSessionTestHelpers.stopAsync (
+                        AgentSessionTestHelpers.stopParameters repositoryId agentId started.ReturnValue.Session.SessionId firstWorkItem stopOperationId
+                    )
 
-            let! duplicateStop =
-                AgentSessionTestHelpers.stopAsync (
-                    AgentSessionTestHelpers.stopParameters repositoryId agentId started.ReturnValue.Session.SessionId firstWorkItem stopOperationId
-                )
+                Assert.That(stopped.ReturnValue.WasIdempotentReplay, Is.False)
+                Assert.That(stopped.ReturnValue.OperationId, Is.EqualTo(stopOperationId))
+                Assert.That(stopped.ReturnValue.Session.LifecycleState, Is.EqualTo(AgentSessionLifecycleState.Stopped))
 
-            Assert.That(duplicateStop.ReturnValue.WasIdempotentReplay, Is.True)
-            Assert.That(duplicateStop.ReturnValue.Session.LifecycleState, Is.EqualTo(AgentSessionLifecycleState.Stopped))
+                let! duplicateStop =
+                    AgentSessionTestHelpers.stopAsync (
+                        AgentSessionTestHelpers.stopParameters repositoryId agentId started.ReturnValue.Session.SessionId firstWorkItem stopOperationId
+                    )
 
-            let! inactiveAfterStop =
-                AgentSessionTestHelpers.statusAsync (
-                    AgentSessionTestHelpers.statusParameters repositoryId agentId started.ReturnValue.Session.SessionId firstWorkItem
-                )
+                Assert.That(duplicateStop.ReturnValue.WasIdempotentReplay, Is.True)
+                Assert.That(duplicateStop.ReturnValue.Session.LifecycleState, Is.EqualTo(AgentSessionLifecycleState.Stopped))
 
-            Assert.That(inactiveAfterStop.ReturnValue.Session.LifecycleState, Is.EqualTo(AgentSessionLifecycleState.Inactive))
+                let! inactiveAfterStop =
+                    AgentSessionTestHelpers.statusAsync (
+                        AgentSessionTestHelpers.statusParameters repositoryId agentId started.ReturnValue.Session.SessionId firstWorkItem
+                    )
 
-            let secondStartOperationId = $"start-{Guid.NewGuid():N}"
+                Assert.That(inactiveAfterStop.ReturnValue.Session.LifecycleState, Is.EqualTo(AgentSessionLifecycleState.Inactive))
 
-            let! replacementStart =
-                AgentSessionTestHelpers.startAsync (AgentSessionTestHelpers.startParameters repositoryId agentId secondWorkItem secondStartOperationId)
+                let secondStartOperationId = $"start-{Guid.NewGuid():N}"
 
-            Assert.That(replacementStart.ReturnValue.WasIdempotentReplay, Is.False)
-            Assert.That(replacementStart.ReturnValue.Session.SessionId, Is.EqualTo(secondStartOperationId))
-            Assert.That(replacementStart.ReturnValue.Session.WorkItemIdOrNumber, Is.EqualTo(secondWorkItem))
-            Assert.That(replacementStart.ReturnValue.Session.LifecycleState, Is.EqualTo(AgentSessionLifecycleState.Active))
+                let! replacementStart =
+                    AgentSessionTestHelpers.startAsync (AgentSessionTestHelpers.startParameters repositoryId agentId secondWorkItem secondStartOperationId)
+
+                replacementSessionId <- replacementStart.ReturnValue.Session.SessionId
+
+                Assert.That(replacementStart.ReturnValue.WasIdempotentReplay, Is.False)
+                Assert.That(replacementStart.ReturnValue.Session.SessionId, Is.EqualTo(secondStartOperationId))
+                Assert.That(replacementStart.ReturnValue.Session.WorkItemIdOrNumber, Is.EqualTo(secondWorkItem))
+                Assert.That(replacementStart.ReturnValue.Session.LifecycleState, Is.EqualTo(AgentSessionLifecycleState.Active))
+
+                let! replacementStopped =
+                    AgentSessionTestHelpers.stopAsync (
+                        AgentSessionTestHelpers.stopParameters
+                            repositoryId
+                            agentId
+                            replacementStart.ReturnValue.Session.SessionId
+                            secondWorkItem
+                            $"stop-{Guid.NewGuid():N}"
+                    )
+
+                Assert.That(replacementStopped.ReturnValue.Session.LifecycleState, Is.EqualTo(AgentSessionLifecycleState.Stopped))
+            with
+            | ex ->
+                do! AgentSessionTestHelpers.tryStopAsync repositoryId agentId replacementSessionId secondWorkItem
+                do! AgentSessionTestHelpers.tryStopAsync repositoryId agentId firstSessionId firstWorkItem
+                return raise ex
         }
