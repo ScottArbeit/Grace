@@ -3,8 +3,12 @@ namespace Grace.CLI.Tests
 open FsUnit
 open Grace.CLI
 open Grace.CLI.CommandOutputContract
+open Grace.Shared
+open Grace.Types.Common
 open NUnit.Framework
 open System
+open System.CommandLine
+open System.IO
 open System.Text.Json
 
 [<TestFixture>]
@@ -12,6 +16,107 @@ open System.Text.Json
 module CommandOutputContractRegistryTests =
 
     let private commandId (identity: CommandIdentity) = identity.CommandId
+
+    let private placeholderGuid = "11111111-1111-1111-1111-111111111111"
+
+    let private optionPlaceholder optionName =
+        match optionName with
+        | "--after" -> "+15m"
+        | "--allows-large-files"
+        | "--anonymous-access"
+        | "--record-saves" -> "true"
+        | "--branch-name"
+        | "--display-name"
+        | "--name"
+        | "--new-name"
+        | "--organization-name"
+        | "--owner-name"
+        | "--repository-name" -> "example"
+        | "--candidate" -> "candidate-1"
+        | "--checkpoint-days"
+        | "--diff-cache-days"
+        | "--directory-version-cache-days"
+        | "--logical-delete-days"
+        | "--save-days" -> "30"
+        | "--claim" -> "user:user-1"
+        | "--conflict-resolution-policy" -> "NoConflicts"
+        | "--default-server-api-version" -> "Latest"
+        | "--delete-reason"
+        | "--description"
+        | "--message"
+        | "--reason"
+        | "--required-responder"
+        | "--text"
+        | "--title" -> "example text"
+        | "--dir-perm" -> "Read"
+        | "--event" -> "promotion-set.applied"
+        | "--fire-at" -> "2026-01-01T00:00:00Z"
+        | "--format" -> "json"
+        | "--gate" -> "build"
+        | "--operation" -> "RepoRead"
+        | "--organization-type"
+        | "--owner-type"
+        | "--visibility" -> "Public"
+        | "--output-file" -> "output.json"
+        | "--path" -> "src"
+        | "--principal-id" -> "user-1"
+        | "--principal-type" -> "User"
+        | "--promotion-mode" -> "IndividualOnly"
+        | "--resource"
+        | "--scope" -> "repository"
+        | "--search-visibility" -> "Visible"
+        | "--set" -> "Active"
+        | "--status" -> "Active"
+        | "--type" -> "summary"
+        | "--url" -> "https://example.test/webhook"
+        | name when name.EndsWith("-file", StringComparison.OrdinalIgnoreCase) -> "input.txt"
+        | name when name.EndsWith("-id", StringComparison.OrdinalIgnoreCase) -> placeholderGuid
+        | name when name.EndsWith("-type", StringComparison.OrdinalIgnoreCase) -> "Maintenance"
+        | _ -> "example"
+
+    let private argumentPlaceholder argumentName =
+        match argumentName with
+        | "query" -> "example"
+        | name when name.Contains("number", StringComparison.OrdinalIgnoreCase) -> "123"
+        | name when name.Contains("work", StringComparison.OrdinalIgnoreCase) -> "123"
+        | name when name.Contains("file", StringComparison.OrdinalIgnoreCase) -> "input.txt"
+        | name when name.Contains("id", StringComparison.OrdinalIgnoreCase) -> placeholderGuid
+        | _ -> "example"
+
+    let private findCommand (commandPath: string list) =
+        let mutable current: Command = GraceCommand.rootCommand :> Command
+
+        for commandName in commandPath do
+            current <-
+                current.Subcommands
+                |> Seq.find (fun subcommand ->
+                    subcommand.Name.Equals(commandName, StringComparison.Ordinal)
+                    || subcommand.Aliases.Contains(commandName))
+
+        current
+
+    let private auditPlaceholderArgs (entry: CommandContractEntry) =
+        let command = findCommand entry.Identity.CommandPath
+
+        [|
+            for option in command.Options do
+                if option.Required then
+                    yield option.Name
+                    yield optionPlaceholder option.Name
+
+            for argument in command.Arguments do
+                yield argumentPlaceholder argument.Name
+        |]
+
+    let private auditParseArgs (entry: CommandContractEntry) =
+        let commandPath = entry.Identity.CommandPath |> List.toArray
+
+        [|
+            yield "--output"
+            yield "Json"
+            yield! commandPath
+            yield! auditPlaceholderArgs entry
+        |]
 
     let private countBy behavior =
         CommandOutputContract.entries
@@ -32,6 +137,42 @@ module CommandOutputContractRegistryTests =
                 |> String.concat ", "
 
             Assert.Fail($"Set mismatch. Missing: {missing}. Extra: {extra}.")
+
+    let private captureStdout action =
+        use writer = new StringWriter()
+        let originalOut = Console.Out
+
+        try
+            Console.SetOut(writer)
+            let exitCode = action ()
+            exitCode, writer.ToString()
+        finally
+            Console.SetOut(originalOut)
+
+    let private parseJsonDocument (output: string) =
+        output
+            .TrimStart()
+            .StartsWith("{", StringComparison.Ordinal)
+        |> should equal true
+
+        JsonDocument.Parse(output)
+
+    let private assertOneJsonObjectStdout (output: string) =
+        let ansiCsiPrefix = string (char 0x1B) + "["
+
+        output.Contains(ansiCsiPrefix, StringComparison.Ordinal)
+        |> should equal false
+
+        output |> should not' (contain "[red]")
+        output |> should not' (contain "Elapsed:")
+
+        output
+        |> should not' (contain "Exception in isOutputFormat")
+
+        use document = parseJsonDocument output
+
+        document.RootElement.ValueKind
+        |> should equal JsonValueKind.Object
 
     [<Test>]
     let ``registry contains accepted inventory totals`` () =
@@ -186,6 +327,136 @@ module CommandOutputContractRegistryTests =
 
             entry.Features.Select
             |> should equal ExistingBehavior
+
+    [<Test>]
+    let ``every common renderer entry has recursive json option and central envelope behavior`` () =
+        let commonEntries =
+            CommandOutputContract.entries
+            |> List.filter (fun entry -> entry.CurrentJsonBehavior = CommonRenderOutputEnvelope)
+
+        commonEntries.Length |> should equal 180
+
+        let parserInvalidEntries =
+            commonEntries
+            |> List.choose (fun entry ->
+                let parseResult = GraceCommand.rootCommand.Parse(auditParseArgs entry)
+
+                if parseResult.Errors.Count = 0 then
+                    None
+                else
+                    let errors =
+                        parseResult.Errors
+                        |> Seq.map (fun error -> error.Message)
+                        |> String.concat "; "
+
+                    Some $"{entry.Identity.CommandId}: {errors}")
+
+        if not parserInvalidEntries.IsEmpty then
+            parserInvalidEntries
+            |> String.concat Environment.NewLine
+            |> fun errors -> Assert.Fail($"Expected parser-valid audit paths for common renderer entries:{Environment.NewLine}{errors}")
+
+        for entry in commonEntries do
+            let parseResult = GraceCommand.rootCommand.Parse(auditParseArgs entry)
+
+            parseResult.Errors.Count |> should equal 0
+
+            Common.json parseResult |> should equal true
+
+            match entry.EnvelopeContract with
+            | ExistingGraceResultEnvelope (ReuseExistingApiOrSdkDto
+            | RequiresCliDto) -> ()
+            | other -> Assert.Fail($"Expected central Grace result envelope metadata for {entry.Identity.CommandId}, got {other}.")
+
+            let successValue = GraceReturnValue.Create $"success:{entry.Identity.CommandId}" $"corr-success-{entry.Identity.CommandId}"
+
+            let successExitCode, successOutput = captureStdout (fun () -> Common.renderOutput parseResult (Ok successValue))
+
+            successExitCode |> should equal 0
+            assertOneJsonObjectStdout successOutput
+
+            use successDocument = parseJsonDocument successOutput
+            let successRoot = successDocument.RootElement
+
+            successRoot.GetProperty("ReturnValue").GetString()
+            |> should equal $"success:{entry.Identity.CommandId}"
+
+            successRoot
+                .GetProperty("CorrelationId")
+                .GetString()
+            |> should equal $"corr-success-{entry.Identity.CommandId}"
+
+            let error = GraceError.Create $"error:{entry.Identity.CommandId}" $"corr-error-{entry.Identity.CommandId}"
+
+            let errorExitCode, errorOutput = captureStdout (fun () -> Common.renderOutput parseResult (Error error))
+
+            errorExitCode |> should equal -1
+            assertOneJsonObjectStdout errorOutput
+
+            use errorDocument = parseJsonDocument errorOutput
+            let errorRoot = errorDocument.RootElement
+
+            errorRoot.GetProperty("Error").GetString()
+            |> should equal $"error:{entry.Identity.CommandId}"
+
+            errorRoot.GetProperty("CorrelationId").GetString()
+            |> should equal $"corr-error-{entry.Identity.CommandId}"
+
+    [<Test>]
+    let ``representative local dto envelopes use shared serializer contract`` () =
+        let parseResult =
+            GraceCommand.rootCommand.Parse(
+                [|
+                    "--output"
+                    "Json"
+                    "maintenance"
+                    "stats"
+                |]
+            )
+
+        parseResult.Errors.Count |> should equal 0
+
+        let dto: Common.LocalOutputDto.MaintenanceStatsDto =
+            { DirectoryCount = 3; FileCount = 5; TotalFileSize = 89L; RootSha256Hash = Some "0123456789abcdef" }
+
+        let exitCode, output =
+            captureStdout (fun () ->
+                GraceReturnValue.Create dto "corr-local-dto"
+                |> Ok
+                |> Common.renderOutput parseResult)
+
+        exitCode |> should equal 0
+        assertOneJsonObjectStdout output
+
+        use document = parseJsonDocument output
+        let root = document.RootElement
+        let returnValue = root.GetProperty("ReturnValue")
+
+        returnValue
+            .GetProperty("DirectoryCount")
+            .GetInt32()
+        |> should equal 3
+
+        returnValue.GetProperty("FileCount").GetInt32()
+        |> should equal 5
+
+        returnValue
+            .GetProperty("TotalFileSize")
+            .GetInt64()
+        |> should equal 89L
+
+        returnValue
+            .GetProperty("RootSha256Hash")
+            .GetString()
+        |> should equal "0123456789abcdef"
+
+        let mutable camelCaseReturnValue = Unchecked.defaultof<JsonElement>
+
+        root.TryGetProperty("returnValue", &camelCaseReturnValue)
+        |> should equal false
+
+        Constants.JsonSerializerOptions.PropertyNamingPolicy
+        |> should equal null
 
     [<Test>]
     let ``watch json mode is registered as immediate error only`` () =
