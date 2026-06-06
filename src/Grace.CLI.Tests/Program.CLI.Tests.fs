@@ -511,6 +511,148 @@ module HelpDoesNotReadConfigTests =
         standardOut |> should not' (contain "Elapsed:")
 
     [<Test>]
+    let ``select option makes command json-oriented`` () =
+        let parseResult =
+            GraceCommand.rootCommand.Parse(
+                [|
+                    "auth"
+                    "logout"
+                    "--select"
+                    "Value"
+                |]
+            )
+
+        parseResult.Errors.Count |> should equal 0
+
+        Common.json parseResult |> should equal true
+
+        Common.tryGetSelect parseResult
+        |> should equal (Some "Value")
+
+    [<Test>]
+    let ``renderOutput select writes selected scalar json only`` () =
+        let parseResult = GraceCommand.rootCommand.Parse([| "--select"; "Value" |])
+        let returnValue = GraceReturnValue.Create {| Value = "ok"; Other = "hidden" |} "corr-select-success"
+
+        let standardOut, standardError =
+            captureStdoutAndStderr (fun () ->
+                Common.renderOutput parseResult (Ok returnValue)
+                |> should equal 0)
+
+        standardError |> should equal String.Empty
+        standardOut.Trim() |> should equal "\"ok\""
+
+    [<Test>]
+    let ``renderOutput select writes selected object and collection json`` () =
+        let parseResult = GraceCommand.rootCommand.Parse([| "--select"; "Container.Items" |])
+
+        let returnValue =
+            GraceReturnValue.Create
+                {|
+                    Container =
+                        {|
+                            Items =
+                                [|
+                                    {| Name = "one" |}
+                                    {| Name = "two" |}
+                                |]
+                        |}
+                |}
+                "corr-select-collection"
+
+        let standardOut, standardError =
+            captureStdoutAndStderr (fun () ->
+                Common.renderOutput parseResult (Ok returnValue)
+                |> should equal 0)
+
+        standardError |> should equal String.Empty
+
+        use document = JsonDocument.Parse(standardOut)
+        let rootElement = document.RootElement
+
+        rootElement.ValueKind
+        |> should equal JsonValueKind.Array
+
+        rootElement.GetArrayLength() |> should equal 2
+
+        rootElement[ 1 ].GetProperty("Name").GetString()
+        |> should equal "two"
+
+    [<Test>]
+    let ``renderOutput select writes null json`` () =
+        let parseResult = GraceCommand.rootCommand.Parse([| "--select"; "Value" |])
+        let returnValue = GraceReturnValue.Create {| Value = (null: string) |} "corr-select-null"
+
+        let standardOut, standardError =
+            captureStdoutAndStderr (fun () ->
+                Common.renderOutput parseResult (Ok returnValue)
+                |> should equal 0)
+
+        standardError |> should equal String.Empty
+        standardOut.Trim() |> should equal "null"
+
+    [<Test>]
+    let ``renderOutput select missing property emits json error`` () =
+        let parseResult = GraceCommand.rootCommand.Parse([| "--select"; "Missing" |])
+        let returnValue = GraceReturnValue.Create {| Value = "ok" |} "corr-select-missing"
+
+        let standardOut, standardError =
+            captureStdoutAndStderr (fun () ->
+                Common.renderOutput parseResult (Ok returnValue)
+                |> should equal -1)
+
+        standardError |> should equal String.Empty
+
+        use document = parseJsonOutput standardOut
+        let rootElement = document.RootElement
+
+        rootElement.GetProperty("Error").GetString()
+        |> should contain "was not found in ReturnValue"
+
+        rootElement
+            .GetProperty("CorrelationId")
+            .GetString()
+        |> should equal "corr-select-missing"
+
+    [<Test>]
+    let ``renderOutput select scalar traversal emits json error`` () =
+        let parseResult = GraceCommand.rootCommand.Parse([| "--select"; "Value.Name" |])
+        let returnValue = GraceReturnValue.Create {| Value = "ok" |} "corr-select-scalar"
+
+        let standardOut, standardError =
+            captureStdoutAndStderr (fun () ->
+                Common.renderOutput parseResult (Ok returnValue)
+                |> should equal -1)
+
+        standardError |> should equal String.Empty
+
+        assertJsonErrorOutput standardOut
+        |> should contain "cannot read 'Name'"
+
+    [<Test>]
+    let ``renderOutput select leaves error envelope unprojected`` () =
+        let parseResult = GraceCommand.rootCommand.Parse([| "--select"; "Value" |])
+        let error = GraceError.Create "original failure" "corr-select-error"
+
+        let standardOut, standardError =
+            captureStdoutAndStderr (fun () ->
+                Common.renderOutput parseResult (Error error)
+                |> should equal -1)
+
+        standardError |> should equal String.Empty
+
+        use document = parseJsonOutput standardOut
+        let rootElement = document.RootElement
+
+        rootElement.GetProperty("Error").GetString()
+        |> should equal "original failure"
+
+        let mutable returnValue = Unchecked.defaultof<JsonElement>
+
+        rootElement.TryGetProperty("ReturnValue", &returnValue)
+        |> should equal false
+
+    [<Test>]
     let ``renderOutput json error writes GraceError envelope with shared field names`` () =
         let parseResult = GraceCommand.rootCommand.Parse([| "--output"; "Json" |])
         let error = GraceError.Create "central writer error" "corr-json-error"

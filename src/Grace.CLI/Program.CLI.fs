@@ -113,6 +113,7 @@ module GraceCommand =
                 || token.Equals(OptionName.CorrelationId, comparison)
                 || token.Equals("-c", comparison)
                 || token.Equals(OptionName.Source, comparison)
+                || token.Equals(OptionName.Select, comparison)
 
             let rec loop index =
                 if index >= args.Length then
@@ -265,6 +266,11 @@ module GraceCommand =
                         true
                     else
                         loop (index + 1)
+                elif
+                    token.Equals(OptionName.Select, StringComparison.OrdinalIgnoreCase)
+                    || token.StartsWith($"{OptionName.Select}=", StringComparison.OrdinalIgnoreCase)
+                then
+                    true
                 else
                     loop (index + 1)
 
@@ -749,6 +755,7 @@ module GraceCommand =
         rootCommand.Options.Add(Options.output)
         rootCommand.Options.Add(Options.schema)
         rootCommand.Options.Add(Options.examples)
+        rootCommand.Options.Add(Options.select)
 
         // Add subcommands.
         rootCommand.Subcommands.Add(Connect.Build)

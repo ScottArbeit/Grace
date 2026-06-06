@@ -23,6 +23,7 @@
     <Compile Include="BuildInfo.Tests.fs" />
     <Compile Include="Artifact.SDK.Tests.fs" />
     <Compile Include="ClientIdentity.SDK.Tests.fs" />
+    <Compile Include="SelectProjection.CLI.Parsing.Tests.fs" />
     <Compile Include="Program.CLI.Parsing.Tests.fs" />
     <Compile Include="Program.CLI.Tests.fs" />
     <Compile Include="HistoryStorage.CLI.Tests.fs" />

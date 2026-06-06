@@ -178,6 +178,9 @@ module CommandOutputContractRegistryTests =
             | ExistingGraceResultEnvelope ReuseExistingApiOrSdkDto -> ()
             | other -> Assert.Fail($"Expected existing Grace result envelope metadata for {entry.Identity.CommandId}, got {other}.")
 
+            entry.Features.Select
+            |> should equal ExistingBehavior
+
     [<Test>]
     let ``schema ready registry entries describe success and error envelopes`` () =
         let identity = CommandOutputContract.commandIdentity [ "auth" ] "logout"
