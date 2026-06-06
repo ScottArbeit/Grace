@@ -1151,6 +1151,12 @@ type WorkItemLinksAuthorizationIntegrationTests() =
             let! crossRepoDownload = WorkItemIntegrationHelpers.getArtifactDownloadUriResponseAsync crossRepoClient repositoryId artifactId
             Assert.That(crossRepoDownload.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden))
 
+            let! mismatchedScopeDownload = WorkItemIntegrationHelpers.getArtifactDownloadUriResponseAsync crossRepoClient otherRepositoryId artifactId
+            Assert.That(mismatchedScopeDownload.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
+
+            let! mismatchedScopeBody = mismatchedScopeDownload.Content.ReadAsStringAsync()
+            Assert.That(mismatchedScopeBody, Does.Contain(ArtifactError.getErrorMessage ArtifactError.ArtifactDoesNotExist))
+
             let! readerDownloadResponse = WorkItemIntegrationHelpers.getArtifactDownloadUriResponseAsync readerClient repositoryId artifactId
             Assert.That(readerDownloadResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK))
 

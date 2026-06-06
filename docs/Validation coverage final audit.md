@@ -141,7 +141,7 @@ that dataset; it records the final implementation disposition after issues #250 
 
 ## OpenAPI And Generated Artifact Status
 
-Current command outcome from this final audit branch:
+Current command outcome from the epic release branch after the PR #299 final review blocker fix:
 
 ```text
 pwsh ./src/OpenAPI/prove-openapi.ps1 -Check All -AllowPending
@@ -159,7 +159,7 @@ Result: passed with four pending gates.
 - Pending: stable SDK package export/import proof.
 - Pending: protocol vector proof verifier.
 
-Current generated metadata command:
+Current generated metadata command from the epic release branch after the PR #299 final review blocker fix:
 
 ```text
 pwsh ./sdk/scripts/generate-sdk-clients.ps1 -Mode Check
@@ -193,19 +193,20 @@ Generator validation remains blocked by schema-shape debt, so the generated clie
 
 ## Final Validation Commands
 
-Commands run from `C:\Source\GraceWorktrees\gh-266-docs-openapi-generated-closure-audit`:
+Commands run from `C:\Source\GraceWorktrees\epic-249-validation-coverage-release`:
 
 | Command | Outcome |
 | ------- | ------- |
+| `dotnet tool run fantomas --check src/Grace.Server/Artifact.Server.fs src/Grace.Server.Tests/WorkItem.Integration.Server.Tests.fs` | Passed; no changes required. |
+| `dotnet test src/Grace.Server.Tests/Grace.Server.Tests.fsproj --configuration Release --filter "ArtifactRoutesEnforceRepositoryPermissionsAndPreserveDownloadIdentityPathAndBytes"` | Passed; 1 test. |
 | `pwsh ./src/OpenAPI/prove-openapi.ps1 -Check All -AllowPending` | Passed with four pending gates recorded above. |
 | `pwsh ./sdk/scripts/generate-sdk-clients.ps1 -Mode Check` | Passed. |
-| `pwsh ./sdk/scripts/invoke-generator-matrix.ps1` | Passed; no tracked diff remained after the run. |
 | `npx --yes markdownlint-cli2 "docs/Validation coverage final audit.md"` | Passed. |
 | `git diff --check` | Passed. |
 
-`pwsh ./scripts/validate.ps1 -Fast` and `pwsh ./scripts/validate.ps1 -Full` were not rerun for this final issue because
-the final slice only adds this audit document. The child PR table above records the last relevant Fast/Full validation
-for each implemented behavior slice.
+`pwsh ./scripts/validate.ps1 -Fast` and `pwsh ./scripts/validate.ps1 -Full` were not rerun for this release-blocker
+fix. The artifact authorization blocker was validated with the focused hosted regression above, and the child PR table
+above records the last relevant Fast/Full validation for each implemented behavior slice.
 
 ## Epic Closure Comment Draft
 
