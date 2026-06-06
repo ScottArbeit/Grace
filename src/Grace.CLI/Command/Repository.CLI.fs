@@ -714,10 +714,10 @@ module Repository =
                                     let output: LocalOutputDto.RepositoryInitDto =
                                         {
                                             Message = "Initialized repository."
-                                            DirectoryCount = graceStatus.Index.Count
-                                            FileCount = fileCount
-                                            TotalFileSize = totalFileSize
-                                            RootSha256Hash = rootDirectoryVersion.Sha256Hash
+                                            DirectoryCount = Some graceStatus.Index.Count
+                                            FileCount = Some fileCount
+                                            TotalFileSize = Some totalFileSize
+                                            RootSha256Hash = Some rootDirectoryVersion.Sha256Hash
                                         }
 
                                     return Ok(GraceReturnValue.Create output (parseResult |> getCorrelationId))
@@ -726,10 +726,10 @@ module Repository =
                                     let output: LocalOutputDto.RepositoryInitDto =
                                         {
                                             Message = "Initialized repository."
-                                            DirectoryCount = 0
-                                            FileCount = 0
-                                            TotalFileSize = 0L
-                                            RootSha256Hash = String.Empty
+                                            DirectoryCount = None
+                                            FileCount = None
+                                            TotalFileSize = None
+                                            RootSha256Hash = None
                                         }
 
                                     return Ok(GraceReturnValue.Create output (parseResult |> getCorrelationId))

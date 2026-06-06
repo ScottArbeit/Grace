@@ -63,7 +63,14 @@ module Common =
 
         type HistoryDeleteDto = { Deleted: bool; Removed: int }
 
-        type RepositoryInitDto = { Message: string; DirectoryCount: int; FileCount: int; TotalFileSize: int64; RootSha256Hash: string }
+        type RepositoryInitDto =
+            {
+                Message: string
+                DirectoryCount: int option
+                FileCount: int option
+                TotalFileSize: int64 option
+                RootSha256Hash: string option
+            }
 
         type ConnectDto =
             {

@@ -170,6 +170,17 @@ module HelpDoesNotReadConfigTests =
 
         rootElement.Clone()
 
+    let private assertGraceErrorEnvelopeOnCleanStreams (standardOut: string) (standardError: string) =
+        standardError |> should equal String.Empty
+        let error = assertJsonErrorOutput standardOut
+
+        standardOut
+            .TrimStart()
+            .StartsWith("{", StringComparison.Ordinal)
+        |> should equal true
+
+        error
+
     let private withFileBackup (path: string) (action: unit -> unit) =
         let directory = Path.GetDirectoryName(path)
 
@@ -245,6 +256,14 @@ module HelpDoesNotReadConfigTests =
         config.BranchId <- branchId
         let json = serialize config
         File.WriteAllText(Path.Combine(graceDir, "graceconfig.json"), json)
+
+    let private writeValidConfigWithDeterministicIds (root: string) =
+        writeValidConfig
+            root
+            (Guid.Parse("11111111-1111-1111-1111-111111111111"))
+            (Guid.Parse("22222222-2222-2222-2222-222222222222"))
+            (Guid.Parse("33333333-3333-3333-3333-333333333333"))
+            (Guid.Parse("44444444-4444-4444-4444-444444444444"))
 
     let private addLifecycleHeaders
         (response: HttpResponseMessage)
@@ -707,6 +726,172 @@ module HelpDoesNotReadConfigTests =
 
                 deleteExitCode |> should equal 0
                 assertGraceEnvelope deleteOutput |> ignore))
+
+    [<Test>]
+    let ``connect json validation error emits clean Grace envelope`` () =
+        withTempDir (fun root ->
+            writeValidConfigWithDeterministicIds root
+
+            let exitCode, standardOut, standardError =
+                runWithCapturedStdoutAndStderr [| "--output"
+                                                  "Json"
+                                                  "connect"
+                                                  "owner/repository"
+                                                  "--owner-name"
+                                                  "owner" |]
+
+            exitCode |> should equal -1
+
+            assertGraceErrorEnvelopeOnCleanStreams standardOut standardError
+            |> should contain "Repository shortcut must be in the form")
+
+    [<Test>]
+    let ``directory version get zip file json validation error emits clean Grace envelope`` () =
+        withTempDir (fun _ ->
+            let exitCode, standardOut, standardError =
+                runWithCapturedStdoutAndStderr [| "--output"
+                                                  "Json"
+                                                  "directory-version"
+                                                  "get-zip-file"
+                                                  "--directory-version-id"
+                                                  $"{Guid.Empty}" |]
+
+            exitCode |> should equal -1
+
+            assertGraceErrorEnvelopeOnCleanStreams standardOut standardError
+            |> should contain "graceconfig.json")
+
+    [<Test>]
+    let ``repository init json invalid directory emits clean Grace envelope`` () =
+        withTempDir (fun root ->
+            writeValidConfigWithDeterministicIds root
+            let missingDirectory = Path.Combine(root, "missing")
+
+            let exitCode, standardOut, standardError =
+                runWithCapturedStdoutAndStderr [| "--output"
+                                                  "Json"
+                                                  "repository"
+                                                  "init"
+                                                  "--directory"
+                                                  missingDirectory |]
+
+            exitCode |> should equal -1
+
+            assertGraceErrorEnvelopeOnCleanStreams standardOut standardError
+            |> should contain "directory")
+
+    [<Test>]
+    let ``repository init no output DTO renders absent observability as null`` () =
+        let parseResult =
+            GraceCommand.rootCommand.Parse(
+                [|
+                    "--output"
+                    "Json"
+                    "repository"
+                    "init"
+                    "--no-output"
+                |]
+            )
+
+        let output: Common.LocalOutputDto.RepositoryInitDto =
+            { Message = "Initialized repository."; DirectoryCount = None; FileCount = None; TotalFileSize = None; RootSha256Hash = None }
+
+        let standardOut, standardError =
+            captureStdoutAndStderr (fun () ->
+                Common.renderOutput parseResult (Ok(GraceReturnValue.Create output "corr-repository-init"))
+                |> should equal 0)
+
+        standardError |> should equal String.Empty
+
+        let rootElement = assertGraceEnvelope standardOut
+        let returnValue = rootElement.GetProperty("ReturnValue")
+
+        returnValue.GetProperty("Message").GetString()
+        |> should equal "Initialized repository."
+
+        returnValue
+            .GetProperty(
+                "DirectoryCount"
+            )
+            .ValueKind
+        |> should equal JsonValueKind.Null
+
+        returnValue.GetProperty("FileCount").ValueKind
+        |> should equal JsonValueKind.Null
+
+        returnValue.GetProperty("TotalFileSize").ValueKind
+        |> should equal JsonValueKind.Null
+
+        returnValue
+            .GetProperty(
+                "RootSha256Hash"
+            )
+            .ValueKind
+        |> should equal JsonValueKind.Null
+
+    [<Test>]
+    let ``review report show json validation error emits clean Grace envelope`` () =
+        withTempDir (fun root ->
+            writeValidConfigWithDeterministicIds root
+
+            let exitCode, standardOut, standardError =
+                runWithCapturedStdoutAndStderr [| "--output"
+                                                  "Json"
+                                                  "review"
+                                                  "report"
+                                                  "show"
+                                                  "--candidate"
+                                                  "not-a-guid" |]
+
+            exitCode |> should equal -1
+
+            assertGraceErrorEnvelopeOnCleanStreams standardOut standardError
+            |> should contain "CandidateId must be a valid non-empty Guid")
+
+    [<Test>]
+    let ``review report export json validation error emits clean Grace envelope`` () =
+        withTempDir (fun root ->
+            writeValidConfigWithDeterministicIds root
+
+            let exitCode, standardOut, standardError =
+                runWithCapturedStdoutAndStderr [| "--output"
+                                                  "Json"
+                                                  "review"
+                                                  "report"
+                                                  "export"
+                                                  "--candidate"
+                                                  "not-a-guid"
+                                                  "--format"
+                                                  "markdown"
+                                                  "--output-file"
+                                                  "report.md" |]
+
+            exitCode |> should equal -1
+
+            assertGraceErrorEnvelopeOnCleanStreams standardOut standardError
+            |> should contain "CandidateId must be a valid non-empty Guid")
+
+    [<Test>]
+    let ``workitem attachments download json validation error emits clean Grace envelope`` () =
+        withTempDir (fun root ->
+            writeValidConfigWithDeterministicIds root
+
+            let exitCode, standardOut, standardError =
+                runWithCapturedStdoutAndStderr [| "--output"
+                                                  "Json"
+                                                  "workitem"
+                                                  "attachments"
+                                                  "download"
+                                                  "not-a-work-item"
+                                                  "--artifact-id"
+                                                  $"{Guid.Empty}"
+                                                  "--output-file"
+                                                  "attachment.bin" |]
+
+            exitCode |> should equal -1
+
+            assertGraceErrorEnvelopeOnCleanStreams standardOut standardError
+            |> should contain "work item ID is invalid")
 
     [<Test>]
     let ``select option makes command json-oriented`` () =
