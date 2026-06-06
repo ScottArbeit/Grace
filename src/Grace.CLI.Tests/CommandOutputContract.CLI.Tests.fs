@@ -7,6 +7,7 @@ open Grace.Shared
 open Grace.Types.Common
 open NUnit.Framework
 open System
+open System.CommandLine
 open System.IO
 open System.Text.Json
 
@@ -15,6 +16,107 @@ open System.Text.Json
 module CommandOutputContractRegistryTests =
 
     let private commandId (identity: CommandIdentity) = identity.CommandId
+
+    let private placeholderGuid = "11111111-1111-1111-1111-111111111111"
+
+    let private optionPlaceholder optionName =
+        match optionName with
+        | "--after" -> "+15m"
+        | "--allows-large-files"
+        | "--anonymous-access"
+        | "--record-saves" -> "true"
+        | "--branch-name"
+        | "--display-name"
+        | "--name"
+        | "--new-name"
+        | "--organization-name"
+        | "--owner-name"
+        | "--repository-name" -> "example"
+        | "--candidate" -> "candidate-1"
+        | "--checkpoint-days"
+        | "--diff-cache-days"
+        | "--directory-version-cache-days"
+        | "--logical-delete-days"
+        | "--save-days" -> "30"
+        | "--claim" -> "user:user-1"
+        | "--conflict-resolution-policy" -> "NoConflicts"
+        | "--default-server-api-version" -> "Latest"
+        | "--delete-reason"
+        | "--description"
+        | "--message"
+        | "--reason"
+        | "--required-responder"
+        | "--text"
+        | "--title" -> "example text"
+        | "--dir-perm" -> "Read"
+        | "--event" -> "promotion-set.applied"
+        | "--fire-at" -> "2026-01-01T00:00:00Z"
+        | "--format" -> "json"
+        | "--gate" -> "build"
+        | "--operation" -> "RepoRead"
+        | "--organization-type"
+        | "--owner-type"
+        | "--visibility" -> "Public"
+        | "--output-file" -> "output.json"
+        | "--path" -> "src"
+        | "--principal-id" -> "user-1"
+        | "--principal-type" -> "User"
+        | "--promotion-mode" -> "IndividualOnly"
+        | "--resource"
+        | "--scope" -> "repository"
+        | "--search-visibility" -> "Visible"
+        | "--set" -> "Active"
+        | "--status" -> "Active"
+        | "--type" -> "summary"
+        | "--url" -> "https://example.test/webhook"
+        | name when name.EndsWith("-file", StringComparison.OrdinalIgnoreCase) -> "input.txt"
+        | name when name.EndsWith("-id", StringComparison.OrdinalIgnoreCase) -> placeholderGuid
+        | name when name.EndsWith("-type", StringComparison.OrdinalIgnoreCase) -> "Maintenance"
+        | _ -> "example"
+
+    let private argumentPlaceholder argumentName =
+        match argumentName with
+        | "query" -> "example"
+        | name when name.Contains("number", StringComparison.OrdinalIgnoreCase) -> "123"
+        | name when name.Contains("work", StringComparison.OrdinalIgnoreCase) -> "123"
+        | name when name.Contains("file", StringComparison.OrdinalIgnoreCase) -> "input.txt"
+        | name when name.Contains("id", StringComparison.OrdinalIgnoreCase) -> placeholderGuid
+        | _ -> "example"
+
+    let private findCommand (commandPath: string list) =
+        let mutable current: Command = GraceCommand.rootCommand :> Command
+
+        for commandName in commandPath do
+            current <-
+                current.Subcommands
+                |> Seq.find (fun subcommand ->
+                    subcommand.Name.Equals(commandName, StringComparison.Ordinal)
+                    || subcommand.Aliases.Contains(commandName))
+
+        current
+
+    let private auditPlaceholderArgs (entry: CommandContractEntry) =
+        let command = findCommand entry.Identity.CommandPath
+
+        [|
+            for option in command.Options do
+                if option.Required then
+                    yield option.Name
+                    yield optionPlaceholder option.Name
+
+            for argument in command.Arguments do
+                yield argumentPlaceholder argument.Name
+        |]
+
+    let private auditParseArgs (entry: CommandContractEntry) =
+        let commandPath = entry.Identity.CommandPath |> List.toArray
+
+        [|
+            yield "--output"
+            yield "Json"
+            yield! commandPath
+            yield! auditPlaceholderArgs entry
+        |]
 
     let private countBy behavior =
         CommandOutputContract.entries
@@ -60,6 +162,7 @@ module CommandOutputContractRegistryTests =
 
         output.Contains(ansiCsiPrefix, StringComparison.Ordinal)
         |> should equal false
+
         output |> should not' (contain "[red]")
         output |> should not' (contain "Elapsed:")
 
@@ -233,10 +336,30 @@ module CommandOutputContractRegistryTests =
 
         commonEntries.Length |> should equal 180
 
+        let parserInvalidEntries =
+            commonEntries
+            |> List.choose (fun entry ->
+                let parseResult = GraceCommand.rootCommand.Parse(auditParseArgs entry)
+
+                if parseResult.Errors.Count = 0 then
+                    None
+                else
+                    let errors =
+                        parseResult.Errors
+                        |> Seq.map (fun error -> error.Message)
+                        |> String.concat "; "
+
+                    Some $"{entry.Identity.CommandId}: {errors}")
+
+        if not parserInvalidEntries.IsEmpty then
+            parserInvalidEntries
+            |> String.concat Environment.NewLine
+            |> fun errors -> Assert.Fail($"Expected parser-valid audit paths for common renderer entries:{Environment.NewLine}{errors}")
+
         for entry in commonEntries do
-            let commandPath = entry.Identity.CommandPath |> List.toArray
-            let parseArgs = Array.append [| "--output"; "Json" |] commandPath
-            let parseResult = GraceCommand.rootCommand.Parse(parseArgs)
+            let parseResult = GraceCommand.rootCommand.Parse(auditParseArgs entry)
+
+            parseResult.Errors.Count |> should equal 0
 
             Common.json parseResult |> should equal true
 

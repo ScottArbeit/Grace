@@ -512,27 +512,45 @@ module HelpDoesNotReadConfigTests =
 
     [<Test>]
     let ``root output json is honored for nested commands before config errors`` () =
-        withTempDir (fun _ ->
-            let exitCode, standardOut, standardError =
-                runWithCapturedStdoutAndStderr [| "--output"
-                                                  "Json"
-                                                  "agent"
-                                                  "work"
-                                                  "status" |]
+        let cases =
+            [
+                [| "agent"; "work"; "status" |]
+                [| "approval"; "policy"; "list" |]
+                [|
+                    "webhook"
+                    "delivery"
+                    "show"
+                    "--delivery"
+                    "11111111-1111-1111-1111-111111111111"
+                |]
+                [|
+                    "workitem"
+                    "attach"
+                    "summary"
+                    "123"
+                    "--text"
+                    "summary text"
+                |]
+            ]
 
-            exitCode |> should equal -1
-            standardError |> should equal String.Empty
+        for commandArgs in cases do
+            withTempDir (fun _ ->
+                let args = Array.append [| "--output"; "Json" |] commandArgs
+                let exitCode, standardOut, standardError = runWithCapturedStdoutAndStderr args
 
-            use document = parseJsonOutput standardOut
-            let rootElement = document.RootElement
+                exitCode |> should equal -1
+                standardError |> should equal String.Empty
 
-            rootElement.GetProperty("Error").GetString()
-            |> should contain "graceconfig.json"
+                use document = parseJsonOutput standardOut
+                let rootElement = document.RootElement
 
-            standardOut |> should not' (contain "Elapsed:")
+                rootElement.GetProperty("Error").GetString()
+                |> should contain "graceconfig.json"
 
-            standardOut
-            |> should not' (contain "Grace Version Control System"))
+                standardOut |> should not' (contain "Elapsed:")
+
+                standardOut
+                |> should not' (contain "Grace Version Control System"))
 
     [<Test>]
     let ``root schema emits json parse error envelope`` () =
