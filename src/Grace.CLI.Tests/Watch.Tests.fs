@@ -134,14 +134,17 @@ module WatchTests =
         JsonDocument.Parse(output)
 
     let private writeLiveWatchStatusFile () =
+        let rootDirectoryId = Guid.NewGuid()
+
         let status: Services.GraceWatchStatus =
             {
                 UpdatedAt = getCurrentInstant ()
-                RootDirectoryId = Guid.NewGuid()
+                IsStartupClaim = false
+                RootDirectoryId = rootDirectoryId
                 RootDirectorySha256Hash = Sha256Hash "live-watch-root"
                 LastFileUploadInstant = Instant.MinValue
                 LastDirectoryVersionInstant = Instant.MinValue
-                DirectoryIds = HashSet<DirectoryVersionId>()
+                DirectoryIds = HashSet<DirectoryVersionId>([| rootDirectoryId |])
             }
 
         let ipcFileName = Services.IpcFileName()
@@ -273,7 +276,31 @@ module WatchTests =
             successfulClaims.Length |> should equal 1
 
             let status = Services.getGraceWatchStatus().Result
-            status |> should not' (equal None))
+            status |> should equal None)
+
+    [<Test>]
+    let ``watch startup claim blocks second ordinary start without usable status`` () =
+        withTempRepo (fun _ ->
+            clearWatchAuthEnv (fun () ->
+                let claimed =
+                    Services
+                        .tryClaimGraceWatchInterprocessFile()
+                        .Result
+
+                claimed |> should equal true
+
+                let status = Services.getGraceWatchStatus().Result
+                status |> should equal None
+
+                let exitCode, output = runWithCapturedOutput [| "watch" |]
+
+                exitCode |> should equal -1
+
+                output
+                |> should contain "GraceWatch is already running"
+
+                output
+                |> should not' (contain "Unable to acquire an access token for SignalR")))
 
     [<Test>]
     let ``watch startup claim replaces malformed stale ipc file`` () =
@@ -293,7 +320,7 @@ module WatchTests =
             claimed |> should equal true
 
             let status = Services.getGraceWatchStatus().Result
-            status |> should not' (equal None))
+            status |> should equal None)
 
     [<Test>]
     let ``watch check exits zero when live watcher status exists`` () =
@@ -350,6 +377,35 @@ module WatchTests =
                 Services.IpcFileName()
                 |> File.Exists
                 |> should equal false))
+
+    [<Test>]
+    let ``watch check exits nonzero and preserves startup claim`` () =
+        withTempRepo (fun _ ->
+            clearWatchAuthEnv (fun () ->
+                let claimed =
+                    Services
+                        .tryClaimGraceWatchInterprocessFile()
+                        .Result
+
+                claimed |> should equal true
+
+                let ipcFileName = Services.IpcFileName()
+                let originalContents = readFileIfExists ipcFileName
+
+                let exitCode, output =
+                    runWithCapturedOutput [| "watch"
+                                             "--check" |]
+
+                exitCode |> should equal -1
+
+                output
+                |> should contain "GraceWatch is not running"
+
+                output
+                |> should not' (contain "Unable to acquire an access token for SignalR")
+
+                readFileIfExists ipcFileName
+                |> should equal originalContents))
 
     [<Test>]
     let ``watch json auth failure emits one clean error envelope`` () =
