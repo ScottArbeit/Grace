@@ -359,6 +359,70 @@ module WatchTests =
             |> should equal originalContents)
 
     [<Test>]
+    let ``watch check json mode emits error envelope and preserves live watcher status`` () =
+        withTempRepo (fun _ ->
+            let ipcFileName = writeLiveWatchStatusFile ()
+            let originalContents = readFileIfExists ipcFileName
+
+            let exitCode, standardOut, standardError =
+                runWithCapturedStdoutAndStderr [| "--output"
+                                                  "Json"
+                                                  "watch"
+                                                  "--check" |]
+
+            exitCode |> should equal -1
+            standardError |> should equal String.Empty
+
+            standardOut
+            |> should not' (contain "GraceWatch is running")
+
+            use document = parseJsonOutput standardOut
+            let root = document.RootElement
+
+            root.GetProperty("Error").GetString()
+            |> should contain "watch is a continuous foreground workflow"
+
+            let mutable returnValue = Unchecked.defaultof<JsonElement>
+
+            root.TryGetProperty("ReturnValue", &returnValue)
+            |> should equal false
+
+            readFileIfExists ipcFileName
+            |> should equal originalContents)
+
+    [<Test>]
+    let ``watch check select mode emits error envelope and preserves live watcher status`` () =
+        withTempRepo (fun _ ->
+            let ipcFileName = writeLiveWatchStatusFile ()
+            let originalContents = readFileIfExists ipcFileName
+
+            let exitCode, standardOut, standardError =
+                runWithCapturedStdoutAndStderr [| "watch"
+                                                  "--check"
+                                                  "--select"
+                                                  "RootDirectoryId" |]
+
+            exitCode |> should equal -1
+            standardError |> should equal String.Empty
+
+            standardOut
+            |> should not' (contain "GraceWatch is running")
+
+            use document = parseJsonOutput standardOut
+            let root = document.RootElement
+
+            root.GetProperty("Error").GetString()
+            |> should contain "does not support --select in this release"
+
+            let mutable returnValue = Unchecked.defaultof<JsonElement>
+
+            root.TryGetProperty("ReturnValue", &returnValue)
+            |> should equal false
+
+            readFileIfExists ipcFileName
+            |> should equal originalContents)
+
+    [<Test>]
     let ``watch check exits nonzero when live watcher status is missing`` () =
         withTempRepo (fun _ ->
             clearWatchAuthEnv (fun () ->

@@ -1272,7 +1272,7 @@ module GraceCommand =
                             //parseResult <- caseInsensitiveMiddleware (rootCommand, parseResult, isCaseInsensitive)
 
                             if (parseResult |> json)
-                               && (parseResult |> isGraceWatchForeground) then
+                               && (parseResult |> isGraceWatch) then
                                 let error =
                                     GraceError.Create
                                         "watch is a continuous foreground workflow; JSON mode requires a cancellation-aware automation host in this release."
