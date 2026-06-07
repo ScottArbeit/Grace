@@ -70,6 +70,7 @@ module Services =
     type GraceWatchStatus =
         {
             UpdatedAt: Instant
+            IsStartupClaim: bool
             RootDirectoryId: DirectoryVersionId
             RootDirectorySha256Hash: Sha256Hash
             LastFileUploadInstant: Instant
@@ -80,6 +81,7 @@ module Services =
         static member Default =
             {
                 UpdatedAt = Instant.MinValue
+                IsStartupClaim = false
                 RootDirectoryId = Guid.Empty
                 RootDirectorySha256Hash = Sha256Hash String.Empty
                 LastFileUploadInstant = Instant.MinValue
@@ -1329,34 +1331,56 @@ module Services =
     /// The full path of the inter-process communication file that grace watch uses to communicate with other invocations of Grace.
     let IpcFileName () = Path.Combine(Path.GetTempPath(), "Grace", Current().BranchName, Constants.IpcFileName)
 
+    let private createGraceWatchStatus (graceStatus: GraceStatus) (directoryIdsOverride: HashSet<DirectoryVersionId> option) =
+        let directoryIds =
+            match directoryIdsOverride with
+            | Some ids -> HashSet<DirectoryVersionId>(ids)
+            | None -> HashSet<DirectoryVersionId>(graceStatus.Index.Keys)
+
+        {
+            UpdatedAt = getCurrentInstant ()
+            IsStartupClaim = false
+            RootDirectoryId = graceStatus.RootDirectoryId
+            RootDirectorySha256Hash = graceStatus.RootDirectorySha256Hash
+            LastFileUploadInstant = graceStatus.LastSuccessfulFileUpload
+            LastDirectoryVersionInstant = graceStatus.LastSuccessfulDirectoryVersionUpload
+            DirectoryIds = directoryIds
+        }
+
+    let private createGraceWatchStartupClaim () = { GraceWatchStatus.Default with UpdatedAt = getCurrentInstant (); IsStartupClaim = true }
+
+    let private isGraceWatchStatusFresh (graceWatchStatus: GraceWatchStatus) =
+        graceWatchStatus.UpdatedAt > getCurrentInstant()
+            .Minus(Duration.FromMinutes(5.0))
+
+    let private isGraceWatchStatusUsable (graceWatchStatus: GraceWatchStatus) =
+        isGraceWatchStatusFresh graceWatchStatus
+        && not graceWatchStatus.IsStartupClaim
+        && graceWatchStatus.RootDirectoryId <> Guid.Empty
+        && not (String.IsNullOrWhiteSpace($"{graceWatchStatus.RootDirectorySha256Hash}"))
+        && not (isNull graceWatchStatus.DirectoryIds)
+        && graceWatchStatus.DirectoryIds.Count > 0
+
+    let private writeGraceWatchStatus fileMode graceWatchStatus =
+        task {
+            Directory.CreateDirectory(Path.GetDirectoryName(IpcFileName()))
+            |> ignore
+
+            use fileStream = new FileStream(IpcFileName(), fileMode, FileAccess.Write, FileShare.None)
+
+            do! serializeAsync fileStream graceWatchStatus
+            graceWatchStatusUpdateTime <- graceWatchStatus.UpdatedAt
+        }
+
     /// Updates the contents of the `grace watch` status inter-process communication file.
     let updateGraceWatchInterprocessFile (graceStatus: GraceStatus) (directoryIdsOverride: HashSet<DirectoryVersionId> option) =
         task {
             try
-                let directoryIds =
-                    match directoryIdsOverride with
-                    | Some ids -> HashSet<DirectoryVersionId>(ids)
-                    | None -> HashSet<DirectoryVersionId>(graceStatus.Index.Keys)
-
-                let newGraceWatchStatus =
-                    {
-                        UpdatedAt = getCurrentInstant ()
-                        RootDirectoryId = graceStatus.RootDirectoryId
-                        RootDirectorySha256Hash = graceStatus.RootDirectorySha256Hash
-                        LastFileUploadInstant = graceStatus.LastSuccessfulFileUpload
-                        LastDirectoryVersionInstant = graceStatus.LastSuccessfulDirectoryVersionUpload
-                        DirectoryIds = directoryIds
-                    }
+                let newGraceWatchStatus = createGraceWatchStatus graceStatus directoryIdsOverride
                 //logToAnsiConsole Colors.Important $"In updateGraceWatchStatus. newGraceWatchStatus.UpdatedAt: {newGraceWatchStatus.UpdatedAt.ToString(InstantPattern.ExtendedIso.PatternText, CultureInfo.InvariantCulture)}."
                 //logToAnsiConsole Colors.Highlighted $"{Markup.Escape(EnhancedStackTrace.Current().ToString())}"
 
-                Directory.CreateDirectory(Path.GetDirectoryName(IpcFileName()))
-                |> ignore
-
-                use fileStream = new FileStream(IpcFileName(), FileMode.Create, FileAccess.Write, FileShare.None)
-
-                do! serializeAsync fileStream newGraceWatchStatus
-                graceWatchStatusUpdateTime <- newGraceWatchStatus.UpdatedAt
+                do! writeGraceWatchStatus FileMode.Create newGraceWatchStatus
                 logToAnsiConsole Colors.Important $"Wrote inter-process communication file."
             with
             | ex ->
@@ -1379,14 +1403,12 @@ module Services =
                     // `grace watch` updates the file at least every five minutes to indicate that it's still alive.
                     // When `grace watch` exits, the status file is deleted in a try...finally (Program.CLI.fs), so the only
                     //   circumstance where it would be on-disk without `grace watch` running is if the process were killed.
-                    // Just to be safe, we're going to check that the file has been written in the last five minutes.
-                    if
-                        graceWatchStatus.UpdatedAt
-                        > getCurrentInstant().Minus(Duration.FromMinutes(5.0))
-                    then
+                    // Just to be safe, only return fresh status that contains real root data. A startup claim is only a
+                    // duplicate-start guard and must not be consumed as a usable repository snapshot.
+                    if isGraceWatchStatusUsable graceWatchStatus then
                         return Some graceWatchStatus
                     else
-                        return None // File is more than five minutes old, so something weird happened and we shouldn't trust the information.
+                        return None // The file is stale, a startup claim, or does not contain usable root data.
                 else
                     //logToAnsiConsole Colors.Verbose $"File {IpcFileName} does not exist."
                     return None // `grace watch` isn't running.
@@ -1397,6 +1419,44 @@ module Services =
                 logToAnsiConsole Colors.Error $"ex.Message: {StringExtensions.EscapeMarkup(ex.Message)}."
                 logToAnsiConsole Colors.Error $"{Environment.NewLine}{StringExtensions.EscapeMarkup(ex.StackTrace)}."
                 return None
+        }
+
+    /// Atomically claims the `grace watch` status IPC file before foreground watch startup.
+    let tryClaimGraceWatchInterprocessFile () =
+        task {
+            let claimStatus = createGraceWatchStartupClaim ()
+
+            let writeClaimToExistingFile (fileStream: FileStream) =
+                task {
+                    fileStream.SetLength(0L)
+                    fileStream.Position <- 0L
+                    do! serializeAsync fileStream claimStatus
+                    graceWatchStatusUpdateTime <- claimStatus.UpdatedAt
+                }
+
+            try
+                do! writeGraceWatchStatus FileMode.CreateNew claimStatus
+                return true
+            with
+            | :? IOException ->
+                try
+                    use fileStream = new FileStream(IpcFileName(), FileMode.Open, FileAccess.ReadWrite, FileShare.None)
+
+                    try
+                        let! existingGraceWatchStatus = deserializeAsync<GraceWatchStatus> fileStream
+
+                        if isGraceWatchStatusFresh existingGraceWatchStatus then
+                            return false
+                        else
+                            do! writeClaimToExistingFile fileStream
+                            return true
+                    with
+                    | _ ->
+                        do! writeClaimToExistingFile fileStream
+                        return true
+                with
+                | :? IOException -> return false
+
         }
 
     /// Checks if a file already exists in the object cache.

@@ -15,6 +15,7 @@ open System.Collections.Generic
 open System.Diagnostics
 open System.IO
 open System.Text.Json
+open System.Threading.Tasks
 
 [<NonParallelizable>]
 module WatchTests =
@@ -133,14 +134,17 @@ module WatchTests =
         JsonDocument.Parse(output)
 
     let private writeLiveWatchStatusFile () =
+        let rootDirectoryId = Guid.NewGuid()
+
         let status: Services.GraceWatchStatus =
             {
                 UpdatedAt = getCurrentInstant ()
-                RootDirectoryId = Guid.NewGuid()
+                IsStartupClaim = false
+                RootDirectoryId = rootDirectoryId
                 RootDirectorySha256Hash = Sha256Hash "live-watch-root"
                 LastFileUploadInstant = Instant.MinValue
                 LastDirectoryVersionInstant = Instant.MinValue
-                DirectoryIds = HashSet<DirectoryVersionId>()
+                DirectoryIds = HashSet<DirectoryVersionId>([| rootDirectoryId |])
             }
 
         let ipcFileName = Services.IpcFileName()
@@ -150,6 +154,13 @@ module WatchTests =
 
         File.WriteAllText(ipcFileName, serialize status)
         ipcFileName
+
+    let private readFileIfExists path = if File.Exists(path) then Some(File.ReadAllText(path)) else None
+
+    let private deleteWatchStatusFileIfExists () =
+        let ipcFileName = Services.IpcFileName()
+
+        if File.Exists(ipcFileName) then File.Delete(ipcFileName)
 
     let private withTempRepo (action: string -> unit) =
         let tempDir = Path.Combine(Path.GetTempPath(), $"grace-watch-tests-{Guid.NewGuid():N}")
@@ -163,8 +174,12 @@ module WatchTests =
         try
             Environment.CurrentDirectory <- tempDir
             resetConfiguration ()
+            Services.graceWatchStatusUpdateTime <- Instant.MinValue
+            deleteWatchStatusFileIfExists ()
             action tempDir
         finally
+            deleteWatchStatusFileIfExists ()
+            Services.graceWatchStatusUpdateTime <- Instant.MinValue
             resetConfiguration ()
             Environment.CurrentDirectory <- originalDir
 
@@ -220,6 +235,241 @@ module WatchTests =
 
                 output
                 |> should contain "Authentication is not configured."))
+
+    [<Test>]
+    let ``watch exits nonzero when live watcher status already exists`` () =
+        withTempRepo (fun _ ->
+            clearWatchAuthEnv (fun () ->
+                let ipcFileName = writeLiveWatchStatusFile ()
+                let originalContents = readFileIfExists ipcFileName
+                let exitCode, output = runWithCapturedOutput [| "watch" |]
+
+                exitCode |> should equal -1
+
+                output
+                |> should contain "GraceWatch is already running"
+
+                output
+                |> should not' (contain "Unable to acquire an access token for SignalR")
+
+                readFileIfExists ipcFileName
+                |> should equal originalContents))
+
+    [<Test>]
+    let ``watch startup claim is atomic for simultaneous ordinary starts`` () =
+        withTempRepo (fun _ ->
+            let claimTasks =
+                Array.init 8 (fun _ ->
+                    Task.Run (fun () ->
+                        Services
+                            .tryClaimGraceWatchInterprocessFile()
+                            .Result))
+
+            claimTasks
+            |> Array.map (fun claimTask -> claimTask :> Task)
+            |> Task.WaitAll
+
+            let successfulClaims =
+                claimTasks
+                |> Array.filter (fun claimTask -> claimTask.Result)
+
+            successfulClaims.Length |> should equal 1
+
+            let status = Services.getGraceWatchStatus().Result
+            status |> should equal None)
+
+    [<Test>]
+    let ``watch startup claim blocks second ordinary start without usable status`` () =
+        withTempRepo (fun _ ->
+            clearWatchAuthEnv (fun () ->
+                let claimed =
+                    Services
+                        .tryClaimGraceWatchInterprocessFile()
+                        .Result
+
+                claimed |> should equal true
+
+                let status = Services.getGraceWatchStatus().Result
+                status |> should equal None
+
+                let exitCode, output = runWithCapturedOutput [| "watch" |]
+
+                exitCode |> should equal -1
+
+                output
+                |> should contain "GraceWatch is already running"
+
+                output
+                |> should not' (contain "Unable to acquire an access token for SignalR")))
+
+    [<Test>]
+    let ``watch startup claim replaces malformed stale ipc file`` () =
+        withTempRepo (fun _ ->
+            let ipcFileName = Services.IpcFileName()
+
+            Directory.CreateDirectory(Path.GetDirectoryName(ipcFileName))
+            |> ignore
+
+            File.WriteAllText(ipcFileName, "not-json")
+
+            let claimed =
+                Services
+                    .tryClaimGraceWatchInterprocessFile()
+                    .Result
+
+            claimed |> should equal true
+
+            let status = Services.getGraceWatchStatus().Result
+            status |> should equal None)
+
+    [<Test>]
+    let ``watch check exits zero when live watcher status exists`` () =
+        withTempRepo (fun _ ->
+            let ipcFileName = writeLiveWatchStatusFile ()
+            let originalContents = readFileIfExists ipcFileName
+
+            let exitCode, output =
+                runWithCapturedOutput [| "watch"
+                                         "--check" |]
+
+            exitCode |> should equal 0
+
+            output |> should contain "GraceWatch is running"
+
+            readFileIfExists ipcFileName
+            |> should equal originalContents)
+
+    [<Test>]
+    let ``watch check through main exits zero and preserves live watcher status`` () =
+        withTempRepo (fun _ ->
+            let ipcFileName = writeLiveWatchStatusFile ()
+            let originalContents = readFileIfExists ipcFileName
+
+            let exitCode, standardOut, standardError =
+                runWithCapturedStdoutAndStderr [| "watch"
+                                                  "--check" |]
+
+            exitCode |> should equal 0
+            standardError |> should equal String.Empty
+
+            standardOut
+            |> should contain "GraceWatch is running"
+
+            readFileIfExists ipcFileName
+            |> should equal originalContents)
+
+    [<Test>]
+    let ``watch check json mode emits error envelope and preserves live watcher status`` () =
+        withTempRepo (fun _ ->
+            let ipcFileName = writeLiveWatchStatusFile ()
+            let originalContents = readFileIfExists ipcFileName
+
+            let exitCode, standardOut, standardError =
+                runWithCapturedStdoutAndStderr [| "--output"
+                                                  "Json"
+                                                  "watch"
+                                                  "--check" |]
+
+            exitCode |> should equal -1
+            standardError |> should equal String.Empty
+
+            standardOut
+            |> should not' (contain "GraceWatch is running")
+
+            use document = parseJsonOutput standardOut
+            let root = document.RootElement
+
+            root.GetProperty("Error").GetString()
+            |> should contain "watch is a continuous foreground workflow"
+
+            let mutable returnValue = Unchecked.defaultof<JsonElement>
+
+            root.TryGetProperty("ReturnValue", &returnValue)
+            |> should equal false
+
+            readFileIfExists ipcFileName
+            |> should equal originalContents)
+
+    [<Test>]
+    let ``watch check select mode emits error envelope and preserves live watcher status`` () =
+        withTempRepo (fun _ ->
+            let ipcFileName = writeLiveWatchStatusFile ()
+            let originalContents = readFileIfExists ipcFileName
+
+            let exitCode, standardOut, standardError =
+                runWithCapturedStdoutAndStderr [| "watch"
+                                                  "--check"
+                                                  "--select"
+                                                  "RootDirectoryId" |]
+
+            exitCode |> should equal -1
+            standardError |> should equal String.Empty
+
+            standardOut
+            |> should not' (contain "GraceWatch is running")
+
+            use document = parseJsonOutput standardOut
+            let root = document.RootElement
+
+            root.GetProperty("Error").GetString()
+            |> should contain "does not support --select in this release"
+
+            let mutable returnValue = Unchecked.defaultof<JsonElement>
+
+            root.TryGetProperty("ReturnValue", &returnValue)
+            |> should equal false
+
+            readFileIfExists ipcFileName
+            |> should equal originalContents)
+
+    [<Test>]
+    let ``watch check exits nonzero when live watcher status is missing`` () =
+        withTempRepo (fun _ ->
+            clearWatchAuthEnv (fun () ->
+                let exitCode, output =
+                    runWithCapturedOutput [| "watch"
+                                             "--check" |]
+
+                exitCode |> should equal -1
+
+                output
+                |> should contain "GraceWatch is not running"
+
+                output
+                |> should not' (contain "Unable to acquire an access token for SignalR")
+
+                Services.IpcFileName()
+                |> File.Exists
+                |> should equal false))
+
+    [<Test>]
+    let ``watch check exits nonzero and preserves startup claim`` () =
+        withTempRepo (fun _ ->
+            clearWatchAuthEnv (fun () ->
+                let claimed =
+                    Services
+                        .tryClaimGraceWatchInterprocessFile()
+                        .Result
+
+                claimed |> should equal true
+
+                let ipcFileName = Services.IpcFileName()
+                let originalContents = readFileIfExists ipcFileName
+
+                let exitCode, output =
+                    runWithCapturedOutput [| "watch"
+                                             "--check" |]
+
+                exitCode |> should equal -1
+
+                output
+                |> should contain "GraceWatch is not running"
+
+                output
+                |> should not' (contain "Unable to acquire an access token for SignalR")
+
+                readFileIfExists ipcFileName
+                |> should equal originalContents))
 
     [<Test>]
     let ``watch json auth failure emits one clean error envelope`` () =

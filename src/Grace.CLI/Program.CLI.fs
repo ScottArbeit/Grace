@@ -945,6 +945,11 @@ module GraceCommand =
     /// Checks if the command is a `grace watch` command.
     let isGraceWatch (parseResult: ParseResult) = if (parseResult.CommandResult.Command.Name = "watch") then true else false
 
+    /// Checks if the command is a foreground `grace watch` command.
+    let isGraceWatchForeground (parseResult: ParseResult) =
+        (parseResult |> isGraceWatch)
+        && not (Command.Watch.isCheckRequested parseResult)
+
     /// Checks if the command is a `grace config` command.
     let isGraceConfig (parseResult: ParseResult) =
         if not <| isNull parseResult.CommandResult.Parent then
@@ -1287,8 +1292,8 @@ module GraceCommand =
                                     else
                                         AnsiConsole.Write(new Rule())
 
-                                // If this instance isn't `grace watch`, we want to check if `grace watch` is running by trying to read the IPC file.
-                                if not <| (parseResult |> isGraceWatch) then
+                                // If this instance isn't foreground `grace watch`, we want to check if `grace watch` is running by trying to read the IPC file.
+                                if not <| (parseResult |> isGraceWatchForeground) then
                                     let! graceWatchStatus = getGraceWatchStatus ()
 
                                     match graceWatchStatus with
@@ -1301,9 +1306,9 @@ module GraceCommand =
 
                                 // Stuff to do after the command has been invoked:
 
-                                // If this instance is `grace watch`, we'll actually delete the IPC file in the finally clause below, but
+                                // If this instance is foreground `grace watch`, we'll actually delete the IPC file in the finally clause below, but
                                 //   we'll write the "we deleted the file" message to the console here, so it comes before the last Rule() is written.
-                                if parseResult |> isGraceWatch then
+                                if parseResult |> isGraceWatchForeground then
                                     logToAnsiConsole Colors.Important (getLocalizedString StringResourceName.InterprocessFileDeleted)
 
                                 // If we're writing output, write the final Rule() to the console.
@@ -1417,9 +1422,9 @@ module GraceCommand =
                             source = resolveInvocationSource parseResult
                         }
 
-                // If this was grace watch, delete the inter-process communication file.
+                // If this was foreground grace watch, delete the inter-process communication file.
                 if not <| isNull (parseResult)
-                   && parseResult |> isGraceWatch then
+                   && parseResult |> isGraceWatchForeground then
                     deleteGraceWatchIpcFileIfOwned ()
         })
             .Result
