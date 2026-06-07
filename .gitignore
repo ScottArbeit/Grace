@@ -3,6 +3,7 @@
 
 # Grace-specific ignores
 .grace/
+/artifacts/
 **/.grace/objects
 **/.grace/directoryVersions
 **/.grace/gracestatus*
