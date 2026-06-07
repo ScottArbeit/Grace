@@ -42,6 +42,8 @@ open Grace.CLI.Text
 open Grace.Types.Automation
 
 module Watch =
+    exception private WatchCommandExit of int
+
 
     module private Options =
         let ownerId =
@@ -115,6 +117,11 @@ module Watch =
                 Description = "The name of the branch. [default: current branch]",
                 Arity = ArgumentArity.ExactlyOne
             )
+
+        let check =
+            new Option<bool>(OptionName.Check, Required = false, Description = "Checks whether GraceWatch is already running without starting the watcher.")
+
+    let isCheckRequested (parseResult: ParseResult) = parseResult.GetValue(Options.check)
 
     /// Holds a list of the created or changed files that we need to process, as determined by the FileSystemWatcher.
     ///
@@ -515,6 +522,20 @@ module Watch =
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) =
             task {
                 try
+                    let! existingGraceWatchStatus = getGraceWatchStatus ()
+
+                    if isCheckRequested parseResult then
+                        match existingGraceWatchStatus with
+                        | Some _ ->
+                            logToAnsiConsole Colors.Important "GraceWatch is running."
+                            raise (WatchCommandExit 0)
+                        | None ->
+                            logToAnsiConsole Colors.Error "GraceWatch is not running."
+                            raise (WatchCommandExit -1)
+                    elif existingGraceWatchStatus |> Option.isSome then
+                        logToAnsiConsole Colors.Error "GraceWatch is already running."
+                        raise (WatchCommandExit -1)
+
                     // Create the FileSystemWatcher, but don't enable it yet.
                     use rootDirectoryFileSystemWatcher = createFileSystemWatcher (Current().RootDirectory)
 
@@ -803,6 +824,7 @@ module Watch =
                     else
                         return 0
                 with
+                | WatchCommandExit exitCode -> return exitCode
                 | :? HttpRequestException as httpEx when
                     httpEx.StatusCode.HasValue
                     && httpEx.StatusCode.Value = HttpStatusCode.Unauthorized
@@ -850,6 +872,7 @@ module Watch =
             |> addOption Options.repositoryId
             |> addOption Options.branchName
             |> addOption Options.branchId
+            |> addOption Options.check
 
         // Create main command and aliases, if any.
         let watchCommand =

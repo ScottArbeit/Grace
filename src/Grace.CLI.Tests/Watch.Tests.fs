@@ -151,6 +151,13 @@ module WatchTests =
         File.WriteAllText(ipcFileName, serialize status)
         ipcFileName
 
+    let private readFileIfExists path = if File.Exists(path) then Some(File.ReadAllText(path)) else None
+
+    let private deleteWatchStatusFileIfExists () =
+        let ipcFileName = Services.IpcFileName()
+
+        if File.Exists(ipcFileName) then File.Delete(ipcFileName)
+
     let private withTempRepo (action: string -> unit) =
         let tempDir = Path.Combine(Path.GetTempPath(), $"grace-watch-tests-{Guid.NewGuid():N}")
         let graceDir = Path.Combine(tempDir, Constants.GraceConfigDirectory)
@@ -163,8 +170,10 @@ module WatchTests =
         try
             Environment.CurrentDirectory <- tempDir
             resetConfiguration ()
+            deleteWatchStatusFileIfExists ()
             action tempDir
         finally
+            deleteWatchStatusFileIfExists ()
             resetConfiguration ()
             Environment.CurrentDirectory <- originalDir
 
@@ -220,6 +229,77 @@ module WatchTests =
 
                 output
                 |> should contain "Authentication is not configured."))
+
+    [<Test>]
+    let ``watch exits nonzero when live watcher status already exists`` () =
+        withTempRepo (fun _ ->
+            clearWatchAuthEnv (fun () ->
+                let ipcFileName = writeLiveWatchStatusFile ()
+                let originalContents = readFileIfExists ipcFileName
+                let exitCode, output = runWithCapturedOutput [| "watch" |]
+
+                exitCode |> should equal -1
+
+                output
+                |> should contain "GraceWatch is already running"
+
+                output
+                |> should not' (contain "Unable to acquire an access token for SignalR")
+
+                readFileIfExists ipcFileName
+                |> should equal originalContents))
+
+    [<Test>]
+    let ``watch check exits zero when live watcher status exists`` () =
+        withTempRepo (fun _ ->
+            let ipcFileName = writeLiveWatchStatusFile ()
+            let originalContents = readFileIfExists ipcFileName
+
+            let exitCode, output =
+                runWithCapturedOutput [| "watch"
+                                         "--check" |]
+
+            exitCode |> should equal 0
+
+            output |> should contain "GraceWatch is running"
+
+            readFileIfExists ipcFileName
+            |> should equal originalContents)
+
+    [<Test>]
+    let ``watch check through main exits zero and preserves live watcher status`` () =
+        withTempRepo (fun _ ->
+            let ipcFileName = writeLiveWatchStatusFile ()
+            let originalContents = readFileIfExists ipcFileName
+
+            let exitCode, standardOut, standardError =
+                runWithCapturedStdoutAndStderr [| "watch"
+                                                  "--check" |]
+
+            exitCode |> should equal 0
+            standardError |> should equal String.Empty
+
+            standardOut
+            |> should contain "GraceWatch is running"
+
+            readFileIfExists ipcFileName
+            |> should equal originalContents)
+
+    [<Test>]
+    let ``watch check exits nonzero when live watcher status is missing`` () =
+        withTempRepo (fun _ ->
+            clearWatchAuthEnv (fun () ->
+                let exitCode, output =
+                    runWithCapturedOutput [| "watch"
+                                             "--check" |]
+
+                exitCode |> should equal -1
+
+                output
+                |> should contain "GraceWatch is not running"
+
+                output
+                |> should not' (contain "Unable to acquire an access token for SignalR")))
 
     [<Test>]
     let ``watch json auth failure emits one clean error envelope`` () =

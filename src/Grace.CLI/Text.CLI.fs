@@ -19,6 +19,9 @@ module Text =
         let BranchName = "--branch-name"
 
         [<Literal>]
+        let Check = "--check"
+
+        [<Literal>]
         let CheckpointDays = "--checkpoint-days"
 
         [<Literal>]
