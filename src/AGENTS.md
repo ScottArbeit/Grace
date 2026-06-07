@@ -85,8 +85,10 @@ update the issue before editing the new paths.
   review-thread workflow: evaluate the comment, make the appropriate fix or explicitly explain why no code change is
   needed, validate the result, commit and push the branch, reply to the GitHub review comment with the outcome and
   evidence, and resolve the GitHub conversation when the feedback has been satisfied.
-- When the user says a PR is merged, verify the merge, delete the issue branch and worktree, run `git fetch --prune`,
-  and `git pull --ff-only` in the local repo so `main` is up to date.
+- After an agent-owned pull request is merged, or closed because the related issue/sub-issue work is complete, cleanup
+  is mandatory: verify the destination contains the change, delete the remote issue branch, delete the local issue
+  branch, remove the task worktree, run `git fetch --prune`, and `git pull --ff-only` in the local repo so `main` is up
+  to date. Do not wait for a separate user prompt before deleting the remote branch.
 - Record skipped validation, docs impact, residual risk, and follow-ups in the task record or pull request.
 - Write tests for new features and bug fixes; prioritize critical paths.
 - Document new public APIs with XML comments and update nearby `AGENTS.md`/docs when behavior changes.

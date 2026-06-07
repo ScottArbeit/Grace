@@ -112,8 +112,10 @@ default-branch versus epic-branch wording so links stay traceable without relyin
   and where the detailed review/fix comments live.
 - Open normal ready-for-review pull requests. Do not open draft pull requests unless the user explicitly asks for a
   draft.
-- When the user says a PR is merged, verify the merge, delete the issue branch and worktree, run `git fetch --prune`,
-  and `git pull --ff-only` in the local repo so `main` is up to date.
+- After an agent-owned pull request is merged, or closed because the related issue/sub-issue work is complete, cleanup
+  is mandatory: verify the destination contains the change, delete the remote issue branch, delete the local issue
+  branch, remove the task worktree, run `git fetch --prune`, and `git pull --ff-only` in the local repo so `main` is up
+  to date. Do not wait for a separate user prompt before deleting the remote branch.
 - Update README, CONTRIBUTING, nearby `AGENTS.md`, and other docs when behavior, commands, APIs, or workflow changes.
 - When the user asks to address a code review comment, review comment, PR feedback, or similar, treat that as a complete
   review-thread workflow: evaluate the comment, make the appropriate fix or explicitly explain why no code change is

@@ -581,17 +581,19 @@ clarification or reply with the trade-off instead of resolving the thread premat
 
 ## Cleanup
 
-After merge or promotion:
+After merge, promotion, or closing a pull request because the related issue/sub-issue work is complete:
 
 1. Verify the destination branch or reference contains the change.
 2. Confirm no uncommitted or unpushed work is stranded in the task workspace.
-3. Remove task worktrees that are no longer needed and delete the issue branch locally and remotely.
-4. Run `git fetch --prune` and `git pull --ff-only` in the local repo so `main` is up to date.
-5. Update the task record with final status and follow-ups.
-6. Leave unrelated local changes untouched.
+3. Delete the remote issue branch.
+4. Remove task worktrees that are no longer needed and delete the local issue branch.
+5. Run `git fetch --prune` and `git pull --ff-only` in the local repo so `main` is up to date.
+6. Update the task record with final status and follow-ups.
+7. Leave unrelated local changes untouched.
 
 For epic integration branch mode, sub-issue cleanup retires the sub-issue branch and worktree after the sub-issue PR is
 merged to the epic branch. Final epic cleanup also retires the epic branch and worktree after the epic-to-`main` PR is
 merged and local `main` is fast-forwarded.
 
-When the user says "PR is merged" or uses equivalent wording, treat that as a request to perform this cleanup sequence.
+Do not wait for a separate user prompt before deleting remote branches. For agent-owned work, branch retirement is part
+of closing the PR/issue lifecycle, not an optional follow-up.
