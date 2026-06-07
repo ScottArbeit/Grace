@@ -522,9 +522,9 @@ module Watch =
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) =
             task {
                 try
-                    let! existingGraceWatchStatus = getGraceWatchStatus ()
-
                     if isCheckRequested parseResult then
+                        let! existingGraceWatchStatus = getGraceWatchStatus ()
+
                         match existingGraceWatchStatus with
                         | Some _ ->
                             logToAnsiConsole Colors.Important "GraceWatch is running."
@@ -532,7 +532,10 @@ module Watch =
                         | None ->
                             logToAnsiConsole Colors.Error "GraceWatch is not running."
                             raise (WatchCommandExit -1)
-                    elif existingGraceWatchStatus |> Option.isSome then
+
+                    let! claimedGraceWatchStatus = tryClaimGraceWatchInterprocessFile ()
+
+                    if not claimedGraceWatchStatus then
                         logToAnsiConsole Colors.Error "GraceWatch is already running."
                         raise (WatchCommandExit -1)
 

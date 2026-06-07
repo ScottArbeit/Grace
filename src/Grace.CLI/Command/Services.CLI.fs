@@ -1329,34 +1329,41 @@ module Services =
     /// The full path of the inter-process communication file that grace watch uses to communicate with other invocations of Grace.
     let IpcFileName () = Path.Combine(Path.GetTempPath(), "Grace", Current().BranchName, Constants.IpcFileName)
 
+    let private createGraceWatchStatus (graceStatus: GraceStatus) (directoryIdsOverride: HashSet<DirectoryVersionId> option) =
+        let directoryIds =
+            match directoryIdsOverride with
+            | Some ids -> HashSet<DirectoryVersionId>(ids)
+            | None -> HashSet<DirectoryVersionId>(graceStatus.Index.Keys)
+
+        {
+            UpdatedAt = getCurrentInstant ()
+            RootDirectoryId = graceStatus.RootDirectoryId
+            RootDirectorySha256Hash = graceStatus.RootDirectorySha256Hash
+            LastFileUploadInstant = graceStatus.LastSuccessfulFileUpload
+            LastDirectoryVersionInstant = graceStatus.LastSuccessfulDirectoryVersionUpload
+            DirectoryIds = directoryIds
+        }
+
+    let private writeGraceWatchStatus fileMode graceWatchStatus =
+        task {
+            Directory.CreateDirectory(Path.GetDirectoryName(IpcFileName()))
+            |> ignore
+
+            use fileStream = new FileStream(IpcFileName(), fileMode, FileAccess.Write, FileShare.None)
+
+            do! serializeAsync fileStream graceWatchStatus
+            graceWatchStatusUpdateTime <- graceWatchStatus.UpdatedAt
+        }
+
     /// Updates the contents of the `grace watch` status inter-process communication file.
     let updateGraceWatchInterprocessFile (graceStatus: GraceStatus) (directoryIdsOverride: HashSet<DirectoryVersionId> option) =
         task {
             try
-                let directoryIds =
-                    match directoryIdsOverride with
-                    | Some ids -> HashSet<DirectoryVersionId>(ids)
-                    | None -> HashSet<DirectoryVersionId>(graceStatus.Index.Keys)
-
-                let newGraceWatchStatus =
-                    {
-                        UpdatedAt = getCurrentInstant ()
-                        RootDirectoryId = graceStatus.RootDirectoryId
-                        RootDirectorySha256Hash = graceStatus.RootDirectorySha256Hash
-                        LastFileUploadInstant = graceStatus.LastSuccessfulFileUpload
-                        LastDirectoryVersionInstant = graceStatus.LastSuccessfulDirectoryVersionUpload
-                        DirectoryIds = directoryIds
-                    }
+                let newGraceWatchStatus = createGraceWatchStatus graceStatus directoryIdsOverride
                 //logToAnsiConsole Colors.Important $"In updateGraceWatchStatus. newGraceWatchStatus.UpdatedAt: {newGraceWatchStatus.UpdatedAt.ToString(InstantPattern.ExtendedIso.PatternText, CultureInfo.InvariantCulture)}."
                 //logToAnsiConsole Colors.Highlighted $"{Markup.Escape(EnhancedStackTrace.Current().ToString())}"
 
-                Directory.CreateDirectory(Path.GetDirectoryName(IpcFileName()))
-                |> ignore
-
-                use fileStream = new FileStream(IpcFileName(), FileMode.Create, FileAccess.Write, FileShare.None)
-
-                do! serializeAsync fileStream newGraceWatchStatus
-                graceWatchStatusUpdateTime <- newGraceWatchStatus.UpdatedAt
+                do! writeGraceWatchStatus FileMode.Create newGraceWatchStatus
                 logToAnsiConsole Colors.Important $"Wrote inter-process communication file."
             with
             | ex ->
@@ -1397,6 +1404,47 @@ module Services =
                 logToAnsiConsole Colors.Error $"ex.Message: {StringExtensions.EscapeMarkup(ex.Message)}."
                 logToAnsiConsole Colors.Error $"{Environment.NewLine}{StringExtensions.EscapeMarkup(ex.StackTrace)}."
                 return None
+        }
+
+    /// Atomically claims the `grace watch` status IPC file before foreground watch startup.
+    let tryClaimGraceWatchInterprocessFile () =
+        task {
+            let claimStatus = createGraceWatchStatus GraceStatus.Default (Some(HashSet<DirectoryVersionId>()))
+
+            let writeClaimToExistingFile (fileStream: FileStream) =
+                task {
+                    fileStream.SetLength(0L)
+                    fileStream.Position <- 0L
+                    do! serializeAsync fileStream claimStatus
+                    graceWatchStatusUpdateTime <- claimStatus.UpdatedAt
+                }
+
+            try
+                do! writeGraceWatchStatus FileMode.CreateNew claimStatus
+                return true
+            with
+            | :? IOException ->
+                try
+                    use fileStream = new FileStream(IpcFileName(), FileMode.Open, FileAccess.ReadWrite, FileShare.None)
+
+                    try
+                        let! existingGraceWatchStatus = deserializeAsync<GraceWatchStatus> fileStream
+
+                        if
+                            existingGraceWatchStatus.UpdatedAt
+                            > getCurrentInstant().Minus(Duration.FromMinutes(5.0))
+                        then
+                            return false
+                        else
+                            do! writeClaimToExistingFile fileStream
+                            return true
+                    with
+                    | _ ->
+                        do! writeClaimToExistingFile fileStream
+                        return true
+                with
+                | :? IOException -> return false
+
         }
 
     /// Checks if a file already exists in the object cache.

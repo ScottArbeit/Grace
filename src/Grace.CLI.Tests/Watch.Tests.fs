@@ -15,6 +15,7 @@ open System.Collections.Generic
 open System.Diagnostics
 open System.IO
 open System.Text.Json
+open System.Threading.Tasks
 
 [<NonParallelizable>]
 module WatchTests =
@@ -170,10 +171,12 @@ module WatchTests =
         try
             Environment.CurrentDirectory <- tempDir
             resetConfiguration ()
+            Services.graceWatchStatusUpdateTime <- Instant.MinValue
             deleteWatchStatusFileIfExists ()
             action tempDir
         finally
             deleteWatchStatusFileIfExists ()
+            Services.graceWatchStatusUpdateTime <- Instant.MinValue
             resetConfiguration ()
             Environment.CurrentDirectory <- originalDir
 
@@ -250,6 +253,49 @@ module WatchTests =
                 |> should equal originalContents))
 
     [<Test>]
+    let ``watch startup claim is atomic for simultaneous ordinary starts`` () =
+        withTempRepo (fun _ ->
+            let claimTasks =
+                Array.init 8 (fun _ ->
+                    Task.Run (fun () ->
+                        Services
+                            .tryClaimGraceWatchInterprocessFile()
+                            .Result))
+
+            claimTasks
+            |> Array.map (fun claimTask -> claimTask :> Task)
+            |> Task.WaitAll
+
+            let successfulClaims =
+                claimTasks
+                |> Array.filter (fun claimTask -> claimTask.Result)
+
+            successfulClaims.Length |> should equal 1
+
+            let status = Services.getGraceWatchStatus().Result
+            status |> should not' (equal None))
+
+    [<Test>]
+    let ``watch startup claim replaces malformed stale ipc file`` () =
+        withTempRepo (fun _ ->
+            let ipcFileName = Services.IpcFileName()
+
+            Directory.CreateDirectory(Path.GetDirectoryName(ipcFileName))
+            |> ignore
+
+            File.WriteAllText(ipcFileName, "not-json")
+
+            let claimed =
+                Services
+                    .tryClaimGraceWatchInterprocessFile()
+                    .Result
+
+            claimed |> should equal true
+
+            let status = Services.getGraceWatchStatus().Result
+            status |> should not' (equal None))
+
+    [<Test>]
     let ``watch check exits zero when live watcher status exists`` () =
         withTempRepo (fun _ ->
             let ipcFileName = writeLiveWatchStatusFile ()
@@ -299,7 +345,11 @@ module WatchTests =
                 |> should contain "GraceWatch is not running"
 
                 output
-                |> should not' (contain "Unable to acquire an access token for SignalR")))
+                |> should not' (contain "Unable to acquire an access token for SignalR")
+
+                Services.IpcFileName()
+                |> File.Exists
+                |> should equal false))
 
     [<Test>]
     let ``watch json auth failure emits one clean error envelope`` () =
