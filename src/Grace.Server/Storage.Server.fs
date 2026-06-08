@@ -901,7 +901,7 @@ module Storage =
                         context
                             .GetLogger()
                             .LogInformation(
-                                $"{getCurrentInstantExtended ()} Received {parameters.FileVersions.Count} FileVersions; Returning {uploadMetadata.Count} uploadMetadata records."
+                                $"{getCurrentInstantExtended ()} Received {parameters.FileVersions.Length} FileVersions; Returning {uploadMetadata.Count} uploadMetadata records."
                             )
 
                         return!

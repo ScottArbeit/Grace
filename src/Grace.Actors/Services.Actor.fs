@@ -176,7 +176,7 @@ module Services =
                         message.ContentType <- "application/json"
                         message.Subject <- "GraceEvent"
                         message.CorrelationId <- metadata.CorrelationId
-                        message.MessageId <- $"{metadata.CorrelationId}-{getCurrentInstant().ToUnixTimeMilliseconds}" //Guid.NewGuid().ToString("N")
+                        message.MessageId <- $"{metadata.CorrelationId}-{getCurrentInstant().ToUnixTimeMilliseconds()}" //Guid.NewGuid().ToString("N")
                         message.ApplicationProperties[ "graceEventType" ] <- getDiscriminatedUnionFullName graceEvent
 
                         for kvp in metadata.Properties do
