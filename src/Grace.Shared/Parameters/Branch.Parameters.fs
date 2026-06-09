@@ -1,6 +1,7 @@
 namespace Grace.Shared.Parameters
 
 open Grace.Shared.Parameters.Common
+open Grace.Types.Annotation
 open Grace.Types.Common
 open System
 
@@ -112,6 +113,33 @@ module Branch =
         inherit BranchParameters()
         member val public References = String.Empty with get, set
         member val public MaxCount = 50 with get, set
+
+    /// Parameters for the /branch/annotate endpoint.
+    type AnnotateParameters() =
+        inherit BranchParameters()
+        member val public TargetReferenceId: ReferenceId = ReferenceId.Empty with get, set
+        member val public Path: RelativePath = String.Empty with get, set
+        member val public StartLine = 1 with get, set
+        member val public EndLine = 1 with get, set
+        member val public ReferenceTypes: ReferenceType array = Array.empty with get, set
+        member val public MaxReferences = DefaultMaxReferences with get, set
+        member val public IncludeLineText = false with get, set
+
+        member this.LineRange = { StartLine = this.StartLine; EndLine = this.EndLine }
+
+        member this.Validate() =
+            [
+                match validateLineRange this.LineRange with
+                | Ok () -> ()
+                | Error errors -> yield! errors
+
+                match validateMaxReferences this.MaxReferences with
+                | Ok () -> ()
+                | Error errors -> yield! errors
+            ]
+            |> function
+                | [] -> Ok()
+                | errors -> Error errors
 
     /// Parameters for the /branch/get endpoint.
     type GetBranchParameters() =
