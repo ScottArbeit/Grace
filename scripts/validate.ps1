@@ -249,6 +249,11 @@ function Invoke-SolutionTests([string]$Configuration, [bool]$IncludeFullTests) {
 
     Write-Host "Test target: src/Grace.slnx"
     Write-Host ("Test filter: {0}" -f $testFilter)
+    if ($IncludeFullTests) {
+        Write-Host "Progress note: -Full includes Grace.Server.Tests; the Aspire-backed test assembly generally runs for 3-4 minutes after the faster assemblies finish."
+        Write-Host "Progress note: VSTest may buffer test-host progress output; wait for the Grace.Server.Tests summary before treating quiet output as a hang."
+    }
+
     Write-Host ("Running: dotnet test `"src/Grace.slnx`" -c {0} --no-build --filter `"{1}`"" -f $Configuration, $testFilter)
 
     Invoke-External "Grace solution tests" {
