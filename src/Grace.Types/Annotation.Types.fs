@@ -27,6 +27,8 @@ module Annotation =
 
     let private referenceTypeName (referenceType: ReferenceType) = getDiscriminatedUnionCaseName referenceType
 
+    let private referenceTypeNames = listCases<ReferenceType> () |> Set.ofArray
+
     [<MessagePackObject; GenerateSerializer>]
     type AnnotationLineRange =
         {
@@ -214,6 +216,8 @@ module Annotation =
             | [] -> Ok()
             | errors -> Error(List.rev errors)
 
+    let private isUnknownReferenceTypeName referenceTypeName = not (referenceTypeNames.Contains referenceTypeName)
+
     let private hasDuplicates values =
         values
         |> Seq.filter (String.IsNullOrWhiteSpace >> not)
@@ -390,6 +394,25 @@ module Annotation =
                 $"SourceReferences must contain no more than MaxReferences ({annotation.MaxReferences}) entries."
             |> List.rev
 
+        let lineTextErrors =
+            []
+            |> appendIf
+                (not annotation.IncludeLineText
+                 && annotation.Lines.Length > 0)
+                "Lines must be empty when IncludeLineText is false."
+            |> List.rev
+
+        let referenceTypeErrors =
+            [
+                for referenceTypeName in annotation.ReferenceTypeFilter do
+                    if isUnknownReferenceTypeName referenceTypeName then
+                        $"ReferenceTypeFilter contains unknown ReferenceType '{referenceTypeName}'."
+
+                for sourceReference in annotation.SourceReferences do
+                    if isUnknownReferenceTypeName sourceReference.ReferenceType then
+                        $"SourceReference '{sourceReference.SourceReferenceId}' contains unknown ReferenceType '{sourceReference.ReferenceType}'."
+            ]
+
         let errors =
             [
                 yield! rangeErrors
@@ -403,6 +426,8 @@ module Annotation =
                 yield! requestedRangeErrors
                 yield! sourceRowPathErrors
                 yield! sourceReferenceBudgetErrors
+                yield! lineTextErrors
+                yield! referenceTypeErrors
             ]
 
         match errors with

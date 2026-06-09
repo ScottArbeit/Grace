@@ -22,6 +22,11 @@ type AnnotationContractTests() =
         | Ok () -> ()
         | Error errors -> Assert.Fail(String.Join(Environment.NewLine, errors))
 
+    let assertErrorContains expected (result: Result<unit, string list>) =
+        match result with
+        | Ok () -> Assert.Fail($"Expected validation error containing '{expected}'.")
+        | Error errors -> Assert.That(errors, Has.Some.Contains(expected))
+
     let validAnnotation includeLineText =
         BranchAnnotationDto.Create(
             { StartLine = 10; EndLine = 12 },
@@ -129,6 +134,39 @@ type AnnotationContractTests() =
                 Assert.That(annotation.Lines, Is.Empty)
                 assertOk (validate annotation))
         )
+
+    [<Test>]
+    member _.AnnotationValidationRejectsLineTextWhenNotRequested() =
+        let annotation =
+            { validAnnotation false with
+                Lines =
+                    [|
+                        { LineNumber = 10; Text = "let value = 1" }
+                    |]
+            }
+
+        validate annotation
+        |> assertErrorContains "Lines must be empty when IncludeLineText is false"
+
+    [<Test>]
+    member _.AnnotationValidationRejectsUnknownSourceReferenceType() =
+        let annotation =
+            { validAnnotation true with
+                SourceReferences =
+                    [|
+                        { (validAnnotation true).SourceReferences[0] with ReferenceType = "Bogus" }
+                    |]
+            }
+
+        validate annotation
+        |> assertErrorContains "unknown ReferenceType 'Bogus'"
+
+    [<Test>]
+    member _.AnnotationValidationRejectsUnknownReferenceTypeFilter() =
+        let annotation = { validAnnotation true with ReferenceTypeFilter = [| "Bogus" |] }
+
+        validate annotation
+        |> assertErrorContains "unknown ReferenceType 'Bogus'"
 
     [<Test>]
     member _.AnnotateParametersDefaultReferenceBudgetIsOneThousand() =
