@@ -3783,6 +3783,9 @@ components:
           $ref: '#/components/schemas/ReferenceType'
         ReferenceText:
           $ref: '#/components/schemas/ReferenceText'
+        CreatedBy:
+          type: string
+          nullable: true
         CreatedAt:
           $ref: '#/components/schemas/Instant'
     RepositoryDto:

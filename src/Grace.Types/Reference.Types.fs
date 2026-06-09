@@ -88,6 +88,7 @@ module Reference =
             ReferenceType: ReferenceType
             ReferenceText: ReferenceText
             Links: ReferenceLinkType seq
+            CreatedBy: string option
             CreatedAt: Instant
             UpdatedAt: Instant option
             DeletedAt: Instant option
@@ -107,6 +108,7 @@ module Reference =
                 ReferenceType = Save
                 ReferenceText = ReferenceText String.Empty
                 Links = Seq.empty
+                CreatedBy = None
                 CreatedAt = Constants.DefaultTimestamp
                 UpdatedAt = None
                 DeletedAt = None
@@ -129,6 +131,11 @@ module Reference =
                         ReferenceType = referenceType
                         ReferenceText = referenceText
                         Links = links
+                        CreatedBy =
+                            if String.IsNullOrWhiteSpace referenceEvent.Metadata.Principal then
+                                None
+                            else
+                                Some referenceEvent.Metadata.Principal
                         CreatedAt = referenceEvent.Metadata.Timestamp
                     }
                 | LinkAdded link ->
