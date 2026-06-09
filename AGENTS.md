@@ -89,31 +89,28 @@ default-branch versus epic-branch wording so links stay traceable without relyin
   files. For broad waves, consider a preparatory compile-item or file-scaffold slice before later branches edit
   separate files.
 - Before the Grace completion review gate, update the branch against current `origin/main`, verify ahead/behind,
-  verify the scoped diff and that no unexpected deletions are present, run the chosen validation gate, then spawn the
-  final review-only sibling. Review on a stale branch is exploratory pre-review and does not satisfy the completion
+  verify the scoped diff and that no unexpected deletions are present, run the chosen validation gate, then wait for
+  Codex Code Review Bot to review the refreshed PR head. A bot signal on a stale commit does not satisfy the completion
   gate. For sub-issue PRs targeting an epic integration branch, run that freshness gate against the current epic branch;
   for the final epic-to-`main` PR, run it against current `origin/main`.
 - Commit after each completed slice and keep pull requests focused and reviewable.
 - When acting as the main implementation orchestrator, delegate each coding task and each fix task to a fresh worker
-  subagent, and delegate each future code review task to a fresh GPT-5.3-Codex High review-only subagent. The main
-  orchestrator must not implement, repair, inspect or validate code fixes as a substitute for the worker, or commit code
-  changes locally. If an earlier worker thread is lost, compacted away, leaves uncommitted work, or cannot be resumed,
-  assign the continuation to a fresh worker subagent with the existing worktree/branch context and required validation.
-  The main agent coordinates issues, prompts, review ledgers, pull requests, CI/merge status, docs/process updates, and
-  final integration evidence. Follow the required subagent review loop in `docs/Development process.md`.
+  subagent. The main orchestrator must not implement, repair, inspect or validate code fixes as a substitute for the
+  worker, or commit code changes locally. If an earlier worker thread is lost, compacted away, leaves uncommitted work,
+  or cannot be resumed, assign the continuation to a fresh worker subagent with the existing worktree/branch context
+  and required validation. The main agent coordinates issues, prompts, review ledgers, pull requests, CI/merge status,
+  docs/process updates, Codex Code Review Bot monitoring, and final integration evidence. Follow the required bot-review
+  loop in `docs/Development process.md`.
 - After the first coding subagent that works on an issue commits and pushes the new branch to origin, open a normal
-  ready-for-review pull request. Keep it open while the step is still in progress so subsequent code-review findings,
-  fixes, and "Reviewed And OK" notes can be recorded on the pull request instead of only on the issue.
-- After each review-only subagent pass, persist the findings and "Reviewed And OK" notes to the pull request when one
-  exists, or to the GitHub issue before the first pull request exists. Include prior "Reviewed And OK" notes in later
-  review prompts so reviewers can build on prior coverage instead of repeating it. If the first code review for a new
-  pull request finds no issues, still add a pull request comment with the review output so the review pass is documented
-  where code review evidence belongs.
-- Code reviews must be exhaustive: review-only subagents should keep searching for additional actionable findings until
-  they stop finding new issues, then report the final no-issues state and the areas they explicitly checked.
-- When adding or updating code-review comments on a pull request, update the pull request body's `Review Status` section
-  at the same time. Keep it as a high-level summary of reviews run, open findings, fix commits, final no-issues reviews,
-  and where the detailed review/fix comments live.
+  ready-for-review pull request. Keep it open while the step is still in progress so Codex Code Review Bot findings,
+  fixes, validation evidence, and final no-issues bot state can be recorded on the pull request instead of only on the
+  issue.
+- For Grace PR code review, do not spawn local review-only subagents by default. Monitor Codex Code Review Bot: 👀 on
+  the PR body means it saw the latest commit and is reviewing; 👍🏻 means it found no issues; a bot PR comment contains
+  findings that must be assigned to a fresh fix subagent.
+- After each fix subagent completes a bot-requested fix, reply to the Codex Code Review Bot comment with the outcome,
+  fix commit, and validation evidence, resolve the GitHub conversation, update the PR body's `Review Status` section,
+  and wait for the next bot review on the new head commit.
 - Open normal ready-for-review pull requests. Do not open draft pull requests unless the user explicitly asks for a
   draft.
 - After an agent-owned pull request is merged, or closed because the related issue/sub-issue work is complete, cleanup

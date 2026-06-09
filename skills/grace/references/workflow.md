@@ -60,10 +60,12 @@ When acting as the main implementation orchestrator, follow the repo policy:
 
 - Delegate coding and fixing tasks to worker subagents when the available tools and user authorization allow
   delegation.
-- Use fresh local review-only sibling subagents for code review when available.
 - Do not replace the worker by locally implementing or validating code fixes from the orchestrator role.
-- Persist each review report, including "Reviewed And OK" notes, to the issue or PR before starting another review.
-- Include prior OK notes in follow-up review prompts so reviewers do not repeat work without cause.
+- Use Codex Code Review Bot as the blocking PR review gate. Do not spawn local review-only subagents by default.
+- Monitor the PR body reactions: 👀 means the bot saw the latest commit and is reviewing; 👍🏻 means it found no issues.
+- If the bot writes findings in a PR comment, route the fix to a fresh worker subagent, then reply to the bot comment
+  with the fix commit and validation evidence, resolve the conversation, update `Review Status`, and wait for the next
+  bot review.
 
 If subagent tools are unavailable or cannot be used under the active tool policy, state that limitation and preserve the
 rest of the Grace workflow as far as possible.
@@ -107,8 +109,8 @@ rule: formatting or freshness checks first, then one final build/test gate.
 Before the Grace completion review gate, update the branch against its required base: current `origin/main` for
 standalone non-epic issue branches, current `origin/epic/...` for sub-issue branches targeting an epic integration
 branch, and current `origin/main` for the final epic-to-`main` PR. Verify ahead/behind, verify the scoped diff and that
-no unexpected deletions are present, run the chosen validation gate, then spawn the final review-only sibling. Review on
-a stale branch is exploratory pre-review and does not satisfy completion.
+no unexpected deletions are present, run the chosen validation gate, then wait for Codex Code Review Bot on the
+refreshed PR head. A bot reaction or comment on a stale commit does not satisfy completion.
 
 ## Merge Cleanup
 

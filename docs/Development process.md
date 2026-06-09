@@ -230,9 +230,9 @@ Validation:
 Definition of done:
 - Behavior changed
 - Tests or docs updated
-- Coding and review work completed through implementation and review-only subagents, with the main agent acting as
-  orchestrator
-- Fresh local review-only sibling subagent reported no issues
+- Coding and fix work completed through implementation subagents, with the main agent acting as orchestrator
+- Codex Code Review Bot reviewed the latest PR commit and either reported no issues with a 👍🏻 reaction on the PR body
+  or all bot comments were fixed, answered, resolved, and followed by a no-issues bot review
 - Ready-for-review pull request opened and linked
 - Validation recorded
 - Review evidence prepared
@@ -362,7 +362,8 @@ When acting as the main agent for a tracked implementation, stay in the orchestr
 coordination, DAG sequencing, prompts, review ledgers, pull request updates, CI/merge status, docs/process updates,
 review/fix routing, and final integration evidence. The main orchestrator must delegate all coding and fixing tasks to
 worker subagents and must not implement, repair, inspect or validate code fixes as a substitute for the worker, or
-commit code changes locally. Code review work must be delegated to fresh local review-only sibling subagents.
+commit code changes locally. Grace relies on Codex Code Review Bot for the blocking pull request code-review gate, not
+locally spawned review-only subagents.
 
 If an earlier worker thread is lost, compacted away, leaves uncommitted work, or otherwise cannot be resumed, the main
 orchestrator must assign the continuation to a fresh worker subagent. The continuation prompt must include the existing
@@ -372,87 +373,60 @@ work safely, but it must not take over code implementation or code-fix validatio
 
 After the first coding subagent that works on the issue commits and pushes the new branch to origin, the orchestrator
 must open a normal ready-for-review pull request. The pull request can remain open while the step is still in progress.
-From that point on, review findings, review fixes, validation evidence, and "Reviewed And OK" notes should be recorded
-as standalone pull request comments, not only as issue comments. Use the issue for claim, planning, parent/epic
-coordination, and pre-PR evidence; use the pull request as the durable code-review ledger once it exists.
-If the first code review for a newly opened pull request reports no issues, still add a standalone pull request comment
-containing the review output. A clean review is evidence, and it belongs on the pull request with the code it reviewed.
-Whenever the orchestrator adds or updates code-review comments on a pull request, it must update the pull request
-body's `Review Status` section in the same turn. That section should stay high-level: reviews run, current open
-findings, fix commits already pushed, final no-issues review status, and links to detailed standalone review/fix
-comments.
-
-A coding task is not complete until a parent/orchestrator thread runs a fresh local review-only sibling subagent after
-the implementation slice has been validated and committed. The review agent must be a sibling of the implementation
-agent, not a nested `codex review` process launched from inside an existing agent or subagent.
+From that point on, review findings, review fixes, validation evidence, and bot-review state belong on the pull request,
+not only on the issue. Use the issue for claim, planning, parent/epic coordination, and pre-PR evidence; use the pull
+request as the durable code-review ledger once it exists. Whenever the orchestrator adds or updates code-review comments
+on a pull request, it must update the pull request body's `Review Status` section in the same turn. That section should
+stay high-level: bot reviews observed, current open findings, fix commits already pushed, final no-issues bot status,
+and links to detailed review/fix comments.
 
 The implementation subagent must stop after committing, validating, and pushing the slice branch, then return a
 [Ready For Review handoff](#ready-for-review-handoff) to the parent/orchestrator thread. The parent/orchestrator is
-responsible for spawning the fresh review-only sibling subagent, collecting its findings, and sending actionable issues
-back to an implementation subagent for fixes. After every review-only pass, the parent/orchestrator must persist the
-review report to the pull request when one exists, or to the GitHub issue before the first pull request exists, before
-starting the next implementation or review pass. The persisted report must include both actionable findings and the
-"Reviewed And OK" notes.
+responsible for opening or updating the pull request and monitoring Codex Code Review Bot. Do not run `codex review`
+through the shell, do not ask GitHub `@codex review`, and do not spawn local review-only subagents for the normal Grace
+completion gate unless the maintainer explicitly changes the review mode for that task.
 
-If the subagent launcher directly exposes a dedicated Code Review mode, skill, command, or capability, select it
-explicitly for the review-only sibling subagent. Do not assume that a generic prompt asking a model to act like a
-reviewer automatically activates the dedicated Code Review capability.
+Codex Code Review Bot communicates through PR-body emoji reactions and PR comments:
 
-Do not run `codex review` through the shell from inside an agent or subagent. Do not use GitHub `@codex review`,
-automatic Codex pull request review, or another external pull-request review bot for this completion gate. Those flows
-are intentionally outside the Grace development loop because they are too slow for each review-fix turn.
+- 👀 on the pull request body means the bot has seen the latest pushed commit and is reviewing it.
+- 👍🏻 on the pull request body means the bot found no issues for the latest reviewed commit.
+- A pull request comment from Codex Code Review Bot means it found one or more actionable issues.
 
-The subagent prompt must say to act strictly as a code reviewer, not edit files, inspect the committed diff and relevant
-surrounding code/tests, report only actionable issues, and clearly say when there are no issues. Code reviews must be
-exhaustive: review-only subagents should keep searching for additional actionable findings until they stop finding new
-issues, then report the final no-issues state and the areas they explicitly checked.
-
-Code review turns can legitimately take several minutes. After spawning a review-only sibling subagent, allow it to run
-for up to 10 minutes before analyzing whether it is stalled or still making useful progress. Do not interrupt or replace
-the review just because it is quiet for a few minutes. The review subagent must report back when it is done so the
-parent/orchestrator can continue the workflow without guessing about the review state. That final report must also name
-the plausible issues the reviewer checked and found not to be problems, so the next review subagent does not re-check
-the same concern without a clear reason.
+The orchestrator must verify that the bot signal applies to the latest pushed commit before treating the review gate as
+complete. Do not merge, close, or call a task review-complete while the latest bot state is still 👀, while a bot comment
+is unresolved, or while the bot has not yet reacted to the current head commit.
 
 The review loop is blocking:
 
-1. From the parent/orchestrator thread, spawn a fresh local review-only sibling subagent against the committed task diff,
-   using a dedicated Code Review capability when the subagent launcher directly exposes one.
-2. Give the review subagent up to 10 minutes to complete before deciding whether to inspect progress, redirect it, or
-   replace it. If it is still making useful progress, continue waiting.
-3. Require the review subagent to keep searching for additional actionable findings until it stops finding new issues.
-4. Require the review subagent to send a final report when it is done: either actionable findings with file/line
-   references where possible, or a clear no-issues result. The final report must include a short "Reviewed And OK"
-   section with brief bullets for non-issues the reviewer explicitly checked, especially concerns raised by prior
-   review passes.
-5. Persist the full review report to the pull request when one exists, or to the issue before the first pull request
-   exists. If another review pass will run later, copy the prior "Reviewed And OK" notes into that review prompt and
-   tell the reviewer to treat them as already-reviewed unless the new diff affects those areas. This applies even when
-   the first pull request review finds no issues.
-   Also update the pull request body's `Review Status` section when the pull request already exists.
-6. If the review finds a missing acceptance-criterion class, repeated trap, or issue-template gap that could affect
+1. After the implementation subagent pushes a commit, monitor the pull request for Codex Code Review Bot activity.
+2. Wait for the bot to put 👀 on the pull request body for the current head commit, then wait for either a 👍🏻 reaction
+   or a bot review comment.
+3. If the bot switches the PR-body reaction to 👍🏻 and there are no unresolved bot review comments for the current head,
+   record that no-issues state in `Review Status` and continue toward merge readiness.
+4. If the bot writes a PR comment with findings, update `Review Status`, then send the findings to a fresh
+   implementation subagent to address in the issue-owned branch/worktree.
+5. If the review finds a missing acceptance-criterion class, repeated trap, or issue-template gap that could affect
    active future workers, amend the active future issues or templates before spawning parallel workers. Preserve issue
    history by appending an addendum unless replacing stale text is clearer and safe.
-7. If the review finds issues, send them to an implementation subagent to address in the issue-owned branch/worktree.
-8. The implementation subagent re-runs focused validation for the changed behavior or docs, plus broader validation when
+6. The implementation subagent re-runs focused validation for the changed behavior or docs, plus broader validation when
    the fix touches shared or risky surfaces.
-9. The implementation subagent commits and pushes the review fix, then returns a new Ready For Review handoff.
-10. Add a new standalone pull request comment for each review fix using the
+7. The implementation subagent commits and pushes the review fix, then returns a new Ready For Review handoff.
+8. Reply to the Codex Code Review Bot comment with the outcome, fix commit, and validation evidence using the
    [Review/Fix comment template](#reviewfix-comment-template). The comment must make the high-level outcome easy to
-   scan before the detailed issue and fix text. Do not add review-fix notes to the pull request body; keep the body to a
-   high-level `Review Status` summary and links to detailed comments.
-11. From the parent/orchestrator thread, spawn another fresh review-only sibling subagent pass against the updated
-   committed diff, again using a dedicated Code Review capability when the subagent launcher directly exposes one.
-12. Repeat the loop until the review reports no issues.
+   scan before the detailed issue and fix text. Resolve the GitHub conversation after the feedback has been satisfied.
+9. Update the pull request body's `Review Status` section with the fix commit, validation evidence, and link to the
+   bot comment or fix reply.
+10. Wait for Codex Code Review Bot to review the new head commit. Repeat the loop until the bot reports no issues with
+   a 👍🏻 reaction on the pull request body and all bot conversations are resolved.
 
-Only after a fresh local review-only sibling subagent reports no issues can the task continue toward merge readiness,
-handoff, or any other completion step. Record whether a dedicated subagent Code Review capability was available, the
-final no-issues review result, and validation evidence in the pull request.
+Only after Codex Code Review Bot reports no issues for the latest commit can the task continue toward merge readiness,
+handoff, or any other completion step. Record the final bot no-issues state and validation evidence in the pull request.
 
 ### Ready For Review Handoff
 
-When the implementation agent is itself a subagent, it must not attempt to satisfy the review gate by running `codex`
-or spawning nested review work. Instead, it must return this handoff to the parent/orchestrator thread:
+When the implementation agent is itself a subagent, it must not attempt to satisfy the review gate by running `codex`,
+asking `@codex review`, or spawning nested review work. Instead, it must return this handoff to the parent/orchestrator
+thread:
 
 ```markdown
 ## Ready For Review
@@ -470,29 +444,28 @@ or spawning nested review work. Instead, it must return this handoff to the pare
 
 ### Review Request
 
-Please spawn a fresh local review-only sibling subagent. Use the subagent launcher's dedicated Code Review capability if
-it is directly exposed. Do not run `codex review` through the shell. Allow the review subagent to run for up to 10
-minutes before analyzing whether it is stalled. The review subagent must report back when complete with either
-actionable findings or a clear no-issues result. The review must be exhaustive: keep searching for additional
-actionable findings until no new issues are found. The report must include a short "Reviewed And OK" section naming
-plausible concerns it checked that were not problems, especially anything checked by prior review passes.
+Please monitor Codex Code Review Bot on the pull request. Do not run local review-only subagents, `codex review`, or
+`@codex review` for the normal Grace completion gate. Wait for the bot to acknowledge the latest commit with 👀, then
+wait for either a 👍🏻 no-issues reaction or a PR comment with findings. If the bot comments with findings, route the fix
+to a fresh implementation subagent, reply to the bot comment with the fix commit and validation evidence, resolve the
+conversation, and wait for the next bot review on the new head commit.
 ```
 
-If the sibling review finds issues, the parent/orchestrator sends those findings to an implementation subagent. The
+If Codex Code Review Bot finds issues, the parent/orchestrator sends those findings to an implementation subagent. The
 implementation subagent addresses the findings, validates, commits and pushes the fixes, and returns a new Ready For
-Review handoff. The parent/orchestrator posts any required standalone pull request comments and then spawns another
-fresh review-only sibling subagent.
+Review handoff. The parent/orchestrator replies to the bot comment, resolves the conversation, updates `Review Status`,
+and waits for the next bot review.
 
 ### Review/Fix Comment Template
 
-Use this Markdown structure for each standalone pull request comment created after a review issue is fixed. Keep the
-top section short and scannable; put detailed evidence below it.
+Use this Markdown structure when replying to a Codex Code Review Bot comment after a review issue is fixed. Keep the top
+section short and scannable; put detailed evidence below it.
 
 ```markdown
 ## Review/Fix: <short issue title>
 
 **Status:** Fixed in `<commit-sha>`
-**Review source:** Local review-only subagent
+**Review source:** Codex Code Review Bot
 **Validation:** <command or check result>
 
 ### Summary
@@ -511,28 +484,6 @@ _One or two sentences explaining the review issue and the fix at a high level._
 
 - `<focused command>`: <result>
 - `<broader command, if any>`: <result or skipped reason>
-```
-
-### Review Report Shape
-
-Review-only subagents should keep final reports concise and use this shape. The "Reviewed And OK" section is required
-even when issues are found; it should prevent repeated re-checking, not pad the report. Before finalizing, reviewers
-must continue searching for additional actionable findings until they stop finding new issues.
-
-```markdown
-## Code Review Result
-
-**Status:** <No issues | Issues found>
-**Diff reviewed:** `<base>..<head>`
-
-### Findings
-
-- <Actionable issue with file/line reference, or "No actionable issues.">
-
-### Reviewed And OK
-
-- <Concern checked and why it is not a problem.>
-- <Prior-review concern checked and still OK, if applicable.>
 ```
 
 ## Validation Commands
@@ -633,12 +584,10 @@ comments as the review loop continues:
 - touched paths and any write-set expansion
 - focused validation run
 - broader validation run, or skipped-validation reason
-- implementation and review path used, including the implementation subagent, fresh local review-only sibling subagent,
-  and whether a dedicated Code Review capability was available
-- final no-issues code review result
-- "Reviewed And OK" notes from the final review pass, especially prior concerns that were rechecked and found safe
-- standalone, templated Markdown pull request comments for each review issue that required a fix, including the issue,
-  fix, fix commit, and validation; do not put review-fix notes in the pull request body
+- implementation and review path used, including the implementation subagent and Codex Code Review Bot state observed
+- final no-issues bot review result for the latest commit
+- replies to each Codex Code Review Bot comment that required a fix, including the issue, fix, fix commit, validation,
+  and resolved conversation state
 - a `Review Status` section that summarizes the current review/fix state and links to detailed review/fix comments
 - docs impact
 - residual risk
@@ -658,8 +607,8 @@ Then verify:
 - no unexpected deletions were introduced during the update
 - the chosen validation gate has passed on the refreshed branch
 
-Only then spawn the final fresh local review-only sibling subagent. A review-only pass on a stale branch is useful
-exploratory pre-review, but it does not satisfy the completion review gate.
+Only then wait for Codex Code Review Bot to review the refreshed head commit. A bot reaction or comment on an older head
+commit is useful history, but it does not satisfy the completion review gate.
 
 Open normal ready-for-review pull requests for Grace implementation work. Do not open draft pull requests unless the
 maintainer explicitly asks for a draft.
