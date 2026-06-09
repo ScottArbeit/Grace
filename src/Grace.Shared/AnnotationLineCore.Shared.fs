@@ -70,12 +70,14 @@ module AnnotationLineCore =
         | :? DecoderFallbackException as ex -> Error(InvalidUtf8 ex.Message)
 
     let getRequestedLines (lineRange: AnnotationLineRange) (document: VisibleTextDocument) =
+        let firstExistingLine = max lineRange.StartLine 1
+        let lastExistingLine = min lineRange.EndLine document.Lines.Length
+
         [|
-            for lineNumber in lineRange.StartLine .. lineRange.EndLine do
+            for lineNumber in firstExistingLine..lastExistingLine do
                 let index = lineNumber - 1
 
-                if index >= 0 && index < document.Lines.Length then
-                    { LineNumber = lineNumber; Text = document.Lines[index] }
+                { LineNumber = lineNumber; Text = document.Lines[index] }
         |]
 
     let private sourceKey (source: AnnotationLineSource) = source.SourceReferenceId, source.Path
@@ -182,11 +184,10 @@ module AnnotationLineCore =
             segments.Add(segmentStart, previousLine, segmentState)
             segments.ToArray()
 
-    let buildComponents requestedLineRange lines states =
+    let private buildComponentsFromSegments lines segments =
         let sourceRows = ResizeArray<AnnotationSourceRow>()
         let boundaries = ResizeArray<AnnotationBoundary>()
         let spans = ResizeArray<AnnotationSpan>()
-        let segments = segmentStates requestedLineRange states
 
         for segmentStart, segmentEnd, state in segments do
             match state with
@@ -210,6 +211,11 @@ module AnnotationLineCore =
                 spans.Add({ SpanId = spanId (spans.Count + 1); BoundaryId = id; LineRange = lineRange segmentStart segmentEnd; SourceRowIds = rowIds })
 
         { Lines = lines; Boundaries = boundaries.ToArray(); Spans = spans.ToArray(); SourceRows = sourceRows.ToArray() }
+
+    let buildComponents requestedLineRange lines states =
+        let segments = segmentStates requestedLineRange states
+
+        buildComponentsFromSegments lines segments
 
     let private missingTargetLine = { BoundaryKind = "TargetLineMissing"; SourceRows = Array.empty }
 
@@ -240,6 +246,42 @@ module AnnotationLineCore =
             let sourceDocument = documents[sourceIndex] |> fst
 
             Resolved { SourceReferenceId = sourceDocument.SourceReference.SourceReferenceId; Path = sourceDocument.Path; LineNumber = lineNumber }
+
+    let private traceRequestedSegments requestedLineRange (targetDocument: VisibleTextDocument) traceDocuments =
+        let segments = ResizeArray<int * int * AnnotationLineState>()
+        let firstExistingLine = max requestedLineRange.StartLine 1
+        let lastExistingLine = min requestedLineRange.EndLine targetDocument.Lines.Length
+
+        if requestedLineRange.StartLine < firstExistingLine then
+            segments.Add(requestedLineRange.StartLine, firstExistingLine - 1, Boundary missingTargetLine)
+
+        if firstExistingLine <= lastExistingLine then
+            let mutable segmentStart = firstExistingLine
+            let mutable segmentState = traceLineSource firstExistingLine traceDocuments
+            let mutable previousLine = firstExistingLine
+            let mutable previousState = segmentState
+
+            for lineNumber in firstExistingLine + 1 .. lastExistingLine do
+                let currentState = traceLineSource lineNumber traceDocuments
+
+                if canAppend previousState currentState previousLine lineNumber then
+                    previousLine <- lineNumber
+                    previousState <- currentState
+                else
+                    segments.Add(segmentStart, previousLine, segmentState)
+                    segmentStart <- lineNumber
+                    segmentState <- currentState
+                    previousLine <- lineNumber
+                    previousState <- currentState
+
+            segments.Add(segmentStart, previousLine, segmentState)
+
+        if lastExistingLine < requestedLineRange.EndLine then
+            let missingStart = max requestedLineRange.StartLine (lastExistingLine + 1)
+
+            segments.Add(missingStart, requestedLineRange.EndLine, Boundary missingTargetLine)
+
+        segments.ToArray()
 
     let buildAnnotation
         (
@@ -339,13 +381,9 @@ module AnnotationLineCore =
                     else
                         Array.empty
 
-                let states =
-                    [|
-                        for lineNumber in requestedLineRange.StartLine .. requestedLineRange.EndLine do
-                            traceLineSource lineNumber traceDocuments
-                    |]
+                let segments = traceRequestedSegments requestedLineRange targetDocument traceDocuments
 
-                let components = buildComponents requestedLineRange lines states
+                let components = buildComponentsFromSegments lines segments
 
                 let usedSourceReferenceIds =
                     components.SourceRows

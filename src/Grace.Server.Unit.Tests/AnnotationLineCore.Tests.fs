@@ -422,6 +422,30 @@ type AnnotationLineCoreTests() =
         )
 
     [<Test>]
+    member _.BuildAnnotationCollapsesHugeMissingRangeWithoutPerLineState() =
+        let annotation =
+            build
+                { StartLine = 1; EndLine = 2_000_000 }
+                [|
+                    historyDocument newReference String.Empty
+                |]
+            |> assertOk
+
+        assertValid annotation
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(annotation.Lines, Is.Empty)
+                Assert.That(annotation.SourceRows, Is.Empty)
+                Assert.That(annotation.Boundaries, Has.Length.EqualTo(1))
+                Assert.That(annotation.Boundaries[0].LineRange, Is.EqualTo({ StartLine = 1; EndLine = 2_000_000 }))
+                Assert.That(annotation.Spans, Has.Length.EqualTo(1))
+                Assert.That(annotation.Spans[0].LineRange, Is.EqualTo({ StartLine = 1; EndLine = 2_000_000 }))
+                Assert.That(annotation.Spans[0].BoundaryId, Is.EqualTo(annotation.Boundaries[0].BoundaryId))
+                Assert.That(annotation.Spans[0].SourceRowIds, Is.Empty))
+        )
+
+    [<Test>]
     member _.BuildAnnotationRejectsRequiredSourceReferencesAboveBudget() =
         let result =
             buildWithMaxReferences
