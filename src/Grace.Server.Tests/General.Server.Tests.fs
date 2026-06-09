@@ -7,6 +7,7 @@ open System
 open System.Net
 open System.Net.Http
 open System.Net.Http.Json
+open System.Reflection
 open System.Text.Json
 open System.Threading
 open System.Threading.Tasks
@@ -60,7 +61,29 @@ module Services =
     let mutable testUserId = String.Empty
     let mutable testUserClaims: string list = []
 
-    let logToTestConsole (message: string) = Console.WriteLine(message)
+    let logToTestConsole (message: string) =
+        TestContext.Progress.WriteLine(message)
+        TestContext.Progress.Flush()
+        Console.Error.WriteLine(message)
+        Console.Error.Flush()
+
+    let getApproximateTestCount () =
+        Assembly.GetExecutingAssembly().GetTypes()
+        |> Seq.collect (fun testType ->
+            testType.GetMethods(
+                BindingFlags.Instance
+                ||| BindingFlags.Static
+                ||| BindingFlags.Public
+                ||| BindingFlags.NonPublic
+            ))
+        |> Seq.filter (fun methodInfo ->
+            methodInfo
+                .GetCustomAttributes(
+                    typeof<TestAttribute>,
+                    true
+                )
+                .Length > 0)
+        |> Seq.length
 
 open Services
 
@@ -71,10 +94,15 @@ type Setup() =
     [<OneTimeSetUp>]
     member public _.Setup() =
         task {
+            let approximateTestCount = getApproximateTestCount ()
+
+            logToTestConsole "Grace.Server.Tests progress: setup starting."
+            logToTestConsole $"Grace.Server.Tests progress: approximately {approximateTestCount} tests will start after setup."
             logToTestConsole "Starting Aspire test host..."
 
             testUserId <- $"{Guid.NewGuid()}"
             let! hostState = AspireTestHost.startAsync testUserId
+            logToTestConsole "Grace.Server.Tests progress: Aspire setup ready."
 
             App <- Some hostState.App
             Client <- hostState.Client
@@ -87,6 +115,7 @@ type Setup() =
 
             Client.DefaultRequestHeaders.Add("x-grace-user-id", testUserId)
 
+            logToTestConsole "Grace.Server.Tests progress: shared fixture data setup starting."
             logToTestConsole $"Grace.Server base address: {graceServerBaseAddress}"
 
             logToTestConsole
@@ -192,11 +221,15 @@ type Setup() =
                             }
                         ))
                 )
+
+            logToTestConsole $"Grace.Server.Tests progress: shared fixture data ready; approximately {approximateTestCount} tests starting."
         }
 
     [<OneTimeTearDown>]
     member public _.Teardown() =
         task {
+            logToTestConsole "Grace.Server.Tests progress: tests concluded; teardown starting."
+
             let correlationId = generateCorrelationId ()
             let logCleanupFailure (label: string) (detail: string) = logToTestConsole $"Cleanup {label} failed: {detail}"
 
@@ -268,6 +301,8 @@ type Setup() =
                 do! AspireTestHost.stopAsync App
             with
             | ex -> logCleanupFailure "apphost stop" ex.Message
+
+            logToTestConsole "Grace.Server.Tests progress: teardown concluded."
 
         }
 

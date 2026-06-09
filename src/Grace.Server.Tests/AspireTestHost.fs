@@ -9,6 +9,7 @@ open Grace.Shared
 open Microsoft.Azure.Cosmos
 open Microsoft.Extensions.DependencyInjection
 open Microsoft.Extensions.Logging
+open NUnit.Framework
 open System
 open System.Collections.Generic
 open System.Diagnostics
@@ -62,6 +63,14 @@ module AspireTestHost =
     let private getTimeout (local: TimeSpan) (ci: TimeSpan) = if isCi then ci else local
 
     let private defaultWaitTimeout = getTimeout (TimeSpan.FromMinutes(5.0)) (TimeSpan.FromMinutes(3.0))
+
+    let private logProgress (message: string) =
+        let progressMessage = $"Grace.Server.Tests progress: {message}"
+
+        TestContext.Progress.WriteLine(progressMessage)
+        TestContext.Progress.Flush()
+        Console.Error.WriteLine(progressMessage)
+        Console.Error.Flush()
 
     let private ensureBootstrapCompatible (bootstrapUserId: string) =
         match sharedBootstrapUserId with
@@ -413,7 +422,9 @@ module AspireTestHost =
         =
         task {
             try
+                logProgress $"waiting for resource '{resourceName}' to become healthy."
                 let! _ = notificationService.WaitForResourceHealthyAsync(resourceName, ct)
+                logProgress $"resource '{resourceName}' is healthy."
                 ()
             with
             | ex ->
@@ -748,6 +759,7 @@ module AspireTestHost =
 
                     let! _ = receiver.PeekMessageAsync()
                     ready <- true
+                    logProgress $"Service Bus emulator ready after {sw.Elapsed.TotalSeconds:n1}s."
                 with
                 | ex ->
                     lastError <- ex.Message
@@ -869,6 +881,7 @@ module AspireTestHost =
                             ()
 
                         ready <- true
+                        logProgress $"Cosmos emulator ready after {sw.Elapsed.TotalSeconds:n1}s."
                     with
                     | ex ->
                         lastError <- formatExceptionChain ex
@@ -924,6 +937,8 @@ module AspireTestHost =
 
     let private startNewHostAsync (bootstrapUserId: string) =
         task {
+            logProgress "Aspire setup starting."
+
             Environment.SetEnvironmentVariable("GRACE_TESTING", "1")
             Environment.SetEnvironmentVariable("GRACE_TEST_CLEANUP", "1")
             Environment.SetEnvironmentVariable("GRACE_TEST_RUN_ID", Guid.NewGuid().ToString("N"))
@@ -939,10 +954,15 @@ module AspireTestHost =
             if shouldSkipServiceBus () then
                 invalidOp FixtureDiagnostics.serviceBusSkipModeMessage
 
+            logProgress "Docker cleanup starting."
             do! cleanupDockerContainersAsync ()
+            logProgress "Docker cleanup complete."
+            logProgress "building Aspire AppHost."
             let! builder = DistributedApplicationTestingBuilder.CreateAsync<Projects.Grace_Aspire_AppHost>()
             let! app = builder.BuildAsync()
+            logProgress "starting Aspire AppHost resources."
             do! app.StartAsync()
+            logProgress "Aspire AppHost started; waiting for resources."
 
             let notificationService = app.Services.GetRequiredService<ResourceNotificationService>()
             let model = app.Services.GetRequiredService<DistributedApplicationModel>()
@@ -992,6 +1012,8 @@ module AspireTestHost =
                 do! waitForResourceHealthyAsync notificationService app serviceBusEmulatorResourceName cts.Token
             else
                 Console.WriteLine("Skipping Service Bus emulator readiness checks (GRACE_TEST_SKIP_SERVICEBUS=1).")
+
+            logProgress "container resources reported healthy; validating service readiness."
 
             let! env = getEnvironmentVariablesAsync app graceServerResourceName
 
@@ -1170,6 +1192,8 @@ module AspireTestHost =
                 do! waitForServiceBusReadyAsync serviceBusEmulatorResourceName serviceBusSqlResourceName state
             else
                 Console.WriteLine("Skipping Service Bus functional readiness checks (GRACE_TEST_SKIP_SERVICEBUS=1).")
+
+            logProgress "containers and service readiness checks complete."
 
             return state
         }
