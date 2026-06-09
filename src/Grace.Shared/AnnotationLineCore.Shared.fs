@@ -269,15 +269,20 @@ module AnnotationLineCore =
         let leftIsInsertionOrDeletion = leftOldLength = 0 || leftNewLength = 0
         let rightIsInsertionOrDeletion = rightOldLength = 0 || rightNewLength = 0
 
+        let blockStayedInPlace =
+            leftOldLength = leftNewLength
+            && rightOldLength = rightNewLength
+
         let editsStayOnOneSide =
             (leftOldLength = 0 && rightOldLength = 0)
             || (leftNewLength = 0 && rightNewLength = 0)
             || leftOldLength = leftNewLength
             || rightOldLength = rightNewLength
 
-        leftIsInsertionOrDeletion
-        && rightIsInsertionOrDeletion
-        && editsStayOnOneSide
+        blockStayedInPlace
+        || (leftIsInsertionOrDeletion
+            && rightIsInsertionOrDeletion
+            && editsStayOnOneSide)
 
     let private buildLineAlignment (oldDocument: VisibleTextDocument) (newDocument: VisibleTextDocument) =
         let mapping = Array.zeroCreate<int> newDocument.Lines.Length
