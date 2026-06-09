@@ -210,6 +210,24 @@ module Application =
                 return StorageAuthorizationResources.downloadUriResource graceIds.OwnerId graceIds.OrganizationId graceIds.RepositoryId parameters
             }
 
+        let annotatePathResourceFromContext (context: HttpContext) =
+            task {
+                context.Request.EnableBuffering()
+                let! parameters = context.BindJsonAsync<Branch.AnnotateParameters>()
+
+                context.Request.Body.Seek(0L, IO.SeekOrigin.Begin)
+                |> ignore
+
+                let correlationId = Services.getCorrelationId context
+
+                if String.IsNullOrWhiteSpace parameters.Path then
+                    return Error(GraceError.Create "Annotation Path must be a relative file path." correlationId)
+                else
+                    let graceIds = Services.getGraceIds context
+                    let normalizedPath = normalizeFilePath parameters.Path
+                    return Ok(Operation.PathRead, Resource.Path(graceIds.OwnerId, graceIds.OrganizationId, graceIds.RepositoryId, normalizedPath))
+            }
+
         let contentBlockUploadPathResourceFromContext (context: HttpContext) =
             task {
                 context.Request.EnableBuffering()
@@ -387,6 +405,8 @@ module Application =
         let requirePathWriteForUploadUri: HttpHandler = AuthorizationMiddleware.requiresPermissions Operation.PathWrite uploadUriResourcesFromContext
 
         let requirePathRead: HttpHandler = AuthorizationMiddleware.requiresPermission Operation.PathRead downloadPathResourceFromContext
+
+        let requireAnnotatePathRead: HttpHandler = AuthorizationMiddleware.requiresPermissionResolved annotatePathResourceFromContext
 
         let requirePathWriteForContentBlockUploadUri: HttpHandler =
             AuthorizationMiddleware.requiresPermission Operation.PathWrite contentBlockUploadPathResourceFromContext
@@ -1008,7 +1028,7 @@ module Application =
                         POST [ route "/assign" Branch.Assign
                                |> addMetadata typeof<Branch.AssignParameters>
 
-                               route "/annotate" (composeHandlers requireBranchRead Branch.Annotate)
+                               route "/annotate" (composeHandlers requireBranchRead (composeHandlers requireAnnotatePathRead Branch.Annotate))
                                |> addMetadata typeof<Branch.AnnotateParameters>
 
                                (route "/checkpoint" Branch.Checkpoint

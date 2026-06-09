@@ -3,6 +3,7 @@ namespace Grace.Server.Tests
 open Grace.Shared
 open Grace.Types
 open Grace.Types.Common
+open Grace.Types.Reference
 open Microsoft.AspNetCore.Http
 open NUnit.Framework
 open System.Security.Claims
@@ -69,3 +70,22 @@ type MetadataCreationTests() =
         match metadata.ClientType with
         | Some (ClientType.CLI version) -> Assert.That(version, Is.EqualTo("0.1.2.3"))
         | other -> Assert.Fail($"Expected CLI client metadata, got {other}.")
+
+
+[<TestFixture>]
+type BranchAnnotationServerTests() =
+
+    [<Test>]
+    member _.``tryGetBasedOnReferenceId follows stored BasedOn links``() =
+        let basedOnReferenceId = System.Guid.Parse("11111111-1111-1111-1111-111111111111")
+
+        let referenceDto =
+            { ReferenceDto.Default with
+                Links =
+                    [|
+                        ReferenceLinkType.IncludedInPromotionSet(System.Guid.Parse("22222222-2222-2222-2222-222222222222"))
+                        ReferenceLinkType.BasedOn basedOnReferenceId
+                    |]
+            }
+
+        Assert.That(Grace.Server.Branch.tryGetBasedOnReferenceId referenceDto, Is.EqualTo(Some basedOnReferenceId))

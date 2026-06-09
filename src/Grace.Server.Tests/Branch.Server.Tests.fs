@@ -281,6 +281,60 @@ module BranchServerTestHelpers =
                 if Directory.Exists(tempRoot) then Directory.Delete(tempRoot, true)
         }
 
+    let createAnnotatableReferenceWithContentAsync repositoryId (branch: Branch.BranchDto) relativePath (content: string) =
+        task {
+            let contentBytes = Encoding.UTF8.GetBytes(content)
+            let fileVersion = FileVersion.Create relativePath (sha256Hex contentBytes) String.Empty false (int64 contentBytes.Length)
+
+            do! uploadFileToObjectStorageAsync repositoryId contentBytes fileVersion
+
+            let directoryVersion =
+                Grace.Types.Common.DirectoryVersion.Create
+                    (Guid.NewGuid())
+                    (Guid.Parse ownerId)
+                    (Guid.Parse organizationId)
+                    (Guid.Parse repositoryId)
+                    "/"
+                    (sha256Hex (Encoding.UTF8.GetBytes($"directory-{Guid.NewGuid():N}")))
+                    (List<DirectoryVersionId>())
+                    (List<FileVersion>([ fileVersion ]))
+                    (int64 contentBytes.Length)
+
+            do! saveDirectoryVersionAsync repositoryId directoryVersion
+            do! saveBranchReferenceAsync repositoryId branch directoryVersion
+
+            let! savedBranch = getBranchAsync repositoryId $"{branch.BranchId}"
+            return savedBranch, fileVersion, savedBranch.LatestSave.ReferenceId
+        }
+
+    let promoteLatestSaveAsync repositoryId (branch: Branch.BranchDto) =
+        task {
+            let enableParameters = Parameters.Branch.EnableFeatureParameters()
+            enableParameters.OwnerId <- ownerId
+            enableParameters.OrganizationId <- organizationId
+            enableParameters.RepositoryId <- repositoryId
+            enableParameters.BranchId <- $"{branch.BranchId}"
+            enableParameters.Enabled <- true
+            enableParameters.CorrelationId <- generateCorrelationId ()
+
+            let! enableResponse = Client.PostAsync("/branch/enablePromotion", createJsonContent enableParameters)
+            do! assertOk enableResponse
+
+            let parameters = Parameters.Branch.CreateReferenceParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.BranchId <- $"{branch.BranchId}"
+            parameters.DirectoryVersionId <- branch.LatestSave.DirectoryId
+            parameters.Sha256Hash <- $"{branch.LatestSave.Sha256Hash}"
+            parameters.Message <- "Annotate route test promotion"
+            parameters.CorrelationId <- generateCorrelationId ()
+
+            let! response = Client.PostAsync("/branch/promote", createJsonContent parameters)
+            do! assertOk response
+            return! getBranchAsync repositoryId $"{branch.BranchId}"
+        }
+
     let private createPersonalAccessTokenAsync () =
         task {
             let parameters = Parameters.Auth.CreatePersonalAccessTokenParameters()
@@ -486,4 +540,68 @@ type BranchServer() =
             let error = deserialize<GraceError> responseBody
             Assert.That(error.Error, Does.Contain("MaxReferences"))
             Assert.That(error.CorrelationId, Is.Not.Empty)
+        }
+
+    [<Test>]
+    member _.AnnotateRouteReturnsGraceErrorForNullPath() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let branchId = repositoryDefaultBranchIds[0]
+            let! branch = BranchServerTestHelpers.getBranchAsync repositoryId branchId
+            let fileVersion = FileVersion.Create "annotate/null-path.fs" String.Empty String.Empty false 1L
+            let parameters = BranchServerTestHelpers.annotateParameters repositoryId branch fileVersion
+            parameters.Path <- null
+
+            let! response = Client.PostAsync("/branch/annotate", createJsonContent parameters)
+            let! responseBody = response.Content.ReadAsStringAsync()
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), responseBody)
+
+            let error = deserialize<GraceError> responseBody
+            Assert.That(error.Error, Is.EqualTo("Annotation Path must be a relative file path."))
+            Assert.That(error.CorrelationId, Is.Not.Empty)
+        }
+
+    [<Test>]
+    member _.AnnotateOlderTargetReferenceIncludesLocalAncestorsBeforeNewestReferences() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let branchId = repositoryDefaultBranchIds[0]
+            let! parentBranch = BranchServerTestHelpers.getBranchAsync repositoryId branchId
+            let! branch = BranchServerTestHelpers.createBranchAsync repositoryId parentBranch $"AnnotateWindow{Guid.NewGuid():N}"
+            let relativePath = $"annotate/{Guid.NewGuid():N}/window.fs"
+            let originalContent = $"let value = 1{Environment.NewLine}"
+
+            let! branch, firstFileVersion, firstReferenceId =
+                BranchServerTestHelpers.createAnnotatableReferenceWithContentAsync repositoryId branch relativePath originalContent
+
+            let! branch, secondFileVersion, secondReferenceId =
+                BranchServerTestHelpers.createAnnotatableReferenceWithContentAsync repositoryId branch relativePath originalContent
+
+            let! _branch, _thirdFileVersion, _thirdReferenceId =
+                BranchServerTestHelpers.createAnnotatableReferenceWithContentAsync repositoryId branch relativePath $"let value = 2{Environment.NewLine}"
+
+            let parameters = BranchServerTestHelpers.annotateParameters repositoryId branch secondFileVersion
+            parameters.TargetReferenceId <- secondReferenceId
+            parameters.MaxReferences <- 2
+
+            let! response = Client.PostAsync("/branch/annotate", createJsonContent parameters)
+            let! responseBody = response.Content.ReadAsStringAsync()
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK), responseBody)
+
+            let returnValue = deserialize<GraceReturnValue<BranchAnnotationDto>> responseBody
+            let annotation = returnValue.ReturnValue
+
+            Assert.That(
+                annotation.SourceReferences
+                |> Array.exists (fun sourceReference -> sourceReference.ReferenceId = firstReferenceId),
+                Is.True
+            )
+
+            let firstReferenceSourceId = $"{firstReferenceId}"
+
+            Assert.That(
+                annotation.SourceRows
+                |> Array.exists (fun sourceRow -> sourceRow.SourceReferenceId = firstReferenceSourceId),
+                Is.True
+            )
         }

@@ -819,6 +819,50 @@ type AccessControl() =
         }
 
     [<Test>]
+    member _.BranchAnnotateRespectsPathReadDeny() =
+        task {
+            let repositoryId = repositoryIds[0]
+
+            let branchParameters = Parameters.Branch.GetBranchParameters()
+            branchParameters.OwnerId <- ownerId
+            branchParameters.OrganizationId <- organizationId
+            branchParameters.RepositoryId <- repositoryId
+            branchParameters.BranchId <- repositoryDefaultBranchIds[0]
+            branchParameters.CorrelationId <- generateCorrelationId ()
+
+            let! branchResponse = Client.PostAsync("/branch/get", createJsonContent branchParameters)
+            let! branchBody = branchResponse.Content.ReadAsStringAsync()
+            Assert.That(branchResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), branchBody)
+
+            let branch =
+                (deserialize<GraceReturnValue<Grace.Types.Branch.BranchDto>> branchBody)
+                    .ReturnValue
+
+            do! grantRoleAsync Client ownerId organizationId repositoryId "repo" "RepoReader" testUserId
+
+            do! upsertPathPermissionAsync Client ownerId organizationId repositoryId "sensitive/secret.txt" [ ("engineering", "NoAccess") ]
+
+            use deniedClient = createClientWithClaims [ "engineering" ]
+
+            let parameters = Parameters.Branch.AnnotateParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.BranchId <- $"{branch.BranchId}"
+            parameters.BranchName <- $"{branch.BranchName}"
+            parameters.TargetReferenceId <- branch.BasedOn.ReferenceId
+            parameters.Path <- "sensitive/secret.txt"
+            parameters.StartLine <- 1
+            parameters.EndLine <- 1
+            parameters.IncludeLineText <- true
+            parameters.CorrelationId <- generateCorrelationId ()
+
+            let! deniedResponse = deniedClient.PostAsync("/branch/annotate", createJsonContent parameters)
+            let! deniedBody = deniedResponse.Content.ReadAsStringAsync()
+            Assert.That(deniedResponse.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden), deniedBody)
+        }
+
+    [<Test>]
     member _.AccessGrantRoleRequiresAdminScope() =
         task {
             let nonAdminUserId = $"{Guid.NewGuid()}"
