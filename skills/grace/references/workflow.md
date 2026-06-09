@@ -16,7 +16,9 @@ Re-read these files during the current session before relying on older memory or
 - When the user says `Plan <work item>`, plan in chat and stop. Do not create GitHub issues unless asked.
 - When asked to create issues, use the Grace agent task shape and stop before implementation unless asked to implement.
 - For tracked multi-step work, create an epic parent issue, one linked sub-issue per implementation step, native GitHub
-  parent relationships, a DAG in the parent issue, and an epic checklist that is updated as sub-issues complete.
+  parent relationships, a DAG in the parent issue, and an epic checklist that is updated as sub-issues complete. Use the
+  concrete `addSubIssue` GraphQL workflow in `docs/Development process.md` when creating the native parent/child
+  relationships.
 - When implementing an epic, always use an explicit `epic-integration-branch`. Create
   `epic/<parent-issue>-<short-slug>` from `origin/main`, route sub-issue pull requests to that branch, and use the
   final epic-to-`main` pull request as the production release candidate. Do not use direct-to-`main` epic slices.

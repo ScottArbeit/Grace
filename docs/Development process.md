@@ -33,6 +33,109 @@ dependency map, and integration status. Each sub-issue owns one implementation s
 review loop, and pull request. When creating the epic and sub-issues, assign each sub-issue's parent issue relationship
 to the epic in GitHub Relationships.
 
+Create the parent epic issue and child issues with `gh issue create`, using issue bodies written as separate files in a
+temporary directory so PowerShell does not have to quote large Markdown bodies inline. After the issues exist, create the
+native GitHub parent/child relationships with the GitHub GraphQL `addSubIssue` mutation for each child. The native
+relationship is the GraphQL part; REST issue links, body checklists, and cross-reference comments are useful traceability
+but are not a substitute for the native parent relationship.
+
+Use this mutation shape:
+
+```graphql
+mutation($parent: ID!, $child: ID!) {
+  addSubIssue(input: { issueId: $parent, subIssueId: $child, replaceParent: true }) {
+    issue { number title }
+    subIssue { number title parent { number title } }
+  }
+}
+```
+
+`issueId` is the parent epic issue node ID. `subIssueId` is the child issue node ID. Use variables instead of embedding
+node IDs in the query string. This PowerShell-friendly shape keeps the GraphQL text and issue bodies in temporary files:
+
+```powershell
+$temp = New-Item -ItemType Directory -Path (Join-Path ([IO.Path]::GetTempPath()) "grace-epic-$([guid]::NewGuid())")
+$parentBody = Join-Path $temp.FullName "parent.md"
+$childBody = Join-Path $temp.FullName "child-1.md"
+$addSubIssueQuery = Join-Path $temp.FullName "add-subissue.graphql"
+
+Set-Content -LiteralPath $parentBody -Value $parentIssueMarkdown
+Set-Content -LiteralPath $childBody -Value $childIssueMarkdown
+Set-Content -LiteralPath $addSubIssueQuery -Value @'
+mutation($parent: ID!, $child: ID!) {
+  addSubIssue(input: { issueId: $parent, subIssueId: $child, replaceParent: true }) {
+    issue { number title }
+    subIssue { number title parent { number title } }
+  }
+}
+'@
+
+$parentUrl = gh issue create --title "Epic: <short title>" --body-file $parentBody
+$childUrl = gh issue create --title "<child title>" --body-file $childBody
+
+$parentNumber = [int]([regex]::Match($parentUrl, '/issues/(\d+)$').Groups[1].Value)
+$childNumber = [int]([regex]::Match($childUrl, '/issues/(\d+)$').Groups[1].Value)
+
+$parentNodeId = gh issue view $parentNumber --json id --jq .id
+$childNodeId = gh issue view $childNumber --json id --jq .id
+
+gh api graphql `
+  -f query="$(Get-Content -Raw -Path $addSubIssueQuery)" `
+  -F parent="$parentNodeId" `
+  -F child="$childNodeId"
+```
+
+After adding relationships, verify both the epic's `subIssues.totalCount` and each child's `parent.number`:
+
+```graphql
+query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    issue(number: $number) {
+      number
+      title
+      subIssues(first: 50) {
+        totalCount
+        nodes {
+          number
+          title
+          parent { number title }
+        }
+      }
+    }
+  }
+}
+```
+
+PowerShell example:
+
+```powershell
+$verifyQuery = Join-Path $temp.FullName "verify-subissues.graphql"
+Set-Content -LiteralPath $verifyQuery -Value @'
+query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    issue(number: $number) {
+      number
+      title
+      subIssues(first: 50) {
+        totalCount
+        nodes {
+          number
+          title
+          parent { number title }
+        }
+      }
+    }
+  }
+}
+'@
+
+gh api graphql `
+  -f query="$(Get-Content -Raw -Path $verifyQuery)" `
+  -F owner="<owner>" `
+  -F name="<repo>" `
+  -F number="$parentNumber"
+```
+
 The parent issue for a multi-step implementation plan must include a DAG that shows:
 
 - each implementation step as a node

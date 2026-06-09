@@ -25,7 +25,8 @@ update the issue before editing the new paths.
 - For tracked multi-step implementation, follow `docs/Development process.md`: create an epic parent issue, link
   sub-issues for each implementation step, assign each sub-issue's parent issue relationship to the epic in GitHub
   Relationships, and include a DAG in the parent issue that shows dependencies and parallelization opportunities. As
-  each sub-issue completes, update the epic checklist.
+  each sub-issue completes, update the epic checklist. Use the concrete `addSubIssue` GraphQL workflow in
+  `docs/Development process.md` when creating the native parent/child relationships.
 - When implementing an epic, always use an explicit epic integration branch. Create
   `epic/<parent-issue>-<slug>` from `origin/main`, branch sub-issue worktrees from the current `origin/epic/...`, open
   sub-issue PRs to the epic branch, keep that branch refreshed from `origin/main`, and use the final epic-to-`main` PR

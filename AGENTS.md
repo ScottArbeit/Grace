@@ -35,7 +35,8 @@ impact and skipped validation.
 For multi-step implementation plans, create an epic parent issue with linked sub-issues for each implementation step,
 assign each sub-issue's parent issue relationship to the epic in GitHub Relationships, and include a DAG in the parent
 issue that shows dependencies and parallelization opportunities. As sub-issues complete, update the epic checklist so
-completed sub-issues are checked.
+completed sub-issues are checked. Use the concrete `addSubIssue` GraphQL workflow in `docs/Development process.md`
+when creating the native parent/child relationships.
 When implementing an epic, always use an explicit epic integration branch. Create
 `epic/<parent-issue>-<slug>` from `origin/main`, branch sub-issue worktrees from the current `origin/epic/...`, open
 sub-issue PRs to the epic branch, keep that branch refreshed from `origin/main`, and use the final epic-to-`main` PR as
@@ -55,7 +56,8 @@ default-branch versus epic-branch wording so links stay traceable without relyin
 - For tracked implementation work, keep one visible task record: the GitHub issue.
 - For multi-step implementation plans, use an epic parent issue, linked sub-issues, native GitHub parent relationships,
   and a DAG in the parent issue that shows dependencies and parallelization opportunities. As each sub-issue completes,
-  check its box in the epic.
+  check its box in the epic. Use the concrete `addSubIssue` GraphQL workflow in `docs/Development process.md` when
+  creating the native parent/child relationships.
 - Before assigning or starting a sub-issue, apply the minimum detail gate: the issue body must include the invariant
   tuple, forbidden implementation shapes, expected tests, and high-risk adversarial examples. Keep each sub-issue small,
   clear, and contextual enough that an implementation agent could reasonably implement it from the issue body alone
