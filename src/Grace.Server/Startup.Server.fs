@@ -1008,8 +1008,11 @@ module Application =
                         POST [ route "/assign" Branch.Assign
                                |> addMetadata typeof<Branch.AssignParameters>
 
-                               route "/checkpoint" Branch.Checkpoint
-                               |> addMetadata typeof<Branch.CreateReferenceParameters>
+                               route "/annotate" (composeHandlers requireBranchRead Branch.Annotate)
+                               |> addMetadata typeof<Branch.AnnotateParameters>
+
+                               (route "/checkpoint" Branch.Checkpoint
+                                |> addMetadata typeof<Branch.CreateReferenceParameters>)
 
                                route "/commit" (composeHandlers requireBranchWrite Branch.Commit)
                                |> addMetadata typeof<Branch.CreateReferenceParameters>

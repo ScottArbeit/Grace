@@ -966,6 +966,46 @@ paths:
           $ref: '#/components/responses/400'
         '500':
           $ref: '#/components/responses/500'
+  /branch/annotate:
+    post:
+      tags:
+        - Branches
+      summary: Annotate a branch reference.
+      description: Annotates lines from an existing server-known reference in a branch. The API reads server-stored reference content and does not save local workspace state.
+      operationId: AnnotateBranch
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AnnotateParameters'
+            examples:
+              annotateBranch:
+                summary: Annotate one file line
+                value:
+                  CorrelationId: cli-20260604T181500Z-0001
+                  Principal: user:alice
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                  RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                  BranchId: de7bf47d-23ae-4599-af68-68a317ea390d
+                  IncludeDeleted: false
+                  TargetReferenceId: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
+                  Path: src/App.fs
+                  StartLine: 1
+                  EndLine: 1
+                  ReferenceTypes:
+                    - Commit
+                    - Save
+                  MaxReferences: 1000
+                  IncludeLineText: true
+      responses:
+        '200':
+          $ref: '#/components/responses/BranchAnnotationResponse'
+        '400':
+          $ref: '#/components/responses/400'
+        '500':
+          $ref: '#/components/responses/500'
   /branch/get:
     post:
       tags:
@@ -3447,1175 +3487,6 @@ components:
       description: Parameters for the /branch/getReference endpoint.
       allOf:
         - $ref: '#/components/schemas/BranchQueryParameters'
-    GetReferencesParameters:
-      description: Parameters for /branch/getReferences and reference-type list endpoints.
-      allOf:
-        - $ref: '#/components/schemas/BranchParameters'
-        - type: object
-          properties:
-            FullSha:
-              type: boolean
-              example: false
-            MaxCount:
-              type: integer
-              format: int32
-              minimum: 1
-              example: 50
-    GetDiffsForReferenceTypeParameters:
-      description: Parameters for the /branch/getDiffsForReferenceType endpoint.
-      allOf:
-        - $ref: '#/components/schemas/BranchParameters'
-        - type: object
-          properties:
-            ReferenceType:
-              $ref: '#/components/schemas/ReferenceType'
-            MaxCount:
-              type: integer
-              format: int32
-              minimum: 1
-              example: 50
-    GetDiffsForReferencesParameters:
-      description: Parameters for the /branch/getDiffsForReferences endpoint.
-      allOf:
-        - $ref: '#/components/schemas/BranchParameters'
-        - type: object
-          properties:
-            References:
-              type: string
-              description: Comma-separated reference identifiers for diff lookup.
-            MaxCount:
-              type: integer
-              format: int32
-              minimum: 1
-              example: 50
-    GetBranchParameters:
-      description: Parameters for the /branch/get endpoint.
-      allOf:
-        - $ref: '#/components/schemas/BranchQueryParameters'
-        - type: object
-          properties:
-            IncludeDeleted:
-              type: boolean
-              example: false
-    SwitchParameters:
-      description: Parameters for the /branch/switch endpoint.
-      allOf:
-        - $ref: '#/components/schemas/BranchQueryParameters'
-    GetBranchVersionParameters:
-      description: Parameters for the /branch/getVersion endpoint.
-      allOf:
-        - $ref: '#/components/schemas/BranchQueryParameters'
-        - type: object
-          properties:
-            IncludeDeleted:
-              type: boolean
-              example: false
-    DiffParameters:
-      description: Parameters shared by public endpoints in the /diff route family.
-      type: object
-      allOf:
-        - $ref: '#/components/schemas/CommonParameters'
-      properties:
-        OwnerId:
-          $ref: '#/components/schemas/OwnerId'
-        OwnerName:
-          $ref: '#/components/schemas/OwnerName'
-        OrganizationId:
-          $ref: '#/components/schemas/OrganizationId'
-        OrganizationName:
-          $ref: '#/components/schemas/OrganizationName'
-        RepositoryId:
-          $ref: '#/components/schemas/RepositoryId'
-        RepositoryName:
-          $ref: '#/components/schemas/RepositoryName'
-        DirectoryVersionId1:
-          type: string
-          format: uuid
-          example: 33a4e36b-828f-4fae-9343-50b6560dc842
-        DirectoryVersionId2:
-          type: string
-          format: uuid
-          example: 66b7b8c2-8d2f-4f04-951c-6b3486c4e5d1
-    PopulateParameters:
-      description: Parameters for diff population.
-      allOf:
-        - $ref: '#/components/schemas/DiffParameters'
-    GetDiffParameters:
-      description: Parameters for retrieving a diff.
-      allOf:
-        - $ref: '#/components/schemas/DiffParameters'
-    GetDiffByReferenceTypeParameters:
-      description: Parameters for retrieving a diff by reference type.
-      allOf:
-        - $ref: '#/components/schemas/DiffParameters'
-        - type: object
-          properties:
-            BranchId:
-              $ref: '#/components/schemas/BranchId'
-            BranchName:
-              $ref: '#/components/schemas/BranchName'
-    GetDiffBySha256HashParameters:
-      description: Parameters for retrieving a diff by SHA-256 hash.
-      allOf:
-        - $ref: '#/components/schemas/DiffParameters'
-        - type: object
-          properties:
-            Sha256Hash1:
-              $ref: '#/components/schemas/Sha256Hash'
-            Sha256Hash2:
-              $ref: '#/components/schemas/Sha256Hash'
-    DirectoryParameters:
-      description: Parameters shared by public endpoints in the /directory route family.
-      type: object
-      allOf:
-        - $ref: '#/components/schemas/CommonParameters'
-      properties:
-        OwnerId:
-          $ref: '#/components/schemas/OwnerId'
-        OwnerName:
-          $ref: '#/components/schemas/OwnerName'
-        OrganizationId:
-          $ref: '#/components/schemas/OrganizationId'
-        OrganizationName:
-          $ref: '#/components/schemas/OrganizationName'
-        RepositoryId:
-          $ref: '#/components/schemas/RepositoryId'
-        RepositoryName:
-          $ref: '#/components/schemas/RepositoryName'
-        DirectoryVersionId:
-          $ref: '#/components/schemas/DirectoryVersionId'
-      example:
-        CorrelationId: cli-20260604T181500Z-0001
-        Principal: user:alice
-        OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
-        OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
-        RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
-        DirectoryVersionId: 33a4e36b-828f-4fae-9343-50b6560dc842
-    CreateParameters:
-      description: Parameters for the /directory/create endpoint.
-      allOf:
-        - $ref: '#/components/schemas/DirectoryParameters'
-        - type: object
-          properties:
-            DirectoryVersion:
-              $ref: '#/components/schemas/DirectoryVersion'
-    GetParameters:
-      description: Parameters for /directory/get and recursive directory-version lookups.
-      allOf:
-        - $ref: '#/components/schemas/DirectoryParameters'
-    GetByDirectoryIdsParameters:
-      description: Parameters for the /directory/getByDirectoryIds endpoint.
-      allOf:
-        - $ref: '#/components/schemas/DirectoryParameters'
-        - type: object
-          properties:
-            DirectoryIds:
-              type: array
-              items:
-                $ref: '#/components/schemas/DirectoryVersionId'
-    GetBySha256HashParameters:
-      description: Parameters for the /directory/getBySha256Hash endpoint.
-      allOf:
-        - $ref: '#/components/schemas/DirectoryParameters'
-        - type: object
-          properties:
-            Sha256Hash:
-              $ref: '#/components/schemas/Sha256Hash'
-    SaveDirectoryVersionsParameters:
-      description: Parameters for the /directory/saveDirectoryVersions endpoint.
-      allOf:
-        - $ref: '#/components/schemas/DirectoryParameters'
-        - type: object
-          properties:
-            DirectoryVersions:
-              type: array
-              items:
-                $ref: '#/components/schemas/DirectoryVersion'
-    BranchDto:
-      description: (automatically generated)
-      type: object
-      properties:
-        Class:
-          type: string
-        BranchId:
-          $ref: '#/components/schemas/BranchId'
-        BranchName:
-          $ref: '#/components/schemas/BranchName'
-        ParentBranchId:
-          $ref: '#/components/schemas/BranchId'
-        BasedOn:
-          $ref: '#/components/schemas/ReferenceId'
-        RepositoryId:
-          $ref: '#/components/schemas/RepositoryId'
-        UserId:
-          $ref: '#/components/schemas/UserId'
-        PromotionEnabled:
-          type: boolean
-        CommitEnabled:
-          type: boolean
-        CheckpointEnabled:
-          type: boolean
-        SaveEnabled:
-          type: boolean
-        TagEnabled:
-          type: boolean
-        LatestPromotion:
-          $ref: '#/components/schemas/ReferenceId'
-        LatestCommit:
-          $ref: '#/components/schemas/ReferenceId'
-        LatestCheckpoint:
-          $ref: '#/components/schemas/ReferenceId'
-        LatestSave:
-          $ref: '#/components/schemas/ReferenceId'
-        CreatedAt:
-          $ref: '#/components/schemas/Instant'
-        UpdatedAt:
-          type: object
-          properties:
-            value:
-              $ref: '#/components/schemas/Instant'
-        DeletedAt:
-          type: object
-          properties:
-            value:
-              $ref: '#/components/schemas/Instant'
-    DiffDto:
-      description: (automatically generated)
-      type: object
-      properties:
-        Class:
-          type: string
-        HasDifferences:
-          type: boolean
-        DirectoryId1:
-          $ref: '#/components/schemas/DirectoryId'
-        Directory1CreatedAt:
-          $ref: '#/components/schemas/Instant'
-        DirectoryId2:
-          $ref: '#/components/schemas/DirectoryId'
-        Directory2CreatedAt:
-          $ref: '#/components/schemas/Instant'
-        Differences:
-          type: array
-          items:
-            $ref: '#/components/schemas/FileSystemDifference'
-        FileDiffs:
-          type: array
-          items:
-            $ref: '#/components/schemas/FileDiff'
-    OrganizationDto:
-      description: (automatically generated)
-      type: object
-      properties:
-        Class:
-          type: string
-        OrganizationId:
-          $ref: '#/components/schemas/OrganizationId'
-        OrganizationName:
-          $ref: '#/components/schemas/OrganizationName'
-        OwnerId:
-          $ref: '#/components/schemas/OwnerId'
-        OrganizationType:
-          $ref: '#/components/schemas/OrganizationType'
-        Description:
-          type: string
-        SearchVisibility:
-          $ref: '#/components/schemas/SearchVisibility'
-        CreatedAt:
-          $ref: '#/components/schemas/Instant'
-        UpdatedAt:
-          type: object
-          properties:
-            value:
-              $ref: '#/components/schemas/Instant'
-        DeletedAt:
-          type: object
-          properties:
-            value:
-              $ref: '#/components/schemas/Instant'
-        DeleteReason:
-          type: string
-    OwnerDto:
-      description: (automatically generated)
-      type: object
-      properties:
-        Class:
-          type: string
-        OwnerId:
-          $ref: '#/components/schemas/OwnerId'
-        OwnerName:
-          $ref: '#/components/schemas/OwnerName'
-        OwnerType:
-          $ref: '#/components/schemas/OwnerType'
-        Description:
-          type: string
-        SearchVisibility:
-          $ref: '#/components/schemas/SearchVisibility'
-        CreatedAt:
-          $ref: '#/components/schemas/Instant'
-        UpdatedAt:
-          type: object
-          properties:
-            value:
-              $ref: '#/components/schemas/Instant'
-        DeletedAt:
-          type: object
-          properties:
-            value:
-              $ref: '#/components/schemas/Instant'
-        DeleteReason:
-          type: string
-    ReferenceDto:
-      description: (automatically generated)
-      type: object
-      properties:
-        Class:
-          type: string
-        ReferenceId:
-          $ref: '#/components/schemas/ReferenceId'
-        BranchId:
-          $ref: '#/components/schemas/BranchId'
-        DirectoryId:
-          $ref: '#/components/schemas/DirectoryId'
-        Sha256Hash:
-          $ref: '#/components/schemas/Sha256Hash'
-        ReferenceType:
-          $ref: '#/components/schemas/ReferenceType'
-        ReferenceText:
-          $ref: '#/components/schemas/ReferenceText'
-        CreatedBy:
-          type: string
-          nullable: true
-        CreatedAt:
-          $ref: '#/components/schemas/Instant'
-    RepositoryDto:
-      description: (automatically generated)
-      type: object
-      properties:
-        Class:
-          type: string
-        RepositoryId:
-          $ref: '#/components/schemas/RepositoryId'
-        OwnerId:
-          $ref: '#/components/schemas/OwnerId'
-        OrganizationId:
-          $ref: '#/components/schemas/OrganizationId'
-        RepositoryName:
-          $ref: '#/components/schemas/RepositoryName'
-        ObjectStorageProvider:
-          $ref: '#/components/schemas/ObjectStorageProvider'
-        StorageAccountName:
-          type: string
-        StorageContainerName:
-          $ref: '#/components/schemas/StorageContainerName'
-        RepositoryVisibility:
-          $ref: '#/components/schemas/RepositoryVisibility'
-        RepositoryStatus:
-          $ref: '#/components/schemas/RepositoryStatus'
-        Branches:
-          type: array
-          items:
-            $ref: '#/components/schemas/BranchName'
-        DefaultServerApiVersion:
-          type: string
-        DefaultBranchName:
-          $ref: '#/components/schemas/BranchName'
-        SaveDays:
-          type: number
-          format: double
-        CheckpointDays:
-          type: number
-    OrganizationParameters:
-      description: Parameters shared by public endpoints in the /organization route family.
-      type: object
-      allOf:
-        - $ref: '#/components/schemas/CommonParameters'
-      properties:
-        OwnerId:
-          $ref: '#/components/schemas/OwnerId'
-        OwnerName:
-          $ref: '#/components/schemas/OwnerName'
-        OrganizationId:
-          $ref: '#/components/schemas/OrganizationId'
-        OrganizationName:
-          $ref: '#/components/schemas/OrganizationName'
-      example:
-        CorrelationId: cli-20260604T181500Z-0001
-        Principal: user:alice
-        OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
-        OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
-    CreateOrganizationParameters:
-      description: Parameters for the /organization/create endpoint.
-      allOf:
-        - $ref: '#/components/schemas/OrganizationParameters'
-    SetOrganizationNameParameters:
-      description: Parameters for the /organization/setName endpoint.
-      allOf:
-        - $ref: '#/components/schemas/OrganizationParameters'
-        - type: object
-          properties:
-            NewName:
-              $ref: '#/components/schemas/OrganizationName'
-    SetOrganizationTypeParameters:
-      description: Parameters for the /organization/setType endpoint.
-      allOf:
-        - $ref: '#/components/schemas/OrganizationParameters'
-        - type: object
-          properties:
-            OrganizationType:
-              $ref: '#/components/schemas/OrganizationType'
-    SetOrganizationSearchVisibilityParameters:
-      description: Parameters for the /organization/setSearchVisibility endpoint.
-      allOf:
-        - $ref: '#/components/schemas/OrganizationParameters'
-        - type: object
-          properties:
-            SearchVisibility:
-              $ref: '#/components/schemas/SearchVisibility'
-    SetOrganizationDescriptionParameters:
-      description: Parameters for the /organization/setDescription endpoint.
-      allOf:
-        - $ref: '#/components/schemas/OrganizationParameters'
-        - type: object
-          properties:
-            Description:
-              type: string
-              maxLength: 2048
-              example: Engineering organization for Alice's projects.
-    DeleteOrganizationParameters:
-      description: Parameters for the /organization/delete endpoint.
-      allOf:
-        - $ref: '#/components/schemas/OrganizationParameters'
-        - type: object
-          properties:
-            Force:
-              type: boolean
-              example: false
-            DeleteReason:
-              type: string
-              example: Organization retired.
-    UndeleteOrganizationParameters:
-      description: Parameters for the /organization/undelete endpoint.
-      allOf:
-        - $ref: '#/components/schemas/OrganizationParameters'
-    GetOrganizationParameters:
-      description: Parameters for the /organization/get endpoint.
-      allOf:
-        - $ref: '#/components/schemas/OrganizationParameters'
-        - type: object
-          properties:
-            IncludeDeleted:
-              type: boolean
-              example: false
-    ListRepositoriesParameters:
-      description: Parameters for the /organization/listRepositories endpoint.
-      allOf:
-        - $ref: '#/components/schemas/OrganizationParameters'
-    OwnerParameters:
-      description: Parameters shared by public endpoints in the /owner route family.
-      type: object
-      allOf:
-        - $ref: '#/components/schemas/CommonParameters'
-      properties:
-        OwnerId:
-          $ref: '#/components/schemas/OwnerId'
-        OwnerName:
-          $ref: '#/components/schemas/OwnerName'
-      example:
-        CorrelationId: cli-20260604T181500Z-0001
-        Principal: user:alice
-        OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
-    CreateOwnerParameters:
-      description: Parameters for the /owner/create endpoint.
-      allOf:
-        - $ref: '#/components/schemas/OwnerParameters'
-    SetOwnerNameParameters:
-      description: Parameters for the /owner/setName endpoint.
-      allOf:
-        - $ref: '#/components/schemas/OwnerParameters'
-        - type: object
-          properties:
-            NewName:
-              $ref: '#/components/schemas/OwnerName'
-    SetOwnerTypeParameters:
-      description: Parameters for the /owner/setType endpoint.
-      allOf:
-        - $ref: '#/components/schemas/OwnerParameters'
-        - type: object
-          properties:
-            OwnerType:
-              $ref: '#/components/schemas/OwnerType'
-    SetOwnerSearchVisibilityParameters:
-      description: Parameters for the /owner/setSearchVisibility endpoint.
-      allOf:
-        - $ref: '#/components/schemas/OwnerParameters'
-        - type: object
-          properties:
-            SearchVisibility:
-              $ref: '#/components/schemas/SearchVisibility'
-    SetOwnerDescriptionParameters:
-      description: Parameters for the /owner/setDescription endpoint.
-      allOf:
-        - $ref: '#/components/schemas/OwnerParameters'
-        - type: object
-          properties:
-            Description:
-              type: string
-              maxLength: 2048
-              example: Source control owner for Alice's projects.
-    DeleteOwnerParameters:
-      description: Parameters for the /owner/delete endpoint.
-      allOf:
-        - $ref: '#/components/schemas/OwnerParameters'
-        - type: object
-          properties:
-            Force:
-              type: boolean
-              example: false
-            DeleteReason:
-              type: string
-              example: Owner retired.
-    UndeleteOwnerParameters:
-      description: Parameters for the /owner/undelete endpoint.
-      allOf:
-        - $ref: '#/components/schemas/OwnerParameters'
-    GetOwnerParameters:
-      description: Parameters for the /owner/get endpoint.
-      allOf:
-        - $ref: '#/components/schemas/OwnerParameters'
-        - type: object
-          properties:
-            IncludeDeleted:
-              type: boolean
-              example: false
-    ListOrganizationsParameters:
-      description: Parameters for the /owner/listOrganizations endpoint.
-      allOf:
-        - $ref: '#/components/schemas/OwnerParameters'
-    ReferenceParameters:
-      description: Public reference identity fields used when a route accepts or returns reference selectors.
-      type: object
-      allOf:
-        - $ref: '#/components/schemas/CommonParameters'
-      properties:
-        ReferenceId:
-          $ref: '#/components/schemas/ReferenceId'
-        ReferenceType:
-          $ref: '#/components/schemas/ReferenceType'
-        ReferenceText:
-          $ref: '#/components/schemas/ReferenceText'
-        RepositoryId:
-          $ref: '#/components/schemas/RepositoryId'
-        RepositoryName:
-          $ref: '#/components/schemas/RepositoryName'
-      example:
-        CorrelationId: cli-20260604T181500Z-0001
-        Principal: user:alice
-        RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
-        ReferenceId: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
-        ReferenceType: Commit
-        ReferenceText: Capture release candidate.
-    RepositoryParameters:
-      description: Parameters shared by public endpoints in the /repository route family.
-      type: object
-      allOf:
-        - $ref: '#/components/schemas/CommonParameters'
-      properties:
-        OwnerId:
-          $ref: '#/components/schemas/OwnerId'
-        OwnerName:
-          $ref: '#/components/schemas/OwnerName'
-        OrganizationId:
-          $ref: '#/components/schemas/OrganizationId'
-        OrganizationName:
-          $ref: '#/components/schemas/OrganizationName'
-        RepositoryId:
-          $ref: '#/components/schemas/RepositoryId'
-        RepositoryName:
-          $ref: '#/components/schemas/RepositoryName'
-      example:
-        CorrelationId: cli-20260604T181500Z-0001
-        Principal: user:alice
-        OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
-        OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
-        RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
-    CreateRepositoryParameters:
-      description: Parameters for the /repository/create endpoint.
-      allOf:
-        - $ref: '#/components/schemas/RepositoryParameters'
-        - type: object
-          properties:
-            ObjectStorageProvider:
-              $ref: '#/components/schemas/ObjectStorageProvider'
-    IsEmptyParameters:
-      description: Parameters for the /repository/isEmpty endpoint.
-      allOf:
-        - $ref: '#/components/schemas/RepositoryParameters'
-    InitParameters:
-      description: Parameters for the /repository/init endpoint.
-      allOf:
-        - $ref: '#/components/schemas/RepositoryParameters'
-        - type: object
-          properties:
-            GraceConfig:
-              type: string
-              example: '{}'
-    SetRepositoryVisibilityParameters:
-      description: Parameters for the /repository/setVisibility endpoint.
-      allOf:
-        - $ref: '#/components/schemas/RepositoryParameters'
-        - type: object
-          properties:
-            Visibility:
-              $ref: '#/components/schemas/RepositoryVisibility'
-    SetRepositoryStatusParameters:
-      description: Parameters for the /repository/setStatus endpoint.
-      allOf:
-        - $ref: '#/components/schemas/RepositoryParameters'
-        - type: object
-          properties:
-            Status:
-              $ref: '#/components/schemas/RepositoryStatus'
-    RecordSavesParameters:
-      description: Parameters for the /repository/setRecordSaves endpoint.
-      allOf:
-        - $ref: '#/components/schemas/RepositoryParameters'
-        - type: object
-          properties:
-            RecordSaves:
-              type: boolean
-              example: true
-    SetSaveDaysParameters:
-      description: Parameters for the /repository/setSaveDays endpoint.
-      allOf:
-        - $ref: '#/components/schemas/RepositoryParameters'
-        - type: object
-          properties:
-            SaveDays:
-              type: number
-              format: float
-              minimum: 0
-              example: 30
-    SetCheckpointDaysParameters:
-      description: Parameters for the /repository/setCheckpointDays endpoint.
-      allOf:
-        - $ref: '#/components/schemas/RepositoryParameters'
-        - type: object
-          properties:
-            CheckpointDays:
-              type: number
-              format: float
-              minimum: 0
-              example: 90
-    SetRepositoryDescriptionParameters:
-      description: Parameters for the /repository/setDescription endpoint.
-      allOf:
-        - $ref: '#/components/schemas/RepositoryParameters'
-        - type: object
-          properties:
-            Description:
-              type: string
-              maxLength: 2048
-              example: Repository for release candidates.
-    SetDefaultServerApiVersionParameters:
-      description: Parameters for the /repository/setDefaultServerApiVersion endpoint.
-      allOf:
-        - $ref: '#/components/schemas/RepositoryParameters'
-        - type: object
-          properties:
-            DefaultServerApiVersion:
-              type: string
-              example: '2026-06-04'
-    SetRepositoryNameParameters:
-      description: Parameters for the /repository/setName endpoint.
-      allOf:
-        - $ref: '#/components/schemas/RepositoryParameters'
-        - type: object
-          properties:
-            NewName:
-              $ref: '#/components/schemas/RepositoryName'
-    DeleteRepositoryParameters:
-      description: Parameters for the /repository/delete endpoint.
-      allOf:
-        - $ref: '#/components/schemas/RepositoryParameters'
-        - type: object
-          properties:
-            Force:
-              type: boolean
-              example: false
-            DeleteReason:
-              type: string
-              example: Repository retired.
-    EnablePromotionTypeParameters:
-      description: Parameters for repository promotion type feature toggles.
-      allOf:
-        - $ref: '#/components/schemas/RepositoryParameters'
-        - type: object
-          properties:
-            Enabled:
-              type: boolean
-              example: true
-    GetReferencesByReferenceIdParameters:
-      description: Parameters for the /repository/getReferencesByReferenceId endpoint.
-      allOf:
-        - $ref: '#/components/schemas/RepositoryParameters'
-        - type: object
-          properties:
-            ReferenceIds:
-              type: array
-              items:
-                $ref: '#/components/schemas/ReferenceId'
-            MaxCount:
-              type: integer
-              format: int32
-              minimum: 1
-              maximum: 1000
-              example: 50
-    GetBranchesParameters:
-      description: Parameters for the /repository/getBranches endpoint.
-      allOf:
-        - $ref: '#/components/schemas/RepositoryParameters'
-        - type: object
-          properties:
-            IncludeDeleted:
-              type: boolean
-              example: false
-            MaxCount:
-              type: integer
-              format: int32
-              minimum: 1
-              maximum: 1000
-              example: 50
-    GetBranchesByBranchIdParameters:
-      description: Parameters for the /repository/getBranchesByBranchId endpoint.
-      allOf:
-        - $ref: '#/components/schemas/RepositoryParameters'
-        - type: object
-          properties:
-            BranchIds:
-              type: array
-              items:
-                $ref: '#/components/schemas/BranchId'
-            MaxCount:
-              type: integer
-              format: int32
-              minimum: 1
-              maximum: 1000
-              example: 50
-            IncludeDeleted:
-              type: boolean
-              example: false
-    UndeleteRepositoryParameters:
-      description: Parameters for the /repository/undelete endpoint.
-      allOf:
-        - $ref: '#/components/schemas/RepositoryParameters'
-    StorageParameters:
-      description: Parameters common to storage endpoints.
-      allOf:
-        - $ref: '#/components/schemas/CommonParameters'
-      type: object
-      properties:
-        OwnerId:
-          type: string
-        OwnerName:
-          type: string
-        OrganizationId:
-          type: string
-        OrganizationName:
-          type: string
-        RepositoryId:
-          type: string
-        RepositoryName:
-          type: string
-    GetUploadMetadataForFilesParameters:
-      description: Parameters for /storage/getUploadMetadataForFiles.
-      allOf:
-        - $ref: '#/components/schemas/StorageParameters'
-      type: object
-      properties:
-        FileVersions:
-          type: array
-          items:
-            $ref: '#/components/schemas/FileVersion'
-    GetUploadUriParameters:
-      description: Parameters for /storage/getUploadUri.
-      allOf:
-        - $ref: '#/components/schemas/StorageParameters'
-      type: object
-      properties:
-        FileVersions:
-          type: array
-          items:
-            $ref: '#/components/schemas/FileVersion'
-    GetDownloadUriParameters:
-      description: Parameters for /storage/getDownloadUri.
-      allOf:
-        - $ref: '#/components/schemas/StorageParameters'
-      type: object
-      properties:
-        FileVersion:
-          $ref: '#/components/schemas/FileVersion'
-    GetContentBlockUploadUriParameters:
-      description: Parameters for /storage/getContentBlockUploadUri.
-      allOf:
-        - $ref: '#/components/schemas/StorageParameters'
-      type: object
-      properties:
-        ContentBlockAddress:
-          $ref: '#/components/schemas/ContentBlockAddress'
-        AuthorizedScope:
-          $ref: '#/components/schemas/RelativePath'
-    GetContentBlockDownloadUriParameters:
-      description: Parameters for /storage/getContentBlockDownloadUri.
-      allOf:
-        - $ref: '#/components/schemas/StorageParameters'
-      type: object
-      properties:
-        ContentBlockAddress:
-          $ref: '#/components/schemas/ContentBlockAddress'
-    DiscoverContentBlocksParameters:
-      description: Parameters for /storage/discoverContentBlocks. Discovery is bounded and non-authoritative; empty results do not prove that chunks or future ContentBlocks are absent.
-      allOf:
-        - $ref: '#/components/schemas/StorageParameters'
-      type: object
-      properties:
-        KeyChunkAddresses:
-          type: array
-          maxItems: 256
-          items:
-            $ref: '#/components/schemas/ChunkAddress'
-    StartManifestUploadSessionParameters:
-      description: Parameters for /storage/startManifestUploadSession.
-      allOf:
-        - $ref: '#/components/schemas/UploadSessionStorageParameters'
-      type: object
-      properties:
-        FileContentHash:
-          $ref: '#/components/schemas/FileContentHash'
-        ExpectedSize:
-          type: integer
-          format: int64
-        ChunkingSuiteId:
-          $ref: '#/components/schemas/ChunkingSuiteId'
-        SamplingPolicySnapshot:
-          type: string
-        OperationId:
-          $ref: '#/components/schemas/UploadSessionOperationId'
-    IssueDedupeDiscoveryParameters:
-      description: Parameters for /storage/issueDedupeDiscovery.
-      allOf:
-        - $ref: '#/components/schemas/UploadSessionStorageParameters'
-      type: object
-      properties:
-        OperationId:
-          $ref: '#/components/schemas/UploadSessionOperationId'
-        ExpiresAt:
-          $ref: '#/components/schemas/Instant'
-        MinimumReuseRunLength:
-          type: integer
-          minimum: 8
-        Hints:
-          type: array
-          maxItems: 1024
-          items:
-            $ref: '#/components/schemas/ContentBlockReuseRangeHint'
-    ClaimReuseRangesParameters:
-      description: Parameters for /storage/claimReuseRanges.
-      allOf:
-        - $ref: '#/components/schemas/UploadSessionStorageParameters'
-      type: object
-      properties:
-        OperationId:
-          $ref: '#/components/schemas/UploadSessionOperationId'
-        DiscoveryOperationId:
-          $ref: '#/components/schemas/UploadSessionOperationId'
-        Hints:
-          type: array
-          maxItems: 1024
-          items:
-            $ref: '#/components/schemas/ContentBlockReuseRangeHint'
-    RegisterContentBlockUploadParameters:
-      description: Parameters for /storage/registerContentBlockUpload.
-      allOf:
-        - $ref: '#/components/schemas/UploadSessionStorageParameters'
-      type: object
-      properties:
-        OperationId:
-          $ref: '#/components/schemas/UploadSessionOperationId'
-        ContentBlockAddress:
-          $ref: '#/components/schemas/ContentBlockAddress'
-        LogicalOffset:
-          type: integer
-          format: int64
-        LogicalLength:
-          type: integer
-          format: int64
-        ExpectedPayloadLength:
-          type: integer
-          format: int64
-    ConfirmContentBlockUploadParameters:
-      description: Parameters for /storage/confirmContentBlockUpload.
-      allOf:
-        - $ref: '#/components/schemas/UploadSessionStorageParameters'
-      type: object
-      properties:
-        OperationId:
-          $ref: '#/components/schemas/UploadSessionOperationId'
-        ContentBlockAddress:
-          $ref: '#/components/schemas/ContentBlockAddress'
-        Payload:
-          type: string
-          format: byte
-        StoragePlacement:
-          $ref: '#/components/schemas/ContentBlockStoragePlacement'
-    FinalizeManifestUploadParameters:
-      description: Parameters for /storage/finalizeManifestUpload.
-      allOf:
-        - $ref: '#/components/schemas/UploadSessionStorageParameters'
-      type: object
-      properties:
-        OperationId:
-          $ref: '#/components/schemas/UploadSessionOperationId'
-        Manifest:
-          $ref: '#/components/schemas/FileManifest'
-        BlockPayloads:
-          type: array
-          items:
-            $ref: '#/components/schemas/FinalizeManifestBlockPayload'
-    DiscoverContentBlocksResult:
-      description: Non-authoritative ContentBlock discovery result.
-      type: object
-      properties:
-        RequestedKeyChunkCount:
-          type: integer
-        AcceptedKeyChunkCount:
-          type: integer
-        Policy:
-          $ref: '#/components/schemas/ContentBlockDiscoveryPolicy'
-        CandidateContentBlocks:
-          type: array
-          items:
-            $ref: '#/components/schemas/ContentBlockDiscoveryCandidate'
-        IsPartial:
-          type: boolean
-        Message:
-          type: string
-    UploadSessionDecision:
-      description: UploadSession command decision returned by manifest upload-session endpoints.
-      type: object
-      properties:
-        Session:
-          $ref: '#/components/schemas/UploadSessionDto'
-        OperationId:
-          $ref: '#/components/schemas/UploadSessionOperationId'
-        Events:
-          type: array
-          items:
-            $ref: '#/components/schemas/UploadSessionEvent'
-        WasIdempotentReplay:
-          type: boolean
-        Message:
-          type: string
-      required:
-        - Session
-        - OperationId
-        - Events
-        - WasIdempotentReplay
-        - Message
-    FileManifest:
-      description: Server-accepted reconstruction contract for one manifest-backed file.
-      type: object
-      properties:
-        Class:
-          type: string
-          enum:
-            - FileManifest
-        ManifestAddress:
-          $ref: '#/components/schemas/ManifestAddress'
-        ChunkingSuiteId:
-          $ref: '#/components/schemas/ChunkingSuiteId'
-        FileContentHash:
-          $ref: '#/components/schemas/FileContentHash'
-        Size:
-          type: integer
-          format: int64
-        Blocks:
-          type: array
-          items:
-            $ref: '#/components/schemas/ContentBlock'
-      required:
-        - Class
-        - ManifestAddress
-        - ChunkingSuiteId
-        - FileContentHash
-        - Size
-        - Blocks
-    ContentBlock:
-      description: Logical byte range inside a manifest-backed file.
-      type: object
-      properties:
-        Class:
-          type: string
-          enum:
-            - ContentBlock
-        Address:
-          $ref: '#/components/schemas/ContentBlockAddress'
-        Offset:
-          type: integer
-          format: int64
-        Size:
-          type: integer
-          format: int64
-      required:
-        - Class
-        - Address
-        - Offset
-        - Size
-    ContentBlockAddress:
-      description: Lowercase 64-character BLAKE3-derived ContentBlock address.
-      type: string
-      pattern: ^[a-f0-9]{64}$
-    ManifestAddress:
-      description: Lowercase 64-character BLAKE3-derived FileManifest address.
-      type: string
-      pattern: ^[a-f0-9]{64}$
-    FileContentHash:
-      description: Lowercase 64-character BLAKE3 hash of the complete unencoded file bytes.
-      type: string
-      pattern: ^[a-f0-9]{64}$
-    ChunkAddress:
-      description: Lowercase 64-character BLAKE3 chunk address.
-      type: string
-      pattern: ^[a-f0-9]{64}$
-    StoragePoolId:
-      description: StoragePool-wide CAS scope identifier.
-      type: string
-    ChunkingSuiteId:
-      description: Versioned chunking suite identifier.
-      type: string
-      example: rabin-v1
-    UploadSessionOperationId:
-      description: Caller-supplied idempotency key for one upload-session operation.
-      type: string
-    Instant:
-      type: string
-      format: date-time
-    ProblemDetails:
-      type: object
-      properties:
-        type:
-          type: string
-          description: A URI reference that identifies the problem type.
-        title:
-          type: string
-          description: A short, human-readable summary of the problem type.
-        status:
-          type: integer
-          description: The HTTP status code generated by the origin server for this occurrence of the problem.
-        detail:
-          type: string
-          description: A human-readable explanation specific to this occurrence of the problem.
-        instance:
-          type: string
-          description: A URI reference that identifies the specific occurrence of the problem.
-      required:
-        - type
-        - title
-        - status
-        - detail
-        - instance
-    BranchId:
-      type: string
-      format: uuid
-      example: de7bf47d-23ae-4599-af68-68a317ea390d
-    BranchName:
-      type: string
-      example: MyBranch
-    CorrelationId:
-      type: string
-      description: Body DTO correlation id copied into Grace command/event metadata after request parsing. This field is distinct from the X-Correlation-Id transport header, which correlates the HTTP request/response exchange.
-      example: cli-20260604T181500Z-0001
-    ContainerName:
-      type: string
-      description: The name of the container must be a valid Grace name. (See the Grace documentation for more information.)
-    DirectoryId:
-      type: string
-      format: uuid
-      example: 33a4e36b-828f-4fae-9343-50b6560dc842
-    FilePath:
-      type: string
-    GraceIgnoreEntry:
-      type: string
-    OrganizationId:
-      type: string
-      format: uuid
-      example: e35d64a9-b990-44f5-bf02-32ad7d15630c
-    OrganizationName:
-      type: string
-    OwnerId:
-      type: string
-      format: uuid
-      example: 9dd5f81f-dc43-4839-9173-85d09394f30f
-    OwnerName:
-      type: string
-    ReferenceId:
-      type: string
-      format: uuid
-      example: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
-    ReferenceName:
-      type: string
-    ReferenceText:
-      type: string
-    RepositoryId:
-      type: string
-      format: uuid
-      example: ab6f35ef-6e01-440b-8f9b-c343a5272095
-    RepositoryName:
-      type: string
-    RelativePath:
-      type: string
-    Sha256Hash:
-      type: string
-      example: 805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243
-    StorageAccountName:
-      type: string
-    StorageConnectionString:
-      type: string
-    StorageContainerName:
-      type: string
-    UriWithSharedAccessSignature:
-      type: string
-    UserId:
-      type: string
-    OwnerType:
-      type: string
-      enum:
-        - Public
-        - Private
-      example: Public
-    OrganizationType:
-      type: string
-      enum:
-        - Public
-        - Private
-      summary: The OrganizationType determines whether the Organization is visible to the public or not.
-      description: The OrganizationType determines whether the Organization is visible to the public or not.
-      example: Public
-    SearchVisibility:
-      type: string
-      enum:
-        - Visible
-        - NotVisible
-      example: NotVisible
-    ReferenceType:
-      type: string
-      enum:
-        - Promotion
-        - Commit
-        - Checkpoint
-        - Save
-        - Tag
-      example: Commit
     CommonParameters:
       description: Common parameters that are used across (almost) every endpoint in Grace.
       type: object
@@ -4626,74 +3497,16 @@ components:
         Principal:
           type: string
           description: The entity on whose behalf the action is being performed.
-    FileVersion:
-      type: object
-      properties:
-        Class:
-          type: string
-        RepositoryId:
-          - $ref: '#/components/schemas/RepositoryId'
-        RelativePath:
-          - $ref: '#/components/schemas/RelativePath'
-        Sha256Hash:
-          - $ref: '#/components/schemas/Sha256Hash'
-        IsBinary:
-          type: boolean
-        Size:
-          type: integer
-          format: int64
-        CreatedAt:
-          type: string
-          format: date-time
-        BlobUri:
-          type: string
-    DirectoryVersion:
-      type: object
-      properties:
-        Class:
-          type: string
-        DirectoryId:
-          - $ref: '#/components/schemas/DirectoryId'
-        RepositoryId:
-          - $ref: '#/components/schemas/RepositoryId'
-        RelativePath:
-          - $ref: '#/components/schemas/RelativePath'
-        Sha256Hash:
-          - $ref: '#/components/schemas/Sha256Hash'
-        Directories:
-          type: array
-          items:
-            - $ref: '#/components/schemas/DirectoryId'
-        Files:
-          type: array
-          items:
-            - $ref: '#/components/schemas/FileVersion'
-        Size:
-          type: integer
-          format: int64
-        RecursiveSize:
-          type: integer
-          format: int64
-        CreatedAt:
-          type: string
-          format: date-time
-    EventMetadata:
-      description: null
-      type: object
-      properties:
-        Timestamp:
-          type: string
-          format: date-time
-        CorrelationId:
-          type: string
-        Principal:
-          type: string
-        ClientType:
-          $ref: '#/components/schemas/ClientType'
-        Properties:
-          type: object
-          additionalProperties:
-            type: string
+    OutboundUrlSafety:
+      type: string
+      enum:
+        - PublicHttps
+        - LocalUnsafeDevOnly
+    ApprovalTimeoutAction:
+      type: string
+      enum:
+        - Reject
+        - Expire
     GraceReturnValue:
       type: object
       properties:
@@ -4708,166 +3521,6 @@ components:
           type: object
           additionalProperties:
             type: string
-    GraceError:
-      description: Grace domain error envelope returned by command handlers. Authentication challenges and framework authorization failures use their HTTP-specific response shapes instead of this domain error envelope.
-      type: object
-      properties:
-        Error:
-          type: string
-          example: OwnerId is required.
-        EventTime:
-          type: string
-          format: date-time
-          example: '2026-06-04T18:15:00Z'
-        CorrelationId:
-          type: string
-          example: cli-20260604T181500Z-0001
-        Properties:
-          type: object
-          additionalProperties:
-            type: string
-      required:
-        - Error
-        - EventTime
-        - CorrelationId
-        - Properties
-      example:
-        Error: OwnerId is required.
-        EventTime: '2026-06-04T18:15:00Z'
-        CorrelationId: cli-20260604T181500Z-0001
-        Properties:
-          Path: /owner/get
-    GraceResult:
-      oneOf:
-        - - $ref: '#/components/schemas/GraceReturnValue'
-        - - $ref: '#/components/schemas/GraceError'
-    FileSystemEntryType:
-      type: string
-      enum:
-        - Directory
-        - File
-    DifferenceType:
-      type: string
-      enum:
-        - Add
-        - Change
-        - Delete
-    FileSystemDifference:
-      type: object
-      properties:
-        DifferenceType:
-          $ref: null
-        FileSystemEntryType:
-          $ref: null
-        RelativePath:
-          $ref: null
-      required:
-        - DifferenceType
-        - FileSystemEntryType
-        - RelativePath
-    FileDiff:
-      type: object
-      properties:
-        RelativePath:
-          $ref: null
-        FileSha1:
-          $ref: null
-        CreatedAt1:
-          $ref: null
-        FileSha2:
-          $ref: null
-        CreatedAt2:
-          $ref: null
-        IsBinary:
-          type: boolean
-        InlineDiff:
-          type: array
-          items:
-            type: array
-            items:
-              $ref: null
-        SideBySideOld:
-          type: array
-          items:
-            type: array
-            items:
-              $ref: null
-        SideBySideNew:
-          type: array
-          items:
-            type: array
-            items:
-              $ref: null
-      required:
-        - RelativePath
-        - FileSha1
-        - CreatedAt1
-        - FileSha2
-        - CreatedAt2
-        - IsBinary
-        - InlineDiff
-        - SideBySideOld
-        - SideBySideNew
-    DiffPiece:
-      type: object
-      properties:
-        Position:
-          type: integer
-          nullable: true
-        SubPieces:
-          type: array
-          items:
-            $ref: null
-        Text:
-          type: string
-        Type:
-          $ref: null
-      required:
-        - Text
-        - Type
-    ChangeType:
-      type: integer
-      enum:
-        - 0
-        - 1
-        - 2
-        - 3
-        - 4
-      enumNames:
-        - Unchanged
-        - Deleted
-        - Inserted
-        - Imaginary
-        - Modified
-    ObjectStorageProvider:
-      type: string
-      enum:
-        - AWSS3
-        - AzureBlobStorage
-        - GoogleCloudStorage
-        - Unknown
-    RepositoryVisibility:
-      type: string
-      enum:
-        - Private
-        - Public
-    RepositoryStatus:
-      type: string
-      enum:
-        - Active
-        - Suspended
-        - Closed
-        - Deleted
-    OutboundUrlSafety:
-      type: string
-      enum:
-        - PublicHttps
-        - LocalUnsafeDevOnly
-    ApprovalTimeoutAction:
-      type: string
-      enum:
-        - Reject
-        - Expire
     ApprovalScope:
       type: object
       properties:
@@ -4911,6 +3564,38 @@ components:
         - Enabled
         - Disabled
         - Deleted
+    Instant:
+      type: string
+      format: date-time
+    GraceError:
+      description: Grace domain error envelope returned by command handlers. Authentication challenges and framework authorization failures use their HTTP-specific response shapes instead of this domain error envelope.
+      type: object
+      properties:
+        Error:
+          type: string
+          example: OwnerId is required.
+        EventTime:
+          type: string
+          format: date-time
+          example: '2026-06-04T18:15:00Z'
+        CorrelationId:
+          type: string
+          example: cli-20260604T181500Z-0001
+        Properties:
+          type: object
+          additionalProperties:
+            type: string
+      required:
+        - Error
+        - EventTime
+        - CorrelationId
+        - Properties
+      example:
+        Error: OwnerId is required.
+        EventTime: '2026-06-04T18:15:00Z'
+        CorrelationId: cli-20260604T181500Z-0001
+        Properties:
+          Path: /owner/get
     ApprovalRequestStatus:
       type: string
       enum:
@@ -4978,6 +3663,44 @@ components:
         - RetryScheduled
         - Failed
         - DeadLettered
+    OwnerId:
+      type: string
+      format: uuid
+      example: 9dd5f81f-dc43-4839-9173-85d09394f30f
+    OwnerName:
+      type: string
+    OrganizationId:
+      type: string
+      format: uuid
+      example: e35d64a9-b990-44f5-bf02-32ad7d15630c
+    OrganizationName:
+      type: string
+    RepositoryId:
+      type: string
+      format: uuid
+      example: ab6f35ef-6e01-440b-8f9b-c343a5272095
+    RepositoryName:
+      type: string
+    BranchId:
+      type: string
+      format: uuid
+      example: de7bf47d-23ae-4599-af68-68a317ea390d
+    BranchName:
+      type: string
+      example: MyBranch
+    ReferenceType:
+      type: string
+      enum:
+        - Promotion
+        - Commit
+        - Checkpoint
+        - Save
+        - Tag
+      example: Commit
+    CorrelationId:
+      type: string
+      description: Body DTO correlation id copied into Grace command/event metadata after request parsing. This field is distinct from the X-Correlation-Id transport header, which correlates the HTTP request/response exchange.
+      example: cli-20260604T181500Z-0001
     BranchCommandReturnValue:
       description: Grace response envelope returned by branch command endpoints.
       type: object
@@ -5004,6 +3727,263 @@ components:
         CorrelationId: cli-20260604T181500Z-0001
         Properties:
           Path: /branch/create
+    ReferenceId:
+      type: string
+      format: uuid
+      example: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
+    Sha256Hash:
+      type: string
+      example: 805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243
+    RelativePath:
+      type: string
+    AnnotateParameters:
+      description: Parameters for the /branch/annotate endpoint.
+      allOf:
+        - $ref: '#/components/schemas/BranchParameters'
+        - type: object
+          properties:
+            TargetReferenceId:
+              $ref: '#/components/schemas/ReferenceId'
+            Path:
+              $ref: '#/components/schemas/RelativePath'
+            StartLine:
+              type: integer
+              format: int32
+              minimum: 1
+              example: 1
+            EndLine:
+              type: integer
+              format: int32
+              minimum: 1
+              example: 20
+            ReferenceTypes:
+              type: array
+              items:
+                $ref: '#/components/schemas/ReferenceType'
+            MaxReferences:
+              type: integer
+              format: int32
+              minimum: 1
+              maximum: 5000
+              example: 1000
+            IncludeLineText:
+              type: boolean
+              example: true
+    AnnotationLineRange:
+      description: Inclusive one-based line range.
+      type: object
+      properties:
+        StartLine:
+          type: integer
+          format: int32
+          minimum: 1
+        EndLine:
+          type: integer
+          format: int32
+          minimum: 1
+      required:
+        - StartLine
+        - EndLine
+    AnnotationLine:
+      description: One annotated target line.
+      type: object
+      properties:
+        LineNumber:
+          type: integer
+          format: int32
+          minimum: 1
+        Text:
+          type: string
+      required:
+        - LineNumber
+        - Text
+    AnnotationBoundary:
+      description: Boundary where annotation could not continue through history.
+      type: object
+      properties:
+        BoundaryId:
+          type: string
+        LineRange:
+          $ref: '#/components/schemas/AnnotationLineRange'
+        SourceRowIds:
+          type: array
+          items:
+            type: string
+      required:
+        - BoundaryId
+        - LineRange
+        - SourceRowIds
+    AnnotationSpan:
+      description: Annotated target span and its source rows.
+      type: object
+      properties:
+        SpanId:
+          type: string
+        BoundaryId:
+          type: string
+        LineRange:
+          $ref: '#/components/schemas/AnnotationLineRange'
+        SourceRowIds:
+          type: array
+          items:
+            type: string
+      required:
+        - SpanId
+        - BoundaryId
+        - LineRange
+        - SourceRowIds
+    AnnotationSourceRow:
+      description: Source row range for an annotation span.
+      type: object
+      properties:
+        SourceRowId:
+          type: string
+        SourceReferenceId:
+          type: string
+        Path:
+          $ref: '#/components/schemas/RelativePath'
+        LineRange:
+          $ref: '#/components/schemas/AnnotationLineRange'
+      required:
+        - SourceRowId
+        - SourceReferenceId
+        - Path
+        - LineRange
+    ReferenceText:
+      type: string
+    AnnotationSourceReference:
+      description: Reference that contributed annotation source rows.
+      type: object
+      properties:
+        SourceReferenceId:
+          type: string
+        ReferenceId:
+          $ref: '#/components/schemas/ReferenceId'
+        ReferenceType:
+          $ref: '#/components/schemas/ReferenceType'
+        ReferenceText:
+          $ref: '#/components/schemas/ReferenceText'
+        DirectoryVersionId:
+          type: string
+          format: uuid
+        CreatedAt:
+          $ref: '#/components/schemas/Instant'
+        CreatedBy:
+          type: string
+          nullable: true
+      required:
+        - SourceReferenceId
+        - ReferenceId
+        - ReferenceType
+        - ReferenceText
+        - DirectoryVersionId
+    BranchAnnotationApiDto:
+      description: Branch annotation result for an existing server-known reference.
+      type: object
+      properties:
+        Class:
+          type: string
+          example: BranchAnnotationDto
+        RequestedLineRange:
+          $ref: '#/components/schemas/AnnotationLineRange'
+        TargetReferenceId:
+          $ref: '#/components/schemas/ReferenceId'
+        Path:
+          $ref: '#/components/schemas/RelativePath'
+        ReferenceTypeFilter:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReferenceType'
+        MaxReferences:
+          type: integer
+          format: int32
+        IncludeLineText:
+          type: boolean
+        Lines:
+          type: array
+          items:
+            $ref: '#/components/schemas/AnnotationLine'
+        Boundaries:
+          type: array
+          items:
+            $ref: '#/components/schemas/AnnotationBoundary'
+        Spans:
+          type: array
+          items:
+            $ref: '#/components/schemas/AnnotationSpan'
+        SourceRows:
+          type: array
+          items:
+            $ref: '#/components/schemas/AnnotationSourceRow'
+        SourceReferences:
+          type: array
+          items:
+            $ref: '#/components/schemas/AnnotationSourceReference'
+      required:
+        - Class
+        - RequestedLineRange
+        - TargetReferenceId
+        - Path
+        - ReferenceTypeFilter
+        - MaxReferences
+        - IncludeLineText
+        - Lines
+        - Boundaries
+        - Spans
+        - SourceRows
+        - SourceReferences
+    BranchAnnotationReturnValue:
+      description: Grace response envelope whose ReturnValue contains a branch annotation.
+      type: object
+      properties:
+        ReturnValue:
+          $ref: '#/components/schemas/BranchAnnotationApiDto'
+        EventTime:
+          $ref: '#/components/schemas/Instant'
+        CorrelationId:
+          $ref: '#/components/schemas/CorrelationId'
+        Properties:
+          type: object
+          additionalProperties:
+            type: string
+      required:
+        - ReturnValue
+        - EventTime
+        - CorrelationId
+        - Properties
+      example:
+        ReturnValue:
+          Class: BranchAnnotationDto
+          RequestedLineRange:
+            StartLine: 1
+            EndLine: 1
+          TargetReferenceId: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
+          Path: src/App.fs
+          ReferenceTypeFilter:
+            - Commit
+            - Save
+          MaxReferences: 1000
+          IncludeLineText: true
+          Lines:
+            - LineNumber: 1
+              Text: module App
+          Boundaries: []
+          Spans: []
+          SourceRows: []
+          SourceReferences: []
+        EventTime: '2026-06-04T18:15:00Z'
+        CorrelationId: cli-20260604T181500Z-0001
+        Properties:
+          Path: /branch/annotate
+    GetBranchParameters:
+      description: Parameters for the /branch/get endpoint.
+      allOf:
+        - $ref: '#/components/schemas/BranchQueryParameters'
+        - type: object
+          properties:
+            IncludeDeleted:
+              type: boolean
+              example: false
     ReferenceApiDto:
       description: Public reference DTO returned through branch reference endpoints.
       type: object
@@ -5046,6 +4026,8 @@ components:
           nullable: true
         DeleteReason:
           type: string
+    UserId:
+      type: string
     BranchApiDto:
       description: Public branch DTO returned through branch endpoints.
       type: object
@@ -5200,6 +4182,20 @@ components:
         CorrelationId: cli-20260604T181500Z-0001
         Properties:
           Path: /branch/getReference
+    GetReferencesParameters:
+      description: Parameters for /branch/getReferences and reference-type list endpoints.
+      allOf:
+        - $ref: '#/components/schemas/BranchParameters'
+        - type: object
+          properties:
+            FullSha:
+              type: boolean
+              example: false
+            MaxCount:
+              type: integer
+              format: int32
+              minimum: 1
+              example: 50
     ReferenceListReturnValue:
       description: Grace response envelope whose ReturnValue contains references.
       type: object
@@ -5235,6 +4231,36 @@ components:
         CorrelationId: cli-20260604T181500Z-0001
         Properties:
           Path: /branch/getReferences
+    DiffParameters:
+      description: Parameters shared by public endpoints in the /diff route family.
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/CommonParameters'
+      properties:
+        OwnerId:
+          $ref: '#/components/schemas/OwnerId'
+        OwnerName:
+          $ref: '#/components/schemas/OwnerName'
+        OrganizationId:
+          $ref: '#/components/schemas/OrganizationId'
+        OrganizationName:
+          $ref: '#/components/schemas/OrganizationName'
+        RepositoryId:
+          $ref: '#/components/schemas/RepositoryId'
+        RepositoryName:
+          $ref: '#/components/schemas/RepositoryName'
+        DirectoryVersionId1:
+          type: string
+          format: uuid
+          example: 33a4e36b-828f-4fae-9343-50b6560dc842
+        DirectoryVersionId2:
+          type: string
+          format: uuid
+          example: 66b7b8c2-8d2f-4f04-951c-6b3486c4e5d1
+    PopulateParameters:
+      description: Parameters for diff population.
+      allOf:
+        - $ref: '#/components/schemas/DiffParameters'
     DiffPopulateReturnValue:
       description: Grace response envelope returned when the diff actor is populated.
       type: object
@@ -5262,6 +4288,66 @@ components:
         Properties:
           DirectoryVersionId1: 33a4e36b-828f-4fae-9343-50b6560dc842
           DirectoryVersionId2: 66b7b8c2-8d2f-4f04-951c-6b3486c4e5d1
+    GetDiffParameters:
+      description: Parameters for retrieving a diff.
+      allOf:
+        - $ref: '#/components/schemas/DiffParameters'
+    FileSystemDifference:
+      type: object
+      properties:
+        DifferenceType:
+          $ref: null
+        FileSystemEntryType:
+          $ref: null
+        RelativePath:
+          $ref: null
+      required:
+        - DifferenceType
+        - FileSystemEntryType
+        - RelativePath
+    FileDiff:
+      type: object
+      properties:
+        RelativePath:
+          $ref: null
+        FileSha1:
+          $ref: null
+        CreatedAt1:
+          $ref: null
+        FileSha2:
+          $ref: null
+        CreatedAt2:
+          $ref: null
+        IsBinary:
+          type: boolean
+        InlineDiff:
+          type: array
+          items:
+            type: array
+            items:
+              $ref: null
+        SideBySideOld:
+          type: array
+          items:
+            type: array
+            items:
+              $ref: null
+        SideBySideNew:
+          type: array
+          items:
+            type: array
+            items:
+              $ref: null
+      required:
+        - RelativePath
+        - FileSha1
+        - CreatedAt1
+        - FileSha2
+        - CreatedAt2
+        - IsBinary
+        - InlineDiff
+        - SideBySideOld
+        - SideBySideNew
     DiffApiDto:
       description: Public diff DTO returned through diff endpoints.
       type: object
@@ -5334,10 +4420,85 @@ components:
         Properties:
           DirectoryVersionId1: 33a4e36b-828f-4fae-9343-50b6560dc842
           DirectoryVersionId2: 66b7b8c2-8d2f-4f04-951c-6b3486c4e5d1
+    GetDiffBySha256HashParameters:
+      description: Parameters for retrieving a diff by SHA-256 hash.
+      allOf:
+        - $ref: '#/components/schemas/DiffParameters'
+        - type: object
+          properties:
+            Sha256Hash1:
+              $ref: '#/components/schemas/Sha256Hash'
+            Sha256Hash2:
+              $ref: '#/components/schemas/Sha256Hash'
     DirectoryVersionId:
       type: string
       format: uuid
       example: 33a4e36b-828f-4fae-9343-50b6560dc842
+    DirectoryParameters:
+      description: Parameters shared by public endpoints in the /directory route family.
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/CommonParameters'
+      properties:
+        OwnerId:
+          $ref: '#/components/schemas/OwnerId'
+        OwnerName:
+          $ref: '#/components/schemas/OwnerName'
+        OrganizationId:
+          $ref: '#/components/schemas/OrganizationId'
+        OrganizationName:
+          $ref: '#/components/schemas/OrganizationName'
+        RepositoryId:
+          $ref: '#/components/schemas/RepositoryId'
+        RepositoryName:
+          $ref: '#/components/schemas/RepositoryName'
+        DirectoryVersionId:
+          $ref: '#/components/schemas/DirectoryVersionId'
+      example:
+        CorrelationId: cli-20260604T181500Z-0001
+        Principal: user:alice
+        OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+        OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+        RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+        DirectoryVersionId: 33a4e36b-828f-4fae-9343-50b6560dc842
+    DirectoryVersion:
+      type: object
+      properties:
+        Class:
+          type: string
+        DirectoryId:
+          - $ref: '#/components/schemas/DirectoryId'
+        RepositoryId:
+          - $ref: '#/components/schemas/RepositoryId'
+        RelativePath:
+          - $ref: '#/components/schemas/RelativePath'
+        Sha256Hash:
+          - $ref: '#/components/schemas/Sha256Hash'
+        Directories:
+          type: array
+          items:
+            - $ref: '#/components/schemas/DirectoryId'
+        Files:
+          type: array
+          items:
+            - $ref: '#/components/schemas/FileVersion'
+        Size:
+          type: integer
+          format: int64
+        RecursiveSize:
+          type: integer
+          format: int64
+        CreatedAt:
+          type: string
+          format: date-time
+    CreateParameters:
+      description: Parameters for the /directory/create endpoint.
+      allOf:
+        - $ref: '#/components/schemas/DirectoryParameters'
+        - type: object
+          properties:
+            DirectoryVersion:
+              $ref: '#/components/schemas/DirectoryVersion'
     DirectoryCommandReturnValue:
       description: Grace response envelope returned by directory command endpoints.
       type: object
@@ -5365,6 +4526,10 @@ components:
         Properties:
           Path: /directory/saveDirectoryVersions
           RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+    GetParameters:
+      description: Parameters for /directory/get and recursive directory-version lookups.
+      allOf:
+        - $ref: '#/components/schemas/DirectoryParameters'
     DirectoryVersionApiDto:
       description: Public directory version DTO returned by directory query endpoints.
       type: object
@@ -5424,6 +4589,57 @@ components:
         - EventTime
         - CorrelationId
         - Properties
+    GetByDirectoryIdsParameters:
+      description: Parameters for the /directory/getByDirectoryIds endpoint.
+      allOf:
+        - $ref: '#/components/schemas/DirectoryParameters'
+        - type: object
+          properties:
+            DirectoryIds:
+              type: array
+              items:
+                $ref: '#/components/schemas/DirectoryVersionId'
+    GetBySha256HashParameters:
+      description: Parameters for the /directory/getBySha256Hash endpoint.
+      allOf:
+        - $ref: '#/components/schemas/DirectoryParameters'
+        - type: object
+          properties:
+            Sha256Hash:
+              $ref: '#/components/schemas/Sha256Hash'
+    SaveDirectoryVersionsParameters:
+      description: Parameters for the /directory/saveDirectoryVersions endpoint.
+      allOf:
+        - $ref: '#/components/schemas/DirectoryParameters'
+        - type: object
+          properties:
+            DirectoryVersions:
+              type: array
+              items:
+                $ref: '#/components/schemas/DirectoryVersion'
+    OrganizationParameters:
+      description: Parameters shared by public endpoints in the /organization route family.
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/CommonParameters'
+      properties:
+        OwnerId:
+          $ref: '#/components/schemas/OwnerId'
+        OwnerName:
+          $ref: '#/components/schemas/OwnerName'
+        OrganizationId:
+          $ref: '#/components/schemas/OrganizationId'
+        OrganizationName:
+          $ref: '#/components/schemas/OrganizationName'
+      example:
+        CorrelationId: cli-20260604T181500Z-0001
+        Principal: user:alice
+        OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+        OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+    CreateOrganizationParameters:
+      description: Parameters for the /organization/create endpoint.
+      allOf:
+        - $ref: '#/components/schemas/OrganizationParameters'
     OrganizationCommandReturnValue:
       description: Grace response envelope returned by organization command endpoints.
       type: object
@@ -5452,6 +4668,115 @@ components:
           Path: /organization/create
           OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
           OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+    SetOrganizationNameParameters:
+      description: Parameters for the /organization/setName endpoint.
+      allOf:
+        - $ref: '#/components/schemas/OrganizationParameters'
+        - type: object
+          properties:
+            NewName:
+              $ref: '#/components/schemas/OrganizationName'
+    OrganizationType:
+      type: string
+      enum:
+        - Public
+        - Private
+      summary: The OrganizationType determines whether the Organization is visible to the public or not.
+      description: The OrganizationType determines whether the Organization is visible to the public or not.
+      example: Public
+    SetOrganizationTypeParameters:
+      description: Parameters for the /organization/setType endpoint.
+      allOf:
+        - $ref: '#/components/schemas/OrganizationParameters'
+        - type: object
+          properties:
+            OrganizationType:
+              $ref: '#/components/schemas/OrganizationType'
+    SearchVisibility:
+      type: string
+      enum:
+        - Visible
+        - NotVisible
+      example: NotVisible
+    SetOrganizationSearchVisibilityParameters:
+      description: Parameters for the /organization/setSearchVisibility endpoint.
+      allOf:
+        - $ref: '#/components/schemas/OrganizationParameters'
+        - type: object
+          properties:
+            SearchVisibility:
+              $ref: '#/components/schemas/SearchVisibility'
+    SetOrganizationDescriptionParameters:
+      description: Parameters for the /organization/setDescription endpoint.
+      allOf:
+        - $ref: '#/components/schemas/OrganizationParameters'
+        - type: object
+          properties:
+            Description:
+              type: string
+              maxLength: 2048
+              example: Engineering organization for Alice's projects.
+    ListRepositoriesParameters:
+      description: Parameters for the /organization/listRepositories endpoint.
+      allOf:
+        - $ref: '#/components/schemas/OrganizationParameters'
+    DeleteOrganizationParameters:
+      description: Parameters for the /organization/delete endpoint.
+      allOf:
+        - $ref: '#/components/schemas/OrganizationParameters'
+        - type: object
+          properties:
+            Force:
+              type: boolean
+              example: false
+            DeleteReason:
+              type: string
+              example: Organization retired.
+    UndeleteOrganizationParameters:
+      description: Parameters for the /organization/undelete endpoint.
+      allOf:
+        - $ref: '#/components/schemas/OrganizationParameters'
+    GetOrganizationParameters:
+      description: Parameters for the /organization/get endpoint.
+      allOf:
+        - $ref: '#/components/schemas/OrganizationParameters'
+        - type: object
+          properties:
+            IncludeDeleted:
+              type: boolean
+              example: false
+    OrganizationDto:
+      description: (automatically generated)
+      type: object
+      properties:
+        Class:
+          type: string
+        OrganizationId:
+          $ref: '#/components/schemas/OrganizationId'
+        OrganizationName:
+          $ref: '#/components/schemas/OrganizationName'
+        OwnerId:
+          $ref: '#/components/schemas/OwnerId'
+        OrganizationType:
+          $ref: '#/components/schemas/OrganizationType'
+        Description:
+          type: string
+        SearchVisibility:
+          $ref: '#/components/schemas/SearchVisibility'
+        CreatedAt:
+          $ref: '#/components/schemas/Instant'
+        UpdatedAt:
+          type: object
+          properties:
+            value:
+              $ref: '#/components/schemas/Instant'
+        DeletedAt:
+          type: object
+          properties:
+            value:
+              $ref: '#/components/schemas/Instant'
+        DeleteReason:
+          type: string
     OrganizationReturnValue:
       description: Grace response envelope whose ReturnValue contains an organization DTO.
       type: object
@@ -5488,6 +4813,24 @@ components:
           Path: /organization/get
           OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
           OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+    OwnerParameters:
+      description: Parameters shared by public endpoints in the /owner route family.
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/CommonParameters'
+      properties:
+        OwnerId:
+          $ref: '#/components/schemas/OwnerId'
+        OwnerName:
+          $ref: '#/components/schemas/OwnerName'
+      example:
+        CorrelationId: cli-20260604T181500Z-0001
+        Principal: user:alice
+        OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+    CreateOwnerParameters:
+      description: Parameters for the /owner/create endpoint.
+      allOf:
+        - $ref: '#/components/schemas/OwnerParameters'
     OwnerCommandReturnValue:
       description: Grace response envelope returned by owner command endpoints.
       type: object
@@ -5515,6 +4858,105 @@ components:
         Properties:
           Path: /owner/create
           OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+    SetOwnerNameParameters:
+      description: Parameters for the /owner/setName endpoint.
+      allOf:
+        - $ref: '#/components/schemas/OwnerParameters'
+        - type: object
+          properties:
+            NewName:
+              $ref: '#/components/schemas/OwnerName'
+    OwnerType:
+      type: string
+      enum:
+        - Public
+        - Private
+      example: Public
+    SetOwnerTypeParameters:
+      description: Parameters for the /owner/setType endpoint.
+      allOf:
+        - $ref: '#/components/schemas/OwnerParameters'
+        - type: object
+          properties:
+            OwnerType:
+              $ref: '#/components/schemas/OwnerType'
+    SetOwnerSearchVisibilityParameters:
+      description: Parameters for the /owner/setSearchVisibility endpoint.
+      allOf:
+        - $ref: '#/components/schemas/OwnerParameters'
+        - type: object
+          properties:
+            SearchVisibility:
+              $ref: '#/components/schemas/SearchVisibility'
+    SetOwnerDescriptionParameters:
+      description: Parameters for the /owner/setDescription endpoint.
+      allOf:
+        - $ref: '#/components/schemas/OwnerParameters'
+        - type: object
+          properties:
+            Description:
+              type: string
+              maxLength: 2048
+              example: Source control owner for Alice's projects.
+    ListOrganizationsParameters:
+      description: Parameters for the /owner/listOrganizations endpoint.
+      allOf:
+        - $ref: '#/components/schemas/OwnerParameters'
+    DeleteOwnerParameters:
+      description: Parameters for the /owner/delete endpoint.
+      allOf:
+        - $ref: '#/components/schemas/OwnerParameters'
+        - type: object
+          properties:
+            Force:
+              type: boolean
+              example: false
+            DeleteReason:
+              type: string
+              example: Owner retired.
+    UndeleteOwnerParameters:
+      description: Parameters for the /owner/undelete endpoint.
+      allOf:
+        - $ref: '#/components/schemas/OwnerParameters'
+    GetOwnerParameters:
+      description: Parameters for the /owner/get endpoint.
+      allOf:
+        - $ref: '#/components/schemas/OwnerParameters'
+        - type: object
+          properties:
+            IncludeDeleted:
+              type: boolean
+              example: false
+    OwnerDto:
+      description: (automatically generated)
+      type: object
+      properties:
+        Class:
+          type: string
+        OwnerId:
+          $ref: '#/components/schemas/OwnerId'
+        OwnerName:
+          $ref: '#/components/schemas/OwnerName'
+        OwnerType:
+          $ref: '#/components/schemas/OwnerType'
+        Description:
+          type: string
+        SearchVisibility:
+          $ref: '#/components/schemas/SearchVisibility'
+        CreatedAt:
+          $ref: '#/components/schemas/Instant'
+        UpdatedAt:
+          type: object
+          properties:
+            value:
+              $ref: '#/components/schemas/Instant'
+        DeletedAt:
+          type: object
+          properties:
+            value:
+              $ref: '#/components/schemas/Instant'
+        DeleteReason:
+          type: string
     OwnerReturnValue:
       description: Grace response envelope whose ReturnValue contains an owner DTO.
       type: object
@@ -5549,6 +4991,45 @@ components:
         Properties:
           Path: /owner/get
           OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+    RepositoryParameters:
+      description: Parameters shared by public endpoints in the /repository route family.
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/CommonParameters'
+      properties:
+        OwnerId:
+          $ref: '#/components/schemas/OwnerId'
+        OwnerName:
+          $ref: '#/components/schemas/OwnerName'
+        OrganizationId:
+          $ref: '#/components/schemas/OrganizationId'
+        OrganizationName:
+          $ref: '#/components/schemas/OrganizationName'
+        RepositoryId:
+          $ref: '#/components/schemas/RepositoryId'
+        RepositoryName:
+          $ref: '#/components/schemas/RepositoryName'
+      example:
+        CorrelationId: cli-20260604T181500Z-0001
+        Principal: user:alice
+        OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+        OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+        RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+    ObjectStorageProvider:
+      type: string
+      enum:
+        - AWSS3
+        - AzureBlobStorage
+        - GoogleCloudStorage
+        - Unknown
+    CreateRepositoryParameters:
+      description: Parameters for the /repository/create endpoint.
+      allOf:
+        - $ref: '#/components/schemas/RepositoryParameters'
+        - type: object
+          properties:
+            ObjectStorageProvider:
+              $ref: '#/components/schemas/ObjectStorageProvider'
     RepositoryCommandReturnValue:
       description: Grace response envelope returned by repository command endpoints.
       type: object
@@ -5578,6 +5059,108 @@ components:
           OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
           OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
           RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+    RepositoryVisibility:
+      type: string
+      enum:
+        - Private
+        - Public
+    SetRepositoryVisibilityParameters:
+      description: Parameters for the /repository/setVisibility endpoint.
+      allOf:
+        - $ref: '#/components/schemas/RepositoryParameters'
+        - type: object
+          properties:
+            Visibility:
+              $ref: '#/components/schemas/RepositoryVisibility'
+    SetRepositoryNameParameters:
+      description: Parameters for the /repository/setName endpoint.
+      allOf:
+        - $ref: '#/components/schemas/RepositoryParameters'
+        - type: object
+          properties:
+            NewName:
+              $ref: '#/components/schemas/RepositoryName'
+    SetSaveDaysParameters:
+      description: Parameters for the /repository/setSaveDays endpoint.
+      allOf:
+        - $ref: '#/components/schemas/RepositoryParameters'
+        - type: object
+          properties:
+            SaveDays:
+              type: number
+              format: float
+              minimum: 0
+              example: 30
+    SetCheckpointDaysParameters:
+      description: Parameters for the /repository/setCheckpointDays endpoint.
+      allOf:
+        - $ref: '#/components/schemas/RepositoryParameters'
+        - type: object
+          properties:
+            CheckpointDays:
+              type: number
+              format: float
+              minimum: 0
+              example: 90
+    RepositoryStatus:
+      type: string
+      enum:
+        - Active
+        - Suspended
+        - Closed
+        - Deleted
+    SetRepositoryStatusParameters:
+      description: Parameters for the /repository/setStatus endpoint.
+      allOf:
+        - $ref: '#/components/schemas/RepositoryParameters'
+        - type: object
+          properties:
+            Status:
+              $ref: '#/components/schemas/RepositoryStatus'
+    SetDefaultServerApiVersionParameters:
+      description: Parameters for the /repository/setDefaultServerApiVersion endpoint.
+      allOf:
+        - $ref: '#/components/schemas/RepositoryParameters'
+        - type: object
+          properties:
+            DefaultServerApiVersion:
+              type: string
+              example: '2026-06-04'
+    RecordSavesParameters:
+      description: Parameters for the /repository/setRecordSaves endpoint.
+      allOf:
+        - $ref: '#/components/schemas/RepositoryParameters'
+        - type: object
+          properties:
+            RecordSaves:
+              type: boolean
+              example: true
+    SetRepositoryDescriptionParameters:
+      description: Parameters for the /repository/setDescription endpoint.
+      allOf:
+        - $ref: '#/components/schemas/RepositoryParameters'
+        - type: object
+          properties:
+            Description:
+              type: string
+              maxLength: 2048
+              example: Repository for release candidates.
+    DeleteRepositoryParameters:
+      description: Parameters for the /repository/delete endpoint.
+      allOf:
+        - $ref: '#/components/schemas/RepositoryParameters'
+        - type: object
+          properties:
+            Force:
+              type: boolean
+              example: false
+            DeleteReason:
+              type: string
+              example: Repository retired.
+    UndeleteRepositoryParameters:
+      description: Parameters for the /repository/undelete endpoint.
+      allOf:
+        - $ref: '#/components/schemas/RepositoryParameters'
     RepositoryBooleanReturnValue:
       description: Grace response envelope whose ReturnValue contains a boolean repository query result.
       type: object
@@ -5598,6 +5181,49 @@ components:
         - EventTime
         - CorrelationId
         - Properties
+    IsEmptyParameters:
+      description: Parameters for the /repository/isEmpty endpoint.
+      allOf:
+        - $ref: '#/components/schemas/RepositoryParameters'
+    StorageContainerName:
+      type: string
+    RepositoryDto:
+      description: (automatically generated)
+      type: object
+      properties:
+        Class:
+          type: string
+        RepositoryId:
+          $ref: '#/components/schemas/RepositoryId'
+        OwnerId:
+          $ref: '#/components/schemas/OwnerId'
+        OrganizationId:
+          $ref: '#/components/schemas/OrganizationId'
+        RepositoryName:
+          $ref: '#/components/schemas/RepositoryName'
+        ObjectStorageProvider:
+          $ref: '#/components/schemas/ObjectStorageProvider'
+        StorageAccountName:
+          type: string
+        StorageContainerName:
+          $ref: '#/components/schemas/StorageContainerName'
+        RepositoryVisibility:
+          $ref: '#/components/schemas/RepositoryVisibility'
+        RepositoryStatus:
+          $ref: '#/components/schemas/RepositoryStatus'
+        Branches:
+          type: array
+          items:
+            $ref: '#/components/schemas/BranchName'
+        DefaultServerApiVersion:
+          type: string
+        DefaultBranchName:
+          $ref: '#/components/schemas/BranchName'
+        SaveDays:
+          type: number
+          format: double
+        CheckpointDays:
+          type: number
     RepositoryReturnValue:
       description: Grace response envelope whose ReturnValue contains a repository DTO.
       type: object
@@ -5617,6 +5243,69 @@ components:
         - EventTime
         - CorrelationId
         - Properties
+    GetBranchesParameters:
+      description: Parameters for the /repository/getBranches endpoint.
+      allOf:
+        - $ref: '#/components/schemas/RepositoryParameters'
+        - type: object
+          properties:
+            IncludeDeleted:
+              type: boolean
+              example: false
+            MaxCount:
+              type: integer
+              format: int32
+              minimum: 1
+              maximum: 1000
+              example: 50
+    BranchDto:
+      description: (automatically generated)
+      type: object
+      properties:
+        Class:
+          type: string
+        BranchId:
+          $ref: '#/components/schemas/BranchId'
+        BranchName:
+          $ref: '#/components/schemas/BranchName'
+        ParentBranchId:
+          $ref: '#/components/schemas/BranchId'
+        BasedOn:
+          $ref: '#/components/schemas/ReferenceId'
+        RepositoryId:
+          $ref: '#/components/schemas/RepositoryId'
+        UserId:
+          $ref: '#/components/schemas/UserId'
+        PromotionEnabled:
+          type: boolean
+        CommitEnabled:
+          type: boolean
+        CheckpointEnabled:
+          type: boolean
+        SaveEnabled:
+          type: boolean
+        TagEnabled:
+          type: boolean
+        LatestPromotion:
+          $ref: '#/components/schemas/ReferenceId'
+        LatestCommit:
+          $ref: '#/components/schemas/ReferenceId'
+        LatestCheckpoint:
+          $ref: '#/components/schemas/ReferenceId'
+        LatestSave:
+          $ref: '#/components/schemas/ReferenceId'
+        CreatedAt:
+          $ref: '#/components/schemas/Instant'
+        UpdatedAt:
+          type: object
+          properties:
+            value:
+              $ref: '#/components/schemas/Instant'
+        DeletedAt:
+          type: object
+          properties:
+            value:
+              $ref: '#/components/schemas/Instant'
     RepositoryBranchesReturnValue:
       description: Grace response envelope whose ReturnValue contains branch DTOs.
       type: object
@@ -5638,6 +5327,49 @@ components:
         - EventTime
         - CorrelationId
         - Properties
+    GetReferencesByReferenceIdParameters:
+      description: Parameters for the /repository/getReferencesByReferenceId endpoint.
+      allOf:
+        - $ref: '#/components/schemas/RepositoryParameters'
+        - type: object
+          properties:
+            ReferenceIds:
+              type: array
+              items:
+                $ref: '#/components/schemas/ReferenceId'
+            MaxCount:
+              type: integer
+              format: int32
+              minimum: 1
+              maximum: 1000
+              example: 50
+    DirectoryId:
+      type: string
+      format: uuid
+      example: 33a4e36b-828f-4fae-9343-50b6560dc842
+    ReferenceDto:
+      description: (automatically generated)
+      type: object
+      properties:
+        Class:
+          type: string
+        ReferenceId:
+          $ref: '#/components/schemas/ReferenceId'
+        BranchId:
+          $ref: '#/components/schemas/BranchId'
+        DirectoryId:
+          $ref: '#/components/schemas/DirectoryId'
+        Sha256Hash:
+          $ref: '#/components/schemas/Sha256Hash'
+        ReferenceType:
+          $ref: '#/components/schemas/ReferenceType'
+        ReferenceText:
+          $ref: '#/components/schemas/ReferenceText'
+        CreatedBy:
+          type: string
+          nullable: true
+        CreatedAt:
+          $ref: '#/components/schemas/Instant'
     RepositoryReferencesReturnValue:
       description: Grace response envelope whose ReturnValue contains reference DTOs.
       type: object
@@ -5659,6 +5391,74 @@ components:
         - EventTime
         - CorrelationId
         - Properties
+    GetBranchesByBranchIdParameters:
+      description: Parameters for the /repository/getBranchesByBranchId endpoint.
+      allOf:
+        - $ref: '#/components/schemas/RepositoryParameters'
+        - type: object
+          properties:
+            BranchIds:
+              type: array
+              items:
+                $ref: '#/components/schemas/BranchId'
+            MaxCount:
+              type: integer
+              format: int32
+              minimum: 1
+              maximum: 1000
+              example: 50
+            IncludeDeleted:
+              type: boolean
+              example: false
+    StorageParameters:
+      description: Parameters common to storage endpoints.
+      allOf:
+        - $ref: '#/components/schemas/CommonParameters'
+      type: object
+      properties:
+        OwnerId:
+          type: string
+        OwnerName:
+          type: string
+        OrganizationId:
+          type: string
+        OrganizationName:
+          type: string
+        RepositoryId:
+          type: string
+        RepositoryName:
+          type: string
+    FileVersion:
+      type: object
+      properties:
+        Class:
+          type: string
+        RepositoryId:
+          - $ref: '#/components/schemas/RepositoryId'
+        RelativePath:
+          - $ref: '#/components/schemas/RelativePath'
+        Sha256Hash:
+          - $ref: '#/components/schemas/Sha256Hash'
+        IsBinary:
+          type: boolean
+        Size:
+          type: integer
+          format: int64
+        CreatedAt:
+          type: string
+          format: date-time
+        BlobUri:
+          type: string
+    GetUploadMetadataForFilesParameters:
+      description: Parameters for /storage/getUploadMetadataForFiles.
+      allOf:
+        - $ref: '#/components/schemas/StorageParameters'
+      type: object
+      properties:
+        FileVersions:
+          type: array
+          items:
+            $ref: '#/components/schemas/FileVersion'
     GraceReturnValueBase:
       description: Common metadata returned with successful Grace responses.
       type: object
@@ -5675,6 +5475,71 @@ components:
         - EventTime
         - CorrelationId
         - Properties
+    ManifestAddress:
+      description: Lowercase 64-character BLAKE3-derived FileManifest address.
+      type: string
+      pattern: ^[a-f0-9]{64}$
+    ChunkingSuiteId:
+      description: Versioned chunking suite identifier.
+      type: string
+      example: rabin-v1
+    FileContentHash:
+      description: Lowercase 64-character BLAKE3 hash of the complete unencoded file bytes.
+      type: string
+      pattern: ^[a-f0-9]{64}$
+    ContentBlockAddress:
+      description: Lowercase 64-character BLAKE3-derived ContentBlock address.
+      type: string
+      pattern: ^[a-f0-9]{64}$
+    ContentBlock:
+      description: Logical byte range inside a manifest-backed file.
+      type: object
+      properties:
+        Class:
+          type: string
+          enum:
+            - ContentBlock
+        Address:
+          $ref: '#/components/schemas/ContentBlockAddress'
+        Offset:
+          type: integer
+          format: int64
+        Size:
+          type: integer
+          format: int64
+      required:
+        - Class
+        - Address
+        - Offset
+        - Size
+    FileManifest:
+      description: Server-accepted reconstruction contract for one manifest-backed file.
+      type: object
+      properties:
+        Class:
+          type: string
+          enum:
+            - FileManifest
+        ManifestAddress:
+          $ref: '#/components/schemas/ManifestAddress'
+        ChunkingSuiteId:
+          $ref: '#/components/schemas/ChunkingSuiteId'
+        FileContentHash:
+          $ref: '#/components/schemas/FileContentHash'
+        Size:
+          type: integer
+          format: int64
+        Blocks:
+          type: array
+          items:
+            $ref: '#/components/schemas/ContentBlock'
+      required:
+        - Class
+        - ManifestAddress
+        - ChunkingSuiteId
+        - FileContentHash
+        - Size
+        - Blocks
     FileContentReference:
       description: Identifies whether a FileVersion refers to whole-file bytes or a FileManifest.
       type: object
@@ -5725,6 +5590,16 @@ components:
                 $ref: '#/components/schemas/UploadMetadata'
           required:
             - ReturnValue
+    GetUploadUriParameters:
+      description: Parameters for /storage/getUploadUri.
+      allOf:
+        - $ref: '#/components/schemas/StorageParameters'
+      type: object
+      properties:
+        FileVersions:
+          type: array
+          items:
+            $ref: '#/components/schemas/FileVersion'
     UriString:
       description: Absolute URI string.
       type: string
@@ -5734,6 +5609,47 @@ components:
       type: object
       additionalProperties:
         $ref: '#/components/schemas/UriString'
+    GetDownloadUriParameters:
+      description: Parameters for /storage/getDownloadUri.
+      allOf:
+        - $ref: '#/components/schemas/StorageParameters'
+      type: object
+      properties:
+        FileVersion:
+          $ref: '#/components/schemas/FileVersion'
+    GetContentBlockUploadUriParameters:
+      description: Parameters for /storage/getContentBlockUploadUri.
+      allOf:
+        - $ref: '#/components/schemas/StorageParameters'
+      type: object
+      properties:
+        ContentBlockAddress:
+          $ref: '#/components/schemas/ContentBlockAddress'
+        AuthorizedScope:
+          $ref: '#/components/schemas/RelativePath'
+    GetContentBlockDownloadUriParameters:
+      description: Parameters for /storage/getContentBlockDownloadUri.
+      allOf:
+        - $ref: '#/components/schemas/StorageParameters'
+      type: object
+      properties:
+        ContentBlockAddress:
+          $ref: '#/components/schemas/ContentBlockAddress'
+    ChunkAddress:
+      description: Lowercase 64-character BLAKE3 chunk address.
+      type: string
+      pattern: ^[a-f0-9]{64}$
+    DiscoverContentBlocksParameters:
+      description: Parameters for /storage/discoverContentBlocks. Discovery is bounded and non-authoritative; empty results do not prove that chunks or future ContentBlocks are absent.
+      allOf:
+        - $ref: '#/components/schemas/StorageParameters'
+      type: object
+      properties:
+        KeyChunkAddresses:
+          type: array
+          maxItems: 256
+          items:
+            $ref: '#/components/schemas/ChunkAddress'
     ContentBlockDiscoveryPolicy:
       description: Bounded, non-authoritative discovery policy returned by /storage/discoverContentBlocks.
       type: object
@@ -5764,6 +5680,9 @@ components:
         IsAuthoritative:
           type: boolean
           example: false
+    StoragePoolId:
+      description: StoragePool-wide CAS scope identifier.
+      type: string
     ContentBlockDiscoveryCandidate:
       description: A bounded, response-protected candidate window for possible ContentBlock reuse.
       type: object
@@ -5787,6 +5706,24 @@ components:
           type: array
           items:
             type: string
+    DiscoverContentBlocksResult:
+      description: Non-authoritative ContentBlock discovery result.
+      type: object
+      properties:
+        RequestedKeyChunkCount:
+          type: integer
+        AcceptedKeyChunkCount:
+          type: integer
+        Policy:
+          $ref: '#/components/schemas/ContentBlockDiscoveryPolicy'
+        CandidateContentBlocks:
+          type: array
+          items:
+            $ref: '#/components/schemas/ContentBlockDiscoveryCandidate'
+        IsPartial:
+          type: boolean
+        Message:
+          type: string
     DiscoverContentBlocksReturnValue:
       description: Successful ContentBlock discovery response.
       allOf:
@@ -5808,6 +5745,26 @@ components:
           format: uuid
         AuthorizedScope:
           $ref: '#/components/schemas/RelativePath'
+    UploadSessionOperationId:
+      description: Caller-supplied idempotency key for one upload-session operation.
+      type: string
+    StartManifestUploadSessionParameters:
+      description: Parameters for /storage/startManifestUploadSession.
+      allOf:
+        - $ref: '#/components/schemas/UploadSessionStorageParameters'
+      type: object
+      properties:
+        FileContentHash:
+          $ref: '#/components/schemas/FileContentHash'
+        ExpectedSize:
+          type: integer
+          format: int64
+        ChunkingSuiteId:
+          $ref: '#/components/schemas/ChunkingSuiteId'
+        SamplingPolicySnapshot:
+          type: string
+        OperationId:
+          $ref: '#/components/schemas/UploadSessionOperationId'
     UploadSessionLifecycleState:
       description: Lifecycle state for a manifest upload session.
       type: string
@@ -6223,6 +6180,23 @@ components:
     ClientType:
       description: The Grace client identity type/version recorded for diagnostics. Client identity headers are not authentication proof and must not be used as authorization evidence.
       type: string
+    EventMetadata:
+      description: null
+      type: object
+      properties:
+        Timestamp:
+          type: string
+          format: date-time
+        CorrelationId:
+          type: string
+        Principal:
+          type: string
+        ClientType:
+          $ref: '#/components/schemas/ClientType'
+        Properties:
+          type: object
+          additionalProperties:
+            type: string
     UploadSessionEvent:
       description: Event emitted by the upload-session actor, paired with event metadata.
       type: object
@@ -6234,6 +6208,28 @@ components:
       required:
         - Event
         - Metadata
+    UploadSessionDecision:
+      description: UploadSession command decision returned by manifest upload-session endpoints.
+      type: object
+      properties:
+        Session:
+          $ref: '#/components/schemas/UploadSessionDto'
+        OperationId:
+          $ref: '#/components/schemas/UploadSessionOperationId'
+        Events:
+          type: array
+          items:
+            $ref: '#/components/schemas/UploadSessionEvent'
+        WasIdempotentReplay:
+          type: boolean
+        Message:
+          type: string
+      required:
+        - Session
+        - OperationId
+        - Events
+        - WasIdempotentReplay
+        - Message
     UploadSessionDecisionReturnValue:
       description: Successful upload-session command response.
       allOf:
@@ -6244,6 +6240,73 @@ components:
               $ref: '#/components/schemas/UploadSessionDecision'
           required:
             - ReturnValue
+    IssueDedupeDiscoveryParameters:
+      description: Parameters for /storage/issueDedupeDiscovery.
+      allOf:
+        - $ref: '#/components/schemas/UploadSessionStorageParameters'
+      type: object
+      properties:
+        OperationId:
+          $ref: '#/components/schemas/UploadSessionOperationId'
+        ExpiresAt:
+          $ref: '#/components/schemas/Instant'
+        MinimumReuseRunLength:
+          type: integer
+          minimum: 8
+        Hints:
+          type: array
+          maxItems: 1024
+          items:
+            $ref: '#/components/schemas/ContentBlockReuseRangeHint'
+    ClaimReuseRangesParameters:
+      description: Parameters for /storage/claimReuseRanges.
+      allOf:
+        - $ref: '#/components/schemas/UploadSessionStorageParameters'
+      type: object
+      properties:
+        OperationId:
+          $ref: '#/components/schemas/UploadSessionOperationId'
+        DiscoveryOperationId:
+          $ref: '#/components/schemas/UploadSessionOperationId'
+        Hints:
+          type: array
+          maxItems: 1024
+          items:
+            $ref: '#/components/schemas/ContentBlockReuseRangeHint'
+    RegisterContentBlockUploadParameters:
+      description: Parameters for /storage/registerContentBlockUpload.
+      allOf:
+        - $ref: '#/components/schemas/UploadSessionStorageParameters'
+      type: object
+      properties:
+        OperationId:
+          $ref: '#/components/schemas/UploadSessionOperationId'
+        ContentBlockAddress:
+          $ref: '#/components/schemas/ContentBlockAddress'
+        LogicalOffset:
+          type: integer
+          format: int64
+        LogicalLength:
+          type: integer
+          format: int64
+        ExpectedPayloadLength:
+          type: integer
+          format: int64
+    ConfirmContentBlockUploadParameters:
+      description: Parameters for /storage/confirmContentBlockUpload.
+      allOf:
+        - $ref: '#/components/schemas/UploadSessionStorageParameters'
+      type: object
+      properties:
+        OperationId:
+          $ref: '#/components/schemas/UploadSessionOperationId'
+        ContentBlockAddress:
+          $ref: '#/components/schemas/ContentBlockAddress'
+        Payload:
+          type: string
+          format: byte
+        StoragePlacement:
+          $ref: '#/components/schemas/ContentBlockStoragePlacement'
     FinalizeManifestBlockPayload:
       description: Optional inline payload used by manifest finalization compatibility paths.
       type: object
@@ -6253,6 +6316,20 @@ components:
         Payload:
           type: string
           format: byte
+    FinalizeManifestUploadParameters:
+      description: Parameters for /storage/finalizeManifestUpload.
+      allOf:
+        - $ref: '#/components/schemas/UploadSessionStorageParameters'
+      type: object
+      properties:
+        OperationId:
+          $ref: '#/components/schemas/UploadSessionOperationId'
+        Manifest:
+          $ref: '#/components/schemas/FileManifest'
+        BlockPayloads:
+          type: array
+          items:
+            $ref: '#/components/schemas/FinalizeManifestBlockPayload'
     PromotionSetApprovalState:
       type: string
       enum:
@@ -6262,6 +6339,270 @@ components:
         - Rejected
         - Expired
         - Stale
+  GetReferencesParameters:
+    $ref: Branch.Components.OpenAPI.yaml#/GetReferencesParameters
+  AnnotateParameters:
+    $ref: Branch.Components.OpenAPI.yaml#/AnnotateParameters
+  GetDiffsForReferenceTypeParameters:
+    $ref: Branch.Components.OpenAPI.yaml#/GetDiffsForReferenceTypeParameters
+    GetDiffsForReferencesParameters:
+      $ref: Branch.Components.OpenAPI.yaml#/GetDiffsForReferencesParameters
+    GetBranchParameters:
+      $ref: Branch.Components.OpenAPI.yaml#/GetBranchParameters
+    SwitchParameters:
+      $ref: Branch.Components.OpenAPI.yaml#/SwitchParameters
+    GetBranchVersionParameters:
+      $ref: Branch.Components.OpenAPI.yaml#/GetBranchVersionParameters
+    DiffParameters:
+      $ref: Diff.Components.OpenAPI.yaml#/DiffParameters
+    PopulateParameters:
+      $ref: Diff.Components.OpenAPI.yaml#/PopulateParameters
+    GetDiffParameters:
+      $ref: Diff.Components.OpenAPI.yaml#/GetDiffParameters
+    GetDiffByReferenceTypeParameters:
+      $ref: Diff.Components.OpenAPI.yaml#/GetDiffByReferenceTypeParameters
+    GetDiffBySha256HashParameters:
+      $ref: Diff.Components.OpenAPI.yaml#/GetDiffBySha256HashParameters
+    DirectoryParameters:
+      $ref: Directory.Components.OpenAPI.yaml#/DirectoryParameters
+    CreateParameters:
+      $ref: Directory.Components.OpenAPI.yaml#/CreateParameters
+    GetParameters:
+      $ref: Directory.Components.OpenAPI.yaml#/GetParameters
+    GetByDirectoryIdsParameters:
+      $ref: Directory.Components.OpenAPI.yaml#/GetByDirectoryIdsParameters
+    GetBySha256HashParameters:
+      $ref: Directory.Components.OpenAPI.yaml#/GetBySha256HashParameters
+    SaveDirectoryVersionsParameters:
+      $ref: Directory.Components.OpenAPI.yaml#/SaveDirectoryVersionsParameters
+    BranchDto:
+      $ref: Dto.Components.OpenAPI.yaml#/BranchDto
+    DiffDto:
+      $ref: Dto.Components.OpenAPI.yaml#/DiffDto
+    OrganizationDto:
+      $ref: Dto.Components.OpenAPI.yaml#/OrganizationDto
+    OwnerDto:
+      $ref: Dto.Components.OpenAPI.yaml#/OwnerDto
+    ReferenceDto:
+      $ref: Dto.Components.OpenAPI.yaml#/ReferenceDto
+    RepositoryDto:
+      $ref: Dto.Components.OpenAPI.yaml#/RepositoryDto
+    OrganizationParameters:
+      $ref: Organization.Components.OpenAPI.yaml#/OrganizationParameters
+    CreateOrganizationParameters:
+      $ref: Organization.Components.OpenAPI.yaml#/CreateOrganizationParameters
+    SetOrganizationNameParameters:
+      $ref: Organization.Components.OpenAPI.yaml#/SetOrganizationNameParameters
+    SetOrganizationTypeParameters:
+      $ref: Organization.Components.OpenAPI.yaml#/SetOrganizationTypeParameters
+    SetOrganizationSearchVisibilityParameters:
+      $ref: Organization.Components.OpenAPI.yaml#/SetOrganizationSearchVisibilityParameters
+    SetOrganizationDescriptionParameters:
+      $ref: Organization.Components.OpenAPI.yaml#/SetOrganizationDescriptionParameters
+    DeleteOrganizationParameters:
+      $ref: Organization.Components.OpenAPI.yaml#/DeleteOrganizationParameters
+    UndeleteOrganizationParameters:
+      $ref: Organization.Components.OpenAPI.yaml#/UndeleteOrganizationParameters
+    GetOrganizationParameters:
+      $ref: Organization.Components.OpenAPI.yaml#/GetOrganizationParameters
+    ListRepositoriesParameters:
+      $ref: Organization.Components.OpenAPI.yaml#/ListRepositoriesParameters
+    OwnerParameters:
+      $ref: Owner.Components.OpenAPI.yaml#/OwnerParameters
+    CreateOwnerParameters:
+      $ref: Owner.Components.OpenAPI.yaml#/CreateOwnerParameters
+    SetOwnerNameParameters:
+      $ref: Owner.Components.OpenAPI.yaml#/SetOwnerNameParameters
+    SetOwnerTypeParameters:
+      $ref: Owner.Components.OpenAPI.yaml#/SetOwnerTypeParameters
+    SetOwnerSearchVisibilityParameters:
+      $ref: Owner.Components.OpenAPI.yaml#/SetOwnerSearchVisibilityParameters
+    SetOwnerDescriptionParameters:
+      $ref: Owner.Components.OpenAPI.yaml#/SetOwnerDescriptionParameters
+    DeleteOwnerParameters:
+      $ref: Owner.Components.OpenAPI.yaml#/DeleteOwnerParameters
+    UndeleteOwnerParameters:
+      $ref: Owner.Components.OpenAPI.yaml#/UndeleteOwnerParameters
+    GetOwnerParameters:
+      $ref: Owner.Components.OpenAPI.yaml#/GetOwnerParameters
+    ListOrganizationsParameters:
+      $ref: Owner.Components.OpenAPI.yaml#/ListOrganizationsParameters
+    ReferenceParameters:
+      $ref: Reference.Components.OpenAPI.yaml#/ReferenceParameters
+    RepositoryParameters:
+      $ref: Repository.Components.OpenAPI.yaml#/RepositoryParameters
+    CreateRepositoryParameters:
+      $ref: Repository.Components.OpenAPI.yaml#/CreateRepositoryParameters
+    IsEmptyParameters:
+      $ref: Repository.Components.OpenAPI.yaml#/IsEmptyParameters
+    InitParameters:
+      $ref: Repository.Components.OpenAPI.yaml#/InitParameters
+    SetRepositoryVisibilityParameters:
+      $ref: Repository.Components.OpenAPI.yaml#/SetRepositoryVisibilityParameters
+    SetRepositoryStatusParameters:
+      $ref: Repository.Components.OpenAPI.yaml#/SetRepositoryStatusParameters
+    RecordSavesParameters:
+      $ref: Repository.Components.OpenAPI.yaml#/RecordSavesParameters
+    SetSaveDaysParameters:
+      $ref: Repository.Components.OpenAPI.yaml#/SetSaveDaysParameters
+    SetCheckpointDaysParameters:
+      $ref: Repository.Components.OpenAPI.yaml#/SetCheckpointDaysParameters
+    SetRepositoryDescriptionParameters:
+      $ref: Repository.Components.OpenAPI.yaml#/SetRepositoryDescriptionParameters
+    SetDefaultServerApiVersionParameters:
+      $ref: Repository.Components.OpenAPI.yaml#/SetDefaultServerApiVersionParameters
+    SetRepositoryNameParameters:
+      $ref: Repository.Components.OpenAPI.yaml#/SetRepositoryNameParameters
+    DeleteRepositoryParameters:
+      $ref: Repository.Components.OpenAPI.yaml#/DeleteRepositoryParameters
+    EnablePromotionTypeParameters:
+      $ref: Repository.Components.OpenAPI.yaml#/EnablePromotionTypeParameters
+    GetReferencesByReferenceIdParameters:
+      $ref: Repository.Components.OpenAPI.yaml#/GetReferencesByReferenceIdParameters
+    GetBranchesParameters:
+      $ref: Repository.Components.OpenAPI.yaml#/GetBranchesParameters
+    GetBranchesByBranchIdParameters:
+      $ref: Repository.Components.OpenAPI.yaml#/GetBranchesByBranchIdParameters
+    UndeleteRepositoryParameters:
+      $ref: Repository.Components.OpenAPI.yaml#/UndeleteRepositoryParameters
+    StorageParameters:
+      $ref: Storage.Components.OpenAPI.yaml#/StorageParameters
+    GetUploadMetadataForFilesParameters:
+      $ref: Storage.Components.OpenAPI.yaml#/GetUploadMetadataForFilesParameters
+    GetUploadUriParameters:
+      $ref: Storage.Components.OpenAPI.yaml#/GetUploadUriParameters
+    GetDownloadUriParameters:
+      $ref: Storage.Components.OpenAPI.yaml#/GetDownloadUriParameters
+    GetContentBlockUploadUriParameters:
+      $ref: Storage.Components.OpenAPI.yaml#/GetContentBlockUploadUriParameters
+    GetContentBlockDownloadUriParameters:
+      $ref: Storage.Components.OpenAPI.yaml#/GetContentBlockDownloadUriParameters
+    DiscoverContentBlocksParameters:
+      $ref: Storage.Components.OpenAPI.yaml#/DiscoverContentBlocksParameters
+    StartManifestUploadSessionParameters:
+      $ref: Storage.Components.OpenAPI.yaml#/StartManifestUploadSessionParameters
+    IssueDedupeDiscoveryParameters:
+      $ref: Storage.Components.OpenAPI.yaml#/IssueDedupeDiscoveryParameters
+    ClaimReuseRangesParameters:
+      $ref: Storage.Components.OpenAPI.yaml#/ClaimReuseRangesParameters
+    RegisterContentBlockUploadParameters:
+      $ref: Storage.Components.OpenAPI.yaml#/RegisterContentBlockUploadParameters
+    ConfirmContentBlockUploadParameters:
+      $ref: Storage.Components.OpenAPI.yaml#/ConfirmContentBlockUploadParameters
+    FinalizeManifestUploadParameters:
+      $ref: Storage.Components.OpenAPI.yaml#/FinalizeManifestUploadParameters
+    DiscoverContentBlocksResult:
+      $ref: Storage.Components.OpenAPI.yaml#/DiscoverContentBlocksResult
+    UploadSessionDecision:
+      $ref: Storage.Components.OpenAPI.yaml#/UploadSessionDecision
+    FileManifest:
+      $ref: Storage.Components.OpenAPI.yaml#/FileManifest
+    ContentBlock:
+      $ref: Storage.Components.OpenAPI.yaml#/ContentBlock
+    ContentBlockAddress:
+      $ref: Storage.Components.OpenAPI.yaml#/ContentBlockAddress
+    ManifestAddress:
+      $ref: Storage.Components.OpenAPI.yaml#/ManifestAddress
+    FileContentHash:
+      $ref: Storage.Components.OpenAPI.yaml#/FileContentHash
+    ChunkAddress:
+      $ref: Storage.Components.OpenAPI.yaml#/ChunkAddress
+    StoragePoolId:
+      $ref: Storage.Components.OpenAPI.yaml#/StoragePoolId
+    ChunkingSuiteId:
+      $ref: Storage.Components.OpenAPI.yaml#/ChunkingSuiteId
+    UploadSessionOperationId:
+      $ref: Storage.Components.OpenAPI.yaml#/UploadSessionOperationId
+    Instant:
+      $ref: Shared.Components.OpenAPI.yaml#/components/schemas/Instant
+    ProblemDetails:
+      $ref: Shared.Components.OpenAPI.yaml#/components/schemas/ProblemDetails
+    BranchId:
+      $ref: Shared.Components.OpenAPI.yaml#/components/schemas/BranchId
+    BranchName:
+      $ref: Shared.Components.OpenAPI.yaml#/components/schemas/BranchName
+    CorrelationId:
+      $ref: Shared.Components.OpenAPI.yaml#/components/schemas/CorrelationId
+    ContainerName:
+      $ref: Shared.Components.OpenAPI.yaml#/components/schemas/ContainerName
+    DirectoryId:
+      $ref: Shared.Components.OpenAPI.yaml#/components/schemas/DirectoryId
+    FilePath:
+      $ref: Shared.Components.OpenAPI.yaml#/components/schemas/FilePath
+    GraceIgnoreEntry:
+      $ref: Shared.Components.OpenAPI.yaml#/components/schemas/GraceIgnoreEntry
+    OrganizationId:
+      $ref: Shared.Components.OpenAPI.yaml#/components/schemas/OrganizationId
+    OrganizationName:
+      $ref: Shared.Components.OpenAPI.yaml#/components/schemas/OrganizationName
+    OwnerId:
+      $ref: Shared.Components.OpenAPI.yaml#/components/schemas/OwnerId
+    OwnerName:
+      $ref: Shared.Components.OpenAPI.yaml#/components/schemas/OwnerName
+    ReferenceId:
+      $ref: Shared.Components.OpenAPI.yaml#/components/schemas/ReferenceId
+    ReferenceName:
+      $ref: Shared.Components.OpenAPI.yaml#/components/schemas/ReferenceName
+    ReferenceText:
+      $ref: Shared.Components.OpenAPI.yaml#/components/schemas/ReferenceText
+    RepositoryId:
+      $ref: Shared.Components.OpenAPI.yaml#/components/schemas/RepositoryId
+    RepositoryName:
+      $ref: Shared.Components.OpenAPI.yaml#/components/schemas/RepositoryName
+    RelativePath:
+      $ref: Shared.Components.OpenAPI.yaml#/components/schemas/RelativePath
+    Sha256Hash:
+      $ref: Shared.Components.OpenAPI.yaml#/components/schemas/Sha256Hash
+    StorageAccountName:
+      $ref: Shared.Components.OpenAPI.yaml#/components/schemas/StorageAccountName
+    StorageConnectionString:
+      $ref: Shared.Components.OpenAPI.yaml#/components/schemas/StorageConnectionString
+    StorageContainerName:
+      $ref: Shared.Components.OpenAPI.yaml#/components/schemas/StorageContainerName
+    UriWithSharedAccessSignature:
+      $ref: Shared.Components.OpenAPI.yaml#/components/schemas/UriWithSharedAccessSignature
+    UserId:
+      $ref: Shared.Components.OpenAPI.yaml#/components/schemas/UserId
+    OwnerType:
+      $ref: Shared.Components.OpenAPI.yaml#/components/schemas/OwnerType
+    OrganizationType:
+      $ref: Shared.Components.OpenAPI.yaml#/components/schemas/OrganizationType
+    SearchVisibility:
+      $ref: Shared.Components.OpenAPI.yaml#/components/schemas/SearchVisibility
+    ReferenceType:
+      $ref: Shared.Components.OpenAPI.yaml#/components/schemas/ReferenceType
+    CommonParameters:
+      $ref: Shared.Components.OpenAPI.yaml#/components/schemas/CommonParameters
+    FileVersion:
+      $ref: Shared.Components.OpenAPI.yaml#/components/schemas/FileVersion
+    DirectoryVersion:
+      $ref: Shared.Components.OpenAPI.yaml#/components/schemas/DirectoryVersion
+    EventMetadata:
+      $ref: Shared.Components.OpenAPI.yaml#/components/schemas/EventMetadata
+    GraceReturnValue:
+      $ref: Shared.Components.OpenAPI.yaml#/components/schemas/GraceReturnValue
+    GraceError:
+      $ref: Shared.Components.OpenAPI.yaml#/components/schemas/GraceError
+    GraceResult:
+      $ref: Shared.Components.OpenAPI.yaml#/components/schemas/GraceResult
+    FileSystemEntryType:
+      $ref: Shared.Components.OpenAPI.yaml#/components/schemas/FileSystemEntryType
+    DifferenceType:
+      $ref: Shared.Components.OpenAPI.yaml#/components/schemas/DifferenceType
+    FileSystemDifference:
+      $ref: Shared.Components.OpenAPI.yaml#/components/schemas/FileSystemDifference
+    FileDiff:
+      $ref: Shared.Components.OpenAPI.yaml#/components/schemas/FileDiff
+    DiffPiece:
+      $ref: Shared.Components.OpenAPI.yaml#/components/schemas/DiffPiece
+    ChangeType:
+      $ref: Shared.Components.OpenAPI.yaml#/components/schemas/ChangeType
+    ObjectStorageProvider:
+      $ref: Shared.Components.OpenAPI.yaml#/components/schemas/ObjectStorageProvider
+    RepositoryVisibility:
+      $ref: Shared.Components.OpenAPI.yaml#/components/schemas/RepositoryVisibility
+    RepositoryStatus:
+      $ref: Shared.Components.OpenAPI.yaml#/components/schemas/RepositoryStatus
   parameters:
     CorrelationIdHeader:
       name: X-Correlation-Id
@@ -6522,6 +6863,12 @@ components:
                 CorrelationId: cli-20260604T181500Z-0001
                 Properties:
                   Path: /branch/create
+    BranchAnnotationResponse:
+      description: OK
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/BranchAnnotationReturnValue'
     BranchResponse:
       description: OK
       content:

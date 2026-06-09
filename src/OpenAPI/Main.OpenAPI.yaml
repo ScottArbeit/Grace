@@ -121,6 +121,8 @@ paths:
     $ref: './Branch.Paths.OpenAPI.yaml#/~1branch~1enableTag'
   /branch/delete:
     $ref: './Branch.Paths.OpenAPI.yaml#/~1branch~1delete'
+  /branch/annotate:
+    $ref: './Branch.Paths.OpenAPI.yaml#/~1branch~1annotate'
   /branch/get:
     $ref: './Branch.Paths.OpenAPI.yaml#/~1branch~1get'
   /branch/getParentBranch:
@@ -345,10 +347,12 @@ components:
       $ref: 'Branch.Components.OpenAPI.yaml#/DeleteBranchParameters'
     GetReferenceParameters:
       $ref: 'Branch.Components.OpenAPI.yaml#/GetReferenceParameters'
-    GetReferencesParameters:
-      $ref: 'Branch.Components.OpenAPI.yaml#/GetReferencesParameters'
-    GetDiffsForReferenceTypeParameters:
-      $ref: 'Branch.Components.OpenAPI.yaml#/GetDiffsForReferenceTypeParameters'
+  GetReferencesParameters:
+    $ref: 'Branch.Components.OpenAPI.yaml#/GetReferencesParameters'
+  AnnotateParameters:
+    $ref: 'Branch.Components.OpenAPI.yaml#/AnnotateParameters'
+  GetDiffsForReferenceTypeParameters:
+    $ref: 'Branch.Components.OpenAPI.yaml#/GetDiffsForReferenceTypeParameters'
     GetDiffsForReferencesParameters:
       $ref: 'Branch.Components.OpenAPI.yaml#/GetDiffsForReferencesParameters'
     GetBranchParameters:

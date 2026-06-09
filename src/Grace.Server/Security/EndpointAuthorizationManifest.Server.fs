@@ -72,6 +72,7 @@ module EndpointAuthorizationManifest =
             endpoint "POST" "/agent/session/status" (Authorized(RepoRead, Repository))
             endpoint "POST" "/agent/session/stop" (Authorized(RepoWrite, Repository))
             endpoint "POST" "/branch/assign" Authenticated
+            endpoint "POST" "/branch/annotate" (Authorized(BranchRead, Branch))
             endpoint "POST" "/branch/checkpoint" Authenticated
             endpoint "POST" "/branch/commit" (Authorized(BranchWrite, Branch))
             endpoint "POST" "/branch/create" Authenticated

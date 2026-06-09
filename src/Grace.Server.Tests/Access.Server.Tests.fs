@@ -1100,6 +1100,20 @@ type EndpointAuthorizationTests() =
         parameters.CorrelationId <- generateCorrelationId ()
         parameters
 
+    let createBranchAnnotateParameters (branch: BranchDto) =
+        let parameters = Parameters.Branch.AnnotateParameters()
+        parameters.OwnerId <- ownerId
+        parameters.OrganizationId <- organizationId
+        parameters.RepositoryId <- $"{branch.RepositoryId}"
+        parameters.BranchId <- $"{branch.BranchId}"
+        parameters.BranchName <- $"{branch.BranchName}"
+        parameters.TargetReferenceId <- branch.BasedOn.ReferenceId
+        parameters.Path <- "does-not-matter-for-auth.txt"
+        parameters.StartLine <- 1
+        parameters.EndLine <- 1
+        parameters.CorrelationId <- generateCorrelationId ()
+        parameters
+
     let createBranchCommitParameters (branch: BranchDto) =
         let parameters = Parameters.Branch.CreateReferenceParameters()
         parameters.OwnerId <- ownerId
@@ -1365,6 +1379,16 @@ type EndpointAuthorizationTests() =
 
             let! allowedGet = readerClient.PostAsync("/branch/get", createJsonContent (createBranchGetParameters branch))
             Assert.That(allowedGet.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+
+            let! unauthAnnotate = unauthClient.PostAsync("/branch/annotate", createJsonContent (createBranchAnnotateParameters branch))
+            Assert.That(unauthAnnotate.StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized))
+
+            let! deniedAnnotate = unprivilegedClient.PostAsync("/branch/annotate", createJsonContent (createBranchAnnotateParameters branch))
+            Assert.That(deniedAnnotate.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden))
+
+            let! readerAnnotate = readerClient.PostAsync("/branch/annotate", createJsonContent (createBranchAnnotateParameters branch))
+            Assert.That(readerAnnotate.StatusCode, Is.Not.EqualTo(HttpStatusCode.Unauthorized))
+            Assert.That(readerAnnotate.StatusCode, Is.Not.EqualTo(HttpStatusCode.Forbidden))
 
             let! enableCommitResponse = adminClient.PostAsync("/branch/enableCommit", createJsonContent (createBranchEnableCommitParameters branch))
 

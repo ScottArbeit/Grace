@@ -1,16 +1,26 @@
 namespace Grace.Server.Tests
 
+open Azure.Storage.Blobs.Models
+open Azure.Storage.Blobs.Specialized
 open Grace.Server.Tests.Services
 open Grace.Shared
+open Grace.Shared.Client.Configuration
 open Grace.Shared.Utilities
 open Grace.Shared.Validation
 open Grace.Shared.Validation.Errors
 open Grace.Types
+open Grace.Types.Annotation
 open Grace.Types.Common
+open Grace.Types.PersonalAccessToken
 open NUnit.Framework
 open System
+open System.Collections.Generic
+open System.IO
+open System.IO.Compression
 open System.Net
 open System.Net.Http
+open System.Security.Cryptography
+open System.Text
 open System.Threading.Tasks
 
 module BranchServerTestHelpers =
@@ -168,6 +178,182 @@ module BranchServerTestHelpers =
             return returnValue.ReturnValue
         }
 
+    let private sha256Hex (bytes: byte array) =
+        SHA256.HashData(bytes)
+        |> fun hash -> byteArrayToString (hash.AsSpan())
+
+    let private gzipBytes (bytes: byte array) =
+        use compressed = new MemoryStream()
+        use gzipStream = new GZipStream(compressed, CompressionLevel.SmallestSize, leaveOpen = true)
+        gzipStream.Write(bytes, 0, bytes.Length)
+        gzipStream.Dispose()
+        compressed.ToArray()
+
+    let private uploadFileToObjectStorageAsync repositoryId (payload: byte array) (fileVersion: FileVersion) =
+        task {
+            let parameters = Parameters.Storage.GetUploadMetadataForFilesParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.FileVersions <- [| fileVersion |]
+            parameters.CorrelationId <- generateCorrelationId ()
+
+            let! uploadResponse = Client.PostAsync("/storage/getUploadMetadataForFiles", createJsonContent parameters)
+            do! assertOk uploadResponse
+            let! uploadMetadata = deserializeContent<GraceReturnValue<List<Parameters.Storage.UploadMetadata>>> uploadResponse
+            let metadata = uploadMetadata.ReturnValue |> Seq.exactlyOne
+
+            use payloadStream = new MemoryStream(gzipBytes payload, writable = false)
+            let blockBlobClient = BlockBlobClient(metadata.BlobUriWithSasToken)
+
+            let uploadOptions = BlobUploadOptions()
+            uploadOptions.HttpHeaders <- BlobHttpHeaders(ContentEncoding = "gzip")
+
+            let! response = blockBlobClient.UploadAsync(payloadStream, uploadOptions)
+            Assert.That(response.GetRawResponse().Status, Is.EqualTo(int HttpStatusCode.Created))
+        }
+
+    let private saveDirectoryVersionAsync repositoryId (directoryVersion: Grace.Types.Common.DirectoryVersion) =
+        task {
+            let parameters = Parameters.DirectoryVersion.SaveDirectoryVersionsParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.CorrelationId <- generateCorrelationId ()
+            parameters.DirectoryVersions.Add(directoryVersion)
+
+            let! response = Client.PostAsync("/directory/saveDirectoryVersions", createJsonContent parameters)
+            do! assertOk response
+        }
+
+    let private saveBranchReferenceAsync repositoryId (branch: Branch.BranchDto) (directoryVersion: Grace.Types.Common.DirectoryVersion) =
+        task {
+            let parameters = Parameters.Branch.CreateReferenceParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.BranchId <- $"{branch.BranchId}"
+            parameters.DirectoryVersionId <- directoryVersion.DirectoryVersionId
+            parameters.Sha256Hash <- $"{directoryVersion.Sha256Hash}"
+            parameters.Message <- "Annotate route test save"
+            parameters.CorrelationId <- generateCorrelationId ()
+
+            let! response = Client.PostAsync("/branch/save", createJsonContent parameters)
+            do! assertOk response
+        }
+
+    let createAnnotatableReferenceAsync repositoryId (parentBranch: Branch.BranchDto) =
+        task {
+            let! branch = createBranchAsync repositoryId parentBranch $"Annotate{Guid.NewGuid():N}"
+            let relativePath = $"annotate/{Guid.NewGuid():N}/sample.fs"
+            let content = $"let value = 42{Environment.NewLine}let other = value + 1{Environment.NewLine}"
+            let contentBytes = Encoding.UTF8.GetBytes(content)
+            let fileVersion = FileVersion.Create relativePath (sha256Hex contentBytes) String.Empty false (int64 contentBytes.Length)
+            let tempRoot = Path.Combine(Path.GetTempPath(), "grace-annotate-tests", Guid.NewGuid().ToString("N"))
+            let filePath = Path.Combine(tempRoot, relativePath.Replace('/', Path.DirectorySeparatorChar))
+
+            Directory.CreateDirectory(Path.GetDirectoryName(filePath))
+            |> ignore
+
+            do! File.WriteAllTextAsync(filePath, content)
+
+            try
+                do! uploadFileToObjectStorageAsync repositoryId contentBytes fileVersion
+
+                let directoryVersion =
+                    Grace.Types.Common.DirectoryVersion.Create
+                        (Guid.NewGuid())
+                        (Guid.Parse ownerId)
+                        (Guid.Parse organizationId)
+                        (Guid.Parse repositoryId)
+                        "/"
+                        (sha256Hex (Encoding.UTF8.GetBytes($"directory-{Guid.NewGuid():N}")))
+                        (List<DirectoryVersionId>())
+                        (List<FileVersion>([ fileVersion ]))
+                        (int64 contentBytes.Length)
+
+                do! saveDirectoryVersionAsync repositoryId directoryVersion
+                do! saveBranchReferenceAsync repositoryId branch directoryVersion
+
+                let! savedBranch = getBranchAsync repositoryId $"{branch.BranchId}"
+                return savedBranch, fileVersion, savedBranch.LatestSave.ReferenceId
+            finally
+                if Directory.Exists(tempRoot) then Directory.Delete(tempRoot, true)
+        }
+
+    let private createPersonalAccessTokenAsync () =
+        task {
+            let parameters = Parameters.Auth.CreatePersonalAccessTokenParameters()
+            parameters.TokenName <- $"branch-sdk-{Guid.NewGuid():N}"
+            parameters.CorrelationId <- generateCorrelationId ()
+
+            let! response = Client.PostAsync("/auth/token/create", createJsonContent parameters)
+            response.EnsureSuccessStatusCode() |> ignore
+            let! returnValue = deserializeContent<GraceReturnValue<PersonalAccessTokenCreated>> response
+            return returnValue.ReturnValue.Token
+        }
+
+    let configureSdkForServerAsync () =
+        task {
+            let configuration = Current()
+            configuration.ServerUri <- graceServerBaseAddress
+
+            let! token = createPersonalAccessTokenAsync ()
+
+            Grace.SDK.Auth.setTokenProvider (fun () -> task { return Some token })
+        }
+
+    let getFirstAnnotatableFileAsync (repositoryId: string) (branch: Branch.BranchDto) =
+        task {
+            let parameters = Parameters.Branch.ListContentsParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.BranchId <- $"{branch.BranchId}"
+            parameters.ReferenceId <- $"{branch.BasedOn.ReferenceId}"
+            parameters.CorrelationId <- generateCorrelationId ()
+
+            let! response = Client.PostAsync("/branch/listContents", createJsonContent parameters)
+            do! assertOk response
+            let! returnValue = deserializeContent<GraceReturnValue<DirectoryVersion.DirectoryVersionDto array>> response
+
+            let fileVersion =
+                returnValue.ReturnValue
+                |> Array.collect (fun directoryVersionDto ->
+                    directoryVersionDto.DirectoryVersion.Files
+                    |> Seq.toArray)
+                |> Array.tryFind (fun fileVersion -> not fileVersion.IsBinary && fileVersion.Size > 0L)
+
+            match fileVersion with
+            | Some fileVersion -> return fileVersion
+            | None ->
+                Assert.Fail($"Repository {repositoryId} branch {branch.BranchId} did not expose a non-empty text file for annotate tests.")
+                return Unchecked.defaultof<FileVersion>
+        }
+
+    let annotateParameters (repositoryId: string) (branch: Branch.BranchDto) (fileVersion: FileVersion) =
+        let parameters = Parameters.Branch.AnnotateParameters()
+        parameters.OwnerId <- ownerId
+        parameters.OrganizationId <- organizationId
+        parameters.RepositoryId <- repositoryId
+        parameters.BranchId <- $"{branch.BranchId}"
+        parameters.TargetReferenceId <- branch.BasedOn.ReferenceId
+        parameters.Path <- fileVersion.RelativePath
+        parameters.StartLine <- 1
+        parameters.EndLine <- 1
+
+        parameters.ReferenceTypes <-
+            [|
+                ReferenceType.Commit
+                ReferenceType.Save
+                ReferenceType.Promotion
+            |]
+
+        parameters.MaxReferences <- 10
+        parameters.IncludeLineText <- true
+        parameters.CorrelationId <- generateCorrelationId ()
+        parameters
+
     let assertBranchMatches (expectedRepositoryId: string) (expectedBranchId: string) (expectedBranchName: string) (branch: Branch.BranchDto) =
         Assert.That(branch.RepositoryId, Is.EqualTo(Guid.Parse(expectedRepositoryId)))
         Assert.That(branch.BranchId, Is.EqualTo(Guid.Parse(expectedBranchId)))
@@ -245,4 +431,59 @@ type BranchServer() =
 
             do! BranchServerTestHelpers.assertMissingRepositoryAsync ()
             do! BranchServerTestHelpers.assertMissingBranchAsync repositoryId
+        }
+
+    [<Test>]
+    member _.AnnotateRouteAndSdkReturnEnvelopeForServerKnownReference() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let branchId = repositoryDefaultBranchIds[0]
+            let! parentBranch = BranchServerTestHelpers.getBranchAsync repositoryId branchId
+            let! branch, fileVersion, targetReferenceId = BranchServerTestHelpers.createAnnotatableReferenceAsync repositoryId parentBranch
+            let parameters = BranchServerTestHelpers.annotateParameters repositoryId branch fileVersion
+            parameters.TargetReferenceId <- targetReferenceId
+
+            let! response = Client.PostAsync("/branch/annotate", createJsonContent parameters)
+            let! responseBody = response.Content.ReadAsStringAsync()
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK), responseBody)
+
+            let returnValue = deserialize<GraceReturnValue<BranchAnnotationDto>> responseBody
+            Assert.That(returnValue.ReturnValue.TargetReferenceId, Is.EqualTo(parameters.TargetReferenceId))
+            Assert.That(returnValue.ReturnValue.Path, Is.EqualTo(fileVersion.RelativePath))
+            Assert.That(returnValue.ReturnValue.IncludeLineText, Is.True)
+            Assert.That(returnValue.ReturnValue.Lines, Is.Not.Empty)
+            Assert.That(returnValue.Properties[ "Path" ].ToString(), Is.EqualTo("/branch/annotate"))
+
+            do! BranchServerTestHelpers.configureSdkForServerAsync ()
+
+            try
+                parameters.CorrelationId <- generateCorrelationId ()
+                let! sdkResult = Grace.SDK.Branch.Annotate parameters
+
+                match sdkResult with
+                | Ok sdkReturnValue ->
+                    Assert.That(sdkReturnValue.ReturnValue.TargetReferenceId, Is.EqualTo(parameters.TargetReferenceId))
+                    Assert.That(sdkReturnValue.ReturnValue.Path, Is.EqualTo(fileVersion.RelativePath))
+                | Error error -> Assert.Fail($"Expected SDK Branch.Annotate success, got {error.Error}.")
+            finally
+                Grace.SDK.Auth.clearTokenProvider ()
+        }
+
+    [<Test>]
+    member _.AnnotateRouteReturnsGraceErrorForBadParameters() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let branchId = repositoryDefaultBranchIds[0]
+            let! branch = BranchServerTestHelpers.getBranchAsync repositoryId branchId
+            let fileVersion = FileVersion.Create "annotate/bad-parameters.fs" String.Empty String.Empty false 1L
+            let parameters = BranchServerTestHelpers.annotateParameters repositoryId branch fileVersion
+            parameters.MaxReferences <- MaximumMaxReferences + 1
+
+            let! response = Client.PostAsync("/branch/annotate", createJsonContent parameters)
+            let! responseBody = response.Content.ReadAsStringAsync()
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), responseBody)
+
+            let error = deserialize<GraceError> responseBody
+            Assert.That(error.Error, Does.Contain("MaxReferences"))
+            Assert.That(error.CorrelationId, Is.Not.Empty)
         }
