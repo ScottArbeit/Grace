@@ -157,6 +157,53 @@ type AnnotationLineCoreTests() =
         )
 
     [<Test>]
+    member _.BuildAnnotationPreservesShiftedStableLinesAfterInsertion() =
+        let annotation =
+            build
+                { StartLine = 1; EndLine = 4 }
+                [|
+                    historyDocument oldReference "a\nb\nc"
+                    historyDocument newReference "x\na\nb\nc"
+                |]
+            |> assertOk
+
+        assertValid annotation
+        assertCoveredExactlyOnce 1 4 annotation
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(annotation.Spans, Has.Length.EqualTo(2))
+                Assert.That(annotation.Spans[0].LineRange, Is.EqualTo({ StartLine = 1; EndLine = 1 }))
+                Assert.That(annotation.SourceRows[0].SourceReferenceId, Is.EqualTo("source-reference-new"))
+                Assert.That(annotation.SourceRows[0].LineRange, Is.EqualTo({ StartLine = 1; EndLine = 1 }))
+                Assert.That(annotation.Spans[1].LineRange, Is.EqualTo({ StartLine = 2; EndLine = 4 }))
+                Assert.That(annotation.SourceRows[1].SourceReferenceId, Is.EqualTo("source-reference-old"))
+                Assert.That(annotation.SourceRows[1].LineRange, Is.EqualTo({ StartLine = 1; EndLine = 3 })))
+        )
+
+    [<Test>]
+    member _.BuildAnnotationPreservesShiftedStableLinesAfterDeletion() =
+        let annotation =
+            build
+                { StartLine = 1; EndLine = 3 }
+                [|
+                    historyDocument oldReference "x\na\nb\nc"
+                    historyDocument newReference "a\nb\nc"
+                |]
+            |> assertOk
+
+        assertValid annotation
+        assertCoveredExactlyOnce 1 3 annotation
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(annotation.Spans, Has.Length.EqualTo(1))
+                Assert.That(annotation.Spans[0].LineRange, Is.EqualTo({ StartLine = 1; EndLine = 3 }))
+                Assert.That(annotation.SourceRows[0].SourceReferenceId, Is.EqualTo("source-reference-old"))
+                Assert.That(annotation.SourceRows[0].LineRange, Is.EqualTo({ StartLine = 2; EndLine = 4 })))
+        )
+
+    [<Test>]
     member _.BuildAnnotationDoesNotTreatMovedRepeatedTextAsProof() =
         let annotation =
             build

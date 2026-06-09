@@ -227,27 +227,124 @@ module AnnotationLineCore =
         else
             None
 
-    let private traceLineSource lineNumber (documents: (AnnotationHistoryDocument * VisibleTextDocument) array) =
+    let private findLongestCommonBlock oldStart oldEnd newStart newEnd (oldLines: string array) (newLines: string array) =
+        let mutable bestOldStart = 0
+        let mutable bestNewStart = 0
+        let mutable bestLength = 0
+
+        for oldIndex in oldStart..oldEnd do
+            for newIndex in newStart..newEnd do
+                let mutable length = 0
+
+                while oldIndex + length <= oldEnd
+                      && newIndex + length <= newEnd
+                      && String.Equals(oldLines[oldIndex + length], newLines[newIndex + length], StringComparison.Ordinal) do
+                    length <- length + 1
+
+                if length > bestLength then
+                    bestOldStart <- oldIndex
+                    bestNewStart <- newIndex
+                    bestLength <- length
+
+        if bestLength = 0 then None else Some(bestOldStart, bestNewStart, bestLength)
+
+    let private canAnchorBlock oldStart oldEnd newStart newEnd oldBlockStart newBlockStart blockLength =
+        let leftOldLength = oldBlockStart - oldStart
+        let leftNewLength = newBlockStart - newStart
+        let rightOldLength = oldEnd - (oldBlockStart + blockLength - 1)
+        let rightNewLength = newEnd - (newBlockStart + blockLength - 1)
+
+        let leftIsInsertionOrDeletion = leftOldLength = 0 || leftNewLength = 0
+        let rightIsInsertionOrDeletion = rightOldLength = 0 || rightNewLength = 0
+
+        let editsStayOnOneSide =
+            (leftOldLength = 0 && rightOldLength = 0)
+            || (leftNewLength = 0 && rightNewLength = 0)
+            || leftOldLength = leftNewLength
+            || rightOldLength = rightNewLength
+
+        leftIsInsertionOrDeletion
+        && rightIsInsertionOrDeletion
+        && editsStayOnOneSide
+
+    let private buildLineAlignment (oldDocument: VisibleTextDocument) (newDocument: VisibleTextDocument) =
+        let mapping = Array.zeroCreate<int> newDocument.Lines.Length
+
+        let rec alignRange oldStart oldEnd newStart newEnd =
+            if oldStart <= oldEnd && newStart <= newEnd then
+                let mutable oldFirst = oldStart
+                let mutable newFirst = newStart
+
+                while oldFirst <= oldEnd
+                      && newFirst <= newEnd
+                      && String.Equals(oldDocument.Lines[oldFirst], newDocument.Lines[newFirst], StringComparison.Ordinal) do
+                    mapping[newFirst] <- oldFirst + 1
+                    oldFirst <- oldFirst + 1
+                    newFirst <- newFirst + 1
+
+                let mutable oldLast = oldEnd
+                let mutable newLast = newEnd
+
+                while oldFirst <= oldLast
+                      && newFirst <= newLast
+                      && String.Equals(oldDocument.Lines[oldLast], newDocument.Lines[newLast], StringComparison.Ordinal) do
+                    mapping[newLast] <- oldLast + 1
+                    oldLast <- oldLast - 1
+                    newLast <- newLast - 1
+
+                if oldFirst <= oldLast && newFirst <= newLast then
+                    match findLongestCommonBlock oldFirst oldLast newFirst newLast oldDocument.Lines newDocument.Lines with
+                    | Some (oldBlockStart, newBlockStart, blockLength) when
+                        canAnchorBlock oldFirst oldLast newFirst newLast oldBlockStart newBlockStart blockLength
+                        ->
+                        for offset in 0 .. blockLength - 1 do
+                            mapping[newBlockStart + offset] <- oldBlockStart + offset + 1
+
+                        alignRange oldFirst (oldBlockStart - 1) newFirst (newBlockStart - 1)
+                        alignRange (oldBlockStart + blockLength) oldLast (newBlockStart + blockLength) newLast
+                    | _ -> ()
+
+        alignRange 0 (oldDocument.Lines.Length - 1) 0 (newDocument.Lines.Length - 1)
+        mapping
+
+    let private traceLineSource lineNumber (documents: (AnnotationHistoryDocument * VisibleTextDocument) array) (lineAlignments: int array array) =
         let targetDocument = documents[documents.Length - 1] |> snd
 
         match lineAt lineNumber targetDocument with
         | None -> Boundary missingTargetLine
         | Some targetText ->
             let mutable sourceIndex = documents.Length - 1
+            let mutable sourceLineNumber = lineNumber
             let mutable keepSearching = true
 
             while keepSearching && sourceIndex > 0 do
-                let previousDocument = documents[sourceIndex - 1] |> snd
+                let previousLineNumber =
+                    let alignment = lineAlignments[sourceIndex - 1]
+                    let alignmentIndex = sourceLineNumber - 1
 
-                match lineAt lineNumber previousDocument with
-                | Some previousText when String.Equals(previousText, targetText, StringComparison.Ordinal) -> sourceIndex <- sourceIndex - 1
-                | _ -> keepSearching <- false
+                    if alignmentIndex >= 0
+                       && alignmentIndex < alignment.Length
+                       && alignment[alignmentIndex] > 0 then
+                        Some alignment[alignmentIndex]
+                    else
+                        None
+
+                match previousLineNumber with
+                | Some previousLine ->
+                    let previousDocument = documents[sourceIndex - 1] |> snd
+
+                    match lineAt previousLine previousDocument with
+                    | Some previousText when String.Equals(previousText, targetText, StringComparison.Ordinal) ->
+                        sourceIndex <- sourceIndex - 1
+                        sourceLineNumber <- previousLine
+                    | _ -> keepSearching <- false
+                | None -> keepSearching <- false
 
             let sourceDocument = documents[sourceIndex] |> fst
 
-            Resolved { SourceReferenceId = sourceDocument.SourceReference.SourceReferenceId; Path = sourceDocument.Path; LineNumber = lineNumber }
+            Resolved { SourceReferenceId = sourceDocument.SourceReference.SourceReferenceId; Path = sourceDocument.Path; LineNumber = sourceLineNumber }
 
-    let private traceRequestedSegments requestedLineRange (targetDocument: VisibleTextDocument) traceDocuments =
+    let private traceRequestedSegments requestedLineRange (targetDocument: VisibleTextDocument) traceDocuments (lineAlignments: int array array) =
         let segments = ResizeArray<int * int * AnnotationLineState>()
         let firstExistingLine = max requestedLineRange.StartLine 1
         let lastExistingLine = min requestedLineRange.EndLine targetDocument.Lines.Length
@@ -257,12 +354,12 @@ module AnnotationLineCore =
 
         if firstExistingLine <= lastExistingLine then
             let mutable segmentStart = firstExistingLine
-            let mutable segmentState = traceLineSource firstExistingLine traceDocuments
+            let mutable segmentState = traceLineSource firstExistingLine traceDocuments lineAlignments
             let mutable previousLine = firstExistingLine
             let mutable previousState = segmentState
 
             for lineNumber in firstExistingLine + 1 .. lastExistingLine do
-                let currentState = traceLineSource lineNumber traceDocuments
+                let currentState = traceLineSource lineNumber traceDocuments lineAlignments
 
                 if canAppend previousState currentState previousLine lineNumber then
                     previousLine <- lineNumber
@@ -375,13 +472,18 @@ module AnnotationLineCore =
 
                 let targetDocument = documents[documents.Length - 1] |> snd
 
+                let lineAlignments =
+                    traceDocuments
+                    |> Array.pairwise
+                    |> Array.map (fun ((_, previousDocument), (_, currentDocument)) -> buildLineAlignment previousDocument currentDocument)
+
                 let lines =
                     if includeLineText then
                         getRequestedLines requestedLineRange targetDocument
                     else
                         Array.empty
 
-                let segments = traceRequestedSegments requestedLineRange targetDocument traceDocuments
+                let segments = traceRequestedSegments requestedLineRange targetDocument traceDocuments lineAlignments
 
                 let components = buildComponentsFromSegments lines segments
 
