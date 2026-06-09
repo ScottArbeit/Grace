@@ -14,6 +14,7 @@
     <Compile Include="AssemblyInfo.fs" />
     <Compile Include="EventMetadata.Types.Tests.fs" />
     <Compile Include="Automation.Types.Tests.fs" />
+    <Compile Include="Reference.Types.Tests.fs" />
     <Compile Include="PromotionSet.ConflictModel.Types.Tests.fs" />
     <Compile Include="PromotionSet.Types.Tests.fs" />
     <Compile Include="Webhooks.Types.Tests.fs" />
