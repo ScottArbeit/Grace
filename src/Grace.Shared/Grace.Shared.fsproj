@@ -38,6 +38,7 @@
         <Compile Include="Diff.Shared.fs" />
         <Compile Include="Evidence.Shared.fs" />
         <Compile Include="ReviewNotes.Shared.fs" />
+        <Compile Include="AnnotationLineCore.Shared.fs" />
         <Compile Include="BaselineDrift.Shared.fs" />
         <Compile Include="Client\Theme.Shared.fs" />
         <Compile Include="Client\Configuration.Shared.fs" />
