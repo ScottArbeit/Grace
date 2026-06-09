@@ -317,6 +317,11 @@ Grace is evolving quickly. Strap in....
 - Pre-fetch by listening to repository events using SignalR and downloading the branches and versions you want
 - Transparent read-through cache for CI workers and in-office users to save time and bandwidth
 
+### Lots of agent-native features
+
+- Agent-specific metadata and APIs to make it easy for agents to understand the context of their work and report on it
+- All CLI commands have `--output Json` and `--schema` options to make it easy for agents to consume their output, along with `--query` to shape the output and `--examples` to show how to use those options
+
 ### Improved database backpressure handling
 
 ### Agent skills to help you create and update Grace's automatic review policies
