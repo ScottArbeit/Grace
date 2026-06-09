@@ -1,9 +1,11 @@
 namespace Grace.Types.Tests
 
+open Grace.Shared
 open Grace.Shared.Utilities
 open Grace.Shared.Parameters.Branch
 open Grace.Types.Annotation
 open Grace.Types.Common
+open MessagePack
 open NUnit.Framework
 open System
 open System.Text.Json
@@ -48,7 +50,7 @@ type AnnotationContractTests() =
                 {
                     SourceReferenceId = "source-reference-1"
                     ReferenceId = sourceReferenceId
-                    ReferenceType = ReferenceType.Commit
+                    ReferenceType = "Commit"
                     ReferenceText = "previous commit"
                     DirectoryVersionId = directoryVersionId
                     CreatedAt = None
@@ -107,6 +109,14 @@ type AnnotationContractTests() =
         )
 
         let roundTrip = deserialize<BranchAnnotationDto> json
+        Assert.That(roundTrip, Is.EqualTo(annotation))
+
+    [<Test>]
+    member _.AnnotationDtoMessagePackRoundTripsThroughGraceOptions() =
+        let annotation = validAnnotation true
+        let bytes = MessagePackSerializer.Serialize(annotation, Constants.messagePackSerializerOptions)
+        let roundTrip = MessagePackSerializer.Deserialize<BranchAnnotationDto>(bytes, Constants.messagePackSerializerOptions)
+
         Assert.That(roundTrip, Is.EqualTo(annotation))
 
     [<Test>]
@@ -203,6 +213,21 @@ type AnnotationContractTests() =
         assertOk (validate annotation)
 
     [<Test>]
+    member _.AnnotationValidationRejectsResolvedSpansWithoutSourceRows() =
+        let annotation =
+            { validAnnotation true with
+                Boundaries = Array.empty
+                Spans =
+                    [|
+                        { SpanId = "span-1"; BoundaryId = String.Empty; LineRange = { StartLine = 10; EndLine = 11 }; SourceRowIds = Array.empty }
+                    |]
+            }
+
+        match validate annotation with
+        | Ok () -> Assert.Fail("Resolved spans without source rows should be rejected.")
+        | Error errors -> Assert.That(errors, Has.Some.Contains("must reference at least one SourceRow"))
+
+    [<Test>]
     member _.AnnotationValidationRejectsDuplicateSourceRows() =
         let annotation = validAnnotation true
 
@@ -274,6 +299,33 @@ type AnnotationContractTests() =
 
         match validate annotation with
         | Ok () -> Assert.Fail("Spans outside the requested line range should be rejected.")
+        | Error errors -> Assert.That(errors, Has.Some.Contains("inside RequestedLineRange"))
+
+    [<TestCase("line")>]
+    [<TestCase("boundary")>]
+    member _.AnnotationValidationRejectsTargetRowsOutsideRequestedRange(targetKind: string) =
+        let annotation = validAnnotation true
+
+        let outsideRequestedRange =
+            match targetKind with
+            | "line" ->
+                { annotation with
+                    Lines =
+                        [|
+                            { annotation.Lines[0] with LineNumber = 13 }
+                        |]
+                }
+            | "boundary" ->
+                { annotation with
+                    Boundaries =
+                        [|
+                            { annotation.Boundaries[0] with LineRange = { StartLine = 9; EndLine = 12 } }
+                        |]
+                }
+            | unexpected -> failwith $"Unknown target kind: {unexpected}"
+
+        match validate outsideRequestedRange with
+        | Ok () -> Assert.Fail($"{targetKind} outside the requested line range should be rejected.")
         | Error errors -> Assert.That(errors, Has.Some.Contains("inside RequestedLineRange"))
 
     [<Test>]

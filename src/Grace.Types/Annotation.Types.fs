@@ -1,6 +1,7 @@
 namespace Grace.Types
 
 open Grace.Types.Common
+open Grace.Shared.Utilities
 open global.MessagePack
 open global.NodaTime
 open Orleans
@@ -21,6 +22,10 @@ module Annotation =
     type AnnotationSourceReferenceId = string
 
     type AnnotationSourceRowId = string
+
+    type ReferenceTypeName = string
+
+    let private referenceTypeName (referenceType: ReferenceType) = getDiscriminatedUnionCaseName referenceType
 
     [<MessagePackObject; GenerateSerializer>]
     type AnnotationLineRange =
@@ -52,7 +57,7 @@ module Annotation =
             [<Key(1)>]
             ReferenceId: ReferenceId
             [<Key(2)>]
-            ReferenceType: ReferenceType
+            ReferenceType: ReferenceTypeName
             [<Key(3)>]
             ReferenceText: ReferenceText
             [<Key(4)>]
@@ -67,7 +72,7 @@ module Annotation =
             {
                 SourceReferenceId = String.Empty
                 ReferenceId = ReferenceId.Empty
-                ReferenceType = ReferenceType.Commit
+                ReferenceType = referenceTypeName ReferenceType.Commit
                 ReferenceText = String.Empty
                 DirectoryVersionId = DirectoryVersionId.Empty
                 CreatedAt = None
@@ -129,7 +134,7 @@ module Annotation =
             [<Key(3)>]
             Path: RelativePath
             [<Key(4)>]
-            ReferenceTypeFilter: ReferenceType array
+            ReferenceTypeFilter: ReferenceTypeName array
             [<Key(5)>]
             MaxReferences: int
             [<Key(6)>]
@@ -180,7 +185,7 @@ module Annotation =
                 RequestedLineRange = requestedLineRange
                 TargetReferenceId = targetReferenceId
                 Path = path
-                ReferenceTypeFilter = referenceTypeFilter
+                ReferenceTypeFilter = referenceTypeFilter |> Array.map referenceTypeName
                 MaxReferences = maxReferences
                 IncludeLineText = includeLineText
                 Lines = if includeLineText then lines else Array.empty
@@ -274,6 +279,14 @@ module Annotation =
                 |> Seq.map (fun sourceRowId -> $"Span '{span.SpanId}' references missing SourceRow '{sourceRowId}'."))
             |> Seq.toList
 
+        let resolvedSpanSourceRowErrors =
+            annotation.Spans
+            |> Seq.filter (fun span ->
+                String.IsNullOrWhiteSpace span.BoundaryId
+                && span.SourceRowIds.Length = 0)
+            |> Seq.map (fun span -> $"Span '{span.SpanId}' without a BoundaryId must reference at least one SourceRow.")
+            |> Seq.toList
+
         let duplicateErrors =
             []
             |> appendIf
@@ -348,10 +361,21 @@ module Annotation =
             ]
 
         let requestedRangeErrors =
-            annotation.Spans
-            |> Seq.filter (fun span -> not (containsLineRange annotation.RequestedLineRange span.LineRange))
-            |> Seq.map (fun span -> $"Span '{span.SpanId}' LineRange must stay inside RequestedLineRange.")
-            |> Seq.toList
+            [
+                for line in annotation.Lines do
+                    let lineRange = { StartLine = line.LineNumber; EndLine = line.LineNumber }
+
+                    if not (containsLineRange annotation.RequestedLineRange lineRange) then
+                        $"Line '{line.LineNumber}' must stay inside RequestedLineRange."
+
+                for boundary in annotation.Boundaries do
+                    if not (containsLineRange annotation.RequestedLineRange boundary.LineRange) then
+                        $"Boundary '{boundary.BoundaryId}' LineRange must stay inside RequestedLineRange."
+
+                for span in annotation.Spans do
+                    if not (containsLineRange annotation.RequestedLineRange span.LineRange) then
+                        $"Span '{span.SpanId}' LineRange must stay inside RequestedLineRange."
+            ]
 
         let sourceRowPathErrors =
             annotation.SourceRows
@@ -375,6 +399,7 @@ module Annotation =
                 yield! boundarySourceRowErrors
                 yield! spanBoundaryErrors
                 yield! spanSourceRowErrors
+                yield! resolvedSpanSourceRowErrors
                 yield! requestedRangeErrors
                 yield! sourceRowPathErrors
                 yield! sourceReferenceBudgetErrors
