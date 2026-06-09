@@ -76,8 +76,9 @@ update the issue before editing the new paths.
   fixes, validation evidence, and final no-issues bot state can be recorded on the pull request instead of only on the
   issue.
 - For Grace PR code review, do not spawn local review-only subagents by default. Monitor Codex Code Review Bot: 👀 on
-  the PR body means it saw the latest commit and is reviewing; 👍🏻 means it found no issues; a bot PR comment contains
-  findings that must be assigned to a fresh fix subagent.
+  the PR body means it saw the latest commit and is reviewing; 👍🏻 means it found no issues; a bot PR comment or
+  inline pull-request-review comment contains findings that must be assigned to a fresh fix subagent. Do not rely on
+  top-level PR comments alone; inspect review comments attached to the bot review before merging.
 - After each fix subagent completes a bot-requested fix, reply to the Codex Code Review Bot comment with the outcome,
   fix commit, and validation evidence, resolve the GitHub conversation, update the PR body's `Review Status` section,
   and wait for the next bot review on the new head commit.
