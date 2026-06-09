@@ -127,21 +127,21 @@
 		<PackageReference Include="Asp.Versioning.Mvc" Version="10.0.0" />
 		<PackageReference Include="Asp.Versioning.Mvc.ApiExplorer" Version="10.0.0" />
 		<PackageReference Include="Azure.Messaging.ServiceBus" Version="7.20.1" />
-		<PackageReference Include="Azure.Monitor.OpenTelemetry.Exporter" Version="1.8.0" />
-		<PackageReference Include="Azure.Storage.Blobs" Version="12.28.0" />
-		<PackageReference Include="Azure.Storage.Blobs.Batch" Version="12.25.0" />
+		<PackageReference Include="Azure.Monitor.OpenTelemetry.Exporter" Version="1.8.1" />
+		<PackageReference Include="Azure.Storage.Blobs" Version="12.29.0" />
+		<PackageReference Include="Azure.Storage.Blobs.Batch" Version="12.26.0" />
 		<PackageReference Include="Ben.Demystifier" Version="0.4.1" />
 		<PackageReference Include="dotenv.net" Version="4.0.2" />
         <PackageReference Include="FSharp.SystemTextJson" Version="1.4.36" />
 		<PackageReference Include="Giraffe" Version="8.2.0" />
-		<PackageReference Include="MessagePack" Version="3.1.4" />
-		<PackageReference Include="MessagePack.Annotations" Version="3.1.4" />
+		<PackageReference Include="MessagePack" Version="3.1.6" />
+		<PackageReference Include="MessagePack.Annotations" Version="3.1.6" />
 		<PackageReference Include="MessagePack.NodaTime" Version="3.5.4" />
 		<PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.8" />
 		<PackageReference Include="Microsoft.AspNetCore.Authentication.OpenIdConnect" Version="10.0.8" />
 		<PackageReference Include="Microsoft.AspNetCore.SignalR.StackExchangeRedis" Version="10.0.8" />
-		<PackageReference Include="Microsoft.Azure.Cosmos" Version="3.60.0" />
-		<PackageReference Include="Microsoft.OpenApi" Version="3.5.3" />
+		<PackageReference Include="Microsoft.Azure.Cosmos" Version="3.61.0" />
+		<PackageReference Include="Microsoft.OpenApi" Version="3.6.0" />
 		<PackageReference Include="Microsoft.Orleans.Clustering.AzureStorage" Version="10.1.0" />
 		<PackageReference Include="Microsoft.Orleans.Persistence.AzureStorage" Version="10.1.0" />
 		<PackageReference Include="Microsoft.Orleans.Persistence.Cosmos" Version="10.1.0" />
@@ -161,9 +161,9 @@
 		<PackageReference Include="OpenTelemetry.Instrumentation.Http" Version="1.15.1" />
 		<PackageReference Include="Orleans.Serialization.NodaTime" Version="1.0.0" />
 		<PackageReference Include="OrleansDashboard" Version="8.2.0" />
-		<PackageReference Include="Swashbuckle.AspNetCore.Swagger" Version="10.1.7" />
-		<PackageReference Include="Swashbuckle.AspNetCore.SwaggerGen" Version="10.1.7" />
-		<PackageReference Include="Swashbuckle.AspNetCore.SwaggerUI" Version="10.1.7" />
+		<PackageReference Include="Swashbuckle.AspNetCore.Swagger" Version="10.2.1" />
+		<PackageReference Include="Swashbuckle.AspNetCore.SwaggerGen" Version="10.2.1" />
+		<PackageReference Include="Swashbuckle.AspNetCore.SwaggerUI" Version="10.2.1" />
 	</ItemGroup>
 	<ItemGroup>
 		<PackageReference Update="FSharp.Core" Version="10.1.300" />
