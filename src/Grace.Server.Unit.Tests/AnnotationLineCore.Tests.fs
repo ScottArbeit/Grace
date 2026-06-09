@@ -255,6 +255,23 @@ type AnnotationLineCoreTests() =
         | Error errors -> Assert.That(errors, Has.Some.Contains("unknown ReferenceType 'Unknown'"))
 
     [<Test>]
+    member _.BuildAnnotationRejectsUnknownTargetReferenceTypePastEndOfFileWithoutFilter() =
+        let unknownReference = sourceReferenceWithType "source-reference-unknown" targetReferenceId "Unknown" "unknown" newDirectoryVersionId
+
+        let result =
+            buildWithoutReferenceTypeFilter
+                { StartLine = 1; EndLine = 1 }
+                [|
+                    historyDocument unknownReference String.Empty
+                |]
+
+        match result with
+        | Ok annotation ->
+            assertValid annotation
+            Assert.Fail("Unknown target reference types should be rejected even when requested lines are missing.")
+        | Error errors -> Assert.That(errors, Has.Some.Contains("unknown ReferenceType 'Unknown'"))
+
+    [<Test>]
     member _.BuildAnnotationRejectsUnknownSourceReferenceTypeWithoutFilter() =
         let unknownReference = sourceReferenceWithType "source-reference-unknown" oldReferenceId "Unknown" "unknown" oldDirectoryVersionId
 
@@ -271,6 +288,43 @@ type AnnotationLineCoreTests() =
             assertValid annotation
             Assert.Fail("Unknown source reference types should be rejected.")
         | Error errors -> Assert.That(errors, Has.Some.Contains("unknown ReferenceType 'Unknown'"))
+
+    [<Test>]
+    member _.BuildAnnotationRejectsBlankUsedSourceReferenceId() =
+        let blankReference = sourceReference String.Empty oldReferenceId "blank" oldDirectoryVersionId
+
+        let result =
+            buildWithoutReferenceTypeFilter
+                { StartLine = 1; EndLine = 1 }
+                [|
+                    historyDocument blankReference "same"
+                    historyDocument newReference "same"
+                |]
+
+        match result with
+        | Ok annotation ->
+            assertValid annotation
+            Assert.Fail("Blank source reference ids should be rejected before DTO creation.")
+        | Error errors -> Assert.That(errors, Has.Some.Contains("blank SourceReferenceId"))
+
+    [<Test>]
+    member _.BuildAnnotationRejectsDuplicateIncludedSourceReferenceIds() =
+        let duplicateOldReference = { oldReference with ReferenceId = saveReferenceId; ReferenceText = "duplicate old" }
+
+        let result =
+            buildWithoutReferenceTypeFilter
+                { StartLine = 1; EndLine = 1 }
+                [|
+                    historyDocument oldReference "same"
+                    historyDocument duplicateOldReference "same"
+                    historyDocument newReference "same"
+                |]
+
+        match result with
+        | Ok annotation ->
+            assertValid annotation
+            Assert.Fail("Duplicate source reference ids should be rejected before budgeting and DTO creation.")
+        | Error errors -> Assert.That(errors, Has.Some.Contains("appears more than once"))
 
     [<Test>]
     member _.BuildAnnotationRejectsHistoryWhenLastReferenceDoesNotMatchTargetReferenceId() =

@@ -114,6 +114,28 @@ module AnnotationLineCore =
         || (isKnownReferenceTypeName document.SourceReference.ReferenceType
             && referenceTypeNames.Contains document.SourceReference.ReferenceType)
 
+    let private validateIncludedSourceReferences (history: AnnotationHistoryDocument array) =
+        [
+            for document in history do
+                let sourceReference = document.SourceReference
+
+                if String.IsNullOrWhiteSpace sourceReference.SourceReferenceId then
+                    "SourceReference contains blank SourceReferenceId."
+
+                if not (isKnownReferenceTypeName sourceReference.ReferenceType) then
+                    $"SourceReference '{sourceReference.SourceReferenceId}' contains unknown ReferenceType '{sourceReference.ReferenceType}'."
+
+            let duplicatedSourceReferenceIds =
+                history
+                |> Array.map (fun document -> document.SourceReference.SourceReferenceId)
+                |> Array.filter (String.IsNullOrWhiteSpace >> not)
+                |> Array.countBy id
+                |> Array.choose (fun (sourceReferenceId, count) -> if count > 1 then Some sourceReferenceId else None)
+
+            for sourceReferenceId in duplicatedSourceReferenceIds do
+                $"SourceReferenceId '{sourceReferenceId}' appears more than once in annotation history."
+        ]
+
     let private appendSourceRow (rows: ResizeArray<AnnotationSourceRow>) path sourceReferenceId sourceRange =
         let rowId = sourceRowId (rows.Count + 1)
 
@@ -249,6 +271,8 @@ module AnnotationLineCore =
             history
             |> Array.filter (matchesReferenceTypeFilter referenceTypeNames)
 
+        let sourceReferenceErrors = validateIncludedSourceReferences includedHistory
+
         let historyErrors =
             [
                 if history.Length = 0 then
@@ -277,7 +301,8 @@ module AnnotationLineCore =
             ]
 
         match lineRangeErrors
-              @ maxReferenceErrors @ historyErrors
+              @ maxReferenceErrors
+                @ historyErrors @ sourceReferenceErrors
             with
         | _ :: _ as errors -> Error errors
         | [] ->
@@ -332,16 +357,7 @@ module AnnotationLineCore =
                     |> Array.map (fun (document, _) -> document.SourceReference)
                     |> Array.filter (fun reference -> usedSourceReferenceIds.Contains reference.SourceReferenceId)
 
-                let sourceReferenceErrors =
-                    [
-                        for sourceReference in sourceReferences do
-                            if not (isKnownReferenceTypeName sourceReference.ReferenceType) then
-                                $"SourceReference '{sourceReference.SourceReferenceId}' contains unknown ReferenceType '{sourceReference.ReferenceType}'."
-                    ]
-
-                if not sourceReferenceErrors.IsEmpty then
-                    Error sourceReferenceErrors
-                elif sourceReferences.Length > maxReferences then
+                if sourceReferences.Length > maxReferences then
                     Error [ $"SourceReferences must contain no more than MaxReferences ({maxReferences}) entries." ]
                 else
                     Ok(
