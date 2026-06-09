@@ -238,6 +238,33 @@ type AnnotationLineCoreTests() =
         )
 
     [<Test>]
+    member _.BuildAnnotationBoundsLargeShiftedRepeatedAlignment() =
+        let repeatedLines = Array.create 160 "repeat"
+        let oldText = String.Join("\n", Array.append [| "old-start" |] (Array.append repeatedLines [| "old-end" |]))
+        let newText = String.Join("\n", repeatedLines)
+
+        let annotation =
+            build
+                { StartLine = 1; EndLine = repeatedLines.Length }
+                [|
+                    historyDocument oldReference oldText
+                    historyDocument newReference newText
+                |]
+            |> assertOk
+
+        assertValid annotation
+        assertCoveredExactlyOnce 1 repeatedLines.Length annotation
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(annotation.Spans, Has.Length.EqualTo(1))
+                Assert.That(annotation.Spans[0].LineRange, Is.EqualTo({ StartLine = 1; EndLine = repeatedLines.Length }))
+                Assert.That(annotation.SourceRows, Has.Length.EqualTo(1))
+                Assert.That(annotation.SourceRows[0].SourceReferenceId, Is.EqualTo("source-reference-new"))
+                Assert.That(annotation.SourceRows[0].LineRange, Is.EqualTo({ StartLine = 1; EndLine = repeatedLines.Length })))
+        )
+
+    [<Test>]
     member _.BuildAnnotationSkipsFilteredReferenceTypesBeforeTracing() =
         let annotation =
             build

@@ -219,6 +219,8 @@ module AnnotationLineCore =
 
     let private missingTargetLine = { BoundaryKind = "TargetLineMissing"; SourceRows = Array.empty }
 
+    let private maxShiftedAlignmentPairScans = 16_384L
+
     let private lineAt lineNumber (document: VisibleTextDocument) =
         let index = lineNumber - 1
 
@@ -227,24 +229,34 @@ module AnnotationLineCore =
         else
             None
 
+    let private shiftedAlignmentScanFitsBudget oldStart oldEnd newStart newEnd =
+        let oldLength = int64 (oldEnd - oldStart + 1)
+        let newLength = int64 (newEnd - newStart + 1)
+
+        oldLength > 0L
+        && newLength > 0L
+        && oldLength * newLength
+           <= maxShiftedAlignmentPairScans
+
     let private findLongestCommonBlock oldStart oldEnd newStart newEnd (oldLines: string array) (newLines: string array) =
         let mutable bestOldStart = 0
         let mutable bestNewStart = 0
         let mutable bestLength = 0
 
-        for oldIndex in oldStart..oldEnd do
-            for newIndex in newStart..newEnd do
-                let mutable length = 0
+        if shiftedAlignmentScanFitsBudget oldStart oldEnd newStart newEnd then
+            for oldIndex in oldStart..oldEnd do
+                for newIndex in newStart..newEnd do
+                    let mutable length = 0
 
-                while oldIndex + length <= oldEnd
-                      && newIndex + length <= newEnd
-                      && String.Equals(oldLines[oldIndex + length], newLines[newIndex + length], StringComparison.Ordinal) do
-                    length <- length + 1
+                    while oldIndex + length <= oldEnd
+                          && newIndex + length <= newEnd
+                          && String.Equals(oldLines[oldIndex + length], newLines[newIndex + length], StringComparison.Ordinal) do
+                        length <- length + 1
 
-                if length > bestLength then
-                    bestOldStart <- oldIndex
-                    bestNewStart <- newIndex
-                    bestLength <- length
+                    if length > bestLength then
+                        bestOldStart <- oldIndex
+                        bestNewStart <- newIndex
+                        bestLength <- length
 
         if bestLength = 0 then None else Some(bestOldStart, bestNewStart, bestLength)
 
