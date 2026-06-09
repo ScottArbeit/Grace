@@ -46,6 +46,9 @@ type AnnotationLineCoreTests() =
     let build requestedRange history =
         buildAnnotation (requestedRange, targetReferenceId, "src/App.fs", [| ReferenceType.Commit |], DefaultMaxReferences, true, history)
 
+    let buildWithoutLineText requestedRange history =
+        buildAnnotation (requestedRange, targetReferenceId, "src/App.fs", [| ReferenceType.Commit |], DefaultMaxReferences, false, history)
+
     let buildWithoutReferenceTypeFilter requestedRange history =
         buildAnnotation (requestedRange, targetReferenceId, "src/App.fs", Array.empty, DefaultMaxReferences, true, history)
 
@@ -260,6 +263,28 @@ type AnnotationLineCoreTests() =
         )
 
     [<Test>]
+    member _.BuildAnnotationPrefersShorterAnchoredBlockOverLongerMovedBlock() =
+        let annotation =
+            build
+                { StartLine = 3; EndLine = 3 }
+                [|
+                    historyDocument oldReference "a\nb\nKEEP\nc\nd"
+                    historyDocument newReference "c\nd\nKEEP\nx\ny"
+                |]
+            |> assertOk
+
+        assertValid annotation
+        assertCoveredExactlyOnce 3 3 annotation
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(annotation.Spans, Has.Length.EqualTo(1))
+                Assert.That(annotation.SourceRows, Has.Length.EqualTo(1))
+                Assert.That(annotation.SourceRows[0].SourceReferenceId, Is.EqualTo("source-reference-old"))
+                Assert.That(annotation.SourceRows[0].LineRange, Is.EqualTo({ StartLine = 3; EndLine = 3 })))
+        )
+
+    [<Test>]
     member _.BuildAnnotationDoesNotTreatMovedRepeatedTextAsProof() =
         let annotation =
             build
@@ -361,6 +386,40 @@ type AnnotationLineCoreTests() =
                 Assert.That(annotation.Spans[0].BoundaryId, Is.EqualTo(annotation.Boundaries[0].BoundaryId))
                 Assert.That(annotation.Spans[0].SourceRowIds, Is.Empty)
                 Assert.That(annotation.SourceRows, Is.Empty))
+        )
+
+    [<Test>]
+    member _.BuildAnnotationReturnsBoundedBoundaryForTinyRequestInLargeFile() =
+        let largeText =
+            String.Join(
+                "\n",
+                [|
+                    for index in 1..20_001 do
+                        $"line-{index}"
+                |]
+            )
+
+        let annotation =
+            buildWithoutLineText
+                { StartLine = 10_001; EndLine = 10_001 }
+                [|
+                    historyDocument oldReference largeText
+                    historyDocument newReference largeText
+                |]
+            |> assertOk
+
+        assertValid annotation
+        assertCoveredExactlyOnce 10_001 10_001 annotation
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(annotation.Lines, Is.Empty)
+                Assert.That(annotation.SourceRows, Is.Empty)
+                Assert.That(annotation.Boundaries, Has.Length.EqualTo(1))
+                Assert.That(annotation.Boundaries[0].LineRange, Is.EqualTo({ StartLine = 10_001; EndLine = 10_001 }))
+                Assert.That(annotation.Spans, Has.Length.EqualTo(1))
+                Assert.That(annotation.Spans[0].BoundaryId, Is.EqualTo(annotation.Boundaries[0].BoundaryId))
+                Assert.That(annotation.Spans[0].SourceRowIds, Is.Empty))
         )
 
     [<Test>]

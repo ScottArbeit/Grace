@@ -223,7 +223,11 @@ module AnnotationLineCore =
 
     let private maxShiftedAlignmentPairScans = 16_384L
 
+    let private maxFullAlignmentTargetLines = 20_000
+
     let private unknownAlignment = -1
+
+    type private LineAlignment = { FirstLineNumber: int; Values: int array }
 
     type private CommonBlockSearchResult =
         | SearchExceededBudget
@@ -275,7 +279,9 @@ module AnnotationLineCore =
         let mutable bestOldStart = 0
         let mutable bestNewStart = 0
         let mutable bestLength = 0
-        let mutable bestCanAnchor = false
+        let mutable bestAnchorOldStart = 0
+        let mutable bestAnchorNewStart = 0
+        let mutable bestAnchorLength = 0
 
         if shiftedAlignmentScanFitsBudget oldStart oldEnd newStart newEnd then
             for oldIndex in oldStart..oldEnd do
@@ -291,23 +297,26 @@ module AnnotationLineCore =
                         length > 0
                         && canAnchorBlock oldStart oldEnd newStart newEnd oldIndex newIndex length
 
-                    if length > bestLength
-                       || (length = bestLength
-                           && canAnchor
-                           && not bestCanAnchor) then
+                    if length > bestLength then
                         bestOldStart <- oldIndex
                         bestNewStart <- newIndex
                         bestLength <- length
-                        bestCanAnchor <- canAnchor
 
-            if bestLength = 0 then
+                    if canAnchor && length > bestAnchorLength then
+                        bestAnchorOldStart <- oldIndex
+                        bestAnchorNewStart <- newIndex
+                        bestAnchorLength <- length
+
+            if bestAnchorLength > 0 then
+                CommonBlock(bestAnchorOldStart, bestAnchorNewStart, bestAnchorLength)
+            elif bestLength = 0 then
                 NoCommonBlock
             else
                 CommonBlock(bestOldStart, bestNewStart, bestLength)
         else
             SearchExceededBudget
 
-    let private buildLineAlignment (oldDocument: VisibleTextDocument) (newDocument: VisibleTextDocument) =
+    let private buildLineAlignmentRange firstLineNumber lineCount (oldDocument: VisibleTextDocument) (newDocument: VisibleTextDocument) =
         let mapping = Array.zeroCreate<int> newDocument.Lines.Length
 
         let rec alignRange oldStart oldEnd newStart newEnd =
@@ -348,9 +357,50 @@ module AnnotationLineCore =
                     | _ -> ()
 
         alignRange 0 (oldDocument.Lines.Length - 1) 0 (newDocument.Lines.Length - 1)
-        mapping
+        let startIndex = max 0 (firstLineNumber - 1)
+        let boundedLineCount = max 0 (min lineCount (mapping.Length - startIndex))
 
-    let private traceLineSource lineNumber (documents: (AnnotationHistoryDocument * VisibleTextDocument) array) (lineAlignments: int array array) =
+        {
+            FirstLineNumber = startIndex + 1
+            Values =
+                if boundedLineCount = 0 then
+                    Array.empty
+                else
+                    mapping[startIndex .. startIndex + boundedLineCount - 1]
+        }
+
+    let private buildLineAlignmentForRequest requestedLineRange (oldDocument: VisibleTextDocument) (newDocument: VisibleTextDocument) =
+        let firstExistingLine = max requestedLineRange.StartLine 1
+        let lastExistingLine = min requestedLineRange.EndLine newDocument.Lines.Length
+
+        if newDocument.Lines.Length > maxFullAlignmentTargetLines then
+            let lineCount =
+                if firstExistingLine <= lastExistingLine then
+                    lastExistingLine - firstExistingLine + 1
+                else
+                    0
+
+            { FirstLineNumber = firstExistingLine; Values = Array.create lineCount unknownAlignment }
+        else
+            let lineCount = if newDocument.Lines.Length = 0 then 0 else newDocument.Lines.Length
+
+            buildLineAlignmentRange 1 lineCount oldDocument newDocument
+
+    let private tryGetPreviousLineNumber lineNumber (alignment: LineAlignment) =
+        let alignmentIndex = lineNumber - alignment.FirstLineNumber
+
+        if alignmentIndex >= 0
+           && alignmentIndex < alignment.Values.Length
+           && alignment.Values[alignmentIndex] > 0 then
+            Some alignment.Values[alignmentIndex], false
+        elif alignmentIndex >= 0
+             && alignmentIndex < alignment.Values.Length
+             && alignment.Values[alignmentIndex] = unknownAlignment then
+            None, true
+        else
+            None, false
+
+    let private traceLineSource lineNumber (documents: (AnnotationHistoryDocument * VisibleTextDocument) array) (lineAlignments: LineAlignment array) =
         let targetDocument = documents[documents.Length - 1] |> snd
 
         match lineAt lineNumber targetDocument with
@@ -362,21 +412,9 @@ module AnnotationLineCore =
             let mutable alignmentWasUnknown = false
 
             while keepSearching && sourceIndex > 0 do
-                let previousLineNumber =
-                    let alignment = lineAlignments[sourceIndex - 1]
-                    let alignmentIndex = sourceLineNumber - 1
+                let previousLineNumber, wasUnknown = tryGetPreviousLineNumber sourceLineNumber lineAlignments[sourceIndex - 1]
 
-                    if alignmentIndex >= 0
-                       && alignmentIndex < alignment.Length
-                       && alignment[alignmentIndex] > 0 then
-                        Some alignment[alignmentIndex]
-                    elif alignmentIndex >= 0
-                         && alignmentIndex < alignment.Length
-                         && alignment[alignmentIndex] = unknownAlignment then
-                        alignmentWasUnknown <- true
-                        None
-                    else
-                        None
+                if wasUnknown then alignmentWasUnknown <- true
 
                 match previousLineNumber with
                 | Some previousLine ->
@@ -396,7 +434,7 @@ module AnnotationLineCore =
 
                 Resolved { SourceReferenceId = sourceDocument.SourceReference.SourceReferenceId; Path = sourceDocument.Path; LineNumber = sourceLineNumber }
 
-    let private traceRequestedSegments requestedLineRange (targetDocument: VisibleTextDocument) traceDocuments (lineAlignments: int array array) =
+    let private traceRequestedSegments requestedLineRange (targetDocument: VisibleTextDocument) traceDocuments (lineAlignments: LineAlignment array) =
         let segments = ResizeArray<int * int * AnnotationLineState>()
         let firstExistingLine = max requestedLineRange.StartLine 1
         let lastExistingLine = min requestedLineRange.EndLine targetDocument.Lines.Length
@@ -527,7 +565,8 @@ module AnnotationLineCore =
                 let lineAlignments =
                     traceDocuments
                     |> Array.pairwise
-                    |> Array.map (fun ((_, previousDocument), (_, currentDocument)) -> buildLineAlignment previousDocument currentDocument)
+                    |> Array.map (fun ((_, previousDocument), (_, currentDocument)) ->
+                        buildLineAlignmentForRequest requestedLineRange previousDocument currentDocument)
 
                 let lines =
                     if includeLineText then
