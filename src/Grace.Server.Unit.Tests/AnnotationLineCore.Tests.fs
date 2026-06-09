@@ -10,9 +10,10 @@ open System.Text
 [<Parallelizable(ParallelScope.All)>]
 type AnnotationLineCoreTests() =
 
-    let targetReferenceId = Guid.Parse("11111111-1111-1111-1111-111111111111")
     let oldReferenceId = Guid.Parse("22222222-2222-2222-2222-222222222222")
     let newReferenceId = Guid.Parse("33333333-3333-3333-3333-333333333333")
+    let targetReferenceId = newReferenceId
+    let mismatchedTargetReferenceId = Guid.Parse("11111111-1111-1111-1111-111111111111")
     let saveReferenceId = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
     let oldDirectoryVersionId = Guid.Parse("44444444-4444-4444-4444-444444444444")
     let newDirectoryVersionId = Guid.Parse("55555555-5555-5555-5555-555555555555")
@@ -37,6 +38,8 @@ type AnnotationLineCoreTests() =
     let saveReference = sourceReferenceWithType "source-reference-save" saveReferenceId "Save" "save" saveDirectoryVersionId
 
     let historyDocument sourceReference content = { SourceReference = sourceReference; Path = "src/App.fs"; Content = bytes content }
+
+    let historyDocumentBytes sourceReference content = { SourceReference = sourceReference; Path = "src/App.fs"; Content = content }
 
     let build requestedRange history =
         buildAnnotation (requestedRange, targetReferenceId, "src/App.fs", [| ReferenceType.Commit |], DefaultMaxReferences, true, history)
@@ -203,6 +206,49 @@ type AnnotationLineCoreTests() =
                 Assert.That(annotation.SourceRows[0].SourceReferenceId, Is.EqualTo("source-reference-new"))
                 Assert.That(annotation.SourceReferences, Has.Length.EqualTo(1))
                 Assert.That(annotation.SourceReferences[0].SourceReferenceId, Is.EqualTo("source-reference-new"))
+                Assert.That(annotation.SourceReferences[0].ReferenceType, Is.EqualTo("Commit")))
+        )
+
+    [<Test>]
+    member _.BuildAnnotationRejectsHistoryWhenLastReferenceDoesNotMatchTargetReferenceId() =
+        let result =
+            buildAnnotation (
+                { StartLine = 1; EndLine = 1 },
+                mismatchedTargetReferenceId,
+                "src/App.fs",
+                [| ReferenceType.Commit |],
+                DefaultMaxReferences,
+                true,
+                [|
+                    historyDocument oldReference "old"
+                    historyDocument newReference "new"
+                |]
+            )
+
+        match result with
+        | Ok _ -> Assert.Fail("History ending at a different target reference should be rejected.")
+        | Error errors -> Assert.That(errors, Has.Some.Contains("TargetReferenceId"))
+
+    [<Test>]
+    member _.BuildAnnotationSkipsFilteredInvalidUtf8ReferenceBeforeDecoding() =
+        let annotation =
+            build
+                { StartLine = 1; EndLine = 1 }
+                [|
+                    historyDocument oldReference "old"
+                    historyDocumentBytes saveReference [| 0xC3uy; 0x28uy |]
+                    historyDocument newReference "new"
+                |]
+            |> assertOk
+
+        assertValid annotation
+        assertCoveredExactlyOnce 1 1 annotation
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(annotation.SourceRows, Has.Length.EqualTo(1))
+                Assert.That(annotation.SourceRows[0].SourceReferenceId, Is.EqualTo("source-reference-new"))
+                Assert.That(annotation.SourceReferences, Has.Length.EqualTo(1))
                 Assert.That(annotation.SourceReferences[0].ReferenceType, Is.EqualTo("Commit")))
         )
 

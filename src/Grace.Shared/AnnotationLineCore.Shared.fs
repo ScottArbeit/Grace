@@ -249,6 +249,15 @@ module AnnotationLineCore =
                     if not (String.Equals(document.Path, path, StringComparison.Ordinal)) then
                         $"Annotation history path '{document.Path}' must match annotation path '{path}'."
 
+                if history.Length > 0
+                   && history[history.Length - 1]
+                       .SourceReference
+                       .ReferenceId
+                      <> targetReferenceId then
+                    $"Target SourceReference '{history[history.Length - 1]
+                                                   .SourceReference
+                                                   .SourceReferenceId}' must match TargetReferenceId."
+
                 if
                     history.Length > 0
                     && not (matchesReferenceTypeFilter referenceTypeNames history[history.Length - 1])
@@ -263,8 +272,12 @@ module AnnotationLineCore =
             with
         | _ :: _ as errors -> Error errors
         | [] ->
-            let decoded =
+            let includedHistory =
                 history
+                |> Array.filter (matchesReferenceTypeFilter referenceTypeNames)
+
+            let decoded =
+                includedHistory
                 |> Array.map (fun document ->
                     match decodeVisibleText document.Content with
                     | Ok visible -> Ok(document, visible)
@@ -286,9 +299,7 @@ module AnnotationLineCore =
                         | Ok document -> Some document
                         | Error _ -> None)
 
-                let traceDocuments =
-                    documents
-                    |> Array.filter (fun (document, _) -> matchesReferenceTypeFilter referenceTypeNames document)
+                let traceDocuments = documents
 
                 let targetDocument = documents[documents.Length - 1] |> snd
 
