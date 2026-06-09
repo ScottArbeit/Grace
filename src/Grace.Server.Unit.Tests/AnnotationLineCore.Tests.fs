@@ -232,6 +232,34 @@ type AnnotationLineCoreTests() =
         )
 
     [<Test>]
+    member _.BuildAnnotationPreservesAnchoredMiddleLineWhenMovedTieAppearsFirst() =
+        let annotation =
+            build
+                { StartLine = 1; EndLine = 3 }
+                [|
+                    historyDocument oldReference "a\nkeep\nb"
+                    historyDocument newReference "b\nkeep\na"
+                |]
+            |> assertOk
+
+        assertValid annotation
+        assertCoveredExactlyOnce 1 3 annotation
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(annotation.Spans, Has.Length.EqualTo(3))
+                Assert.That(annotation.Spans[0].LineRange, Is.EqualTo({ StartLine = 1; EndLine = 1 }))
+                Assert.That(annotation.SourceRows[0].SourceReferenceId, Is.EqualTo("source-reference-new"))
+                Assert.That(annotation.SourceRows[0].LineRange, Is.EqualTo({ StartLine = 1; EndLine = 1 }))
+                Assert.That(annotation.Spans[1].LineRange, Is.EqualTo({ StartLine = 2; EndLine = 2 }))
+                Assert.That(annotation.SourceRows[1].SourceReferenceId, Is.EqualTo("source-reference-old"))
+                Assert.That(annotation.SourceRows[1].LineRange, Is.EqualTo({ StartLine = 2; EndLine = 2 }))
+                Assert.That(annotation.Spans[2].LineRange, Is.EqualTo({ StartLine = 3; EndLine = 3 }))
+                Assert.That(annotation.SourceRows[2].SourceReferenceId, Is.EqualTo("source-reference-new"))
+                Assert.That(annotation.SourceRows[2].LineRange, Is.EqualTo({ StartLine = 3; EndLine = 3 })))
+        )
+
+    [<Test>]
     member _.BuildAnnotationDoesNotTreatMovedRepeatedTextAsProof() =
         let annotation =
             build
@@ -287,9 +315,52 @@ type AnnotationLineCoreTests() =
             Action (fun () ->
                 Assert.That(annotation.Spans, Has.Length.EqualTo(1))
                 Assert.That(annotation.Spans[0].LineRange, Is.EqualTo({ StartLine = 1; EndLine = repeatedLines.Length }))
-                Assert.That(annotation.SourceRows, Has.Length.EqualTo(1))
-                Assert.That(annotation.SourceRows[0].SourceReferenceId, Is.EqualTo("source-reference-new"))
-                Assert.That(annotation.SourceRows[0].LineRange, Is.EqualTo({ StartLine = 1; EndLine = repeatedLines.Length })))
+                Assert.That(annotation.Boundaries, Has.Length.EqualTo(1))
+                Assert.That(annotation.Boundaries[0].LineRange, Is.EqualTo({ StartLine = 1; EndLine = repeatedLines.Length }))
+                Assert.That(annotation.Spans[0].BoundaryId, Is.EqualTo(annotation.Boundaries[0].BoundaryId))
+                Assert.That(annotation.Spans[0].SourceRowIds, Is.Empty)
+                Assert.That(annotation.SourceRows, Is.Empty))
+        )
+
+    [<Test>]
+    member _.BuildAnnotationUsesBoundaryWhenShiftedAlignmentExceedsBudget() =
+        let stableLines =
+            [|
+                for index in 1..129 do
+                    $"stable-{index}"
+            |]
+
+        let oldText =
+            String.Join(
+                "\n",
+                Array.concat [| [| "deleted-header" |]
+                                stableLines
+                                [| "old-tail" |] |]
+            )
+
+        let newText = String.Join("\n", Array.append stableLines [| "new-tail" |])
+
+        let annotation =
+            build
+                { StartLine = 1; EndLine = stableLines.Length }
+                [|
+                    historyDocument oldReference oldText
+                    historyDocument newReference newText
+                |]
+            |> assertOk
+
+        assertValid annotation
+        assertCoveredExactlyOnce 1 stableLines.Length annotation
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(annotation.Spans, Has.Length.EqualTo(1))
+                Assert.That(annotation.Spans[0].LineRange, Is.EqualTo({ StartLine = 1; EndLine = stableLines.Length }))
+                Assert.That(annotation.Boundaries, Has.Length.EqualTo(1))
+                Assert.That(annotation.Boundaries[0].LineRange, Is.EqualTo({ StartLine = 1; EndLine = stableLines.Length }))
+                Assert.That(annotation.Spans[0].BoundaryId, Is.EqualTo(annotation.Boundaries[0].BoundaryId))
+                Assert.That(annotation.Spans[0].SourceRowIds, Is.Empty)
+                Assert.That(annotation.SourceRows, Is.Empty))
         )
 
     [<Test>]

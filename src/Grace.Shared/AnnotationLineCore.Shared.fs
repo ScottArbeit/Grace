@@ -219,7 +219,16 @@ module AnnotationLineCore =
 
     let private missingTargetLine = { BoundaryKind = "TargetLineMissing"; SourceRows = Array.empty }
 
+    let private shiftedAlignmentBudgetExceeded = { BoundaryKind = "ShiftedAlignmentBudgetExceeded"; SourceRows = Array.empty }
+
     let private maxShiftedAlignmentPairScans = 16_384L
+
+    let private unknownAlignment = -1
+
+    type private CommonBlockSearchResult =
+        | SearchExceededBudget
+        | NoCommonBlock
+        | CommonBlock of OldStart: int * NewStart: int * Length: int
 
     let private lineAt lineNumber (document: VisibleTextDocument) =
         let index = lineNumber - 1
@@ -237,28 +246,6 @@ module AnnotationLineCore =
         && newLength > 0L
         && oldLength * newLength
            <= maxShiftedAlignmentPairScans
-
-    let private findLongestCommonBlock oldStart oldEnd newStart newEnd (oldLines: string array) (newLines: string array) =
-        let mutable bestOldStart = 0
-        let mutable bestNewStart = 0
-        let mutable bestLength = 0
-
-        if shiftedAlignmentScanFitsBudget oldStart oldEnd newStart newEnd then
-            for oldIndex in oldStart..oldEnd do
-                for newIndex in newStart..newEnd do
-                    let mutable length = 0
-
-                    while oldIndex + length <= oldEnd
-                          && newIndex + length <= newEnd
-                          && String.Equals(oldLines[oldIndex + length], newLines[newIndex + length], StringComparison.Ordinal) do
-                        length <- length + 1
-
-                    if length > bestLength then
-                        bestOldStart <- oldIndex
-                        bestNewStart <- newIndex
-                        bestLength <- length
-
-        if bestLength = 0 then None else Some(bestOldStart, bestNewStart, bestLength)
 
     let private canAnchorBlock oldStart oldEnd newStart newEnd oldBlockStart newBlockStart blockLength =
         let leftOldLength = oldBlockStart - oldStart
@@ -283,6 +270,42 @@ module AnnotationLineCore =
         || (leftIsInsertionOrDeletion
             && rightIsInsertionOrDeletion
             && editsStayOnOneSide)
+
+    let private findLongestCommonBlock oldStart oldEnd newStart newEnd (oldLines: string array) (newLines: string array) =
+        let mutable bestOldStart = 0
+        let mutable bestNewStart = 0
+        let mutable bestLength = 0
+        let mutable bestCanAnchor = false
+
+        if shiftedAlignmentScanFitsBudget oldStart oldEnd newStart newEnd then
+            for oldIndex in oldStart..oldEnd do
+                for newIndex in newStart..newEnd do
+                    let mutable length = 0
+
+                    while oldIndex + length <= oldEnd
+                          && newIndex + length <= newEnd
+                          && String.Equals(oldLines[oldIndex + length], newLines[newIndex + length], StringComparison.Ordinal) do
+                        length <- length + 1
+
+                    let canAnchor =
+                        length > 0
+                        && canAnchorBlock oldStart oldEnd newStart newEnd oldIndex newIndex length
+
+                    if length > bestLength
+                       || (length = bestLength
+                           && canAnchor
+                           && not bestCanAnchor) then
+                        bestOldStart <- oldIndex
+                        bestNewStart <- newIndex
+                        bestLength <- length
+                        bestCanAnchor <- canAnchor
+
+            if bestLength = 0 then
+                NoCommonBlock
+            else
+                CommonBlock(bestOldStart, bestNewStart, bestLength)
+        else
+            SearchExceededBudget
 
     let private buildLineAlignment (oldDocument: VisibleTextDocument) (newDocument: VisibleTextDocument) =
         let mapping = Array.zeroCreate<int> newDocument.Lines.Length
@@ -311,7 +334,10 @@ module AnnotationLineCore =
 
                 if oldFirst <= oldLast && newFirst <= newLast then
                     match findLongestCommonBlock oldFirst oldLast newFirst newLast oldDocument.Lines newDocument.Lines with
-                    | Some (oldBlockStart, newBlockStart, blockLength) when
+                    | SearchExceededBudget ->
+                        for newIndex in newFirst..newLast do
+                            mapping[newIndex] <- unknownAlignment
+                    | CommonBlock (oldBlockStart, newBlockStart, blockLength) when
                         canAnchorBlock oldFirst oldLast newFirst newLast oldBlockStart newBlockStart blockLength
                         ->
                         for offset in 0 .. blockLength - 1 do
@@ -333,6 +359,7 @@ module AnnotationLineCore =
             let mutable sourceIndex = documents.Length - 1
             let mutable sourceLineNumber = lineNumber
             let mutable keepSearching = true
+            let mutable alignmentWasUnknown = false
 
             while keepSearching && sourceIndex > 0 do
                 let previousLineNumber =
@@ -343,6 +370,11 @@ module AnnotationLineCore =
                        && alignmentIndex < alignment.Length
                        && alignment[alignmentIndex] > 0 then
                         Some alignment[alignmentIndex]
+                    elif alignmentIndex >= 0
+                         && alignmentIndex < alignment.Length
+                         && alignment[alignmentIndex] = unknownAlignment then
+                        alignmentWasUnknown <- true
+                        None
                     else
                         None
 
@@ -357,9 +389,12 @@ module AnnotationLineCore =
                     | _ -> keepSearching <- false
                 | None -> keepSearching <- false
 
-            let sourceDocument = documents[sourceIndex] |> fst
+            if alignmentWasUnknown then
+                Boundary shiftedAlignmentBudgetExceeded
+            else
+                let sourceDocument = documents[sourceIndex] |> fst
 
-            Resolved { SourceReferenceId = sourceDocument.SourceReference.SourceReferenceId; Path = sourceDocument.Path; LineNumber = sourceLineNumber }
+                Resolved { SourceReferenceId = sourceDocument.SourceReference.SourceReferenceId; Path = sourceDocument.Path; LineNumber = sourceLineNumber }
 
     let private traceRequestedSegments requestedLineRange (targetDocument: VisibleTextDocument) traceDocuments (lineAlignments: int array array) =
         let segments = ResizeArray<int * int * AnnotationLineState>()
