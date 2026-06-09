@@ -13,27 +13,36 @@ type AnnotationLineCoreTests() =
     let targetReferenceId = Guid.Parse("11111111-1111-1111-1111-111111111111")
     let oldReferenceId = Guid.Parse("22222222-2222-2222-2222-222222222222")
     let newReferenceId = Guid.Parse("33333333-3333-3333-3333-333333333333")
+    let saveReferenceId = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
     let oldDirectoryVersionId = Guid.Parse("44444444-4444-4444-4444-444444444444")
     let newDirectoryVersionId = Guid.Parse("55555555-5555-5555-5555-555555555555")
+    let saveDirectoryVersionId = Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
 
     let bytes (text: string) = Encoding.UTF8.GetBytes(text)
 
-    let sourceReference sourceReferenceId referenceId referenceText directoryVersionId =
+    let sourceReferenceWithType sourceReferenceId referenceId referenceType referenceText directoryVersionId =
         { AnnotationSourceReference.Default with
             SourceReferenceId = sourceReferenceId
             ReferenceId = referenceId
-            ReferenceType = "Commit"
+            ReferenceType = referenceType
             ReferenceText = referenceText
             DirectoryVersionId = directoryVersionId
         }
 
+    let sourceReference sourceReferenceId referenceId referenceText directoryVersionId =
+        sourceReferenceWithType sourceReferenceId referenceId "Commit" referenceText directoryVersionId
+
     let oldReference = sourceReference "source-reference-old" oldReferenceId "old" oldDirectoryVersionId
     let newReference = sourceReference "source-reference-new" newReferenceId "new" newDirectoryVersionId
+    let saveReference = sourceReferenceWithType "source-reference-save" saveReferenceId "Save" "save" saveDirectoryVersionId
 
     let historyDocument sourceReference content = { SourceReference = sourceReference; Path = "src/App.fs"; Content = bytes content }
 
     let build requestedRange history =
         buildAnnotation (requestedRange, targetReferenceId, "src/App.fs", [| ReferenceType.Commit |], DefaultMaxReferences, true, history)
+
+    let buildWithMaxReferences maxReferences requestedRange history =
+        buildAnnotation (requestedRange, targetReferenceId, "src/App.fs", [| ReferenceType.Commit |], maxReferences, true, history)
 
     let assertOk result =
         match result with
@@ -174,6 +183,30 @@ type AnnotationLineCoreTests() =
         )
 
     [<Test>]
+    member _.BuildAnnotationSkipsFilteredReferenceTypesBeforeTracing() =
+        let annotation =
+            build
+                { StartLine = 1; EndLine = 1 }
+                [|
+                    historyDocument oldReference "old"
+                    historyDocument saveReference "new"
+                    historyDocument newReference "new"
+                |]
+            |> assertOk
+
+        assertValid annotation
+        assertCoveredExactlyOnce 1 1 annotation
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(annotation.SourceRows, Has.Length.EqualTo(1))
+                Assert.That(annotation.SourceRows[0].SourceReferenceId, Is.EqualTo("source-reference-new"))
+                Assert.That(annotation.SourceReferences, Has.Length.EqualTo(1))
+                Assert.That(annotation.SourceReferences[0].SourceReferenceId, Is.EqualTo("source-reference-new"))
+                Assert.That(annotation.SourceReferences[0].ReferenceType, Is.EqualTo("Commit")))
+        )
+
+    [<Test>]
     member _.BuildAnnotationCoalescesOnlyContiguousMatchingSourceDetails() =
         let annotation =
             build
@@ -224,6 +257,23 @@ type AnnotationLineCoreTests() =
                 Assert.That(annotation.Spans[1].BoundaryId, Is.EqualTo(annotation.Boundaries[0].BoundaryId))
                 Assert.That(annotation.Spans[1].SourceRowIds, Is.Empty))
         )
+
+    [<Test>]
+    member _.BuildAnnotationRejectsRequiredSourceReferencesAboveBudget() =
+        let result =
+            buildWithMaxReferences
+                1
+                { StartLine = 1; EndLine = 2 }
+                [|
+                    historyDocument oldReference "same\nold"
+                    historyDocument newReference "same\nnew"
+                |]
+
+        match result with
+        | Ok annotation ->
+            assertValid annotation
+            Assert.That(annotation.SourceReferences, Has.Length.LessThanOrEqualTo(annotation.MaxReferences))
+        | Error errors -> Assert.That(errors, Has.Some.Contains("MaxReferences"))
 
     [<Test>]
     member _.BuildComponentsDoesNotCollapseWhenBoundaryStateDiffers() =

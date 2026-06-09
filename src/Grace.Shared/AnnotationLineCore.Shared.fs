@@ -1,5 +1,6 @@
 namespace Grace.Shared
 
+open Grace.Shared.Utilities
 open Grace.Types.Annotation
 open Grace.Types.Common
 open System
@@ -101,6 +102,12 @@ module AnnotationLineCore =
     let private spanId index = $"span-{index}"
 
     let private boundaryId index = $"boundary-{index}"
+
+    let private referenceTypeName (referenceType: ReferenceType) = getDiscriminatedUnionCaseName referenceType
+
+    let private matchesReferenceTypeFilter (referenceTypeNames: Set<string>) (document: AnnotationHistoryDocument) =
+        referenceTypeNames.Count = 0
+        || referenceTypeNames.Contains document.SourceReference.ReferenceType
 
     let private appendSourceRow (rows: ResizeArray<AnnotationSourceRow>) path sourceReferenceId sourceRange =
         let rowId = sourceRowId (rows.Count + 1)
@@ -223,6 +230,16 @@ module AnnotationLineCore =
             | Ok () -> []
             | Error errors -> errors
 
+        let maxReferenceErrors =
+            match validateMaxReferences maxReferences with
+            | Ok () -> []
+            | Error errors -> errors
+
+        let referenceTypeNames =
+            referenceTypeFilter
+            |> Array.map referenceTypeName
+            |> Set.ofArray
+
         let historyErrors =
             [
                 if history.Length = 0 then
@@ -231,9 +248,19 @@ module AnnotationLineCore =
                 for document in history do
                     if not (String.Equals(document.Path, path, StringComparison.Ordinal)) then
                         $"Annotation history path '{document.Path}' must match annotation path '{path}'."
+
+                if
+                    history.Length > 0
+                    && not (matchesReferenceTypeFilter referenceTypeNames history[history.Length - 1])
+                then
+                    $"Target SourceReference '{history[history.Length - 1]
+                                                   .SourceReference
+                                                   .SourceReferenceId}' must match ReferenceTypeFilter."
             ]
 
-        match lineRangeErrors @ historyErrors with
+        match lineRangeErrors
+              @ maxReferenceErrors @ historyErrors
+            with
         | _ :: _ as errors -> Error errors
         | [] ->
             let decoded =
@@ -259,6 +286,10 @@ module AnnotationLineCore =
                         | Ok document -> Some document
                         | Error _ -> None)
 
+                let traceDocuments =
+                    documents
+                    |> Array.filter (fun (document, _) -> matchesReferenceTypeFilter referenceTypeNames document)
+
                 let targetDocument = documents[documents.Length - 1] |> snd
 
                 let lines =
@@ -270,7 +301,7 @@ module AnnotationLineCore =
                 let states =
                     [|
                         for lineNumber in requestedLineRange.StartLine .. requestedLineRange.EndLine do
-                            traceLineSource lineNumber documents
+                            traceLineSource lineNumber traceDocuments
                     |]
 
                 let components = buildComponents requestedLineRange lines states
@@ -281,22 +312,25 @@ module AnnotationLineCore =
                     |> Set.ofArray
 
                 let sourceReferences =
-                    history
-                    |> Array.map (fun document -> document.SourceReference)
+                    traceDocuments
+                    |> Array.map (fun (document, _) -> document.SourceReference)
                     |> Array.filter (fun reference -> usedSourceReferenceIds.Contains reference.SourceReferenceId)
 
-                Ok(
-                    BranchAnnotationDto.Create(
-                        requestedLineRange,
-                        targetReferenceId,
-                        path,
-                        referenceTypeFilter,
-                        maxReferences,
-                        includeLineText,
-                        lines,
-                        components.Boundaries,
-                        components.Spans,
-                        components.SourceRows,
-                        sourceReferences
+                if sourceReferences.Length > maxReferences then
+                    Error [ $"SourceReferences must contain no more than MaxReferences ({maxReferences}) entries." ]
+                else
+                    Ok(
+                        BranchAnnotationDto.Create(
+                            requestedLineRange,
+                            targetReferenceId,
+                            path,
+                            referenceTypeFilter,
+                            maxReferences,
+                            includeLineText,
+                            lines,
+                            components.Boundaries,
+                            components.Spans,
+                            components.SourceRows,
+                            sourceReferences
+                        )
                     )
-                )
