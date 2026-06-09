@@ -196,7 +196,7 @@ module Branch =
             let startIndex = max 0 (targetIndex - maxReferences + 1)
             ordered[startIndex..targetIndex]
 
-    let private includeStoredBasedOnReferences repositoryId correlationId (references: Reference.ReferenceDto array) =
+    let private includeStoredBasedOnReferences repositoryId correlationId maxReferences (references: Reference.ReferenceDto array) =
         task {
             let effectiveReferences = ResizeArray<Reference.ReferenceDto>(references)
 
@@ -206,22 +206,45 @@ module Branch =
                     |> Array.map (fun referenceDto -> referenceDto.ReferenceId)
                 )
 
+            let requestedBasedOnReferenceIds = HashSet<ReferenceId>()
             let mutable index = 0
 
             while index < effectiveReferences.Count do
                 let referenceDto = effectiveReferences[index]
 
                 match tryGetBasedOnReferenceId referenceDto with
-                | Some basedOnReferenceId when not (knownReferenceIds.Contains basedOnReferenceId) ->
-                    knownReferenceIds.Add basedOnReferenceId |> ignore
-
+                | Some basedOnReferenceId when
+                    not (knownReferenceIds.Contains basedOnReferenceId)
+                    && requestedBasedOnReferenceIds.Add basedOnReferenceId
+                    ->
                     let basedOnReferenceActorProxy = Reference.CreateActorProxy basedOnReferenceId repositoryId correlationId
                     let! basedOnReference = basedOnReferenceActorProxy.Get correlationId
 
                     if basedOnReference.ReferenceId <> ReferenceId.Empty
                        && basedOnReference.DeletedAt.IsNone
                        && basedOnReference.RepositoryId = repositoryId then
-                        effectiveReferences.Add basedOnReference
+                        let! branchReferences = getReferences basedOnReference.RepositoryId basedOnReference.BranchId Int32.MaxValue correlationId
+
+                        let basedOnHistoryWindow =
+                            if branchReferences
+                               |> Array.exists (fun branchReference -> branchReference.ReferenceId = basedOnReference.ReferenceId) then
+                                branchReferences
+                            else
+                                Array.append branchReferences [| basedOnReference |]
+                            |> orderedHistoryWindow basedOnReference.ReferenceId maxReferences
+
+                        let mutable basedOnHistoryIndex = 0
+
+                        while basedOnHistoryIndex < basedOnHistoryWindow.Length do
+                            let basedOnHistoryReference = basedOnHistoryWindow[basedOnHistoryIndex]
+
+                            if not (knownReferenceIds.Contains basedOnHistoryReference.ReferenceId) then
+                                knownReferenceIds.Add basedOnHistoryReference.ReferenceId
+                                |> ignore
+
+                                effectiveReferences.Add basedOnHistoryReference
+
+                            basedOnHistoryIndex <- basedOnHistoryIndex + 1
                 | _ -> ()
 
                 index <- index + 1
@@ -274,7 +297,7 @@ module Branch =
                                 Array.append branchReferences [| targetReference |]
                             |> orderedHistoryWindow targetReference.ReferenceId parameters.MaxReferences
 
-                        let! references = includeStoredBasedOnReferences targetReference.RepositoryId correlationId localHistoryWindow
+                        let! references = includeStoredBasedOnReferences targetReference.RepositoryId correlationId parameters.MaxReferences localHistoryWindow
 
                         match! buildEffectiveHistory context repositoryDto normalizedPath references with
                         | Error error -> return Error error

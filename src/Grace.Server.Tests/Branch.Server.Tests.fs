@@ -335,6 +335,21 @@ module BranchServerTestHelpers =
             return! getBranchAsync repositoryId $"{branch.BranchId}"
         }
 
+    let rebaseBranchAsync repositoryId (branch: Branch.BranchDto) basedOnReferenceId =
+        task {
+            let parameters = Parameters.Branch.RebaseParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.BranchId <- $"{branch.BranchId}"
+            parameters.BasedOn <- basedOnReferenceId
+            parameters.CorrelationId <- generateCorrelationId ()
+
+            let! response = Client.PostAsync("/branch/rebase", createJsonContent parameters)
+            do! assertOk response
+            return! getBranchAsync repositoryId $"{branch.BranchId}"
+        }
+
     let private createPersonalAccessTokenAsync () =
         task {
             let parameters = Parameters.Auth.CreatePersonalAccessTokenParameters()
@@ -562,6 +577,46 @@ type BranchServer() =
         }
 
     [<Test>]
+    member _.AnnotateRouteReturnsGraceErrorForNullReferenceTypes() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let branchId = repositoryDefaultBranchIds[0]
+            let! branch = BranchServerTestHelpers.getBranchAsync repositoryId branchId
+            let fileVersion = FileVersion.Create "annotate/null-reference-types.fs" String.Empty String.Empty false 1L
+            let parameters = BranchServerTestHelpers.annotateParameters repositoryId branch fileVersion
+
+            let json =
+                $"""
+{{
+  "OwnerId": "{parameters.OwnerId}",
+  "OrganizationId": "{parameters.OrganizationId}",
+  "RepositoryId": "{parameters.RepositoryId}",
+  "BranchId": "{parameters.BranchId}",
+  "TargetReferenceId": "{parameters.TargetReferenceId}",
+  "Path": "{parameters.Path}",
+  "StartLine": {parameters.StartLine},
+  "EndLine": {parameters.EndLine},
+  "ReferenceTypes": null,
+  "MaxReferences": {parameters.MaxReferences},
+  "IncludeLineText": {parameters
+                          .IncludeLineText
+                          .ToString()
+                          .ToLowerInvariant()},
+  "CorrelationId": "{parameters.CorrelationId}"
+}}
+"""
+
+            use content = new StringContent(json, Encoding.UTF8, "application/json")
+            let! response = Client.PostAsync("/branch/annotate", content)
+            let! responseBody = response.Content.ReadAsStringAsync()
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), responseBody)
+
+            let error = deserialize<GraceError> responseBody
+            Assert.That(error.Error, Is.EqualTo("ReferenceTypes must not be null."))
+            Assert.That(error.CorrelationId, Is.Not.Empty)
+        }
+
+    [<Test>]
     member _.AnnotateOlderTargetReferenceIncludesLocalAncestorsBeforeNewestReferences() =
         task {
             let repositoryId = repositoryIds[0]
@@ -602,6 +657,62 @@ type BranchServer() =
             Assert.That(
                 annotation.SourceRows
                 |> Array.exists (fun sourceRow -> sourceRow.SourceReferenceId = firstReferenceSourceId),
+                Is.True
+            )
+        }
+
+    [<Test>]
+    member _.AnnotateChildRebaseFetchesParentHistoryBeforeBasedOnPromotion() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let branchId = repositoryDefaultBranchIds[0]
+            let! parentBranch = BranchServerTestHelpers.getBranchAsync repositoryId branchId
+            let! parentWorkBranch = BranchServerTestHelpers.createBranchAsync repositoryId parentBranch $"AnnotateParent{Guid.NewGuid():N}"
+            let relativePath = $"annotate/{Guid.NewGuid():N}/parent-history.fs"
+            let content = $"let inherited = 319{Environment.NewLine}"
+
+            let! parentWithSave, fileVersion, parentSaveReferenceId =
+                BranchServerTestHelpers.createAnnotatableReferenceWithContentAsync repositoryId parentWorkBranch relativePath content
+
+            let! parentWithPromotion = BranchServerTestHelpers.promoteLatestSaveAsync repositoryId parentWithSave
+            let! childBranch = BranchServerTestHelpers.createBranchAsync repositoryId parentWithPromotion $"AnnotateParentHistory{Guid.NewGuid():N}"
+            let! childBranch = BranchServerTestHelpers.rebaseBranchAsync repositoryId childBranch parentWithPromotion.LatestPromotion.ReferenceId
+            let! childReferences = BranchServerTestHelpers.getBranchReferencesAsync repositoryId $"{childBranch.BranchId}"
+
+            let childRebaseReference =
+                childReferences
+                |> Array.filter (fun referenceDto -> referenceDto.ReferenceType = ReferenceType.Rebase)
+                |> Array.maxBy (fun referenceDto -> referenceDto.CreatedAt)
+
+            let parameters = BranchServerTestHelpers.annotateParameters repositoryId childBranch fileVersion
+            parameters.TargetReferenceId <- childRebaseReference.ReferenceId
+
+            parameters.ReferenceTypes <-
+                [|
+                    ReferenceType.Save
+                    ReferenceType.Promotion
+                    ReferenceType.Rebase
+                |]
+
+            parameters.MaxReferences <- 10
+
+            let! response = Client.PostAsync("/branch/annotate", createJsonContent parameters)
+            let! responseBody = response.Content.ReadAsStringAsync()
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK), responseBody)
+
+            let returnValue = deserialize<GraceReturnValue<BranchAnnotationDto>> responseBody
+            let annotation = returnValue.ReturnValue
+            let parentSaveSourceId = $"{parentSaveReferenceId}"
+
+            Assert.That(
+                annotation.SourceReferences
+                |> Array.exists (fun sourceReference -> sourceReference.ReferenceId = parentSaveReferenceId),
+                Is.True
+            )
+
+            Assert.That(
+                annotation.SourceRows
+                |> Array.exists (fun sourceRow -> sourceRow.SourceReferenceId = parentSaveSourceId),
                 Is.True
             )
         }
