@@ -78,6 +78,8 @@ update the issue before editing the new paths.
   reviewer to re-check them only when the new diff affects those areas. If the first code review for a new pull request
   finds no issues, still add a pull request comment with the review output so the review pass is documented where code
   review evidence belongs.
+- Code reviews must be exhaustive: review-only subagents should keep searching for additional actionable findings until
+  they stop finding new issues, then report the final no-issues state and the areas they explicitly checked.
 - When adding or updating code-review comments on a pull request, update the pull request body's `Review Status` section
   at the same time. Keep it as a high-level summary of reviews run, open findings, fix commits, final no-issues reviews,
   and where the detailed review/fix comments live.

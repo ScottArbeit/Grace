@@ -633,6 +633,8 @@ Definition of done:
 - Tests or docs updated
 - Fresh local review-only sibling subagent completed with no issues remaining; implementation subagents return a Ready
   For Review handoff instead of running nested <code>codex review</code>
+- Code reviews are exhaustive: review-only sibling subagents keep searching for additional actionable findings until
+  they stop finding new issues
 - Review-only sibling subagents are allowed up to 10 minutes before stalled-progress analysis and must report back when
   complete so the parent/orchestrator can continue
 - Review reports include brief Reviewed And OK notes for plausible issues checked and found safe, so later reviewers do
