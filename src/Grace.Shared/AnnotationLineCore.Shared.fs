@@ -105,9 +105,14 @@ module AnnotationLineCore =
 
     let private referenceTypeName (referenceType: ReferenceType) = getDiscriminatedUnionCaseName referenceType
 
+    let private knownReferenceTypeNames = listCases<ReferenceType> () |> Set.ofArray
+
+    let private isKnownReferenceTypeName referenceTypeName = knownReferenceTypeNames.Contains referenceTypeName
+
     let private matchesReferenceTypeFilter (referenceTypeNames: Set<string>) (document: AnnotationHistoryDocument) =
         referenceTypeNames.Count = 0
-        || referenceTypeNames.Contains document.SourceReference.ReferenceType
+        || (isKnownReferenceTypeName document.SourceReference.ReferenceType
+            && referenceTypeNames.Contains document.SourceReference.ReferenceType)
 
     let private appendSourceRow (rows: ResizeArray<AnnotationSourceRow>) path sourceReferenceId sourceRange =
         let rowId = sourceRowId (rows.Count + 1)
@@ -240,12 +245,16 @@ module AnnotationLineCore =
             |> Array.map referenceTypeName
             |> Set.ofArray
 
+        let includedHistory =
+            history
+            |> Array.filter (matchesReferenceTypeFilter referenceTypeNames)
+
         let historyErrors =
             [
                 if history.Length = 0 then
                     "Annotation history must contain at least the target document."
 
-                for document in history do
+                for document in includedHistory do
                     if not (String.Equals(document.Path, path, StringComparison.Ordinal)) then
                         $"Annotation history path '{document.Path}' must match annotation path '{path}'."
 
@@ -272,10 +281,6 @@ module AnnotationLineCore =
             with
         | _ :: _ as errors -> Error errors
         | [] ->
-            let includedHistory =
-                history
-                |> Array.filter (matchesReferenceTypeFilter referenceTypeNames)
-
             let decoded =
                 includedHistory
                 |> Array.map (fun document ->
@@ -327,7 +332,16 @@ module AnnotationLineCore =
                     |> Array.map (fun (document, _) -> document.SourceReference)
                     |> Array.filter (fun reference -> usedSourceReferenceIds.Contains reference.SourceReferenceId)
 
-                if sourceReferences.Length > maxReferences then
+                let sourceReferenceErrors =
+                    [
+                        for sourceReference in sourceReferences do
+                            if not (isKnownReferenceTypeName sourceReference.ReferenceType) then
+                                $"SourceReference '{sourceReference.SourceReferenceId}' contains unknown ReferenceType '{sourceReference.ReferenceType}'."
+                    ]
+
+                if not sourceReferenceErrors.IsEmpty then
+                    Error sourceReferenceErrors
+                elif sourceReferences.Length > maxReferences then
                     Error [ $"SourceReferences must contain no more than MaxReferences ({maxReferences}) entries." ]
                 else
                     Ok(

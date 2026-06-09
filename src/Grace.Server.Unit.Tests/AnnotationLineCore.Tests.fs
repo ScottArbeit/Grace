@@ -39,10 +39,15 @@ type AnnotationLineCoreTests() =
 
     let historyDocument sourceReference content = { SourceReference = sourceReference; Path = "src/App.fs"; Content = bytes content }
 
+    let historyDocumentWithPath sourceReference path content = { SourceReference = sourceReference; Path = path; Content = bytes content }
+
     let historyDocumentBytes sourceReference content = { SourceReference = sourceReference; Path = "src/App.fs"; Content = content }
 
     let build requestedRange history =
         buildAnnotation (requestedRange, targetReferenceId, "src/App.fs", [| ReferenceType.Commit |], DefaultMaxReferences, true, history)
+
+    let buildWithoutReferenceTypeFilter requestedRange history =
+        buildAnnotation (requestedRange, targetReferenceId, "src/App.fs", Array.empty, DefaultMaxReferences, true, history)
 
     let buildWithMaxReferences maxReferences requestedRange history =
         buildAnnotation (requestedRange, targetReferenceId, "src/App.fs", [| ReferenceType.Commit |], maxReferences, true, history)
@@ -208,6 +213,64 @@ type AnnotationLineCoreTests() =
                 Assert.That(annotation.SourceReferences[0].SourceReferenceId, Is.EqualTo("source-reference-new"))
                 Assert.That(annotation.SourceReferences[0].ReferenceType, Is.EqualTo("Commit")))
         )
+
+    [<Test>]
+    member _.BuildAnnotationSkipsFilteredReferenceTypesBeforePathValidation() =
+        let annotation =
+            build
+                { StartLine = 1; EndLine = 1 }
+                [|
+                    historyDocument oldReference "old"
+                    historyDocumentWithPath saveReference "src/Renamed.fs" "new"
+                    historyDocument newReference "new"
+                |]
+            |> assertOk
+
+        assertValid annotation
+        assertCoveredExactlyOnce 1 1 annotation
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(annotation.SourceRows, Has.Length.EqualTo(1))
+                Assert.That(annotation.SourceRows[0].SourceReferenceId, Is.EqualTo("source-reference-new"))
+                Assert.That(annotation.SourceReferences, Has.Length.EqualTo(1))
+                Assert.That(annotation.SourceReferences[0].ReferenceType, Is.EqualTo("Commit")))
+        )
+
+    [<Test>]
+    member _.BuildAnnotationRejectsUnknownTargetReferenceTypeWithoutFilter() =
+        let unknownReference = sourceReferenceWithType "source-reference-unknown" targetReferenceId "Unknown" "unknown" newDirectoryVersionId
+
+        let result =
+            buildWithoutReferenceTypeFilter
+                { StartLine = 1; EndLine = 1 }
+                [|
+                    historyDocument unknownReference "new"
+                |]
+
+        match result with
+        | Ok annotation ->
+            assertValid annotation
+            Assert.Fail("Unknown target reference types should be rejected.")
+        | Error errors -> Assert.That(errors, Has.Some.Contains("unknown ReferenceType 'Unknown'"))
+
+    [<Test>]
+    member _.BuildAnnotationRejectsUnknownSourceReferenceTypeWithoutFilter() =
+        let unknownReference = sourceReferenceWithType "source-reference-unknown" oldReferenceId "Unknown" "unknown" oldDirectoryVersionId
+
+        let result =
+            buildWithoutReferenceTypeFilter
+                { StartLine = 1; EndLine = 1 }
+                [|
+                    historyDocument unknownReference "same"
+                    historyDocument newReference "same"
+                |]
+
+        match result with
+        | Ok annotation ->
+            assertValid annotation
+            Assert.Fail("Unknown source reference types should be rejected.")
+        | Error errors -> Assert.That(errors, Has.Some.Contains("unknown ReferenceType 'Unknown'"))
 
     [<Test>]
     member _.BuildAnnotationRejectsHistoryWhenLastReferenceDoesNotMatchTargetReferenceId() =
