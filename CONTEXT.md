@@ -723,3 +723,103 @@ Developer: "If applying a PromotionSet is waiting for an Approval Responder, is 
 
 Domain expert: "No. The Approval Request is pending. The PromotionSet can remain ready while list views show the
 derived Promotion Set Approval Summary."
+
+## Branch Annotation Context
+
+This context captures the project language for the Grace branch annotation design discussion. It is a glossary only, not
+an implementation specification.
+
+### Branch Annotation Language
+
+**Branch annotation**:
+A view of a file on a Branch that explains which References account for the file's visible lines. It is the Grace
+feature concept behind `grace branch annotate`.
+_Avoid_: Blame, origin search
+
+**Line source**:
+The Reference that explains a visible line under the selected branch annotation rules. A line source may identify when
+the line last changed, when it became visible on the Branch, or both, but it is always expressed in Grace terms as a
+Reference.
+_Avoid_: Git origin, distributed origin
+
+**Reference creator**:
+The identity recorded for the event that created a Reference. It is the preferred language for "who created this
+Reference" in branch annotation output.
+_Avoid_: Author, committer, Git user
+
+**Effective branch history**:
+The References needed to explain the content visible on a Branch, including relevant `BasedOn` relationships when a
+branch was created or rebased. One Branch has one effective branch history for a selected Target Reference, subject to
+the chosen annotation filters.
+_Avoid_: Origin history, remote history
+
+**Annotation line**:
+A 1-based visible text line in the target file after line-ending normalization for annotation comparison. Terminal
+newlines do not create an additional visible line. Annotation lines apply only to text files; binary files are outside
+branch annotation V1.
+_Avoid_: Diff line, physical newline record
+
+**Annotation boundary**:
+A point where branch annotation can still return visible target lines, but cannot fully prove one or more line source
+details under the selected annotation rules. Boundaries must be explicit and must not be presented as complete source
+attribution.
+_Avoid_: Silent fallback, unknown origin
+
+**Last changed Reference**:
+The Reference where a visible annotation line or line span last became different at the annotated RelativePath under the
+selected branch annotation rules. A Rebase Reference is a Last changed Reference only for lines whose visible content
+changed at that Rebase. Human branch annotation output defaults to this line source role.
+_Avoid_: Last changed by, committer, author
+
+**Introduced Reference**:
+The earliest Reference in effective branch history where a visible annotation line or line span is known, through
+annotation line continuity, to appear at the annotated RelativePath under the same line comparison rules used by branch
+annotation. It may be unknown when annotation reaches a boundary before proving the earliest same-path appearance.
+_Avoid_: Origin Reference, original author, first commit, earliest text match
+
+**Annotation span**:
+A contiguous range of annotation lines in the target file that share the same resolved line source details under the
+selected branch annotation rules. Branch annotation JSON should represent repeated line attribution as spans rather than
+duplicating one source object per line.
+_Avoid_: Blame hunk, diff hunk, repeated per-line record
+
+**Exact path annotation**:
+Branch annotation that explains visible lines only at the selected RelativePath. It does not follow renames, copies, or
+moved blocks across other paths. In V1, a delete-plus-add or rename-like history is a path boundary unless the same
+RelativePath remains visible in effective branch history.
+_Avoid_: Rename following, copy detection, repository-wide provenance
+
+**Target Reference**:
+The Reference whose directory and file state branch annotation is explaining. If no Target Reference is selected
+explicitly, `grace branch annotate` uses the selected Branch's latest Reference.
+_Avoid_: HEAD, tip, origin
+
+**Annotation line continuity**:
+The relationship established by branch annotation when a target annotation line is traced across earlier file states at
+the same RelativePath. It is based on the annotation algorithm's line alignment, not on searching for matching text
+anywhere in the file.
+_Avoid_: Text search, repository-wide provenance, semantic equivalence
+
+### Branch Annotation Ambiguities
+
+**Origin**:
+Do not use `Origin` as a Grace branch annotation mode. Grace is centralized, and the annotation design should explain
+visible content through Branches, References, and `BasedOn` relationships rather than importing Git/distributed-source
+terminology.
+
+### Branch Annotation Dialogue
+
+Developer: "Should annotate show the origin of this line?"
+
+Domain expert: "Say line source instead. In Grace, the answer should be a Reference in the effective branch history,
+not a Git-style origin."
+
+Developer: "Should it show who made the change?"
+
+Domain expert: "Yes, when available. Use the Reference creator captured from event metadata, and make absence or
+redaction explicit."
+
+Developer: "If the same line text appeared earlier elsewhere in the file, is that the Introduced Reference?"
+
+Domain expert: "No. Introduced Reference follows annotation line continuity at the exact RelativePath. It is not text
+search, semantic equivalence, rename following, or repository-wide provenance."
