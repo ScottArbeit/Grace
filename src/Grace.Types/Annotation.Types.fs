@@ -59,6 +59,8 @@ module Annotation =
             DirectoryVersionId: DirectoryVersionId
             [<Key(5)>]
             CreatedAt: Instant option
+            [<Key(6)>]
+            CreatedBy: string option
         }
 
         static member Default =
@@ -69,6 +71,7 @@ module Annotation =
                 ReferenceText = String.Empty
                 DirectoryVersionId = DirectoryVersionId.Empty
                 CreatedAt = None
+                CreatedBy = None
             }
 
     [<MessagePackObject; GenerateSerializer>]
@@ -212,12 +215,18 @@ module Annotation =
         |> Seq.countBy id
         |> Seq.exists (fun (_, count) -> count > 1)
 
+    let private hasBlanks values = values |> Seq.exists String.IsNullOrWhiteSpace
+
     let private collectRangeErrors label lineRange =
         match validateLineRange lineRange with
         | Ok () -> []
         | Error errors ->
             errors
             |> List.map (fun error -> $"{label}: {error}")
+
+    let private containsLineRange (outer: AnnotationLineRange) (inner: AnnotationLineRange) =
+        inner.StartLine >= outer.StartLine
+        && inner.EndLine <= outer.EndLine
 
     let validateLinkIntegrity (annotation: BranchAnnotationDto) =
         let sourceReferenceIds =
@@ -251,7 +260,9 @@ module Annotation =
 
         let spanBoundaryErrors =
             annotation.Spans
-            |> Seq.filter (fun span -> not (boundaryIds.Contains span.BoundaryId))
+            |> Seq.filter (fun span ->
+                not (String.IsNullOrWhiteSpace span.BoundaryId)
+                && not (boundaryIds.Contains span.BoundaryId))
             |> Seq.map (fun span -> $"Span '{span.SpanId}' references missing Boundary '{span.BoundaryId}'.")
             |> Seq.toList
 
@@ -291,6 +302,34 @@ module Annotation =
                 "Spans must not contain duplicate SpanId values."
             |> List.rev
 
+        let blankIdentifierErrors =
+            []
+            |> appendIf
+                (hasBlanks (
+                    annotation.SourceReferences
+                    |> Seq.map (fun sourceReference -> sourceReference.SourceReferenceId)
+                ))
+                "SourceReferences must not contain blank SourceReferenceId values."
+            |> appendIf
+                (hasBlanks (
+                    annotation.SourceRows
+                    |> Seq.map (fun sourceRow -> sourceRow.SourceRowId)
+                ))
+                "SourceRows must not contain blank SourceRowId values."
+            |> appendIf
+                (hasBlanks (
+                    annotation.Boundaries
+                    |> Seq.map (fun boundary -> boundary.BoundaryId)
+                ))
+                "Boundaries must not contain blank BoundaryId values."
+            |> appendIf
+                (hasBlanks (
+                    annotation.Spans
+                    |> Seq.map (fun span -> span.SpanId)
+                ))
+                "Spans must not contain blank SpanId values."
+            |> List.rev
+
         let rangeErrors =
             [
                 yield! collectRangeErrors "RequestedLineRange" annotation.RequestedLineRange
@@ -308,14 +347,37 @@ module Annotation =
                     yield! collectRangeErrors $"Span '{span.SpanId}'" span.LineRange
             ]
 
+        let requestedRangeErrors =
+            annotation.Spans
+            |> Seq.filter (fun span -> not (containsLineRange annotation.RequestedLineRange span.LineRange))
+            |> Seq.map (fun span -> $"Span '{span.SpanId}' LineRange must stay inside RequestedLineRange.")
+            |> Seq.toList
+
+        let sourceRowPathErrors =
+            annotation.SourceRows
+            |> Seq.filter (fun sourceRow -> not (String.Equals(sourceRow.Path, annotation.Path, StringComparison.Ordinal)))
+            |> Seq.map (fun sourceRow -> $"SourceRow '{sourceRow.SourceRowId}' Path must match annotation Path '{annotation.Path}'.")
+            |> Seq.toList
+
+        let sourceReferenceBudgetErrors =
+            []
+            |> appendIf
+                (annotation.SourceReferences.Length > annotation.MaxReferences)
+                $"SourceReferences must contain no more than MaxReferences ({annotation.MaxReferences}) entries."
+            |> List.rev
+
         let errors =
             [
                 yield! rangeErrors
                 yield! duplicateErrors
+                yield! blankIdentifierErrors
                 yield! sourceRowReferenceErrors
                 yield! boundarySourceRowErrors
                 yield! spanBoundaryErrors
                 yield! spanSourceRowErrors
+                yield! requestedRangeErrors
+                yield! sourceRowPathErrors
+                yield! sourceReferenceBudgetErrors
             ]
 
         match errors with

@@ -4,6 +4,7 @@ open Grace.Shared.Parameters.Common
 open Grace.Types.Annotation
 open Grace.Types.Common
 open System
+open System.Text.Json.Serialization
 
 module Branch =
 
@@ -125,6 +126,7 @@ module Branch =
         member val public MaxReferences = DefaultMaxReferences with get, set
         member val public IncludeLineText = false with get, set
 
+        [<JsonIgnore(Condition = JsonIgnoreCondition.Always)>]
         member this.LineRange = { StartLine = this.StartLine; EndLine = this.EndLine }
 
         member this.Validate() =

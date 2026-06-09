@@ -52,6 +52,7 @@ type AnnotationContractTests() =
                     ReferenceText = "previous commit"
                     DirectoryVersionId = directoryVersionId
                     CreatedAt = None
+                    CreatedBy = Some "alice@example.test"
                 }
             |]
         )
@@ -82,11 +83,24 @@ type AnnotationContractTests() =
                 Assert.That(root.GetProperty("ReferenceTypeFilter").ValueKind, Is.EqualTo(JsonValueKind.Array))
                 Assert.That(root.GetProperty("SourceReferences").ValueKind, Is.EqualTo(JsonValueKind.Array))
 
+                let serializedSourceReference =
+                    root
+                        .GetProperty("SourceReferences")
+                        .EnumerateArray()
+                    |> Seq.exactlyOne
+
                 Assert.That(
                     root
                         .GetProperty("SourceReferences")
                         .GetArrayLength(),
                     Is.EqualTo(1)
+                )
+
+                Assert.That(
+                    serializedSourceReference
+                        .GetProperty("CreatedBy")
+                        .GetString(),
+                    Is.EqualTo("alice@example.test")
                 )
 
                 Assert.That(root.TryGetProperty("AlgorithmVersion", &algorithmVersion), Is.False))
@@ -109,11 +123,16 @@ type AnnotationContractTests() =
     [<Test>]
     member _.AnnotateParametersDefaultReferenceBudgetIsOneThousand() =
         let parameters = AnnotateParameters()
+        let json = serialize parameters
 
         Assert.Multiple(
             Action (fun () ->
+                use document = JsonDocument.Parse(json)
+                let mutable lineRange = Unchecked.defaultof<JsonElement>
+
                 Assert.That(parameters.MaxReferences, Is.EqualTo(1000))
                 Assert.That(parameters.IncludeLineText, Is.False)
+                Assert.That(document.RootElement.TryGetProperty("LineRange", &lineRange), Is.False)
                 assertOk (parameters.Validate()))
         )
 
@@ -171,6 +190,19 @@ type AnnotationContractTests() =
             )
 
     [<Test>]
+    member _.AnnotationValidationAllowsResolvedSpansWithoutBoundaries() =
+        let annotation =
+            { validAnnotation true with
+                Boundaries = Array.empty
+                Spans =
+                    [|
+                        { SpanId = "span-1"; BoundaryId = String.Empty; LineRange = { StartLine = 10; EndLine = 11 }; SourceRowIds = [| "source-row-1" |] }
+                    |]
+            }
+
+        assertOk (validate annotation)
+
+    [<Test>]
     member _.AnnotationValidationRejectsDuplicateSourceRows() =
         let annotation = validAnnotation true
 
@@ -186,3 +218,90 @@ type AnnotationContractTests() =
         match validate duplicate with
         | Ok () -> Assert.Fail("Duplicate source rows should be rejected.")
         | Error errors -> Assert.That(errors, Has.Some.Contains("duplicate SourceRowId"))
+
+    [<TestCase("source-reference")>]
+    [<TestCase("source-row")>]
+    [<TestCase("boundary")>]
+    [<TestCase("span")>]
+    member _.AnnotationValidationRejectsBlankIdentifiers(identifierKind: string) =
+        let annotation = validAnnotation true
+
+        let blank =
+            match identifierKind with
+            | "source-reference" ->
+                { annotation with
+                    SourceReferences =
+                        [|
+                            { annotation.SourceReferences[0] with SourceReferenceId = " " }
+                        |]
+                }
+            | "source-row" ->
+                { annotation with
+                    SourceRows =
+                        [|
+                            { annotation.SourceRows[0] with SourceRowId = " " }
+                        |]
+                }
+            | "boundary" ->
+                { annotation with
+                    Boundaries =
+                        [|
+                            { annotation.Boundaries[0] with BoundaryId = " " }
+                        |]
+                }
+            | "span" ->
+                { annotation with
+                    Spans =
+                        [|
+                            { annotation.Spans[0] with SpanId = " " }
+                        |]
+                }
+            | unexpected -> failwith $"Unknown identifier kind: {unexpected}"
+
+        match validate blank with
+        | Ok () -> Assert.Fail($"Blank {identifierKind} identifiers should be rejected.")
+        | Error errors -> Assert.That(errors, Has.Some.Contains("blank"))
+
+    [<Test>]
+    member _.AnnotationValidationRejectsSpansOutsideRequestedRange() =
+        let annotation =
+            { validAnnotation true with
+                Spans =
+                    [|
+                        { SpanId = "span-1"; BoundaryId = "boundary-1"; LineRange = { StartLine = 9; EndLine = 11 }; SourceRowIds = [| "source-row-1" |] }
+                    |]
+            }
+
+        match validate annotation with
+        | Ok () -> Assert.Fail("Spans outside the requested line range should be rejected.")
+        | Error errors -> Assert.That(errors, Has.Some.Contains("inside RequestedLineRange"))
+
+    [<Test>]
+    member _.AnnotationValidationRejectsCrossPathSourceRows() =
+        let annotation =
+            { validAnnotation true with
+                SourceRows =
+                    [|
+                        { (validAnnotation true).SourceRows[0] with Path = "src/Other.fs" }
+                    |]
+            }
+
+        match validate annotation with
+        | Ok () -> Assert.Fail("Source rows from a different path should be rejected.")
+        | Error errors -> Assert.That(errors, Has.Some.Contains("Path must match annotation Path"))
+
+    [<Test>]
+    member _.AnnotationValidationRejectsSourceReferencesAboveBudget() =
+        let annotation =
+            { validAnnotation true with
+                MaxReferences = 1
+                SourceReferences =
+                    [|
+                        (validAnnotation true).SourceReferences[0]
+                        { (validAnnotation true).SourceReferences[0] with SourceReferenceId = "source-reference-2" }
+                    |]
+            }
+
+        match validate annotation with
+        | Ok () -> Assert.Fail("SourceReferences above MaxReferences should be rejected.")
+        | Error errors -> Assert.That(errors, Has.Some.Contains("MaxReferences"))
