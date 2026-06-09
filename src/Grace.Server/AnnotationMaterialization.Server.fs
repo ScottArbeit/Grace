@@ -7,6 +7,8 @@ open Grace.Shared.Utilities
 open Grace.Types.Common
 open Grace.Types.Repository
 open System
+open System.IO
+open System.IO.Compression
 open System.Security.Cryptography
 open System.Text
 open System.Threading
@@ -70,6 +72,33 @@ module internal AnnotationMaterialization =
             Error(error correlationId $"Annotation target '{fileVersion.RelativePath}' materialized bytes do not match FileVersion.Sha256Hash.")
         else
             Ok(copyBytes bytes)
+
+    let private looksLikeGzip (bytes: byte array) =
+        not (isNull bytes)
+        && bytes.Length >= 2
+        && bytes[0] = 0x1fuy
+        && bytes[1] = 0x8buy
+
+    let private decompressGzipWholeFileBytes (fileVersion: FileVersion) (bytes: byte array) correlationId =
+        if looksLikeGzip bytes then
+            try
+                use source = new MemoryStream(bytes, writable = false)
+                use gzipStream = new GZipStream(source, CompressionMode.Decompress, leaveOpen = false)
+                use decompressed = new MemoryStream()
+                let buffer = Array.zeroCreate<byte> 81920
+                let mutable bytesRead = gzipStream.Read(buffer, 0, buffer.Length)
+
+                while bytesRead > 0
+                      && decompressed.Length <= fileVersion.Size do
+                    decompressed.Write(buffer, 0, bytesRead)
+                    bytesRead <- gzipStream.Read(buffer, 0, buffer.Length)
+
+                Ok(decompressed.ToArray())
+            with
+            | :? InvalidDataException as ex ->
+                Error(error correlationId $"Annotation target '{fileVersion.RelativePath}' gzip content could not be decompressed: {ex.Message}")
+        else
+            Ok bytes
 
     let private decodeUtf8Text (fileVersion: FileVersion) (bytes: byte array) correlationId =
         if int64 bytes.Length > MaxMaterializedTextBytes then
@@ -159,7 +188,10 @@ module internal AnnotationMaterialization =
             let objectKey = StorageKeys.wholeFileContentObjectKey fileVersion
 
             match! readObjectPayload objectKey correlationId cancellationToken with
-            | Ok bytes -> return validateExactFileBytes fileVersion bytes correlationId
+            | Ok bytes ->
+                match decompressGzipWholeFileBytes fileVersion bytes correlationId with
+                | Ok decompressedBytes -> return validateExactFileBytes fileVersion decompressedBytes correlationId
+                | Error decompressionError -> return Error decompressionError
             | Error readError -> return Error readError
         }
 
@@ -237,7 +269,7 @@ module internal AnnotationMaterialization =
                 if objectKey.StartsWith(StorageKeys.contentBlockObjectKey String.Empty, StringComparison.Ordinal) then
                     MaxContentBlockPayloadBytes
                 else
-                    MaxMaterializedTextBytes
+                    MaxContentBlockPayloadBytes
 
             azureObjectPayloadReader repositoryDto maxPayloadBytes objectKey correlationId cancellationToken
 

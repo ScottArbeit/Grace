@@ -7,6 +7,8 @@ open Grace.Types.Common
 open NUnit.Framework
 open System
 open System.Collections.Generic
+open System.IO
+open System.IO.Compression
 open System.Security.Cryptography
 open System.Text
 open System.Threading
@@ -23,6 +25,13 @@ type AnnotationMaterializationServerTests() =
         |> fun value -> value.ToLowerInvariant()
 
     let textBytes (text: string) = Encoding.UTF8.GetBytes text
+
+    let gzipBytes (bytes: byte array) =
+        use compressed = new MemoryStream()
+        use gzipStream = new GZipStream(compressed, CompressionLevel.SmallestSize, leaveOpen = true)
+        gzipStream.Write(bytes, 0, bytes.Length)
+        gzipStream.Dispose()
+        compressed.ToArray()
 
     let fileVersion relativePath isBinary (bytes: byte array) = FileVersion.Create relativePath (sha256Hex bytes) String.Empty isBinary (int64 bytes.Length)
 
@@ -91,6 +100,21 @@ type AnnotationMaterializationServerTests() =
             |> expectOk
 
         Assert.That(result.Text, Is.EqualTo("line one\nline two\n"))
+        Assert.That(result.Bytes = bytes, Is.True)
+
+    [<Test>]
+    member _.WholeFileContentMaterializesGzipCompressedUtf8Text() =
+        let bytes = textBytes "gzip line one\ngzip line two\n"
+        let target = fileVersion "/src/Compressed.fs" false bytes
+        let objectKey = StorageKeys.wholeFileContentObjectKey target
+        let objects = Dictionary<string, byte array>()
+        objects[objectKey] <- gzipBytes bytes
+
+        let result =
+            materialize (readerFrom objects) target
+            |> expectOk
+
+        Assert.That(result.Text, Is.EqualTo("gzip line one\ngzip line two\n"))
         Assert.That(result.Bytes = bytes, Is.True)
 
     [<Test>]
