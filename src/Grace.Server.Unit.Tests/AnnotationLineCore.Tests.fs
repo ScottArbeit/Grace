@@ -879,6 +879,34 @@ type AnnotationLineCoreTests() =
         )
 
     [<Test>]
+    member _.BuildAnnotationIgnoresPrunedDifferentPathAncestorWhenBudgetBounded() =
+        let middleReference = sourceReferenceWithType "source-reference-middle" saveReferenceId "Commit" "middle" saveDirectoryVersionId
+
+        let annotation =
+            buildWithMaxReferences
+                2
+                { StartLine = 1; EndLine = 2 }
+                [|
+                    historyDocumentWithPath oldReference "src/RenamedBeforeBudget.fs" "same\nrenamed"
+                    historyDocument middleReference "same\nmiddle"
+                    historyDocument newReference "same\nnew"
+                |]
+            |> assertOk
+
+        assertValid annotation
+        assertCoveredExactlyOnce 1 2 annotation
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(annotation.Boundaries, Has.Length.EqualTo(1))
+                Assert.That(annotation.Boundaries[0].LineRange, Is.EqualTo({ StartLine = 1; EndLine = 1 }))
+                Assert.That(annotation.Spans[0].BoundaryId, Is.EqualTo(annotation.Boundaries[0].BoundaryId))
+                Assert.That(annotation.SourceRows[0].SourceReferenceId, Is.EqualTo("source-reference-middle"))
+                Assert.That(annotation.SourceRows[1].SourceReferenceId, Is.EqualTo("source-reference-new"))
+                Assert.That(annotation.SourceReferences, Has.Length.EqualTo(2)))
+        )
+
+    [<Test>]
     member _.BuildAnnotationRejectsUnknownTargetReferenceTypeWithoutFilter() =
         let unknownReference = sourceReferenceWithType "source-reference-unknown" targetReferenceId "Unknown" "unknown" newDirectoryVersionId
 

@@ -588,14 +588,24 @@ module AnnotationLineCore =
             |> Array.map referenceTypeName
             |> Set.ofArray
 
-        let sourceReferenceErrors = validateSourceReferences history
+        let traversalWasBudgetBounded =
+            maxReferences > 0
+            && history.Length > maxReferences
+
+        let traceHistory =
+            if traversalWasBudgetBounded then
+                history[history.Length - maxReferences ..]
+            else
+                history
+
+        let sourceReferenceErrors = validateSourceReferences traceHistory
 
         let historyErrors =
             [
                 if history.Length = 0 then
                     "Annotation history must contain at least the target document."
 
-                for document in history do
+                for document in traceHistory do
                     if not (String.Equals(document.Path, path, StringComparison.Ordinal)) then
                         $"Annotation history path '{document.Path}' must match annotation path '{path}'."
 
@@ -615,19 +625,11 @@ module AnnotationLineCore =
             with
         | _ :: _ as errors -> Error errors
         | [] ->
-            let traversalWasBudgetBounded = history.Length > maxReferences
-
             let effectiveTraversalBoundaryKind =
                 if traversalWasBudgetBounded then
                     Some "TraversalBudgetReached"
                 else
                     traversalBoundaryKind
-
-            let traceHistory =
-                if traversalWasBudgetBounded then
-                    history[history.Length - maxReferences ..]
-                else
-                    history
 
             let decoded =
                 traceHistory
