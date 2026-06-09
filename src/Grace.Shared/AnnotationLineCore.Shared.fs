@@ -256,7 +256,7 @@ module AnnotationLineCore =
 
     let private shiftedAlignmentBudgetExceeded = { BoundaryKind = "ShiftedAlignmentBudgetExceeded"; SourceRows = Array.empty }
 
-    let private traversalBudgetReached source = { BoundaryKind = "TraversalBudgetReached"; SourceRows = [| source |] }
+    let private traversalBoundaryReached boundaryKind source = { BoundaryKind = boundaryKind; SourceRows = [| source |] }
 
     let private referenceTypeFiltered source = { BoundaryKind = "ReferenceTypeFiltered"; SourceRows = [| source |] }
 
@@ -474,7 +474,7 @@ module AnnotationLineCore =
         (documents: (AnnotationHistoryDocument * VisibleTextDocument) array)
         (lineAlignments: LineAlignment array)
         referenceTypeNames
-        traversalWasBudgetBounded
+        traversalBoundaryKind
         =
         let targetDocument = documents[documents.Length - 1] |> snd
 
@@ -508,9 +508,9 @@ module AnnotationLineCore =
                 let sourceDocument, _ = documents[sourceIndex]
                 let sourceLine = lineSourceFromDocument sourceLineNumber sourceDocument
 
-                if traversalWasBudgetBounded && sourceIndex = 0 then
-                    Boundary(traversalBudgetReached sourceLine)
-                else
+                match traversalBoundaryKind with
+                | Some boundaryKind when sourceIndex = 0 -> Boundary(traversalBoundaryReached boundaryKind sourceLine)
+                | _ ->
                     match tryProjectAttributionSource sourceIndex sourceLineNumber documents lineAlignments referenceTypeNames with
                     | Some (projectedIndex, projectedLineNumber) ->
                         let projectedDocument, _ = documents[projectedIndex]
@@ -523,7 +523,7 @@ module AnnotationLineCore =
         traceDocuments
         (lineAlignments: LineAlignment array)
         referenceTypeNames
-        traversalWasBudgetBounded
+        traversalBoundaryKind
         =
         let segments = ResizeArray<int * int * AnnotationLineState>()
         let firstExistingLine = max requestedLineRange.StartLine 1
@@ -534,13 +534,13 @@ module AnnotationLineCore =
 
         if firstExistingLine <= lastExistingLine then
             let mutable segmentStart = firstExistingLine
-            let mutable segmentState = traceLineSource firstExistingLine traceDocuments lineAlignments referenceTypeNames traversalWasBudgetBounded
+            let mutable segmentState = traceLineSource firstExistingLine traceDocuments lineAlignments referenceTypeNames traversalBoundaryKind
 
             let mutable previousLine = firstExistingLine
             let mutable previousState = segmentState
 
             for lineNumber in firstExistingLine + 1 .. lastExistingLine do
-                let currentState = traceLineSource lineNumber traceDocuments lineAlignments referenceTypeNames traversalWasBudgetBounded
+                let currentState = traceLineSource lineNumber traceDocuments lineAlignments referenceTypeNames traversalBoundaryKind
 
                 if canAppend previousState currentState previousLine lineNumber then
                     previousLine <- lineNumber
@@ -561,7 +561,7 @@ module AnnotationLineCore =
 
         segments.ToArray()
 
-    let buildAnnotation
+    let private buildAnnotationWithTraversalBoundary
         (
             requestedLineRange: AnnotationLineRange,
             targetReferenceId: ReferenceId,
@@ -569,6 +569,7 @@ module AnnotationLineCore =
             referenceTypeFilter: ReferenceType array,
             maxReferences: int,
             includeLineText: bool,
+            traversalBoundaryKind: string option,
             history: AnnotationHistoryDocument array
         )
         =
@@ -616,6 +617,12 @@ module AnnotationLineCore =
         | [] ->
             let traversalWasBudgetBounded = history.Length > maxReferences
 
+            let effectiveTraversalBoundaryKind =
+                if traversalWasBudgetBounded then
+                    Some "TraversalBudgetReached"
+                else
+                    traversalBoundaryKind
+
             let traceHistory =
                 if traversalWasBudgetBounded then
                     history[history.Length - maxReferences ..]
@@ -662,7 +669,7 @@ module AnnotationLineCore =
                         Array.empty
 
                 let segments =
-                    traceRequestedSegments requestedLineRange targetDocument traceDocuments lineAlignments referenceTypeNames traversalWasBudgetBounded
+                    traceRequestedSegments requestedLineRange targetDocument traceDocuments lineAlignments referenceTypeNames effectiveTraversalBoundaryKind
 
                 let components = buildComponentsFromSegments lines segments
 
@@ -694,3 +701,38 @@ module AnnotationLineCore =
                             sourceReferences
                         )
                     )
+
+    let buildAnnotation
+        (
+            requestedLineRange: AnnotationLineRange,
+            targetReferenceId: ReferenceId,
+            path: RelativePath,
+            referenceTypeFilter: ReferenceType array,
+            maxReferences: int,
+            includeLineText: bool,
+            history: AnnotationHistoryDocument array
+        )
+        =
+        buildAnnotationWithTraversalBoundary (requestedLineRange, targetReferenceId, path, referenceTypeFilter, maxReferences, includeLineText, None, history)
+
+    let buildAnnotationFromEffectiveHistoryTraversal
+        (
+            requestedLineRange: AnnotationLineRange,
+            targetReferenceId: ReferenceId,
+            path: RelativePath,
+            referenceTypeFilter: ReferenceType array,
+            maxReferences: int,
+            includeLineText: bool,
+            traversalResult: EffectiveHistoryTraversalResult
+        )
+        =
+        buildAnnotationWithTraversalBoundary (
+            requestedLineRange,
+            targetReferenceId,
+            path,
+            referenceTypeFilter,
+            maxReferences,
+            includeLineText,
+            traversalResult.BoundaryKind,
+            traversalResult.History
+        )

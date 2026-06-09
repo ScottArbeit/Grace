@@ -64,6 +64,17 @@ type AnnotationLineCoreTests() =
     let buildWithReferenceTypes referenceTypes requestedRange history =
         buildAnnotation (requestedRange, targetReferenceId, "src/App.fs", referenceTypes, DefaultMaxReferences, true, history)
 
+    let buildFromTraversal requestedRange traversalResult =
+        buildAnnotationFromEffectiveHistoryTraversal (
+            requestedRange,
+            targetReferenceId,
+            "src/App.fs",
+            [| ReferenceType.Commit |],
+            DefaultMaxReferences,
+            true,
+            traversalResult
+        )
+
     let assertOk result =
         match result with
         | Ok value -> value
@@ -740,6 +751,103 @@ type AnnotationLineCoreTests() =
                 Assert.That(annotation.Spans[0].BoundaryId, Is.EqualTo(annotation.Boundaries[0].BoundaryId))
                 Assert.That(annotation.SourceRows[0].SourceReferenceId, Is.EqualTo("source-reference-new"))
                 Assert.That(annotation.SourceReferences, Has.Length.EqualTo(1)))
+        )
+
+    [<Test>]
+    member _.BuildAnnotationPreservesUnauthorizedAncestorBoundaryFromTraversalResult() =
+        let oldDocument = historyDocument oldReference "same"
+        let newDocument = historyDocument newReference "same"
+
+        let traversalResult =
+            traverseEffectiveBranchHistory
+                targetReferenceId
+                DefaultMaxReferences
+                [|
+                    effectiveHistoryDocument newDocument (Some oldReferenceId) true
+                    effectiveHistoryDocument oldDocument None false
+                |]
+
+        let annotation =
+            traversalResult
+            |> buildFromTraversal { StartLine = 1; EndLine = 1 }
+            |> assertOk
+
+        assertValid annotation
+        assertCoveredExactlyOnce 1 1 annotation
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(traversalResult.BoundaryKind, Is.EqualTo(Some "UnauthorizedAncestor"))
+                Assert.That(annotation.Boundaries, Has.Length.EqualTo(1))
+                Assert.That(annotation.Boundaries[0].LineRange, Is.EqualTo({ StartLine = 1; EndLine = 1 }))
+                Assert.That(annotation.Spans[0].BoundaryId, Is.EqualTo(annotation.Boundaries[0].BoundaryId))
+                Assert.That(annotation.SourceRows[0].SourceReferenceId, Is.EqualTo("source-reference-new"))
+                Assert.That(annotation.SourceReferences, Has.Length.EqualTo(1)))
+        )
+
+    [<Test>]
+    member _.BuildAnnotationPreservesMissingParentBoundaryFromTraversalResult() =
+        let newDocument = historyDocument newReference "same"
+
+        let traversalResult =
+            traverseEffectiveBranchHistory
+                targetReferenceId
+                DefaultMaxReferences
+                [|
+                    effectiveHistoryDocument newDocument (Some oldReferenceId) true
+                |]
+
+        let annotation =
+            traversalResult
+            |> buildFromTraversal { StartLine = 1; EndLine = 1 }
+            |> assertOk
+
+        assertValid annotation
+        assertCoveredExactlyOnce 1 1 annotation
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(traversalResult.BoundaryKind, Is.EqualTo(Some "MissingParentReference"))
+                Assert.That(annotation.Boundaries, Has.Length.EqualTo(1))
+                Assert.That(annotation.Boundaries[0].LineRange, Is.EqualTo({ StartLine = 1; EndLine = 1 }))
+                Assert.That(annotation.Spans[0].BoundaryId, Is.EqualTo(annotation.Boundaries[0].BoundaryId))
+                Assert.That(annotation.SourceRows[0].SourceReferenceId, Is.EqualTo("source-reference-new"))
+                Assert.That(annotation.SourceReferences, Has.Length.EqualTo(1)))
+        )
+
+    [<Test>]
+    member _.BuildAnnotationPreservesBasedOnLoopBoundaryFromTraversalResult() =
+        let oldDocument = historyDocument oldReference "same\nold"
+        let newDocument = historyDocument newReference "same\nnew"
+
+        let traversalResult =
+            traverseEffectiveBranchHistory
+                targetReferenceId
+                DefaultMaxReferences
+                [|
+                    effectiveHistoryDocument newDocument (Some oldReferenceId) true
+                    effectiveHistoryDocument oldDocument (Some targetReferenceId) true
+                |]
+
+        let annotation =
+            traversalResult
+            |> buildFromTraversal { StartLine = 1; EndLine = 2 }
+            |> assertOk
+
+        assertValid annotation
+        assertCoveredExactlyOnce 1 2 annotation
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(traversalResult.BoundaryKind, Is.EqualTo(Some "BasedOnLoopOrRepeatedLink"))
+                Assert.That(annotation.Boundaries, Has.Length.EqualTo(1))
+                Assert.That(annotation.Boundaries[0].LineRange, Is.EqualTo({ StartLine = 1; EndLine = 1 }))
+                Assert.That(annotation.Spans, Has.Length.EqualTo(2))
+                Assert.That(annotation.Spans[0].BoundaryId, Is.EqualTo(annotation.Boundaries[0].BoundaryId))
+                Assert.That(annotation.Spans[1].BoundaryId, Is.Empty)
+                Assert.That(annotation.SourceRows[0].SourceReferenceId, Is.EqualTo("source-reference-old"))
+                Assert.That(annotation.SourceRows[1].SourceReferenceId, Is.EqualTo("source-reference-new"))
+                Assert.That(annotation.SourceReferences, Has.Length.EqualTo(2)))
         )
 
     [<Test>]
