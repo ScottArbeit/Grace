@@ -14,6 +14,10 @@ module AnnotationLineCore =
 
     type AnnotationHistoryDocument = { SourceReference: AnnotationSourceReference; Path: RelativePath; Content: byte array }
 
+    type EffectiveHistoryDocument = { Document: AnnotationHistoryDocument; BasedOnReferenceId: ReferenceId option; IsAuthorized: bool }
+
+    type EffectiveHistoryTraversalResult = { History: AnnotationHistoryDocument array; BoundaryKind: string option }
+
     type AnnotationLineSource = { SourceReferenceId: AnnotationSourceReferenceId; Path: RelativePath; LineNumber: int }
 
     type AnnotationBoundaryState = { BoundaryKind: string; SourceRows: AnnotationLineSource array }
@@ -80,6 +84,37 @@ module AnnotationLineCore =
                 { LineNumber = lineNumber; Text = document.Lines[index] }
         |]
 
+    let traverseEffectiveBranchHistory targetReferenceId maxReferences (history: EffectiveHistoryDocument array) =
+        let byReferenceId =
+            history
+            |> Array.map (fun entry -> entry.Document.SourceReference.ReferenceId, entry)
+            |> Map.ofArray
+
+        let chronological = ResizeArray<AnnotationHistoryDocument>()
+        let mutable boundary = None
+        let mutable currentReferenceId = Some targetReferenceId
+        let mutable visited = Set.empty<ReferenceId>
+
+        while Option.isNone boundary
+              && currentReferenceId.IsSome do
+            let referenceId = currentReferenceId.Value
+
+            if visited.Contains referenceId then
+                boundary <- Some "BasedOnLoopOrRepeatedLink"
+            elif chronological.Count >= maxReferences then
+                boundary <- Some "TraversalBudgetReached"
+            else
+                visited <- visited.Add referenceId
+
+                match byReferenceId.TryFind referenceId with
+                | None -> boundary <- Some "MissingParentReference"
+                | Some entry when not entry.IsAuthorized -> boundary <- Some "UnauthorizedAncestor"
+                | Some entry ->
+                    chronological.Add entry.Document
+                    currentReferenceId <- entry.BasedOnReferenceId
+
+        { History = chronological.ToArray() |> Array.rev; BoundaryKind = boundary }
+
     let private sourceKey (source: AnnotationLineSource) = source.SourceReferenceId, source.Path
 
     let private boundaryKey (boundary: AnnotationBoundaryState) =
@@ -116,7 +151,7 @@ module AnnotationLineCore =
         || (isKnownReferenceTypeName document.SourceReference.ReferenceType
             && referenceTypeNames.Contains document.SourceReference.ReferenceType)
 
-    let private validateIncludedSourceReferences (history: AnnotationHistoryDocument array) =
+    let private validateSourceReferences (history: AnnotationHistoryDocument array) =
         [
             for document in history do
                 let sourceReference = document.SourceReference
@@ -220,6 +255,10 @@ module AnnotationLineCore =
     let private missingTargetLine = { BoundaryKind = "TargetLineMissing"; SourceRows = Array.empty }
 
     let private shiftedAlignmentBudgetExceeded = { BoundaryKind = "ShiftedAlignmentBudgetExceeded"; SourceRows = Array.empty }
+
+    let private traversalBoundaryReached boundaryKind source = { BoundaryKind = boundaryKind; SourceRows = [| source |] }
+
+    let private referenceTypeFiltered source = { BoundaryKind = "ReferenceTypeFiltered"; SourceRows = [| source |] }
 
     let private maxShiftedAlignmentPairScans = 16_384L
 
@@ -400,7 +439,43 @@ module AnnotationLineCore =
         else
             None, false
 
-    let private traceLineSource lineNumber (documents: (AnnotationHistoryDocument * VisibleTextDocument) array) (lineAlignments: LineAlignment array) =
+    let private tryGetNextLineNumber lineNumber (alignment: LineAlignment) =
+        alignment.Values
+        |> Array.tryFindIndex (fun previousLineNumber -> previousLineNumber = lineNumber)
+        |> Option.map (fun index -> alignment.FirstLineNumber + index)
+
+    let private lineSourceFromDocument lineNumber document =
+        { SourceReferenceId = document.SourceReference.SourceReferenceId; Path = document.Path; LineNumber = lineNumber }
+
+    let private tryProjectAttributionSource sourceIndex sourceLineNumber documents (lineAlignments: LineAlignment array) referenceTypeNames =
+        let mutable projected = None
+        let mutable index = sourceIndex
+        let mutable lineNumber = sourceLineNumber
+
+        while Option.isNone projected
+              && index < Array.length documents do
+            let document, _ = documents[index]
+
+            if matchesReferenceTypeFilter referenceTypeNames document then
+                projected <- Some(index, lineNumber)
+
+            if Option.isNone projected
+               && index < lineAlignments.Length then
+                match tryGetNextLineNumber lineNumber lineAlignments[index] with
+                | Some nextLineNumber -> lineNumber <- nextLineNumber
+                | None -> index <- Array.length documents
+
+            index <- index + 1
+
+        projected
+
+    let private traceLineSource
+        lineNumber
+        (documents: (AnnotationHistoryDocument * VisibleTextDocument) array)
+        (lineAlignments: LineAlignment array)
+        referenceTypeNames
+        traversalBoundaryKind
+        =
         let targetDocument = documents[documents.Length - 1] |> snd
 
         match lineAt lineNumber targetDocument with
@@ -430,11 +505,26 @@ module AnnotationLineCore =
             if alignmentWasUnknown then
                 Boundary shiftedAlignmentBudgetExceeded
             else
-                let sourceDocument = documents[sourceIndex] |> fst
+                let sourceDocument, _ = documents[sourceIndex]
+                let sourceLine = lineSourceFromDocument sourceLineNumber sourceDocument
 
-                Resolved { SourceReferenceId = sourceDocument.SourceReference.SourceReferenceId; Path = sourceDocument.Path; LineNumber = sourceLineNumber }
+                match traversalBoundaryKind with
+                | Some boundaryKind when sourceIndex = 0 -> Boundary(traversalBoundaryReached boundaryKind sourceLine)
+                | _ ->
+                    match tryProjectAttributionSource sourceIndex sourceLineNumber documents lineAlignments referenceTypeNames with
+                    | Some (projectedIndex, projectedLineNumber) ->
+                        let projectedDocument, _ = documents[projectedIndex]
+                        Resolved(lineSourceFromDocument projectedLineNumber projectedDocument)
+                    | None -> Boundary(referenceTypeFiltered sourceLine)
 
-    let private traceRequestedSegments requestedLineRange (targetDocument: VisibleTextDocument) traceDocuments (lineAlignments: LineAlignment array) =
+    let private traceRequestedSegments
+        requestedLineRange
+        (targetDocument: VisibleTextDocument)
+        traceDocuments
+        (lineAlignments: LineAlignment array)
+        referenceTypeNames
+        traversalBoundaryKind
+        =
         let segments = ResizeArray<int * int * AnnotationLineState>()
         let firstExistingLine = max requestedLineRange.StartLine 1
         let lastExistingLine = min requestedLineRange.EndLine targetDocument.Lines.Length
@@ -444,12 +534,13 @@ module AnnotationLineCore =
 
         if firstExistingLine <= lastExistingLine then
             let mutable segmentStart = firstExistingLine
-            let mutable segmentState = traceLineSource firstExistingLine traceDocuments lineAlignments
+            let mutable segmentState = traceLineSource firstExistingLine traceDocuments lineAlignments referenceTypeNames traversalBoundaryKind
+
             let mutable previousLine = firstExistingLine
             let mutable previousState = segmentState
 
             for lineNumber in firstExistingLine + 1 .. lastExistingLine do
-                let currentState = traceLineSource lineNumber traceDocuments lineAlignments
+                let currentState = traceLineSource lineNumber traceDocuments lineAlignments referenceTypeNames traversalBoundaryKind
 
                 if canAppend previousState currentState previousLine lineNumber then
                     previousLine <- lineNumber
@@ -470,7 +561,7 @@ module AnnotationLineCore =
 
         segments.ToArray()
 
-    let buildAnnotation
+    let private buildAnnotationWithTraversalBoundary
         (
             requestedLineRange: AnnotationLineRange,
             targetReferenceId: ReferenceId,
@@ -478,6 +569,7 @@ module AnnotationLineCore =
             referenceTypeFilter: ReferenceType array,
             maxReferences: int,
             includeLineText: bool,
+            traversalBoundaryKind: string option,
             history: AnnotationHistoryDocument array
         )
         =
@@ -496,18 +588,24 @@ module AnnotationLineCore =
             |> Array.map referenceTypeName
             |> Set.ofArray
 
-        let includedHistory =
-            history
-            |> Array.filter (matchesReferenceTypeFilter referenceTypeNames)
+        let traversalWasBudgetBounded =
+            maxReferences > 0
+            && history.Length > maxReferences
 
-        let sourceReferenceErrors = validateIncludedSourceReferences includedHistory
+        let traceHistory =
+            if traversalWasBudgetBounded then
+                history[history.Length - maxReferences ..]
+            else
+                history
+
+        let sourceReferenceErrors = validateSourceReferences traceHistory
 
         let historyErrors =
             [
                 if history.Length = 0 then
                     "Annotation history must contain at least the target document."
 
-                for document in includedHistory do
+                for document in traceHistory do
                     if not (String.Equals(document.Path, path, StringComparison.Ordinal)) then
                         $"Annotation history path '{document.Path}' must match annotation path '{path}'."
 
@@ -519,14 +617,6 @@ module AnnotationLineCore =
                     $"Target SourceReference '{history[history.Length - 1]
                                                    .SourceReference
                                                    .SourceReferenceId}' must match TargetReferenceId."
-
-                if
-                    history.Length > 0
-                    && not (matchesReferenceTypeFilter referenceTypeNames history[history.Length - 1])
-                then
-                    $"Target SourceReference '{history[history.Length - 1]
-                                                   .SourceReference
-                                                   .SourceReferenceId}' must match ReferenceTypeFilter."
             ]
 
         match lineRangeErrors
@@ -535,8 +625,14 @@ module AnnotationLineCore =
             with
         | _ :: _ as errors -> Error errors
         | [] ->
+            let effectiveTraversalBoundaryKind =
+                if traversalWasBudgetBounded then
+                    Some "TraversalBudgetReached"
+                else
+                    traversalBoundaryKind
+
             let decoded =
-                includedHistory
+                traceHistory
                 |> Array.map (fun document ->
                     match decodeVisibleText document.Content with
                     | Ok visible -> Ok(document, visible)
@@ -574,7 +670,8 @@ module AnnotationLineCore =
                     else
                         Array.empty
 
-                let segments = traceRequestedSegments requestedLineRange targetDocument traceDocuments lineAlignments
+                let segments =
+                    traceRequestedSegments requestedLineRange targetDocument traceDocuments lineAlignments referenceTypeNames effectiveTraversalBoundaryKind
 
                 let components = buildComponentsFromSegments lines segments
 
@@ -606,3 +703,38 @@ module AnnotationLineCore =
                             sourceReferences
                         )
                     )
+
+    let buildAnnotation
+        (
+            requestedLineRange: AnnotationLineRange,
+            targetReferenceId: ReferenceId,
+            path: RelativePath,
+            referenceTypeFilter: ReferenceType array,
+            maxReferences: int,
+            includeLineText: bool,
+            history: AnnotationHistoryDocument array
+        )
+        =
+        buildAnnotationWithTraversalBoundary (requestedLineRange, targetReferenceId, path, referenceTypeFilter, maxReferences, includeLineText, None, history)
+
+    let buildAnnotationFromEffectiveHistoryTraversal
+        (
+            requestedLineRange: AnnotationLineRange,
+            targetReferenceId: ReferenceId,
+            path: RelativePath,
+            referenceTypeFilter: ReferenceType array,
+            maxReferences: int,
+            includeLineText: bool,
+            traversalResult: EffectiveHistoryTraversalResult
+        )
+        =
+        buildAnnotationWithTraversalBoundary (
+            requestedLineRange,
+            targetReferenceId,
+            path,
+            referenceTypeFilter,
+            maxReferences,
+            includeLineText,
+            traversalResult.BoundaryKind,
+            traversalResult.History
+        )
