@@ -1155,7 +1155,9 @@ module Services =
             match! createLocalFileVersion fileInfo with
             | Some fileVersion ->
                 if fileVersion.Sha256Hash
-                   <> existingFileVersion.Sha256Hash then
+                   <> existingFileVersion.Sha256Hash
+                   || fileVersion.Blake3Hash
+                      <> existingFileVersion.Blake3Hash then
                     directoryVersion.Files.RemoveAt(existingFileIndex)
                     directoryVersion.Files.Add(fileVersion)
                     directoryVersion.Size <- directoryVersion.Files.Sum(fun file -> int64 (file.Size))
@@ -1428,14 +1430,15 @@ module Services =
 
         let fileVersionOverlaysByIdentity =
             fileVersionOverlays
-                .GroupBy(fun fileVersion -> (fileVersion.RelativePath, fileVersion.Sha256Hash))
+                .GroupBy(fun fileVersion -> (fileVersion.RelativePath, fileVersion.Sha256Hash, fileVersion.Blake3Hash))
                 .ToDictionary((fun group -> group.Key), (fun group -> group.First()))
 
         let files =
             localDirectoryVersion
                 .Files
                 .Select(fun localFileVersion ->
-                    match fileVersionOverlaysByIdentity.TryGetValue((localFileVersion.RelativePath, localFileVersion.Sha256Hash)) with
+                    match fileVersionOverlaysByIdentity.TryGetValue((localFileVersion.RelativePath, localFileVersion.Sha256Hash, localFileVersion.Blake3Hash))
+                        with
                     | true, uploadedFileVersion -> uploadedFileVersion
                     | false, _ -> localFileVersion.ToFileVersion)
                 .ToList()

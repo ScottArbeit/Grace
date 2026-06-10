@@ -15,6 +15,7 @@ open System
 open System.Collections.Generic
 open System.IO
 open System.Linq
+open System.Security.Cryptography
 open System.Text
 open System.Threading.Tasks
 
@@ -78,6 +79,10 @@ module CurrentStateCaptureCliTests =
             )
 
         { manifest with ManifestAddress = ContentAddress.computeManifestAddressForManifest manifest }
+
+    let private computeSha256Hash (bytes: byte array) =
+        SHA256.HashData(bytes)
+        |> fun hash -> Sha256Hash(byteArrayToString (hash.AsSpan()))
 
     let private ensureConfigFile root =
         let graceDirectory = Path.Combine(root, Constants.GraceConfigDirectory)
@@ -441,6 +446,84 @@ module CurrentStateCaptureCliTests =
         }
 
     [<Test>]
+    let ``changed file version is captured when only BLAKE3 changes`` () =
+        task {
+            do!
+                withTempConfiguration (fun root ->
+                    task {
+                        let relativePath = RelativePath "file.txt"
+                        let fullPath = Path.Combine(root, $"{relativePath}")
+                        let bytes = Encoding.UTF8.GetBytes("same sha seeded file with new blake3")
+
+                        File.WriteAllBytes(fullPath, bytes)
+
+                        let sha256Hash = computeSha256Hash bytes
+                        let newBlake3Hash = Blake3Hash(ContentAddress.computeBlake3Hex bytes)
+
+                        let previousFileVersion =
+                            LocalFileVersion.CreateWithHashes
+                                relativePath
+                                sha256Hash
+                                (Blake3Hash "previous-blake3")
+                                false
+                                (int64 bytes.Length)
+                                (getCurrentInstant ())
+                                true
+                                DateTime.UtcNow
+
+                        let previousRoot =
+                            LocalDirectoryVersion.CreateWithHashes
+                                rootDirectoryId
+                                OwnerId.Empty
+                                OrganizationId.Empty
+                                RepositoryId.Empty
+                                Constants.RootDirectoryPath
+                                rootSha
+                                (Blake3Hash "previous-root-blake3")
+                                (List<DirectoryVersionId>())
+                                (List<LocalFileVersion>([| previousFileVersion |]))
+                                previousFileVersion.Size
+                                DateTime.UtcNow
+
+                        let index = GraceIndex()
+
+                        index.TryAdd(previousRoot.DirectoryVersionId, previousRoot)
+                        |> ignore
+
+                        let previousStatus =
+                            { GraceStatus.Default with
+                                Index = index
+                                RootDirectoryId = previousRoot.DirectoryVersionId
+                                RootDirectorySha256Hash = previousRoot.Sha256Hash
+                            }
+
+                        let differences =
+                            List<FileSystemDifference>(
+                                [|
+                                    FileSystemDifference.Create DifferenceType.Change FileSystemEntryType.File relativePath
+                                |]
+                            )
+
+                        let! (_, newDirectoryVersions) = getNewGraceStatusAndDirectoryVersions previousStatus differences
+
+                        newDirectoryVersions.Count |> should equal 1
+
+                        let updatedRoot = newDirectoryVersions.Single()
+
+                        updatedRoot.DirectoryVersionId
+                        |> should not' (equal previousRoot.DirectoryVersionId)
+
+                        let updatedFile = updatedRoot.Files.Single()
+
+                        updatedFile.Sha256Hash
+                        |> should equal previousFileVersion.Sha256Hash
+
+                        updatedFile.Blake3Hash
+                        |> should equal newBlake3Hash
+                    })
+        }
+
+    [<Test>]
     let ``directory upload overlay uses manifest backed uploaded file version`` () =
         let manifest = finalizedManifest ()
 
@@ -485,6 +568,76 @@ module CurrentStateCaptureCliTests =
             .ContentReference
             .Manifest
         |> should equal (Some manifest)
+
+    [<Test>]
+    let ``directory upload overlay does not preserve prior manifest when BLAKE3 changes`` () =
+        let manifest = finalizedManifest ()
+        let relativePath = RelativePath "large.bin"
+        let sameSha256Hash = Sha256Hash "manifest-sha"
+
+        let priorLocalFileVersion =
+            LocalFileVersion.CreateWithHashes
+                relativePath
+                sameSha256Hash
+                (Blake3Hash $"{manifest.FileContentHash}")
+                true
+                manifest.Size
+                (getCurrentInstant ())
+                true
+                DateTime.UtcNow
+
+        let priorFileVersion = priorLocalFileVersion.ToFileVersion
+        priorFileVersion.ContentReference <- FileContentReference.FileManifest manifest
+
+        let previousDirectoryVersion =
+            DirectoryVersion.CreateWithHashes
+                (Guid.NewGuid())
+                OwnerId.Empty
+                OrganizationId.Empty
+                RepositoryId.Empty
+                Constants.RootDirectoryPath
+                (Sha256Hash "previous-directory-sha")
+                (Blake3Hash "previous-directory-blake3")
+                (List<DirectoryVersionId>())
+                (List<FileVersion>([| priorFileVersion |]))
+                priorLocalFileVersion.Size
+
+        let localFileVersion =
+            LocalFileVersion.CreateWithHashes
+                relativePath
+                sameSha256Hash
+                (Blake3Hash "changed-blake3")
+                true
+                manifest.Size
+                (getCurrentInstant ())
+                true
+                DateTime.UtcNow
+
+        let localDirectoryVersion =
+            LocalDirectoryVersion.CreateWithHashes
+                (Guid.NewGuid())
+                OwnerId.Empty
+                OrganizationId.Empty
+                RepositoryId.Empty
+                Constants.RootDirectoryPath
+                (Sha256Hash "new-directory-sha")
+                (Blake3Hash "new-directory-blake3")
+                (List<DirectoryVersionId>())
+                (List<LocalFileVersion>([| localFileVersion |]))
+                localFileVersion.Size
+                DateTime.UtcNow
+
+        let directoryVersion = toDirectoryVersionWithUploadedFiles [] [ previousDirectoryVersion ] localDirectoryVersion
+
+        directoryVersion.Files.Count |> should equal 1
+
+        directoryVersion.Files[0]
+            .ContentReference
+            .ReferenceType
+        |> should equal FileContentReferenceType.WholeFileContent
+
+        directoryVersion.Files[0].Blake3Hash
+        |> should equal localFileVersion.Blake3Hash
 
     [<Test>]
     let ``previous directory lookup parameters use requested repository ids`` () =
