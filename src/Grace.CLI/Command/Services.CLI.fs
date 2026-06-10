@@ -1286,7 +1286,8 @@ module Services =
             match! createLocalFileVersion fileInfo with
             | Some fileVersion ->
                 directoryVersion.Files.Add(fileVersion)
-                let updated = { directoryVersion with Size = directoryVersion.Files.Sum(fun file -> int64 (file.Size)) }
+                directoryVersion.Size <- directoryVersion.Files.Sum(fun file -> int64 (file.Size))
+                let updated = directoryVersion
 
                 changedDirectoryVersions.AddOrUpdate(directoryVersion.RelativePath, (fun _ -> updated), (fun _ _ -> updated))
                 |> ignore
@@ -1319,10 +1320,11 @@ module Services =
             match! createLocalFileVersion fileInfo with
             | Some fileVersion ->
                 if fileVersion.Sha256Hash
-                   <> existingFileVersion.Sha256Hash then
+                    <> existingFileVersion.Sha256Hash then
                     directoryVersion.Files.RemoveAt(existingFileIndex)
                     directoryVersion.Files.Add(fileVersion)
-                    let updated = { directoryVersion with Size = directoryVersion.Files.Sum(fun file -> int64 (file.Size)) }
+                    directoryVersion.Size <- directoryVersion.Files.Sum(fun file -> int64 (file.Size))
+                    let updated = directoryVersion
 
                     changedDirectoryVersions.AddOrUpdate(directoryVersion.RelativePath, (fun _ -> updated), (fun _ _ -> updated))
                     |> ignore
@@ -1352,7 +1354,8 @@ module Services =
             let dv = directoryVersion[0]
             let index = dv.Files.FindIndex(fun file -> file.RelativePath = difference.RelativePath)
             dv.Files.RemoveAt(index)
-            let updated = { dv with Size = dv.Files.Sum(fun file -> int64 (file.Size)) }
+            dv.Size <- dv.Files.Sum(fun file -> int64 (file.Size))
+            let updated = dv
 
             changedDirectoryVersions.AddOrUpdate(dv.RelativePath, (fun _ -> updated), (fun _ _ -> updated))
             |> ignore

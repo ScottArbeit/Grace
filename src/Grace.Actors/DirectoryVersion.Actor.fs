@@ -938,7 +938,20 @@ module DirectoryVersion =
                                                     totalElapsedMs
                                                 )
 
-                                                let newDirectoryVersion = { directoryVersion with HashesValidated = true }
+                                                let newDirectoryVersion = DirectoryVersion()
+                                                newDirectoryVersion.Class <- directoryVersion.Class
+                                                newDirectoryVersion.DirectoryVersionId <- directoryVersion.DirectoryVersionId
+                                                newDirectoryVersion.OwnerId <- directoryVersion.OwnerId
+                                                newDirectoryVersion.OrganizationId <- directoryVersion.OrganizationId
+                                                newDirectoryVersion.RepositoryId <- directoryVersion.RepositoryId
+                                                newDirectoryVersion.RelativePath <- directoryVersion.RelativePath
+                                                newDirectoryVersion.Sha256Hash <- directoryVersion.Sha256Hash
+                                                newDirectoryVersion.Blake3Hash <- directoryVersion.Blake3Hash
+                                                newDirectoryVersion.Directories <- directoryVersion.Directories
+                                                newDirectoryVersion.Files <- directoryVersion.Files
+                                                newDirectoryVersion.Size <- directoryVersion.Size
+                                                newDirectoryVersion.CreatedAt <- directoryVersion.CreatedAt
+                                                newDirectoryVersion.HashesValidated <- true
                                                 return Ok(Created newDirectoryVersion)
                                     | SetRecursiveSize recursiveSize -> return Ok(RecursiveSizeSet recursiveSize)
                                     | DeleteLogical deleteReason ->
