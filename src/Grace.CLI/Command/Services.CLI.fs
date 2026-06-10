@@ -1765,8 +1765,9 @@ module Services =
             CreateSaveReference: LocalDirectoryVersion -> string -> Task<Result<ReferenceId, GraceError>>
         }
 
-    let private referenceHasRoot rootDirectoryId rootDirectorySha256Hash (referenceDto: ReferenceDto) =
+    let private referenceHasRootOnBranch branchId rootDirectoryId rootDirectorySha256Hash (referenceDto: ReferenceDto) =
         referenceDto.ReferenceId <> ReferenceId.Empty
+        && referenceDto.BranchId = branchId
         && referenceDto.DirectoryId = rootDirectoryId
         && referenceDto.Sha256Hash = rootDirectorySha256Hash
 
@@ -1777,9 +1778,30 @@ module Services =
             branchDto.LatestCommit
             branchDto.LatestCheckpoint
             branchDto.LatestPromotion
-            branchDto.BasedOn
         ]
-        |> Seq.tryFind (referenceHasRoot rootDirectoryId rootDirectorySha256Hash)
+        |> Seq.tryFind (referenceHasRootOnBranch branchDto.BranchId rootDirectoryId rootDirectorySha256Hash)
+
+    let private getChangedFileVersionsReferencedByUpdatedDirectories
+        (differences: List<FileSystemDifference>)
+        (directoryVersions: List<LocalDirectoryVersion>)
+        =
+        let changedFilePaths = HashSet<RelativePath>()
+
+        differences
+        |> Seq.iter (fun difference ->
+            match difference.DifferenceType, difference.FileSystemEntryType with
+            | (DifferenceType.Add
+              | DifferenceType.Change),
+              FileSystemEntryType.File ->
+                changedFilePaths.Add(difference.RelativePath)
+                |> ignore
+            | _ -> ())
+
+        directoryVersions
+        |> Seq.collect (fun directoryVersion -> directoryVersion.Files)
+        |> Seq.filter (fun fileVersion -> changedFilePaths.Contains fileVersion.RelativePath)
+        |> Seq.distinctBy (fun fileVersion -> fileVersion.RelativePath, fileVersion.Sha256Hash)
+        |> Seq.toList
 
     let private saveDisabledError correlationId =
         GraceError.Create "Save is disabled on this branch, and local changes require a Save before branch annotation can continue." correlationId
@@ -1872,10 +1894,11 @@ module Services =
                         elif not branchDto.SaveEnabled then
                             return Error(saveDisabledError correlationId)
                         else
-                            let! newFileVersions = operations.CopyUpdatedFilesToObjectCache differences
+                            let! _ = operations.CopyUpdatedFilesToObjectCache differences
                             let! (updatedGraceStatus, newDirectoryVersions) = operations.BuildUpdatedGraceStatus previousGraceStatus differences
+                            let fileVersionsToUpload = getChangedFileVersionsReferencedByUpdatedDirectories differences newDirectoryVersions
 
-                            match! operations.UploadFileVersions newFileVersions with
+                            match! operations.UploadFileVersions fileVersionsToUpload with
                             | Error error -> return Error error
                             | Ok () ->
                                 match! operations.UploadDirectoryVersions newDirectoryVersions with
@@ -1892,10 +1915,15 @@ module Services =
                                     return! createSaveForCurrentRoot operations branchDto saveMessage correlationId rootDirectoryVersion
         }
 
-    let private parseCreatedReferenceId correlationId (returnValue: GraceReturnValue<string>) =
-        match Guid.TryParse returnValue.ReturnValue with
-        | true, referenceId -> Ok referenceId
-        | false, _ -> Error(GraceError.Create $"Save reference creation returned an invalid ReferenceId: {returnValue.ReturnValue}." correlationId)
+    let parseCreatedReferenceId correlationId (returnValue: GraceReturnValue<string>) =
+        let mutable referenceIdProperty = Unchecked.defaultof<obj>
+
+        if returnValue.Properties.TryGetValue(nameof ReferenceId, &referenceIdProperty) then
+            match Guid.TryParse(string referenceIdProperty) with
+            | true, referenceId -> Ok referenceId
+            | false, _ -> Error(GraceError.Create $"Save reference creation returned an invalid ReferenceId property: {referenceIdProperty}." correlationId)
+        else
+            Error(GraceError.Create "Save reference creation did not return a ReferenceId property." correlationId)
 
     /// Generates a temporary file name within the ObjectDirectory, and returns the full file path.
     /// This file name will be used to copy modified files into before renaming them with their proper names and SHA256 values.

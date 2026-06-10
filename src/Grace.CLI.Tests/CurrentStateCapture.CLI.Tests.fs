@@ -17,6 +17,8 @@ open System.Threading.Tasks
 [<NonParallelizable>]
 module CurrentStateCaptureCliTests =
     let private correlationId = "current-state-capture-tests"
+    let private currentBranchId = Guid.NewGuid()
+    let private parentBranchId = Guid.NewGuid()
     let private rootDirectoryId = Guid.NewGuid()
     let private rootSha = Sha256Hash "current-root-sha"
     let private savedReferenceId = Guid.NewGuid()
@@ -42,10 +44,16 @@ module CurrentStateCaptureCliTests =
         { GraceStatus.Default with Index = index; RootDirectoryId = directoryVersionId; RootDirectorySha256Hash = sha256Hash }
 
     let private referenceDto referenceId directoryVersionId sha256Hash =
-        { ReferenceDto.Default with ReferenceId = referenceId; ReferenceType = ReferenceType.Save; DirectoryId = directoryVersionId; Sha256Hash = sha256Hash }
+        { ReferenceDto.Default with
+            ReferenceId = referenceId
+            BranchId = currentBranchId
+            ReferenceType = ReferenceType.Save
+            DirectoryId = directoryVersionId
+            Sha256Hash = sha256Hash
+        }
 
     let private branch saveEnabled latestReference =
-        { BranchDto.Default with SaveEnabled = saveEnabled; LatestReference = latestReference; LatestSave = latestReference }
+        { BranchDto.Default with BranchId = currentBranchId; SaveEnabled = saveEnabled; LatestReference = latestReference; LatestSave = latestReference }
 
     let private defaultOperations branchDto =
         {
@@ -131,6 +139,44 @@ module CurrentStateCaptureCliTests =
         | Error error -> Assert.Fail($"Expected GraceWatch success, got: {error.Error}")
 
     [<Test>]
+    let ``unchanged child branch does not use parent BasedOn reference`` () =
+        let parentReferenceId = Guid.NewGuid()
+        let createdSaveId = Guid.NewGuid()
+        let mutable createdSave = false
+
+        let parentBasedOn = { referenceDto parentReferenceId rootDirectoryId rootSha with BranchId = parentBranchId }
+
+        let branchDto = { branch true ReferenceDto.Default with BasedOn = parentBasedOn }
+
+        let operations =
+            { defaultOperations branchDto with
+                CreateSaveReference =
+                    fun rootDirectoryVersion _ ->
+                        createdSave <- true
+
+                        rootDirectoryVersion.DirectoryVersionId
+                        |> should equal rootDirectoryId
+
+                        rootDirectoryVersion.Sha256Hash
+                        |> should equal rootSha
+
+                        Task.FromResult(Ok(createdSaveId))
+            }
+
+        let result =
+            (resolveCliCurrentStateTargetReference operations None branchAnnotateImplicitSaveMessage correlationId)
+                .Result
+
+        match result with
+        | Ok captured ->
+            captured.TargetReferenceId
+            |> should equal createdSaveId
+
+            captured.Source |> should equal CreatedSave
+            createdSave |> should equal true
+        | Error error -> Assert.Fail($"Expected implicit Save success, got: {error.Error}")
+
+    [<Test>]
     let ``local changes auto-create save with annotate message`` () =
         let updatedRootId = Guid.NewGuid()
         let updatedRootSha = Sha256Hash "updated-root-sha"
@@ -190,6 +236,81 @@ module CurrentStateCaptureCliTests =
             uploadedDirectories |> should equal true
             appliedStatus |> should equal true
         | Error error -> Assert.Fail($"Expected auto-save success, got: {error.Error}")
+
+    [<Test>]
+    let ``local changes upload changed file versions already present in object cache`` () =
+        let updatedRootId = Guid.NewGuid()
+        let updatedRootSha = Sha256Hash "updated-root-sha"
+        let createdSaveId = Guid.NewGuid()
+        let changedPath = RelativePath "src/file.txt"
+
+        let changedFile =
+            LocalFileVersion.Create changedPath (Sha256Hash "changed-file-sha") false 12L (Grace.Shared.Utilities.getCurrentInstant ()) true DateTime.UtcNow
+
+        let mutable uploadedFiles = List<LocalFileVersion>()
+
+        let differences =
+            List<FileSystemDifference>(
+                [|
+                    FileSystemDifference.Create DifferenceType.Change FileSystemEntryType.File changedPath
+                |]
+            )
+
+        let updatedStatus = graceStatus updatedRootId updatedRootSha
+
+        let updatedRoot =
+            LocalDirectoryVersion.Create
+                updatedRootId
+                OwnerId.Empty
+                OrganizationId.Empty
+                RepositoryId.Empty
+                Constants.RootDirectoryPath
+                updatedRootSha
+                (List<DirectoryVersionId>())
+                (List<LocalFileVersion>([| changedFile |]))
+                changedFile.Size
+                DateTime.UtcNow
+
+        let operations =
+            { defaultOperations (branch true ReferenceDto.Default) with
+                ScanForDifferences = fun _ -> Task.FromResult(differences)
+                CopyUpdatedFilesToObjectCache = fun _ -> Task.FromResult(Seq.empty<LocalFileVersion>)
+                BuildUpdatedGraceStatus = fun _ _ -> Task.FromResult(updatedStatus, List<LocalDirectoryVersion>([| updatedRoot |]))
+                UploadFileVersions =
+                    fun fileVersions ->
+                        uploadedFiles <- List<LocalFileVersion>(fileVersions)
+                        Task.FromResult(Ok())
+                CreateSaveReference = fun _ _ -> Task.FromResult(Ok(createdSaveId))
+            }
+
+        let result =
+            (resolveCliCurrentStateTargetReference operations None branchAnnotateImplicitSaveMessage correlationId)
+                .Result
+
+        match result with
+        | Ok captured ->
+            captured.TargetReferenceId
+            |> should equal createdSaveId
+
+            uploadedFiles.Count |> should equal 1
+
+            uploadedFiles[0].RelativePath
+            |> should equal changedPath
+
+            uploadedFiles[0].Sha256Hash
+            |> should equal changedFile.Sha256Hash
+        | Error error -> Assert.Fail($"Expected auto-save success, got: {error.Error}")
+
+    [<Test>]
+    let ``created save reference id is parsed from response properties`` () =
+        let createdSaveId = Guid.NewGuid()
+        let properties = Dictionary<string, obj>()
+        properties.Add(nameof ReferenceId, createdSaveId)
+        let returnValue = GraceReturnValue.CreateWithMetadata "Branch command succeeded." correlationId properties
+
+        match parseCreatedReferenceId correlationId returnValue with
+        | Ok referenceId -> referenceId |> should equal createdSaveId
+        | Error error -> Assert.Fail($"Expected ReferenceId property parse success, got: {error.Error}")
 
     [<Test>]
     let ``save disabled fails before uploading local changes`` () =
