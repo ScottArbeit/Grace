@@ -105,6 +105,8 @@ module DoctorCliTests =
                 serverUri
         )
 
+        Path.Combine(graceDir, Constants.GraceConfigFileName)
+
     let private snapshotFiles root =
         if Directory.Exists(root) then
             Directory.GetFiles(root, "*", SearchOption.AllDirectories)
@@ -112,6 +114,8 @@ module DoctorCliTests =
             |> Array.sortBy (fun (relativePath, _, _) -> relativePath)
         else
             Array.empty
+
+    let private openExclusiveReadLock path = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.None)
 
     let private withUserConfigTemporarilyMissing (action: string -> unit) =
         let userConfigPath = UserConfiguration.getUserConfigurationPath ()
@@ -318,6 +322,7 @@ module DoctorCliTests =
         withTempDir (fun root ->
             withIsolatedHome root (fun _ ->
                 writeGraceConfig root "http://127.0.0.1:5000"
+                |> ignore
 
                 let exitCode, standardOut, standardError =
                     runWithCapturedStdoutAndStderr [| "--output"
@@ -349,6 +354,7 @@ module DoctorCliTests =
         withTempDir (fun root ->
             withIsolatedHome root (fun _ ->
                 writeGraceConfig root "http://127.0.0.1:5000"
+                |> ignore
 
                 let exitCode, standardOut, standardError =
                     runWithCapturedStdoutAndStderr [| "--output"
@@ -373,6 +379,7 @@ module DoctorCliTests =
         withTempDir (fun root ->
             withIsolatedHome root (fun home ->
                 writeGraceConfig root "http://127.0.0.1:5000"
+                |> ignore
 
                 File.WriteAllText(
                     Path.Combine(root, Constants.GraceIgnoreFileName),
@@ -476,6 +483,101 @@ notes.txt # inline comment
 
                 snapshotFiles root |> should equal beforeRoot
                 snapshotFiles home |> should equal beforeHome))
+
+    [<Test>]
+    let ``doctor treats unreadable config file as parse failure instead of missing config`` () =
+        withTempDir (fun root ->
+            withIsolatedHome root (fun _ ->
+                let configPath = writeGraceConfig root "http://127.0.0.1:5000"
+
+                use _lock = openExclusiveReadLock configPath
+
+                let exitCode, standardOut, standardError =
+                    runWithCapturedStdoutAndStderr [| "--output"
+                                                      "Json"
+                                                      "doctor"
+                                                      "--check"
+                                                      "config.file.discover"
+                                                      "--check"
+                                                      "config.file.parse" |]
+
+                exitCode |> should equal 1
+
+                use document = assertCleanJsonOutput standardOut standardError
+
+                let checks =
+                    document
+                        .RootElement
+                        .GetProperty("ReturnValue")
+                        .GetProperty("Checks")
+
+                checks.GetArrayLength() |> should equal 2
+
+                checks[ 0 ].GetProperty("Id").GetString()
+                |> should equal "config.file.discover"
+
+                checks[ 0 ].GetProperty("Status").GetString()
+                |> should equal "Ok"
+
+                checks[ 0 ].GetProperty("Summary").GetString()
+                |> should contain "parsing is reported"
+
+                checks[ 1 ].GetProperty("Id").GetString()
+                |> should equal "config.file.parse"
+
+                checks[ 1 ].GetProperty("Status").GetString()
+                |> should equal "Failed"
+
+                checks[ 1 ].GetProperty("Summary").GetString()
+                |> should contain "Could not parse"))
+
+    [<Test>]
+    let ``doctor carries unreadable graceignore into ignore parse result without affecting config parse`` () =
+        withTempDir (fun root ->
+            withIsolatedHome root (fun _ ->
+                writeGraceConfig root "http://127.0.0.1:5000"
+                |> ignore
+
+                let graceIgnorePath = Path.Combine(root, Constants.GraceIgnoreFileName)
+                File.WriteAllText(graceIgnorePath, "bin/")
+
+                use _lock = openExclusiveReadLock graceIgnorePath
+
+                let exitCode, standardOut, standardError =
+                    runWithCapturedStdoutAndStderr [| "--output"
+                                                      "Json"
+                                                      "doctor"
+                                                      "--check"
+                                                      "config.file.parse"
+                                                      "--check"
+                                                      "ignore.entries.parse" |]
+
+                exitCode |> should equal 1
+
+                use document = assertCleanJsonOutput standardOut standardError
+
+                let checks =
+                    document
+                        .RootElement
+                        .GetProperty("ReturnValue")
+                        .GetProperty("Checks")
+
+                checks.GetArrayLength() |> should equal 2
+
+                checks[ 0 ].GetProperty("Id").GetString()
+                |> should equal "config.file.parse"
+
+                checks[ 0 ].GetProperty("Status").GetString()
+                |> should equal "Ok"
+
+                checks[ 1 ].GetProperty("Id").GetString()
+                |> should equal "ignore.entries.parse"
+
+                checks[ 1 ].GetProperty("Status").GetString()
+                |> should equal "Failed"
+
+                checks[ 1 ].GetProperty("Summary").GetString()
+                |> should contain "Could not parse"))
 
     [<Test>]
     let ``doctor missing user config reports warning without creating user grace directory`` () =
@@ -598,6 +700,7 @@ notes.txt # inline comment
         withTempDir (fun root ->
             withIsolatedHome root (fun _ ->
                 writeGraceConfig root "http://127.0.0.1:5000"
+                |> ignore
 
                 let exitCode, standardOut, standardError =
                     runWithCapturedStdoutAndStderr [| "--output"

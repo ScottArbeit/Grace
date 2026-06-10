@@ -275,8 +275,8 @@ module Doctor =
         let configurationState =
             match Configuration.tryInspectCurrentDirectoryConfiguration () with
             | Ok inspection -> ConfigurationLoaded inspection
-            | Error message when message.Contains(Constants.GraceConfigFileName, StringComparison.OrdinalIgnoreCase) -> ConfigurationMissing message
-            | Error message -> ConfigurationMalformed message
+            | Error (Configuration.ConfigurationFileNotFound message) -> ConfigurationMissing message
+            | Error (Configuration.ConfigurationFileMalformed message) -> ConfigurationMalformed message
 
         {
             ConfigurationState = configurationState
@@ -390,11 +390,12 @@ module Doctor =
             | ConfigurationLoaded inspection ->
                 let ignore = inspection.Ignore
 
-                if ignore.Exists then
+                match ignore.ErrorMessage with
+                | Some message -> failed $"Could not parse {Constants.GraceIgnoreFileName}: {message}"
+                | None when ignore.Exists ->
                     ok
                         $".graceignore has {ignore.Entries.Length} active entries: {ignore.FileEntries.Length} file patterns and {ignore.DirectoryEntries.Length} directory patterns."
-                else
-                    warning $".graceignore was not found at {ignore.Path}; no file was created."
+                | None -> warning $".graceignore was not found at {ignore.Path}; no file was created."
             | ConfigurationMissing _ -> skipped check $"Skipped because {ConfigFileDiscoverCheckId} did not find {Constants.GraceConfigFileName}."
             | ConfigurationMalformed _ -> skipped check $"Skipped because {ConfigFileParseCheckId} failed."
         | _ -> skipped check "No diagnostic implementation is registered for this check."
