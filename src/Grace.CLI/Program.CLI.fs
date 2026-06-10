@@ -509,7 +509,16 @@ module GraceCommand =
                         "admin"
                     ]
             }
-            { Heading = "Local utilities"; CommandNames = [ "history"; "maintenance"; "alias" ] }
+            {
+                Heading = "Local utilities"
+                CommandNames =
+                    [
+                        "doctor"
+                        "history"
+                        "maintenance"
+                        "alias"
+                    ]
+            }
         ]
 
     let private repositoryHelpSections =
@@ -830,6 +839,7 @@ module GraceCommand =
         rootCommand.Subcommands.Add(History.Build)
         rootCommand.Subcommands.Add(Auth.Build)
         rootCommand.Subcommands.Add(Maintenance.Build)
+        rootCommand.Subcommands.Add(Doctor.Build)
         rootCommand.Subcommands.Add(WorkItemCommand.Build)
         rootCommand.Subcommands.Add(ReviewCommand.Build)
         rootCommand.Subcommands.Add(CandidateCommand.Build)
@@ -945,6 +955,14 @@ module GraceCommand =
 
     /// Checks if the command is a `grace watch` command.
     let isGraceWatch (parseResult: ParseResult) = if (parseResult.CommandResult.Command.Name = "watch") then true else false
+
+    /// Checks if the command is a `grace doctor` command.
+    let isGraceDoctor (parseResult: ParseResult) =
+        if isNull parseResult then
+            false
+        else
+            Seq.append [ parseResult.CommandResult.Command ] (parseResult.CommandResult.Command.Parents.OfType<Command>())
+            |> Seq.exists (fun command -> command.Name.Equals("doctor", StringComparison.OrdinalIgnoreCase))
 
     /// Checks if the command is a foreground `grace watch` command.
     let isGraceWatchForeground (parseResult: ParseResult) =
@@ -1094,7 +1112,8 @@ module GraceCommand =
                                 raise (IntrospectionExit returnValue)
                             | None -> ()
 
-                        LocalStateDb.setVerbose (parseResult |> verbose)
+                        if not (parseResult |> isGraceDoctor) then
+                            LocalStateDb.setVerbose (parseResult |> verbose)
 
                     let helpAction =
                         match parseResult.Action with
@@ -1264,6 +1283,9 @@ module GraceCommand =
 
                         Console.Write(finalHelpText)
                         returnValue <- invokeResult
+                    else if parseResult |> isGraceDoctor then
+                        let invokedReturnValue = parseResult.Invoke()
+                        returnValue <- invokedReturnValue
                     else if configurationFileExists () then
                         match tryGetJsonConfigurationError parseResult with
                         | Some error ->
@@ -1349,6 +1371,7 @@ module GraceCommand =
                                 "auth"
                                 "connect"
                                 "alias"
+                                "doctor"
                             ]
 
                         let isAllowed =
@@ -1410,7 +1433,10 @@ module GraceCommand =
                     (finishTime - startTime).TotalMilliseconds
                     |> int64
 
-                if not isIntrospection then
+                if
+                    not isIntrospection
+                    && not (parseResult |> isGraceDoctor)
+                then
                     HistoryStorage.tryRecordInvocation
                         {
                             argvOriginal = argvOriginal

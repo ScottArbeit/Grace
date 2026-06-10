@@ -374,6 +374,130 @@ module CommandOutputContract =
                     |]
             |}
 
+    let private doctorCheckSchema =
+        schemaObject
+            "DoctorCheckDto"
+            [
+                "Id", scalarSchema "string"
+                "Category", scalarSchema "string"
+                "Title", scalarSchema "string"
+                "Description", scalarSchema "string"
+                "DefaultEnabled", scalarSchema "boolean"
+                "SupportsOffline", scalarSchema "boolean"
+            ]
+            [|
+                "Id"
+                "Category"
+                "Title"
+                "Description"
+                "DefaultEnabled"
+                "SupportsOffline"
+            |]
+
+    let private doctorCheckResultSchema =
+        schemaObject
+            "DoctorCheckResultDto"
+            [
+                "Id", scalarSchema "string"
+                "Category", scalarSchema "string"
+                "Title", scalarSchema "string"
+                "Status", scalarSchema "string"
+                "Severity", scalarSchema "string"
+                "Summary", scalarSchema "string"
+            ]
+            [|
+                "Id"
+                "Category"
+                "Title"
+                "Status"
+                "Severity"
+                "Summary"
+            |]
+
+    let private doctorSummarySchema =
+        schemaObject
+            "DoctorSummaryDto"
+            [
+                "Total", scalarSchema "integer"
+                "Ok", scalarSchema "integer"
+                "Warning", scalarSchema "integer"
+                "Failed", scalarSchema "integer"
+                "Skipped", scalarSchema "integer"
+            ]
+            [|
+                "Total"
+                "Ok"
+                "Warning"
+                "Failed"
+                "Skipped"
+            |]
+
+    let private doctorReportSchema =
+        schemaObject
+            "DoctorReportDto"
+            [
+                "ReportVersion", scalarSchema "string"
+                "Status", scalarSchema "string"
+                "ExitCode", scalarSchema "integer"
+                "Full", scalarSchema "boolean"
+                "Offline", scalarSchema "boolean"
+                "Strict", scalarSchema "boolean"
+                "ListOnly", scalarSchema "boolean"
+                "RequestedChecks", arraySchema (scalarSchema "string") "Requested check IDs or categories after token normalization."
+                "Catalog", arraySchema doctorCheckSchema "Inert doctor check catalog entries included in the report."
+                "Checks", arraySchema doctorCheckResultSchema "Scaffolded check results; no real diagnostics run in this slice."
+                "Summary", doctorSummarySchema
+            ]
+            [|
+                "ReportVersion"
+                "Status"
+                "ExitCode"
+                "Full"
+                "Offline"
+                "Strict"
+                "ListOnly"
+                "RequestedChecks"
+                "Catalog"
+                "Checks"
+                "Summary"
+            |]
+
+    let private doctorReportExample =
+        box
+            {|
+                ReportVersion = "doctor-report-v1"
+                Status = "Ok"
+                ExitCode = 0
+                Full = false
+                Offline = false
+                Strict = false
+                ListOnly = true
+                RequestedChecks = [| "cli.catalog" |]
+                Catalog =
+                    [|
+                        {|
+                            Id = "cli.catalog"
+                            Category = "CLI"
+                            Title = "CLI command catalog"
+                            Description = "Verifies that the Grace CLI command catalog is available. Scaffold only; no runtime probe is executed."
+                            DefaultEnabled = true
+                            SupportsOffline = true
+                        |}
+                    |]
+                Checks =
+                    [|
+                        {|
+                            Id = "cli.catalog"
+                            Category = "CLI"
+                            Title = "CLI command catalog"
+                            Status = "Ok"
+                            Severity = "Info"
+                            Summary = "Scaffolded check only; no diagnostic probe ran in this slice."
+                        |}
+                    |]
+                Summary = {| Total = 1; Ok = 1; Warning = 0; Failed = 0; Skipped = 0 |}
+            |}
+
     let private supportedReturnValueContract name provenance schema example notes =
         { Name = name; Provenance = provenance; Status = SchemaReady; Schema = schema; Example = example; Notes = notes }
 
@@ -468,6 +592,16 @@ module CommandOutputContract =
                 maintenanceStatsExample
                 [
                     "Command-specific CLI DTO emitted by maintenance update-index in the common Grace result envelope after the local index is updated."
+                ]
+        | "doctor", ExistingGraceResultEnvelope RequiresCliDto ->
+            supportedReturnValueContract
+                "DoctorReportDto"
+                "Grace.CLI.Command.Common.LocalOutputDto"
+                doctorReportSchema
+                doctorReportExample
+                [
+                    "Command-specific CLI DTO emitted by grace doctor in the common Grace result envelope."
+                    "Doctor schema and examples are intentionally available in the S0 scaffold because later slices add real diagnostics behind the stable DTO."
                 ]
         | "repository.get", ExistingGraceResultEnvelope ReuseExistingApiOrSdkDto ->
             incompleteReturnValueContract
@@ -719,7 +853,11 @@ module CommandOutputContract =
             ExecutionScope = executionScope
             Mutating = mutating
             EnvelopeContract = envelopeContract
-            Features = featuresFor behavior
+            Features =
+                if identity.CommandId.Equals("doctor", StringComparison.Ordinal) then
+                    { JsonMode = ExistingBehavior; Schema = ExistingBehavior; Examples = ExistingBehavior; Select = ExistingBehavior }
+                else
+                    featuresFor behavior
             ReturnValueContract = returnValueContractFor identity envelopeContract
         }
 
@@ -849,6 +987,7 @@ module CommandOutputContract =
             row [ "history" ] "run" true true human_proc_only fire_and_forget_progress local_client RequiresCliDto
             row [ "history" ] "search" true false common_renderOutput_envelope read_list_search local_client RequiresCliDto
             row [ "history" ] "show" true false common_renderOutput_envelope read_list_search local_client RequiresCliDto
+            row [] "doctor" true false common_renderOutput_envelope read_list_search local_client RequiresCliDto
             row [ "maintenance" ] "check-ignore-entries" true false common_renderOutput_envelope read_list_search local_client RequiresCliDto
             row [ "maintenance" ] "list-contents" true false common_renderOutput_envelope read_list_search local_client RequiresCliDto
             row [ "maintenance" ] "scan" true true common_renderOutput_envelope progress_local_workflow local_client RequiresCliDto

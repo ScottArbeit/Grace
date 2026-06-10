@@ -73,6 +73,9 @@ module Text =
         let ForceRecompute = "--force-recompute"
 
         [<Literal>]
+        let Full = "--full"
+
+        [<Literal>]
         let FullSha = "--full-sha"
 
         [<Literal>]
@@ -94,6 +97,9 @@ module Text =
         let ListFiles = "--list-files"
 
         [<Literal>]
+        let ListChecks = "--list-checks"
+
+        [<Literal>]
         let LogicalDeleteDays = "--logical-delete-days"
 
         [<Literal>]
@@ -110,6 +116,9 @@ module Text =
 
         [<Literal>]
         let NewName = "--new-name"
+
+        [<Literal>]
+        let Offline = "--offline"
 
         [<Literal>]
         let OrganizationId = "--organization-id"
@@ -248,6 +257,9 @@ module Text =
 
         [<Literal>]
         let Since = "--since"
+
+        [<Literal>]
+        let Strict = "--strict"
 
         [<Literal>]
         let Status = "--status"
