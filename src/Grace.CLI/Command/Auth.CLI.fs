@@ -68,15 +68,119 @@ module Auth =
 
     type TokenStore = { Helper: MsalCacheHelper; StorageProperties: StorageCreationProperties; LockFilePath: string; InProcessLock: SemaphoreSlim }
 
+    type AuthEnvironmentFieldStatus = { Name: string; IsSet: bool; Required: bool }
+
+    type AuthInspection =
+        {
+            GraceTokenPresent: bool
+            GraceTokenValid: bool
+            GraceTokenError: string option
+            GraceTokenFilePresent: bool
+            M2mFields: AuthEnvironmentFieldStatus array
+            CliFields: AuthEnvironmentFieldStatus array
+            M2mComplete: bool
+            CliComplete: bool
+            HasPartialM2m: bool
+            HasPartialCli: bool
+            ActiveSource: string
+            HasUsableCredentialSource: bool
+        }
+
     let private tryGetEnv name =
         let value = Environment.GetEnvironmentVariable(name)
         if String.IsNullOrWhiteSpace value then None else Some value
 
+    let private isEnvSet name = tryGetEnv name |> Option.isSome
+
     let private normalizeBearerToken (token: string) =
-        if token.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase) then
-            token.Substring("Bearer ".Length).Trim()
+        let trimmed = token.Trim()
+
+        if trimmed.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase) then
+            trimmed.Substring("Bearer ".Length).Trim()
         else
-            token.Trim()
+            trimmed
+
+    let private authField required name = { Name = name; IsSet = isEnvSet name; Required = required }
+
+    let private requiredFieldsComplete fields =
+        fields
+        |> Array.filter (fun field -> field.Required)
+        |> Array.forall (fun field -> field.IsSet)
+
+    let private anyFieldsSet fields = fields |> Array.exists (fun field -> field.IsSet)
+
+    let private hasPartialRequiredFields fields =
+        anyFieldsSet fields
+        && not (requiredFieldsComplete fields)
+
+    let inspectAuthEnvironment () =
+        let tokenValue = tryGetEnv Constants.EnvironmentVariables.GraceToken
+        let graceTokenPresent = tokenValue.IsSome
+
+        let graceTokenValid, graceTokenError =
+            match tokenValue with
+            | None -> false, None
+            | Some value ->
+                let normalized = normalizeBearerToken value
+
+                match Grace.Types.PersonalAccessToken.tryParseToken normalized with
+                | Some _ -> true, None
+                | None ->
+                    false,
+                    Some $"GRACE_TOKEN accepts Grace PATs only (prefix {Grace.Types.PersonalAccessToken.TokenPrefix}). Auth0 access tokens are not valid here."
+
+        let m2mFields =
+            [|
+                authField true Constants.EnvironmentVariables.GraceAuthOidcAuthority
+                authField true Constants.EnvironmentVariables.GraceAuthOidcAudience
+                authField true Constants.EnvironmentVariables.GraceAuthOidcM2mClientId
+                authField true Constants.EnvironmentVariables.GraceAuthOidcM2mClientSecret
+                authField false Constants.EnvironmentVariables.GraceAuthOidcM2mScopes
+            |]
+
+        let cliFields =
+            [|
+                authField true Constants.EnvironmentVariables.GraceAuthOidcAuthority
+                authField true Constants.EnvironmentVariables.GraceAuthOidcAudience
+                authField true Constants.EnvironmentVariables.GraceAuthOidcCliClientId
+                authField false Constants.EnvironmentVariables.GraceAuthOidcCliRedirectPort
+                authField false Constants.EnvironmentVariables.GraceAuthOidcCliScopes
+            |]
+
+        let m2mComplete = requiredFieldsComplete m2mFields
+        let cliComplete = requiredFieldsComplete cliFields
+        let hasPartialM2m = hasPartialRequiredFields m2mFields
+        let hasPartialCli = hasPartialRequiredFields cliFields
+        let graceTokenFilePresent = isEnvSet Constants.EnvironmentVariables.GraceTokenFile
+
+        let activeSource, hasUsableCredentialSource =
+            if graceTokenValid then
+                $"{Constants.EnvironmentVariables.GraceToken} PAT", true
+            elif graceTokenError.IsSome then
+                $"{Constants.EnvironmentVariables.GraceToken} invalid", false
+            elif graceTokenFilePresent then
+                $"{Constants.EnvironmentVariables.GraceTokenFile} unsupported", false
+            elif m2mComplete then
+                "OIDC M2M environment", true
+            elif cliComplete then
+                "OIDC CLI environment", true
+            else
+                "None", false
+
+        {
+            GraceTokenPresent = graceTokenPresent
+            GraceTokenValid = graceTokenValid
+            GraceTokenError = graceTokenError
+            GraceTokenFilePresent = graceTokenFilePresent
+            M2mFields = m2mFields
+            CliFields = cliFields
+            M2mComplete = m2mComplete
+            CliComplete = cliComplete
+            HasPartialM2m = hasPartialM2m
+            HasPartialCli = hasPartialCli
+            ActiveSource = activeSource
+            HasUsableCredentialSource = hasUsableCredentialSource
+        }
 
     let private normalizeAuthority (authority: string) =
         let trimmed = authority.Trim()

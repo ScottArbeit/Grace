@@ -118,6 +118,27 @@ module Common =
                 NewDirectoryVersions: MaintenanceScanDirectoryVersionDto array
             }
 
+        type DoctorCheckDto = { Id: string; Category: string; Title: string; Description: string; DefaultEnabled: bool; SupportsOffline: bool }
+
+        type DoctorCheckResultDto = { Id: string; Category: string; Title: string; Status: string; Severity: string; Summary: string }
+
+        type DoctorSummaryDto = { Total: int; Ok: int; Warning: int; Failed: int; Skipped: int }
+
+        type DoctorReportDto =
+            {
+                ReportVersion: string
+                Status: string
+                ExitCode: int
+                Full: bool
+                Offline: bool
+                Strict: bool
+                ListOnly: bool
+                RequestedChecks: string array
+                Catalog: DoctorCheckDto array
+                Checks: DoctorCheckResultDto array
+                Summary: DoctorSummaryDto
+            }
+
         type WatchResultDto = { Started: bool; Completed: bool; Message: string; RootDirectory: string; ServerUri: string; RepositoryId: Guid; BranchId: Guid }
 
     /// The output format for the command.
