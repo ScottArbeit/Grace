@@ -396,6 +396,14 @@ module DoctorCliTests =
         finally
             Doctor.resetServerProbeFactoryForTests ()
 
+    let private withWorkingTreeScanner scanner action =
+        Doctor.setWorkingTreeScannerForTests scanner
+
+        try
+            action ()
+        finally
+            Doctor.resetWorkingTreeScannerForTests ()
+
     let private successfulProbeWithLifecycle diagnostics =
         Doctor.ServerProbeSucceeded
             {
@@ -1965,6 +1973,90 @@ module DoctorCliTests =
                 snapshotFiles root |> should equal beforeRoot))
 
     [<Test>]
+    let ``doctor working-tree scan does not prune directories from file-only ignore entries`` () =
+        withTempDir (fun root ->
+            withIsolatedHome root (fun _ ->
+                File.WriteAllText(Path.Combine(root, Constants.GraceIgnoreFileName), "build")
+
+                seedWorkingTreeSnapshot root |> ignore
+
+                let buildOutput = Path.Combine(root, "build", "generated.txt")
+
+                Directory.CreateDirectory(Path.GetDirectoryName(buildOutput))
+                |> ignore
+
+                File.WriteAllText(buildOutput, "generated content that should be detected")
+
+                let beforeRoot = snapshotFiles root
+
+                let exitCode, standardOut, standardError =
+                    runWithCapturedStdoutAndStderr [| "--output"
+                                                      "Json"
+                                                      "doctor"
+                                                      "--check"
+                                                      "working-tree.scan"
+                                                      "--select"
+                                                      "Checks" |]
+
+                exitCode |> should equal 0
+                standardError |> should equal String.Empty
+                use document = JsonDocument.Parse(standardOut)
+
+                document.RootElement.GetArrayLength()
+                |> should equal 1
+
+                let workingTree = findCheckById document.RootElement "working-tree.scan"
+
+                workingTree.GetProperty("Status").GetString()
+                |> should equal "Warning"
+
+                let summary = workingTree.GetProperty("Summary").GetString()
+
+                summary |> should contain "5 total"
+                summary |> should contain "3 added"
+                summary |> should contain "1 changed"
+                summary |> should contain "1 deleted"
+
+                snapshotFiles root |> should equal beforeRoot))
+
+    [<Test>]
+    let ``doctor strict exact working-tree scan fails when read-only scan execution fails`` () =
+        withTempDir (fun root ->
+            withIsolatedHome root (fun _ ->
+                seedWorkingTreeSnapshot root |> ignore
+
+                withWorkingTreeScanner
+                    (fun _ _ -> Task.FromResult(Error "simulated read-only scan failure"))
+                    (fun () ->
+                        let exitCode, standardOut, standardError =
+                            runWithCapturedStdoutAndStderr [| "--output"
+                                                              "Json"
+                                                              "doctor"
+                                                              "--check"
+                                                              "working-tree.scan"
+                                                              "--strict"
+                                                              "--select"
+                                                              "Checks" |]
+
+                        exitCode |> should equal 1
+                        standardError |> should equal String.Empty
+                        use document = JsonDocument.Parse(standardOut)
+
+                        document.RootElement.GetArrayLength()
+                        |> should equal 1
+
+                        let workingTree = findCheckById document.RootElement "working-tree.scan"
+
+                        workingTree.GetProperty("Status").GetString()
+                        |> should equal "Failed"
+
+                        workingTree.GetProperty("Severity").GetString()
+                        |> should equal "Error"
+
+                        workingTree.GetProperty("Summary").GetString()
+                        |> should contain "Working-tree scan failed without updating local state: simulated read-only scan failure")))
+
+    [<Test>]
     let ``doctor working-tree category selector runs scan`` () =
         withTempDir (fun root ->
             withIsolatedHome root (fun _ ->
@@ -2706,6 +2798,9 @@ notes.txt # inline comment
 
                     checks[ 2 ].GetProperty("Summary").GetString()
                     |> should contain "4 active entries"
+
+                    checks[ 2 ].GetProperty("Summary").GetString()
+                    |> should contain "2 file patterns and 2 directory patterns"
 
                     snapshotFiles root |> should equal beforeRoot
                     snapshotFiles home |> should equal beforeHome

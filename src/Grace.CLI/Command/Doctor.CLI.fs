@@ -733,20 +733,33 @@ module Doctor =
     let private workingTreeScanRemediation =
         "Run `grace maintenance scan` to inspect details or `grace maintenance update-index` when you intentionally want local state to match the current working tree."
 
+    type private WorkingTreeScanSummaryResult =
+        | WorkingTreeScanPrerequisiteSkipped of string
+        | WorkingTreeScanFailed of string
+        | WorkingTreeScanSummary of string
+
+    let mutable private workingTreeScanner = Services.scanWorkingTreeForDifferencesReadOnly
+
+    let setWorkingTreeScannerForTests scanner = workingTreeScanner <- scanner
+
+    let resetWorkingTreeScannerForTests () = workingTreeScanner <- Services.scanWorkingTreeForDifferencesReadOnly
+
     let private workingTreeScanSummary (context: DoctorInspectionContext) =
         match context.ConfigurationState with
-        | ConfigurationMissing _ -> Error $"Skipped because {ConfigFileDiscoverCheckId} did not find {Constants.GraceConfigFileName}."
-        | ConfigurationMalformed _ -> Error $"Skipped because {ConfigFileParseCheckId} failed."
+        | ConfigurationMissing _ ->
+            WorkingTreeScanPrerequisiteSkipped $"Skipped because {ConfigFileDiscoverCheckId} did not find {Constants.GraceConfigFileName}."
+        | ConfigurationMalformed _ -> WorkingTreeScanPrerequisiteSkipped $"Skipped because {ConfigFileParseCheckId} failed."
         | ConfigurationLoaded inspection ->
             let localStateInspection = context.LocalStateInspection.Value
 
             if not localStateInspection.OpenedReadOnly then
-                Error(localStateUnavailableSummary WorkingTreeScanCheckId localStateInspection)
+                WorkingTreeScanPrerequisiteSkipped(localStateUnavailableSummary WorkingTreeScanCheckId localStateInspection)
             elif localStateInspection.MissingRequiredTables.Length > 0 then
-                Error $"Skipped because {StateDbRequiredTablesCheckId} did not find all required local-state tables."
+                WorkingTreeScanPrerequisiteSkipped $"Skipped because {StateDbRequiredTablesCheckId} did not find all required local-state tables."
             elif localStateInspection.SchemaVersion
                  <> Some ExpectedLocalStateSchemaVersion then
-                Error $"Skipped because {StateDbSchemaVersionCheckId} did not find schema_version {ExpectedLocalStateSchemaVersion}."
+                WorkingTreeScanPrerequisiteSkipped
+                    $"Skipped because {StateDbSchemaVersionCheckId} did not find schema_version {ExpectedLocalStateSchemaVersion}."
             else
                 let configuration = inspection.Configuration
 
@@ -759,14 +772,14 @@ module Doctor =
                     |> fun task -> task.GetAwaiter().GetResult()
 
                 match snapshotResult with
-                | Error message -> Error $"Skipped because the read-only local-state snapshot could not be read: {message}"
+                | Error message -> WorkingTreeScanPrerequisiteSkipped $"Skipped because the read-only local-state snapshot could not be read: {message}"
                 | Ok snapshot ->
                     let hasRootDirectoryVersion =
                         snapshot.Index.Values
                         |> Seq.exists (fun directoryVersion -> directoryVersion.RelativePath = Constants.RootDirectoryPath)
 
                     if not hasRootDirectoryVersion then
-                        Ok(
+                        WorkingTreeScanSummary(
                             "Local-state snapshot is missing the root directory version; doctor did not rebuild it. "
                             + workingTreeScanRemediation
                         )
@@ -777,26 +790,26 @@ module Doctor =
                                 GraceDirectory = configuration.GraceDirectory
                                 GraceStatusFile = configuration.GraceStatusFile
                                 DirectoryIgnoreEntries =
-                                    inspection.Ignore.Entries
+                                    inspection.Ignore.DirectoryEntries
                                     |> Array.map (fun entry -> $"*{entry}")
                                     |> Array.distinct
                                 FileIgnoreEntries = inspection.Ignore.FileEntries
                             }
 
                         let scanResult =
-                            Services.scanWorkingTreeForDifferencesReadOnly scanInput snapshot
+                            workingTreeScanner scanInput snapshot
                             |> fun task -> task.GetAwaiter().GetResult()
 
                         match scanResult with
-                        | Error message -> Error $"Working-tree scan failed without updating local state: {message}"
+                        | Error message -> WorkingTreeScanFailed $"Working-tree scan failed without updating local state: {message}"
                         | Ok differences when differences.Count = 0 ->
-                            Ok "Working tree matches the read-only local-state snapshot. Doctor did not update the maintenance index."
+                            WorkingTreeScanSummary "Working tree matches the read-only local-state snapshot. Doctor did not update the maintenance index."
                         | Ok differences ->
                             let added = countDifferences Add differences
                             let changed = countDifferences Change differences
                             let deleted = countDifferences Delete differences
 
-                            Ok
+                            WorkingTreeScanSummary
                                 $"Working tree differs from the read-only local-state snapshot: {differences.Count} total, {added} added, {changed} changed, {deleted} deleted. {workingTreeScanRemediation}"
 
     let private oidcSummary (auth: Auth.AuthInspection) =
@@ -1037,9 +1050,10 @@ module Doctor =
                     $"Skipped in the default profile because working-tree drift scanning can hash repository files. Re-run with --full or --check {WorkingTreeScanCheckId}. {workingTreeScanRemediation}"
             else
                 match workingTreeScanSummary context with
-                | Error message -> skipped check message
-                | Ok summary when summary.StartsWith("Working tree matches", StringComparison.Ordinal) -> ok summary
-                | Ok summary -> warning summary
+                | WorkingTreeScanPrerequisiteSkipped message -> skipped check message
+                | WorkingTreeScanFailed message -> failed message
+                | WorkingTreeScanSummary summary when summary.StartsWith("Working tree matches", StringComparison.Ordinal) -> ok summary
+                | WorkingTreeScanSummary summary -> warning summary
         | ConfigFileDiscoverCheckId ->
             match context.ConfigurationState with
             | ConfigurationLoaded inspection -> ok $"Found {Constants.GraceConfigFileName} at {inspection.Path}; repository root {inspection.RootDirectory}."
