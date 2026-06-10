@@ -90,15 +90,15 @@ module Auth =
         let value = Environment.GetEnvironmentVariable(name)
         if String.IsNullOrWhiteSpace value then None else Some value
 
-    let private isEnvSet name =
-        isNull (Environment.GetEnvironmentVariable(name))
-        |> not
+    let private isEnvSet name = tryGetEnv name |> Option.isSome
 
     let private normalizeBearerToken (token: string) =
-        if token.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase) then
-            token.Substring("Bearer ".Length).Trim()
+        let trimmed = token.Trim()
+
+        if trimmed.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase) then
+            trimmed.Substring("Bearer ".Length).Trim()
         else
-            token.Trim()
+            trimmed
 
     let private authField required name = { Name = name; IsSet = isEnvSet name; Required = required }
 
@@ -114,23 +114,20 @@ module Auth =
         && not (requiredFieldsComplete fields)
 
     let inspectAuthEnvironment () =
-        let tokenValue = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.GraceToken)
-        let graceTokenPresent = not (isNull tokenValue)
+        let tokenValue = tryGetEnv Constants.EnvironmentVariables.GraceToken
+        let graceTokenPresent = tokenValue.IsSome
 
         let graceTokenValid, graceTokenError =
-            if not graceTokenPresent then
-                false, None
-            elif String.IsNullOrWhiteSpace tokenValue then
-                false, Some $"GRACE_TOKEN is set but empty. Provide a Grace PAT or unset {Constants.EnvironmentVariables.GraceToken}."
-            else
-                let trimmed = tokenValue.Trim()
+            match tokenValue with
+            | None -> false, None
+            | Some value ->
+                let normalized = normalizeBearerToken value
 
-                match Grace.Types.PersonalAccessToken.tryParseToken trimmed with
+                match Grace.Types.PersonalAccessToken.tryParseToken normalized with
                 | Some _ -> true, None
                 | None ->
                     false,
-                    Some
-                        $"GRACE_TOKEN accepts Grace PATs only (prefix {Grace.Types.PersonalAccessToken.TokenPrefix}). Auth0 access tokens and bearer prefixes are not valid here."
+                    Some $"GRACE_TOKEN accepts Grace PATs only (prefix {Grace.Types.PersonalAccessToken.TokenPrefix}). Auth0 access tokens are not valid here."
 
         let m2mFields =
             [|

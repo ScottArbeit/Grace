@@ -456,9 +456,45 @@ module DoctorCliTests =
                     .GetString()
                 |> should equal "Ok"))
 
+    [<Test>]
+    let ``doctor auth accepts bearer GRACE_TOKEN without printing raw value`` () =
+        withTempDir (fun _ ->
+            let token = validPat ()
+            let bearerToken = $"  Bearer {token}  "
+
+            withEnv Constants.EnvironmentVariables.GraceToken (Some bearerToken) (fun () ->
+                let exitCode, standardOut, standardError =
+                    runWithCapturedStdoutAndStderr [| "--output"
+                                                      "Json"
+                                                      "doctor"
+                                                      "--check"
+                                                      "auth.source.detected"
+                                                      "--check"
+                                                      "auth.env-token.valid" |]
+
+                exitCode |> should equal 0
+                assertDoesNotContainSecrets [ token; bearerToken ] standardOut standardError
+
+                use document = assertCleanJsonOutput standardOut standardError
+
+                let checks =
+                    document
+                        .RootElement
+                        .GetProperty("ReturnValue")
+                        .GetProperty("Checks")
+
+                (findCheckById checks "auth.source.detected")
+                    .GetProperty("Summary")
+                    .GetString()
+                |> should contain "GRACE_TOKEN PAT"
+
+                (findCheckById checks "auth.env-token.valid")
+                    .GetProperty("Status")
+                    .GetString()
+                |> should equal "Ok"))
+
     [<TestCase("not-a-pat")>]
     [<TestCase("Bearer not-a-pat")>]
-    [<TestCase("")>]
     let ``doctor auth rejects invalid GRACE_TOKEN safely`` token =
         withTempDir (fun _ ->
             withEnv Constants.EnvironmentVariables.GraceToken (Some token) (fun () ->
@@ -487,6 +523,52 @@ module DoctorCliTests =
 
                 check.GetProperty("Summary").GetString()
                 |> should contain "GRACE_TOKEN"))
+
+    [<TestCase("")>]
+    [<TestCase("   ")>]
+    let ``doctor auth treats blank GRACE_TOKEN as unset and continues OIDC inspection`` token =
+        withTempDir (fun _ ->
+            withEnv Constants.EnvironmentVariables.GraceToken (Some token) (fun () ->
+                withEnv Constants.EnvironmentVariables.GraceAuthOidcAuthority (Some "https://tenant.example.invalid/") (fun () ->
+                    withEnv Constants.EnvironmentVariables.GraceAuthOidcAudience (Some "https://api.example.invalid/") (fun () ->
+                        withEnv Constants.EnvironmentVariables.GraceAuthOidcM2mClientId (Some "m2m-client-id") (fun () ->
+                            withEnv Constants.EnvironmentVariables.GraceAuthOidcM2mClientSecret (Some "m2m-client-secret") (fun () ->
+                                let exitCode, standardOut, standardError =
+                                    runWithCapturedStdoutAndStderr [| "--output"
+                                                                      "Json"
+                                                                      "doctor"
+                                                                      "--check"
+                                                                      "auth.source.detected"
+                                                                      "--check"
+                                                                      "auth.env-token.valid"
+                                                                      "--check"
+                                                                      "auth.oidc.configuration" |]
+
+                                exitCode |> should equal 0
+                                assertDoesNotContainSecrets [ "m2m-client-secret" ] standardOut standardError
+
+                                use document = assertCleanJsonOutput standardOut standardError
+
+                                let checks =
+                                    document
+                                        .RootElement
+                                        .GetProperty("ReturnValue")
+                                        .GetProperty("Checks")
+
+                                (findCheckById checks "auth.source.detected")
+                                    .GetProperty("Summary")
+                                    .GetString()
+                                |> should contain "OIDC M2M environment"
+
+                                (findCheckById checks "auth.env-token.valid")
+                                    .GetProperty("Status")
+                                    .GetString()
+                                |> should equal "Skipped"
+
+                                (findCheckById checks "auth.oidc.configuration")
+                                    .GetProperty("Status")
+                                    .GetString()
+                                |> should equal "Ok"))))))
 
     [<Test>]
     let ``doctor auth reports unsupported GRACE_TOKEN_FILE with GRACE_TOKEN remediation`` () =
@@ -517,6 +599,59 @@ module DoctorCliTests =
 
                 check.GetProperty("Summary").GetString()
                 |> should contain "GRACE_TOKEN"))
+
+    [<TestCase("")>]
+    [<TestCase("   ")>]
+    let ``doctor auth treats blank GRACE_TOKEN_FILE as unset for explicit checks`` tokenFileValue =
+        withTempDir (fun _ ->
+            withEnv Constants.EnvironmentVariables.GraceTokenFile (Some tokenFileValue) (fun () ->
+                let exitCode, standardOut, standardError =
+                    runWithCapturedStdoutAndStderr [| "--output"
+                                                      "Json"
+                                                      "doctor"
+                                                      "--check"
+                                                      "auth.token-file.unsupported" |]
+
+                exitCode |> should equal 0
+
+                use document = assertCleanJsonOutput standardOut standardError
+
+                let check =
+                    document
+                        .RootElement
+                        .GetProperty("ReturnValue")
+                        .GetProperty("Checks")[0]
+
+                check.GetProperty("Status").GetString()
+                |> should equal "Ok"
+
+                check.GetProperty("Summary").GetString()
+                |> should contain "GRACE_TOKEN_FILE is not set."))
+
+    [<TestCase("")>]
+    [<TestCase("   ")>]
+    let ``doctor auth treats blank GRACE_TOKEN_FILE as unset in default checks`` tokenFileValue =
+        withTempDir (fun _ ->
+            withEnv Constants.EnvironmentVariables.GraceTokenFile (Some tokenFileValue) (fun () ->
+                let exitCode, standardOut, standardError =
+                    runWithCapturedStdoutAndStderr [| "--output"
+                                                      "Json"
+                                                      "doctor" |]
+
+                exitCode |> should equal 0
+
+                use document = assertCleanJsonOutput standardOut standardError
+
+                let checks =
+                    document
+                        .RootElement
+                        .GetProperty("ReturnValue")
+                        .GetProperty("Checks")
+
+                (findCheckById checks "auth.token-file.unsupported")
+                    .GetProperty("Status")
+                    .GetString()
+                |> should equal "Ok"))
 
     [<Test>]
     let ``doctor auth missing environment warns and skips token validation`` () =
@@ -590,6 +725,37 @@ module DoctorCliTests =
 
                         check.GetProperty("Summary").GetString()
                         |> should contain "partial"))))
+
+    [<Test>]
+    let ``doctor auth treats blank OIDC required values as missing`` () =
+        withTempDir (fun _ ->
+            withEnv Constants.EnvironmentVariables.GraceAuthOidcAuthority (Some "   ") (fun () ->
+                withEnv Constants.EnvironmentVariables.GraceAuthOidcAudience (Some "https://api.example.invalid/") (fun () ->
+                    withEnv Constants.EnvironmentVariables.GraceAuthOidcM2mClientId (Some "m2m-client-id") (fun () ->
+                        withEnv Constants.EnvironmentVariables.GraceAuthOidcM2mClientSecret (Some "m2m-client-secret") (fun () ->
+                            let exitCode, standardOut, standardError =
+                                runWithCapturedStdoutAndStderr [| "--output"
+                                                                  "Json"
+                                                                  "doctor"
+                                                                  "--check"
+                                                                  "auth.oidc.configuration" |]
+
+                            exitCode |> should equal 0
+                            assertDoesNotContainSecrets [ "m2m-client-secret" ] standardOut standardError
+
+                            use document = assertCleanJsonOutput standardOut standardError
+
+                            let check =
+                                document
+                                    .RootElement
+                                    .GetProperty("ReturnValue")
+                                    .GetProperty("Checks")[0]
+
+                            check.GetProperty("Status").GetString()
+                            |> should equal "Warning"
+
+                            check.GetProperty("Summary").GetString()
+                            |> should contain Constants.EnvironmentVariables.GraceAuthOidcAuthority)))))
 
     [<Test>]
     let ``doctor auth exact check selections are not filtered out`` () =
