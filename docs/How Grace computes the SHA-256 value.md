@@ -2,10 +2,13 @@
 
 ## Introduction
 
-Grace currently uses SHA-256 values in file, directory, reference, diff, and lookup workflows. These values are version
-graph hashes: they identify stored Grace `FileVersion`, `DirectoryVersion`, and `Reference` version objects. They are
-separate from content-addressed storage identities such as `FileContentHash`, `ChunkAddress`, `ContentBlockAddress`, and
-`ManifestAddress`.
+Grace currently uses SHA-256 values in file, directory, reference, diff, and lookup workflows. These values sit in the
+version graph, but their current meaning depends on the object type. Current file SHA-256 values are byte hashes; they
+do not by themselves identify stored `FileVersion` objects because a `FileVersion` also carries `RelativePath`.
+Directory SHA-256 values are computed from the directory's own path plus child version hashes. References store the
+referenced root directory hash; Grace does not compute a separate SHA-256 preimage over the `Reference` object itself.
+These values are separate from content-addressed storage identities such as `FileContentHash`, `ChunkAddress`,
+`ContentBlockAddress`, and `ManifestAddress`.
 
 ADR [0006](adr/0006-blake3-and-sha256-version-hashes.md) accepts a future model where BLAKE3 is the default version-hash
 algorithm for new version objects and SHA-256 remains retained for compatibility, verification, and transition tooling.
@@ -52,7 +55,9 @@ The file SHA-256 value is computed with this algorithm:
 For example, `byte[] { 0x43, 0x2a, 0x01, 0xfa }` is represented as `432a01fa`.
 
 The file relative path still matters to Grace's domain model because a `FileVersion` says a specific relative path
-contains specific file content in a repository version. The current file SHA-256 calculation itself is byte-only.
+contains specific file content in a repository version. Two files with the same bytes at different relative paths have
+the same current file SHA-256 value, but they are different `FileVersion` records because their `RelativePath` values
+differ. The current file SHA-256 calculation itself is byte-only.
 
 ### Directories
 
@@ -68,7 +73,13 @@ The directory SHA-256 value is computed with this algorithm:
 1. Append each child file SHA-256 value, in sorted order, as UTF-8 bytes.
 1. Finalize the SHA-256 hash and convert it to lowercase hexadecimal text.
 
-This keeps directory identity sensitive to path and tree shape without making the file byte hash include path data.
+The current implementation uses child names for sorting, but it does not append those child names to the hash input. A
+current directory SHA-256 preimage is the directory's own relative path followed by each child SHA-256 value. The future
+`grace.directory-version.v1` preimage from ADR 0006 is planned to be child-name-aware; this page does not describe that
+future behavior as shipped.
+
+This keeps the current directory SHA-256 value sensitive to the directory path and ordered child hash sequence without
+making the file byte hash include path data.
 
 ### Version Hash Transition
 
