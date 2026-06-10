@@ -12,6 +12,8 @@ open NUnit.Framework
 open System
 open System.Collections.Generic
 open System.IO
+open System.Security.Cryptography
+open System.Text
 open System.Threading.Tasks
 
 [<NonParallelizable>]
@@ -55,6 +57,27 @@ module CurrentStateCaptureCliTests =
     let private branch saveEnabled latestReference =
         { BranchDto.Default with BranchId = currentBranchId; SaveEnabled = saveEnabled; LatestReference = latestReference; LatestSave = latestReference }
 
+    let private sha256Hash (bytes: byte array) =
+        SHA256.HashData(bytes)
+        |> Convert.ToHexString
+        |> fun value -> Sha256Hash(value.ToLowerInvariant())
+
+    let private manifestReferenceFor bytes =
+        let blockAddress = ContentBlockAddress(ContentAddress.computeBlake3Hex bytes)
+
+        let manifest =
+            FileManifest.Create(
+                ManifestAddress String.Empty,
+                RabinChunking.SuiteName,
+                FileContentHash(ContentAddress.computeBlake3Hex bytes),
+                int64 bytes.Length,
+                [
+                    ContentBlock.Create(blockAddress, 0L, int64 bytes.Length)
+                ]
+            )
+
+        FileContentReference.FileManifest { manifest with ManifestAddress = ContentAddress.computeManifestAddressForManifest manifest }
+
     let private defaultOperations branchDto =
         {
             GetBranch = fun () -> Task.FromResult(Ok(GraceReturnValue.Create branchDto correlationId))
@@ -63,7 +86,7 @@ module CurrentStateCaptureCliTests =
             ScanForDifferences = fun _ -> Task.FromResult(List<FileSystemDifference>())
             CopyUpdatedFilesToObjectCache = fun _ -> Task.FromResult(Seq.empty<LocalFileVersion>)
             BuildUpdatedGraceStatus = fun status _ -> Task.FromResult(status, List<LocalDirectoryVersion>())
-            UploadFileVersions = fun _ -> Task.FromResult(Ok())
+            UploadFileVersions = fun _ -> Task.FromResult(Ok Array.empty<FileVersion>)
             UploadDirectoryVersions = fun _ -> Task.FromResult(Ok())
             ApplyGraceStatusIncremental = fun _ _ _ -> Task.FromResult(())
             CreateSaveReference = fun _ _ -> Task.FromResult(Ok(Guid.NewGuid()))
@@ -279,7 +302,14 @@ module CurrentStateCaptureCliTests =
                 UploadFileVersions =
                     fun fileVersions ->
                         uploadedFiles <- List<LocalFileVersion>(fileVersions)
-                        Task.FromResult(Ok())
+
+                        Task.FromResult(
+                            Ok(
+                                fileVersions
+                                |> Seq.map (fun fileVersion -> fileVersion.ToFileVersion)
+                                |> Seq.toArray
+                            )
+                        )
                 CreateSaveReference = fun _ _ -> Task.FromResult(Ok(createdSaveId))
             }
 
@@ -300,6 +330,197 @@ module CurrentStateCaptureCliTests =
             uploadedFiles[0].Sha256Hash
             |> should equal changedFile.Sha256Hash
         | Error error -> Assert.Fail($"Expected auto-save success, got: {error.Error}")
+
+    [<Test>]
+    let ``local changes save directory versions with enriched uploaded file versions`` () =
+        let updatedRootId = Guid.NewGuid()
+        let updatedRootSha = Sha256Hash "updated-root-sha"
+        let createdSaveId = Guid.NewGuid()
+        let changedPath = RelativePath "src/large.bin"
+        let payload = Encoding.UTF8.GetBytes("large manifest-backed payload")
+
+        let changedFile =
+            LocalFileVersion.CreateWithHashes
+                changedPath
+                (sha256Hash payload)
+                (Blake3Hash(ContentAddress.computeBlake3Hex payload))
+                true
+                (int64 payload.Length)
+                (Grace.Shared.Utilities.getCurrentInstant ())
+                true
+                DateTime.UtcNow
+
+        let uploadedFile = changedFile.ToFileVersion
+        uploadedFile.Blake3Hash <- Blake3Hash(ContentAddress.computeBlake3Hex payload)
+        uploadedFile.ContentReference <- manifestReferenceFor payload
+
+        let mutable savedDirectoryFiles = List<FileVersion>()
+
+        let differences =
+            List<FileSystemDifference>(
+                [|
+                    FileSystemDifference.Create DifferenceType.Change FileSystemEntryType.File changedPath
+                |]
+            )
+
+        let updatedStatus = graceStatus updatedRootId updatedRootSha
+
+        let updatedRoot =
+            LocalDirectoryVersion.Create
+                updatedRootId
+                OwnerId.Empty
+                OrganizationId.Empty
+                RepositoryId.Empty
+                Constants.RootDirectoryPath
+                updatedRootSha
+                (List<DirectoryVersionId>())
+                (List<LocalFileVersion>([| changedFile |]))
+                changedFile.Size
+                DateTime.UtcNow
+
+        let operations =
+            { defaultOperations (branch true ReferenceDto.Default) with
+                ScanForDifferences = fun _ -> Task.FromResult(differences)
+                BuildUpdatedGraceStatus = fun _ _ -> Task.FromResult(updatedStatus, List<LocalDirectoryVersion>([| updatedRoot |]))
+                UploadFileVersions = fun _ -> Task.FromResult(Ok [| uploadedFile |])
+                UploadDirectoryVersions =
+                    fun directoryVersions ->
+                        savedDirectoryFiles <- directoryVersions[0].Files
+                        Task.FromResult(Ok())
+                CreateSaveReference = fun _ _ -> Task.FromResult(Ok(createdSaveId))
+            }
+
+        let result =
+            (resolveCliCurrentStateTargetReference operations None branchAnnotateImplicitSaveMessage correlationId)
+                .Result
+
+        match result with
+        | Ok captured ->
+            captured.TargetReferenceId
+            |> should equal createdSaveId
+
+            savedDirectoryFiles.Count |> should equal 1
+
+            savedDirectoryFiles[0].Blake3Hash
+            |> should equal uploadedFile.Blake3Hash
+
+            savedDirectoryFiles[0]
+                .ContentReference
+                .ReferenceType
+            |> should equal FileContentReferenceType.FileManifest
+        | Error error -> Assert.Fail($"Expected auto-save success, got: {error.Error}")
+
+    [<Test>]
+    let ``local changes do not apply local status when save reference creation fails`` () =
+        let updatedRootId = Guid.NewGuid()
+        let updatedRootSha = Sha256Hash "updated-root-sha"
+        let mutable appliedStatus = false
+
+        let differences =
+            List<FileSystemDifference>(
+                [|
+                    FileSystemDifference.Create DifferenceType.Add FileSystemEntryType.Directory (RelativePath "new-folder")
+                |]
+            )
+
+        let updatedStatus = graceStatus updatedRootId updatedRootSha
+        let updatedRoot = rootDirectoryVersion updatedRootId updatedRootSha
+
+        let operations =
+            { defaultOperations (branch true ReferenceDto.Default) with
+                ScanForDifferences = fun _ -> Task.FromResult(differences)
+                BuildUpdatedGraceStatus = fun _ _ -> Task.FromResult(updatedStatus, List<LocalDirectoryVersion>([| updatedRoot |]))
+                ApplyGraceStatusIncremental =
+                    fun _ _ _ ->
+                        appliedStatus <- true
+                        Task.FromResult(())
+                CreateSaveReference = fun _ _ -> Task.FromResult(Error(GraceError.Create "save reference failed" correlationId))
+            }
+
+        let result =
+            (resolveCliCurrentStateTargetReference operations None branchAnnotateImplicitSaveMessage correlationId)
+                .Result
+
+        match result with
+        | Ok captured -> Assert.Fail($"Expected save-reference failure, got: {captured}")
+        | Error error ->
+            error.Error
+            |> should contain "save reference failed"
+
+            appliedStatus |> should equal false
+
+    [<Test>]
+    let ``read-only current-state scan detects changed BLAKE3 when SHA-256 still matches`` () =
+        let root = Path.Combine(Path.GetTempPath(), $"grace-current-state-scan-{Guid.NewGuid():N}")
+        let graceDirectory = Path.Combine(root, Constants.GraceConfigDirectory)
+        let filePath = Path.Combine(root, "same-sha-different-blake3.txt")
+        let relativePath = RelativePath "same-sha-different-blake3.txt"
+
+        try
+            Directory.CreateDirectory(root) |> ignore
+
+            Directory.CreateDirectory(graceDirectory)
+            |> ignore
+
+            let payload = Encoding.UTF8.GetBytes("same sha, different blake3")
+            File.WriteAllBytes(filePath, payload)
+
+            let fileInfo = FileInfo(filePath)
+
+            let priorFile =
+                LocalFileVersion.CreateWithHashes
+                    relativePath
+                    (sha256Hash payload)
+                    (Blake3Hash "legacy-or-wrong-blake3")
+                    false
+                    fileInfo.Length
+                    (Grace.Shared.Utilities.getCurrentInstant ())
+                    true
+                    (fileInfo.LastWriteTimeUtc.AddSeconds(-10.0))
+
+            let previousRoot =
+                LocalDirectoryVersion.Create
+                    rootDirectoryId
+                    OwnerId.Empty
+                    OrganizationId.Empty
+                    RepositoryId.Empty
+                    Constants.RootDirectoryPath
+                    rootSha
+                    (List<DirectoryVersionId>())
+                    (List<LocalFileVersion>([| priorFile |]))
+                    priorFile.Size
+                    DateTime.UtcNow
+
+            let index = GraceIndex()
+
+            index.TryAdd(rootDirectoryId, previousRoot)
+            |> ignore
+
+            let previousStatus = { GraceStatus.Default with Index = index; RootDirectoryId = rootDirectoryId; RootDirectorySha256Hash = rootSha }
+
+            let scanInput =
+                {
+                    RootDirectory = root
+                    GraceDirectory = graceDirectory
+                    GraceStatusFile = Path.Combine(graceDirectory, Constants.GraceLocalStateDbFileName)
+                    DirectoryIgnoreEntries = Array.empty
+                    FileIgnoreEntries = Array.empty
+                }
+
+            match (scanWorkingTreeForDifferencesReadOnly scanInput previousStatus)
+                .Result
+                with
+            | Error error -> Assert.Fail($"Expected scan success, got: {error}")
+            | Ok differences ->
+                differences.Count |> should equal 1
+
+                differences[0].DifferenceType
+                |> should equal DifferenceType.Change
+
+                differences[0].RelativePath
+                |> should equal relativePath
+        finally
+            if Directory.Exists(root) then Directory.Delete(root, true)
 
     [<Test>]
     let ``created save reference id is parsed from response properties`` () =
@@ -330,7 +551,7 @@ module CurrentStateCaptureCliTests =
                 UploadFileVersions =
                     fun _ ->
                         uploadedFiles <- true
-                        Task.FromResult(Ok())
+                        Task.FromResult(Ok Array.empty<FileVersion>)
                 CreateSaveReference =
                     fun _ _ ->
                         createdSave <- true
