@@ -16,6 +16,7 @@ module en_US =
     let getString stringResourceName =
         match stringResourceName with
         | AssignIsDisabled -> "This branch has disabled assign."
+        | Blake3HashIsRequired -> "The Blake3Hash value is required."
         | Branch -> "Branch"
         | BranchAlreadyExists -> "The branch already exists."
         | BranchDoesNotExist -> "The branch was not found."
@@ -72,6 +73,7 @@ module en_US =
         | InvalidBranchId -> "The provided BranchId is not a valid Guid."
         | InvalidBranchName ->
             "The BranchName is not a valid Grace name. A valid object name in Grace has between 2 and 64 characters, has a letter for the first character ([A-Za-z]), and letters, numbers, or - for the rest ([A-Za-z0-9\-]{1,63})."
+        | InvalidBlake3Hash -> "The provided BLAKE3 hash is not a valid lowercase 64-character BLAKE3 hash value."
         | InvalidCheckpointDaysValue -> "The provided value for CheckpointDays is invalid."
         | InvalidConflictResolutionPolicy ->
             $"The Conflict Resolution Policy provided is not a valid value. Valid values: {listCasesAsString<Common.ConflictResolutionPolicy> ()}."
@@ -102,6 +104,7 @@ module en_US =
         | InvalidSearchVisibility -> "The SearchVisibility provided is not a valid SearchVisibility value."
         | InvalidServerApiVersion -> "The provided ServerApiVersion is not recognized. Please use a published Grace API version identifier."
         | InvalidSha256Hash -> "The provided SHA-256 hash is not a valid SHA-256 hash value."
+        | InvalidSha256VersionHash -> "The provided SHA-256 version hash is not a valid lowercase 64-character SHA-256 hash value."
         | InvalidSize -> "The provided size does not match the size calculated by adding the sizes of all files in the directory."
         | InvalidVisibilityValue -> "The provided visibility value is not valid."
         | PromotionIsDisabled -> "This branch has disabled promotions."
@@ -165,6 +168,7 @@ module en_US =
         | Sha256HashDoesNotExist -> "The Sha256Hash value was not found."
         | Sha256HashDoesNotMatch -> "The provided SHA-256 hash for this directory version does not match the SHA-256 hash calculated by Grace Server."
         | Sha256HashIsRequired -> "The Sha256Hash value is required."
+        | Sha256VersionHashIsRequired -> "The SHA-256 version hash value is required."
         | StringIsTooLong -> "The provided string is longer than allowed."
         | TagIsDisabled -> "This branch has disabled tags."
         | TestFailed -> "The test failed."
