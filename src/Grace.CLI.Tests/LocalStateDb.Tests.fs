@@ -86,6 +86,9 @@ module LocalStateDbTests =
     let private createFileVersion relativePath sha256Hash isBinary size createdAt lastWriteTime =
         LocalFileVersion.Create relativePath sha256Hash isBinary size createdAt true lastWriteTime
 
+    let private createFileVersionWithHashes relativePath sha256Hash blake3Hash isBinary size createdAt lastWriteTime =
+        LocalFileVersion.CreateWithHashes relativePath sha256Hash blake3Hash isBinary size createdAt true lastWriteTime
+
     let private createDirectoryVersion
         (configuration: GraceConfiguration)
         (directoryVersionId: DirectoryVersionId)
@@ -205,7 +208,7 @@ module LocalStateDbTests =
                 use cmd = connection.CreateCommand()
                 cmd.CommandText <- "SELECT value FROM meta WHERE key = 'schema_version';"
                 let schemaVersion = cmd.ExecuteScalar() :?> string
-                schemaVersion |> should equal "2"
+                schemaVersion |> should equal "3"
 
                 cmd.CommandText <- "SELECT COUNT(*) FROM status_meta;"
                 let statusMetaCount = Convert.ToInt32(cmd.ExecuteScalar())
@@ -222,7 +225,7 @@ module LocalStateDbTests =
                 let srcId = Guid.NewGuid()
 
                 let rootFile = createFileVersion "root.txt" "root-hash" false 12L now lastWrite
-                let srcFile = createFileVersion "src/file.txt" "src-hash" false 34L now lastWrite
+                let srcFile = createFileVersionWithHashes "src/file.txt" "src-hash" "src-blake3" false 34L now lastWrite
 
                 let srcDirectory = createDirectoryVersion configuration srcId "src" "src-dir-hash" [||] [| srcFile |] srcFile.Size lastWrite
 
@@ -272,6 +275,7 @@ module LocalStateDbTests =
                     |> Seq.find (fun file -> file.RelativePath = "src/file.txt")
 
                 srcRead.Sha256Hash |> should equal "src-hash"
+                srcRead.Blake3Hash |> should equal "src-blake3"
                 srcRead.Size |> should equal 34L
             })
 
@@ -321,7 +325,7 @@ module LocalStateDbTests =
 
                 let newRootId = Guid.NewGuid()
                 let newSrcId = Guid.NewGuid()
-                let changedFile = createFileVersion "src/file.txt" "src-hash-2" false 25L now lastWrite
+                let changedFile = createFileVersionWithHashes "src/file.txt" "src-hash-2" "src-blake3-2" false 25L now lastWrite
                 let newFile = createFileVersion "src/new.txt" "new-hash" false 5L now lastWrite
 
                 let newSrcDirectory =
@@ -382,6 +386,12 @@ module LocalStateDbTests =
                 |> Seq.exists (fun file -> file.RelativePath = "src/new.txt")
                 |> should equal true
 
+                let changedRead =
+                    srcRead.Files
+                    |> Seq.find (fun file -> file.RelativePath = "src/file.txt")
+
+                changedRead.Blake3Hash |> should equal "src-blake3-2"
+
                 readBack.Index.Values
                 |> Seq.collect (fun dv -> dv.Files)
                 |> Seq.exists (fun file -> file.RelativePath = "root.txt")
@@ -395,7 +405,7 @@ module LocalStateDbTests =
                 let now = getCurrentInstant ()
                 let lastWrite = DateTime.UtcNow
                 let directoryId = Guid.NewGuid()
-                let fileVersion = createFileVersion "src/cache.txt" "cache-hash" false 12L now lastWrite
+                let fileVersion = createFileVersionWithHashes "src/cache.txt" "cache-hash" "cache-blake3" false 12L now lastWrite
 
                 let directory = createDirectoryVersion configuration directoryId "src" "cache-dir-hash" [||] [| fileVersion |] fileVersion.Size lastWrite
 
@@ -408,6 +418,11 @@ module LocalStateDbTests =
                 let! fileExists = LocalStateDb.isFileVersionInObjectCache configuration.GraceStatusFile fileVersion
 
                 fileExists |> should equal true
+
+                use connection = openRawConnection configuration.GraceStatusFile
+
+                executeScalarString connection "SELECT blake3_hash FROM object_cache_directory_files WHERE relative_path = 'src/cache.txt';"
+                |> should equal "cache-blake3"
             })
 
     [<Test>]
@@ -454,7 +469,7 @@ module LocalStateDbTests =
 
                 use connection = openRawConnection configuration.GraceStatusFile
                 let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
-                schemaVersion |> should equal "2"
+                schemaVersion |> should equal "3"
 
                 let corruptAfter =
                     getCorruptBackups configuration.GraceStatusFile
@@ -481,7 +496,7 @@ module LocalStateDbTests =
 
                 use connection = openRawConnection configuration.GraceStatusFile
                 let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
-                schemaVersion |> should equal "2"
+                schemaVersion |> should equal "3"
 
                 let corruptAfter =
                     getCorruptBackups configuration.GraceStatusFile
@@ -602,7 +617,7 @@ module LocalStateDbTests =
                     connection
                     "CREATE TABLE IF NOT EXISTS status_meta (id INTEGER PRIMARY KEY CHECK (id = 1), root_directory_version_id TEXT NOT NULL, root_directory_sha256_hash TEXT NOT NULL, last_successful_file_upload_unix_ticks INTEGER NOT NULL, last_successful_directory_version_upload_unix_ticks INTEGER NOT NULL);"
 
-                executeNonQuery connection "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '2');"
+                executeNonQuery connection "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '3');"
 
                 executeNonQuery
                     connection
@@ -794,7 +809,7 @@ module LocalStateDbTests =
 
                 use connection = openRawConnection configuration.GraceStatusFile
                 let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
-                schemaVersion |> should equal "2"
+                schemaVersion |> should equal "3"
 
                 let statusMetaCount = executeScalarInt connection "SELECT COUNT(*) FROM status_meta;"
                 statusMetaCount |> should equal 1
@@ -820,7 +835,7 @@ module LocalStateDbTests =
 
                 use connection = openRawConnection configuration.GraceStatusFile
                 let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
-                schemaVersion |> should equal "2"
+                schemaVersion |> should equal "3"
             })
 
     [<Test>]
@@ -1073,7 +1088,7 @@ module LocalStateDbTests =
 
                 executeNonQuery
                     connection
-                    "INSERT OR REPLACE INTO status_directories (relative_path, parent_path, directory_version_id, sha256_hash, size_bytes, created_at_unix_ticks, last_write_time_utc_ticks) VALUES ('.', '', '00000000-0000-0000-0000-000000000001', 'root', 0, 0, 0);"
+                    "INSERT OR REPLACE INTO status_directories (relative_path, parent_path, directory_version_id, sha256_hash, blake3_hash, size_bytes, created_at_unix_ticks, last_write_time_utc_ticks) VALUES ('.', '', '00000000-0000-0000-0000-000000000001', 'root', '', 0, 0, 0);"
 
                 let orphanId = Guid.NewGuid()
 
@@ -1081,7 +1096,7 @@ module LocalStateDbTests =
                     Action (fun () ->
                         executeNonQuery
                             connection
-                            $"INSERT OR REPLACE INTO status_files (relative_path, directory_path, directory_version_id, sha256_hash, is_binary, size_bytes, created_at_unix_ticks, uploaded_to_object_storage, last_write_time_utc_ticks) VALUES ('orphan.txt', 'missing', '{orphanId}', 'hash', 0, 1, 0, 0, 0);")
+                            $"INSERT OR REPLACE INTO status_files (relative_path, directory_path, directory_version_id, sha256_hash, blake3_hash, is_binary, size_bytes, created_at_unix_ticks, uploaded_to_object_storage, last_write_time_utc_ticks) VALUES ('orphan.txt', 'missing', '{orphanId}', 'hash', '', 0, 1, 0, 0, 0);")
                 )
                 |> ignore
             })
@@ -1590,7 +1605,7 @@ module LocalStateDbTests =
                     integrity.ToLowerInvariant() |> should equal "ok"
 
                     let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
-                    schemaVersion |> should equal "2"
+                    schemaVersion |> should equal "3"
 
                     let statusMetaCount = executeScalarInt connection "SELECT COUNT(*) FROM status_meta;"
                     statusMetaCount |> should equal 1

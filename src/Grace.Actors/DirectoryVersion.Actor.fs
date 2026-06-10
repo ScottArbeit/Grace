@@ -938,7 +938,8 @@ module DirectoryVersion =
                                                     totalElapsedMs
                                                 )
 
-                                                let newDirectoryVersion = { directoryVersion with HashesValidated = true }
+                                                directoryVersion.HashesValidated <- true
+                                                let newDirectoryVersion = directoryVersion
                                                 return Ok(Created newDirectoryVersion)
                                     | SetRecursiveSize recursiveSize -> return Ok(RecursiveSizeSet recursiveSize)
                                     | DeleteLogical deleteReason ->

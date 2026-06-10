@@ -210,6 +210,60 @@ type CommonTypesTests() =
         Assert.That(fileVersion.Blake3Hash, Is.EqualTo(Blake3Hash String.Empty))
 
     [<Test>]
+    member _.DirectoryVersionJsonWithoutBlake3HashDefaultsToEmptyScaffoldValue() =
+        let legacyJson =
+            """
+{
+  "Class": "DirectoryVersion",
+  "DirectoryVersionId": "11111111-1111-1111-1111-111111111111",
+  "OwnerId": "22222222-2222-2222-2222-222222222222",
+  "OrganizationId": "33333333-3333-3333-3333-333333333333",
+  "RepositoryId": "44444444-4444-4444-4444-444444444444",
+  "RelativePath": "src",
+  "Sha256Hash": "sha256-directory",
+  "Directories": [],
+  "Files": [],
+  "Size": 123,
+  "CreatedAt": "2025-01-01T00:00:00Z",
+  "HashesValidated": false
+}
+"""
+
+        let directoryVersion = deserialize<DirectoryVersion> legacyJson
+
+        Assert.That(directoryVersion.Sha256Hash, Is.EqualTo(Sha256Hash "sha256-directory"))
+        Assert.That(directoryVersion.Blake3Hash, Is.EqualTo(Blake3Hash String.Empty))
+        Assert.That(directoryVersion.Directories.Count, Is.EqualTo(0))
+        Assert.That(directoryVersion.Files.Count, Is.EqualTo(0))
+
+    [<Test>]
+    member _.LocalDirectoryVersionJsonWithoutBlake3HashDefaultsToEmptyScaffoldValue() =
+        let legacyJson =
+            """
+{
+  "Class": "LocalDirectoryVersion",
+  "DirectoryVersionId": "11111111-1111-1111-1111-111111111111",
+  "OwnerId": "22222222-2222-2222-2222-222222222222",
+  "OrganizationId": "33333333-3333-3333-3333-333333333333",
+  "RepositoryId": "44444444-4444-4444-4444-444444444444",
+  "RelativePath": "src",
+  "Sha256Hash": "sha256-directory",
+  "Directories": [],
+  "Files": [],
+  "Size": 123,
+  "CreatedAt": "2025-01-01T00:00:00Z",
+  "LastWriteTimeUtc": "2025-01-01T00:00:00Z"
+}
+"""
+
+        let directoryVersion = deserialize<LocalDirectoryVersion> legacyJson
+
+        Assert.That(directoryVersion.Sha256Hash, Is.EqualTo(Sha256Hash "sha256-directory"))
+        Assert.That(directoryVersion.Blake3Hash, Is.EqualTo(Blake3Hash String.Empty))
+        Assert.That(directoryVersion.Directories.Count, Is.EqualTo(0))
+        Assert.That(directoryVersion.Files.Count, Is.EqualTo(0))
+
+    [<Test>]
     member _.FileVersionManifestContentReferenceRoundTripsThroughJsonAndMessagePack() =
         let manifest =
             FileManifest.Create(
