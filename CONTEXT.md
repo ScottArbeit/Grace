@@ -15,9 +15,11 @@ hexadecimal string. A FileContentHash identifies the whole logical file, while C
 _Avoid_: FileVersion hash, path hash, directory hash
 
 **Version Hash**:
-The graph identity hash for a FileVersion, DirectoryVersion, or Reference version object. Version hashes identify Grace
-version graph objects; they are separate from path-independent CAS identities such as FileContentHash, ChunkAddress,
-ContentBlockAddress, and ManifestAddress.
+In ADR 0006's target model, the graph identity hash for a FileVersion, DirectoryVersion, or Reference version object.
+Version hashes identify Grace version graph objects; they are separate from path-independent CAS identities such as
+FileContentHash, ChunkAddress, ContentBlockAddress, and ManifestAddress. Current SHA-256 values are transition data:
+current file SHA-256 values hash file bytes only, and current references store the root directory hash instead of a
+separate Reference-object hash.
 _Avoid_: FileContentHash, ChunkAddress, ContentBlockAddress, ManifestAddress
 
 **FileManifest**:
