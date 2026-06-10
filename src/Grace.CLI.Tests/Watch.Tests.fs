@@ -353,6 +353,81 @@ module WatchTests =
         |> should equal (Some manifest)
 
     [<Test>]
+    let ``watch pending upload list preserves manifest uploads across file batches`` () =
+        let firstManifest = finalizedManifest ()
+        let secondManifest = finalizedManifest ()
+
+        let createLocalFileVersion (relativePath: string) (sha256Hash: string) (manifest: FileManifest) =
+            LocalFileVersion.CreateWithHashes
+                (RelativePath relativePath)
+                (Sha256Hash sha256Hash)
+                (Blake3Hash $"{manifest.FileContentHash}")
+                true
+                manifest.Size
+                (getCurrentInstant ())
+                true
+                DateTime.UtcNow
+
+        let firstLocalFileVersion = createLocalFileVersion "first-large.bin" "watch-first-uploaded-manifest-sha" firstManifest
+        let secondLocalFileVersion = createLocalFileVersion "second-large.bin" "watch-second-uploaded-manifest-sha" secondManifest
+
+        let firstUploadedFileVersion = firstLocalFileVersion.ToFileVersion
+        firstUploadedFileVersion.ContentReference <- FileContentReference.FileManifest firstManifest
+
+        let secondUploadedFileVersion = secondLocalFileVersion.ToFileVersion
+        secondUploadedFileVersion.ContentReference <- FileContentReference.FileManifest secondManifest
+
+        let pendingFileVersions = List<FileVersion>()
+        Watch.addUploadedFileVersionsForWatchBatch pendingFileVersions [ firstUploadedFileVersion ]
+        Watch.addUploadedFileVersionsForWatchBatch pendingFileVersions [ secondUploadedFileVersion ]
+
+        let uploadedFileVersions = Watch.snapshotUploadedFileVersionsForGraceStatusUpdate pendingFileVersions
+
+        uploadedFileVersions.Count |> should equal 2
+
+        let changedLocalDirectoryVersion =
+            LocalDirectoryVersion.CreateWithHashes
+                (Guid.NewGuid())
+                OwnerId.Empty
+                OrganizationId.Empty
+                RepositoryId.Empty
+                Constants.RootDirectoryPath
+                (Sha256Hash "watch-batched-directory-sha")
+                (Blake3Hash "watch-batched-directory-blake3")
+                (List<DirectoryVersionId>())
+                (List<LocalFileVersion>(
+                    [|
+                        firstLocalFileVersion
+                        secondLocalFileVersion
+                    |]
+                ))
+                (firstLocalFileVersion.Size
+                 + secondLocalFileVersion.Size)
+                DateTime.UtcNow
+
+        let directoryVersion = toDirectoryVersionWithUploadedFiles uploadedFileVersions Seq.empty<DirectoryVersion> changedLocalDirectoryVersion
+
+        directoryVersion.Files.Count |> should equal 2
+
+        let firstFileVersion = directoryVersion.Files.Find(fun fileVersion -> fileVersion.RelativePath = RelativePath "first-large.bin")
+        let secondFileVersion = directoryVersion.Files.Find(fun fileVersion -> fileVersion.RelativePath = RelativePath "second-large.bin")
+
+        firstFileVersion.ContentReference.ReferenceType
+        |> should equal FileContentReferenceType.FileManifest
+
+        firstFileVersion.ContentReference.Manifest
+        |> should equal (Some firstManifest)
+
+        secondFileVersion.ContentReference.ReferenceType
+        |> should equal FileContentReferenceType.FileManifest
+
+        secondFileVersion.ContentReference.Manifest
+        |> should equal (Some secondManifest)
+
+        Watch.clearUploadedFileVersionsAfterGraceStatusUpdate pendingFileVersions
+        pendingFileVersions.Count |> should equal 0
+
+    [<Test>]
     let ``watch exits with auth guidance when no token is configured`` () =
         withTempRepo (fun _ ->
             clearWatchAuthEnv (fun () ->

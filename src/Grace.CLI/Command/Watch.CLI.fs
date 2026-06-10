@@ -142,6 +142,14 @@ module Watch =
     let mutable private graceStatusDirectoryIds = HashSet<DirectoryVersionId>()
     let mutable graceStatusMemoryStream: MemoryStream = null
     let mutable graceStatusHasChanged = false
+    let private pendingUploadedFileVersions = List<FileVersion>()
+
+    let internal addUploadedFileVersionsForWatchBatch (pendingFileVersions: List<FileVersion>) (uploadedFileVersions: seq<FileVersion>) =
+        pendingFileVersions.AddRange(uploadedFileVersions)
+
+    let internal snapshotUploadedFileVersionsForGraceStatusUpdate (pendingFileVersions: List<FileVersion>) = List<FileVersion>(pendingFileVersions)
+
+    let internal clearUploadedFileVersionsAfterGraceStatusUpdate (pendingFileVersions: List<FileVersion>) = pendingFileVersions.Clear()
 
     let fileDeleted filePath = logToConsole $"In Delete: filePath: {filePath}"
 
@@ -469,7 +477,6 @@ module Watch =
 
                     let mutable lastFileUploadInstant = graceStatus.LastSuccessfulFileUpload
                     let mutable processedAnyFile = false
-                    let uploadedFileVersions = List<FileVersion>()
 
                     /// This is just a way to throw away the unit value from the ConcurrentDictionary.
                     let mutable unitValue = ()
@@ -489,7 +496,7 @@ module Watch =
                         if filesToProcess.TryRemove(fileName, &unitValue) then
                             logToAnsiConsole Colors.Verbose $"Processing {fileName}. filesToProcess.Count: {filesToProcess.Count}."
                             let! uploadedFileVersion = copyFileToObjectDirectoryAndUploadToStorage getUploadMetadataForFilesParameters (FilePath fileName)
-                            uploadedFileVersions.AddRange(uploadedFileVersion)
+                            addUploadedFileVersionsForWatchBatch pendingUploadedFileVersions uploadedFileVersion
                             processedAnyFile <- true
                             lastFileUploadInstant <- getCurrentInstant ()
 
@@ -502,9 +509,12 @@ module Watch =
                     if filesToProcess.IsEmpty then
                         let! graceStatusSnapshot = readGraceStatusFile ()
                         graceStatus <- graceStatusSnapshot
+                        let uploadedFileVersions = snapshotUploadedFileVersionsForGraceStatusUpdate pendingUploadedFileVersions
 
                         match! (updateGraceStatus graceStatus uploadedFileVersions correlationId) with
-                        | Some newGraceStatus -> graceStatus <- newGraceStatus
+                        | Some newGraceStatus ->
+                            graceStatus <- newGraceStatus
+                            clearUploadedFileVersionsAfterGraceStatusUpdate pendingUploadedFileVersions
                         | None ->
                             logToAnsiConsole Colors.Important $"Grace Status file was not updated."
                             () // Something went wrong, don't update the in-memory Grace Status.
