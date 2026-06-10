@@ -67,6 +67,42 @@ type ContentAddressTypesTests() =
             Assert.That(sha256Hash, Is.EqualTo(Sha256Hash expectedSha256), $"SHA-256 vector failed for {name}.")
 
     [<Test>]
+    member _.CombinedFileHashesMatchKnownVectors() =
+        let vectors =
+            [
+                "empty",
+                Array.empty,
+                "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262",
+                "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                "abc",
+                Encoding.UTF8.GetBytes("abc"),
+                "6437b3ac38465133ffb63b75273a8db548c558465d79db03fd359c6cd5bd9d85",
+                "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+                "binary",
+                [|
+                    0uy
+                    1uy
+                    2uy
+                    3uy
+                    4uy
+                    255uy
+                    128uy
+                    64uy
+                    10uy
+                    13uy
+                |],
+                "08127a2b7e4a048ef7db8e3a94a4134688b78630e2fed93d58a1aaa14c51402e",
+                "75a6070abf8bf13e756be4607e09f22fa9a7e4d737ba4d354dfd85b4437b1ec2"
+            ]
+
+        for name, bytes, expectedBlake3, expectedSha256 in vectors do
+            use stream = new ChunkedReadStream(bytes, 3)
+            let sha256Hash, blake3Hash = runTask (Services.computeHashesForFile stream (RelativePath $"vectors/{name}.bin"))
+
+            Assert.That(blake3Hash, Is.EqualTo(Blake3Hash expectedBlake3), $"BLAKE3 vector failed for {name}.")
+            Assert.That(sha256Hash, Is.EqualTo(Sha256Hash expectedSha256), $"SHA-256 vector failed for {name}.")
+
+    [<Test>]
     member _.FileHashesIgnoreRelativePath() =
         let bytes = Encoding.UTF8.GetBytes("same file bytes, different paths")
 
