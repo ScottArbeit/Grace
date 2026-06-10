@@ -127,8 +127,8 @@ Rejected selectors return a JSON error envelope. They do not produce partial out
 
 The final registry-backed inventory for Epic #274 covers every CLI leaf command with exactly one disposition:
 
-- Total leaf commands: `201`
-- JSON-ready routed commands: `180`
+- Total leaf commands: `202`
+- JSON-ready routed commands: `181`
 - Intentionally human-only commands: `1`
 - Deferred routed commands with explicit V2 scope: `11`
 - Source-only/unrouted commands: `9`
