@@ -388,8 +388,6 @@ type ManifestUploadSdkTests() =
             match result with
             | Error error -> Assert.Fail($"{error.Error}{Environment.NewLine}{serialize error.Properties}")
             | Ok returnValue ->
-                Assert.That(returnValue.ReturnValue, Is.True)
-
                 Assert.That(
                     manifestAttempts,
                     Is.EquivalentTo(
@@ -405,6 +403,9 @@ type ManifestUploadSdkTests() =
                 let fallbackFileVersion = wholeFileFallbacks[0][0]
                 Assert.That(fallbackFileVersion, Is.EqualTo(ineligibleFallbackFile))
                 Assert.That(fallbackFileVersion.Blake3Hash, Is.EqualTo(Blake3Hash "fallback-blake3"))
+                Assert.That(returnValue.ReturnValue, Has.Length.EqualTo(2))
+                Assert.That(returnValue.ReturnValue, Does.Contain(manifestFile))
+                Assert.That(returnValue.ReturnValue, Does.Contain(ineligibleFallbackFile))
         }
 
     [<Test>]

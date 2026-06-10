@@ -169,30 +169,36 @@ module DirectoryVersion =
                 Error(manifestValidationError correlationId fileVersion "must include a ChunkingSuiteId before Save.")
             elif not (ContentAddress.isValidAddress manifest.FileContentHash) then
                 Error(manifestValidationError correlationId fileVersion "has an invalid FileContentHash before Save.")
-            elif String.IsNullOrWhiteSpace fileVersion.Blake3Hash then
-                Error(manifestValidationError correlationId fileVersion "must include FileVersion.Blake3Hash before Save.")
-            elif not (ContentAddress.isValidAddress fileVersion.Blake3Hash) then
-                Error(manifestValidationError correlationId fileVersion "has an invalid FileVersion.Blake3Hash before Save.")
-            elif fileVersion.Blake3Hash <> manifest.FileContentHash then
-                Error(manifestValidationError correlationId fileVersion "must have FileVersion.Blake3Hash equal FileManifest.FileContentHash before Save.")
-            elif manifest.Size <= 0L then
-                Error(manifestValidationError correlationId fileVersion "must have a positive size before Save.")
-            elif fileVersion.Size <> manifest.Size then
-                Error(manifestValidationError correlationId fileVersion "must match the FileVersion size before Save.")
             else
-                validateManifestBlocks correlationId fileVersion manifest
-                |> Result.bind (fun () ->
-                    let expectedAddress = ContentAddress.computeManifestAddressForManifest manifest
-
-                    if expectedAddress <> manifest.ManifestAddress then
-                        Error(
-                            manifestValidationError
-                                correlationId
-                                fileVersion
-                                "must have a finalized ManifestAddress that matches its reconstruction contract before Save."
-                        )
+                let effectiveFileVersionBlake3Hash =
+                    if String.IsNullOrWhiteSpace fileVersion.Blake3Hash then
+                        Blake3Hash $"{manifest.FileContentHash}"
                     else
-                        Ok())
+                        fileVersion.Blake3Hash
+
+                if not (ContentAddress.isValidAddress effectiveFileVersionBlake3Hash) then
+                    Error(manifestValidationError correlationId fileVersion "has an invalid FileVersion.Blake3Hash before Save.")
+                elif effectiveFileVersionBlake3Hash
+                     <> manifest.FileContentHash then
+                    Error(manifestValidationError correlationId fileVersion "must have FileVersion.Blake3Hash equal FileManifest.FileContentHash before Save.")
+                elif manifest.Size <= 0L then
+                    Error(manifestValidationError correlationId fileVersion "must have a positive size before Save.")
+                elif fileVersion.Size <> manifest.Size then
+                    Error(manifestValidationError correlationId fileVersion "must match the FileVersion size before Save.")
+                else
+                    validateManifestBlocks correlationId fileVersion manifest
+                    |> Result.bind (fun () ->
+                        let expectedAddress = ContentAddress.computeManifestAddressForManifest manifest
+
+                        if expectedAddress <> manifest.ManifestAddress then
+                            Error(
+                                manifestValidationError
+                                    correlationId
+                                    fileVersion
+                                    "must have a finalized ManifestAddress that matches its reconstruction contract before Save."
+                            )
+                        else
+                            Ok())
         with
         | ex -> Error(GraceError.CreateWithException ex $"FileManifest reference for '{fileVersion.RelativePath}' is invalid before Save." correlationId)
 

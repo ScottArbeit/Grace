@@ -138,6 +138,20 @@ type SaveBoundaryActorTests() =
         | Error error -> Assert.That(error.Error, Does.Contain("FileVersion.Blake3Hash equal FileManifest.FileContentHash"))
 
     [<Test>]
+    member _.SaveBoundaryAcceptsLegacyManifestBackedFileVersionWithMissingBlake3Hash() =
+        let manifest = finalizedManifest ()
+        let fileVersion = manifestFile manifest
+        fileVersion.Blake3Hash <- Blake3Hash String.Empty
+        let directoryVersion = directoryWith [ fileVersion ]
+
+        let plan =
+            ReferenceActor.planManifestSaveBoundary repositoryId referenceId directoryVersion "corr-legacy-manifest-blake3"
+            |> expectPlan
+
+        Assert.That(plan.Manifest.ManifestAddress, Is.EqualTo(manifest.ManifestAddress))
+        Assert.That(plan.Manifest.FileContentHash, Is.EqualTo(manifest.FileContentHash))
+
+    [<Test>]
     member _.DirectoryVersionWholeFileValidationSetIgnoresFinalizedManifestBackedFiles() =
         let manifest = finalizedManifest ()
         let wholeFile = wholeFile ()

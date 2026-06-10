@@ -254,11 +254,14 @@ module Services =
 
                     stream.Position <- 0
                     let! sha256Hash = computeSha256ForFile stream relativePath
+                    stream.Position <- 0
+                    let! blake3Hash = computeBlake3ForFile stream
 
                     let returnValue =
-                        LocalFileVersion.Create
+                        LocalFileVersion.CreateWithHashes
                             relativePath
                             sha256Hash
+                            blake3Hash
                             isBinary
                             fileInfo.Length
                             (Instant.FromDateTimeUtc(fileInfo.LastWriteTimeUtc))
@@ -915,6 +918,8 @@ module Services =
         copy.FileVersions <- fileVersions
         copy
 
+    let private createSuccessfulFileUploadResult correlationId fileVersions = Ok(GraceReturnValue.Create fileVersions correlationId)
+
     let private storageIdOrCurrent<'Id> (rawValue: string) (currentValue: 'Id) (parse: string -> 'Id) =
         if String.IsNullOrWhiteSpace rawValue then currentValue else parse rawValue
 
@@ -945,9 +950,10 @@ module Services =
         =
         task {
             if parameters.FileVersions.Count() = 0 then
-                return Ok(GraceReturnValue.Create true parameters.CorrelationId)
+                return createSuccessfulFileUploadResult parameters.CorrelationId Array.empty<FileVersion>
             else
                 let fallbackFileVersions = ConcurrentQueue<FileVersion>()
+                let uploadedFileVersions = ConcurrentQueue<FileVersion>()
                 let errors = ConcurrentQueue<GraceError>()
                 let mutable fileVersionIndex = 0
 
@@ -955,8 +961,11 @@ module Services =
                     let fileVersion = parameters.FileVersions[fileVersionIndex]
 
                     match! manifestUpload fileVersion with
-                    | Ok result when not result.ReturnValue.UsedManifestUpload -> fallbackFileVersions.Enqueue(result.ReturnValue.FileVersion)
-                    | Ok _ -> ()
+                    | Ok result ->
+                        uploadedFileVersions.Enqueue(result.ReturnValue.FileVersion)
+
+                        if not result.ReturnValue.UsedManifestUpload then
+                            fallbackFileVersions.Enqueue(result.ReturnValue.FileVersion)
                     | Error error -> errors.Enqueue(error)
 
                     fileVersionIndex <- fileVersionIndex + 1
@@ -972,17 +981,25 @@ module Services =
                     let fallback = fallbackFileVersions.ToArray()
 
                     if fallback.Length = 0 then
-                        return Ok(GraceReturnValue.Create true parameters.CorrelationId)
+                        return createSuccessfulFileUploadResult parameters.CorrelationId (uploadedFileVersions.ToArray())
                     else
-                        return! wholeFileUpload (copyStorageParameters parameters fallback)
+                        match! wholeFileUpload (copyStorageParameters parameters fallback) with
+                        | Ok _ -> return createSuccessfulFileUploadResult parameters.CorrelationId (uploadedFileVersions.ToArray())
+                        | Error error -> return Error error
         }
 
     /// Uploads all new or changed files from a directory to object storage.
     let uploadFilesToObjectStorage (parameters: GetUploadMetadataForFilesParameters) =
-        uploadFilesToObjectStorageWithClients
-            (fun fileVersion -> ManifestUpload.uploadFile (createManifestUploadRequest parameters fileVersion))
-            uploadWholeFilesToObjectStorage
-            parameters
+        task {
+            match!
+                uploadFilesToObjectStorageWithClients
+                    (fun fileVersion -> ManifestUpload.uploadFile (createManifestUploadRequest parameters fileVersion))
+                    uploadWholeFilesToObjectStorage
+                    parameters
+                with
+            | Ok _ -> return Ok(GraceReturnValue.Create true parameters.CorrelationId)
+            | Error error -> return Error error
+        }
 
     /// Creates an updated LocalDirectoryVersion instance, with a new DirectoryId, based on changes to an existing one.
     ///
@@ -1314,12 +1331,39 @@ module Services =
                 return (previousGraceStatus, newDirectoryVersions)
         }
 
+    let internal toDirectoryVersionWithUploadedFiles (uploadedFileVersions: seq<FileVersion>) (localDirectoryVersion: LocalDirectoryVersion) =
+        let uploadedByIdentity =
+            uploadedFileVersions
+                .GroupBy(fun fileVersion -> (fileVersion.RelativePath, fileVersion.Sha256Hash))
+                .ToDictionary((fun group -> group.Key), (fun group -> group.First()))
+
+        let files =
+            localDirectoryVersion
+                .Files
+                .Select(fun localFileVersion ->
+                    match uploadedByIdentity.TryGetValue((localFileVersion.RelativePath, localFileVersion.Sha256Hash)) with
+                    | true, uploadedFileVersion -> uploadedFileVersion
+                    | false, _ -> localFileVersion.ToFileVersion)
+                .ToList()
+
+        DirectoryVersion.CreateWithHashes
+            localDirectoryVersion.DirectoryVersionId
+            localDirectoryVersion.OwnerId
+            localDirectoryVersion.OrganizationId
+            localDirectoryVersion.RepositoryId
+            localDirectoryVersion.RelativePath
+            localDirectoryVersion.Sha256Hash
+            localDirectoryVersion.Blake3Hash
+            localDirectoryVersion.Directories
+            files
+            localDirectoryVersion.Size
+
     /// Ensures that the provided directory versions are uploaded to Grace Server.
     /// This will add new directory versions, and ignore existing directory versions, as they are immutable.
-    let uploadDirectoryVersions (localDirectoryVersions: List<LocalDirectoryVersion>) correlationId =
+    let uploadDirectoryVersionsWithUploadedFiles (localDirectoryVersions: List<LocalDirectoryVersion>) uploadedFileVersions correlationId =
         let directoryVersions =
             localDirectoryVersions
-                .Select(fun ldv -> ldv.ToDirectoryVersion)
+                .Select(toDirectoryVersionWithUploadedFiles uploadedFileVersions)
                 .ToList()
 
         let saveParameters = SaveDirectoryVersionsParameters()
@@ -1333,6 +1377,11 @@ module Services =
         saveParameters.DirectoryVersions <- directoryVersions
 
         DirectoryVersion.SaveDirectoryVersions saveParameters
+
+    /// Ensures that the provided directory versions are uploaded to Grace Server.
+    /// This will add new directory versions, and ignore existing directory versions, as they are immutable.
+    let uploadDirectoryVersions (localDirectoryVersions: List<LocalDirectoryVersion>) correlationId =
+        uploadDirectoryVersionsWithUploadedFiles localDirectoryVersions Seq.empty<FileVersion> correlationId
 
     /// The full path of the inter-process communication file that grace watch uses to communicate with other invocations of Grace.
     let IpcFileName () = Path.Combine(Path.GetTempPath(), "Grace", Current().BranchName, Constants.IpcFileName)
@@ -1762,8 +1811,8 @@ module Services =
             ScanForDifferences: GraceStatus -> Task<List<FileSystemDifference>>
             CopyUpdatedFilesToObjectCache: List<FileSystemDifference> -> Task<seq<LocalFileVersion>>
             BuildUpdatedGraceStatus: GraceStatus -> List<FileSystemDifference> -> Task<GraceStatus * List<LocalDirectoryVersion>>
-            UploadFileVersions: seq<LocalFileVersion> -> Task<Result<unit, GraceError>>
-            UploadDirectoryVersions: List<LocalDirectoryVersion> -> Task<Result<unit, GraceError>>
+            UploadFileVersions: seq<LocalFileVersion> -> Task<Result<FileVersion list, GraceError>>
+            UploadDirectoryVersions: List<LocalDirectoryVersion> -> seq<FileVersion> -> Task<Result<unit, GraceError>>
             ApplyGraceStatusIncremental: GraceStatus -> IEnumerable<LocalDirectoryVersion> -> IEnumerable<FileSystemDifference> -> Task<unit>
             CreateSaveReference: LocalDirectoryVersion -> string -> Task<Result<ReferenceId, GraceError>>
         }
@@ -1903,8 +1952,8 @@ module Services =
 
                             match! operations.UploadFileVersions fileVersionsToUpload with
                             | Error error -> return Error error
-                            | Ok () ->
-                                match! operations.UploadDirectoryVersions newDirectoryVersions with
+                            | Ok uploadedFileVersions ->
+                                match! operations.UploadDirectoryVersions newDirectoryVersions uploadedFileVersions with
                                 | Error error -> return Error error
                                 | Ok () ->
                                     let updatedGraceStatus =
@@ -2110,14 +2159,19 @@ module Services =
                              |> Seq.toArray)
                     )
 
-                match! uploadFilesToObjectStorage parameters with
-                | Ok _ -> return Ok()
+                match!
+                    uploadFilesToObjectStorageWithClients
+                        (fun fileVersion -> ManifestUpload.uploadFile (createManifestUploadRequest parameters fileVersion))
+                        uploadWholeFilesToObjectStorage
+                        parameters
+                    with
+                | Ok returnValue -> return Ok(returnValue.ReturnValue |> Seq.toList)
                 | Error error -> return Error error
             }
 
-        let uploadDirectoryVersionsForCapture directoryVersions =
+        let uploadDirectoryVersionsForCapture directoryVersions uploadedFileVersions =
             task {
-                match! uploadDirectoryVersions directoryVersions correlationId with
+                match! uploadDirectoryVersionsWithUploadedFiles directoryVersions uploadedFileVersions correlationId with
                 | Ok _ -> return Ok()
                 | Error error -> return Error error
             }

@@ -4,7 +4,9 @@ open FsUnit
 open Grace.CLI
 open Grace.CLI.Services
 open Grace.Shared
+open Grace.Shared.Client.Configuration
 open Grace.Shared.Constants
+open Grace.Shared.Utilities
 open Grace.Types.Branch
 open Grace.Types.Common
 open Grace.Types.Reference
@@ -12,6 +14,7 @@ open NUnit.Framework
 open System
 open System.Collections.Generic
 open System.IO
+open System.Text
 open System.Threading.Tasks
 
 [<NonParallelizable>]
@@ -52,6 +55,58 @@ module CurrentStateCaptureCliTests =
             Sha256Hash = sha256Hash
         }
 
+    let private finalizedManifest () =
+        let bytes = Encoding.UTF8.GetBytes("manifest-backed current-state file")
+
+        let block =
+            match ContentBlockFormat.encode [ { PhysicalOffset = 0L; Bytes = bytes } ] with
+            | Ok block -> block
+            | Error error ->
+                Assert.Fail($"Expected content block encoding to succeed, got {error}.")
+                Unchecked.defaultof<ContentBlockFormat.EncodedContentBlock>
+
+        let manifest =
+            FileManifest.Create(
+                ManifestAddress String.Empty,
+                RabinChunking.SuiteName,
+                FileContentHash(ContentAddress.computeBlake3Hex bytes),
+                int64 bytes.Length,
+                [
+                    ContentBlock.Create(block.Address, 0L, int64 bytes.Length)
+                ]
+            )
+
+        { manifest with ManifestAddress = ContentAddress.computeManifestAddressForManifest manifest }
+
+    let private ensureConfigFile root =
+        let graceDirectory = Path.Combine(root, Constants.GraceConfigDirectory)
+
+        Directory.CreateDirectory(graceDirectory)
+        |> ignore
+
+        let graceConfigPath = Path.Combine(graceDirectory, Constants.GraceConfigFileName)
+
+        if not (File.Exists(graceConfigPath)) then
+            File.WriteAllText(graceConfigPath, "{}")
+
+    let private withTempConfiguration action =
+        task {
+            let root = Path.Combine(Path.GetTempPath(), $"grace-current-state-{Guid.NewGuid():N}")
+            let previousDirectory = Environment.CurrentDirectory
+
+            try
+                Directory.CreateDirectory(root) |> ignore
+                Environment.CurrentDirectory <- root
+                ensureConfigFile root
+                resetConfiguration ()
+                return! action root
+            finally
+                Environment.CurrentDirectory <- previousDirectory
+                resetConfiguration ()
+
+                if Directory.Exists(root) then Directory.Delete(root, true)
+        }
+
     let private branch saveEnabled latestReference =
         { BranchDto.Default with BranchId = currentBranchId; SaveEnabled = saveEnabled; LatestReference = latestReference; LatestSave = latestReference }
 
@@ -63,8 +118,8 @@ module CurrentStateCaptureCliTests =
             ScanForDifferences = fun _ -> Task.FromResult(List<FileSystemDifference>())
             CopyUpdatedFilesToObjectCache = fun _ -> Task.FromResult(Seq.empty<LocalFileVersion>)
             BuildUpdatedGraceStatus = fun status _ -> Task.FromResult(status, List<LocalDirectoryVersion>())
-            UploadFileVersions = fun _ -> Task.FromResult(Ok())
-            UploadDirectoryVersions = fun _ -> Task.FromResult(Ok())
+            UploadFileVersions = fun _ -> Task.FromResult(Ok([]))
+            UploadDirectoryVersions = fun _ _ -> Task.FromResult(Ok())
             ApplyGraceStatusIncremental = fun _ _ _ -> Task.FromResult(())
             CreateSaveReference = fun _ _ -> Task.FromResult(Ok(Guid.NewGuid()))
         }
@@ -200,7 +255,7 @@ module CurrentStateCaptureCliTests =
                 ScanForDifferences = fun _ -> Task.FromResult(differences)
                 BuildUpdatedGraceStatus = fun _ _ -> Task.FromResult(updatedStatus, List<LocalDirectoryVersion>([| updatedRoot |]))
                 UploadDirectoryVersions =
-                    fun _ ->
+                    fun _ _ ->
                         uploadedDirectories <- true
                         Task.FromResult(Ok())
                 ApplyGraceStatusIncremental =
@@ -243,9 +298,10 @@ module CurrentStateCaptureCliTests =
         let updatedRootSha = Sha256Hash "updated-root-sha"
         let createdSaveId = Guid.NewGuid()
         let changedPath = RelativePath "src/file.txt"
+        let changedBlake3 = Blake3Hash "changed-file-blake3"
 
         let changedFile =
-            LocalFileVersion.Create changedPath (Sha256Hash "changed-file-sha") false 12L (Grace.Shared.Utilities.getCurrentInstant ()) true DateTime.UtcNow
+            LocalFileVersion.CreateWithHashes changedPath (Sha256Hash "changed-file-sha") changedBlake3 false 12L (getCurrentInstant ()) true DateTime.UtcNow
 
         let mutable uploadedFiles = List<LocalFileVersion>()
 
@@ -279,7 +335,14 @@ module CurrentStateCaptureCliTests =
                 UploadFileVersions =
                     fun fileVersions ->
                         uploadedFiles <- List<LocalFileVersion>(fileVersions)
-                        Task.FromResult(Ok())
+
+                        Task.FromResult(
+                            Ok(
+                                uploadedFiles
+                                |> Seq.map (fun fileVersion -> fileVersion.ToFileVersion)
+                                |> Seq.toList
+                            )
+                        )
                 CreateSaveReference = fun _ _ -> Task.FromResult(Ok(createdSaveId))
             }
 
@@ -299,7 +362,82 @@ module CurrentStateCaptureCliTests =
 
             uploadedFiles[0].Sha256Hash
             |> should equal changedFile.Sha256Hash
+
+            uploadedFiles[0].Blake3Hash
+            |> should equal changedBlake3
         | Error error -> Assert.Fail($"Expected auto-save success, got: {error.Error}")
+
+    [<Test>]
+    let ``createLocalFileVersion captures complete file BLAKE3`` () =
+        task {
+            do!
+                withTempConfiguration (fun root ->
+                    task {
+                        let relativePath = "src/file.txt"
+                        let fullPath = Path.Combine(root, relativePath)
+
+                        Directory.CreateDirectory(Path.GetDirectoryName(fullPath))
+                        |> ignore
+
+                        let bytes = Encoding.UTF8.GetBytes("new local file content")
+                        File.WriteAllBytes(fullPath, bytes)
+
+                        match! createLocalFileVersion (FileInfo(fullPath)) with
+                        | Some fileVersion ->
+                            fileVersion.RelativePath
+                            |> should equal (RelativePath relativePath)
+
+                            fileVersion.Blake3Hash
+                            |> should equal (Blake3Hash(ContentAddress.computeBlake3Hex bytes))
+                        | None -> Assert.Fail("Expected LocalFileVersion capture to succeed.")
+                    })
+        }
+
+    [<Test>]
+    let ``directory upload overlay uses manifest backed uploaded file version`` () =
+        let manifest = finalizedManifest ()
+
+        let localFileVersion =
+            LocalFileVersion.CreateWithHashes
+                (RelativePath "large.bin")
+                (Sha256Hash "manifest-sha")
+                (Blake3Hash $"{manifest.FileContentHash}")
+                true
+                manifest.Size
+                (getCurrentInstant ())
+                true
+                DateTime.UtcNow
+
+        let uploadedFileVersion = localFileVersion.ToFileVersion
+        uploadedFileVersion.ContentReference <- FileContentReference.FileManifest manifest
+
+        let localDirectoryVersion =
+            LocalDirectoryVersion.CreateWithHashes
+                (Guid.NewGuid())
+                OwnerId.Empty
+                OrganizationId.Empty
+                RepositoryId.Empty
+                Constants.RootDirectoryPath
+                (Sha256Hash "directory-sha")
+                (Blake3Hash "directory-blake3")
+                (List<DirectoryVersionId>())
+                (List<LocalFileVersion>([| localFileVersion |]))
+                localFileVersion.Size
+                DateTime.UtcNow
+
+        let directoryVersion = toDirectoryVersionWithUploadedFiles [ uploadedFileVersion ] localDirectoryVersion
+
+        directoryVersion.Files.Count |> should equal 1
+
+        directoryVersion.Files[0]
+            .ContentReference
+            .ReferenceType
+        |> should equal FileContentReferenceType.FileManifest
+
+        directoryVersion.Files[0]
+            .ContentReference
+            .Manifest
+        |> should equal (Some manifest)
 
     [<Test>]
     let ``created save reference id is parsed from response properties`` () =
@@ -330,7 +468,7 @@ module CurrentStateCaptureCliTests =
                 UploadFileVersions =
                     fun _ ->
                         uploadedFiles <- true
-                        Task.FromResult(Ok())
+                        Task.FromResult(Ok([]))
                 CreateSaveReference =
                     fun _ _ ->
                         createdSave <- true
