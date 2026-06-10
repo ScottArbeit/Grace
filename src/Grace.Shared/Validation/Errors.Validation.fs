@@ -144,6 +144,26 @@ module Errors =
             | Some error -> ConfigError.getErrorMessage error
             | None -> String.Empty
 
+    type VersionHashError =
+        | Blake3HashIsRequired
+        | InvalidBlake3Hash
+        | InvalidSha256VersionHash
+        | Sha256VersionHashIsRequired
+
+        interface IErrorDiscriminatedUnion
+
+        static member getErrorMessage(versionHashError: VersionHashError) : string =
+            match versionHashError with
+            | Blake3HashIsRequired -> getLocalizedString StringResourceName.Blake3HashIsRequired
+            | InvalidBlake3Hash -> getLocalizedString StringResourceName.InvalidBlake3Hash
+            | InvalidSha256VersionHash -> getLocalizedString StringResourceName.InvalidSha256VersionHash
+            | Sha256VersionHashIsRequired -> getLocalizedString StringResourceName.Sha256VersionHashIsRequired
+
+        static member getErrorMessage(versionHashError: VersionHashError option) : string =
+            match versionHashError with
+            | Some error -> VersionHashError.getErrorMessage error
+            | None -> String.Empty
+
     type ConnectError =
         | RepositoryDoesNotExist
         | InvalidRepositoryId
@@ -873,6 +893,7 @@ module Errors =
         | :? PolicyError as policyError -> PolicyError.getErrorMessage policyError
         | :? ReviewError as reviewError -> ReviewError.getErrorMessage reviewError
         | :? QueueError as queueError -> QueueError.getErrorMessage queueError
+        | :? VersionHashError as versionHashError -> VersionHashError.getErrorMessage versionHashError
         | :? ValidationSetError as validationSetError -> ValidationSetError.getErrorMessage validationSetError
         | :? ValidationResultError as validationResultError -> ValidationResultError.getErrorMessage validationResultError
         | :? ArtifactError as artifactError -> ArtifactError.getErrorMessage artifactError
