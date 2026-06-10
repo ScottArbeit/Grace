@@ -577,6 +577,20 @@ type BranchServer() =
         }
 
     [<Test>]
+    member _.AnnotateRouteReturnsGraceErrorForNullBody() =
+        task {
+            use content = new StringContent("null", Encoding.UTF8, "application/json")
+
+            let! response = Client.PostAsync("/branch/annotate", content)
+            let! responseBody = response.Content.ReadAsStringAsync()
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), responseBody)
+
+            let error = deserialize<GraceError> responseBody
+            Assert.That(error.Error, Is.EqualTo("Annotate parameters must not be null."))
+            Assert.That(error.CorrelationId, Is.Not.Empty)
+        }
+
+    [<Test>]
     member _.AnnotateRouteReturnsGraceErrorForNullReferenceTypes() =
         task {
             let repositoryId = repositoryIds[0]

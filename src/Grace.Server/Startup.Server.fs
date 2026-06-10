@@ -220,7 +220,9 @@ module Application =
 
                 let correlationId = Services.getCorrelationId context
 
-                if String.IsNullOrWhiteSpace parameters.Path then
+                if Object.ReferenceEquals(parameters, null) then
+                    return Error(GraceError.Create "Annotate parameters must not be null." correlationId)
+                elif String.IsNullOrWhiteSpace parameters.Path then
                     return Error(GraceError.Create "Annotation Path must be a relative file path." correlationId)
                 else
                     let graceIds = Services.getGraceIds context
