@@ -487,7 +487,7 @@ module DoctorCliTests =
                     !requestCount |> should equal 0))
 
     [<Test>]
-    let ``doctor server healthz reachable passes and lifecycle headers are surfaced`` () =
+    let ``doctor server healthz reachable warns when lifecycle status is deprecated`` () =
         withTempDir (fun root ->
             withIsolatedHome root (fun _ ->
                 writeGraceConfig root "http://configured.example.test/base"
@@ -537,7 +537,7 @@ module DoctorCliTests =
                         let lifecycle = findCheckById checks "server.lifecycle.headers"
 
                         lifecycle.GetProperty("Status").GetString()
-                        |> should equal "Ok"
+                        |> should equal "Warning"
 
                         lifecycle.GetProperty("Summary").GetString()
                         |> should contain "deprecated"
@@ -641,6 +641,58 @@ module DoctorCliTests =
                             check.GetProperty("Summary").GetString()
                             |> should contain expectedText)
 
+                let lifecycleRejectionDiagnostics =
+                    lifecycleDiagnostics
+                        (Some "unsupported")
+                        (Some "2026-12-01")
+                        (Some "0.1.0")
+                        (Some "0.2.0")
+                        (Some "https://github.com/ScottArbeit/Grace/releases")
+                        (Some true)
+                        false
+
+                let lifecycleRejection =
+                    Doctor.ServerProbeSucceeded
+                        {
+                            StatusCode = HttpStatusCode.UpgradeRequired
+                            ReasonPhrase = "Upgrade Required"
+                            LifecycleDiagnostics = lifecycleRejectionDiagnostics
+                            Body = ""
+                        }
+
+                withDoctorServerProbeFactory
+                    (fun _ -> Task.FromResult lifecycleRejection)
+                    (fun () ->
+                        let exitCode, standardOut, standardError =
+                            runWithCapturedStdoutAndStderr [| "--output"
+                                                              "Json"
+                                                              "doctor"
+                                                              "--check"
+                                                              "server.healthz.reachable" |]
+
+                        exitCode |> should equal 1
+
+                        use document = assertCleanJsonOutput standardOut standardError
+
+                        let check =
+                            document
+                                .RootElement
+                                .GetProperty("ReturnValue")
+                                .GetProperty("Checks")[0]
+
+                        check.GetProperty("Status").GetString()
+                        |> should equal "Failed"
+
+                        let summary = check.GetProperty("Summary").GetString()
+
+                        summary |> should contain "unsupported"
+
+                        summary
+                        |> should contain "Update the Grace CLI/SDK"
+
+                        summary
+                        |> should not' (contain "check server health and GRACE_SERVER_URI"))
+
                 writeGraceConfig root "not-a-uri" |> ignore
 
                 let requestCount = ref 0
@@ -711,8 +763,13 @@ module DoctorCliTests =
                         check.GetProperty("Summary").GetString()
                         |> should contain "not-a-date"
 
-                        check.GetProperty("Summary").GetString()
-                        |> should contain "http://example.test/update")))
+                        let summary = check.GetProperty("Summary").GetString()
+
+                        summary
+                        |> should contain "updateUrl=<suppressed because server value was not HTTPS>"
+
+                        summary
+                        |> should not' (contain "http://example.test/update"))))
 
     [<Test>]
     let ``doctor server explicit checks offline skip without network calls`` () =

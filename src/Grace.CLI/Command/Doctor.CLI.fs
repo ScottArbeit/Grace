@@ -650,15 +650,30 @@ module Doctor =
         | Some recommendedVersion -> details.Add($"recommendedVersion={recommendedVersion}")
         | None -> ()
 
-        match diagnostics.UpdateUrl with
-        | Some updateUrl -> details.Add($"updateUrl={updateUrl}")
-        | None -> ()
+        match diagnostics.UpdateUrl, diagnostics.UpdateUrlIsHttps with
+        | Some updateUrl, Some true -> details.Add($"updateUrl={updateUrl}")
+        | Some _, Some false -> details.Add("updateUrl=<suppressed because server value was not HTTPS>")
+        | Some updateUrl, _ -> details.Add($"updateUrl={updateUrl}")
+        | None, _ -> ()
 
         String.Join("; ", details)
 
+    let private lifecycleStatusNeedsUserAction (diagnostics: ClientIdentity.LifecycleDiagnostics) =
+        match diagnostics.Status with
+        | Some status when status.Equals("deprecated", StringComparison.OrdinalIgnoreCase) -> true
+        | Some status when status.Equals("unsupported", StringComparison.OrdinalIgnoreCase) -> true
+        | _ -> false
+
     let private lifecycleHasWarning (diagnostics: ClientIdentity.LifecycleDiagnostics) =
-        diagnostics.UnsupportedAfterIsMalformed
+        lifecycleStatusNeedsUserAction diagnostics
+        || diagnostics.UnsupportedAfterIsMalformed
         || diagnostics.UpdateUrlIsHttps = Some false
+
+    let private healthzLifecycleRejectionSummary (response: ServerProbeResponse) =
+        response.LifecycleDiagnostics
+        |> Option.filter lifecycleStatusNeedsUserAction
+        |> Option.map (fun diagnostics ->
+            $"Reached /healthz with HTTP {(int response.StatusCode)} {response.ReasonPhrase}, and Grace SDK lifecycle headers reported client status requiring action: {lifecycleSummary diagnostics}. Update the Grace CLI/SDK or otherwise address the lifecycle status before retrying.")
 
     let private probeFailureSummary inspection =
         match inspection with
@@ -758,8 +773,11 @@ module Doctor =
                 ->
                 ok $"Reached /healthz with HTTP {(int response.StatusCode)} {response.ReasonPhrase}; timeout was {DoctorServerProbeTimeoutMilliseconds} ms."
             | ServerProbeSucceeded response ->
-                failed
-                    $"Reached /healthz but the server returned HTTP {(int response.StatusCode)} {response.ReasonPhrase}; check server health and GRACE_SERVER_URI."
+                match healthzLifecycleRejectionSummary response with
+                | Some summary -> failed summary
+                | None ->
+                    failed
+                        $"Reached /healthz but the server returned HTTP {(int response.StatusCode)} {response.ReasonPhrase}; check server health and GRACE_SERVER_URI."
             | ServerProbeTimedOut message -> failed $"{message} Check the effective server URI, network path, proxy settings, or server startup state."
             | ServerProbeTlsFailed message -> failed $"{message} Verify the server certificate and HTTPS endpoint configuration."
             | ServerProbeConnectionFailed message -> failed $"{message} Check that the Grace server is running and reachable."
