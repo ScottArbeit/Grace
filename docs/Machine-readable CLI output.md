@@ -200,7 +200,7 @@ $document.ReturnValue.DirectoryCount
 For diagnostics, `doctor` returns a structured report:
 
 ```powershell
-$json = grace --output Json doctor --check auth
+$json = grace --output Json doctor --check Authentication
 $report = $json | ConvertFrom-Json
 $report.ReturnValue.Status
 $report.ReturnValue.Summary.Warning

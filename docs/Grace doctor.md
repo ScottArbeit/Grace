@@ -13,7 +13,7 @@ PowerShell:
 grace doctor
 grace --output Json doctor
 grace doctor --list-checks
-grace --output Json doctor --check auth --select Summary
+grace --output Json doctor --check Authentication --select Summary
 ```
 
 bash / zsh:
@@ -22,7 +22,7 @@ bash / zsh:
 grace doctor
 grace --output Json doctor
 grace doctor --list-checks
-grace --output Json doctor --check auth --select Summary
+grace --output Json doctor --check Authentication --select Summary
 ```
 
 ## Command Behavior
@@ -42,7 +42,7 @@ parsing or storing doctor evidence.
 
 | Option | Behavior |
 | --- | --- |
-| `--full` | Includes checks reserved for the full doctor profile. In v1, this enables the working-tree scan. |
+| `--full` | Includes full-profile checks, including working-tree scan and server probes unless `--offline` is used. |
 | `--offline` | Skips network probes. Local checks can still run. |
 | `--list-checks` | Lists the catalog and marks each returned check as skipped; diagnostic probes do not run. |
 | `--check <id-or-category>` | Runs only matching check IDs or categories. Repeat the option or separate values with commas. |
@@ -50,6 +50,8 @@ parsing or storing doctor evidence.
 
 Check selection is case-insensitive. Category tokens can use spaces or hyphens, so `--check working-tree` matches
 `working-tree.scan`. Exact check IDs can also select non-default or full-profile diagnostics without `--full`.
+Default `grace doctor` does not run server probes. Explicit `--check Server` selection and `--full` can run server
+checks such as `server.healthz.reachable`; `--offline` suppresses checks that do not support offline execution.
 
 ## Exit Codes
 
