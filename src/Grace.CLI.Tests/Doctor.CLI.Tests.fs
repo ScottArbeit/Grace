@@ -312,12 +312,13 @@ module DoctorCliTests =
             Directory.Exists(Path.Combine(root, ".grace"))
             |> should equal false)
 
-    [<Test>]
-    let ``doctor select projects return value property without config`` () =
+    [<TestCase("Json")>]
+    [<TestCase("Verbose")>]
+    let ``doctor select projects return value property without config`` output =
         withTempDir (fun root ->
             let exitCode, standardOut, standardError =
                 runWithCapturedStdoutAndStderr [| "--output"
-                                                  "Json"
+                                                  output
                                                   "doctor"
                                                   "--select"
                                                   "Status" |]

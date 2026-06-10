@@ -275,7 +275,11 @@ module Doctor =
         inherit SynchronousCommandLineAction()
 
         override _.Invoke(parseResult: ParseResult) : int =
-            if parseResult |> verbose then printParseResult parseResult
+            if
+                (parseResult |> verbose)
+                && not (parseResult |> hasSelect)
+            then
+                printParseResult parseResult
 
             let full = parseResult.GetValue(Options.full)
             let offline = parseResult.GetValue(Options.offline)
