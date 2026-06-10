@@ -312,9 +312,10 @@ Grace uses FileVersion for path-aware repository meaning, and Content-Addressabl
 identity. Do not describe chunks as belonging to a path; chunks belong to content-addressed storage.
 
 **Version graph hash vs. CAS address**:
-Grace uses version hashes for FileVersion, DirectoryVersion, and Reference graph identity. Grace uses FileContentHash,
-ChunkAddress, ContentBlockAddress, and ManifestAddress for content-addressed storage identity. Do not use a CAS address
-as a version hash, and do not use a version hash as a chunk, block, manifest, or file-content address.
+ADR 0006's target behavior uses version hashes for FileVersion, DirectoryVersion, and Reference graph identity during
+the future transition. Grace uses FileContentHash, ChunkAddress, ContentBlockAddress, and ManifestAddress for
+content-addressed storage identity. Do not use a CAS address as a version hash, and do not use a version hash as a
+chunk, block, manifest, or file-content address.
 
 **File content vs. chunk identity**:
 Grace uses FileContentHash for the complete file bytes and ChunkAddress for one ContentChunk inside manifest-backed
