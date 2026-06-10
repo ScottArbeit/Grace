@@ -189,6 +189,7 @@ module BranchCommandTests =
         | Error error -> Assert.Fail($"Expected annotate handler success, got: {error.Error}")
 
     [<TestCase("C:\\repo\\src\\App.fs", "--path must be repository-relative")>]
+    [<TestCase("D:/repo/src/App.fs", "--path must be repository-relative")>]
     [<TestCase("../src/App.fs", "--path must not contain traversal")>]
     [<TestCase("src/../App.fs", "--path must not contain traversal")>]
     let ``annotate handler rejects invalid repository relative paths`` path expectedError =

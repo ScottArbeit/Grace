@@ -1780,13 +1780,20 @@ module Branch =
                 |> Array.distinct
                 |> Ok
 
+    let private isWindowsDriveRootedPath (path: string) =
+        path.Length >= 3
+        && Char.IsLetter(path[0])
+        && path[1] = ':'
+        && (path[2] = '/' || path[2] = '\\')
+
     let private normalizeBranchAnnotatePath correlationId (path: string) =
         let trimmed = if isNull path then String.Empty else path.Trim()
 
         if String.IsNullOrWhiteSpace(trimmed) then
             Error(GraceError.Create "--path is required and must be repository-relative." correlationId)
         elif
-            Path.IsPathFullyQualified(trimmed)
+            isWindowsDriveRootedPath trimmed
+            || Path.IsPathFullyQualified(trimmed)
             || trimmed.StartsWith("/", StringComparison.Ordinal)
             || trimmed.StartsWith("\\", StringComparison.Ordinal)
         then
