@@ -63,7 +63,8 @@ so links stay traceable without relying on epic-branch auto-close behavior.
 - Before assigning or starting a coding issue or sub-issue, apply the minimum detail gate from
   `docs/Development process.md`: invariant tuple, forbidden implementation shapes, positive/negative/regression/boundary
   tests, high-risk adversarial examples, selected risk-surface traps, and explicit N/A waivers. Keep each issue
-  implementable from its body alone without hidden project context.
+  implementable from its body alone without hidden project context. Write the gate as review-prevention guidance that
+  predicts likely Codex Code Review Bot findings without adding new issue-template ceremony.
 - Declare owned paths, forbidden or sensitive paths, risk surfaces, validation, docs impact, and definition of done
   before editing.
 - After the issue exists, claim it with a comment, assign it to the authenticated GitHub user, and create an
@@ -115,6 +116,8 @@ so links stay traceable without relying on epic-branch auto-close behavior.
   resolution, labels, checklists, or merge/cleanup state. The orchestrator owns those GitHub coordination updates and
   may schedule the next independent worker from the handoff before finishing wrap-up for the previous worker when the
   dependency graph and write sets allow it.
+- Before handoff, require the worker to run a bot-prevention self-review over the actual diff, fix likely Codex Code
+  Review Bot findings it discovers, and report first-pass review readiness with residual risks in the handoff.
 - After the first coding subagent that works on an issue commits and pushes the new branch to origin, open a normal
   ready-for-review pull request. Keep it open while the step is still in progress so Codex Code Review Bot findings,
   fixes, validation evidence, and final no-issues bot state can be recorded on the pull request instead of only on the
@@ -122,7 +125,9 @@ so links stay traceable without relying on epic-branch auto-close behavior.
 - For Grace PR code review, do not spawn local review-only subagents by default. Monitor Codex Code Review Bot: 👀 on
   the PR body means it saw the latest commit and is reviewing; 👍🏻 means it found no issues; a bot PR comment or
   inline pull-request-review comment contains findings that must be assigned to a fresh fix subagent. Do not rely on
-  top-level PR comments alone; inspect review comments attached to the bot review before merging.
+  top-level PR comments alone; inspect review comments attached to the bot review before merging. For high-risk slices,
+  the orchestrator may assign a fresh pre-PR review worker before opening or updating the PR when that is cheaper than a
+  likely bot/fix/re-review loop; this does not replace the bot as the blocking review gate.
 - After each fix subagent completes a bot-requested fix and hands off, the orchestrator replies to the Codex Code Review
   Bot comment with the outcome, fix commit, and validation evidence, resolves the GitHub conversation, updates the PR
   body's `Review Status` section, includes the required prevention line from `docs/Development process.md`, and waits

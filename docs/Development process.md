@@ -21,6 +21,9 @@ For small typo fixes or tiny docs corrections, keep the spirit of the process bu
 - Run the fastest meaningful validation first, then broader validation when risk or shared surfaces justify it.
 - Commit after each completed slice so review scope stays clear.
 - Keep docs, README guidance, and nearby `AGENTS.md` files aligned with behavior and workflow changes.
+- Use the existing issue details to prevent likely Codex Code Review Bot findings before the pull request exists. This
+  means sharper invariants, forbidden implementation shapes, adversarial cases, and test evidence rather than more
+  issue-template ceremony.
 
 ## Task Records
 
@@ -197,6 +200,12 @@ Before assigning, claiming, or starting a coding issue, apply this minimum detai
 - Selected risk-surface traps from the checklist below.
 - Explicit "not applicable" waivers with reasons for skipped gate items or risk surfaces.
 
+Write the minimum detail gate as review-prevention guidance. The issue should predict the implementation shortcuts,
+weak tests, contract drift, stale identity assumptions, authorization mistakes, async or cancellation gaps, stale docs,
+generated-artifact omissions, or validation gaps that Codex Code Review Bot is likely to flag if the worker misses them.
+Prefer a few task-specific warnings over copying broad checklists. This is a quality bar for the existing issue fields,
+not a new required section.
+
 If review finds a missing class of acceptance criterion, adversarial case, contract propagation, or validation evidence,
 update active and future sibling issues before assigning more workers. Preserve issue history by appending an addendum
 unless replacing stale text is clearer and safe.
@@ -275,6 +284,7 @@ Definition of done:
 - Behavior changed
 - Tests or docs updated
 - Coding and fix work completed through implementation subagents, with the main agent acting as orchestrator
+- Worker completed a bot-prevention self-review over the actual diff before handoff
 - Codex Code Review Bot reviewed the latest PR commit and either reported no issues with a 👍🏻 reaction on the PR body
   or all bot comments were fixed, answered, resolved, and followed by a no-issues bot review
 - Ready-for-review pull request opened and linked
@@ -450,6 +460,20 @@ Before editing files, the implementation worker should post or include a lightwe
 Keep this preflight short. Its job is to catch missing acceptance criteria, contract surfaces, adversarial examples,
 mode interactions, validation gaps, and path-lease expansion before code changes start.
 
+Before handoff, the worker must perform a bot-prevention self-review over the actual diff. This is part of
+implementation done, not a separate review phase. The worker should look for likely Codex Code Review Bot findings in:
+
+- correctness and edge cases
+- missing, weak, or false-positive tests
+- authorization, scope, identity, or materialization ordering
+- DTO, API, CLI, SDK, serialization, or OpenAPI contract drift
+- async, retry, idempotency, cancellation, or observability gaps
+- stale docs, generated artifacts, examples, or help text
+- validation gaps or stale evidence
+
+Anything found in this pass should be fixed before the worker pushes or hands off. If a category is not applicable, the
+handoff can say so briefly rather than expanding the issue or pull request with boilerplate.
+
 Prefer worker prompts that end at a handoff boundary. A worker subagent performs the assigned implementation or fix,
 keeps its worktree consistent, runs required validation, commits and pushes when the prompt asks for it, and returns a
 handoff with commit hash, changed files, validation evidence, blockers, and follow-ups. By default, workers should not
@@ -457,6 +481,12 @@ update GitHub issues, pull request bodies, review comments, conversation resolut
 cleanup records. The orchestrator owns those coordination updates. Once the handoff is sufficient, the orchestrator may
 start the next independent worker before completing wrap-up for the prior worker, as long as the dependency graph and
 write sets make that scheduling safe.
+
+For high-risk slices, the orchestrator may assign a fresh pre-PR review worker before opening or updating the pull
+request when that is cheaper than a likely bot/fix/re-review loop. Reserve this exception for changes that touch
+authorization, storage/materialization, public contracts, generated clients or OpenAPI, async/idempotency behavior,
+large cross-surface diffs, or slices where the implementation worker reports residual risk. This optional pre-PR review
+does not replace Codex Code Review Bot as the blocking review gate.
 
 After the first coding subagent that works on the issue commits and pushes the new branch to origin, the orchestrator
 must open a normal ready-for-review pull request. The pull request can remain open while the step is still in progress.
@@ -471,7 +501,8 @@ The implementation subagent must stop after committing, validating, and pushing 
 [Ready For Review handoff](#ready-for-review-handoff) to the parent/orchestrator thread. The parent/orchestrator is
 responsible for opening or updating the pull request and monitoring Codex Code Review Bot. Do not run `codex review`
 through the shell, do not ask GitHub `@codex review`, and do not spawn local review-only subagents for the normal Grace
-completion gate unless the maintainer explicitly changes the review mode for that task.
+completion gate except for the selective high-risk pre-PR review described above or when the maintainer explicitly
+changes the review mode for that task.
 
 Codex Code Review Bot communicates through PR-body emoji reactions, review summaries, top-level PR comments, and
 inline pull-request-review comments:
@@ -568,6 +599,12 @@ return this handoff to the parent/orchestrator thread:
 
 - `<focused command>`: <result>
 - `<broader command, if any>`: <result or skipped reason>
+
+### First-Pass Review Readiness
+
+- Bot-prevention self-review: <completed; notable categories checked>
+- Issues found and fixed before handoff: <none, or summary>
+- Residual risks: <none, or summary>
 
 ### Orchestrator Follow-Up
 

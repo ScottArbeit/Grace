@@ -29,6 +29,9 @@ Re-read these files during the current session before relying on older memory or
   - high-risk adversarial examples
   - selected risk-surface traps
   - explicit N/A waivers with reasons
+- Write the minimum detail gate as review-prevention guidance. Predict likely Codex Code Review Bot findings, such as
+  weak tests, stale identity assumptions, contract drift, auth or materialization ordering mistakes, async gaps,
+  stale generated artifacts, or validation gaps, using the existing issue fields instead of adding more ceremony.
 
 ## Issue-Owned Implementation
 
@@ -76,12 +79,17 @@ When acting as the main implementation orchestrator, follow the repo policy:
 - Require a lightweight implementation preflight before coding: acceptance criteria to prove, contract surfaces to
   update or waive, existing tests to fail or extend, adversarial cases, global options or modes, validation, touched
   paths, and any issue-owned path expansion needed before editing.
+- Require a bot-prevention self-review before worker handoff. The worker should inspect the actual diff for likely
+  Codex Code Review Bot findings, fix anything found before push or handoff, and report first-pass review readiness
+  plus residual risks.
 - Ask worker subagents to finish with a handoff as soon as their assigned implementation or fix is validated and pushed.
   By default, the orchestrator owns GitHub issue updates, PR body updates, review-comment replies, conversation
   resolution, labels, checklists, merge state, and cleanup records. The orchestrator can start the next independent
   worker from a sufficient handoff before finishing wrap-up for the previous worker when dependencies and write sets
   make that safe.
-- Use Codex Code Review Bot as the blocking PR review gate. Do not spawn local review-only subagents by default.
+- Use Codex Code Review Bot as the blocking PR review gate. Do not spawn local review-only subagents by default. For
+  high-risk slices, the orchestrator may assign a fresh pre-PR review worker before opening or updating the PR when that
+  is cheaper than a likely bot/fix/re-review loop; this does not replace the bot as the blocking review gate.
 - Monitor the PR body reactions: 👀 means the bot saw the latest commit and is reviewing; 👍🏻 means it found no issues.
 - Inspect both top-level PR comments and inline comments attached to the bot pull request review; `gh pr view --json
   comments` alone can miss review-thread findings.
