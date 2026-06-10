@@ -563,7 +563,7 @@ module LocalStateDbTests =
             })
 
     [<Test>]
-    let ``read-only inspection does not create missing wal sidecars`` () =
+    let ``read-only inspection opens checkpointed wal database without creating missing sidecars`` () =
         withTempDir (fun _ configuration ->
             task {
                 do! LocalStateDb.ensureDbInitialized configuration.GraceStatusFile
@@ -582,11 +582,17 @@ module LocalStateDbTests =
 
                 let inspection = LocalStateDb.inspectReadOnly configuration.GraceStatusFile
 
-                inspection.OpenedReadOnly |> should equal false
+                inspection.OpenedReadOnly |> should equal true
+                inspection.OpenError |> should equal None
 
-                inspection.OpenError
-                |> Option.defaultValue String.Empty
-                |> should contain "required sidecar files are missing"
+                inspection.SchemaVersion
+                |> should equal (Some "2")
+
+                inspection.IntegrityCheckRows
+                |> should equal [| "ok" |]
+
+                inspection.ObjectCacheReadable
+                |> should equal (Some true)
 
                 snapshotFile configuration.GraceStatusFile
                 |> should equal dbBefore

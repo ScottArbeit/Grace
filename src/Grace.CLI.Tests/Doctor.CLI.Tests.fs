@@ -1061,6 +1061,68 @@ module DoctorCliTests =
                     |> should contain "openReadOnlyConnection starting")))
 
     [<Test>]
+    let ``doctor local-state checks inspect checkpointed wal database without creating missing sidecars`` () =
+        withTempDir (fun root ->
+            withIsolatedHome root (fun _ ->
+                ensureValidLocalStateDb root
+                SqliteConnection.ClearAllPools()
+
+                let dbPath = localStateDbPath root
+                let walPath = dbPath + "-wal"
+                let shmPath = dbPath + "-shm"
+
+                for sidecar in [| walPath; shmPath |] do
+                    if File.Exists(sidecar) then File.Delete(sidecar)
+
+                File.Exists(walPath) |> should equal false
+                File.Exists(shmPath) |> should equal false
+
+                let dbBefore = snapshotFile dbPath
+
+                withLocalStateDbOpenTrace root (fun tracePath ->
+                    let exitCode, standardOut, standardError =
+                        runWithCapturedStdoutAndStderr [| "--output"
+                                                          "Json"
+                                                          "doctor"
+                                                          "--check"
+                                                          "state.db.read-only-open"
+                                                          "--check"
+                                                          "state.db.schema-version"
+                                                          "--check"
+                                                          "state.db.integrity-check"
+                                                          "--check"
+                                                          "object-cache.index-readable" |]
+
+                    exitCode |> should equal 0
+
+                    use document = assertCleanJsonOutput standardOut standardError
+
+                    let checks =
+                        document
+                            .RootElement
+                            .GetProperty("ReturnValue")
+                            .GetProperty("Checks")
+
+                    for checkId in
+                        [|
+                            "state.db.read-only-open"
+                            "state.db.schema-version"
+                            "state.db.integrity-check"
+                            "object-cache.index-readable"
+                        |] do
+                        (findCheckById checks checkId)
+                            .GetProperty("Status")
+                            .GetString()
+                        |> should equal "Ok"
+
+                    readTrace tracePath
+                    |> should contain "openReadOnlyConnection starting"
+
+                    snapshotFile dbPath |> should equal dbBefore
+                    File.Exists(walPath) |> should equal false
+                    File.Exists(shmPath) |> should equal false)))
+
+    [<Test>]
     let ``doctor default run opens local-state database and includes local-state checks`` () =
         withTempDir (fun root ->
             withIsolatedHome root (fun _ ->

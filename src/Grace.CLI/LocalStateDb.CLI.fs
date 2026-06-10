@@ -220,41 +220,6 @@ module LocalStateDb =
             ObjectCacheError = None
         }
 
-    let private openReadOnlyConnection (dbPath: string) =
-        sqliteInitialized.Value |> ignore
-        let traceOpenConnections = shouldTraceOpenConnections ()
-
-        if traceOpenConnections then
-            logTrace $"openReadOnlyConnection starting. dbPath={dbPath}"
-
-        let connectionString =
-            let builder = SqliteConnectionStringBuilder()
-            builder.DataSource <- dbPath
-            builder.Mode <- SqliteOpenMode.ReadOnly
-            builder.Pooling <- false
-            builder.DefaultTimeout <- BusyTimeoutMs / 1000
-            builder.ToString()
-
-        let connection = new SqliteConnection(connectionString)
-
-        try
-            connection.Open()
-            executePragma connection $"PRAGMA busy_timeout = {BusyTimeoutMs};"
-            executePragma connection "PRAGMA query_only = ON;"
-
-            if traceOpenConnections then
-                logTrace $"openReadOnlyConnection opened connection. dbPath={dbPath}"
-
-            connection
-        with
-        | ex ->
-            try
-                connection.Dispose()
-            with
-            | _ -> ()
-
-            raise ex
-
     let private sqliteHeaderMagic = Encoding.ASCII.GetBytes("SQLite format 3" + string (char 0))
 
     let private isWalModeHeader (dbPath: string) =
@@ -274,12 +239,65 @@ module LocalStateDb =
         with
         | _ -> false
 
-    let private missingWalSidecars (dbPath: string) =
-        if isWalModeHeader dbPath then
-            [| dbPath + "-wal"; dbPath + "-shm" |]
-            |> Array.filter (File.Exists >> not)
-        else
+    let private walSidecarPaths (dbPath: string) = dbPath + "-wal", dbPath + "-shm"
+
+    let private missingPartialWalSidecars (dbPath: string) =
+        let walPath, shmPath = walSidecarPaths dbPath
+        let walExists = File.Exists(walPath)
+        let shmExists = File.Exists(shmPath)
+
+        if walExists = shmExists then
             Array.empty
+        else
+            [|
+                if not walExists then Path.GetFileName(walPath)
+
+                if not shmExists then Path.GetFileName(shmPath)
+            |]
+
+    let private shouldUseImmutableReadOnlySnapshot (dbPath: string) =
+        let walPath, shmPath = walSidecarPaths dbPath
+
+        isWalModeHeader dbPath
+        && not (File.Exists(walPath))
+        && not (File.Exists(shmPath))
+
+    let private openReadOnlyConnection (dbPath: string) immutableSnapshot =
+        sqliteInitialized.Value |> ignore
+        let traceOpenConnections = shouldTraceOpenConnections ()
+
+        if traceOpenConnections then
+            logTrace $"openReadOnlyConnection starting. dbPath={dbPath} immutableSnapshot={immutableSnapshot}"
+
+        let connectionString =
+            let builder = SqliteConnectionStringBuilder()
+
+            builder.DataSource <- if immutableSnapshot then $"{Uri(dbPath).AbsoluteUri}?immutable=1" else dbPath
+
+            builder.Mode <- SqliteOpenMode.ReadOnly
+            builder.Pooling <- false
+            builder.DefaultTimeout <- BusyTimeoutMs / 1000
+            builder.ToString()
+
+        let connection = new SqliteConnection(connectionString)
+
+        try
+            connection.Open()
+            executePragma connection $"PRAGMA busy_timeout = {BusyTimeoutMs};"
+            executePragma connection "PRAGMA query_only = ON;"
+
+            if traceOpenConnections then
+                logTrace $"openReadOnlyConnection opened connection. dbPath={dbPath} immutableSnapshot={immutableSnapshot}"
+
+            connection
+        with
+        | ex ->
+            try
+                connection.Dispose()
+            with
+            | _ -> ()
+
+            raise ex
 
     let private readTextRows (connection: SqliteConnection) (sql: string) =
         use cmd = connection.CreateCommand()
@@ -364,13 +382,10 @@ module LocalStateDb =
            || dbPathIsDirectory then
             emptyReadOnlyInspection normalizedPath parentDirectoryExists dbFileExists dbPathIsDirectory false None
         else
-            let missingWalSidecars = missingWalSidecars normalizedPath
+            let missingPartialWalSidecars = missingPartialWalSidecars normalizedPath
 
-            if missingWalSidecars.Length > 0 then
-                let missingNames =
-                    missingWalSidecars
-                    |> Array.map Path.GetFileName
-                    |> String.concat ", "
+            if missingPartialWalSidecars.Length > 0 then
+                let missingNames = String.concat ", " missingPartialWalSidecars
 
                 emptyReadOnlyInspection
                     normalizedPath
@@ -379,10 +394,11 @@ module LocalStateDb =
                     dbPathIsDirectory
                     false
                     (Some
-                        $"Database is in WAL mode but required sidecar files are missing: {missingNames}. Doctor did not open the database to avoid creating sidecar files.")
+                        $"Database has an incomplete WAL sidecar set; missing: {missingNames}. Doctor did not open the database to avoid creating sidecar files or ignoring live WAL content.")
             else
                 try
-                    use connection = openReadOnlyConnection normalizedPath
+                    let immutableSnapshot = shouldUseImmutableReadOnlySnapshot normalizedPath
+                    use connection = openReadOnlyConnection normalizedPath immutableSnapshot
                     let tableNames = readObjectNames connection "table"
                     let indexNames = readObjectNames connection "index"
 
