@@ -177,12 +177,22 @@ module DoctorCliTests =
         |> Convert.ToHexString
         |> fun value -> value.ToLowerInvariant()
 
-    let private createSnapshotFile relativePath content lastWriteTime =
-        LocalFileVersion.Create
+    let private createSnapshotFile (relativePath: RelativePath) (content: string) (lastWriteTime: DateTime) =
+        let bytes = Encoding.UTF8.GetBytes(content)
+        use stream = new MemoryStream(bytes)
+
+        let blake3Hash =
+            Services
+                .computeBlake3ForFile(stream)
+                .GetAwaiter()
+                .GetResult()
+
+        LocalFileVersion.CreateWithHashes
             relativePath
             (sha256Hex content)
+            (Blake3Hash $"{blake3Hash}")
             false
-            (int64 (Encoding.UTF8.GetByteCount(content)))
+            (int64 bytes.Length)
             (Grace.Shared.Utilities.getCurrentInstant ())
             true
             lastWriteTime
@@ -2432,7 +2442,7 @@ module DoctorCliTests =
                 (findCheckById checks "state.db.schema-version")
                     .GetProperty("Summary")
                     .GetString()
-                |> should contain "schema_version is 2"
+                |> should contain "schema_version is 3"
 
                 (findCheckById checks "object-cache.index-readable")
                     .GetProperty("Summary")
@@ -2563,7 +2573,7 @@ module DoctorCliTests =
                         |> should equal "Ok"
 
                         checks[ 0 ].GetProperty("Summary").GetString()
-                        |> should contain "schema_version is 2"
+                        |> should contain "schema_version is 3"
 
                         let trace = readTrace tracePath
                         trace |> should contain repoDbPath
