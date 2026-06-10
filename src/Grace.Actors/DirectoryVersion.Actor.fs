@@ -70,22 +70,18 @@ module DirectoryVersion =
                     stopwatch.Stop()
                     return MissingInStorage(fileVersion, stopwatch.Elapsed.TotalMilliseconds)
                 else
-                    let computeHashFromBlob computeHash =
+                    let computeHashesFromBlob () =
                         task {
                             use! blobStream = blobClient.OpenReadAsync(position = 0, bufferSize = (64 * 1024))
 
                             if fileVersion.IsBinary then
-                                return! computeHash blobStream
+                                return! computeHashesForFile blobStream fileVersion.RelativePath
                             else
                                 use gzStream = new GZipStream(stream = blobStream, mode = CompressionMode.Decompress, leaveOpen = false)
-                                return! computeHash gzStream
+                                return! computeHashesForFile gzStream fileVersion.RelativePath
                         }
 
-                    let! computedSha256Hash = computeHashFromBlob (fun stream -> computeSha256ForFile stream fileVersion.RelativePath)
-
-                    let! computedBlake3Hash = computeHashFromBlob (fun stream -> computeBlake3ForFile stream)
-
-                    let computedBlake3Hash = Blake3Hash $"{computedBlake3Hash}"
+                    let! computedSha256Hash, computedBlake3Hash = computeHashesFromBlob ()
 
                     stopwatch.Stop()
 
