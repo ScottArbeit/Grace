@@ -355,23 +355,32 @@ module Diff =
 
                                         if (newDirectoryVersions.Count > 0) then
                                             (task {
-                                                let saveParameters = SaveDirectoryVersionsParameters()
-                                                saveParameters.OwnerId <- graceIds.OwnerIdString
-                                                saveParameters.OwnerName <- graceIds.OwnerName
-                                                saveParameters.OrganizationId <- graceIds.OrganizationIdString
-                                                saveParameters.OrganizationName <- graceIds.OrganizationName
-                                                saveParameters.RepositoryId <- graceIds.RepositoryIdString
-                                                saveParameters.RepositoryName <- graceIds.RepositoryName
-                                                saveParameters.CorrelationId <- getCorrelationId parseResult
+                                                match!
+                                                    getPreviousDirectoryVersionsForChangedDirectories
+                                                        previousGraceStatus
+                                                        newDirectoryVersions
+                                                        (getCorrelationId parseResult)
+                                                    with
+                                                | Ok previousDirectoryVersions ->
+                                                    let saveParameters = SaveDirectoryVersionsParameters()
+                                                    saveParameters.OwnerId <- graceIds.OwnerIdString
+                                                    saveParameters.OwnerName <- graceIds.OwnerName
+                                                    saveParameters.OrganizationId <- graceIds.OrganizationIdString
+                                                    saveParameters.OrganizationName <- graceIds.OrganizationName
+                                                    saveParameters.RepositoryId <- graceIds.RepositoryIdString
+                                                    saveParameters.RepositoryName <- graceIds.RepositoryName
+                                                    saveParameters.CorrelationId <- getCorrelationId parseResult
 
-                                                saveParameters.DirectoryVersions <-
-                                                    newDirectoryVersions
-                                                        .Select(toDirectoryVersionWithUploadedFiles uploadedFileVersions [])
-                                                        .ToList()
+                                                    saveParameters.DirectoryVersions <-
+                                                        newDirectoryVersions
+                                                            .Select(toDirectoryVersionWithUploadedFiles uploadedFileVersions previousDirectoryVersions)
+                                                            .ToList()
 
-                                                match! DirectoryVersion.SaveDirectoryVersions saveParameters with
-                                                | Ok returnValue -> ()
-                                                | Error error -> logToAnsiConsole Colors.Error $"Failed to upload new directory versions. {error}"
+                                                    match! DirectoryVersion.SaveDirectoryVersions saveParameters with
+                                                    | Ok returnValue -> ()
+                                                    | Error error -> logToAnsiConsole Colors.Error $"Failed to upload new directory versions. {error}"
+                                                | Error error ->
+                                                    logToAnsiConsole Colors.Error $"Failed to retrieve previous directory versions for save. {error}"
                                             })
                                                 .Wait()
 
@@ -660,23 +669,32 @@ module Diff =
 
                                             if (newDirectoryVersions.Count > 0) then
                                                 (task {
-                                                    let saveParameters = SaveDirectoryVersionsParameters()
-                                                    saveParameters.OwnerId <- graceIds.OwnerIdString
-                                                    saveParameters.OwnerName <- graceIds.OwnerName
-                                                    saveParameters.OrganizationId <- graceIds.OrganizationIdString
-                                                    saveParameters.OrganizationName <- graceIds.OrganizationName
-                                                    saveParameters.RepositoryId <- graceIds.RepositoryIdString
-                                                    saveParameters.RepositoryName <- graceIds.RepositoryName
-                                                    saveParameters.CorrelationId <- getCorrelationId parseResult
+                                                    match!
+                                                        getPreviousDirectoryVersionsForChangedDirectories
+                                                            previousGraceStatus
+                                                            newDirectoryVersions
+                                                            (getCorrelationId parseResult)
+                                                        with
+                                                    | Ok previousDirectoryVersions ->
+                                                        let saveParameters = SaveDirectoryVersionsParameters()
+                                                        saveParameters.OwnerId <- graceIds.OwnerIdString
+                                                        saveParameters.OwnerName <- graceIds.OwnerName
+                                                        saveParameters.OrganizationId <- graceIds.OrganizationIdString
+                                                        saveParameters.OrganizationName <- graceIds.OrganizationName
+                                                        saveParameters.RepositoryId <- graceIds.RepositoryIdString
+                                                        saveParameters.RepositoryName <- graceIds.RepositoryName
+                                                        saveParameters.CorrelationId <- getCorrelationId parseResult
 
-                                                    saveParameters.DirectoryVersions <-
-                                                        newDirectoryVersions
-                                                            .Select(toDirectoryVersionWithUploadedFiles uploadedFileVersions [])
-                                                            .ToList()
+                                                        saveParameters.DirectoryVersions <-
+                                                            newDirectoryVersions
+                                                                .Select(toDirectoryVersionWithUploadedFiles uploadedFileVersions previousDirectoryVersions)
+                                                                .ToList()
 
-                                                    match! DirectoryVersion.SaveDirectoryVersions saveParameters with
-                                                    | Ok returnValue -> ()
-                                                    | Error error -> logToAnsiConsole Colors.Error $"Failed to upload new directory versions. {error}"
+                                                        match! DirectoryVersion.SaveDirectoryVersions saveParameters with
+                                                        | Ok returnValue -> ()
+                                                        | Error error -> logToAnsiConsole Colors.Error $"Failed to upload new directory versions. {error}"
+                                                    | Error error ->
+                                                        logToAnsiConsole Colors.Error $"Failed to retrieve previous directory versions for save. {error}"
                                                 })
                                                     .Wait()
 

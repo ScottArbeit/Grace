@@ -1162,6 +1162,7 @@ module Branch =
                                         //let mutable rootDirectoryId = DirectoryId.Empty
                                         //let mutable rootDirectorySha256Hash = Sha256Hash String.Empty
                                         let rootDirectoryVersion = ref (DirectoryVersionId.Empty, Sha256Hash String.Empty)
+                                        let mutable implicitSaveError = None
 
                                         match! getGraceWatchStatus () with
                                         | Some graceWatchStatus ->
@@ -1249,6 +1250,7 @@ module Branch =
                                             t4.StartTask() // Upload directory versions.
 
                                             let mutable lastDirectoryVersionUpload = newGraceStatus.LastSuccessfulDirectoryVersionUpload
+                                            let mutable priorDirectoryLookupError = None
 
                                             if newDirectoryVersions.Count > 0 then
                                                 match!
@@ -1256,7 +1258,7 @@ module Branch =
                                                         previousGraceStatus
                                                         newDirectoryVersions
                                                         (getCorrelationId parseResult)
-                                                with
+                                                    with
                                                 | Ok previousDirectoryVersions ->
                                                     let saveParameters = SaveDirectoryVersionsParameters()
                                                     saveParameters.OwnerId <- graceIds.OwnerIdString
@@ -1278,44 +1280,51 @@ module Branch =
 
                                                     lastDirectoryVersionUpload <- getCurrentInstant ()
                                                 | Error error ->
-                                                    logToAnsiConsole
-                                                        Colors.Error
-                                                        $"Error retrieving previous directory versions for save: {error.Error}"
+                                                    logToAnsiConsole Colors.Error $"Error retrieving previous directory versions for save: {error.Error}"
 
-                                            t4.Value <- 100.0
+                                                    t4.Value <- 50.0
+                                                    priorDirectoryLookupError <- Some error
 
-                                            newGraceStatus <-
-                                                { newGraceStatus with
-                                                    LastSuccessfulFileUpload = lastFileUploadInstant
-                                                    LastSuccessfulDirectoryVersionUpload = lastDirectoryVersionUpload
-                                                }
+                                            match priorDirectoryLookupError with
+                                            | Some error -> implicitSaveError <- Some error
+                                            | None ->
+                                                t4.Value <- 100.0
 
-                                            do! applyGraceStatusIncremental newGraceStatus newDirectoryVersions differences
+                                                newGraceStatus <-
+                                                    { newGraceStatus with
+                                                        LastSuccessfulFileUpload = lastFileUploadInstant
+                                                        LastSuccessfulDirectoryVersionUpload = lastDirectoryVersionUpload
+                                                    }
 
-                                        t5.StartTask() // Create new reference.
+                                                do! applyGraceStatusIncremental newGraceStatus newDirectoryVersions differences
 
-                                        let (rootDirectoryId, rootDirectorySha256Hash) = rootDirectoryVersion.Value
+                                        match implicitSaveError with
+                                        | Some error -> return Error error
+                                        | None ->
+                                            t5.StartTask() // Create new reference.
 
-                                        let sdkParameters =
-                                            Parameters.Branch.CreateReferenceParameters(
-                                                BranchId = graceIds.BranchIdString,
-                                                BranchName = graceIds.BranchName,
-                                                OwnerId = graceIds.OwnerIdString,
-                                                OwnerName = graceIds.OwnerName,
-                                                OrganizationId = graceIds.OrganizationIdString,
-                                                OrganizationName = graceIds.OrganizationName,
-                                                RepositoryId = graceIds.RepositoryIdString,
-                                                RepositoryName = graceIds.RepositoryName,
-                                                DirectoryVersionId = rootDirectoryId,
-                                                Sha256Hash = rootDirectorySha256Hash,
-                                                Message = referenceMessage,
-                                                CorrelationId = graceIds.CorrelationId
-                                            )
+                                            let (rootDirectoryId, rootDirectorySha256Hash) = rootDirectoryVersion.Value
 
-                                        let! result = command sdkParameters
-                                        t5.Value <- 100.0
+                                            let sdkParameters =
+                                                Parameters.Branch.CreateReferenceParameters(
+                                                    BranchId = graceIds.BranchIdString,
+                                                    BranchName = graceIds.BranchName,
+                                                    OwnerId = graceIds.OwnerIdString,
+                                                    OwnerName = graceIds.OwnerName,
+                                                    OrganizationId = graceIds.OrganizationIdString,
+                                                    OrganizationName = graceIds.OrganizationName,
+                                                    RepositoryId = graceIds.RepositoryIdString,
+                                                    RepositoryName = graceIds.RepositoryName,
+                                                    DirectoryVersionId = rootDirectoryId,
+                                                    Sha256Hash = rootDirectorySha256Hash,
+                                                    Message = referenceMessage,
+                                                    CorrelationId = graceIds.CorrelationId
+                                                )
 
-                                        return result
+                                            let! result = command sdkParameters
+                                            t5.Value <- 100.0
+
+                                            return result
                                     })
                     else
                         let! previousGraceStatus = readGraceStatusFile ()
@@ -1367,12 +1376,7 @@ module Branch =
                             | Ok returnValue -> returnValue.ReturnValue
                             | Error _ -> Array.empty
 
-                        match!
-                            getPreviousDirectoryVersionsForChangedDirectories
-                                previousGraceStatus
-                                newDirectoryVersions
-                                (getCorrelationId parseResult)
-                        with
+                        match! getPreviousDirectoryVersionsForChangedDirectories previousGraceStatus newDirectoryVersions (getCorrelationId parseResult) with
                         | Error error -> return Error error
                         | Ok previousDirectoryVersions ->
                             let saveParameters = SaveDirectoryVersionsParameters()
@@ -2927,12 +2931,8 @@ module Branch =
 
                             if currentBranch.SaveEnabled
                                && newDirectoryVersions.Any() then
-                                match!
-                                    getPreviousDirectoryVersionsForChangedDirectories
-                                        previousGraceStatus
-                                        newDirectoryVersions
-                                        (getCorrelationId parseResult)
-                                with
+                                match! getPreviousDirectoryVersionsForChangedDirectories previousGraceStatus newDirectoryVersions (getCorrelationId parseResult)
+                                    with
                                 | Error error ->
                                     t |> setProgressTaskValue showOutput 50.0
                                     return Error error

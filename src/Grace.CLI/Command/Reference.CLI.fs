@@ -622,6 +622,7 @@ module Reference =
                                         //let mutable rootDirectoryId = DirectoryId.Empty
                                         //let mutable rootDirectorySha256Hash = Sha256Hash String.Empty
                                         let rootDirectoryVersion = ref (DirectoryVersionId.Empty, Sha256Hash String.Empty)
+                                        let mutable implicitSaveError = None
 
                                         match! getGraceWatchStatus () with
                                         | Some graceWatchStatus ->
@@ -709,61 +710,78 @@ module Reference =
                                             t4.StartTask() // Upload directory versions.
 
                                             let mutable lastDirectoryVersionUpload = newGraceStatus.LastSuccessfulDirectoryVersionUpload
+                                            let mutable priorDirectoryLookupError = None
 
                                             if newDirectoryVersions.Count > 0 then
-                                                let saveParameters = SaveDirectoryVersionsParameters()
-                                                saveParameters.OwnerId <- graceIds.OwnerIdString
-                                                saveParameters.OwnerName <- graceIds.OwnerName
-                                                saveParameters.OrganizationId <- graceIds.OrganizationIdString
-                                                saveParameters.OrganizationName <- graceIds.OrganizationName
-                                                saveParameters.RepositoryId <- graceIds.RepositoryIdString
-                                                saveParameters.RepositoryName <- graceIds.RepositoryName
-                                                saveParameters.CorrelationId <- graceIds.CorrelationId
-                                                saveParameters.DirectoryVersionId <- $"{newGraceStatus.RootDirectoryId}"
+                                                match!
+                                                    getPreviousDirectoryVersionsForChangedDirectories
+                                                        previousGraceStatus
+                                                        newDirectoryVersions
+                                                        graceIds.CorrelationId
+                                                    with
+                                                | Error error ->
+                                                    t4.Value <- 50.0
+                                                    priorDirectoryLookupError <- Some error
+                                                | Ok previousDirectoryVersions ->
+                                                    let saveParameters = SaveDirectoryVersionsParameters()
+                                                    saveParameters.OwnerId <- graceIds.OwnerIdString
+                                                    saveParameters.OwnerName <- graceIds.OwnerName
+                                                    saveParameters.OrganizationId <- graceIds.OrganizationIdString
+                                                    saveParameters.OrganizationName <- graceIds.OrganizationName
+                                                    saveParameters.RepositoryId <- graceIds.RepositoryIdString
+                                                    saveParameters.RepositoryName <- graceIds.RepositoryName
+                                                    saveParameters.CorrelationId <- graceIds.CorrelationId
+                                                    saveParameters.DirectoryVersionId <- $"{newGraceStatus.RootDirectoryId}"
 
-                                                saveParameters.DirectoryVersions <-
-                                                    newDirectoryVersions
-                                                        .Select(toDirectoryVersionWithUploadedFiles uploadedFileVersions [])
-                                                        .ToList()
+                                                    saveParameters.DirectoryVersions <-
+                                                        newDirectoryVersions
+                                                            .Select(toDirectoryVersionWithUploadedFiles uploadedFileVersions previousDirectoryVersions)
+                                                            .ToList()
 
-                                                let! uploadDirectoryVersions = DirectoryVersion.SaveDirectoryVersions saveParameters
+                                                    let! uploadDirectoryVersions = DirectoryVersion.SaveDirectoryVersions saveParameters
 
-                                                lastDirectoryVersionUpload <- getCurrentInstant ()
+                                                    lastDirectoryVersionUpload <- getCurrentInstant ()
 
-                                            t4.Value <- 100.0
+                                            match priorDirectoryLookupError with
+                                            | Some error -> implicitSaveError <- Some error
+                                            | None ->
+                                                t4.Value <- 100.0
 
-                                            newGraceStatus <-
-                                                { newGraceStatus with
-                                                    LastSuccessfulFileUpload = lastFileUploadInstant
-                                                    LastSuccessfulDirectoryVersionUpload = lastDirectoryVersionUpload
-                                                }
+                                                newGraceStatus <-
+                                                    { newGraceStatus with
+                                                        LastSuccessfulFileUpload = lastFileUploadInstant
+                                                        LastSuccessfulDirectoryVersionUpload = lastDirectoryVersionUpload
+                                                    }
 
-                                            do! applyGraceStatusIncremental newGraceStatus newDirectoryVersions differences
+                                                do! applyGraceStatusIncremental newGraceStatus newDirectoryVersions differences
 
-                                        t5.StartTask() // Create new reference.
+                                        match implicitSaveError with
+                                        | Some error -> return Error error
+                                        | None ->
+                                            t5.StartTask() // Create new reference.
 
-                                        let (rootDirectoryId, rootDirectorySha256Hash) = rootDirectoryVersion.Value
+                                            let (rootDirectoryId, rootDirectorySha256Hash) = rootDirectoryVersion.Value
 
-                                        let sdkParameters =
-                                            Parameters.Branch.CreateReferenceParameters(
-                                                BranchId = graceIds.BranchIdString,
-                                                BranchName = graceIds.BranchName,
-                                                OwnerId = graceIds.OwnerIdString,
-                                                OwnerName = graceIds.OwnerName,
-                                                OrganizationId = graceIds.OrganizationIdString,
-                                                OrganizationName = graceIds.OrganizationName,
-                                                RepositoryId = graceIds.RepositoryIdString,
-                                                RepositoryName = graceIds.RepositoryName,
-                                                DirectoryVersionId = rootDirectoryId,
-                                                Sha256Hash = rootDirectorySha256Hash,
-                                                Message = message,
-                                                CorrelationId = graceIds.CorrelationId
-                                            )
+                                            let sdkParameters =
+                                                Parameters.Branch.CreateReferenceParameters(
+                                                    BranchId = graceIds.BranchIdString,
+                                                    BranchName = graceIds.BranchName,
+                                                    OwnerId = graceIds.OwnerIdString,
+                                                    OwnerName = graceIds.OwnerName,
+                                                    OrganizationId = graceIds.OrganizationIdString,
+                                                    OrganizationName = graceIds.OrganizationName,
+                                                    RepositoryId = graceIds.RepositoryIdString,
+                                                    RepositoryName = graceIds.RepositoryName,
+                                                    DirectoryVersionId = rootDirectoryId,
+                                                    Sha256Hash = rootDirectorySha256Hash,
+                                                    Message = message,
+                                                    CorrelationId = graceIds.CorrelationId
+                                                )
 
-                                        let! result = command sdkParameters
-                                        t5.Value <- 100.0
+                                            let! result = command sdkParameters
+                                            t5.Value <- 100.0
 
-                                        return result
+                                            return result
                                     })
                     else
                         let! previousGraceStatus = readGraceStatusFile ()
@@ -815,41 +833,44 @@ module Reference =
                             | Ok returnValue -> returnValue.ReturnValue
                             | Error _ -> Array.empty
 
-                        let saveParameters = SaveDirectoryVersionsParameters()
-                        saveParameters.OwnerId <- graceIds.OwnerIdString
-                        saveParameters.OwnerName <- graceIds.OwnerName
-                        saveParameters.OrganizationId <- graceIds.OrganizationIdString
-                        saveParameters.OrganizationName <- graceIds.OrganizationName
-                        saveParameters.RepositoryId <- graceIds.RepositoryIdString
-                        saveParameters.RepositoryName <- graceIds.RepositoryName
-                        saveParameters.CorrelationId <- graceIds.CorrelationId
+                        match! getPreviousDirectoryVersionsForChangedDirectories previousGraceStatus newDirectoryVersions graceIds.CorrelationId with
+                        | Error error -> return Error error
+                        | Ok previousDirectoryVersions ->
+                            let saveParameters = SaveDirectoryVersionsParameters()
+                            saveParameters.OwnerId <- graceIds.OwnerIdString
+                            saveParameters.OwnerName <- graceIds.OwnerName
+                            saveParameters.OrganizationId <- graceIds.OrganizationIdString
+                            saveParameters.OrganizationName <- graceIds.OrganizationName
+                            saveParameters.RepositoryId <- graceIds.RepositoryIdString
+                            saveParameters.RepositoryName <- graceIds.RepositoryName
+                            saveParameters.CorrelationId <- graceIds.CorrelationId
 
-                        saveParameters.DirectoryVersions <-
-                            newDirectoryVersions
-                                .Select(toDirectoryVersionWithUploadedFiles uploadedFileVersions [])
-                                .ToList()
+                            saveParameters.DirectoryVersions <-
+                                newDirectoryVersions
+                                    .Select(toDirectoryVersionWithUploadedFiles uploadedFileVersions previousDirectoryVersions)
+                                    .ToList()
 
-                        let! uploadDirectoryVersions = DirectoryVersion.SaveDirectoryVersions saveParameters
-                        let rootDirectoryVersion = getRootDirectoryVersion previousGraceStatus
+                            let! uploadDirectoryVersions = DirectoryVersion.SaveDirectoryVersions saveParameters
+                            let rootDirectoryVersion = getRootDirectoryVersion previousGraceStatus
 
-                        let sdkParameters =
-                            Parameters.Branch.CreateReferenceParameters(
-                                BranchId = graceIds.BranchIdString,
-                                BranchName = graceIds.BranchName,
-                                OwnerId = graceIds.OwnerIdString,
-                                OwnerName = graceIds.OwnerName,
-                                OrganizationId = graceIds.OrganizationIdString,
-                                OrganizationName = graceIds.OrganizationName,
-                                RepositoryId = graceIds.RepositoryIdString,
-                                RepositoryName = graceIds.RepositoryName,
-                                DirectoryVersionId = rootDirectoryVersion.DirectoryVersionId,
-                                Sha256Hash = rootDirectoryVersion.Sha256Hash,
-                                Message = message,
-                                CorrelationId = graceIds.CorrelationId
-                            )
+                            let sdkParameters =
+                                Parameters.Branch.CreateReferenceParameters(
+                                    BranchId = graceIds.BranchIdString,
+                                    BranchName = graceIds.BranchName,
+                                    OwnerId = graceIds.OwnerIdString,
+                                    OwnerName = graceIds.OwnerName,
+                                    OrganizationId = graceIds.OrganizationIdString,
+                                    OrganizationName = graceIds.OrganizationName,
+                                    RepositoryId = graceIds.RepositoryIdString,
+                                    RepositoryName = graceIds.RepositoryName,
+                                    DirectoryVersionId = rootDirectoryVersion.DirectoryVersionId,
+                                    Sha256Hash = rootDirectoryVersion.Sha256Hash,
+                                    Message = message,
+                                    CorrelationId = graceIds.CorrelationId
+                                )
 
-                        let! result = command sdkParameters
-                        return result
+                            let! result = command sdkParameters
+                            return result
                 | Error error -> return Error error
             with
             | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
