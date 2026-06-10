@@ -3,6 +3,7 @@ namespace Grace.Server.Tests
 open Grace.Shared
 open Grace.Shared.AnnotationLineCore
 open Grace.Types
+open Grace.Types.Annotation
 open Grace.Types.Common
 open Grace.Types.Reference
 open Microsoft.AspNetCore.Http
@@ -165,3 +166,26 @@ type BranchAnnotationServerTests() =
         match result with
         | Ok _ -> Assert.Fail("Target materialization error should stop annotation.")
         | Error error -> Assert.That(error.Error, Is.EqualTo(materializationError.Error))
+
+    [<Test>]
+    member _.``tryReserveRetainedAnnotationBytes rejects content past total materialization budget``() =
+        let document = { SourceReference = AnnotationSourceReference.Default; Path = "src/App.fs"; Content = [| 1uy |] }
+
+        let accepted =
+            Grace.Server.Branch.tryReserveRetainedAnnotationBytes
+                (Grace.Server.Branch.MaxRetainedAnnotationMaterializationBytes
+                 - 1L)
+                document
+
+        let rejected = Grace.Server.Branch.tryReserveRetainedAnnotationBytes Grace.Server.Branch.MaxRetainedAnnotationMaterializationBytes document
+
+        Assert.Multiple(
+            System.Action (fun () ->
+                match accepted with
+                | Ok retainedBytes -> Assert.That(retainedBytes, Is.EqualTo(Grace.Server.Branch.MaxRetainedAnnotationMaterializationBytes))
+                | Error boundaryKind -> Assert.Fail($"Expected accepted byte reservation, got boundary {boundaryKind}.")
+
+                match rejected with
+                | Ok retainedBytes -> Assert.Fail($"Expected materialization budget boundary, got retained bytes {retainedBytes}.")
+                | Error boundaryKind -> Assert.That(boundaryKind, Is.EqualTo(Grace.Server.Branch.annotationMaterializationBudgetBoundaryKind)))
+        )

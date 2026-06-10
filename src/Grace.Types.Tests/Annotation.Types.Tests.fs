@@ -43,7 +43,12 @@ type AnnotationContractTests() =
                 { LineNumber = 11; Text = "value + 1" }
             |],
             [|
-                { BoundaryId = "boundary-1"; LineRange = { StartLine = 10; EndLine = 12 }; SourceRowIds = [| "source-row-1" |] }
+                {
+                    BoundaryId = "boundary-1"
+                    LineRange = { StartLine = 10; EndLine = 12 }
+                    SourceRowIds = [| "source-row-1" |]
+                    BoundaryKind = "TargetLineMissing"
+                }
             |],
             [|
                 { SpanId = "span-1"; BoundaryId = "boundary-1"; LineRange = { StartLine = 10; EndLine = 11 }; SourceRowIds = [| "source-row-1" |] }
@@ -324,6 +329,22 @@ type AnnotationContractTests() =
         match validate blank with
         | Ok () -> Assert.Fail($"Blank {identifierKind} identifiers should be rejected.")
         | Error errors -> Assert.That(errors, Has.Some.Contains("blank"))
+
+    [<Test>]
+    member _.AnnotationValidationRejectsBlankBoundaryKind() =
+        let annotation = validAnnotation true
+
+        let blank =
+            { annotation with
+                Boundaries =
+                    [|
+                        { annotation.Boundaries[0] with BoundaryKind = " " }
+                    |]
+            }
+
+        match validate blank with
+        | Ok () -> Assert.Fail("Blank BoundaryKind should be rejected.")
+        | Error errors -> Assert.That(errors, Has.Some.Contains("blank BoundaryKind"))
 
     [<Test>]
     member _.AnnotationValidationRejectsSpansOutsideRequestedRange() =

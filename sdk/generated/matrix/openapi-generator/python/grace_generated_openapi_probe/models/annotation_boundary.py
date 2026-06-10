@@ -32,7 +32,8 @@ class AnnotationBoundary(BaseModel):
     boundary_id: StrictStr = Field(alias="BoundaryId")
     line_range: AnnotationLineRange = Field(alias="LineRange")
     source_row_ids: List[StrictStr] = Field(alias="SourceRowIds")
-    __properties: ClassVar[List[str]] = ["BoundaryId", "LineRange", "SourceRowIds"]
+    boundary_kind: StrictStr = Field(description="Grace boundary reason explaining why annotation could not continue through history.", alias="BoundaryKind")
+    __properties: ClassVar[List[str]] = ["BoundaryId", "LineRange", "SourceRowIds", "BoundaryKind"]
 
     model_config = ConfigDict(
         validate_by_name=True,
@@ -90,7 +91,8 @@ class AnnotationBoundary(BaseModel):
         _obj = cls.model_validate({
             "BoundaryId": obj.get("BoundaryId"),
             "LineRange": AnnotationLineRange.from_dict(obj["LineRange"]) if obj.get("LineRange") is not None else None,
-            "SourceRowIds": obj.get("SourceRowIds")
+            "SourceRowIds": obj.get("SourceRowIds"),
+            "BoundaryKind": obj.get("BoundaryKind")
         })
         return _obj
 

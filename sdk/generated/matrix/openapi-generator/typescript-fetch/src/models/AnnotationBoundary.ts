@@ -45,6 +45,12 @@ export interface AnnotationBoundary {
      * @memberof AnnotationBoundary
      */
     sourceRowIds: Array<string>;
+    /**
+     * Grace boundary reason explaining why annotation could not continue through history.
+     * @type {string}
+     * @memberof AnnotationBoundary
+     */
+    boundaryKind: string;
 }
 
 /**
@@ -54,6 +60,7 @@ export function instanceOfAnnotationBoundary(value: object): value is Annotation
     if (!('boundaryId' in value) || value['boundaryId'] === undefined) return false;
     if (!('lineRange' in value) || value['lineRange'] === undefined) return false;
     if (!('sourceRowIds' in value) || value['sourceRowIds'] === undefined) return false;
+    if (!('boundaryKind' in value) || value['boundaryKind'] === undefined) return false;
     return true;
 }
 
@@ -70,6 +77,7 @@ export function AnnotationBoundaryFromJSONTyped(json: any, ignoreDiscriminator: 
         'boundaryId': json['BoundaryId'],
         'lineRange': AnnotationLineRangeFromJSON(json['LineRange']),
         'sourceRowIds': json['SourceRowIds'],
+        'boundaryKind': json['BoundaryKind'],
     };
 }
 
@@ -87,6 +95,7 @@ export function AnnotationBoundaryToJSONTyped(value?: AnnotationBoundary | null,
         'BoundaryId': value['boundaryId'],
         'LineRange': AnnotationLineRangeToJSON(value['lineRange']),
         'SourceRowIds': value['sourceRowIds'],
+        'BoundaryKind': value['boundaryKind'],
     };
 }
 

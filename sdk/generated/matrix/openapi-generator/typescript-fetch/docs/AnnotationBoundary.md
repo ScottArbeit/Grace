@@ -10,6 +10,7 @@ Name | Type
 `boundaryId` | string
 `lineRange` | [AnnotationLineRange](AnnotationLineRange.md)
 `sourceRowIds` | Array&lt;string&gt;
+`boundaryKind` | string
 
 ## Example
 
@@ -21,6 +22,7 @@ const example = {
   "boundaryId": null,
   "lineRange": null,
   "sourceRowIds": null,
+  "boundaryKind": null,
 } satisfies AnnotationBoundary
 
 console.log(example)

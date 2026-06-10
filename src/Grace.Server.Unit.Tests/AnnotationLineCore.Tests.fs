@@ -1172,6 +1172,8 @@ type AnnotationLineCoreTests() =
         Assert.Multiple(
             Action (fun () ->
                 Assert.That(components.Boundaries, Has.Length.EqualTo(2))
+                Assert.That(components.Boundaries[0].BoundaryKind, Is.EqualTo(firstBoundary.BoundaryKind))
+                Assert.That(components.Boundaries[1].BoundaryKind, Is.EqualTo(secondBoundary.BoundaryKind))
                 Assert.That(components.Spans, Has.Length.EqualTo(2))
                 Assert.That(components.Spans[0].BoundaryId, Is.EqualTo(components.Boundaries[0].BoundaryId))
                 Assert.That(components.Spans[1].BoundaryId, Is.EqualTo(components.Boundaries[1].BoundaryId)))

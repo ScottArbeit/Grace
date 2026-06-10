@@ -9,6 +9,7 @@ Name | Type | Description | Notes
 **boundary_id** | **str** |  | 
 **line_range** | [**AnnotationLineRange**](AnnotationLineRange.md) |  | 
 **source_row_ids** | **List[str]** |  | 
+**boundary_kind** | **str** | Grace boundary reason explaining why annotation could not continue through history. | 
 
 ## Example
 

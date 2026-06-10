@@ -42,7 +42,8 @@ class TestAnnotationBoundary(unittest.TestCase):
                     end_line = 1, ),
                 source_row_ids = [
                     ''
-                    ]
+                    ],
+                boundary_kind = ''
             )
         else:
             return AnnotationBoundary(
@@ -53,6 +54,7 @@ class TestAnnotationBoundary(unittest.TestCase):
                 source_row_ids = [
                     ''
                     ],
+                boundary_kind = '',
         )
         """
 

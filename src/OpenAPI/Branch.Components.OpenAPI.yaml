@@ -522,7 +522,10 @@
           type: array
           items:
             type: string
-      required: [BoundaryId, LineRange, SourceRowIds]
+        BoundaryKind:
+          type: string
+          description: Grace boundary reason explaining why annotation could not continue through history.
+      required: [BoundaryId, LineRange, SourceRowIds, BoundaryKind]
     AnnotationSpan:
       description: Annotated target span and its source rows.
       type: object

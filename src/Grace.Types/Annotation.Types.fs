@@ -105,9 +105,11 @@ module Annotation =
             LineRange: AnnotationLineRange
             [<Key(2)>]
             SourceRowIds: AnnotationSourceRowId array
+            [<Key(3)>]
+            BoundaryKind: string
         }
 
-        static member Default = { BoundaryId = String.Empty; LineRange = AnnotationLineRange.Default; SourceRowIds = Array.empty }
+        static member Default = { BoundaryId = String.Empty; LineRange = AnnotationLineRange.Default; SourceRowIds = Array.empty; BoundaryKind = String.Empty }
 
     [<MessagePackObject; GenerateSerializer>]
     type AnnotationSpan =
@@ -339,6 +341,12 @@ module Annotation =
                     |> Seq.map (fun boundary -> boundary.BoundaryId)
                 ))
                 "Boundaries must not contain blank BoundaryId values."
+            |> appendIf
+                (hasBlanks (
+                    annotation.Boundaries
+                    |> Seq.map (fun boundary -> boundary.BoundaryKind)
+                ))
+                "Boundaries must not contain blank BoundaryKind values."
             |> appendIf
                 (hasBlanks (
                     annotation.Spans

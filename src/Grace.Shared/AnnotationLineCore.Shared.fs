@@ -248,7 +248,7 @@ module AnnotationLineCore =
                 let rowIds = appendSourceRowsForBoundary sourceRows boundary
                 let id = boundaryId (boundaries.Count + 1)
 
-                boundaries.Add({ BoundaryId = id; LineRange = lineRange segmentStart segmentEnd; SourceRowIds = rowIds })
+                boundaries.Add({ BoundaryId = id; LineRange = lineRange segmentStart segmentEnd; SourceRowIds = rowIds; BoundaryKind = boundary.BoundaryKind })
 
                 spans.Add({ SpanId = spanId (spans.Count + 1); BoundaryId = id; LineRange = lineRange segmentStart segmentEnd; SourceRowIds = rowIds })
 

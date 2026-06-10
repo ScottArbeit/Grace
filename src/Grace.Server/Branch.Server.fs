@@ -39,7 +39,17 @@ module Branch =
 
     let activitySource = new ActivitySource("Branch")
 
-    let log = ApplicationContext.loggerFactory.CreateLogger("Branch.Server")
+    let private branchLogger () = ApplicationContext.loggerFactory.CreateLogger("Branch.Server")
+
+    let log =
+        { new ILogger with
+            member _.BeginScope<'TState>(state: 'TState) = (branchLogger ()).BeginScope(state)
+            member _.IsEnabled(logLevel) = (branchLogger ()).IsEnabled(logLevel)
+
+            member _.Log(logLevel, eventId, state, ex, formatter) =
+                (branchLogger ())
+                    .Log(logLevel, eventId, state, ex, formatter)
+        }
 
     let private annotationError correlationId message = GraceError.Create message correlationId
 
@@ -129,6 +139,20 @@ module Branch =
 
     let internal unreadableAncestorBoundaryKind = "UnmaterializableAncestor"
 
+    let internal annotationMaterializationBudgetBoundaryKind = "MaterializationBudgetExceeded"
+
+    [<Literal>]
+    let internal MaxRetainedAnnotationMaterializationBytes = 64L * 1024L * 1024L
+
+    let internal tryReserveRetainedAnnotationBytes retainedBytes (document: AnnotationHistoryDocument) =
+        let contentLength = if isNull document.Content then 0L else int64 document.Content.LongLength
+
+        if contentLength > 0L
+           && retainedBytes + contentLength > MaxRetainedAnnotationMaterializationBytes then
+            Error annotationMaterializationBudgetBoundaryKind
+        else
+            Ok(retainedBytes + contentLength)
+
     let private effectiveHistoryDocument document basedOnReferenceId isAuthorized boundaryKind =
         { Document = document; BasedOnReferenceId = basedOnReferenceId; IsAuthorized = isAuthorized; BoundaryKind = boundaryKind }
 
@@ -171,34 +195,72 @@ module Branch =
 
                 result
 
-            let effectiveHistory = ResizeArray<EffectiveHistoryDocument>()
-            let mutable index = 0
+            let referenceById =
+                references
+                |> Array.map (fun referenceDto -> referenceDto.ReferenceId, referenceDto)
+                |> dict
+
+            let effectiveHistoryByReferenceId = Dictionary<ReferenceId, EffectiveHistoryDocument>()
+            let mutable retainedBytes = 0L
+            let mutable currentReferenceId = Some targetReferenceId
             let mutable error: GraceError option = None
+            let mutable boundaryReached = false
+            let visited = HashSet<ReferenceId>()
 
-            while index < references.Length && error.IsNone do
-                let referenceDto = references[index]
+            while currentReferenceId.IsSome
+                  && error.IsNone
+                  && not boundaryReached
+                  && visited.Add currentReferenceId.Value do
+                let referenceId = currentReferenceId.Value
 
-                let basedOnReferenceId =
-                    match basedOnByReferenceId.TryGetValue referenceDto.ReferenceId with
-                    | true, referenceId -> referenceId
-                    | false, _ -> None
+                match referenceById.TryGetValue referenceId with
+                | false, _ -> boundaryReached <- true
+                | true, referenceDto ->
+                    let basedOnReferenceId =
+                        match basedOnByReferenceId.TryGetValue referenceDto.ReferenceId with
+                        | true, referenceId -> referenceId
+                        | false, _ -> None
 
-                let! isAuthorized = canReadReferenceBranch context referenceDto
+                    let! isAuthorized = canReadReferenceBranch context referenceDto
 
-                if isAuthorized then
-                    match! materializeAnnotationDocument context repositoryDto path referenceDto with
-                    | materializationResult ->
-                        match effectiveHistoryFromMaterializationResult path targetReferenceId referenceDto basedOnReferenceId materializationResult with
-                        | Ok document -> effectiveHistory.Add document
-                        | Error materializationError -> error <- Some materializationError
-                else
-                    effectiveHistory.Add(effectiveHistoryDocument (emptyAnnotationDocument path referenceDto) basedOnReferenceId false None)
+                    if isAuthorized then
+                        match! materializeAnnotationDocument context repositoryDto path referenceDto with
+                        | materializationResult ->
+                            match effectiveHistoryFromMaterializationResult path targetReferenceId referenceDto basedOnReferenceId materializationResult with
+                            | Ok document ->
+                                match tryReserveRetainedAnnotationBytes retainedBytes document.Document with
+                                | Ok nextRetainedBytes ->
+                                    retainedBytes <- nextRetainedBytes
+                                    effectiveHistoryByReferenceId[referenceDto.ReferenceId] <- document
+                                    currentReferenceId <- basedOnReferenceId
 
-                index <- index + 1
+                                    if document.BoundaryKind.IsSome then boundaryReached <- true
+                                | Error boundaryKind ->
+                                    effectiveHistoryByReferenceId[referenceDto.ReferenceId] <- effectiveHistoryDocument
+                                                                                                   (emptyAnnotationDocument path referenceDto)
+                                                                                                   basedOnReferenceId
+                                                                                                   true
+                                                                                                   (Some boundaryKind)
+
+                                    boundaryReached <- true
+                            | Error materializationError -> error <- Some materializationError
+                    else
+                        effectiveHistoryByReferenceId[referenceDto.ReferenceId] <- effectiveHistoryDocument
+                                                                                       (emptyAnnotationDocument path referenceDto)
+                                                                                       basedOnReferenceId
+                                                                                       false
+                                                                                       None
+
+                        boundaryReached <- true
 
             match error with
             | Some error -> return Error error
-            | None -> return Ok(effectiveHistory.ToArray())
+            | None ->
+                return
+                    Ok(
+                        effectiveHistoryByReferenceId.Values
+                        |> Seq.toArray
+                    )
         }
 
     let private withBasedOnLink basedOnReferenceId (referenceDto: Reference.ReferenceDto) =
@@ -471,6 +533,7 @@ module Branch =
                 else
                     let! error = validationResults |> getFirstError
                     let errorMessage = BranchError.getErrorMessage error
+
                     log.LogDebug("{CurrentInstant}: error: {error}", getCurrentInstantExtended (), errorMessage)
 
                     let graceError =

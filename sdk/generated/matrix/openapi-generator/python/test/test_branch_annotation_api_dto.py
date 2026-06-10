@@ -60,7 +60,8 @@ class TestBranchAnnotationApiDto(unittest.TestCase):
                             end_line = 1, ), 
                         source_row_ids = [
                             ''
-                            ], )
+                            ], 
+                        boundary_kind = '', )
                     ],
                 spans = [
                     grace_generated_openapi_probe.models.annotation_span.AnnotationSpan(
@@ -119,7 +120,8 @@ class TestBranchAnnotationApiDto(unittest.TestCase):
                             end_line = 1, ), 
                         source_row_ids = [
                             ''
-                            ], )
+                            ], 
+                        boundary_kind = '', )
                     ],
                 spans = [
                     grace_generated_openapi_probe.models.annotation_span.AnnotationSpan(

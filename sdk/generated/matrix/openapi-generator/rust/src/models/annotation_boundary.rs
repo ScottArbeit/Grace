@@ -20,15 +20,19 @@ pub struct AnnotationBoundary {
     pub line_range: Box<models::AnnotationLineRange>,
     #[serde(rename = "SourceRowIds")]
     pub source_row_ids: Vec<String>,
+    /// Grace boundary reason explaining why annotation could not continue through history.
+    #[serde(rename = "BoundaryKind")]
+    pub boundary_kind: String,
 }
 
 impl AnnotationBoundary {
     /// Boundary where annotation could not continue through history.
-    pub fn new(boundary_id: String, line_range: models::AnnotationLineRange, source_row_ids: Vec<String>) -> AnnotationBoundary {
+    pub fn new(boundary_id: String, line_range: models::AnnotationLineRange, source_row_ids: Vec<String>, boundary_kind: String) -> AnnotationBoundary {
         AnnotationBoundary {
             boundary_id,
             line_range: Box::new(line_range),
             source_row_ids,
+            boundary_kind,
         }
     }
 }

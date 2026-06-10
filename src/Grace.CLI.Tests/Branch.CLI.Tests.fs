@@ -91,7 +91,7 @@ module BranchCommandTests =
                 { LineNumber = 9; Text = "let three = 3" }
             |],
             [|
-                { BoundaryId = "boundary-1"; LineRange = { StartLine = 9; EndLine = 9 }; SourceRowIds = [| "row-3" |] }
+                { BoundaryId = "boundary-1"; LineRange = { StartLine = 9; EndLine = 9 }; SourceRowIds = [| "row-3" |]; BoundaryKind = "TraversalBudgetReached" }
             |],
             [|
                 { SpanId = "span-1"; BoundaryId = String.Empty; LineRange = { StartLine = 7; EndLine = 8 }; SourceRowIds = [| "row-1"; "row-2" |] }
