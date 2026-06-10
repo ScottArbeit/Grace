@@ -21,6 +21,14 @@ Closes #
 - RED evidence or docs-only waiver:
 - Focused validation:
 
+## Minimum detail gate evidence
+
+- Invariant tuple proved or docs-only waiver:
+- Forbidden implementation shapes avoided:
+- Positive / negative / regression / boundary tests or waivers:
+- High-risk adversarial examples covered or waived:
+- Selected risk-surface traps addressed or waived:
+
 ## Test coverage changes
 
 Choose one:
@@ -68,6 +76,23 @@ Choose one:
 ## Validation not run
 
 ## Residual risks
+
+## Review/fix prevention
+
+For each Codex Code Review Bot or GitHub review finding fixed in this PR, include:
+
+- Root-cause class:
+- Current issue, sibling issues, template, or agent docs update needed:
+
+Root-cause classes:
+
+- acceptance-criteria / negative-proof gap
+- contract-propagation gap
+- CLI mode / side-effect interaction
+- auth / materialization / traversal ordering gap
+- algorithm adversarial-case gap
+- validation / stale-evidence gap
+- ordinary implementation mistake
 
 ## Rollback or recovery notes
 

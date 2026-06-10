@@ -25,8 +25,10 @@ Re-read these files during the current session before relying on older memory or
 - Before assigning a sub-issue, require the minimum detail gate:
   - invariant tuple
   - forbidden implementation shapes
-  - expected tests
+  - positive, negative, regression, and boundary tests
   - high-risk adversarial examples
+  - selected risk-surface traps
+  - explicit N/A waivers with reasons
 
 ## Issue-Owned Implementation
 
@@ -71,6 +73,9 @@ When acting as the main implementation orchestrator, follow the repo policy:
   `validation`, `blockers`, and `nextStep`. Require updates before edits, before and after long validation or generation
   commands, before commit/push/handoff steps, and before the final response. Also ask for a short chat heartbeat
   roughly every five minutes while work continues.
+- Require a lightweight implementation preflight before coding: acceptance criteria to prove, contract surfaces to
+  update or waive, existing tests to fail or extend, adversarial cases, global options or modes, validation, touched
+  paths, and any issue-owned path expansion needed before editing.
 - Ask worker subagents to finish with a handoff as soon as their assigned implementation or fix is validated and pushed.
   By default, the orchestrator owns GitHub issue updates, PR body updates, review-comment replies, conversation
   resolution, labels, checklists, merge state, and cleanup records. The orchestrator can start the next independent
@@ -82,7 +87,8 @@ When acting as the main implementation orchestrator, follow the repo policy:
   comments` alone can miss review-thread findings.
 - If the bot writes findings in a top-level PR comment or inline pull-request-review comment, route the fix to a fresh
   worker subagent. After the worker hands off, the orchestrator replies to the bot comment with the fix commit and
-  validation evidence, resolves the conversation, updates `Review Status`, and waits for the next bot review.
+  validation evidence, includes the prevention line from `docs/Development process.md`, resolves the conversation,
+  updates `Review Status`, and waits for the next bot review.
 
 If subagent tools are unavailable or cannot be used under the active tool policy, state that limitation and preserve the
 rest of the Grace workflow as far as possible.

@@ -178,11 +178,13 @@ When using an epic integration branch:
 The parent issue must also include a sub-issue checklist. As sub-issues complete, update that checklist so completed
 sub-issues are checked.
 
-Keep each sub-issue small and clear enough that an implementation agent can reasonably succeed from the issue body
+Keep each sub-issue small and clear enough that an implementation agent can reasonably implement it from the issue body
 alone. If a step needs hidden project knowledge to succeed, split it smaller or add the missing context before assigning
-it.
+it. For behavior-changing work, objective, owned paths, and validation commands are not enough. The issue must also say
+what must remain true, what shortcuts are forbidden, what evidence would catch a false positive, and which contract or
+runtime surfaces must be updated or explicitly waived.
 
-Before assigning or starting a sub-issue, apply this minimum detail gate:
+Before assigning, claiming, or starting a coding issue, apply this minimum detail gate:
 
 - Invariant tuple: the actor, route, command, DTO, stored object, or workflow state that must remain true; the identity
   dimensions that define "same" versus "stale"; and the durable source of truth.
@@ -192,6 +194,36 @@ Before assigning or starting a sub-issue, apply this minimum detail gate:
   the slice complete.
 - High-risk adversarial examples: stale IDs, cross-scope objects, reordered events, retries, duplicate requests, mutable
   config, cancellation, redaction, or other edge cases likely to trick a shallow implementation.
+- Selected risk-surface traps from the checklist below.
+- Explicit "not applicable" waivers with reasons for skipped gate items or risk surfaces.
+
+If review finds a missing class of acceptance criterion, adversarial case, contract propagation, or validation evidence,
+update active and future sibling issues before assigning more workers. Preserve issue history by appending an addendum
+unless replacing stale text is clearer and safe.
+
+### Risk-Surface Trap Checklist
+
+Use this checklist to choose the task-local traps that belong in the minimum detail gate. Not every row applies to every
+issue, but every selected or skipped row should be clear enough that a worker and reviewer can see what must be proven.
+
+- Proof/test work: identify the false-positive test review is likely to catch. Prove the assertion would fail on
+  regression, not just execute the path.
+- DTO/contract work: check JSON shape, MessagePack or other serialization shape, OpenAPI component, aggregate OpenAPI,
+  generated-client impact, SDK/facade impact, docs impact, and compatibility posture.
+- CLI work: check `--output Json`, `--select`, `--schema`, `--examples`, stdout cleanliness, stderr/progress behavior,
+  exit-code behavior, and whether global options accidentally skip or duplicate side effects.
+- Server/API work: specify ordering for parse, null/blank validation, domain validation, authorization,
+  resource/path authorization, materialization, mutation/query, and envelope/error serialization.
+- Storage/materialization work: cover missing/corrupt content, size limits, hash/length mismatch, cancellation,
+  retained bytes, compressed/uncompressed paths, and target-vs-ancestor failure semantics.
+- Async/runtime work: prove ordering, retry, dedupe, cancellation, idempotency, and observability through deterministic
+  signals, not arbitrary sleeps.
+- Algorithm work: include adversarial input/output examples for tie-breaking, small ranges, boundary conditions,
+  budgets, pathological runtime cases, and excluded or filtered data.
+- History/traversal work: cover target reference windowing, parent links, `BasedOn`, filtered-vs-traversed history,
+  missing/unauthorized/unreadable ancestors, loops, and traversal budgets.
+- Final audit/docs work: list exact commands/checks rerun, branch/head used, stale evidence rejected, docs/examples
+  verified against runtime behavior, and explicit deferred or residual risks.
 
 Include the behavior to change, relevant context and evidence, owned paths, forbidden or sensitive paths, validation
 commands, docs impact, and the definition of done.
@@ -220,6 +252,18 @@ Risk surfaces:
 - SDK or client contract
 - Docs or workflow
 - No special risk expected
+
+Minimum detail gate:
+- Invariant tuple:
+- Forbidden implementation shapes:
+- Expected tests:
+  - positive:
+  - negative:
+  - regression:
+  - boundary:
+- High-risk adversarial examples:
+- Selected risk-surface traps:
+- Explicit N/A waivers with reasons:
 
 Validation:
 - Focused command:
@@ -388,6 +432,24 @@ five minutes while still working. The heartbeat should be a status update, not a
 is blocked. The orchestrator may read the status file and thread output to monitor progress, and should avoid
 interrupting an active worker only to ask for status.
 
+Before editing files, the implementation worker should post or include a lightweight preflight after reading the issue:
+
+```markdown
+## Implementation Preflight
+
+- Acceptance criteria I will prove:
+- Contract surfaces I must update or explicitly waive:
+- Existing tests I expect to fail or extend:
+- Adversarial cases I will cover:
+- Global options or modes that could change behavior:
+- Validation I will run:
+- Paths I will touch:
+- Issue-owned path expansion needed before editing:
+```
+
+Keep this preflight short. Its job is to catch missing acceptance criteria, contract surfaces, adversarial examples,
+mode interactions, validation gaps, and path-lease expansion before code changes start.
+
 Prefer worker prompts that end at a handoff boundary. A worker subagent performs the assigned implementation or fix,
 keeps its worktree consistent, runs required validation, commits and pushes when the prompt asks for it, and returns a
 handoff with commit hash, changed files, validation evidence, blockers, and follow-ups. By default, workers should not
@@ -467,16 +529,17 @@ The review loop is blocking:
 4. If the bot writes a top-level PR comment or inline pull-request-review comment with findings, update
    `Review Status`, then send the findings to a fresh implementation subagent to address in the issue-owned
    branch/worktree.
-5. If the review finds a missing acceptance-criterion class, repeated trap, or issue-template gap that could affect
-   active future workers, amend the active future issues or templates before spawning parallel workers. Preserve issue
-   history by appending an addendum unless replacing stale text is clearer and safe.
+5. If the review finds a missing acceptance-criterion class, adversarial case, contract-propagation requirement, stale
+   validation evidence, repeated trap, or issue-template gap that could affect active or future workers, amend the
+   active and future sibling issues before spawning more workers. Update the issue template or agent docs when the trap
+   is structural. Preserve issue history by appending an addendum unless replacing stale text is clearer and safe.
 6. The implementation subagent re-runs focused validation for the changed behavior or docs, plus broader validation when
    the fix touches shared or risky surfaces.
 7. The implementation subagent commits and pushes the review fix, then returns a new Ready For Review handoff.
 8. The orchestrator replies to each Codex Code Review Bot top-level or inline review comment with the outcome, fix
    commit, and validation evidence using the [Review/Fix comment template](#reviewfix-comment-template). The comment
-   must make the high-level outcome easy to scan before the detailed issue and fix text. The orchestrator resolves the
-   GitHub conversation after the feedback has been satisfied.
+   must include a short prevention line and make the high-level outcome easy to scan before the detailed issue and fix
+   text. The orchestrator resolves the GitHub conversation after the feedback has been satisfied.
 9. The orchestrator updates the pull request body's `Review Status` section with the fix commit, validation evidence,
    and link to the bot comment or fix reply.
 10. Wait for Codex Code Review Bot to review the new head commit. Repeat the loop until the bot reports no issues with
@@ -535,6 +598,7 @@ section short and scannable; put detailed evidence below it.
 **Status:** Fixed in `<commit-sha>`
 **Review source:** Codex Code Review Bot
 **Validation:** <command or check result>
+**Prevention:** <root-cause class>; <current issue, sibling issues, template, or agent docs update needed?>
 
 ### Summary
 
@@ -553,6 +617,20 @@ _One or two sentences explaining the review issue and the fix at a high level._
 - `<focused command>`: <result>
 - `<broader command, if any>`: <result or skipped reason>
 ```
+
+Use one of these root-cause classes in the `Prevention` line:
+
+- acceptance-criteria / negative-proof gap
+- contract-propagation gap
+- CLI mode / side-effect interaction
+- auth / materialization / traversal ordering gap
+- algorithm adversarial-case gap
+- validation / stale-evidence gap
+- ordinary implementation mistake
+
+Not every review finding requires a docs change. Ordinary implementation mistakes can be fixed and recorded without
+changing templates or process docs. Repeated or structural traps should update active/future sibling issues before more
+workers are assigned, and should update the issue template or agent docs when the missing guard belongs in future tasks.
 
 ## Validation Commands
 
@@ -699,11 +777,17 @@ The agent should:
 4. Run focused validation for the changed behavior or docs, and broader validation when the feedback touches shared or
    risky surfaces.
 5. Commit the fix and push the branch.
-6. Reply to the GitHub review comment with the outcome, changed commit, and validation evidence.
+6. Reply to the GitHub review comment with the outcome, changed commit, validation evidence, and a short prevention
+   line.
 7. Resolve the GitHub conversation after the feedback has been satisfied.
 
 If the comment is ambiguous, conflicts with another requirement, or would cause a behavioral regression, ask for
 clarification or reply with the trade-off instead of resolving the thread prematurely.
+
+The prevention line must include one root-cause class and whether the current issue, sibling issues, issue template, or
+agent docs need an update. Use the same classes from the [Review/Fix comment template](#reviewfix-comment-template).
+Not every finding requires a docs change, but repeated or structural traps should update active/future issues before
+more workers are assigned.
 
 ## Cleanup
 

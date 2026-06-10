@@ -31,9 +31,10 @@ update the issue before editing the new paths.
   `epic/<parent-issue>-<slug>` from `origin/main`, branch sub-issue worktrees from the current `origin/epic/...`, open
   sub-issue PRs to the epic branch, keep that branch refreshed from `origin/main`, and use the final epic-to-`main` PR
   as the production release candidate. Do not use direct-to-`main` epic slices.
-- Before assigning or starting a sub-issue, require the minimum detail gate: invariant tuple, forbidden implementation
-  shapes, expected tests, and high-risk adversarial examples. The issue should be contextual enough for an
-  implementation agent to succeed from the issue body alone without hidden project context.
+- Before assigning or starting a coding issue or sub-issue, require the minimum detail gate from
+  `docs/Development process.md`: invariant tuple, forbidden implementation shapes, positive/negative/regression/boundary
+  tests, high-risk adversarial examples, selected risk-surface traps, and explicit N/A waivers. The issue should be
+  contextual enough for an implementation agent to succeed from the issue body alone without hidden project context.
 - Claim the issue with a comment, assign it to the authenticated GitHub user, and create or switch to an issue-owned
   branch/worktree from the selected base before editing implementation files: latest `origin/main` for standalone
   non-epic issues, or current `origin/epic/...` for sub-issues under the required epic integration branch.
@@ -80,8 +81,9 @@ update the issue before editing the new paths.
   inline pull-request-review comment contains findings that must be assigned to a fresh fix subagent. Do not rely on
   top-level PR comments alone; inspect review comments attached to the bot review before merging.
 - After each fix subagent completes a bot-requested fix, reply to the Codex Code Review Bot comment with the outcome,
-  fix commit, and validation evidence, resolve the GitHub conversation, update the PR body's `Review Status` section,
-  and wait for the next bot review on the new head commit.
+  fix commit, validation evidence, and the prevention line required by `docs/Development process.md`, resolve the
+  GitHub conversation, update the PR body's `Review Status` section, and wait for the next bot review on the new head
+  commit.
 - When the user asks to address a code review comment, review comment, PR feedback, or similar, complete the full
   review-thread workflow: evaluate the comment, make the appropriate fix or explicitly explain why no code change is
   needed, validate the result, commit and push the branch, reply to the GitHub review comment with the outcome and

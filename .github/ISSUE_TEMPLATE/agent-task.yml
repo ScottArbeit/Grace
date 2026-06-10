@@ -45,15 +45,55 @@ body:
       description: Select every area this task touches. Choose no special risk only when the other options do not apply.
       multiple: true
       options:
+        - Proof/test work
+        - DTO or contract work
         - Auth, authorization, tenant, or secret handling
         - Storage, Cosmos DB, Service Bus, Redis, or Aspire
+        - Storage or materialization work
         - CLI public contract
         - Server or API contract
         - Orleans actor behavior
+        - Async or runtime behavior
+        - Algorithm behavior
+        - History or traversal behavior
         - SDK or client contract
         - Deployment, Docker, or GitHub Actions
+        - Final audit or docs evidence
         - Docs or workflow
         - No special risk surface expected
+    validations:
+      required: true
+  - type: textarea
+    id: minimum-detail-gate
+    attributes:
+      label: Minimum detail gate
+      description: Required for implementation tasks before assignment or claim. Use N/A only with a reason.
+      placeholder: |
+        - Invariant tuple:
+          - actor/route/command/DTO/state:
+          - identity dimensions:
+          - durable source of truth:
+        - Forbidden implementation shapes:
+          - ...
+        - Expected tests:
+          - positive:
+          - negative:
+          - regression:
+          - boundary:
+        - High-risk adversarial examples:
+          - ...
+        - Selected risk-surface traps:
+          - proof/test:
+          - DTO/contract:
+          - CLI:
+          - server/API:
+          - storage/materialization:
+          - async/runtime:
+          - algorithm:
+          - history/traversal:
+          - final audit/docs:
+        - Explicit N/A waivers with reasons:
+          - ...
     validations:
       required: true
   - type: dropdown

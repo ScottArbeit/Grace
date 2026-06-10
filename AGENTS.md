@@ -60,10 +60,10 @@ so links stay traceable without relying on epic-branch auto-close behavior.
   and a DAG in the parent issue that shows dependencies and parallelization opportunities. As each sub-issue completes,
   check its box in the epic. Use the concrete `addSubIssue` GraphQL workflow in `docs/Development process.md` when
   creating the native parent/child relationships.
-- Before assigning or starting a sub-issue, apply the minimum detail gate: the issue body must include the invariant
-  tuple, forbidden implementation shapes, expected tests, and high-risk adversarial examples. Keep each sub-issue small,
-  clear, and contextual enough that an implementation agent could reasonably implement it from the issue body alone
-  without hidden project context.
+- Before assigning or starting a coding issue or sub-issue, apply the minimum detail gate from
+  `docs/Development process.md`: invariant tuple, forbidden implementation shapes, positive/negative/regression/boundary
+  tests, high-risk adversarial examples, selected risk-surface traps, and explicit N/A waivers. Keep each issue
+  implementable from its body alone without hidden project context.
 - Declare owned paths, forbidden or sensitive paths, risk surfaces, validation, docs impact, and definition of done
   before editing.
 - After the issue exists, claim it with a comment, assign it to the authenticated GitHub user, and create an
@@ -125,7 +125,8 @@ so links stay traceable without relying on epic-branch auto-close behavior.
   top-level PR comments alone; inspect review comments attached to the bot review before merging.
 - After each fix subagent completes a bot-requested fix and hands off, the orchestrator replies to the Codex Code Review
   Bot comment with the outcome, fix commit, and validation evidence, resolves the GitHub conversation, updates the PR
-  body's `Review Status` section, and waits for the next bot review on the new head commit.
+  body's `Review Status` section, includes the required prevention line from `docs/Development process.md`, and waits
+  for the next bot review on the new head commit.
 - Open normal ready-for-review pull requests. Do not open draft pull requests unless the user explicitly asks for a
   draft.
 - After an agent-owned pull request is merged, or closed because the related issue/sub-issue work is complete, cleanup
