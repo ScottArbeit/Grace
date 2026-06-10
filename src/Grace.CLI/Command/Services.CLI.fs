@@ -167,7 +167,13 @@ module Services =
             else
                 normalizeFilePath (directoryInfoToCheck.FullName + "/")
 
-        if FileSystemName.MatchesSimpleExpression(graceIgnoreEntry, normalizedDirectoryPath, ignoreCase) then
+        let normalizedDirectoryPathWithoutSeparator = Path.TrimEndingDirectorySeparator(normalizedDirectoryPath)
+
+        if
+            FileSystemName.MatchesSimpleExpression(graceIgnoreEntry, normalizedDirectoryPath, ignoreCase)
+            || FileSystemName.MatchesSimpleExpression(graceIgnoreEntry, normalizedDirectoryPathWithoutSeparator, ignoreCase)
+            || FileSystemName.MatchesSimpleExpression(graceIgnoreEntry, directoryInfoToCheck.Name, ignoreCase)
+        then
             //logToAnsiConsole Colors.Changed $"checkIgnoreLineAgainstDirectory: directory '{normalizedDirectoryPath}' matches ignore entry '{graceIgnoreEntry}'."
             true
         else
@@ -273,6 +279,182 @@ module Services =
                     return None
             else
                 return None
+        }
+
+    type WorkingTreeScanInput =
+        {
+            RootDirectory: string
+            GraceDirectory: string
+            GraceStatusFile: string
+            DirectoryIgnoreEntries: string array
+            FileIgnoreEntries: string array
+        }
+
+    let private normalizeFullPath path =
+        Path
+            .GetFullPath(path)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+
+    let private isWithinGraceDirectory (scanInput: WorkingTreeScanInput) path =
+        let graceDirectory = normalizeFullPath scanInput.GraceDirectory
+        let candidate = Path.GetFullPath(path)
+
+        candidate.Equals(graceDirectory, StringComparison.OrdinalIgnoreCase)
+        || candidate.StartsWith(
+            graceDirectory
+            + string Path.DirectorySeparatorChar,
+            StringComparison.OrdinalIgnoreCase
+        )
+        || candidate.StartsWith(
+            graceDirectory
+            + string Path.AltDirectorySeparatorChar,
+            StringComparison.OrdinalIgnoreCase
+        )
+
+    let private shouldIgnoreFileForScan (scanInput: WorkingTreeScanInput) (cache: ConcurrentDictionary<FilePath, bool>) (filePath: FilePath) =
+        let mutable shouldIgnore = false
+
+        if cache.TryGetValue(filePath, &shouldIgnore) then
+            shouldIgnore
+        else
+            let fileInfo = FileInfo(filePath)
+
+            let shouldIgnoreThisFile =
+                isWithinGraceDirectory scanInput filePath
+                || filePath.Equals(scanInput.GraceStatusFile, StringComparison.InvariantCultureIgnoreCase)
+                || filePath.Equals(scanInput.GraceStatusFile + "-wal", StringComparison.InvariantCultureIgnoreCase)
+                || filePath.Equals(scanInput.GraceStatusFile + "-shm", StringComparison.InvariantCultureIgnoreCase)
+                || filePath.Equals(scanInput.GraceStatusFile + "-journal", StringComparison.InvariantCultureIgnoreCase)
+                || filePath.EndsWith(".gracetmp", StringComparison.OrdinalIgnoreCase)
+                || Directory.Exists(filePath)
+                || scanInput.DirectoryIgnoreEntries
+                   |> Array.exists (fun graceIgnoreLine -> checkIgnoreLineAgainstDirectory fileInfo.Directory graceIgnoreLine)
+                || scanInput.DirectoryIgnoreEntries
+                   |> Array.exists (fun graceIgnoreLine -> checkIgnoreLineAgainstFile filePath graceIgnoreLine)
+                || scanInput.FileIgnoreEntries
+                   |> Array.exists (fun graceIgnoreLine -> checkIgnoreLineAgainstFile filePath graceIgnoreLine)
+
+            cache.TryAdd(filePath, shouldIgnoreThisFile)
+            |> ignore
+
+            shouldIgnoreThisFile
+
+    let private shouldIgnoreDirectoryForScan (scanInput: WorkingTreeScanInput) (cache: ConcurrentDictionary<FilePath, bool>) (directoryPath: string) =
+        let mutable shouldIgnore = false
+
+        if cache.TryGetValue(directoryPath, &shouldIgnore) then
+            shouldIgnore
+        else
+            let directoryInfo = DirectoryInfo(directoryPath)
+
+            let shouldIgnoreDirectory =
+                isWithinGraceDirectory scanInput directoryInfo.FullName
+                || scanInput.DirectoryIgnoreEntries.Any(fun graceIgnoreLine -> checkIgnoreLineAgainstDirectory directoryInfo graceIgnoreLine)
+
+            cache.TryAdd(directoryPath, shouldIgnoreDirectory)
+            |> ignore
+
+            shouldIgnoreDirectory
+
+    let private createLocalFileVersionForScan (scanInput: WorkingTreeScanInput) (fileInfo: FileInfo) =
+        task {
+            if fileInfo.Exists then
+                use stream = fileInfo.Open(fileStreamOptionsRead)
+
+                let! isBinary = isBinaryFile stream
+
+                stream.Position <- 0
+                let relativePath = normalizeFilePath (Path.GetRelativePath(scanInput.RootDirectory, fileInfo.FullName))
+                let! sha256Hash = computeSha256ForFile stream relativePath
+
+                return
+                    Some(
+                        LocalFileVersion.Create
+                            relativePath
+                            sha256Hash
+                            isBinary
+                            fileInfo.Length
+                            (Instant.FromDateTimeUtc(fileInfo.LastWriteTimeUtc))
+                            true
+                            fileInfo.LastWriteTimeUtc
+                    )
+            else
+                return None
+        }
+
+    let private getWorkingDirectoryWriteTimesForScan (scanInput: WorkingTreeScanInput) =
+        let cache = ConcurrentDictionary<FilePath, bool>()
+        let localWriteTimes = Dictionary<FileSystemEntryType * RelativePath, DateTime>()
+
+        let rec collect (directoryInfo: DirectoryInfo) =
+            if not (shouldIgnoreDirectoryForScan scanInput cache directoryInfo.FullName) then
+                let directoryFullPath = RelativePath(normalizeFilePath (Path.GetRelativePath(scanInput.RootDirectory, directoryInfo.FullName)))
+
+                localWriteTimes[(FileSystemEntryType.Directory, directoryFullPath)] <- directoryInfo.LastWriteTimeUtc
+
+                directoryInfo
+                    .GetFiles()
+                    .Where(fun file -> not (shouldIgnoreFileForScan scanInput cache file.FullName))
+                |> Seq.iter (fun fileInfo ->
+                    let fileFullPath = RelativePath(normalizeFilePath (Path.GetRelativePath(scanInput.RootDirectory, fileInfo.FullName)))
+                    localWriteTimes[(FileSystemEntryType.File, fileFullPath)] <- fileInfo.LastWriteTimeUtc)
+
+                directoryInfo
+                    .GetDirectories()
+                    .Where(fun directory -> not (shouldIgnoreDirectoryForScan scanInput cache directory.FullName))
+                |> Seq.iter collect
+
+        collect (DirectoryInfo(scanInput.RootDirectory))
+        localWriteTimes
+
+    let scanWorkingTreeForDifferencesReadOnly (scanInput: WorkingTreeScanInput) (previousGraceStatus: GraceStatus) =
+        task {
+            try
+                let lookupCache = Dictionary<FileSystemEntryType * RelativePath, DateTime * Sha256Hash>()
+
+                for kvp in previousGraceStatus.Index do
+                    let directoryVersion = kvp.Value
+
+                    lookupCache.TryAdd(
+                        (FileSystemEntryType.Directory, directoryVersion.RelativePath),
+                        (directoryVersion.LastWriteTimeUtc, directoryVersion.Sha256Hash)
+                    )
+                    |> ignore
+
+                    for file in directoryVersion.Files do
+                        lookupCache.TryAdd((FileSystemEntryType.File, file.RelativePath), (file.LastWriteTimeUtc, file.Sha256Hash))
+                        |> ignore
+
+                let localWriteTimes = getWorkingDirectoryWriteTimesForScan scanInput
+                let differences = List<FileSystemDifference>()
+
+                for kvp in localWriteTimes do
+                    let fileSystemEntryType, relativePath = kvp.Key
+                    let lastWriteTimeUtc = kvp.Value
+
+                    if not (lookupCache.ContainsKey((fileSystemEntryType, relativePath))) then
+                        differences.Add(FileSystemDifference.Create Add fileSystemEntryType relativePath)
+                    elif fileSystemEntryType.IsFile then
+                        let knownLastWriteTimeUtc, existingSha256Hash = lookupCache[(fileSystemEntryType, relativePath)]
+
+                        if lastWriteTimeUtc <> knownLastWriteTimeUtc then
+                            let fileInfo = FileInfo(Path.Combine(scanInput.RootDirectory, relativePath))
+                            let! newFileVersion = createLocalFileVersionForScan scanInput fileInfo
+
+                            match newFileVersion with
+                            | Some fileVersion when fileVersion.Sha256Hash <> existingSha256Hash ->
+                                differences.Add(FileSystemDifference.Create Change fileSystemEntryType relativePath)
+                            | _ -> ()
+
+                for kvp in lookupCache do
+                    let fileSystemEntryType, relativePath = kvp.Key
+
+                    if not (localWriteTimes.ContainsKey((fileSystemEntryType, relativePath))) then
+                        differences.Add(FileSystemDifference.Create Delete fileSystemEntryType relativePath)
+
+                return Ok differences
+            with
+            | ex -> return Error ex.Message
         }
 
     /// Gets the LocalDirectoryVersion for the root directory of the repository from GraceStatus.

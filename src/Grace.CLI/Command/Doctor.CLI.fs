@@ -89,6 +89,9 @@ module Doctor =
     let private ObjectCacheIndexReadableCheckId = "object-cache.index-readable"
 
     [<Literal>]
+    let private WorkingTreeScanCheckId = "working-tree.scan"
+
+    [<Literal>]
     let private ServerHealthzReachableCheckId = "server.healthz.reachable"
 
     [<Literal>]
@@ -319,6 +322,15 @@ module Doctor =
                 SupportsOffline = true
             }
             {
+                Id = WorkingTreeScanCheckId
+                Category = "Working tree"
+                Title = "Working-tree drift scan"
+                Description =
+                    "Skipped by default; --full or an explicit working-tree.scan selection compares the working tree to a read-only local-state snapshot."
+                DefaultEnabled = true
+                SupportsOffline = true
+            }
+            {
                 Id = "identity.auth-session"
                 Category = "Identity"
                 Title = "Authentication session"
@@ -377,6 +389,12 @@ module Doctor =
 
     type private SelectionError = Unknown of string array
 
+    let private categoryMatchesToken (category: string) (token: string) =
+        category.Equals(token, StringComparison.OrdinalIgnoreCase)
+        || category
+            .Replace(" ", "-", StringComparison.OrdinalIgnoreCase)
+            .Equals(token, StringComparison.OrdinalIgnoreCase)
+
     let private selectedCatalogEntries full offline listOnly requestedTokens =
         let profileEntries =
             catalog
@@ -395,7 +413,7 @@ module Doctor =
                     catalog
                     |> Array.filter (fun check ->
                         check.Id.Equals(token, StringComparison.OrdinalIgnoreCase)
-                        || check.Category.Equals(token, StringComparison.OrdinalIgnoreCase))
+                        || categoryMatchesToken check.Category token)
 
                 if Array.isEmpty matches then
                     unknown.Add(token)
@@ -427,7 +445,9 @@ module Doctor =
 
     type private DoctorInspectionContext =
         {
+            Full: bool
             Offline: bool
+            RequestedTokens: string array
             ConfigurationState: ConfigurationInspectionState
             UserConfiguration: UserConfiguration.UserConfigurationInspection
             EnvironmentServerUri: string option
@@ -577,7 +597,7 @@ module Doctor =
             }
             |> serverProbeFactory
 
-    let private createInspectionContext offline =
+    let private createInspectionContext full offline requestedTokens =
         let configurationState =
             match Configuration.tryInspectCurrentDirectoryConfiguration () with
             | Ok inspection -> ConfigurationLoaded inspection
@@ -597,7 +617,9 @@ module Doctor =
         let effectiveServerUri = resolveEffectiveServerUri configurationState environmentServerUri
 
         {
+            Full = full
             Offline = offline
+            RequestedTokens = requestedTokens
             ConfigurationState = configurationState
             UserConfiguration = UserConfiguration.tryInspectUserConfiguration ()
             EnvironmentServerUri = environmentServerUri
@@ -696,6 +718,99 @@ module Doctor =
             match inspection.OpenError with
             | Some message -> $"Skipped because {StateDbReadOnlyOpenCheckId} could not open the database read-only: {message}"
             | None -> $"Skipped because {checkId} requires a read-only local state database inspection."
+
+    let private workingTreeScanExplicitlyRequested (context: DoctorInspectionContext) =
+        context.RequestedTokens
+        |> Array.exists (fun token ->
+            token.Equals(WorkingTreeScanCheckId, StringComparison.OrdinalIgnoreCase)
+            || categoryMatchesToken "Working tree" token)
+
+    let private countDifferences differenceType (differences: List<FileSystemDifference>) =
+        differences
+        |> Seq.filter (fun difference -> difference.DifferenceType = differenceType)
+        |> Seq.length
+
+    let private workingTreeScanRemediation =
+        "Run `grace maintenance scan` to inspect details or `grace maintenance update-index` when you intentionally want local state to match the current working tree."
+
+    type private WorkingTreeScanSummaryResult =
+        | WorkingTreeScanPrerequisiteSkipped of string
+        | WorkingTreeScanFailed of string
+        | WorkingTreeScanSummary of string
+
+    let mutable private workingTreeScanner = Services.scanWorkingTreeForDifferencesReadOnly
+
+    let setWorkingTreeScannerForTests scanner = workingTreeScanner <- scanner
+
+    let resetWorkingTreeScannerForTests () = workingTreeScanner <- Services.scanWorkingTreeForDifferencesReadOnly
+
+    let private workingTreeScanSummary (context: DoctorInspectionContext) =
+        match context.ConfigurationState with
+        | ConfigurationMissing _ ->
+            WorkingTreeScanPrerequisiteSkipped $"Skipped because {ConfigFileDiscoverCheckId} did not find {Constants.GraceConfigFileName}."
+        | ConfigurationMalformed _ -> WorkingTreeScanPrerequisiteSkipped $"Skipped because {ConfigFileParseCheckId} failed."
+        | ConfigurationLoaded inspection ->
+            let localStateInspection = context.LocalStateInspection.Value
+
+            if not localStateInspection.OpenedReadOnly then
+                WorkingTreeScanPrerequisiteSkipped(localStateUnavailableSummary WorkingTreeScanCheckId localStateInspection)
+            elif localStateInspection.MissingRequiredTables.Length > 0 then
+                WorkingTreeScanPrerequisiteSkipped $"Skipped because {StateDbRequiredTablesCheckId} did not find all required local-state tables."
+            elif localStateInspection.SchemaVersion
+                 <> Some ExpectedLocalStateSchemaVersion then
+                WorkingTreeScanPrerequisiteSkipped
+                    $"Skipped because {StateDbSchemaVersionCheckId} did not find schema_version {ExpectedLocalStateSchemaVersion}."
+            else
+                let configuration = inspection.Configuration
+
+                let snapshotResult =
+                    LocalStateDb.readStatusSnapshotReadOnly
+                        configuration.GraceStatusFile
+                        configuration.OwnerId
+                        configuration.OrganizationId
+                        configuration.RepositoryId
+                    |> fun task -> task.GetAwaiter().GetResult()
+
+                match snapshotResult with
+                | Error message -> WorkingTreeScanPrerequisiteSkipped $"Skipped because the read-only local-state snapshot could not be read: {message}"
+                | Ok snapshot ->
+                    let hasRootDirectoryVersion =
+                        snapshot.Index.Values
+                        |> Seq.exists (fun directoryVersion -> directoryVersion.RelativePath = Constants.RootDirectoryPath)
+
+                    if not hasRootDirectoryVersion then
+                        WorkingTreeScanSummary(
+                            "Local-state snapshot is missing the root directory version; doctor did not rebuild it. "
+                            + workingTreeScanRemediation
+                        )
+                    else
+                        let scanInput: Services.WorkingTreeScanInput =
+                            {
+                                RootDirectory = inspection.RootDirectory
+                                GraceDirectory = configuration.GraceDirectory
+                                GraceStatusFile = configuration.GraceStatusFile
+                                DirectoryIgnoreEntries =
+                                    inspection.Ignore.DirectoryEntries
+                                    |> Array.map (fun entry -> $"*{entry}")
+                                    |> Array.distinct
+                                FileIgnoreEntries = inspection.Ignore.FileEntries
+                            }
+
+                        let scanResult =
+                            workingTreeScanner scanInput snapshot
+                            |> fun task -> task.GetAwaiter().GetResult()
+
+                        match scanResult with
+                        | Error message -> WorkingTreeScanFailed $"Working-tree scan failed without updating local state: {message}"
+                        | Ok differences when differences.Count = 0 ->
+                            WorkingTreeScanSummary "Working tree matches the read-only local-state snapshot. Doctor did not update the maintenance index."
+                        | Ok differences ->
+                            let added = countDifferences Add differences
+                            let changed = countDifferences Change differences
+                            let deleted = countDifferences Delete differences
+
+                            WorkingTreeScanSummary
+                                $"Working tree differs from the read-only local-state snapshot: {differences.Count} total, {added} added, {changed} changed, {deleted} deleted. {workingTreeScanRemediation}"
 
     let private oidcSummary (auth: Auth.AuthInspection) =
         let m2mMissing = missingRequiredFields auth.M2mFields
@@ -925,6 +1040,20 @@ module Doctor =
 
                     failed $"Object-cache metadata is not readable: {objectCacheError}. Doctor did not repair object-cache rows."
                 | None -> skipped check "Object-cache metadata readability was not attempted."
+        | WorkingTreeScanCheckId ->
+            if
+                not context.Full
+                && not (workingTreeScanExplicitlyRequested context)
+            then
+                skipped
+                    check
+                    $"Skipped in the default profile because working-tree drift scanning can hash repository files. Re-run with --full or --check {WorkingTreeScanCheckId}. {workingTreeScanRemediation}"
+            else
+                match workingTreeScanSummary context with
+                | WorkingTreeScanPrerequisiteSkipped message -> skipped check message
+                | WorkingTreeScanFailed message -> failed message
+                | WorkingTreeScanSummary summary when summary.StartsWith("Working tree matches", StringComparison.Ordinal) -> ok summary
+                | WorkingTreeScanSummary summary -> warning summary
         | ConfigFileDiscoverCheckId ->
             match context.ConfigurationState with
             | ConfigurationLoaded inspection -> ok $"Found {Constants.GraceConfigFileName} at {inspection.Path}; repository root {inspection.RootDirectory}."
@@ -1067,12 +1196,12 @@ module Doctor =
         else
             0
 
-    let createReportForChecks full offline listOnly (checks: LocalOutputDto.DoctorCheckDto array) =
+    let private createReportForChecksWithTokens full offline listOnly requestedTokens (checks: LocalOutputDto.DoctorCheckDto array) =
         let results =
             if listOnly then
                 checks |> Array.map listOnlyResultForCheck
             else
-                let context = createInspectionContext offline
+                let context = createInspectionContext full offline requestedTokens
                 checks |> Array.map (resultForCheck context)
 
         let summary = summarize results
@@ -1095,6 +1224,9 @@ module Doctor =
 
         { report with ExitCode = diagnosticExitCode false report }
 
+    let createReportForChecks full offline listOnly (checks: LocalOutputDto.DoctorCheckDto array) =
+        createReportForChecksWithTokens full offline listOnly Array.empty checks
+
     let withStatus status (report: LocalOutputDto.DoctorReportDto) =
         let checks =
             if report.Checks.Length = 0 then
@@ -1109,7 +1241,7 @@ module Doctor =
         { updated with ExitCode = diagnosticExitCode updated.Strict updated }
 
     let private createReport full offline strict listOnly requestedTokens checks =
-        let report = createReportForChecks full offline listOnly checks
+        let report = createReportForChecksWithTokens full offline listOnly requestedTokens checks
 
         let report = { report with Strict = strict; RequestedChecks = requestedTokens }
 

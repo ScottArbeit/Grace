@@ -165,7 +165,6 @@ module Configuration =
                 else
                     graceIgnoreLine.Substring(0, commentIndex).Trim())
             |> Seq.filter (fun graceIgnoreLine -> (not (String.IsNullOrEmpty(graceIgnoreLine))))
-            |> Seq.map (fun graceIgnoreLine -> Path.TrimEndingDirectorySeparator(graceIgnoreLine))
             |> Seq.toArray
         else
             Array.empty

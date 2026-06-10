@@ -1334,3 +1334,158 @@ module LocalStateDb =
             finally
                 connection.Dispose()
         }
+
+    let readStatusSnapshotReadOnly (dbPath: string) (ownerId: OwnerId) (organizationId: OrganizationId) (repositoryId: RepositoryId) =
+        task {
+            let normalizedPath = Path.GetFullPath(dbPath)
+            let directoryPath = Path.GetDirectoryName(normalizedPath)
+
+            if
+                not (String.IsNullOrWhiteSpace(directoryPath))
+                && not (Directory.Exists(directoryPath))
+            then
+                return Error $"Local state directory was not found for {normalizedPath}."
+            elif Directory.Exists(normalizedPath) then
+                return Error $"Local state database path is a directory: {normalizedPath}."
+            elif not (File.Exists(normalizedPath)) then
+                return Error $"Local state database was not found at {normalizedPath}."
+            else
+                let missingPartialWalSidecars = missingPartialWalSidecars normalizedPath
+
+                if missingPartialWalSidecars.Length > 0 then
+                    let missingNames = String.concat ", " missingPartialWalSidecars
+
+                    return
+                        Error
+                            $"Database has an incomplete WAL sidecar set; missing: {missingNames}. Doctor did not open the database to avoid creating sidecar files or ignoring live WAL content."
+                else
+                    try
+                        let immutableSnapshot = shouldUseImmutableReadOnlySnapshot normalizedPath
+                        use connection = openReadOnlyConnection normalizedPath immutableSnapshot
+
+                        match readStatusMetaInternal connection with
+                        | None -> return Error "Local state status_meta row is missing or unreadable."
+                        | Some meta ->
+                            let directories = List<StatusDirectoryRow>()
+                            let files = List<StatusFileRow>()
+
+                            use directoryCommand = connection.CreateCommand()
+
+                            directoryCommand.CommandText <-
+                                "SELECT relative_path, parent_path, directory_version_id, sha256_hash, size_bytes, created_at_unix_ticks, last_write_time_utc_ticks FROM status_directories;"
+
+                            use directoryReader = directoryCommand.ExecuteReader()
+
+                            while directoryReader.Read() do
+                                directories.Add(
+                                    {
+                                        RelativePath = directoryReader.GetString(0)
+                                        ParentPath = directoryReader.GetString(1)
+                                        DirectoryVersionId = Guid.Parse(directoryReader.GetString(2))
+                                        Sha256Hash = directoryReader.GetString(3)
+                                        SizeBytes = directoryReader.GetInt64(4)
+                                        CreatedAt = Instant.FromUnixTimeTicks(directoryReader.GetInt64(5))
+                                        LastWriteTimeUtc = DateTime(directoryReader.GetInt64(6), DateTimeKind.Utc)
+                                    }
+                                )
+
+                            use fileCommand = connection.CreateCommand()
+
+                            fileCommand.CommandText <-
+                                "SELECT relative_path, directory_version_id, sha256_hash, is_binary, size_bytes, created_at_unix_ticks, uploaded_to_object_storage, last_write_time_utc_ticks FROM status_files;"
+
+                            use fileReader = fileCommand.ExecuteReader()
+
+                            while fileReader.Read() do
+                                files.Add(
+                                    {
+                                        RelativePath = fileReader.GetString(0)
+                                        DirectoryVersionId = Guid.Parse(fileReader.GetString(1))
+                                        Sha256Hash = fileReader.GetString(2)
+                                        IsBinary = fileReader.GetInt64(3) = 1L
+                                        SizeBytes = fileReader.GetInt64(4)
+                                        CreatedAt = Instant.FromUnixTimeTicks(fileReader.GetInt64(5))
+                                        UploadedToObjectStorage = fileReader.GetInt64(6) = 1L
+                                        LastWriteTimeUtc = DateTime(fileReader.GetInt64(7), DateTimeKind.Utc)
+                                    }
+                                )
+
+                            let directoriesByParent = Dictionary<string, List<DirectoryVersionId>>()
+                            let filesByDirectory = Dictionary<DirectoryVersionId, List<LocalFileVersion>>()
+
+                            directories
+                            |> Seq.iter (fun directory ->
+                                let mutable existing = Unchecked.defaultof<List<DirectoryVersionId>>
+
+                                if directoriesByParent.TryGetValue(directory.ParentPath, &existing) then
+                                    existing.Add(directory.DirectoryVersionId)
+                                else
+                                    directoriesByParent.Add(directory.ParentPath, List<DirectoryVersionId>([ directory.DirectoryVersionId ])))
+
+                            files
+                            |> Seq.iter (fun file ->
+                                let localFile =
+                                    LocalFileVersion.Create
+                                        file.RelativePath
+                                        file.Sha256Hash
+                                        file.IsBinary
+                                        file.SizeBytes
+                                        file.CreatedAt
+                                        file.UploadedToObjectStorage
+                                        file.LastWriteTimeUtc
+
+                                let mutable existing = Unchecked.defaultof<List<LocalFileVersion>>
+
+                                if filesByDirectory.TryGetValue(file.DirectoryVersionId, &existing) then
+                                    existing.Add(localFile)
+                                else
+                                    filesByDirectory.Add(file.DirectoryVersionId, List<LocalFileVersion>([ localFile ])))
+
+                            let index = GraceIndex()
+
+                            directories
+                            |> Seq.iter (fun directory ->
+                                let directoriesForPath =
+                                    let mutable list = Unchecked.defaultof<List<DirectoryVersionId>>
+
+                                    if directoriesByParent.TryGetValue(directory.RelativePath, &list) then
+                                        list
+                                    else
+                                        List<DirectoryVersionId>()
+
+                                let filesForPath =
+                                    let mutable list = Unchecked.defaultof<List<LocalFileVersion>>
+
+                                    if filesByDirectory.TryGetValue(directory.DirectoryVersionId, &list) then
+                                        list
+                                    else
+                                        List<LocalFileVersion>()
+
+                                let localDirectory =
+                                    LocalDirectoryVersion.Create
+                                        directory.DirectoryVersionId
+                                        ownerId
+                                        organizationId
+                                        repositoryId
+                                        directory.RelativePath
+                                        directory.Sha256Hash
+                                        directoriesForPath
+                                        filesForPath
+                                        directory.SizeBytes
+                                        directory.LastWriteTimeUtc
+
+                                index.TryAdd(directory.DirectoryVersionId, localDirectory)
+                                |> ignore)
+
+                            return
+                                Ok
+                                    {
+                                        Index = index
+                                        RootDirectoryId = meta.RootDirectoryId
+                                        RootDirectorySha256Hash = meta.RootDirectorySha256Hash
+                                        LastSuccessfulFileUpload = meta.LastSuccessfulFileUpload
+                                        LastSuccessfulDirectoryVersionUpload = meta.LastSuccessfulDirectoryVersionUpload
+                                    }
+                    with
+                    | ex -> return Error ex.Message
+        }
