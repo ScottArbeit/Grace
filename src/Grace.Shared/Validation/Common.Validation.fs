@@ -63,7 +63,7 @@ module Common =
             else
                 Ok() |> returnValueTask
 
-        /// Validates that a string is either empty or a valid partial or full SHA-256 hash value.
+        /// Validates that a string is either empty or a valid SHA-256 hash prefix value.
         ///
         /// Regex: ^[0-9a-fA-F]{2,64}$
         let isEmptyOrValidSha256Hash<'T when 'T :> IErrorDiscriminatedUnion> (s: string) (error: 'T) =
@@ -75,11 +75,60 @@ module Common =
             else
                 Error error |> returnValueTask
 
-        /// Validates that a string is a valid partial or full SHA-256 hash value.
+        /// Validates that a string is a valid SHA-256 hash prefix value.
         ///
         /// Regex: ^[0-9a-fA-F]{2,64}$
         let isValidSha256Hash<'T when 'T :> IErrorDiscriminatedUnion> (s: string) (error: 'T) =
             if Constants.Sha256Regex.IsMatch(s) then
+                Ok() |> returnValueTask
+            else
+                Error error |> returnValueTask
+
+        /// Validates that a string is either empty or a valid SHA-256 hash prefix value.
+        ///
+        /// Regex: ^[0-9a-fA-F]{2,64}$
+        let isEmptyOrValidSha256HashPrefix<'T when 'T :> IErrorDiscriminatedUnion> (s: string) (error: 'T) = isEmptyOrValidSha256Hash s error
+
+        /// Validates that a string is a valid SHA-256 hash prefix value.
+        ///
+        /// Regex: ^[0-9a-fA-F]{2,64}$
+        let isValidSha256HashPrefix<'T when 'T :> IErrorDiscriminatedUnion> (s: string) (error: 'T) = isValidSha256Hash s error
+
+        /// Validates that a string is a lowercase full SHA-256 version hash value.
+        ///
+        /// Regex: ^[0-9a-f]{64}$
+        let isValidSha256VersionHash<'T when 'T :> IErrorDiscriminatedUnion> (s: string) (error: 'T) =
+            if Constants.Sha256FullHashRegex.IsMatch(s) then
+                Ok() |> returnValueTask
+            else
+                Error error |> returnValueTask
+
+        /// Validates that a string is a valid BLAKE3 hash prefix value.
+        ///
+        /// Regex: ^[0-9a-fA-F]{2,64}$
+        let isValidBlake3HashPrefix<'T when 'T :> IErrorDiscriminatedUnion> (s: string) (error: 'T) =
+            if Constants.Blake3HashPrefixRegex.IsMatch(s) then
+                Ok() |> returnValueTask
+            else
+                Error error |> returnValueTask
+
+        /// Validates that a string is either empty or a valid BLAKE3 hash prefix value.
+        ///
+        /// Regex: ^[0-9a-fA-F]{2,64}$
+        let isEmptyOrValidBlake3HashPrefix<'T when 'T :> IErrorDiscriminatedUnion> (s: string) (error: 'T) =
+            if
+                String.IsNullOrEmpty(s)
+                || Constants.Blake3HashPrefixRegex.IsMatch(s)
+            then
+                Ok() |> returnValueTask
+            else
+                Error error |> returnValueTask
+
+        /// Validates that a string is a lowercase full BLAKE3 version hash value.
+        ///
+        /// Regex: ^[0-9a-f]{64}$
+        let isValidBlake3VersionHash<'T when 'T :> IErrorDiscriminatedUnion> (s: string) (error: 'T) =
+            if Constants.Blake3FullHashRegex.IsMatch(s) then
                 Ok() |> returnValueTask
             else
                 Error error |> returnValueTask

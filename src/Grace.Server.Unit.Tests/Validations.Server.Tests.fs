@@ -123,6 +123,40 @@ type Validations() =
         Assert.That(result, Is.EqualTo(Common.okResult))
 
     [<Test>]
+    member this.``SHA-256 prefix boundary values return Ok``() =
+        let cases =
+            [|
+                "2 characters", "67"
+                "64 characters", "67a1790dca55b8803ad024ee28f616a284df5dd7b8ba5f68b4b252a5e925af79"
+                "uppercase lookup", "67A1790DCA55B8803AD024EE28F616A284DF5DD7B8BA5F68B4B252A5E925AF79"
+            |]
+
+        for caseName, hash in cases do
+            let result =
+                (String.isValidSha256HashPrefix hash TestError.TestFailed)
+                    .Result
+
+            Assert.That(result, Is.EqualTo(Common.okResult), caseName)
+
+    [<Test>]
+    member this.``SHA-256 version hash requires lowercase full value``() =
+        let valid =
+            (String.isValidSha256VersionHash "67a1790dca55b8803ad024ee28f616a284df5dd7b8ba5f68b4b252a5e925af79" VersionHashError.InvalidSha256VersionHash)
+                .Result
+
+        let uppercase =
+            (String.isValidSha256VersionHash "67A1790DCA55B8803AD024EE28F616A284DF5DD7B8BA5F68B4B252A5E925AF79" VersionHashError.InvalidSha256VersionHash)
+                .Result
+
+        let short =
+            (String.isValidSha256VersionHash "67" VersionHashError.InvalidSha256VersionHash)
+                .Result
+
+        Assert.That(Result.isOk valid, Is.True)
+        Assert.That(Result.isError uppercase, Is.True)
+        Assert.That(Result.isError short, Is.True)
+
+    [<Test>]
     member this.``empty string for SHA-256 value returns Ok``() =
         let result =
             (String.isEmptyOrValidSha256Hash "" TestError.TestFailed)
@@ -137,6 +171,94 @@ type Validations() =
                 .Result
 
         Assert.That(result, Is.EqualTo(Common.errorResult))
+
+    [<Test>]
+    member this.``invalid SHA-256 prefix values return Error``() =
+        let cases =
+            [|
+                "empty", ""
+                "one character", "6"
+                "non-hex", "not-a-sha-256-hash"
+            |]
+
+        for caseName, hash in cases do
+            let result =
+                (String.isValidSha256HashPrefix hash TestError.TestFailed)
+                    .Result
+
+            Assert.That(result, Is.EqualTo(Common.errorResult), caseName)
+
+    [<Test>]
+    member this.``valid BLAKE3 prefix values return Ok``() =
+        let cases =
+            [|
+                "2 characters", "af"
+                "64 characters", "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adcd1e8c76d9a8885f16a39f"
+                "uppercase lookup", "AF1349B9F5F9A1A6A0404DEA36DCC9499BCB25C9ADCD1E8C76D9A8885F16A39F"
+            |]
+
+        for caseName, hash in cases do
+            let result =
+                (String.isValidBlake3HashPrefix hash VersionHashError.InvalidBlake3Hash)
+                    .Result
+
+            Assert.That(Result.isOk result, Is.True, caseName)
+
+    [<Test>]
+    member this.``invalid BLAKE3 prefix values return Error``() =
+        let cases =
+            [|
+                "empty", ""
+                "one character", "a"
+                "non-hex", "not-a-blake3-hash"
+            |]
+
+        for caseName, hash in cases do
+            let result =
+                (String.isValidBlake3HashPrefix hash VersionHashError.InvalidBlake3Hash)
+                    .Result
+
+            Assert.That(Result.isError result, Is.True, caseName)
+
+    [<Test>]
+    member this.``empty string for optional BLAKE3 prefix returns Ok``() =
+        let result =
+            (String.isEmptyOrValidBlake3HashPrefix "" VersionHashError.InvalidBlake3Hash)
+                .Result
+
+        Assert.That(Result.isOk result, Is.True)
+
+    [<Test>]
+    member this.``BLAKE3 version hash requires lowercase full value``() =
+        let valid =
+            (String.isValidBlake3VersionHash "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adcd1e8c76d9a8885f16a39f" VersionHashError.InvalidBlake3Hash)
+                .Result
+
+        let uppercase =
+            (String.isValidBlake3VersionHash "AF1349B9F5F9A1A6A0404DEA36DCC9499BCB25C9ADCD1E8C76D9A8885F16A39F" VersionHashError.InvalidBlake3Hash)
+                .Result
+
+        let empty =
+            (String.isValidBlake3VersionHash "" VersionHashError.Blake3HashIsRequired)
+                .Result
+
+        let short =
+            (String.isValidBlake3VersionHash "af" VersionHashError.InvalidBlake3Hash)
+                .Result
+
+        Assert.That(Result.isOk valid, Is.True)
+        Assert.That(Result.isError uppercase, Is.True)
+        Assert.That(Result.isError empty, Is.True)
+        Assert.That(Result.isError short, Is.True)
+
+    [<Test>]
+    member this.``version hash errors return localized text``() =
+        Assert.That(
+            getErrorMessage VersionHashError.InvalidBlake3Hash,
+            Is.EqualTo("The provided BLAKE3 hash is not a valid lowercase 64-character BLAKE3 hash value.")
+        )
+
+        Assert.That(getErrorMessage VersionHashError.Blake3HashIsRequired, Is.EqualTo("The Blake3Hash value is required."))
 
     [<Test>]
     member this.``string length less than max length returns Ok``() =
