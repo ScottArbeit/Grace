@@ -17,6 +17,7 @@ open Grace.Shared.Validation
 open Grace.Shared.Validation.Errors
 open Grace.Types.Branch
 open Grace.Types.DirectoryVersion
+open Grace.Types.Annotation
 open Grace.Types.Reference
 open Grace.Types.Common
 open NodaTime
@@ -205,6 +206,69 @@ module Branch =
 
         let referenceId =
             new Option<ReferenceId>(OptionName.ReferenceId, [||], Required = false, Description = "The reference ID <Guid>.", Arity = ArgumentArity.ExactlyOne)
+
+        let annotatePath =
+            new Option<String>(OptionName.Path, Required = true, Description = "The repository-relative path to annotate.", Arity = ArgumentArity.ExactlyOne)
+
+        let annotateLineRange =
+            new Option<String>(
+                "--line-range",
+                [| "-L" |],
+                Required = false,
+                Description = "The inclusive 1-based line range to annotate, formatted as start,end.",
+                Arity = ArgumentArity.ExactlyOne
+            )
+
+        let annotateStartLine =
+            new Option<int>(
+                "--start-line",
+                Required = false,
+                Description = "The first 1-based line to annotate. [default: 1]",
+                Arity = ArgumentArity.ExactlyOne,
+                DefaultValueFactory = (fun _ -> 1)
+            )
+
+        let annotateEndLine =
+            new Option<int>(
+                "--end-line",
+                Required = false,
+                Description = "The final 1-based line to annotate. Defaults to --start-line when omitted.",
+                Arity = ArgumentArity.ExactlyOne,
+                DefaultValueFactory = (fun _ -> 0)
+            )
+
+        let annotateReferenceTypes =
+            new Option<String>(
+                "--reference-types",
+                Required = false,
+                Description = "Comma-separated Reference types to use for attribution, for example Commit,Promotion.",
+                Arity = ArgumentArity.ExactlyOne
+            )
+
+        let annotateShow =
+            (new Option<String>(
+                "--show",
+                Required = false,
+                Description = "Human output source details to show: last-changed, introduced, or both. JSON always includes the complete DTO.",
+                Arity = ArgumentArity.ExactlyOne,
+                DefaultValueFactory = (fun _ -> "last-changed")
+            ))
+                .AcceptOnlyFromAmong(
+                    [|
+                        "last-changed"
+                        "introduced"
+                        "both"
+                    |]
+                )
+
+        let annotateMaxReferences =
+            new Option<int>(
+                "--max-references",
+                Required = false,
+                Description = $"Maximum References to traverse while annotating. [default: {DefaultMaxReferences}; maximum: {MaximumMaxReferences}]",
+                Arity = ArgumentArity.ExactlyOne,
+                DefaultValueFactory = (fun _ -> DefaultMaxReferences)
+            )
 
         let sha256Hash =
             new Option<String>(
@@ -1672,6 +1736,300 @@ module Branch =
             }
 
     type EnableFeatureCommand = EnableFeatureParameters -> Task<GraceResult<string>>
+
+    type BranchAnnotateShow =
+        | LastChanged
+        | Introduced
+        | Both
+
+    type BranchAnnotateCommand = AnnotateParameters -> Task<GraceResult<BranchAnnotationDto>>
+
+    type BranchAnnotateTargetReferenceResolver = ReferenceId option -> CorrelationId -> Task<Result<CliCurrentStateCaptureResult, GraceError>>
+
+    let private validReferenceTypeNames = listCases<ReferenceType> ()
+
+    let private tryParseReferenceType (value: string) =
+        validReferenceTypeNames
+        |> Array.tryFind (fun name -> String.Equals(name, value.Trim(), StringComparison.OrdinalIgnoreCase))
+        |> Option.bind (fun canonicalName -> discriminatedUnionFromString<ReferenceType> canonicalName)
+
+    let internal tryParseBranchAnnotateReferenceTypes correlationId (value: string) =
+        if String.IsNullOrWhiteSpace(value) then
+            Ok Array.empty
+        else
+            let tokens = value.Split(',', StringSplitOptions.None)
+
+            let invalid =
+                tokens
+                |> Array.choose (fun token ->
+                    if String.IsNullOrWhiteSpace(token) then
+                        Some "<blank>"
+                    else
+                        match tryParseReferenceType token with
+                        | Some _ -> None
+                        | None -> Some(token.Trim()))
+
+            if invalid.Length > 0 then
+                let invalidText = String.Join(", ", invalid)
+                let validText = String.Join(", ", validReferenceTypeNames)
+
+                Error(GraceError.Create $"Unknown Reference type(s): {invalidText}. Allowed values: {validText}." correlationId)
+            else
+                tokens
+                |> Array.choose tryParseReferenceType
+                |> Array.distinct
+                |> Ok
+
+    let private normalizeBranchAnnotatePath correlationId (path: string) =
+        let trimmed = if isNull path then String.Empty else path.Trim()
+
+        if String.IsNullOrWhiteSpace(trimmed) then
+            Error(GraceError.Create "--path is required and must be repository-relative." correlationId)
+        elif
+            Path.IsPathFullyQualified(trimmed)
+            || trimmed.StartsWith("/", StringComparison.Ordinal)
+            || trimmed.StartsWith("\\", StringComparison.Ordinal)
+        then
+            Error(GraceError.Create "--path must be repository-relative; absolute paths are not allowed." correlationId)
+        else
+            let normalized = trimmed.Replace('\\', '/')
+
+            let hasTraversal =
+                normalized.Split('/', StringSplitOptions.RemoveEmptyEntries)
+                |> Array.exists (fun segment -> segment = ".." || segment = ".")
+
+            if
+                hasTraversal
+                || normalized.Contains("../", StringComparison.Ordinal)
+                || normalized.EndsWith("/..", StringComparison.Ordinal)
+            then
+                Error(GraceError.Create "--path must not contain traversal segments." correlationId)
+            elif normalized.Contains(":", StringComparison.Ordinal) then
+                Error(GraceError.Create "--path must not contain drive or URI separators." correlationId)
+            else
+                Ok(RelativePath normalized)
+
+    let internal parseBranchAnnotateLineRange correlationId (lineRange: string) startLine endLine =
+        let parsedRange =
+            if String.IsNullOrWhiteSpace(lineRange) then
+                let effectiveEndLine = if endLine = 0 then startLine else endLine
+                { StartLine = startLine; EndLine = effectiveEndLine }
+            else
+                let parts =
+                    lineRange.Split(
+                        ',',
+                        StringSplitOptions.TrimEntries
+                        ||| StringSplitOptions.RemoveEmptyEntries
+                    )
+
+                if parts.Length <> 2 then
+                    { StartLine = 0; EndLine = -1 }
+                else
+                    match Int32.TryParse(parts[0]), Int32.TryParse(parts[1]) with
+                    | (true, parsedStart), (true, parsedEnd) -> { StartLine = parsedStart; EndLine = parsedEnd }
+                    | _ -> { StartLine = 0; EndLine = -1 }
+
+        match validateLineRange parsedRange with
+        | Ok () -> Ok parsedRange
+        | Error errors ->
+            let errorText = String.Join(" ", errors)
+            Error(GraceError.Create $"Invalid annotation line range: {errorText}" correlationId)
+
+    let private parseBranchAnnotateShow (value: string) =
+        match value with
+        | value when String.Equals(value, "introduced", StringComparison.OrdinalIgnoreCase) -> Introduced
+        | value when String.Equals(value, "both", StringComparison.OrdinalIgnoreCase) -> Both
+        | _ -> LastChanged
+
+    let private tryGetSourceReference (annotation: BranchAnnotationDto) sourceReferenceId =
+        annotation.SourceReferences
+        |> Array.tryFind (fun sourceReference -> sourceReference.SourceReferenceId = sourceReferenceId)
+
+    let private tryGetSourceRowAndReference annotation sourceRowId =
+        annotation.SourceRows
+        |> Array.tryFind (fun sourceRow -> sourceRow.SourceRowId = sourceRowId)
+        |> Option.bind (fun sourceRow ->
+            tryGetSourceReference annotation sourceRow.SourceReferenceId
+            |> Option.map (fun sourceReference -> sourceRow, sourceReference))
+
+    let private sourceReferenceText label (source: AnnotationSourceRow * AnnotationSourceReference) =
+        let sourceRow, sourceReference = source
+
+        let createdBy =
+            sourceReference.CreatedBy
+            |> Option.defaultValue "unknown Reference creator"
+
+        let referenceText =
+            if String.IsNullOrWhiteSpace(sourceReference.ReferenceText) then
+                String.Empty
+            else
+                $" - {sourceReference.ReferenceText}"
+
+        $"{label}: {sourceReference.ReferenceType} {sourceReference.ReferenceId} lines {sourceRow.LineRange.StartLine}-{sourceRow.LineRange.EndLine}; creator {createdBy}{referenceText}"
+
+    let private renderBranchAnnotationSpan (parseResult: ParseResult) (showMode: BranchAnnotateShow) (annotation: BranchAnnotationDto) (span: AnnotationSpan) =
+        let spanLines =
+            annotation.Lines
+            |> Array.filter (fun line ->
+                line.LineNumber >= span.LineRange.StartLine
+                && line.LineNumber <= span.LineRange.EndLine)
+            |> Array.sortBy (fun line -> line.LineNumber)
+
+        let lineHeader =
+            if span.LineRange.StartLine = span.LineRange.EndLine then
+                $"Line {span.LineRange.StartLine}"
+            else
+                $"Lines {span.LineRange.StartLine}-{span.LineRange.EndLine}"
+
+        AnsiConsole.MarkupLine($"[{Colors.Important}]{Markup.Escape(lineHeader)}[/]")
+
+        let sourceRows =
+            span.SourceRowIds
+            |> Array.choose (tryGetSourceRowAndReference annotation)
+
+        match showMode, sourceRows with
+        | (LastChanged
+          | Both),
+          rows when rows.Length > 0 ->
+            let sourceText = sourceReferenceText "Last changed Reference" rows[0]
+            AnsiConsole.MarkupLine($"  [{Colors.Deemphasized}]{Markup.Escape(sourceText)}[/]")
+        | _ -> ()
+
+        match showMode, sourceRows with
+        | (Introduced
+          | Both),
+          rows when rows.Length > 1 ->
+            let sourceText = sourceReferenceText "Introduced Reference" rows[1]
+            AnsiConsole.MarkupLine($"  [{Colors.Deemphasized}]{Markup.Escape(sourceText)}[/]")
+        | (Introduced
+          | Both),
+          rows when rows.Length > 0 ->
+            let sourceText = sourceReferenceText "Introduced Reference" rows[0]
+            AnsiConsole.MarkupLine($"  [{Colors.Deemphasized}]{Markup.Escape(sourceText)}[/]")
+        | _ -> ()
+
+        if not (String.IsNullOrWhiteSpace(span.BoundaryId)) then
+            AnsiConsole.MarkupLine($"  [{Colors.Important}]Annotation boundary:[/] {Markup.Escape(span.BoundaryId)}")
+
+        for line in spanLines do
+            AnsiConsole.MarkupLine($"  [{Colors.Highlighted}]{line.LineNumber, 5}[/] {Markup.Escape(line.Text)}")
+
+        AnsiConsole.WriteLine()
+
+    let internal renderBranchAnnotationHumanOutput parseResult showMode (annotation: BranchAnnotationDto) =
+        if parseResult |> hasOutput then
+            AnsiConsole.MarkupLine($"[{Colors.Important}]Branch annotation for {Markup.Escape(annotation.Path)} at Reference {annotation.TargetReferenceId}[/]")
+
+            annotation.Spans
+            |> Array.sortBy (fun span -> span.LineRange.StartLine)
+            |> Array.iter (renderBranchAnnotationSpan parseResult showMode annotation)
+
+            AnsiConsole.MarkupLine($"[{Colors.Important}]Returned {annotation.Spans.Length} annotation spans.[/]")
+
+    let internal annotateHandlerWith
+        (annotateCommand: BranchAnnotateCommand)
+        (resolveTargetReference: BranchAnnotateTargetReferenceResolver)
+        (parseResult: ParseResult)
+        =
+        task {
+            let correlationId = getCorrelationId parseResult
+            let graceIds = parseResult |> getNormalizedIdsAndNames
+
+            let explicitReferenceId =
+                if isNull (parseResult.GetResult(Options.referenceId)) then
+                    None
+                else
+                    let referenceId = parseResult.GetValue(Options.referenceId)
+                    if referenceId = ReferenceId.Empty then None else Some referenceId
+
+            let pathResult =
+                parseResult.GetValue(Options.annotatePath)
+                |> normalizeBranchAnnotatePath correlationId
+
+            let lineRangeText =
+                if isNull (parseResult.GetResult(Options.annotateLineRange)) then
+                    String.Empty
+                else
+                    parseResult.GetValue(Options.annotateLineRange)
+
+            let rangeResult =
+                parseBranchAnnotateLineRange
+                    correlationId
+                    lineRangeText
+                    (parseResult.GetValue(Options.annotateStartLine))
+                    (parseResult.GetValue(Options.annotateEndLine))
+
+            let referenceTypesText =
+                if isNull (parseResult.GetResult(Options.annotateReferenceTypes)) then
+                    String.Empty
+                else
+                    parseResult.GetValue(Options.annotateReferenceTypes)
+
+            let referenceTypesResult = tryParseBranchAnnotateReferenceTypes correlationId referenceTypesText
+            let maxReferences = parseResult.GetValue(Options.annotateMaxReferences)
+
+            match pathResult, rangeResult, referenceTypesResult, validateMaxReferences maxReferences with
+            | Error error, _, _, _ -> return Error error
+            | _, Error error, _, _ -> return Error error
+            | _, _, Error error, _ -> return Error error
+            | _, _, _, Error errors ->
+                let errorText = String.Join(" ", errors)
+                return Error(GraceError.Create $"Invalid --max-references: {errorText}" correlationId)
+            | Ok path, Ok lineRange, Ok referenceTypes, Ok () ->
+                match! resolveTargetReference explicitReferenceId correlationId with
+                | Error error -> return Error error
+                | Ok targetReference ->
+                    let parameters =
+                        AnnotateParameters(
+                            OwnerId = graceIds.OwnerIdString,
+                            OwnerName = graceIds.OwnerName,
+                            OrganizationId = graceIds.OrganizationIdString,
+                            OrganizationName = graceIds.OrganizationName,
+                            RepositoryId = graceIds.RepositoryIdString,
+                            RepositoryName = graceIds.RepositoryName,
+                            BranchId = graceIds.BranchIdString,
+                            BranchName = graceIds.BranchName,
+                            TargetReferenceId = targetReference.TargetReferenceId,
+                            Path = path,
+                            StartLine = lineRange.StartLine,
+                            EndLine = lineRange.EndLine,
+                            ReferenceTypes = referenceTypes,
+                            MaxReferences = maxReferences,
+                            IncludeLineText = true,
+                            CorrelationId = correlationId
+                        )
+
+                    return! annotateCommand parameters
+        }
+
+    type Annotate() =
+        inherit AsynchronousCommandLineAction()
+
+        override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
+            task {
+                try
+                    if parseResult |> verbose then printParseResult parseResult
+
+                    let! result =
+                        annotateHandlerWith (fun parameters -> Branch.Annotate parameters) resolveCliCurrentStateTargetReferenceForBranchAnnotate parseResult
+
+                    let rendered = result |> renderOutput parseResult
+
+                    match result with
+                    | Ok returnValue ->
+                        let showMode =
+                            parseResult.GetValue(Options.annotateShow)
+                            |> parseBranchAnnotateShow
+
+                        renderBranchAnnotationHumanOutput parseResult showMode returnValue.ReturnValue
+                    | Error _ -> ()
+
+                    return rendered
+                with
+                | ex ->
+                    let graceError = GraceError.Create $"{ExceptionResponse.Create ex}" (parseResult |> getCorrelationId)
+                    return renderOutput parseResult (GraceResult.Error graceError)
+            }
 
     let private enableFeatureHandler (parseResult: ParseResult) (enabled: bool) (command: EnableFeatureCommand) =
         task {
@@ -4131,6 +4489,25 @@ module Branch =
 
         getRecursiveSizeCommand.Action <- new GetRecursiveSize()
         branchCommand.Subcommands.Add(getRecursiveSizeCommand)
+
+        let annotateCommand =
+            new Command(
+                "annotate",
+                Description =
+                    "Annotate visible text lines at a repository-relative path with Last changed and Introduced References. V1 is exact-path only and does not follow renames, copies, or moved blocks."
+            )
+            |> addOption Options.annotatePath
+            |> addOption Options.referenceId
+            |> addOption Options.annotateLineRange
+            |> addOption Options.annotateStartLine
+            |> addOption Options.annotateEndLine
+            |> addOption Options.annotateReferenceTypes
+            |> addOption Options.annotateShow
+            |> addOption Options.annotateMaxReferences
+            |> addCommonOptions
+
+        annotateCommand.Action <- new Annotate()
+        branchCommand.Subcommands.Add(annotateCommand)
 
         let enableAssignCommand =
             new Command("enable-assign", Description = "Enable or disable assigning promotions on this branch.")
