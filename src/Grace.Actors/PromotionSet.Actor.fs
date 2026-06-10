@@ -44,6 +44,21 @@ module PromotionSet =
 
     type private DirectorySnapshot = { DirectoriesByPath: Dictionary<RelativePath, DirectoryVersion>; FilesByPath: Dictionary<RelativePath, FileVersion> }
 
+    type internal ComputedDirectoryMetadata = { DirectoryVersionId: DirectoryVersionId; Sha256Hash: Sha256Hash; Size: int64 }
+
+    let internal localDirectoryVersionForPromotionHash ownerId organizationId repositoryId relativePath metadata lastWriteTimeUtc =
+        LocalDirectoryVersion.Create
+            metadata.DirectoryVersionId
+            ownerId
+            organizationId
+            repositoryId
+            relativePath
+            metadata.Sha256Hash
+            (List<DirectoryVersionId>())
+            (List<LocalFileVersion>())
+            metadata.Size
+            lastWriteTimeUtc
+
     type private StepConflictFile =
         {
             FilePath: RelativePath
@@ -893,7 +908,7 @@ module PromotionSet =
 
                     directoryPathIndex <- directoryPathIndex + 1
 
-                let computedDirectoryMetadata = Dictionary<RelativePath, DirectoryVersionId * Sha256Hash>(StringComparer.OrdinalIgnoreCase)
+                let computedDirectoryMetadata = Dictionary<RelativePath, ComputedDirectoryMetadata>(StringComparer.OrdinalIgnoreCase)
                 let directoryVersionsToCreate = ResizeArray<DirectoryVersion>()
                 let mutable materializationError: GraceError option = Option.None
                 let mutable buildIndex = 0
@@ -917,20 +932,16 @@ module PromotionSet =
 
                     while childIndex < childDirectoryPathsArray.Length do
                         let childDirectoryPath = childDirectoryPathsArray[childIndex]
-                        let childDirectoryId, childSha = computedDirectoryMetadata[childDirectoryPath]
-                        childDirectoryIds.Add(childDirectoryId)
+                        let childMetadata = computedDirectoryMetadata[childDirectoryPath]
+                        childDirectoryIds.Add(childMetadata.DirectoryVersionId)
 
                         localChildDirectories.Add(
-                            LocalDirectoryVersion.Create
-                                childDirectoryId
+                            localDirectoryVersionForPromotionHash
                                 promotionSetDto.OwnerId
                                 promotionSetDto.OrganizationId
                                 promotionSetDto.RepositoryId
                                 childDirectoryPath
-                                childSha
-                                (List<DirectoryVersionId>())
-                                (List<LocalFileVersion>())
-                                0L
+                                childMetadata
                                 DateTime.UtcNow
                         )
 
@@ -954,6 +965,7 @@ module PromotionSet =
                             localDirectoryFiles.Add(fileVersion.ToLocalFileVersion DateTime.UtcNow)
                             orderedFileIndex <- orderedFileIndex + 1
 
+                    let directorySize = getDirectorySize directoryFiles
                     let computedSha = computeSha256ForDirectory directoryPath localChildDirectories localDirectoryFiles
 
                     let tryReuseDirectoryId (snapshot: DirectorySnapshot) =
@@ -990,11 +1002,12 @@ module PromotionSet =
                                 computedSha
                                 childDirectoryIds
                                 directoryFiles
-                                (getDirectorySize directoryFiles)
+                                directorySize
 
                         directoryVersionsToCreate.Add(directoryVersion)
 
-                    computedDirectoryMetadata[directoryPath] <- (directoryVersionId, computedSha)
+                    computedDirectoryMetadata[directoryPath] <- { DirectoryVersionId = directoryVersionId; Sha256Hash = computedSha; Size = directorySize }
+
                     buildIndex <- buildIndex + 1
 
                 let mutable createIndex = 0
@@ -1019,10 +1032,10 @@ module PromotionSet =
                 match materializationError with
                 | Option.Some graceError -> return Error graceError
                 | Option.None ->
-                    let mutable rootDirectory = Unchecked.defaultof<(DirectoryVersionId * Sha256Hash)>
+                    let mutable rootDirectory = Unchecked.defaultof<ComputedDirectoryMetadata>
 
                     if computedDirectoryMetadata.TryGetValue(RootDirectoryPath, &rootDirectory) then
-                        return Ok(fst rootDirectory)
+                        return Ok rootDirectory.DirectoryVersionId
                     else
                         return
                             Error(
