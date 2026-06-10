@@ -697,6 +697,8 @@ module Doctor =
         |> Option.map (fun diagnostics ->
             $"Reached /healthz with HTTP {(int response.StatusCode)} {response.ReasonPhrase}, and Grace SDK lifecycle headers reported client status requiring action: {lifecycleSummary diagnostics}. Update the Grace CLI/SDK or otherwise address the lifecycle status before retrying.")
 
+    let private isSuccessfulHttpStatus (statusCode: HttpStatusCode) = int statusCode >= 200 && int statusCode <= 299
+
     let private probeFailureSummary inspection =
         match inspection with
         | ServerProbeSkipped message -> message
@@ -882,10 +884,7 @@ module Doctor =
         | ServerHealthzReachableCheckId ->
             match context.ServerHealthzInspection.Value with
             | ServerProbeSkipped message -> skipped check message
-            | ServerProbeSucceeded response when
-                int response.StatusCode >= 200
-                && int response.StatusCode <= 299
-                ->
+            | ServerProbeSucceeded response when isSuccessfulHttpStatus response.StatusCode ->
                 ok $"Reached /healthz with HTTP {(int response.StatusCode)} {response.ReasonPhrase}; timeout was {DoctorServerProbeTimeoutMilliseconds} ms."
             | ServerProbeSucceeded response ->
                 match healthzLifecycleRejectionSummary response with
@@ -903,6 +902,12 @@ module Doctor =
         | ServerLifecycleHeadersCheckId ->
             match context.ServerHealthzInspection.Value with
             | ServerProbeSkipped message -> skipped check message
+            | ServerProbeSucceeded response when not (isSuccessfulHttpStatus response.StatusCode) ->
+                match healthzLifecycleRejectionSummary response with
+                | Some summary -> failed summary
+                | None ->
+                    failed
+                        $"Could not inspect lifecycle headers because /healthz returned HTTP {(int response.StatusCode)} {response.ReasonPhrase}; check server health and GRACE_SERVER_URI."
             | ServerProbeSucceeded response ->
                 match response.LifecycleDiagnostics with
                 | None -> ok "No Grace SDK lifecycle headers were returned by /healthz."
@@ -926,10 +931,7 @@ module Doctor =
                     match probeServer "auth/me" (Some token) effectiveServerUri
                           |> fun task -> task.GetAwaiter().GetResult()
                         with
-                    | ServerProbeSucceeded response when
-                        int response.StatusCode >= 200
-                        && int response.StatusCode <= 299
-                        ->
+                    | ServerProbeSucceeded response when isSuccessfulHttpStatus response.StatusCode ->
                         ok
                             $"Authenticated principal endpoint /auth/me returned HTTP {(int response.StatusCode)} {response.ReasonPhrase} using the non-refreshing {Constants.EnvironmentVariables.GraceToken} PAT source."
                     | ServerProbeSucceeded response ->

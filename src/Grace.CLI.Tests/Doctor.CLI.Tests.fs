@@ -673,6 +673,59 @@ module DoctorCliTests =
                         requests[0].BearerToken |> should equal None)))
 
     [<Test>]
+    let ``doctor exact lifecycle headers fails when healthz returns non-success without lifecycle headers`` () =
+        withTempDir (fun root ->
+            withIsolatedHome root (fun _ ->
+                writeGraceConfig root "http://example.test"
+                |> ignore
+
+                let requests = ResizeArray<Doctor.ServerProbeRequest>()
+
+                let failedProbe =
+                    Doctor.ServerProbeSucceeded
+                        { StatusCode = HttpStatusCode.InternalServerError; ReasonPhrase = "Internal Server Error"; LifecycleDiagnostics = None; Body = "" }
+
+                withDoctorServerProbeFactory
+                    (fun request ->
+                        requests.Add(request)
+                        Task.FromResult failedProbe)
+                    (fun () ->
+                        let exitCode, standardOut, standardError =
+                            runWithCapturedStdoutAndStderr [| "--output"
+                                                              "Json"
+                                                              "doctor"
+                                                              "--check"
+                                                              "server.lifecycle.headers" |]
+
+                        exitCode |> should equal 1
+
+                        use document = assertCleanJsonOutput standardOut standardError
+
+                        let returnValue = document.RootElement.GetProperty("ReturnValue")
+
+                        returnValue.GetProperty("Status").GetString()
+                        |> should equal "Failed"
+
+                        let checks = returnValue.GetProperty("Checks")
+
+                        checks.GetArrayLength() |> should equal 1
+
+                        let lifecycle = checks[0]
+
+                        lifecycle.GetProperty("Id").GetString()
+                        |> should equal "server.lifecycle.headers"
+
+                        lifecycle.GetProperty("Status").GetString()
+                        |> should equal "Failed"
+
+                        lifecycle.GetProperty("Summary").GetString()
+                        |> should contain "HTTP 500 Internal Server Error"
+
+                        requests.Count |> should equal 1
+
+                        requests[0].RelativePath |> should equal "healthz")))
+
+    [<Test>]
     let ``doctor server healthz uses GRACE_SERVER_URI over config and reports mismatch separately`` () =
         withTempDir (fun root ->
             withIsolatedHome root (fun _ ->
