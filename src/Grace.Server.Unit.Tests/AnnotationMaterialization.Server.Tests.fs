@@ -121,6 +121,7 @@ type AnnotationMaterializationServerTests() =
     member _.ManifestBackedContentMaterializesExactUtf8Text() =
         let bytes = textBytes "manifest line one\nmanifest line two\n"
         let target, block = manifestFile "/src/Large.fs" bytes
+        target.Blake3Hash <- Blake3Hash(ContentAddress.computeBlake3Hex bytes)
         let objects = Dictionary<string, byte array>()
         objects[StorageKeys.contentBlockObjectKey block.Address] <- block.Payload
 
@@ -130,6 +131,31 @@ type AnnotationMaterializationServerTests() =
 
         Assert.That(result.Text, Is.EqualTo("manifest line one\nmanifest line two\n"))
         Assert.That(result.Bytes = bytes, Is.True)
+
+    [<Test>]
+    member _.MaterializationRejectsMismatchedFileBlake3WhenPresent() =
+        let bytes = textBytes "manifest blake3 payload"
+        let target, block = manifestFile "/src/Large.fs" bytes
+        target.Blake3Hash <- Blake3Hash "wrong-blake3"
+        let objects = Dictionary<string, byte array>()
+        objects[StorageKeys.contentBlockObjectKey block.Address] <- block.Payload
+
+        materialize (readerFrom objects) target
+        |> expectErrorContains "FileVersion.Blake3Hash"
+
+    [<Test>]
+    member _.MaterializationAllowsLegacyEmptyFileBlake3() =
+        let bytes = textBytes "legacy manifest payload"
+        let target, block = manifestFile "/src/LegacyLarge.fs" bytes
+        target.Blake3Hash <- Blake3Hash String.Empty
+        let objects = Dictionary<string, byte array>()
+        objects[StorageKeys.contentBlockObjectKey block.Address] <- block.Payload
+
+        let result =
+            materialize (readerFrom objects) target
+            |> expectOk
+
+        Assert.That(result.Text, Is.EqualTo("legacy manifest payload"))
 
     [<Test>]
     member _.BinaryTargetIsRejectedBeforeStorageRead() =

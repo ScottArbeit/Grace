@@ -43,14 +43,20 @@ open Azure.Storage
 
 module DirectoryVersion =
 
-    /// Result of validating a single file's SHA-256 hash.
+    /// Result of validating a single whole-file content reference.
     type FileValidationResult =
-        | Valid of fileVersion: FileVersion * computedHash: Sha256Hash * elapsedMs: float
-        | HashMismatch of fileVersion: FileVersion * expectedHash: Sha256Hash * computedHash: Sha256Hash * elapsedMs: float
+        | Valid of fileVersion: FileVersion * computedSha256Hash: Sha256Hash * computedBlake3Hash: Blake3Hash * elapsedMs: float
+        | HashMismatch of
+            fileVersion: FileVersion *
+            expectedSha256Hash: Sha256Hash *
+            computedSha256Hash: Sha256Hash *
+            expectedBlake3Hash: Blake3Hash *
+            computedBlake3Hash: Blake3Hash *
+            elapsedMs: float
         | MissingInStorage of fileVersion: FileVersion * elapsedMs: float
         | ValidationError of fileVersion: FileVersion * errorMessage: string * elapsedMs: float
 
-    /// Validates a single file's SHA-256 hash by downloading from storage and computing.
+    /// Validates a single file's version hashes by downloading from storage and computing.
     /// Note: Non-binary files are stored as GZip-compressed streams, so we need to decompress them first.
     let validateFileSha256 (repositoryDto: RepositoryDto) (fileVersion: FileVersion) (correlationId: CorrelationId) =
         task {
@@ -64,54 +70,78 @@ module DirectoryVersion =
                     stopwatch.Stop()
                     return MissingInStorage(fileVersion, stopwatch.Elapsed.TotalMilliseconds)
                 else
-                    // Download the stream from blob storage
-                    use! blobStream = blobClient.OpenReadAsync(position = 0, bufferSize = (64 * 1024))
+                    let computeHashFromBlob computeHash =
+                        task {
+                            use! blobStream = blobClient.OpenReadAsync(position = 0, bufferSize = (64 * 1024))
 
-                    // Compute SHA-256 hash using the server-specific validation function.
-                    // Text files are stored as GZip streams and need decompression.
-                    let! computedHash =
-                        if fileVersion.IsBinary then
-                            computeSha256ForFile blobStream fileVersion.RelativePath
-                        else
-                            task {
+                            if fileVersion.IsBinary then
+                                return! computeHash blobStream
+                            else
                                 use gzStream = new GZipStream(stream = blobStream, mode = CompressionMode.Decompress, leaveOpen = false)
-                                return! computeSha256ForFile gzStream fileVersion.RelativePath
-                            }
+                                return! computeHash gzStream
+                        }
+
+                    let! computedSha256Hash = computeHashFromBlob (fun stream -> computeSha256ForFile stream fileVersion.RelativePath)
+
+                    let! computedBlake3Hash = computeHashFromBlob (fun stream -> computeBlake3ForFile stream)
+
+                    let computedBlake3Hash = Blake3Hash $"{computedBlake3Hash}"
 
                     stopwatch.Stop()
 
-                    if computedHash = fileVersion.Sha256Hash then
-                        return Valid(fileVersion, computedHash, stopwatch.Elapsed.TotalMilliseconds)
+                    if computedSha256Hash = fileVersion.Sha256Hash
+                       && (String.IsNullOrWhiteSpace fileVersion.Blake3Hash
+                           || computedBlake3Hash = fileVersion.Blake3Hash) then
+                        return Valid(fileVersion, computedSha256Hash, computedBlake3Hash, stopwatch.Elapsed.TotalMilliseconds)
                     else
-                        return HashMismatch(fileVersion, fileVersion.Sha256Hash, computedHash, stopwatch.Elapsed.TotalMilliseconds)
+                        return
+                            HashMismatch(
+                                fileVersion,
+                                fileVersion.Sha256Hash,
+                                computedSha256Hash,
+                                fileVersion.Blake3Hash,
+                                computedBlake3Hash,
+                                stopwatch.Elapsed.TotalMilliseconds
+                            )
             with
             | ex ->
                 stopwatch.Stop()
                 return ValidationError(fileVersion, ex.Message, stopwatch.Elapsed.TotalMilliseconds)
         }
 
-    /// Determines which files need validation by comparing with a previously validated DirectoryVersion.
-    /// Returns the list of files that need to be validated.
-    let getFilesToValidate (newFiles: List<FileVersion>) (previouslyValidatedFiles: List<FileVersion>) : FileVersion array =
-        if previouslyValidatedFiles.Count > 0 then
-            // Create a set of (RelativePath, Sha256Hash) pairs from the old files
-            let previousFilesLookup = Dictionary<RelativePath, Sha256Hash>()
-
-            previouslyValidatedFiles
-            |> Seq.iter (fun previousFile -> previousFilesLookup.Add(previousFile.RelativePath, previousFile.Sha256Hash))
-
-            // Return files that are not in the old set (new or changed)
-            newFiles
-                .Where(fun f -> not (previousFilesLookup.Contains(KeyValuePair(f.RelativePath, f.Sha256Hash))))
-                .ToArray()
-        else
-            newFiles.ToArray()
-
     let private normalizeContentReference (fileVersion: FileVersion) =
         if isNull (box fileVersion.ContentReference) then
             FileContentReference.WholeFileContent
         else
             fileVersion.ContentReference
+
+    /// Determines which files need validation by comparing with a previously validated DirectoryVersion.
+    /// Returns the list of files that need to be validated.
+    let getFilesToValidate (newFiles: List<FileVersion>) (previouslyValidatedFiles: List<FileVersion>) : FileVersion array =
+        if previouslyValidatedFiles.Count > 0 then
+            let contentReferenceIdentity (fileVersion: FileVersion) =
+                let contentReference = normalizeContentReference fileVersion
+
+                match contentReference.ReferenceType, contentReference.Manifest with
+                | FileContentReferenceType.FileManifest, Some manifest -> $"{contentReference.ReferenceType}:{manifest.ManifestAddress}"
+                | referenceType, _ -> $"{referenceType}"
+
+            let fileIdentity (fileVersion: FileVersion) =
+                (fileVersion.RelativePath, fileVersion.Sha256Hash, fileVersion.Blake3Hash, contentReferenceIdentity fileVersion)
+
+            let previousFilesLookup = HashSet<RelativePath * Sha256Hash * Blake3Hash * string>()
+
+            previouslyValidatedFiles
+            |> Seq.iter (fun previousFile ->
+                previousFilesLookup.Add(fileIdentity previousFile)
+                |> ignore)
+
+            // Return files that are not in the old set (new or changed)
+            newFiles
+                .Where(fun f -> not (previousFilesLookup.Contains(fileIdentity f)))
+                .ToArray()
+        else
+            newFiles.ToArray()
 
     let private isWholeFileContentReference (fileVersion: FileVersion) =
         (normalizeContentReference fileVersion)
@@ -169,6 +199,11 @@ module DirectoryVersion =
                 Error(manifestValidationError correlationId fileVersion "must include a ChunkingSuiteId before Save.")
             elif not (ContentAddress.isValidAddress manifest.FileContentHash) then
                 Error(manifestValidationError correlationId fileVersion "has an invalid FileContentHash before Save.")
+            elif
+                not (String.IsNullOrWhiteSpace fileVersion.Blake3Hash)
+                && fileVersion.Blake3Hash <> manifest.FileContentHash
+            then
+                Error(manifestValidationError correlationId fileVersion "must match FileVersion.Blake3Hash before Save.")
             elif manifest.Size <= 0L then
                 Error(manifestValidationError correlationId fileVersion "must have a positive size before Save.")
             elif fileVersion.Size <> manifest.Size then
@@ -822,33 +857,36 @@ module DirectoryVersion =
                                                 validationResults
                                                 |> Array.sumBy (fun result ->
                                                     match result with
-                                                    | Valid (_, _, ms) -> ms
-                                                    | HashMismatch (_, _, _, ms) -> ms
+                                                    | Valid (_, _, _, ms) -> ms
+                                                    | HashMismatch (_, _, _, _, _, ms) -> ms
                                                     | MissingInStorage (_, ms) -> ms
                                                     | ValidationError (_, _, ms) -> ms)
 
                                             // Log validation results
                                             for result in validationResults do
                                                 match result with
-                                                | Valid (fv, computedHash, elapsedMs) ->
+                                                | Valid (fv, computedSha256Hash, computedBlake3Hash, elapsedMs) ->
                                                     log.LogDebug(
-                                                        "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; SHA-256 validation passed; File: {RelativePath}; Hash: {Hash}; ElapsedMs: {ElapsedMs}.",
+                                                        "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; file version hash validation passed; File: {RelativePath}; Sha256Hash: {Sha256Hash}; Blake3Hash: {Blake3Hash}; ElapsedMs: {ElapsedMs}.",
                                                         getCurrentInstantExtended (),
                                                         getMachineName,
                                                         metadata.CorrelationId,
                                                         fv.RelativePath,
-                                                        computedHash,
+                                                        computedSha256Hash,
+                                                        computedBlake3Hash,
                                                         elapsedMs
                                                     )
-                                                | HashMismatch (fv, expectedHash, computedHash, elapsedMs) ->
+                                                | HashMismatch (fv, expectedSha256Hash, computedSha256Hash, expectedBlake3Hash, computedBlake3Hash, elapsedMs) ->
                                                     log.LogWarning(
-                                                        "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; SHA-256 hash mismatch; File: {RelativePath}; ExpectedHash: {ExpectedHash}; ComputedHash: {ComputedHash}; ElapsedMs: {ElapsedMs}.",
+                                                        "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; file version hash mismatch; File: {RelativePath}; ExpectedSha256Hash: {ExpectedSha256Hash}; ComputedSha256Hash: {ComputedSha256Hash}; ExpectedBlake3Hash: {ExpectedBlake3Hash}; ComputedBlake3Hash: {ComputedBlake3Hash}; ElapsedMs: {ElapsedMs}.",
                                                         getCurrentInstantExtended (),
                                                         getMachineName,
                                                         metadata.CorrelationId,
                                                         fv.RelativePath,
-                                                        expectedHash,
-                                                        computedHash,
+                                                        expectedSha256Hash,
+                                                        computedSha256Hash,
+                                                        expectedBlake3Hash,
+                                                        computedBlake3Hash,
                                                         elapsedMs
                                                     )
                                                 | MissingInStorage (fv, elapsedMs) ->
@@ -879,8 +917,8 @@ module DirectoryVersion =
                                                     failures
                                                     |> List.map (fun failure ->
                                                         match failure with
-                                                        | HashMismatch (fv, expected, computed, _) ->
-                                                            $"File '{fv.RelativePath}': hash mismatch (expected: {expected}, computed: {computed})"
+                                                        | HashMismatch (fv, expectedSha256, computedSha256, expectedBlake3, computedBlake3, _) ->
+                                                            $"File '{fv.RelativePath}': hash mismatch (expected SHA-256: {expectedSha256}, computed SHA-256: {computedSha256}, expected BLAKE3: {expectedBlake3}, computed BLAKE3: {computedBlake3})"
                                                         | MissingInStorage (fv, _) -> $"File '{fv.RelativePath}': not found in object storage"
                                                         | ValidationError (fv, msg, _) -> $"File '{fv.RelativePath}': validation error ({msg})"
                                                         | _ -> "Unknown error")
