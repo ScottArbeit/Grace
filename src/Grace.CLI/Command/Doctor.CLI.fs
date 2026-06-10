@@ -405,7 +405,7 @@ module Doctor =
             UserConfiguration: UserConfiguration.UserConfigurationInspection
             EnvironmentServerUri: string option
             AuthInspection: Auth.AuthInspection
-            LocalStateInspection: LocalStateDb.ReadOnlyLocalStateInspection
+            LocalStateInspection: Lazy<LocalStateDb.ReadOnlyLocalStateInspection>
         }
 
     let private normalizeOptionalText value = if String.IsNullOrWhiteSpace(value) then None else Some(value.Trim())
@@ -430,7 +430,7 @@ module Doctor =
                 Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.GraceServerUri)
                 |> normalizeOptionalText
             AuthInspection = Auth.inspectAuthEnvironment ()
-            LocalStateInspection = LocalStateDb.inspectReadOnly localStateDbPath
+            LocalStateInspection = lazy (LocalStateDb.inspectReadOnly localStateDbPath)
         }
 
     let private checkResult checkId category title status severity summary : LocalOutputDto.DoctorCheckResultDto =
@@ -532,7 +532,7 @@ module Doctor =
             elif auth.HasPartialM2m || auth.HasPartialCli then warning summary
             else skipped check summary
         | StateDbFilePresentCheckId ->
-            let inspection = context.LocalStateInspection
+            let inspection = context.LocalStateInspection.Value
 
             if not inspection.ParentDirectoryExists then
                 warning
@@ -546,7 +546,7 @@ module Doctor =
             else
                 ok $"Local state database file exists at {inspection.DbPath}."
         | StateDbReadOnlyOpenCheckId ->
-            let inspection = context.LocalStateInspection
+            let inspection = context.LocalStateInspection.Value
 
             if inspection.OpenedReadOnly then
                 ok "Opened the local state database with SQLite read-only mode. No initialization, migration, WAL change, or repair was attempted."
@@ -562,7 +562,7 @@ module Doctor =
             else
                 skipped check (localStateUnavailableSummary StateDbReadOnlyOpenCheckId inspection)
         | StateDbSchemaVersionCheckId ->
-            let inspection = context.LocalStateInspection
+            let inspection = context.LocalStateInspection.Value
 
             if not inspection.OpenedReadOnly then
                 skipped check (localStateUnavailableSummary StateDbSchemaVersionCheckId inspection)
@@ -574,7 +574,7 @@ module Doctor =
                         $"Local state schema_version is {version}; expected {ExpectedLocalStateSchemaVersion}. Doctor did not migrate, recreate, or move corrupt database files."
                 | None -> failed "Local state schema_version metadata is missing or unreadable. Doctor did not write default metadata."
         | StateDbRequiredTablesCheckId ->
-            let inspection = context.LocalStateInspection
+            let inspection = context.LocalStateInspection.Value
 
             if not inspection.OpenedReadOnly then
                 skipped check (localStateUnavailableSummary StateDbRequiredTablesCheckId inspection)
@@ -583,7 +583,7 @@ module Doctor =
             else
                 failed $"Missing required local state tables: {formatListOrNone inspection.MissingRequiredTables}. Doctor did not create schema objects."
         | StateDbRequiredIndexesCheckId ->
-            let inspection = context.LocalStateInspection
+            let inspection = context.LocalStateInspection.Value
 
             if not inspection.OpenedReadOnly then
                 skipped check (localStateUnavailableSummary StateDbRequiredIndexesCheckId inspection)
@@ -592,7 +592,7 @@ module Doctor =
             else
                 failed $"Missing required local state indexes: {formatListOrNone inspection.MissingRequiredIndexes}. Doctor did not create schema objects."
         | StateDbIntegrityCheckId ->
-            let inspection = context.LocalStateInspection
+            let inspection = context.LocalStateInspection.Value
 
             if not inspection.OpenedReadOnly then
                 skipped check (localStateUnavailableSummary StateDbIntegrityCheckId inspection)
@@ -604,7 +604,7 @@ module Doctor =
             else
                 failed $"SQLite integrity_check reported: {formatListOrNone inspection.IntegrityCheckRows}. Doctor did not repair or rewrite the database."
         | StateDbForeignKeyCheckId ->
-            let inspection = context.LocalStateInspection
+            let inspection = context.LocalStateInspection.Value
 
             if not inspection.OpenedReadOnly then
                 skipped check (localStateUnavailableSummary StateDbForeignKeyCheckId inspection)
@@ -614,7 +614,7 @@ module Doctor =
                 failed
                     $"SQLite foreign_key_check reported violations: {formatListOrNone inspection.ForeignKeyViolations}. Doctor did not repair object-cache rows."
         | ObjectCacheIndexReadableCheckId ->
-            let inspection = context.LocalStateInspection
+            let inspection = context.LocalStateInspection.Value
 
             if not inspection.OpenedReadOnly then
                 skipped check (localStateUnavailableSummary ObjectCacheIndexReadableCheckId inspection)

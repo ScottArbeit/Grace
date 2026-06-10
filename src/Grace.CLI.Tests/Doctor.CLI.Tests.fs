@@ -97,6 +97,13 @@ module DoctorCliTests =
         finally
             Environment.SetEnvironmentVariable(name, original)
 
+    let private withLocalStateDbOpenTrace root (action: string -> unit) =
+        let tracePath = Path.Combine(root, "local-state-open-trace.log")
+
+        withEnv "GRACE_LOCALSTATE_DB_TRACE_PATH" (Some tracePath) (fun () -> withEnv "GRACE_LOCALSTATE_DB_TRACE_OPEN" (Some "1") (fun () -> action tracePath))
+
+    let private readTrace tracePath = if File.Exists(tracePath) then File.ReadAllText(tracePath) else String.Empty
+
     let private withIsolatedHome (root: string) (action: string -> unit) =
         let home = Path.Combine(root, "home")
         Directory.CreateDirectory(home) |> ignore
@@ -980,6 +987,109 @@ module DoctorCliTests =
 
             for checkId in localStateCheckIds do
                 catalogIds |> should contain checkId)
+
+    [<Test>]
+    let ``doctor selected non-local check does not open local-state database`` () =
+        withTempDir (fun root ->
+            withIsolatedHome root (fun _ ->
+                writeGraceConfig root "http://127.0.0.1:5000"
+                |> ignore
+
+                let dbPath = localStateDbPath root
+                File.WriteAllText(dbPath, "not a sqlite database")
+                let dbBefore = snapshotFile dbPath
+
+                withLocalStateDbOpenTrace root (fun tracePath ->
+                    let exitCode, standardOut, standardError =
+                        runWithCapturedStdoutAndStderr [| "--output"
+                                                          "Json"
+                                                          "doctor"
+                                                          "--check"
+                                                          "config.file.parse" |]
+
+                    exitCode |> should equal 0
+
+                    use document = assertCleanJsonOutput standardOut standardError
+
+                    let checks =
+                        document
+                            .RootElement
+                            .GetProperty("ReturnValue")
+                            .GetProperty("Checks")
+
+                    checks.GetArrayLength() |> should equal 1
+
+                    checks[ 0 ].GetProperty("Id").GetString()
+                    |> should equal "config.file.parse"
+
+                    checks[ 0 ].GetProperty("Status").GetString()
+                    |> should equal "Ok"
+
+                    readTrace tracePath |> should equal String.Empty
+                    snapshotFile dbPath |> should equal dbBefore)))
+
+    [<Test>]
+    let ``doctor selected local-state check opens local-state database read-only`` () =
+        withTempDir (fun root ->
+            withIsolatedHome root (fun _ ->
+                ensureValidLocalStateDb root
+
+                withLocalStateDbOpenTrace root (fun tracePath ->
+                    let exitCode, standardOut, standardError =
+                        runWithCapturedStdoutAndStderr [| "--output"
+                                                          "Json"
+                                                          "doctor"
+                                                          "--check"
+                                                          "state.db.schema-version" |]
+
+                    exitCode |> should equal 0
+
+                    use document = assertCleanJsonOutput standardOut standardError
+
+                    let checks =
+                        document
+                            .RootElement
+                            .GetProperty("ReturnValue")
+                            .GetProperty("Checks")
+
+                    checks.GetArrayLength() |> should equal 1
+
+                    checks[ 0 ].GetProperty("Status").GetString()
+                    |> should equal "Ok"
+
+                    readTrace tracePath
+                    |> should contain "openReadOnlyConnection starting")))
+
+    [<Test>]
+    let ``doctor default run opens local-state database and includes local-state checks`` () =
+        withTempDir (fun root ->
+            withIsolatedHome root (fun _ ->
+                ensureValidLocalStateDb root
+
+                withLocalStateDbOpenTrace root (fun tracePath ->
+                    let exitCode, standardOut, standardError =
+                        runWithCapturedStdoutAndStderr [| "--output"
+                                                          "Json"
+                                                          "doctor" |]
+
+                    exitCode |> should equal 0
+
+                    use document = assertCleanJsonOutput standardOut standardError
+
+                    let checks =
+                        document
+                            .RootElement
+                            .GetProperty("ReturnValue")
+                            .GetProperty("Checks")
+
+                    for checkId in localStateCheckIds do
+                        (findCheckById checks checkId)
+                            .GetProperty("Id")
+                            .GetString()
+                        |> should equal checkId
+
+                    readTrace tracePath
+                    |> should contain "openReadOnlyConnection starting")))
 
     [<Test>]
     let ``doctor local-state valid database reports read-only metadata checks`` () =

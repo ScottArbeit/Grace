@@ -26,8 +26,8 @@ module LocalStateDb =
     let mutable private verboseEnabled = false
 
     let setVerbose enabled = verboseEnabled <- enabled
-    let private traceFilePath = Environment.GetEnvironmentVariable("GRACE_LOCALSTATE_DB_TRACE_PATH")
-    let private traceOpenConnections = not (String.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("GRACE_LOCALSTATE_DB_TRACE_OPEN")))
+    let private getTraceFilePath () = Environment.GetEnvironmentVariable("GRACE_LOCALSTATE_DB_TRACE_PATH")
+    let private shouldTraceOpenConnections () = not (String.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("GRACE_LOCALSTATE_DB_TRACE_OPEN")))
     let private initLocks = ConcurrentDictionary<string, SemaphoreSlim>(StringComparer.OrdinalIgnoreCase)
     let private initializedDbs = ConcurrentDictionary<string, bool>(StringComparer.OrdinalIgnoreCase)
 
@@ -39,6 +39,8 @@ module LocalStateDb =
     let private logVerbose message = if verboseEnabled then Log.LogVerbose message
 
     let private logTrace message =
+        let traceFilePath = getTraceFilePath ()
+
         if not (String.IsNullOrWhiteSpace(traceFilePath)) then
             try
                 File.AppendAllText(traceFilePath, $"{DateTime.UtcNow:O} {message}{Environment.NewLine}")
@@ -100,6 +102,7 @@ module LocalStateDb =
     let private openConnection (dbPath: string) =
         sqliteInitialized.Value |> ignore
         let directoryPath = Path.GetDirectoryName(dbPath)
+        let traceOpenConnections = shouldTraceOpenConnections ()
         logVerbose $"LocalStateDb.openConnection starting. dbPath={dbPath} dir={directoryPath}"
 
         if traceOpenConnections then
@@ -218,6 +221,10 @@ module LocalStateDb =
 
     let private openReadOnlyConnection (dbPath: string) =
         sqliteInitialized.Value |> ignore
+        let traceOpenConnections = shouldTraceOpenConnections ()
+
+        if traceOpenConnections then
+            logTrace $"openReadOnlyConnection starting. dbPath={dbPath}"
 
         let connectionString =
             let builder = SqliteConnectionStringBuilder()
@@ -233,6 +240,10 @@ module LocalStateDb =
             connection.Open()
             executePragma connection $"PRAGMA busy_timeout = {BusyTimeoutMs};"
             executePragma connection "PRAGMA query_only = ON;"
+
+            if traceOpenConnections then
+                logTrace $"openReadOnlyConnection opened connection. dbPath={dbPath}"
+
             connection
         with
         | ex ->
