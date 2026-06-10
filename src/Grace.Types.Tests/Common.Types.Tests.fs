@@ -28,6 +28,10 @@ type LegacyFileVersion =
         BlobUri: string
     }
 
+module HashAliasTestData =
+    let sha256Hash: Sha256Hash = Sha256Hash "67a1790dca55b8803ad024ee28f616a284df5dd7b8ba5f68b4b252a5e925af79"
+    let blake3Hash: Blake3Hash = Blake3Hash "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adcd1e8c76d9a8885f16a39f"
+
 module ManifestEligibilityTestData =
     let thresholdBytes = 1024 * 1024
 
@@ -92,6 +96,11 @@ module ManifestEligibilityTestData =
 
 [<Parallelizable(ParallelScope.All)>]
 type CommonTypesTests() =
+    [<Test>]
+    member _.Blake3HashAliasExistsBesideSha256Hash() =
+        Assert.That(HashAliasTestData.blake3Hash, Is.EqualTo("af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adcd1e8c76d9a8885f16a39f"))
+        Assert.That(HashAliasTestData.sha256Hash, Is.EqualTo("67a1790dca55b8803ad024ee28f616a284df5dd7b8ba5f68b4b252a5e925af79"))
+
     [<Test>]
     member _.ManifestEligibilityPolicyDefaultUsesOneMiBThresholdAndEightKiBScanWindow() =
         let policy = ManifestEligibilityPolicy.Default
