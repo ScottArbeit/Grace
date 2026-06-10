@@ -47,7 +47,10 @@ type AnnotationLineCoreTests() =
     let historyDocumentBytes sourceReference content = { SourceReference = sourceReference; Path = "src/App.fs"; Content = content }
 
     let effectiveHistoryDocument document basedOnReferenceId isAuthorized =
-        { Document = document; BasedOnReferenceId = basedOnReferenceId; IsAuthorized = isAuthorized }
+        { Document = document; BasedOnReferenceId = basedOnReferenceId; IsAuthorized = isAuthorized; BoundaryKind = None }
+
+    let boundaryEffectiveHistoryDocument document boundaryKind =
+        { Document = document; BasedOnReferenceId = None; IsAuthorized = true; BoundaryKind = Some boundaryKind }
 
     let build requestedRange history =
         buildAnnotation (requestedRange, targetReferenceId, "src/App.fs", [| ReferenceType.Commit |], DefaultMaxReferences, true, history)
@@ -232,6 +235,30 @@ type AnnotationLineCoreTests() =
         Assert.Multiple(
             Action (fun () ->
                 Assert.That(result.BoundaryKind, Is.EqualTo(Some "TraversalBudgetReached"))
+
+                Assert.That(sourceReferenceIdsMatch, Is.True))
+        )
+
+    [<Test>]
+    member _.TraverseEffectiveBranchHistoryStopsAtUnreadableAncestorBoundary() =
+        let oldDocument = historyDocument oldReference String.Empty
+        let newDocument = historyDocument newReference "child"
+
+        let result =
+            traverseEffectiveBranchHistory
+                targetReferenceId
+                DefaultMaxReferences
+                [|
+                    effectiveHistoryDocument newDocument (Some oldReferenceId) true
+                    boundaryEffectiveHistoryDocument oldDocument Grace.Server.Branch.unreadableAncestorBoundaryKind
+                |]
+
+        let sourceReferenceIds = historySourceReferenceIds result
+        let sourceReferenceIdsMatch = sourceReferenceIds = [| "source-reference-new" |]
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(result.BoundaryKind, Is.EqualTo(Some Grace.Server.Branch.unreadableAncestorBoundaryKind))
 
                 Assert.That(sourceReferenceIdsMatch, Is.True))
         )

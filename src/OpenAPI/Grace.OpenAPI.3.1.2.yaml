@@ -6339,12 +6339,12 @@ components:
         - Rejected
         - Expired
         - Stale
-  GetReferencesParameters:
-    $ref: Branch.Components.OpenAPI.yaml#/GetReferencesParameters
-  AnnotateParameters:
-    $ref: Branch.Components.OpenAPI.yaml#/AnnotateParameters
-  GetDiffsForReferenceTypeParameters:
-    $ref: Branch.Components.OpenAPI.yaml#/GetDiffsForReferenceTypeParameters
+    GetReferencesParameters:
+      $ref: Branch.Components.OpenAPI.yaml#/GetReferencesParameters
+    AnnotateParameters:
+      $ref: Branch.Components.OpenAPI.yaml#/AnnotateParameters
+    GetDiffsForReferenceTypeParameters:
+      $ref: Branch.Components.OpenAPI.yaml#/GetDiffsForReferenceTypeParameters
     GetDiffsForReferencesParameters:
       $ref: Branch.Components.OpenAPI.yaml#/GetDiffsForReferencesParameters
     GetBranchParameters:

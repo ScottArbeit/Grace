@@ -53,6 +53,34 @@ type OpenApiRouteCoverageTests() =
             if matchItem.Success then Some matchItem.Groups["path"].Value else None)
         |> Set.ofArray
 
+    let assertSchemaRefIsNestedUnderComponentsSchemas schemaName =
+        let lines = File.ReadAllLines(openApiMainPath)
+        let schemaLine = $"    {schemaName}:"
+        let refLine = $"      $ref: 'Branch.Components.OpenAPI.yaml#/{schemaName}'"
+
+        match lines
+              |> Array.tryFindIndex (fun line -> String.Equals(line, schemaLine, StringComparison.Ordinal))
+            with
+        | None -> Assert.Fail($"Main.OpenAPI.yaml must define {schemaName} under components.schemas.")
+        | Some schemaIndex ->
+            Assert.That(schemaIndex + 1, Is.LessThan(lines.Length), $"{schemaName} must include a following $ref line.")
+            Assert.That(lines[schemaIndex + 1], Is.EqualTo(refLine))
+
+            let precedingIndex expectedLine =
+                lines[..schemaIndex]
+                |> Array.mapi (fun index line -> index, line)
+                |> Array.choose (fun (index, line) ->
+                    if String.Equals(line, expectedLine, StringComparison.Ordinal) then
+                        Some index
+                    else
+                        None)
+                |> Array.last
+
+            let precedingSchemasIndex = precedingIndex "  schemas:"
+            let precedingComponentsIndex = precedingIndex "components:"
+
+            Assert.That(precedingSchemasIndex, Is.GreaterThan(precedingComponentsIndex), $"{schemaName} must be nested under components.schemas.")
+
     let parseStartupRoutes () =
         let text = File.ReadAllText(startupPath)
         let matches = startupRouteTokenRegex.Matches(text)
@@ -174,6 +202,11 @@ type OpenApiRouteCoverageTests() =
                 |> String.concat Environment.NewLine
 
             Assert.Fail($"OpenAPI is missing ADR-0001 storage routes:{Environment.NewLine}{missingText}")
+
+    [<Test>]
+    member _.OpenApiBranchRequestSchemasRemainNestedUnderComponentsSchemas() =
+        assertSchemaRefIsNestedUnderComponentsSchemas "GetReferencesParameters"
+        assertSchemaRefIsNestedUnderComponentsSchemas "AnnotateParameters"
 
     [<Test>]
     member _.OpenApiInfoVersionMatchesCurrentApiContractVersion() = Assert.That(openApiVersion (), Is.EqualTo(ApiContractVersion.CurrentReleased))

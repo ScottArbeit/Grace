@@ -119,10 +119,26 @@ module Branch =
                 | Error error -> return Error error
         }
 
-    let private buildEffectiveHistory
+    let internal unreadableAncestorBoundaryKind = "UnmaterializableAncestor"
+
+    let private effectiveHistoryDocument document basedOnReferenceId isAuthorized boundaryKind =
+        { Document = document; BasedOnReferenceId = basedOnReferenceId; IsAuthorized = isAuthorized; BoundaryKind = boundaryKind }
+
+    let private emptyAnnotationDocument path referenceDto =
+        { SourceReference = toAnnotationSourceReference referenceDto; Path = normalizeAnnotationPath path; Content = Array.empty }
+
+    let internal effectiveHistoryFromMaterializationResult path targetReferenceId referenceDto basedOnReferenceId materializationResult =
+        match materializationResult with
+        | Ok (Some document) -> Ok(effectiveHistoryDocument document basedOnReferenceId true None)
+        | Ok None -> Ok(effectiveHistoryDocument (emptyAnnotationDocument path referenceDto) basedOnReferenceId true None)
+        | Error materializationError when referenceDto.ReferenceId = targetReferenceId -> Error materializationError
+        | Error _ -> Ok(effectiveHistoryDocument (emptyAnnotationDocument path referenceDto) basedOnReferenceId true (Some unreadableAncestorBoundaryKind))
+
+    let internal buildEffectiveHistory
         (context: HttpContext)
         (repositoryDto: Repository.RepositoryDto)
         (path: RelativePath)
+        (targetReferenceId: ReferenceId)
         (references: Reference.ReferenceDto array)
         =
         task {
@@ -163,17 +179,12 @@ module Branch =
 
                 if isAuthorized then
                     match! materializeAnnotationDocument context repositoryDto path referenceDto with
-                    | Ok (Some document) -> effectiveHistory.Add({ Document = document; BasedOnReferenceId = basedOnReferenceId; IsAuthorized = true })
-                    | Ok None ->
-                        let document =
-                            { SourceReference = toAnnotationSourceReference referenceDto; Path = normalizeAnnotationPath path; Content = Array.empty }
-
-                        effectiveHistory.Add({ Document = document; BasedOnReferenceId = basedOnReferenceId; IsAuthorized = true })
-                    | Error materializationError -> error <- Some materializationError
+                    | materializationResult ->
+                        match effectiveHistoryFromMaterializationResult path targetReferenceId referenceDto basedOnReferenceId materializationResult with
+                        | Ok document -> effectiveHistory.Add document
+                        | Error materializationError -> error <- Some materializationError
                 else
-                    let document = { SourceReference = toAnnotationSourceReference referenceDto; Path = normalizeAnnotationPath path; Content = Array.empty }
-
-                    effectiveHistory.Add({ Document = document; BasedOnReferenceId = basedOnReferenceId; IsAuthorized = false })
+                    effectiveHistory.Add(effectiveHistoryDocument (emptyAnnotationDocument path referenceDto) basedOnReferenceId false None)
 
                 index <- index + 1
 
@@ -182,7 +193,18 @@ module Branch =
             | None -> return Ok(effectiveHistory.ToArray())
         }
 
-    let private orderedHistoryWindow targetReferenceId maxReferences (references: Reference.ReferenceDto array) =
+    let private withBasedOnLink basedOnReferenceId (referenceDto: Reference.ReferenceDto) =
+        match tryGetBasedOnReferenceId referenceDto with
+        | Some _ -> referenceDto
+        | None ->
+            { referenceDto with
+                Links =
+                    referenceDto.Links
+                    |> Seq.append [ ReferenceLinkType.BasedOn basedOnReferenceId ]
+                    |> Array.ofSeq
+            }
+
+    let internal orderedHistoryWindow targetReferenceId maxReferences (references: Reference.ReferenceDto array) =
         let ordered =
             references
             |> Array.filter (fun referenceDto -> referenceDto.DeletedAt.IsNone)
@@ -194,7 +216,13 @@ module Branch =
         | None -> ordered |> Array.truncate maxReferences
         | Some targetIndex ->
             let startIndex = max 0 (targetIndex - maxReferences + 1)
-            ordered[startIndex..targetIndex]
+            let window = ordered[startIndex..targetIndex]
+
+            if startIndex > 0 && window.Length > 0 then
+                window[0] <- window[0]
+                             |> withBasedOnLink ordered[startIndex - 1].ReferenceId
+
+            window
 
     let private includeStoredBasedOnReferences repositoryId correlationId maxReferences (references: Reference.ReferenceDto array) =
         task {
@@ -299,7 +327,7 @@ module Branch =
 
                         let! references = includeStoredBasedOnReferences targetReference.RepositoryId correlationId parameters.MaxReferences localHistoryWindow
 
-                        match! buildEffectiveHistory context repositoryDto normalizedPath references with
+                        match! buildEffectiveHistory context repositoryDto normalizedPath targetReference.ReferenceId references with
                         | Error error -> return Error error
                         | Ok history ->
                             let traversal = AnnotationLineCore.traverseEffectiveBranchHistory targetReference.ReferenceId parameters.MaxReferences history

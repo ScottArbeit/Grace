@@ -14,7 +14,13 @@ module AnnotationLineCore =
 
     type AnnotationHistoryDocument = { SourceReference: AnnotationSourceReference; Path: RelativePath; Content: byte array }
 
-    type EffectiveHistoryDocument = { Document: AnnotationHistoryDocument; BasedOnReferenceId: ReferenceId option; IsAuthorized: bool }
+    type EffectiveHistoryDocument =
+        {
+            Document: AnnotationHistoryDocument
+            BasedOnReferenceId: ReferenceId option
+            IsAuthorized: bool
+            BoundaryKind: string option
+        }
 
     type EffectiveHistoryTraversalResult = { History: AnnotationHistoryDocument array; BoundaryKind: string option }
 
@@ -108,6 +114,7 @@ module AnnotationLineCore =
 
                 match byReferenceId.TryFind referenceId with
                 | None -> boundary <- Some "MissingParentReference"
+                | Some entry when entry.BoundaryKind.IsSome -> boundary <- entry.BoundaryKind
                 | Some entry when not entry.IsAuthorized -> boundary <- Some "UnauthorizedAncestor"
                 | Some entry ->
                     chronological.Add entry.Document
