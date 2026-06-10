@@ -24,10 +24,10 @@ module Services =
 
             match result with
             | Ok result ->
-                result.Properties[ key ] <- safeValue
+                result.Properties[key] <- safeValue
                 Ok result
             | Error error ->
-                error.Properties[ key ] <- safeValue
+                error.Properties[key] <- safeValue
                 Error error
         else
             result
@@ -45,9 +45,7 @@ module Services =
                 true // Indicates that the object is okay to be returned to the pool
 
     /// An ObjectPool for IncrementalHash instances.
-    let incrementalHashPool =
-        DefaultObjectPoolProvider()
-            .Create(IncrementalHashPolicy())
+    let incrementalHashPool = DefaultObjectPoolProvider().Create(IncrementalHashPolicy())
 
     /// Computes the BLAKE3 value for a given file, presented as a stream.
     ///
@@ -59,7 +57,7 @@ module Services =
             // I did some informal perf testing on large files. This size was best, larger didn't help, and 64K keeps it on the small object heap.
             let bufferLength = 64 * 1024
 
-            let buffer = ArrayPool<byte>.Shared.Rent (bufferLength)
+            let buffer = ArrayPool<byte>.Shared.Rent(bufferLength)
             let mutable hasher = Hasher.New()
 
             try
@@ -79,7 +77,7 @@ module Services =
                 return FileContentHash(byteArrayToString blake3Bytes)
             finally
                 if not <| isNull buffer then
-                    ArrayPool<byte>.Shared.Return (buffer, clearArray = true)
+                    ArrayPool<byte>.Shared.Return(buffer, clearArray = true)
 
                 hasher.Dispose()
         }
@@ -103,7 +101,7 @@ module Services =
                     int (stream.Length)
 
             // Get a buffer to hold the part of the file we're going to check.
-            let startingBytes = ArrayPool<byte>.Shared.Rent (bytesToCheck)
+            let startingBytes = ArrayPool<byte>.Shared.Rent(bytesToCheck)
             //logToConsole $"In isBinaryFile: stream.Length: {stream.Length}. Rented byte array of length {bytesToCheck}."
 
             try
@@ -115,18 +113,13 @@ module Services =
                     //logToConsole $"In isBinaryFile: stream.Length: {stream.Length}. Finished reading stream."
 
                     // Search for a 0x00 character.
-                    return
-                        startingBytes
-                            .Take(bytesRead)
-                            .Any(fun b -> char (b) = nulChar)
-                with
-                | ex ->
+                    return startingBytes.Take(bytesRead).Any(fun b -> char (b) = nulChar)
+                with ex ->
                     //logToConsole $"In isBinaryFile: stream.Length: {stream.Length}. Caught exception: {ExceptionResponse.Create ex}."
                     return false
             finally
                 // Return the rented buffer to the pool, even if an exception is thrown.
-                if not <| isNull startingBytes then
-                    ArrayPool<byte>.Shared.Return (startingBytes)
+                if not <| isNull startingBytes then ArrayPool<byte>.Shared.Return(startingBytes)
         }
 
     /// Computes the SHA-256 value for a given file, presented as a stream.
@@ -138,7 +131,7 @@ module Services =
             let bufferLength = 64 * 1024
 
             // Using object pooling for both of these.
-            let buffer = ArrayPool<byte>.Shared.Rent (bufferLength)
+            let buffer = ArrayPool<byte>.Shared.Rent(bufferLength)
             let hasher = incrementalHashPool.Get()
 
             try
@@ -165,55 +158,121 @@ module Services =
                 return Sha256Hash sha256Hash
             finally
                 if not <| isNull buffer then
-                    ArrayPool<byte>.Shared.Return (buffer, clearArray = true)
+                    ArrayPool<byte>.Shared.Return(buffer, clearArray = true)
 
                 if not <| isNull hasher then incrementalHashPool.Return(hasher)
         }
 
+    /// The hash algorithm to use for a DirectoryVersion preimage.
+    type DirectoryVersionHashAlgorithm =
+        | Blake3
+        | Sha256
+
+    /// Identifies the kind of child entry included in a DirectoryVersion preimage.
+    type DirectoryVersionPreimageEntryKind =
+        | Directory
+        | File
+
+    /// A child entry included in a DirectoryVersion preimage.
+    type DirectoryVersionPreimageEntry =
+        { Kind: DirectoryVersionPreimageEntryKind
+          RelativePath: RelativePath
+          Size: int64
+          Blake3Hash: Blake3Hash
+          Sha256Hash: Sha256Hash }
+
+        static member Create kind relativePath size blake3Hash sha256Hash =
+            { Kind = kind; RelativePath = RelativePath(normalizeFilePath $"{relativePath}"); Size = size; Blake3Hash = blake3Hash; Sha256Hash = sha256Hash }
+
+        static member Directory relativePath size blake3Hash sha256Hash =
+            DirectoryVersionPreimageEntry.Create DirectoryVersionPreimageEntryKind.Directory relativePath size blake3Hash sha256Hash
+
+        static member File relativePath size blake3Hash sha256Hash =
+            DirectoryVersionPreimageEntry.Create DirectoryVersionPreimageEntryKind.File relativePath size blake3Hash sha256Hash
+
+    let private directoryVersionAlgorithmName algorithm =
+        match algorithm with
+        | DirectoryVersionHashAlgorithm.Blake3 -> "blake3"
+        | DirectoryVersionHashAlgorithm.Sha256 -> "sha256"
+
+    let private directoryVersionEntryKindName kind =
+        match kind with
+        | DirectoryVersionPreimageEntryKind.Directory -> "directory"
+        | DirectoryVersionPreimageEntryKind.File -> "file"
+
+    let private directoryVersionEntryHash algorithm (entry: DirectoryVersionPreimageEntry) =
+        match algorithm with
+        | DirectoryVersionHashAlgorithm.Blake3 -> entry.Blake3Hash
+        | DirectoryVersionHashAlgorithm.Sha256 -> entry.Sha256Hash
+
+    let private encodeDirectoryVersionPath (path: RelativePath) = normalizeFilePath $"{path}" |> Encoding.UTF8.GetBytes |> Convert.ToBase64String
+
+    /// Builds the versioned DirectoryVersion preimage used by both BLAKE3 and SHA-256 directory hashes.
+    let directoryVersionPreimage algorithm (relativeDirectoryPath: RelativePath) (entries: seq<DirectoryVersionPreimageEntry>) =
+        if isNull entries then nullArg (nameof entries)
+
+        let sortedEntries =
+            entries
+            |> Seq.sortWith (fun left right ->
+                let pathComparison = StringComparer.Ordinal.Compare(normalizeFilePath $"{left.RelativePath}", normalizeFilePath $"{right.RelativePath}")
+
+                if pathComparison <> 0 then
+                    pathComparison
+                else
+                    StringComparer.Ordinal.Compare(directoryVersionEntryKindName left.Kind, directoryVersionEntryKindName right.Kind))
+            |> Seq.toArray
+
+        let lines = List<string>()
+        lines.Add("grace.directory-version.v1")
+        lines.Add($"algorithm:{directoryVersionAlgorithmName algorithm}")
+        lines.Add($"path:{encodeDirectoryVersionPath relativeDirectoryPath}")
+        lines.Add($"child-count:{sortedEntries.Length}")
+
+        sortedEntries
+        |> Array.iteri (fun index entry ->
+            lines.Add(
+                $"child:{index}:{directoryVersionEntryKindName entry.Kind}:{encodeDirectoryVersionPath entry.RelativePath}:{entry.Size}:{directoryVersionEntryHash algorithm entry}"
+            ))
+
+        String.Join("\n", lines) + "\n"
+
+    /// Computes the BLAKE3 hash for a DirectoryVersion preimage.
+    let computeBlake3ForDirectory (relativeDirectoryPath: RelativePath) (entries: seq<DirectoryVersionPreimageEntry>) =
+        let preimage = directoryVersionPreimage DirectoryVersionHashAlgorithm.Blake3 relativeDirectoryPath entries
+        let preimageBytes = Encoding.UTF8.GetBytes preimage
+        use hasher = Hasher.New()
+        hasher.Update(preimageBytes.AsSpan())
+        let blake3Bytes = stackalloc<byte> Hash.Size
+        hasher.Finalize(blake3Bytes)
+        Blake3Hash(byteArrayToString blake3Bytes)
+
+    /// Computes the SHA-256 hash for a DirectoryVersion preimage.
+    let computeSha256ForDirectoryEntries (relativeDirectoryPath: RelativePath) (entries: seq<DirectoryVersionPreimageEntry>) =
+        let preimage = directoryVersionPreimage DirectoryVersionHashAlgorithm.Sha256 relativeDirectoryPath entries
+        let preimageBytes = Encoding.UTF8.GetBytes preimage
+        let sha256Bytes = SHA256.HashData preimageBytes
+        Sha256Hash(byteArrayToString sha256Bytes)
+
     /// Computes the SHA-256 value for a given relative directory.
     ///
-    /// Sha256Hash values for directories are computed by concatenating the relative path of the directory, and the Sha256Hash values of all subdirectories and files.
+    /// Sha256Hash values for directories are computed from a versioned DirectoryVersion preimage.
     let computeSha256ForDirectory (relativeDirectoryPath: RelativePath) (directories: List<LocalDirectoryVersion>) (files: List<LocalFileVersion>) =
-        let hasher = incrementalHashPool.Get()
+        let directoryEntries =
+            directories
+            |> Seq.map (fun directory ->
+                DirectoryVersionPreimageEntry.Directory directory.RelativePath directory.Size (Blake3Hash String.Empty) directory.Sha256Hash)
 
-        try
-            hasher.AppendData(Encoding.UTF8.GetBytes(relativeDirectoryPath))
+        let fileEntries =
+            files
+            |> Seq.map (fun file -> DirectoryVersionPreimageEntry.File file.RelativePath file.Size (Blake3Hash String.Empty) file.Sha256Hash)
 
-            // We're sorting just to get consistent ordering; inconsistent ordering would produce difference SHA-256 hashes.
-            let sortedDirectories =
-                directories
-                |> Seq.sortBy (fun subdirectory -> subdirectory.RelativePath)
-
-            for subdirectory in sortedDirectories do
-                hasher.AppendData(Encoding.UTF8.GetBytes(subdirectory.Sha256Hash))
-
-            // Again, sorting to ensure consistent ordering.
-            let sortedFiles =
-                files
-                |> Seq.sortBy (fun file -> file.RelativePath)
-
-            for file in sortedFiles do
-                hasher.AppendData(Encoding.UTF8.GetBytes(file.Sha256Hash))
-
-            // Get the SHA-256 hash as a byte array.
-            let sha256Bytes = stackalloc<byte> SHA256.HashSizeInBytes
-            hasher.GetHashAndReset(sha256Bytes) |> ignore
-
-            // Convert the SHA-256 value from a byte[] to a string, and return it.
-            //   Example: byte[]{0x43, 0x2a, 0x01, 0xfa} -> "432a01fa"
-            Sha256Hash(byteArrayToString sha256Bytes)
-        finally
-            if not <| isNull hasher then incrementalHashPool.Return(hasher)
+        computeSha256ForDirectoryEntries relativeDirectoryPath (Seq.append directoryEntries fileEntries)
 
     /// Gets the total size of the files contained within this specific directory. This does not include the size of any subdirectories.
-    let getDirectorySize (files: IList<FileVersion>) =
-        files
-        |> Seq.fold (fun (size: int64) file -> size + file.Size) 0L
+    let getDirectorySize (files: IList<FileVersion>) = files |> Seq.fold (fun (size: int64) file -> size + file.Size) 0L
 
     /// Gets the total size of the files contained within this specific directory. This does not include the size of any subdirectories.
-    let getLocalDirectorySize (files: IList<LocalFileVersion>) =
-        files
-        |> Seq.fold (fun (size: int64) file -> size + file.Size) 0L
+    let getLocalDirectorySize (files: IList<LocalFileVersion>) = files |> Seq.fold (fun (size: int64) file -> size + file.Size) 0L
 
     /// Gets the number of path segments for the longest relative path in GraceIndex.
     ///
