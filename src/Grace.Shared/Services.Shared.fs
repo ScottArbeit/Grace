@@ -1,5 +1,6 @@
 namespace Grace.Shared
 
+open Blake3
 open Grace.Types.Common
 open Grace.Shared.Utilities
 open Microsoft.Extensions.Logging
@@ -47,6 +48,41 @@ module Services =
     let incrementalHashPool =
         DefaultObjectPoolProvider()
             .Create(IncrementalHashPolicy())
+
+    /// Computes the BLAKE3 value for a given file, presented as a stream.
+    ///
+    /// FileContentHash values for files are computed by hashing only the file's contents.
+    let computeBlake3ForFile (stream: Stream) =
+        task {
+            if isNull stream then nullArg (nameof stream)
+
+            // I did some informal perf testing on large files. This size was best, larger didn't help, and 64K keeps it on the small object heap.
+            let bufferLength = 64 * 1024
+
+            let buffer = ArrayPool<byte>.Shared.Rent (bufferLength)
+            let mutable hasher = Hasher.New()
+
+            try
+                let mutable moreToRead = true
+
+                while moreToRead do
+                    let! bytesRead = stream.ReadAsync(buffer, 0, bufferLength)
+
+                    if bytesRead > 0 then
+                        hasher.Update(buffer.AsSpan(0, bytesRead))
+                    else
+                        moreToRead <- false
+
+                let blake3Bytes = stackalloc<byte> Hash.Size
+                hasher.Finalize(blake3Bytes)
+
+                return FileContentHash(byteArrayToString blake3Bytes)
+            finally
+                if not <| isNull buffer then
+                    ArrayPool<byte>.Shared.Return (buffer, clearArray = true)
+
+                hasher.Dispose()
+        }
 
     /// The 0x00 character.
     let nulChar = char (0)
