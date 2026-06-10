@@ -97,6 +97,14 @@ module Branch =
             | ReferenceLinkType.BasedOn referenceId when referenceId <> ReferenceId.Empty -> Some referenceId
             | _ -> None)
 
+    let private tryGetStoredBasedOnReferenceId (syntheticBasedOnByReferenceId: Dictionary<ReferenceId, ReferenceId>) (referenceDto: Reference.ReferenceDto) =
+        match tryGetBasedOnReferenceId referenceDto with
+        | Some basedOnReferenceId ->
+            match syntheticBasedOnByReferenceId.TryGetValue referenceDto.ReferenceId with
+            | true, syntheticBasedOnReferenceId when syntheticBasedOnReferenceId = basedOnReferenceId -> None
+            | _ -> Some basedOnReferenceId
+        | None -> None
+
     let private materializeAnnotationDocument
         (context: HttpContext)
         (repositoryDto: Repository.RepositoryDto)
@@ -204,27 +212,44 @@ module Branch =
                     |> Array.ofSeq
             }
 
-    let internal orderedHistoryWindow targetReferenceId maxReferences (references: Reference.ReferenceDto array) =
+    type internal HistoryWindow = { References: Reference.ReferenceDto array; SyntheticBasedOnByReferenceId: Dictionary<ReferenceId, ReferenceId> }
+
+    let internal orderedHistoryWindowWithSyntheticBoundaries targetReferenceId maxReferences (references: Reference.ReferenceDto array) =
         let ordered =
             references
             |> Array.filter (fun referenceDto -> referenceDto.DeletedAt.IsNone)
             |> Array.sortBy (fun referenceDto -> referenceDto.CreatedAt)
 
+        let syntheticBasedOnByReferenceId = Dictionary<ReferenceId, ReferenceId>()
+
         match ordered
               |> Array.tryFindIndex (fun referenceDto -> referenceDto.ReferenceId = targetReferenceId)
             with
-        | None -> ordered |> Array.truncate maxReferences
+        | None -> { References = ordered |> Array.truncate maxReferences; SyntheticBasedOnByReferenceId = syntheticBasedOnByReferenceId }
         | Some targetIndex ->
             let startIndex = max 0 (targetIndex - maxReferences + 1)
             let window = ordered[startIndex..targetIndex]
 
             if startIndex > 0 && window.Length > 0 then
-                window[0] <- window[0]
-                             |> withBasedOnLink ordered[startIndex - 1].ReferenceId
+                let basedOnReferenceId = ordered[startIndex - 1].ReferenceId
 
-            window
+                window[0] <- window[0] |> withBasedOnLink basedOnReferenceId
 
-    let private includeStoredBasedOnReferences repositoryId correlationId maxReferences (references: Reference.ReferenceDto array) =
+                syntheticBasedOnByReferenceId[window[0].ReferenceId] <- basedOnReferenceId
+
+            { References = window; SyntheticBasedOnByReferenceId = syntheticBasedOnByReferenceId }
+
+    let internal orderedHistoryWindow targetReferenceId maxReferences (references: Reference.ReferenceDto array) =
+        (orderedHistoryWindowWithSyntheticBoundaries targetReferenceId maxReferences references)
+            .References
+
+    let private includeStoredBasedOnReferences
+        repositoryId
+        correlationId
+        maxReferences
+        (syntheticBasedOnByReferenceId: Dictionary<ReferenceId, ReferenceId>)
+        (references: Reference.ReferenceDto array)
+        =
         task {
             let effectiveReferences = ResizeArray<Reference.ReferenceDto>(references)
 
@@ -240,7 +265,7 @@ module Branch =
             while index < effectiveReferences.Count do
                 let referenceDto = effectiveReferences[index]
 
-                match tryGetBasedOnReferenceId referenceDto with
+                match tryGetStoredBasedOnReferenceId syntheticBasedOnByReferenceId referenceDto with
                 | Some basedOnReferenceId when
                     not (knownReferenceIds.Contains basedOnReferenceId)
                     && requestedBasedOnReferenceIds.Add basedOnReferenceId
@@ -259,12 +284,15 @@ module Branch =
                                 branchReferences
                             else
                                 Array.append branchReferences [| basedOnReference |]
-                            |> orderedHistoryWindow basedOnReference.ReferenceId maxReferences
+                            |> orderedHistoryWindowWithSyntheticBoundaries basedOnReference.ReferenceId maxReferences
+
+                        for syntheticBasedOn in basedOnHistoryWindow.SyntheticBasedOnByReferenceId do
+                            syntheticBasedOnByReferenceId[syntheticBasedOn.Key] <- syntheticBasedOn.Value
 
                         let mutable basedOnHistoryIndex = 0
 
-                        while basedOnHistoryIndex < basedOnHistoryWindow.Length do
-                            let basedOnHistoryReference = basedOnHistoryWindow[basedOnHistoryIndex]
+                        while basedOnHistoryIndex < basedOnHistoryWindow.References.Length do
+                            let basedOnHistoryReference = basedOnHistoryWindow.References[basedOnHistoryIndex]
 
                             if not (knownReferenceIds.Contains basedOnHistoryReference.ReferenceId) then
                                 knownReferenceIds.Add basedOnHistoryReference.ReferenceId
@@ -323,9 +351,15 @@ module Branch =
                                 branchReferences
                             else
                                 Array.append branchReferences [| targetReference |]
-                            |> orderedHistoryWindow targetReference.ReferenceId parameters.MaxReferences
+                            |> orderedHistoryWindowWithSyntheticBoundaries targetReference.ReferenceId parameters.MaxReferences
 
-                        let! references = includeStoredBasedOnReferences targetReference.RepositoryId correlationId parameters.MaxReferences localHistoryWindow
+                        let! references =
+                            includeStoredBasedOnReferences
+                                targetReference.RepositoryId
+                                correlationId
+                                parameters.MaxReferences
+                                localHistoryWindow.SyntheticBasedOnByReferenceId
+                                localHistoryWindow.References
 
                         match! buildEffectiveHistory context repositoryDto normalizedPath targetReference.ReferenceId references with
                         | Error error -> return Error error

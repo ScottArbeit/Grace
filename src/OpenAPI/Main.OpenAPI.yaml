@@ -347,10 +347,6 @@ components:
       $ref: 'Branch.Components.OpenAPI.yaml#/DeleteBranchParameters'
     GetReferenceParameters:
       $ref: 'Branch.Components.OpenAPI.yaml#/GetReferenceParameters'
-    GetReferencesParameters:
-      $ref: 'Branch.Components.OpenAPI.yaml#/GetReferencesParameters'
-    AnnotateParameters:
-      $ref: 'Branch.Components.OpenAPI.yaml#/AnnotateParameters'
     GetDiffsForReferenceTypeParameters:
       $ref: 'Branch.Components.OpenAPI.yaml#/GetDiffsForReferenceTypeParameters'
     GetDiffsForReferencesParameters:

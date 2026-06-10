@@ -38,8 +38,9 @@ class ReferenceDto(BaseModel):
     sha256_hash: Optional[StrictStr] = Field(default=None, alias="Sha256Hash")
     reference_type: Optional[ReferenceType] = Field(default=None, alias="ReferenceType")
     reference_text: Optional[StrictStr] = Field(default=None, alias="ReferenceText")
+    created_by: Optional[StrictStr] = Field(default=None, alias="CreatedBy")
     created_at: Optional[datetime] = Field(default=None, alias="CreatedAt")
-    __properties: ClassVar[List[str]] = ["Class", "ReferenceId", "BranchId", "DirectoryId", "Sha256Hash", "ReferenceType", "ReferenceText", "CreatedAt"]
+    __properties: ClassVar[List[str]] = ["Class", "ReferenceId", "BranchId", "DirectoryId", "Sha256Hash", "ReferenceType", "ReferenceText", "CreatedBy", "CreatedAt"]
 
     model_config = ConfigDict(
         validate_by_name=True,
@@ -99,6 +100,7 @@ class ReferenceDto(BaseModel):
             "Sha256Hash": obj.get("Sha256Hash"),
             "ReferenceType": obj.get("ReferenceType"),
             "ReferenceText": obj.get("ReferenceText"),
+            "CreatedBy": obj.get("CreatedBy"),
             "CreatedAt": obj.get("CreatedAt")
         })
         return _obj

@@ -14,6 +14,7 @@ Name | Type
 `sha256Hash` | string
 `referenceType` | [ReferenceType](ReferenceType.md)
 `referenceText` | string
+`createdBy` | string
 `createdAt` | Date
 
 ## Example
@@ -30,6 +31,7 @@ const example = {
   "sha256Hash": 805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243,
   "referenceType": null,
   "referenceText": null,
+  "createdBy": null,
   "createdAt": null,
 } satisfies ReferenceDto
 

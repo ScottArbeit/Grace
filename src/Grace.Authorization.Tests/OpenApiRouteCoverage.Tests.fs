@@ -17,6 +17,8 @@ type ClassificationGroup = { Classification: string; Reason: string; TraceIds: s
 type OpenApiRouteCoverageTests() =
 
     let openApiMainPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "OpenAPI", "Main.OpenAPI.yaml"))
+    let openApiBundlePath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "OpenAPI", "Grace.OpenAPI.yaml"))
+    let openApiProjectionPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "OpenAPI", "Grace.OpenAPI.3.1.2.yaml"))
     let routeClassificationRegistryPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "OpenAPI", "RouteClassification.json"))
     let startupPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Server", "Startup.Server.fs"))
 
@@ -53,19 +55,22 @@ type OpenApiRouteCoverageTests() =
             if matchItem.Success then Some matchItem.Groups["path"].Value else None)
         |> Set.ofArray
 
-    let assertSchemaRefIsNestedUnderComponentsSchemas schemaName =
-        let lines = File.ReadAllLines(openApiMainPath)
+    let assertBundledSchemaIsUnique artifactPath schemaName =
+        let lines = File.ReadAllLines(artifactPath)
         let schemaLine = $"    {schemaName}:"
-        let refLine = $"      $ref: 'Branch.Components.OpenAPI.yaml#/{schemaName}'"
+        let externalRefLine = $"      $ref: Branch.Components.OpenAPI.yaml#/{schemaName}"
 
-        match lines
-              |> Array.tryFindIndex (fun line -> String.Equals(line, schemaLine, StringComparison.Ordinal))
-            with
-        | None -> Assert.Fail($"Main.OpenAPI.yaml must define {schemaName} under components.schemas.")
-        | Some schemaIndex ->
-            Assert.That(schemaIndex + 1, Is.LessThan(lines.Length), $"{schemaName} must include a following $ref line.")
-            Assert.That(lines[schemaIndex + 1], Is.EqualTo(refLine))
+        let schemaIndexes =
+            lines
+            |> Array.mapi (fun index line -> index, line)
+            |> Array.choose (fun (index, line) ->
+                if String.Equals(line, schemaLine, StringComparison.Ordinal) then
+                    Some index
+                else
+                    None)
 
+        match schemaIndexes with
+        | [| schemaIndex |] ->
             let precedingIndex expectedLine =
                 lines[..schemaIndex]
                 |> Array.mapi (fun index line -> index, line)
@@ -80,6 +85,9 @@ type OpenApiRouteCoverageTests() =
             let precedingComponentsIndex = precedingIndex "components:"
 
             Assert.That(precedingSchemasIndex, Is.GreaterThan(precedingComponentsIndex), $"{schemaName} must be nested under components.schemas.")
+            Assert.That(lines, Does.Not.Contain(externalRefLine), $"{Path.GetFileName artifactPath} must not keep an external {schemaName} schema ref.")
+        | [||] -> Assert.Fail($"{Path.GetFileName artifactPath} must define {schemaName} under components.schemas.")
+        | _ -> Assert.Fail($"{Path.GetFileName artifactPath} must define {schemaName} only once under components.schemas.")
 
     let parseStartupRoutes () =
         let text = File.ReadAllText(startupPath)
@@ -204,9 +212,14 @@ type OpenApiRouteCoverageTests() =
             Assert.Fail($"OpenAPI is missing ADR-0001 storage routes:{Environment.NewLine}{missingText}")
 
     [<Test>]
-    member _.OpenApiBranchRequestSchemasRemainNestedUnderComponentsSchemas() =
-        assertSchemaRefIsNestedUnderComponentsSchemas "GetReferencesParameters"
-        assertSchemaRefIsNestedUnderComponentsSchemas "AnnotateParameters"
+    member _.BundledOpenApiBranchRequestSchemasRemainUniqueUnderComponentsSchemas() =
+        for artifactPath in
+            [
+                openApiBundlePath
+                openApiProjectionPath
+            ] do
+            assertBundledSchemaIsUnique artifactPath "GetReferencesParameters"
+            assertBundledSchemaIsUnique artifactPath "AnnotateParameters"
 
     [<Test>]
     member _.OpenApiInfoVersionMatchesCurrentApiContractVersion() = Assert.That(openApiVersion (), Is.EqualTo(ApiContractVersion.CurrentReleased))

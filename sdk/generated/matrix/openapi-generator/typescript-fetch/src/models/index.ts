@@ -1,5 +1,12 @@
 /* tslint:disable */
 /* eslint-disable */
+export * from './AnnotateParameters';
+export * from './AnnotationBoundary';
+export * from './AnnotationLine';
+export * from './AnnotationLineRange';
+export * from './AnnotationSourceReference';
+export * from './AnnotationSourceRow';
+export * from './AnnotationSpan';
 export * from './ApprovalDecision';
 export * from './ApprovalPolicy';
 export * from './ApprovalPolicyParameters';
@@ -12,6 +19,8 @@ export * from './ApprovalScope';
 export * from './ApprovalTimeoutAction';
 export * from './ApproveApprovalRequestParameters';
 export * from './BlockUploadIntent';
+export * from './BranchAnnotationApiDto';
+export * from './BranchAnnotationReturnValue';
 export * from './BranchApiDto';
 export * from './BranchCommandReturnValue';
 export * from './BranchDto';

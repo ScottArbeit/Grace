@@ -45,6 +45,7 @@ class TestRepositoryReferencesReturnValue(unittest.TestCase):
                         sha256_hash = '805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243', 
                         reference_type = 'Commit', 
                         reference_text = '', 
+                        created_by = '', 
                         created_at = datetime.datetime.strptime('2013-10-20 19:20:30.00', '%Y-%m-%d %H:%M:%S.%f'), )
                     ],
                 event_time = datetime.datetime.strptime('2013-10-20 19:20:30.00', '%Y-%m-%d %H:%M:%S.%f'),
@@ -64,6 +65,7 @@ class TestRepositoryReferencesReturnValue(unittest.TestCase):
                         sha256_hash = '805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243', 
                         reference_type = 'Commit', 
                         reference_text = '', 
+                        created_by = '', 
                         created_at = datetime.datetime.strptime('2013-10-20 19:20:30.00', '%Y-%m-%d %H:%M:%S.%f'), )
                     ],
                 event_time = datetime.datetime.strptime('2013-10-20 19:20:30.00', '%Y-%m-%d %H:%M:%S.%f'),

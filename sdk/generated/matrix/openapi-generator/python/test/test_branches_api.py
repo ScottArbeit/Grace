@@ -27,6 +27,13 @@ class TestBranchesApi(unittest.TestCase):
     def tearDown(self) -> None:
         pass
 
+    def test_annotate_branch(self) -> None:
+        """Test case for annotate_branch
+
+        Annotate a branch reference.
+        """
+        pass
+
     def test_checkpoint_branch(self) -> None:
         """Test case for checkpoint_branch
 

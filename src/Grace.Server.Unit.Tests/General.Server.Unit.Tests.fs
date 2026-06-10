@@ -109,8 +109,8 @@ type BranchAnnotationServerTests() =
         let secondReferenceId = System.Guid.Parse("22222222-2222-2222-2222-222222222222")
         let thirdReferenceId = System.Guid.Parse("33333333-3333-3333-3333-333333333333")
 
-        let window =
-            Grace.Server.Branch.orderedHistoryWindow
+        let historyWindow =
+            Grace.Server.Branch.orderedHistoryWindowWithSyntheticBoundaries
                 thirdReferenceId
                 2
                 [|
@@ -119,6 +119,8 @@ type BranchAnnotationServerTests() =
                     reference 3 thirdReferenceId
                 |]
 
+        let window = historyWindow.References
+
         Assert.Multiple(
             System.Action (fun () ->
                 Assert.That(window, Has.Length.EqualTo(2))
@@ -126,7 +128,8 @@ type BranchAnnotationServerTests() =
                 Assert.That(window[1].ReferenceId, Is.EqualTo(thirdReferenceId))
 
                 Assert.That(Grace.Server.Branch.tryGetBasedOnReferenceId window[0], Is.EqualTo(Some firstReferenceId))
-                Assert.That(Grace.Server.Branch.tryGetBasedOnReferenceId window[1], Is.EqualTo(Microsoft.FSharp.Core.Option.None)))
+                Assert.That(Grace.Server.Branch.tryGetBasedOnReferenceId window[1], Is.EqualTo(Microsoft.FSharp.Core.Option.None))
+                Assert.That(historyWindow.SyntheticBasedOnByReferenceId[secondReferenceId], Is.EqualTo(firstReferenceId)))
         )
 
     [<Test>]

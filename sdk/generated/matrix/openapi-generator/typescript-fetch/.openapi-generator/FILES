@@ -2,6 +2,13 @@
 .npmignore
 .openapi-generator-ignore
 README.md
+docs/AnnotateParameters.md
+docs/AnnotationBoundary.md
+docs/AnnotationLine.md
+docs/AnnotationLineRange.md
+docs/AnnotationSourceReference.md
+docs/AnnotationSourceRow.md
+docs/AnnotationSpan.md
 docs/ApprovalDecision.md
 docs/ApprovalPolicy.md
 docs/ApprovalPolicyParameters.md
@@ -15,6 +22,8 @@ docs/ApprovalTimeoutAction.md
 docs/ApprovalsApi.md
 docs/ApproveApprovalRequestParameters.md
 docs/BlockUploadIntent.md
+docs/BranchAnnotationApiDto.md
+docs/BranchAnnotationReturnValue.md
 docs/BranchApiDto.md
 docs/BranchCommandReturnValue.md
 docs/BranchDto.md
@@ -230,6 +239,13 @@ src/apis/RepositoriesApi.ts
 src/apis/WebhooksApi.ts
 src/apis/index.ts
 src/index.ts
+src/models/AnnotateParameters.ts
+src/models/AnnotationBoundary.ts
+src/models/AnnotationLine.ts
+src/models/AnnotationLineRange.ts
+src/models/AnnotationSourceReference.ts
+src/models/AnnotationSourceRow.ts
+src/models/AnnotationSpan.ts
 src/models/ApprovalDecision.ts
 src/models/ApprovalPolicy.ts
 src/models/ApprovalPolicyParameters.ts
@@ -242,6 +258,8 @@ src/models/ApprovalScope.ts
 src/models/ApprovalTimeoutAction.ts
 src/models/ApproveApprovalRequestParameters.ts
 src/models/BlockUploadIntent.ts
+src/models/BranchAnnotationApiDto.ts
+src/models/BranchAnnotationReturnValue.ts
 src/models/BranchApiDto.ts
 src/models/BranchCommandReturnValue.ts
 src/models/BranchDto.ts
