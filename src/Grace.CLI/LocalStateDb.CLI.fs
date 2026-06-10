@@ -5,6 +5,7 @@ open System.Collections.Concurrent
 open System.Collections.Generic
 open System.Diagnostics
 open System.IO
+open System.Text
 open System.Threading
 open System.Threading.Tasks
 open Grace.Shared.Client.Configuration
@@ -26,8 +27,8 @@ module LocalStateDb =
     let mutable private verboseEnabled = false
 
     let setVerbose enabled = verboseEnabled <- enabled
-    let private traceFilePath = Environment.GetEnvironmentVariable("GRACE_LOCALSTATE_DB_TRACE_PATH")
-    let private traceOpenConnections = not (String.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("GRACE_LOCALSTATE_DB_TRACE_OPEN")))
+    let private getTraceFilePath () = Environment.GetEnvironmentVariable("GRACE_LOCALSTATE_DB_TRACE_PATH")
+    let private shouldTraceOpenConnections () = not (String.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("GRACE_LOCALSTATE_DB_TRACE_OPEN")))
     let private initLocks = ConcurrentDictionary<string, SemaphoreSlim>(StringComparer.OrdinalIgnoreCase)
     let private initializedDbs = ConcurrentDictionary<string, bool>(StringComparer.OrdinalIgnoreCase)
 
@@ -39,6 +40,8 @@ module LocalStateDb =
     let private logVerbose message = if verboseEnabled then Log.LogVerbose message
 
     let private logTrace message =
+        let traceFilePath = getTraceFilePath ()
+
         if not (String.IsNullOrWhiteSpace(traceFilePath)) then
             try
                 File.AppendAllText(traceFilePath, $"{DateTime.UtcNow:O} {message}{Environment.NewLine}")
@@ -100,6 +103,7 @@ module LocalStateDb =
     let private openConnection (dbPath: string) =
         sqliteInitialized.Value |> ignore
         let directoryPath = Path.GetDirectoryName(dbPath)
+        let traceOpenConnections = shouldTraceOpenConnections ()
         logVerbose $"LocalStateDb.openConnection starting. dbPath={dbPath} dir={directoryPath}"
 
         if traceOpenConnections then
@@ -158,6 +162,291 @@ module LocalStateDb =
             "CREATE TABLE IF NOT EXISTS object_cache_directory_files (directory_version_id TEXT NOT NULL, relative_path TEXT NOT NULL, sha256_hash TEXT NOT NULL, is_binary INTEGER NOT NULL, size_bytes INTEGER NOT NULL, created_at_unix_ticks INTEGER NOT NULL, uploaded_to_object_storage INTEGER NOT NULL, last_write_time_utc_ticks INTEGER NOT NULL, PRIMARY KEY (directory_version_id, relative_path), FOREIGN KEY (directory_version_id) REFERENCES object_cache_directories(directory_version_id) ON DELETE CASCADE);"
             "CREATE INDEX IF NOT EXISTS ix_object_cache_files_path_hash ON object_cache_directory_files(relative_path, sha256_hash);"
         |]
+
+    let private requiredTableNames =
+        [|
+            "meta"
+            "status_meta"
+            "status_directories"
+            "status_files"
+            "object_cache_directories"
+            "object_cache_directory_children"
+            "object_cache_directory_files"
+        |]
+
+    let private requiredIndexNames =
+        [|
+            "ix_status_directories_parent"
+            "ix_status_directories_directory_version_id"
+            "ix_status_files_directory_path"
+            "ix_status_files_directory_version_id"
+            "ix_status_files_sha256"
+            "ix_object_cache_directories_relative_path"
+            "ix_object_cache_children_parent"
+            "ix_object_cache_files_path_hash"
+        |]
+
+    type ReadOnlyLocalStateInspection =
+        {
+            DbPath: string
+            ParentDirectoryExists: bool
+            DbFileExists: bool
+            DbPathIsDirectory: bool
+            OpenedReadOnly: bool
+            OpenError: string option
+            SchemaVersion: string option
+            MissingRequiredTables: string array
+            MissingRequiredIndexes: string array
+            IntegrityCheckRows: string array
+            ForeignKeyViolations: string array
+            ObjectCacheReadable: bool option
+            ObjectCacheError: string option
+        }
+
+    let private emptyReadOnlyInspection dbPath parentDirectoryExists dbFileExists dbPathIsDirectory openedReadOnly openError =
+        {
+            DbPath = dbPath
+            ParentDirectoryExists = parentDirectoryExists
+            DbFileExists = dbFileExists
+            DbPathIsDirectory = dbPathIsDirectory
+            OpenedReadOnly = openedReadOnly
+            OpenError = openError
+            SchemaVersion = None
+            MissingRequiredTables = requiredTableNames
+            MissingRequiredIndexes = requiredIndexNames
+            IntegrityCheckRows = Array.empty
+            ForeignKeyViolations = Array.empty
+            ObjectCacheReadable = None
+            ObjectCacheError = None
+        }
+
+    let private sqliteHeaderMagic = Encoding.ASCII.GetBytes("SQLite format 3" + string (char 0))
+
+    let private isWalModeHeader (dbPath: string) =
+        try
+            use stream = new FileStream(dbPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite ||| FileShare.Delete)
+
+            if stream.Length < 20L then
+                false
+            else
+                let header = Array.zeroCreate<byte> 20
+                let bytesRead = stream.Read(header, 0, header.Length)
+
+                bytesRead = header.Length
+                && header[0..15] = sqliteHeaderMagic
+                && header[18] = 2uy
+                && header[19] = 2uy
+        with
+        | _ -> false
+
+    let private walSidecarPaths (dbPath: string) = dbPath + "-wal", dbPath + "-shm"
+
+    let private missingPartialWalSidecars (dbPath: string) =
+        let walPath, shmPath = walSidecarPaths dbPath
+        let walExists = File.Exists(walPath)
+        let shmExists = File.Exists(shmPath)
+
+        if walExists = shmExists then
+            Array.empty
+        else
+            [|
+                if not walExists then Path.GetFileName(walPath)
+
+                if not shmExists then Path.GetFileName(shmPath)
+            |]
+
+    let private shouldUseImmutableReadOnlySnapshot (dbPath: string) =
+        let walPath, shmPath = walSidecarPaths dbPath
+
+        isWalModeHeader dbPath
+        && not (File.Exists(walPath))
+        && not (File.Exists(shmPath))
+
+    let private openReadOnlyConnection (dbPath: string) immutableSnapshot =
+        sqliteInitialized.Value |> ignore
+        let traceOpenConnections = shouldTraceOpenConnections ()
+
+        if traceOpenConnections then
+            logTrace $"openReadOnlyConnection starting. dbPath={dbPath} immutableSnapshot={immutableSnapshot}"
+
+        let connectionString =
+            let builder = SqliteConnectionStringBuilder()
+
+            builder.DataSource <- if immutableSnapshot then $"{Uri(dbPath).AbsoluteUri}?immutable=1" else dbPath
+
+            builder.Mode <- SqliteOpenMode.ReadOnly
+            builder.Pooling <- false
+            builder.DefaultTimeout <- BusyTimeoutMs / 1000
+            builder.ToString()
+
+        let connection = new SqliteConnection(connectionString)
+
+        try
+            connection.Open()
+            executePragma connection $"PRAGMA busy_timeout = {BusyTimeoutMs};"
+            executePragma connection "PRAGMA query_only = ON;"
+
+            if traceOpenConnections then
+                logTrace $"openReadOnlyConnection opened connection. dbPath={dbPath} immutableSnapshot={immutableSnapshot}"
+
+            connection
+        with
+        | ex ->
+            try
+                connection.Dispose()
+            with
+            | _ -> ()
+
+            raise ex
+
+    let private readTextRows (connection: SqliteConnection) (sql: string) =
+        use cmd = connection.CreateCommand()
+        cmd.CommandText <- sql
+        use reader = cmd.ExecuteReader()
+        let rows = ResizeArray<string>()
+
+        while reader.Read() do
+            rows.Add(reader.GetString(0))
+
+        rows |> Seq.toArray
+
+    let private readObjectNames (connection: SqliteConnection) objectType =
+        use cmd = connection.CreateCommand()
+        cmd.CommandText <- "SELECT name FROM sqlite_master WHERE type = $type;"
+
+        cmd.Parameters.AddWithValue("$type", objectType)
+        |> ignore
+
+        use reader = cmd.ExecuteReader()
+        let names = HashSet<string>(StringComparer.OrdinalIgnoreCase)
+
+        while reader.Read() do
+            names.Add(reader.GetString(0)) |> ignore
+
+        names
+
+    let private readSchemaVersionReadOnly (connection: SqliteConnection) =
+        use cmd = connection.CreateCommand()
+        cmd.CommandText <- "SELECT value FROM meta WHERE key = 'schema_version' LIMIT 1;"
+        let value = cmd.ExecuteScalar()
+
+        if isNull value || value = DBNull.Value then
+            None
+        else
+            Some(Convert.ToString(value))
+
+    let private readForeignKeyViolations (connection: SqliteConnection) =
+        use cmd = connection.CreateCommand()
+        cmd.CommandText <- "PRAGMA foreign_key_check;"
+        use reader = cmd.ExecuteReader()
+        let violations = ResizeArray<string>()
+
+        while reader.Read() do
+            let tableName = reader.GetString(0)
+            let rowId = reader.GetInt64(1)
+            let parent = reader.GetString(2)
+            let foreignKeyId = reader.GetInt32(3)
+            violations.Add($"{tableName}:{rowId}->{parent}#{foreignKeyId}")
+
+        violations |> Seq.toArray
+
+    let private inspectObjectCacheReadOnly (connection: SqliteConnection) =
+        try
+            for tableName in
+                [|
+                    "object_cache_directories"
+                    "object_cache_directory_children"
+                    "object_cache_directory_files"
+                |] do
+                use cmd = connection.CreateCommand()
+                cmd.CommandText <- $"SELECT COUNT(*) FROM {tableName};"
+                cmd.ExecuteScalar() |> ignore
+
+            Some true, None
+        with
+        | ex -> Some false, Some ex.Message
+
+    let inspectReadOnly (dbPath: string) =
+        let normalizedPath = Path.GetFullPath(dbPath)
+        let directoryPath = Path.GetDirectoryName(normalizedPath)
+
+        let parentDirectoryExists =
+            String.IsNullOrWhiteSpace(directoryPath)
+            || Directory.Exists(directoryPath)
+
+        let dbFileExists = File.Exists(normalizedPath)
+        let dbPathIsDirectory = Directory.Exists(normalizedPath)
+
+        if not parentDirectoryExists
+           || (not dbFileExists && not dbPathIsDirectory)
+           || dbPathIsDirectory then
+            emptyReadOnlyInspection normalizedPath parentDirectoryExists dbFileExists dbPathIsDirectory false None
+        else
+            let missingPartialWalSidecars = missingPartialWalSidecars normalizedPath
+
+            if missingPartialWalSidecars.Length > 0 then
+                let missingNames = String.concat ", " missingPartialWalSidecars
+
+                emptyReadOnlyInspection
+                    normalizedPath
+                    parentDirectoryExists
+                    dbFileExists
+                    dbPathIsDirectory
+                    false
+                    (Some
+                        $"Database has an incomplete WAL sidecar set; missing: {missingNames}. Doctor did not open the database to avoid creating sidecar files or ignoring live WAL content.")
+            else
+                try
+                    let immutableSnapshot = shouldUseImmutableReadOnlySnapshot normalizedPath
+                    use connection = openReadOnlyConnection normalizedPath immutableSnapshot
+                    let tableNames = readObjectNames connection "table"
+                    let indexNames = readObjectNames connection "index"
+
+                    let missingRequiredTables =
+                        requiredTableNames
+                        |> Array.filter (fun tableName -> not (tableNames.Contains(tableName)))
+
+                    let missingRequiredIndexes =
+                        requiredIndexNames
+                        |> Array.filter (fun indexName -> not (indexNames.Contains(indexName)))
+
+                    let schemaVersion =
+                        try
+                            readSchemaVersionReadOnly connection
+                        with
+                        | _ -> None
+
+                    let integrityRows =
+                        try
+                            readTextRows connection "PRAGMA integrity_check;"
+                        with
+                        | ex -> [| ex.Message |]
+
+                    let foreignKeyViolations =
+                        try
+                            readForeignKeyViolations connection
+                        with
+                        | ex -> [| ex.Message |]
+
+                    let objectCacheReadable, objectCacheError = inspectObjectCacheReadOnly connection
+
+                    {
+                        DbPath = normalizedPath
+                        ParentDirectoryExists = parentDirectoryExists
+                        DbFileExists = dbFileExists
+                        DbPathIsDirectory = dbPathIsDirectory
+                        OpenedReadOnly = true
+                        OpenError = None
+                        SchemaVersion = schemaVersion
+                        MissingRequiredTables = missingRequiredTables
+                        MissingRequiredIndexes = missingRequiredIndexes
+                        IntegrityCheckRows = integrityRows
+                        ForeignKeyViolations = foreignKeyViolations
+                        ObjectCacheReadable = objectCacheReadable
+                        ObjectCacheError = objectCacheError
+                    }
+                with
+                | ex -> emptyReadOnlyInspection normalizedPath parentDirectoryExists dbFileExists dbPathIsDirectory false (Some ex.Message)
 
     let private tryGetMetaValue (connection: SqliteConnection) (key: string) =
         use cmd = connection.CreateCommand()
