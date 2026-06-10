@@ -1912,6 +1912,59 @@ module DoctorCliTests =
                 snapshotFiles root |> should equal beforeRoot))
 
     [<Test>]
+    let ``doctor working-tree scan prunes trailing-slash ignored directories`` () =
+        withTempDir (fun root ->
+            withIsolatedHome root (fun _ ->
+                File.WriteAllText(Path.Combine(root, Constants.GraceIgnoreFileName), String.Join(Environment.NewLine, [| "bin/"; "obj/"; "home/cache/" |]))
+
+                seedWorkingTreeSnapshot root |> ignore
+
+                let ignoredPaths =
+                    [|
+                        Path.Combine(root, "bin", "added-from-bin.txt")
+                        Path.Combine(root, "obj", "Debug", "generated.txt")
+                        Path.Combine(root, "home", "cache", "generated.txt")
+                    |]
+
+                for ignoredPath in ignoredPaths do
+                    Directory.CreateDirectory(Path.GetDirectoryName(ignoredPath))
+                    |> ignore
+
+                    File.WriteAllText(ignoredPath, "ignored generated content")
+
+                let beforeRoot = snapshotFiles root
+
+                let exitCode, standardOut, standardError =
+                    runWithCapturedStdoutAndStderr [| "--output"
+                                                      "Json"
+                                                      "doctor"
+                                                      "--check"
+                                                      "working-tree.scan"
+                                                      "--select"
+                                                      "Checks" |]
+
+                exitCode |> should equal 0
+                standardError |> should equal String.Empty
+                use document = JsonDocument.Parse(standardOut)
+
+                document.RootElement.GetArrayLength()
+                |> should equal 1
+
+                let workingTree = findCheckById document.RootElement "working-tree.scan"
+
+                workingTree.GetProperty("Status").GetString()
+                |> should equal "Warning"
+
+                let summary = workingTree.GetProperty("Summary").GetString()
+
+                summary |> should contain "3 total"
+                summary |> should contain "1 added"
+                summary |> should contain "1 changed"
+                summary |> should contain "1 deleted"
+
+                snapshotFiles root |> should equal beforeRoot))
+
+    [<Test>]
     let ``doctor working-tree category selector runs scan`` () =
         withTempDir (fun root ->
             withIsolatedHome root (fun _ ->

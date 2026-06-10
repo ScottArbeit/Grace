@@ -777,8 +777,9 @@ module Doctor =
                                 GraceDirectory = configuration.GraceDirectory
                                 GraceStatusFile = configuration.GraceStatusFile
                                 DirectoryIgnoreEntries =
-                                    inspection.Ignore.DirectoryEntries
+                                    inspection.Ignore.Entries
                                     |> Array.map (fun entry -> $"*{entry}")
+                                    |> Array.distinct
                                 FileIgnoreEntries = inspection.Ignore.FileEntries
                             }
 

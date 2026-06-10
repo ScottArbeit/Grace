@@ -167,7 +167,13 @@ module Services =
             else
                 normalizeFilePath (directoryInfoToCheck.FullName + "/")
 
-        if FileSystemName.MatchesSimpleExpression(graceIgnoreEntry, normalizedDirectoryPath, ignoreCase) then
+        let normalizedDirectoryPathWithoutSeparator = Path.TrimEndingDirectorySeparator(normalizedDirectoryPath)
+
+        if
+            FileSystemName.MatchesSimpleExpression(graceIgnoreEntry, normalizedDirectoryPath, ignoreCase)
+            || FileSystemName.MatchesSimpleExpression(graceIgnoreEntry, normalizedDirectoryPathWithoutSeparator, ignoreCase)
+            || FileSystemName.MatchesSimpleExpression(graceIgnoreEntry, directoryInfoToCheck.Name, ignoreCase)
+        then
             //logToAnsiConsole Colors.Changed $"checkIgnoreLineAgainstDirectory: directory '{normalizedDirectoryPath}' matches ignore entry '{graceIgnoreEntry}'."
             true
         else
