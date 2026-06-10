@@ -13,6 +13,7 @@ module Text =
 
     type StringResourceName =
         | AssignIsDisabled
+        | Blake3HashIsRequired
         | Branch
         | BranchAlreadyExists
         | BranchDoesNotExist
@@ -63,6 +64,7 @@ module Text =
         | InterprocessFileDeleted
         | InvalidBranchId
         | InvalidBranchName
+        | InvalidBlake3Hash
         | InvalidCheckpointDaysValue
         | InvalidConflictResolutionPolicy
         | InvalidDiffCacheDaysValue
@@ -88,6 +90,7 @@ module Text =
         | InvalidSearchVisibility
         | InvalidServerApiVersion
         | InvalidSha256Hash
+        | InvalidSha256VersionHash
         | InvalidSize
         | InvalidVisibilityValue
         | PromotionIsDisabled
@@ -146,6 +149,7 @@ module Text =
         | Sha256HashDoesNotExist
         | Sha256HashDoesNotMatch
         | Sha256HashIsRequired
+        | Sha256VersionHashIsRequired
         | StringIsTooLong
         | TagIsDisabled
         | TestFailed
