@@ -1398,8 +1398,21 @@ module LocalStateDb =
                         match readStatusMetaInternal connection with
                         | None -> return Error "Local state status_meta row is missing or unreadable."
                         | Some meta ->
+                            let columnExists tableName columnName =
+                                use command = connection.CreateCommand()
+                                command.CommandText <- $"PRAGMA table_info({tableName});"
+                                use reader = command.ExecuteReader()
+                                let mutable found = false
+
+                                while reader.Read() do
+                                    if StringComparer.OrdinalIgnoreCase.Equals(reader.GetString(1), columnName) then
+                                        found <- true
+
+                                found
+
                             let directories = List<StatusDirectoryRow>()
                             let files = List<StatusFileRow>()
+                            let hasStatusFilesBlake3Hash = columnExists "status_files" "blake3_hash"
 
                             use directoryCommand = connection.CreateCommand()
 
@@ -1424,8 +1437,10 @@ module LocalStateDb =
 
                             use fileCommand = connection.CreateCommand()
 
+                            let fileBlake3Projection = if hasStatusFilesBlake3Hash then "blake3_hash" else "''"
+
                             fileCommand.CommandText <-
-                                "SELECT relative_path, directory_version_id, sha256_hash, is_binary, size_bytes, created_at_unix_ticks, uploaded_to_object_storage, last_write_time_utc_ticks FROM status_files;"
+                                $"SELECT relative_path, directory_version_id, sha256_hash, {fileBlake3Projection}, is_binary, size_bytes, created_at_unix_ticks, uploaded_to_object_storage, last_write_time_utc_ticks FROM status_files;"
 
                             use fileReader = fileCommand.ExecuteReader()
 
@@ -1435,12 +1450,12 @@ module LocalStateDb =
                                         RelativePath = fileReader.GetString(0)
                                         DirectoryVersionId = Guid.Parse(fileReader.GetString(1))
                                         Sha256Hash = fileReader.GetString(2)
-                                        Blake3Hash = String.Empty
-                                        IsBinary = fileReader.GetInt64(3) = 1L
-                                        SizeBytes = fileReader.GetInt64(4)
-                                        CreatedAt = Instant.FromUnixTimeTicks(fileReader.GetInt64(5))
-                                        UploadedToObjectStorage = fileReader.GetInt64(6) = 1L
-                                        LastWriteTimeUtc = DateTime(fileReader.GetInt64(7), DateTimeKind.Utc)
+                                        Blake3Hash = fileReader.GetString(3)
+                                        IsBinary = fileReader.GetInt64(4) = 1L
+                                        SizeBytes = fileReader.GetInt64(5)
+                                        CreatedAt = Instant.FromUnixTimeTicks(fileReader.GetInt64(6))
+                                        UploadedToObjectStorage = fileReader.GetInt64(7) = 1L
+                                        LastWriteTimeUtc = DateTime(fileReader.GetInt64(8), DateTimeKind.Utc)
                                     }
                                 )
 
@@ -1459,9 +1474,10 @@ module LocalStateDb =
                             files
                             |> Seq.iter (fun file ->
                                 let localFile =
-                                    LocalFileVersion.Create
+                                    LocalFileVersion.CreateWithHashes
                                         file.RelativePath
                                         file.Sha256Hash
+                                        file.Blake3Hash
                                         file.IsBinary
                                         file.SizeBytes
                                         file.CreatedAt

@@ -398,7 +398,8 @@ module LocalStateDbTests =
                     srcRead.Files
                     |> Seq.find (fun file -> file.RelativePath = "src/file.txt")
 
-                changedRead.Blake3Hash |> should equal "src-blake3-2"
+                changedRead.Blake3Hash
+                |> should equal "src-blake3-2"
 
                 readBack.Index.Values
                 |> Seq.collect (fun dv -> dv.Files)
@@ -557,7 +558,7 @@ module LocalStateDbTests =
                 inspection.OpenError |> should equal None
 
                 inspection.SchemaVersion
-                |> should equal (Some "2")
+                |> should equal (Some "3")
 
                 inspection.MissingRequiredTables
                 |> should equal Array.empty<string>
@@ -601,7 +602,7 @@ module LocalStateDbTests =
                 inspection.OpenError |> should equal None
 
                 inspection.SchemaVersion
-                |> should equal (Some "2")
+                |> should equal (Some "3")
 
                 inspection.IntegrityCheckRows
                 |> should equal [| "ok" |]
@@ -727,7 +728,7 @@ module LocalStateDbTests =
 
                 executeNonQuery
                     connection
-                    "INSERT INTO object_cache_directory_files (directory_version_id, relative_path, sha256_hash, is_binary, size_bytes, created_at_unix_ticks, uploaded_to_object_storage, last_write_time_utc_ticks) VALUES ('00000000-0000-0000-0000-000000000111', 'orphan.txt', 'hash', 0, 1, 0, 0, 0);"
+                    "INSERT INTO object_cache_directory_files (directory_version_id, relative_path, sha256_hash, blake3_hash, is_binary, size_bytes, created_at_unix_ticks, uploaded_to_object_storage, last_write_time_utc_ticks) VALUES ('00000000-0000-0000-0000-000000000111', 'orphan.txt', 'hash', '', 0, 1, 0, 0, 0);"
 
                 let inspection = LocalStateDb.inspectReadOnly configuration.GraceStatusFile
 
@@ -1240,6 +1241,51 @@ module LocalStateDbTests =
 
                 fileRead.LastWriteTimeUtc.Kind
                 |> should equal DateTimeKind.Utc
+            })
+
+    [<Test>]
+    let ``readStatusSnapshotReadOnly preserves persisted file blake3 hashes`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                let now = Instant.FromUnixTimeTicks(999L)
+                let lastWrite = DateTime(2021, 10, 11, 12, 13, 14, DateTimeKind.Utc)
+                let rootId = Guid.NewGuid()
+                let blake3Hash = "6437b3ac38465133ffb63b75273a8db548c558465d79db03fd359c6cd5bd9d85"
+                let file = createFileVersionWithHashes "root.txt" "sha256-hash" blake3Hash false 10L now lastWrite
+                let rootDir = createDirectoryVersion configuration rootId Constants.RootDirectoryPath "root-hash" [||] [| file |] file.Size lastWrite
+
+                let index = GraceIndex()
+                index.TryAdd(rootId, rootDir) |> ignore
+
+                let status =
+                    { GraceStatus.Default with
+                        Index = index
+                        RootDirectoryId = rootId
+                        RootDirectorySha256Hash = rootDir.Sha256Hash
+                        LastSuccessfulFileUpload = now
+                        LastSuccessfulDirectoryVersionUpload = now
+                    }
+
+                do! LocalStateDb.replaceStatusSnapshot configuration.GraceStatusFile status
+
+                let! readOnlyResult =
+                    LocalStateDb.readStatusSnapshotReadOnly
+                        configuration.GraceStatusFile
+                        configuration.OwnerId
+                        configuration.OrganizationId
+                        configuration.RepositoryId
+
+                match readOnlyResult with
+                | Ok readBack ->
+                    let rootRead = readBack.Index[rootId]
+
+                    let fileRead =
+                        rootRead.Files
+                        |> Seq.find (fun f -> f.RelativePath = "root.txt")
+
+                    fileRead.Blake3Hash
+                    |> should equal (Blake3Hash blake3Hash)
+                | Error error -> Assert.Fail($"Expected read-only snapshot to load, but got: {error}")
             })
 
     [<Test>]
