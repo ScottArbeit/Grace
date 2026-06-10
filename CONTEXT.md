@@ -14,6 +14,12 @@ The path-independent BLAKE3 identity of the complete bytes named by a FileVersio
 hexadecimal string. A FileContentHash identifies the whole logical file, while ChunkAddress identifies one ContentChunk.
 _Avoid_: FileVersion hash, path hash, directory hash
 
+**Version Hash**:
+The graph identity hash for a FileVersion, DirectoryVersion, or Reference version object. Version hashes identify Grace
+version graph objects; they are separate from path-independent CAS identities such as FileContentHash, ChunkAddress,
+ContentBlockAddress, and ManifestAddress.
+_Avoid_: FileContentHash, ChunkAddress, ContentBlockAddress, ManifestAddress
+
 **FileManifest**:
 The reconstruction description for large file content that spans ContentChunks stored in ContentBlocks. A FileManifest
 references ordered ContentBlockRanges. FileManifest identity comes from reconstruction content, not from the Repository
@@ -303,6 +309,11 @@ _Avoid_: PromotionSet pending status, blocked status, compute status
 Grace uses FileVersion for path-aware repository meaning, and Content-Addressable Storage for path-independent storage
 identity. Do not describe chunks as belonging to a path; chunks belong to content-addressed storage.
 
+**Version graph hash vs. CAS address**:
+Grace uses version hashes for FileVersion, DirectoryVersion, and Reference graph identity. Grace uses FileContentHash,
+ChunkAddress, ContentBlockAddress, and ManifestAddress for content-addressed storage identity. Do not use a CAS address
+as a version hash, and do not use a version hash as a chunk, block, manifest, or file-content address.
+
 **File content vs. chunk identity**:
 Grace uses FileContentHash for the complete file bytes and ChunkAddress for one ContentChunk inside manifest-backed
 large file content. Do not use ChunkAddress to mean the whole file.
@@ -525,6 +536,11 @@ Developer: "If `src/app.fs` and `backup/app.fs` contain the same bytes, are they
 
 Domain expert: "No. They are two FileVersions because their relative paths differ, but they may refer to the same
 FileContentHash and FileContentReference."
+
+Developer: "Can I use FileContentHash as the FileVersion hash?"
+
+Domain expert: "No. FileContentHash is a path-independent content identity. A FileVersion version hash identifies the
+version graph object that says a specific relative path contains specific content."
 
 Developer: "Can the cache distribute chunks without knowing the original path?"
 
