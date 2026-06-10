@@ -113,6 +113,10 @@ module Doctor =
             |> Array.filter (String.IsNullOrWhiteSpace >> not)
             |> Array.distinctBy (fun value -> value.ToUpperInvariant())
 
+    type private SelectionError =
+        | Unknown of string array
+        | OfflineExcluded of string array
+
     let private selectedCatalogEntries full offline requestedTokens =
         let profileEntries =
             catalog
@@ -125,6 +129,7 @@ module Doctor =
         else
             let selected = ResizeArray<LocalOutputDto.DoctorCheckDto>()
             let unknown = ResizeArray<string>()
+            let excludedOffline = ResizeArray<string>()
 
             for token in requestedTokens do
                 let matches =
@@ -137,17 +142,36 @@ module Doctor =
                     unknown.Add(token)
                 else
                     for check in matches do
-                        if
-                            (full || check.DefaultEnabled)
-                            && (not offline || check.SupportsOffline)
-                            && not (selected.Exists(fun existing -> existing.Id.Equals(check.Id, StringComparison.OrdinalIgnoreCase)))
-                        then
+                        if offline && not check.SupportsOffline then
+                            excludedOffline.Add(check.Id)
+                        elif not (selected.Exists(fun existing -> existing.Id.Equals(check.Id, StringComparison.OrdinalIgnoreCase))) then
                             selected.Add(check)
 
             if unknown.Count > 0 then
-                Error(unknown |> Seq.toArray)
+                Error(Unknown(unknown |> Seq.toArray))
+            elif excludedOffline.Count > 0 then
+                let tokens =
+                    excludedOffline
+                    |> Seq.distinctBy (fun value -> value.ToUpperInvariant())
+                    |> Seq.toArray
+
+                Error(OfflineExcluded tokens)
             else
                 Ok(selected |> Seq.toArray)
+
+    let private validateChecks parseResult full offline requestedTokens =
+        match selectedCatalogEntries full offline requestedTokens with
+        | Ok checks -> Ok checks
+        | Error (OfflineExcluded tokens) ->
+            let tokens = String.Join(", ", tokens)
+            Error(GraceError.Create $"Doctor check token is not available in offline mode: {tokens}." (getCorrelationId parseResult))
+        | Error (Unknown unknown) ->
+            let tokens = String.Join(", ", unknown)
+            Error(GraceError.Create $"Unknown doctor check token: {tokens}." (getCorrelationId parseResult))
+
+    let private shouldRenderHumanReport parseResult =
+        not (parseResult |> json)
+        && (parseResult |> hasOutput)
 
     let private resultForCheck (check: LocalOutputDto.DoctorCheckDto) : LocalOutputDto.DoctorCheckResultDto =
         {
@@ -247,13 +271,6 @@ module Doctor =
 
         AnsiConsole.Write(table)
 
-    let private validateChecks parseResult full offline requestedTokens =
-        match selectedCatalogEntries full offline requestedTokens with
-        | Ok checks -> Ok checks
-        | Error unknown ->
-            let tokens = String.Join(", ", unknown)
-            Error(GraceError.Create $"Unknown doctor check token: {tokens}." (getCorrelationId parseResult))
-
     type Invoke() =
         inherit SynchronousCommandLineAction()
 
@@ -273,14 +290,13 @@ module Doctor =
             | Error error -> renderOutput parseResult (Error error)
             | Ok checks ->
                 let report = createReport full offline strict listChecks requestedTokens checks
+                let renderResult = renderOutput parseResult (Ok(GraceReturnValue.Create report (getCorrelationId parseResult)))
 
-                if parseResult |> json then
-                    renderOutput parseResult (Ok(GraceReturnValue.Create report (getCorrelationId parseResult)))
-                    |> ignore
-                else
+                if renderResult = 0
+                   && shouldRenderHumanReport parseResult then
                     renderHumanReport report
 
-                diagnosticExitCode strict report
+                if renderResult <> 0 then renderResult else diagnosticExitCode strict report
 
     let Build =
         let doctorCommand =

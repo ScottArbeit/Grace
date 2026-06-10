@@ -148,6 +148,31 @@ module DoctorCliTests =
             checks.GetArrayLength() |> should equal 2)
 
     [<Test>]
+    let ``doctor explicit check includes non-default catalog entry without full`` () =
+        withTempDir (fun _ ->
+            let exitCode, standardOut, standardError =
+                runWithCapturedStdoutAndStderr [| "--output"
+                                                  "Json"
+                                                  "doctor"
+                                                  "--check"
+                                                  "identity.auth-session" |]
+
+            exitCode |> should equal 0
+
+            use document = assertCleanJsonOutput standardOut standardError
+
+            let checks =
+                document
+                    .RootElement
+                    .GetProperty("ReturnValue")
+                    .GetProperty("Checks")
+
+            checks.GetArrayLength() |> should equal 1
+
+            checks[ 0 ].GetProperty("Id").GetString()
+            |> should equal "identity.auth-session")
+
+    [<Test>]
     let ``doctor invalid check emits GraceError in json mode`` () =
         withTempDir (fun _ ->
             let exitCode, standardOut, standardError =
@@ -199,6 +224,22 @@ module DoctorCliTests =
             Directory.Exists(Path.Combine(root, ".grace"))
             |> should equal false)
 
+    [<TestCase("Silent")>]
+    [<TestCase("Minimal")>]
+    let ``doctor suppresses successful human output for quiet output modes`` output =
+        withTempDir (fun root ->
+            let exitCode, standardOut, standardError =
+                runWithCapturedStdoutAndStderr [| "--output"
+                                                  output
+                                                  "doctor" |]
+
+            exitCode |> should equal 0
+            standardOut |> should equal String.Empty
+            standardError |> should equal String.Empty
+
+            Directory.Exists(Path.Combine(root, ".grace"))
+            |> should equal false)
+
     [<Test>]
     let ``doctor select projects return value property without config`` () =
         withTempDir (fun root ->
@@ -212,6 +253,28 @@ module DoctorCliTests =
             exitCode |> should equal 0
             standardError |> should equal String.Empty
             standardOut.Trim() |> should equal "\"Ok\""
+
+            Directory.Exists(Path.Combine(root, ".grace"))
+            |> should equal false)
+
+    [<Test>]
+    let ``doctor select missing property returns projection failure exit code`` () =
+        withTempDir (fun root ->
+            let exitCode, standardOut, standardError =
+                runWithCapturedStdoutAndStderr [| "doctor"
+                                                  "--select"
+                                                  "NoSuchProperty" |]
+
+            exitCode |> should equal -1
+            standardError |> should equal String.Empty
+
+            use document = parseJsonOutput standardOut
+
+            document
+                .RootElement
+                .GetProperty("Error")
+                .GetString()
+            |> should contain "NoSuchProperty"
 
             Directory.Exists(Path.Combine(root, ".grace"))
             |> should equal false)
