@@ -109,14 +109,12 @@ Successful JSON output uses the existing Grace result envelope. The `ReturnValue
   },
   "EventTime": "2026-06-10T00:00:00Z",
   "CorrelationId": "correlation-id",
-  "Properties": [
-    {
-      "Key": "cli.contractVersion",
-      "Value": "cli-json-v1"
-    }
-  ]
+  "Properties": []
 }
 ```
+
+Direct `grace --output Json doctor` output has an empty `Properties` array. The `cli.contractVersion` metadata appears
+in schema and example introspection documents, not in the direct doctor execution envelope.
 
 The important DTO fields are:
 
