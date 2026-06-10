@@ -923,6 +923,15 @@ module Services =
     let private storageIdOrCurrent<'Id> (rawValue: string) (currentValue: 'Id) (parse: string -> 'Id) =
         if String.IsNullOrWhiteSpace rawValue then currentValue else parse rawValue
 
+    let internal localFilePathForManifestUpload (fileVersion: FileVersion) =
+        let current = Current()
+        let objectFilePath = getNativeFilePath (Path.Combine(current.ObjectDirectory, fileVersion.RelativePath, fileVersion.GetObjectFileName))
+
+        if File.Exists(objectFilePath) then
+            objectFilePath
+        else
+            getNativeFilePath (Path.Combine(current.RootDirectory, $"{fileVersion.RelativePath}"))
+
     let private createManifestUploadRequest (parameters: GetUploadMetadataForFilesParameters) (fileVersion: FileVersion) =
         let current = Current()
 
@@ -936,7 +945,7 @@ module Services =
                 RepositoryName = parameters.RepositoryName
                 AuthorizedScope = fileVersion.RelativePath
                 FileVersion = fileVersion
-                LocalFilePath = Path.Combine(current.ObjectDirectory, fileVersion.RelativePath, fileVersion.GetObjectFileName)
+                LocalFilePath = localFilePathForManifestUpload fileVersion
                 CorrelationId = parameters.CorrelationId
                 PlannerOptions = LocalPlanner.Options.Default
             }
@@ -2154,7 +2163,19 @@ module Services =
                         // If we do already have this exact version of the file, just delete the temp file.
                         File.Delete(tempFilePath)
                         //logToConsole $"Finished copyToObjectDirectory for {filePath}; object file already exists; deleted temp file."
-                        return None
+                        let objectFilePathInfo = FileInfo(objectFilePath)
+                        let relativePath = Path.GetRelativePath(Current().RootDirectory, filePath)
+
+                        return
+                            Some(
+                                FileVersion.CreateWithHashes
+                                    (RelativePath relativePath)
+                                    (Sha256Hash $"{sha256Hash}")
+                                    (Blake3Hash $"{blake3Hash}")
+                                    ("")
+                                    isBinary
+                                    (objectFilePathInfo.Length)
+                            )
                 //return result
                 else
                     logToAnsiConsole Colors.Error $"File {filePath} does not exist."

@@ -37,6 +37,21 @@ open Grace.Shared.Parameters.Storage
 
 module Diff =
 
+    let internal applyImplicitSaveStatusIfSuccessful
+        (implicitSaveError: GraceError option)
+        (applyGraceStatusIncremental: GraceStatus -> IEnumerable<LocalDirectoryVersion> -> IEnumerable<FileSystemDifference> -> Task<unit>)
+        (updatedGraceStatus: GraceStatus)
+        (newDirectoryVersions: IEnumerable<LocalDirectoryVersion>)
+        (differences: IEnumerable<FileSystemDifference>)
+        =
+        task {
+            match implicitSaveError with
+            | Some _ -> return false
+            | None ->
+                do! applyGraceStatusIncremental updatedGraceStatus newDirectoryVersions differences
+                return true
+        }
+
     module private Options =
         let ownerId =
             new Option<OwnerId>(
@@ -312,6 +327,9 @@ module Diff =
                                         previousDirectoryIds <- graceWatchStatus.DirectoryIds
                                     | None ->
                                         let! previousGraceStatus = readGraceStatusFile ()
+                                        rootDirectoryId <- previousGraceStatus.RootDirectoryId
+                                        rootDirectorySha256Hash <- previousGraceStatus.RootDirectorySha256Hash
+                                        previousDirectoryIds <- previousGraceStatus.Index.Keys.ToHashSet()
                                         t0.Value <- 100.0
                                         t1.StartTask()
                                         let! differences = scanForDifferences previousGraceStatus
@@ -322,10 +340,6 @@ module Diff =
 
                                         let! (updatedGraceStatus, newDirectoryVersions) = getNewGraceStatusAndDirectoryVersions previousGraceStatus differences
 
-                                        do! applyGraceStatusIncremental updatedGraceStatus newDirectoryVersions differences
-                                        rootDirectoryId <- updatedGraceStatus.RootDirectoryId
-                                        rootDirectorySha256Hash <- updatedGraceStatus.RootDirectorySha256Hash
-                                        previousDirectoryIds <- updatedGraceStatus.Index.Keys.ToHashSet()
                                         t2.Value <- 100.0
 
                                         t3.StartTask()
@@ -349,7 +363,9 @@ module Diff =
 
                                         match! uploadFilesToObjectStorage getUploadMetadataForFilesParameters with
                                         | Ok returnValue -> uploadedFileVersions <- returnValue.ReturnValue
-                                        | Error error -> logToAnsiConsole Colors.Error $"Failed to upload changed files to object storage. {error}"
+                                        | Error error ->
+                                            implicitSaveError <- Some error
+                                            logToAnsiConsole Colors.Error $"Failed to upload changed files to object storage. {error}"
 
                                         t3.Value <- 100.0
 
@@ -405,11 +421,26 @@ module Diff =
                                                         (getCorrelationId parseResult)
                                                     with
                                                 | Ok saveReference -> ()
-                                                | Error error -> logToAnsiConsole Colors.Error $"Failed to create a save reference. {error}"
+                                                | Error error ->
+                                                    implicitSaveError <- Some error
+                                                    logToAnsiConsole Colors.Error $"Failed to create a save reference. {error}"
                                             })
                                                 .Wait()
 
                                         t5.Value <- 100.0
+
+                                        let! appliedGraceStatus =
+                                            applyImplicitSaveStatusIfSuccessful
+                                                implicitSaveError
+                                                applyGraceStatusIncremental
+                                                updatedGraceStatus
+                                                newDirectoryVersions
+                                                differences
+
+                                        if appliedGraceStatus then
+                                            rootDirectoryId <- updatedGraceStatus.RootDirectoryId
+                                            rootDirectorySha256Hash <- updatedGraceStatus.RootDirectorySha256Hash
+                                            previousDirectoryIds <- updatedGraceStatus.Index.Keys.ToHashSet()
 
                                     // Check for latest reference of the given type from the server.
                                     t6.StartTask()
@@ -635,6 +666,9 @@ module Diff =
                                         | None ->
                                             let! previousGraceStatus = readGraceStatusFile ()
                                             let mutable graceStatus = previousGraceStatus
+                                            rootDirectoryId <- previousGraceStatus.RootDirectoryId
+                                            rootDirectorySha256Hash <- previousGraceStatus.RootDirectorySha256Hash
+                                            previousDirectoryIds <- previousGraceStatus.Index.Keys.ToHashSet()
                                             t0.Value <- 100.0
                                             t1.StartTask()
                                             let! differences = scanForDifferences previousGraceStatus
@@ -646,10 +680,6 @@ module Diff =
                                             let! (updatedGraceStatus, newDirectoryVersions) =
                                                 getNewGraceStatusAndDirectoryVersions previousGraceStatus differences
 
-                                            do! applyGraceStatusIncremental updatedGraceStatus newDirectoryVersions differences
-                                            rootDirectoryId <- updatedGraceStatus.RootDirectoryId
-                                            rootDirectorySha256Hash <- updatedGraceStatus.RootDirectorySha256Hash
-                                            previousDirectoryIds <- updatedGraceStatus.Index.Keys.ToHashSet()
                                             t2.Value <- 100.0
 
                                             t3.StartTask()
@@ -673,7 +703,9 @@ module Diff =
 
                                             match! uploadFilesToObjectStorage getUploadMetadataForFilesParameters with
                                             | Ok returnValue -> uploadedFileVersions <- returnValue.ReturnValue
-                                            | Error error -> logToAnsiConsole Colors.Error $"Failed to upload changed files to object storage. {error}"
+                                            | Error error ->
+                                                implicitSaveError <- Some error
+                                                logToAnsiConsole Colors.Error $"Failed to upload changed files to object storage. {error}"
 
                                             t3.Value <- 100.0
 
@@ -728,11 +760,26 @@ module Diff =
                                                             (getCorrelationId parseResult)
                                                         with
                                                     | Ok saveReference -> ()
-                                                    | Error error -> logToAnsiConsole Colors.Error $"Failed to create a save reference. {error}"
+                                                    | Error error ->
+                                                        implicitSaveError <- Some error
+                                                        logToAnsiConsole Colors.Error $"Failed to create a save reference. {error}"
                                                 })
                                                     .Wait()
 
                                             t5.Value <- 100.0
+
+                                            let! appliedGraceStatus =
+                                                applyImplicitSaveStatusIfSuccessful
+                                                    implicitSaveError
+                                                    applyGraceStatusIncremental
+                                                    updatedGraceStatus
+                                                    newDirectoryVersions
+                                                    differences
+
+                                            if appliedGraceStatus then
+                                                rootDirectoryId <- updatedGraceStatus.RootDirectoryId
+                                                rootDirectorySha256Hash <- updatedGraceStatus.RootDirectorySha256Hash
+                                                previousDirectoryIds <- updatedGraceStatus.Index.Keys.ToHashSet()
 
                                         // Check for latest reference of the given type from the server.
                                         t6.StartTask()

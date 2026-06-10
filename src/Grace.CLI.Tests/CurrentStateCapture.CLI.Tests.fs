@@ -422,6 +422,115 @@ module CurrentStateCaptureCliTests =
         | Error error -> Assert.Fail($"Expected auto-save success, got: {error.Error}")
 
     [<Test>]
+    let ``manifest upload source falls back to working tree file when object cache copy is absent`` () =
+        task {
+            do!
+                withTempConfiguration (fun root ->
+                    task {
+                        let relativePath = "src/legacy-large.bin"
+                        let fullPath = Path.Combine(root, relativePath)
+
+                        Directory.CreateDirectory(Path.GetDirectoryName(fullPath))
+                        |> ignore
+
+                        File.WriteAllBytes(fullPath, Encoding.UTF8.GetBytes("legacy implicit save upload source"))
+
+                        let! localFileVersion = createLocalFileVersion (FileInfo fullPath)
+
+                        match localFileVersion with
+                        | Some localFileVersion ->
+                            let uploadSourcePath = localFilePathForManifestUpload localFileVersion.ToFileVersion
+
+                            uploadSourcePath
+                            |> should equal (getNativeFilePath fullPath)
+                        | None -> Assert.Fail("Expected local file version creation to succeed.")
+                    })
+        }
+
+    [<Test>]
+    let ``manifest upload source prefers stable object cache copy when present`` () =
+        task {
+            do!
+                withTempConfiguration (fun root ->
+                    task {
+                        let relativePath = "src/cached-large.bin"
+                        let fullPath = Path.Combine(root, relativePath)
+
+                        Directory.CreateDirectory(Path.GetDirectoryName(fullPath))
+                        |> ignore
+
+                        File.WriteAllBytes(fullPath, Encoding.UTF8.GetBytes("cached implicit save upload source"))
+
+                        let! localFileVersion = createLocalFileVersion (FileInfo fullPath)
+
+                        match localFileVersion with
+                        | Some localFileVersion ->
+                            let! copiedFileVersion = copyToObjectDirectory fullPath
+
+                            copiedFileVersion.IsSome |> should equal true
+
+                            let uploadSourcePath = localFilePathForManifestUpload localFileVersion.ToFileVersion
+
+                            uploadSourcePath
+                            |> should equal localFileVersion.FullObjectPath
+                        | None -> Assert.Fail("Expected local file version creation to succeed.")
+                    })
+        }
+
+    [<Test>]
+    let ``copy to object directory returns file version for cache hit`` () =
+        task {
+            do!
+                withTempConfiguration (fun root ->
+                    task {
+                        let relativePath = "src/reverted-large.bin"
+                        let fullPath = Path.Combine(root, relativePath)
+
+                        Directory.CreateDirectory(Path.GetDirectoryName(fullPath))
+                        |> ignore
+
+                        File.WriteAllBytes(fullPath, Encoding.UTF8.GetBytes("cached large file revert content"))
+
+                        let! firstCopy = copyToObjectDirectory fullPath
+                        let! secondCopy = copyToObjectDirectory fullPath
+
+                        match firstCopy, secondCopy with
+                        | Some firstFileVersion, Some secondFileVersion ->
+                            secondFileVersion.RelativePath
+                            |> should equal firstFileVersion.RelativePath
+
+                            secondFileVersion.Sha256Hash
+                            |> should equal firstFileVersion.Sha256Hash
+
+                            secondFileVersion.Blake3Hash
+                            |> should equal firstFileVersion.Blake3Hash
+                        | _ -> Assert.Fail("Expected both first copy and object-cache hit to return file versions.")
+                    })
+        }
+
+    [<Test>]
+    let ``diff implicit save failure does not apply rejected local status`` () =
+        let mutable appliedStatus = false
+        let updatedStatus = graceStatus (Guid.NewGuid()) (Sha256Hash "rejected-root-sha")
+        let saveError = GraceError.Create "SaveDirectoryVersions rejected the implicit save." correlationId
+
+        let applyStatus _ _ _ =
+            appliedStatus <- true
+            Task.FromResult(())
+
+        let result =
+            (Grace.CLI.Command.Diff.applyImplicitSaveStatusIfSuccessful
+                (Some saveError)
+                applyStatus
+                updatedStatus
+                Seq.empty<LocalDirectoryVersion>
+                Seq.empty<FileSystemDifference>)
+                .Result
+
+        result |> should equal false
+        appliedStatus |> should equal false
+
+    [<Test>]
     let ``createLocalFileVersion captures complete file BLAKE3`` () =
         task {
             do!
