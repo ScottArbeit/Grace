@@ -240,6 +240,63 @@ module BranchCommandTests =
             |> should contain "Invalid annotation line range"
 
     [<Test>]
+    let ``annotate handler rejects explicit zero end line`` () =
+        let parseResult =
+            parse [| "branch"
+                     "annotate"
+                     "--path"
+                     "src/App.fs"
+                     "--start-line"
+                     "5"
+                     "--end-line"
+                     "0" |]
+
+        let annotate (_: AnnotateParameters) : Task<GraceResult<BranchAnnotationDto>> =
+            Task.FromResult(Ok(GraceReturnValue.Create sampleAnnotation correlationId))
+
+        let resolveTargetReference (_: ReferenceId option) (_: CorrelationId) : Task<Result<CliCurrentStateCaptureResult, GraceError>> =
+            Task.FromResult(Ok targetReferenceResult)
+
+        let result =
+            (Branch.annotateHandlerWith annotate resolveTargetReference parseResult)
+                .Result
+
+        match result with
+        | Ok _ -> Assert.Fail("Expected explicit zero end line failure.")
+        | Error error ->
+            error.Error
+            |> should contain "Invalid annotation line range"
+
+    [<Test>]
+    let ``annotate handler defaults omitted end line to start line`` () =
+        let mutable captured = Unchecked.defaultof<AnnotateParameters>
+
+        let parseResult =
+            parse [| "branch"
+                     "annotate"
+                     "--path"
+                     "src/App.fs"
+                     "--start-line"
+                     "5" |]
+
+        let annotate (parameters: AnnotateParameters) : Task<GraceResult<BranchAnnotationDto>> =
+            captured <- parameters
+            Task.FromResult(Ok(GraceReturnValue.Create sampleAnnotation correlationId))
+
+        let resolveTargetReference (_: ReferenceId option) (_: CorrelationId) : Task<Result<CliCurrentStateCaptureResult, GraceError>> =
+            Task.FromResult(Ok targetReferenceResult)
+
+        let result =
+            (Branch.annotateHandlerWith annotate resolveTargetReference parseResult)
+                .Result
+
+        match result with
+        | Ok _ ->
+            captured.StartLine |> should equal 5
+            captured.EndLine |> should equal 5
+        | Error error -> Assert.Fail($"Expected omitted end line success, got: {error.Error}")
+
+    [<Test>]
     let ``annotate handler rejects reference type typo`` () =
         let parseResult =
             parse [| "branch"

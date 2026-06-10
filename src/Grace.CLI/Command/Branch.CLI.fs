@@ -1816,10 +1816,11 @@ module Branch =
             else
                 Ok(RelativePath normalized)
 
-    let internal parseBranchAnnotateLineRange correlationId (lineRange: string) startLine endLine =
+    let internal parseBranchAnnotateLineRange correlationId (lineRange: string) startLine endLine endLineWasSpecified =
         let parsedRange =
             if String.IsNullOrWhiteSpace(lineRange) then
-                let effectiveEndLine = if endLine = 0 then startLine else endLine
+                let effectiveEndLine = if endLine = 0 && not endLineWasSpecified then startLine else endLine
+
                 { StartLine = startLine; EndLine = effectiveEndLine }
             else
                 let parts =
@@ -1962,12 +1963,16 @@ module Branch =
                 else
                     parseResult.GetValue(Options.annotateLineRange)
 
+            let endLineResult = parseResult.GetResult(Options.annotateEndLine)
+
             let rangeResult =
                 parseBranchAnnotateLineRange
                     correlationId
                     lineRangeText
                     (parseResult.GetValue(Options.annotateStartLine))
                     (parseResult.GetValue(Options.annotateEndLine))
+                    (not (isNull endLineResult)
+                     && not endLineResult.Implicit)
 
             let referenceTypesText =
                 if isNull (parseResult.GetResult(Options.annotateReferenceTypes)) then
