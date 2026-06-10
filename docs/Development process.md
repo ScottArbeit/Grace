@@ -371,6 +371,31 @@ worktree and branch, current git status, prior objective, owned and forbidden pa
 review findings or review-ledger notes already recorded. The main orchestrator may inspect enough metadata to route the
 work safely, but it must not take over code implementation or code-fix validation itself.
 
+Every worker prompt should include a status-reporting protocol so the orchestrator does not have to infer whether the
+worker is active, blocked, validating, or ready for review. For Grace work, ask the worker to create or update a temp
+status file outside the repository, such as `$env:TEMP\grace-agent-status\<issue-or-pr>-<task>.md`, with these fields:
+
+- `phase`: current work phase, such as orienting, patching, focused validation, full validation, handoff, or blocked
+- `lastUpdate`: timestamp for the latest status write
+- `changedFiles`: intended or actual file groups touched
+- `validation`: commands run, running, passed, failed, or intentionally skipped
+- `blockers`: concrete blockers or an empty list
+- `nextStep`: the next action the worker intends to take
+
+Require the worker to update that file before code edits, before and after long validation or generation commands,
+before commit/push/handoff steps, and before its final response. Also require a short chat heartbeat roughly every
+five minutes while still working. The heartbeat should be a status update, not a request for attention, unless the worker
+is blocked. The orchestrator may read the status file and thread output to monitor progress, and should avoid
+interrupting an active worker only to ask for status.
+
+Prefer worker prompts that end at a handoff boundary. A worker subagent performs the assigned implementation or fix,
+keeps its worktree consistent, runs required validation, commits and pushes when the prompt asks for it, and returns a
+handoff with commit hash, changed files, validation evidence, blockers, and follow-ups. By default, workers should not
+update GitHub issues, pull request bodies, review comments, conversation resolution, labels, checklists, merge state, or
+cleanup records. The orchestrator owns those coordination updates. Once the handoff is sufficient, the orchestrator may
+start the next independent worker before completing wrap-up for the prior worker, as long as the dependency graph and
+write sets make that scheduling safe.
+
 After the first coding subagent that works on the issue commits and pushes the new branch to origin, the orchestrator
 must open a normal ready-for-review pull request. The pull request can remain open while the step is still in progress.
 From that point on, review findings, review fixes, validation evidence, and bot-review state belong on the pull request,
@@ -448,12 +473,12 @@ The review loop is blocking:
 6. The implementation subagent re-runs focused validation for the changed behavior or docs, plus broader validation when
    the fix touches shared or risky surfaces.
 7. The implementation subagent commits and pushes the review fix, then returns a new Ready For Review handoff.
-8. Reply to each Codex Code Review Bot top-level or inline review comment with the outcome, fix commit, and validation
-   evidence using the [Review/Fix comment template](#reviewfix-comment-template). The comment must make the high-level
-   outcome easy to scan before the detailed issue and fix text. Resolve the GitHub conversation after the feedback has
-   been satisfied.
-9. Update the pull request body's `Review Status` section with the fix commit, validation evidence, and link to the
-   bot comment or fix reply.
+8. The orchestrator replies to each Codex Code Review Bot top-level or inline review comment with the outcome, fix
+   commit, and validation evidence using the [Review/Fix comment template](#reviewfix-comment-template). The comment
+   must make the high-level outcome easy to scan before the detailed issue and fix text. The orchestrator resolves the
+   GitHub conversation after the feedback has been satisfied.
+9. The orchestrator updates the pull request body's `Review Status` section with the fix commit, validation evidence,
+   and link to the bot comment or fix reply.
 10. Wait for Codex Code Review Bot to review the new head commit. Repeat the loop until the bot reports no issues with
    a 👍🏻 reaction on the pull request body and all bot conversations are resolved.
 
@@ -463,8 +488,9 @@ handoff, or any other completion step. Record the final bot no-issues state and 
 ### Ready For Review Handoff
 
 When the implementation agent is itself a subagent, it must not attempt to satisfy the review gate by running `codex`,
-asking `@codex review`, or spawning nested review work. Instead, it must return this handoff to the parent/orchestrator
-thread:
+asking `@codex review`, spawning nested review work, or updating GitHub issues, pull requests, review comments, labels,
+checklists, or merge/cleanup state unless the orchestrator explicitly delegated that GitHub update. Instead, it must
+return this handoff to the parent/orchestrator thread:
 
 ```markdown
 ## Ready For Review
@@ -479,6 +505,10 @@ thread:
 
 - `<focused command>`: <result>
 - `<broader command, if any>`: <result or skipped reason>
+
+### Orchestrator Follow-Up
+
+- `<issue/PR/comment/checklist update needed, or none>`
 
 ### Review Request
 

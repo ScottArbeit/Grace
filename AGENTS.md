@@ -103,6 +103,18 @@ so links stay traceable without relying on epic-branch auto-close behavior.
   and required validation. The main agent coordinates issues, prompts, review ledgers, pull requests, CI/merge status,
   docs/process updates, Codex Code Review Bot monitoring, and final integration evidence. Follow the required bot-review
   loop in `docs/Development process.md`.
+- When assigning a worker subagent, include an explicit status protocol in the prompt. For Grace work, ask the worker to
+  create or update a temp status file outside the repo, for example
+  `$env:TEMP\grace-agent-status\<issue-or-pr>-<task>.md`, with `phase`, `lastUpdate`, `changedFiles`, `validation`,
+  `blockers`, and `nextStep`. Require updates before code edits, before and after long validation/generation commands,
+  before commit/push/handoff steps, and before the final response. Also ask the worker to send a short chat heartbeat
+  roughly every five minutes while still working so the orchestrator can distinguish active progress from a stalled or
+  lost worker without interrupting it.
+- Worker subagents should finish their assigned implementation or fix as soon as they have a validated result and a
+  handoff. By default, do not make workers update GitHub issues, pull request bodies, review comments, conversation
+  resolution, labels, checklists, or merge/cleanup state. The orchestrator owns those GitHub coordination updates and
+  may schedule the next independent worker from the handoff before finishing wrap-up for the previous worker when the
+  dependency graph and write sets allow it.
 - After the first coding subagent that works on an issue commits and pushes the new branch to origin, open a normal
   ready-for-review pull request. Keep it open while the step is still in progress so Codex Code Review Bot findings,
   fixes, validation evidence, and final no-issues bot state can be recorded on the pull request instead of only on the
@@ -111,9 +123,9 @@ so links stay traceable without relying on epic-branch auto-close behavior.
   the PR body means it saw the latest commit and is reviewing; 👍🏻 means it found no issues; a bot PR comment or
   inline pull-request-review comment contains findings that must be assigned to a fresh fix subagent. Do not rely on
   top-level PR comments alone; inspect review comments attached to the bot review before merging.
-- After each fix subagent completes a bot-requested fix, reply to the Codex Code Review Bot comment with the outcome,
-  fix commit, and validation evidence, resolve the GitHub conversation, update the PR body's `Review Status` section,
-  and wait for the next bot review on the new head commit.
+- After each fix subagent completes a bot-requested fix and hands off, the orchestrator replies to the Codex Code Review
+  Bot comment with the outcome, fix commit, and validation evidence, resolves the GitHub conversation, updates the PR
+  body's `Review Status` section, and waits for the next bot review on the new head commit.
 - Open normal ready-for-review pull requests. Do not open draft pull requests unless the user explicitly asks for a
   draft.
 - After an agent-owned pull request is merged, or closed because the related issue/sub-issue work is complete, cleanup
