@@ -480,7 +480,7 @@ module Repository =
                                                         Parallel.ForEach(
                                                             graceStatus.Index.Values,
                                                             Constants.ParallelOptions,
-                                                            (fun ldv ->
+                                                            (fun (ldv: LocalDirectoryVersion) ->
                                                                 for fileVersion in ldv.Files do
                                                                     fileVersions.TryAdd(fileVersion.RelativePath, fileVersion)
                                                                     |> ignore)
