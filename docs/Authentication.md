@@ -254,6 +254,12 @@ The CLI can authenticate in multiple ways. The first matching mode “wins”:
 * `grace auth logout`
   Clears the cached interactive token from the secure store.
 
+* `grace doctor --check Authentication`
+  Produces a read-only diagnostic report for local authentication environment checks. Doctor parses
+  `GRACE_TOKEN` shape without printing the token, reports unsupported `GRACE_TOKEN_FILE` configuration, and checks OIDC
+  environment completeness without acquiring, refreshing, storing, or validating credentials with a provider. Use
+  specific `auth.*` check IDs when you want to run only one authentication diagnostic.
+
 ---
 
 ## Personal Access Tokens (PATs)
