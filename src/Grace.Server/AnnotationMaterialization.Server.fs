@@ -58,7 +58,7 @@ module internal AnnotationMaterialization =
         else
             Ok()
 
-    let private validateExactFileBytes (fileVersion: FileVersion) (bytes: byte array) correlationId =
+    let private validateExactFileBytes requireBlake3Hash (fileVersion: FileVersion) (bytes: byte array) correlationId =
         if isNull bytes then
             Error(error correlationId $"Annotation target '{fileVersion.RelativePath}' content reader returned null bytes.")
         elif int64 bytes.Length <> fileVersion.Size then
@@ -72,9 +72,13 @@ module internal AnnotationMaterialization =
             && not (String.Equals(sha256Hex bytes, fileVersion.Sha256Hash, StringComparison.OrdinalIgnoreCase))
         then
             Error(error correlationId $"Annotation target '{fileVersion.RelativePath}' materialized bytes do not match FileVersion.Sha256Hash.")
-        elif String.IsNullOrWhiteSpace fileVersion.Blake3Hash then
+        elif requireBlake3Hash
+             && String.IsNullOrWhiteSpace fileVersion.Blake3Hash then
             Error(error correlationId $"Annotation target '{fileVersion.RelativePath}' has no FileVersion.Blake3Hash.")
-        elif not (String.Equals(blake3Hex bytes, fileVersion.Blake3Hash, StringComparison.OrdinalIgnoreCase)) then
+        elif
+            not (String.IsNullOrWhiteSpace fileVersion.Blake3Hash)
+            && not (String.Equals(blake3Hex bytes, fileVersion.Blake3Hash, StringComparison.OrdinalIgnoreCase))
+        then
             Error(error correlationId $"Annotation target '{fileVersion.RelativePath}' materialized bytes do not match FileVersion.Blake3Hash.")
         else
             Ok(copyBytes bytes)
@@ -184,7 +188,7 @@ module internal AnnotationMaterialization =
                 | Error readError -> return Error readError
                 | Ok payloads ->
                     match ManifestValidation.validate RabinChunking.SuiteName manifest payloads with
-                    | Ok bytes -> return validateExactFileBytes fileVersion bytes correlationId
+                    | Ok bytes -> return validateExactFileBytes true fileVersion bytes correlationId
                     | Error validationError ->
                         return Error(error correlationId $"Annotation target '{fileVersion.RelativePath}' {describeManifestValidationError validationError}")
         }
@@ -196,7 +200,7 @@ module internal AnnotationMaterialization =
             match! readObjectPayload objectKey correlationId cancellationToken with
             | Ok bytes ->
                 match decompressGzipWholeFileBytes fileVersion bytes correlationId with
-                | Ok decompressedBytes -> return validateExactFileBytes fileVersion decompressedBytes correlationId
+                | Ok decompressedBytes -> return validateExactFileBytes false fileVersion decompressedBytes correlationId
                 | Error decompressionError -> return Error decompressionError
             | Error readError -> return Error readError
         }

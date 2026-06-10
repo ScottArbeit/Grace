@@ -342,6 +342,16 @@ type ManifestUploadSdkTests() =
             let correlationId = "corr-cli-manifest-fallback-routing"
             let manifestFile = FileVersion.Create "large.bin" (Sha256Hash "manifest-sha") String.Empty true 2048L
             let ineligibleFile = FileVersion.Create "small.fs" (Sha256Hash "ineligible-sha") String.Empty false 128L
+
+            let ineligibleFallbackFile =
+                FileVersion.CreateWithHashes
+                    ineligibleFile.RelativePath
+                    ineligibleFile.Sha256Hash
+                    (Blake3Hash "fallback-blake3")
+                    ineligibleFile.BlobUri
+                    ineligibleFile.IsBinary
+                    ineligibleFile.Size
+
             let manifestAttempts = ResizeArray<string>()
             let wholeFileFallbacks = ResizeArray<FileVersion array>()
 
@@ -351,7 +361,11 @@ type ManifestUploadSdkTests() =
 
                     let result: ManifestUpload.ManifestUploadResult =
                         {
-                            FileVersion = fileVersion
+                            FileVersion =
+                                if fileVersion.RelativePath = ineligibleFile.RelativePath then
+                                    ineligibleFallbackFile
+                                else
+                                    fileVersion
                             Manifest = None
                             UploadSessionId = None
                             UploadedBlockCount = if fileVersion.RelativePath = manifestFile.RelativePath then 1 else 0
@@ -388,7 +402,9 @@ type ManifestUploadSdkTests() =
 
                 Assert.That(wholeFileFallbacks.Count, Is.EqualTo(1))
                 Assert.That(wholeFileFallbacks[0].Length, Is.EqualTo(1))
-                Assert.That(wholeFileFallbacks[0][0], Is.EqualTo(ineligibleFile))
+                let fallbackFileVersion = wholeFileFallbacks[0][0]
+                Assert.That(fallbackFileVersion, Is.EqualTo(ineligibleFallbackFile))
+                Assert.That(fallbackFileVersion.Blake3Hash, Is.EqualTo(Blake3Hash "fallback-blake3"))
         }
 
     [<Test>]

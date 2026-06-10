@@ -207,13 +207,28 @@ type AnnotationMaterializationServerTests() =
         |> expectErrorContains "FileVersion.Blake3Hash"
 
     [<Test>]
-    member _.MaterializedBytesWithMissingBlake3HashAreRejected() =
-        let bytes = textBytes "missing blake3 text"
-        let target = fileVersion "/src/MissingBlake3.fs" false bytes
+    member _.LegacyWholeFileContentWithMissingBlake3HashMaterializes() =
+        let bytes = textBytes "legacy missing blake3 text"
+        let target = fileVersion "/src/LegacyMissingBlake3.fs" false bytes
         target.Blake3Hash <- String.Empty
         let objectKey = StorageKeys.wholeFileContentObjectKey target
         let objects = Dictionary<string, byte array>()
         objects[objectKey] <- bytes
+
+        let result =
+            materialize (readerFrom objects) target
+            |> expectOk
+
+        Assert.That(result.Text, Is.EqualTo("legacy missing blake3 text"))
+        Assert.That(result.Bytes = bytes, Is.True)
+
+    [<Test>]
+    member _.ManifestBackedContentWithMissingBlake3HashIsRejected() =
+        let bytes = textBytes "manifest missing blake3 text"
+        let target, block = manifestFile "/src/ManifestMissingBlake3.fs" bytes
+        target.Blake3Hash <- String.Empty
+        let objects = Dictionary<string, byte array>()
+        objects[StorageKeys.contentBlockObjectKey block.Address] <- block.Payload
 
         materialize (readerFrom objects) target
         |> expectErrorContains "has no FileVersion.Blake3Hash"

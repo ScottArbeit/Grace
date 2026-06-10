@@ -955,7 +955,7 @@ module Services =
                     let fileVersion = parameters.FileVersions[fileVersionIndex]
 
                     match! manifestUpload fileVersion with
-                    | Ok result when not result.ReturnValue.UsedManifestUpload -> fallbackFileVersions.Enqueue(fileVersion)
+                    | Ok result when not result.ReturnValue.UsedManifestUpload -> fallbackFileVersions.Enqueue(result.ReturnValue.FileVersion)
                     | Ok _ -> ()
                     | Error error -> errors.Enqueue(error)
 
