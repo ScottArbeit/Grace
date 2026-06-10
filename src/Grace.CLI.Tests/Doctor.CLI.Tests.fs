@@ -1222,6 +1222,61 @@ module DoctorCliTests =
                 snapshotFiles root |> should equal beforeRoot))
 
     [<Test>]
+    let ``doctor malformed config from nested directory inspects discovered local-state database`` () =
+        withTempDir (fun root ->
+            withIsolatedHome root (fun _ ->
+                ensureValidLocalStateDb root
+
+                let graceDir = Path.Combine(root, Constants.GraceConfigDirectory)
+                File.WriteAllText(Path.Combine(graceDir, Constants.GraceConfigFileName), "{ not json")
+
+                let nested = Path.Combine(root, "src", "nested")
+                Directory.CreateDirectory(nested) |> ignore
+                let originalDir = Environment.CurrentDirectory
+
+                try
+                    Environment.CurrentDirectory <- nested
+                    let repoDbPath = localStateDbPath root
+                    let cwdDbPath = Path.Combine(nested, Constants.GraceConfigDirectory, Constants.GraceLocalStateDbFileName)
+
+                    withLocalStateDbOpenTrace root (fun tracePath ->
+                        let exitCode, standardOut, standardError =
+                            runWithCapturedStdoutAndStderr [| "--output"
+                                                              "Json"
+                                                              "doctor"
+                                                              "--check"
+                                                              "state.db.schema-version" |]
+
+                        exitCode |> should equal 0
+
+                        use document = assertCleanJsonOutput standardOut standardError
+
+                        let checks =
+                            document
+                                .RootElement
+                                .GetProperty("ReturnValue")
+                                .GetProperty("Checks")
+
+                        checks.GetArrayLength() |> should equal 1
+
+                        checks[ 0 ].GetProperty("Status").GetString()
+                        |> should equal "Ok"
+
+                        checks[ 0 ].GetProperty("Summary").GetString()
+                        |> should contain "schema_version is 2"
+
+                        let trace = readTrace tracePath
+                        trace |> should contain repoDbPath
+                        trace |> should not' (contain cwdDbPath)
+
+                        File.Exists(cwdDbPath) |> should equal false
+
+                        Directory.Exists(Path.GetDirectoryName(cwdDbPath))
+                        |> should equal false)
+                finally
+                    Environment.CurrentDirectory <- originalDir))
+
+    [<Test>]
     let ``doctor local-state database path occupied by directory reports failure without mutation`` () =
         withTempDir (fun root ->
             withIsolatedHome root (fun _ ->

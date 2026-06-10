@@ -563,6 +563,39 @@ module LocalStateDbTests =
             })
 
     [<Test>]
+    let ``read-only inspection does not create missing wal sidecars`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                do! LocalStateDb.ensureDbInitialized configuration.GraceStatusFile
+                SqliteConnection.ClearAllPools()
+
+                let walPath = configuration.GraceStatusFile + "-wal"
+                let shmPath = configuration.GraceStatusFile + "-shm"
+
+                for sidecar in [| walPath; shmPath |] do
+                    if File.Exists(sidecar) then File.Delete(sidecar)
+
+                File.Exists(walPath) |> should equal false
+                File.Exists(shmPath) |> should equal false
+
+                let dbBefore = snapshotFile configuration.GraceStatusFile
+
+                let inspection = LocalStateDb.inspectReadOnly configuration.GraceStatusFile
+
+                inspection.OpenedReadOnly |> should equal false
+
+                inspection.OpenError
+                |> Option.defaultValue String.Empty
+                |> should contain "required sidecar files are missing"
+
+                snapshotFile configuration.GraceStatusFile
+                |> should equal dbBefore
+
+                File.Exists(walPath) |> should equal false
+                File.Exists(shmPath) |> should equal false
+            })
+
+    [<Test>]
     let ``read-only inspection does not create missing parent or database`` () =
         withTempDir (fun root _ ->
             task {

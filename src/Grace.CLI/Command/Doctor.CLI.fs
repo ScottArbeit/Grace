@@ -397,7 +397,7 @@ module Doctor =
     type private ConfigurationInspectionState =
         | ConfigurationLoaded of Configuration.GraceConfigurationInspection
         | ConfigurationMissing of string
-        | ConfigurationMalformed of string
+        | ConfigurationMalformed of path: string * message: string
 
     type private DoctorInspectionContext =
         {
@@ -415,13 +415,13 @@ module Doctor =
             match Configuration.tryInspectCurrentDirectoryConfiguration () with
             | Ok inspection -> ConfigurationLoaded inspection
             | Error (Configuration.ConfigurationFileNotFound message) -> ConfigurationMissing message
-            | Error (Configuration.ConfigurationFileMalformed message) -> ConfigurationMalformed message
+            | Error (Configuration.ConfigurationFileMalformed (path, message)) -> ConfigurationMalformed(path, message)
 
         let localStateDbPath =
             match configurationState with
             | ConfigurationLoaded inspection -> inspection.Configuration.GraceStatusFile
-            | ConfigurationMissing _
-            | ConfigurationMalformed _ -> Path.Combine(Environment.CurrentDirectory, Constants.GraceConfigDirectory, Constants.GraceLocalStateDbFileName)
+            | ConfigurationMalformed (path, _) -> Path.Combine(Path.GetDirectoryName(path), Constants.GraceLocalStateDbFileName)
+            | ConfigurationMissing _ -> Path.Combine(Environment.CurrentDirectory, Constants.GraceConfigDirectory, Constants.GraceLocalStateDbFileName)
 
         {
             ConfigurationState = configurationState
@@ -632,12 +632,12 @@ module Doctor =
             match context.ConfigurationState with
             | ConfigurationLoaded inspection -> ok $"Found {Constants.GraceConfigFileName} at {inspection.Path}; repository root {inspection.RootDirectory}."
             | ConfigurationMissing message -> warning $"{message} No configuration file was created."
-            | ConfigurationMalformed _ -> ok $"Found {Constants.GraceConfigFileName}, but parsing is reported by {ConfigFileParseCheckId}."
+            | ConfigurationMalformed (path, _) -> ok $"Found {Constants.GraceConfigFileName} at {path}, but parsing is reported by {ConfigFileParseCheckId}."
         | ConfigFileParseCheckId ->
             match context.ConfigurationState with
             | ConfigurationLoaded inspection -> ok $"Parsed {inspection.Path} without rewriting it."
             | ConfigurationMissing _ -> skipped check $"Skipped because {ConfigFileDiscoverCheckId} did not find {Constants.GraceConfigFileName}."
-            | ConfigurationMalformed message -> failed $"Could not parse {Constants.GraceConfigFileName}: {message}"
+            | ConfigurationMalformed (_, message) -> failed $"Could not parse {Constants.GraceConfigFileName}: {message}"
         | ConfigRepositoryIdentityCheckId ->
             match context.ConfigurationState with
             | ConfigurationLoaded inspection ->

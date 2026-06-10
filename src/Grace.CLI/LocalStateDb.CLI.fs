@@ -5,6 +5,7 @@ open System.Collections.Concurrent
 open System.Collections.Generic
 open System.Diagnostics
 open System.IO
+open System.Text
 open System.Threading
 open System.Threading.Tasks
 open Grace.Shared.Client.Configuration
@@ -254,6 +255,32 @@ module LocalStateDb =
 
             raise ex
 
+    let private sqliteHeaderMagic = Encoding.ASCII.GetBytes("SQLite format 3" + string (char 0))
+
+    let private isWalModeHeader (dbPath: string) =
+        try
+            use stream = new FileStream(dbPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite ||| FileShare.Delete)
+
+            if stream.Length < 20L then
+                false
+            else
+                let header = Array.zeroCreate<byte> 20
+                let bytesRead = stream.Read(header, 0, header.Length)
+
+                bytesRead = header.Length
+                && header[0..15] = sqliteHeaderMagic
+                && header[18] = 2uy
+                && header[19] = 2uy
+        with
+        | _ -> false
+
+    let private missingWalSidecars (dbPath: string) =
+        if isWalModeHeader dbPath then
+            [| dbPath + "-wal"; dbPath + "-shm" |]
+            |> Array.filter (File.Exists >> not)
+        else
+            Array.empty
+
     let private readTextRows (connection: SqliteConnection) (sql: string) =
         use cmd = connection.CreateCommand()
         cmd.CommandText <- sql
@@ -337,56 +364,73 @@ module LocalStateDb =
            || dbPathIsDirectory then
             emptyReadOnlyInspection normalizedPath parentDirectoryExists dbFileExists dbPathIsDirectory false None
         else
-            try
-                use connection = openReadOnlyConnection normalizedPath
-                let tableNames = readObjectNames connection "table"
-                let indexNames = readObjectNames connection "index"
+            let missingWalSidecars = missingWalSidecars normalizedPath
 
-                let missingRequiredTables =
-                    requiredTableNames
-                    |> Array.filter (fun tableName -> not (tableNames.Contains(tableName)))
+            if missingWalSidecars.Length > 0 then
+                let missingNames =
+                    missingWalSidecars
+                    |> Array.map Path.GetFileName
+                    |> String.concat ", "
 
-                let missingRequiredIndexes =
-                    requiredIndexNames
-                    |> Array.filter (fun indexName -> not (indexNames.Contains(indexName)))
+                emptyReadOnlyInspection
+                    normalizedPath
+                    parentDirectoryExists
+                    dbFileExists
+                    dbPathIsDirectory
+                    false
+                    (Some
+                        $"Database is in WAL mode but required sidecar files are missing: {missingNames}. Doctor did not open the database to avoid creating sidecar files.")
+            else
+                try
+                    use connection = openReadOnlyConnection normalizedPath
+                    let tableNames = readObjectNames connection "table"
+                    let indexNames = readObjectNames connection "index"
 
-                let schemaVersion =
-                    try
-                        readSchemaVersionReadOnly connection
-                    with
-                    | _ -> None
+                    let missingRequiredTables =
+                        requiredTableNames
+                        |> Array.filter (fun tableName -> not (tableNames.Contains(tableName)))
 
-                let integrityRows =
-                    try
-                        readTextRows connection "PRAGMA integrity_check;"
-                    with
-                    | ex -> [| ex.Message |]
+                    let missingRequiredIndexes =
+                        requiredIndexNames
+                        |> Array.filter (fun indexName -> not (indexNames.Contains(indexName)))
 
-                let foreignKeyViolations =
-                    try
-                        readForeignKeyViolations connection
-                    with
-                    | ex -> [| ex.Message |]
+                    let schemaVersion =
+                        try
+                            readSchemaVersionReadOnly connection
+                        with
+                        | _ -> None
 
-                let objectCacheReadable, objectCacheError = inspectObjectCacheReadOnly connection
+                    let integrityRows =
+                        try
+                            readTextRows connection "PRAGMA integrity_check;"
+                        with
+                        | ex -> [| ex.Message |]
 
-                {
-                    DbPath = normalizedPath
-                    ParentDirectoryExists = parentDirectoryExists
-                    DbFileExists = dbFileExists
-                    DbPathIsDirectory = dbPathIsDirectory
-                    OpenedReadOnly = true
-                    OpenError = None
-                    SchemaVersion = schemaVersion
-                    MissingRequiredTables = missingRequiredTables
-                    MissingRequiredIndexes = missingRequiredIndexes
-                    IntegrityCheckRows = integrityRows
-                    ForeignKeyViolations = foreignKeyViolations
-                    ObjectCacheReadable = objectCacheReadable
-                    ObjectCacheError = objectCacheError
-                }
-            with
-            | ex -> emptyReadOnlyInspection normalizedPath parentDirectoryExists dbFileExists dbPathIsDirectory false (Some ex.Message)
+                    let foreignKeyViolations =
+                        try
+                            readForeignKeyViolations connection
+                        with
+                        | ex -> [| ex.Message |]
+
+                    let objectCacheReadable, objectCacheError = inspectObjectCacheReadOnly connection
+
+                    {
+                        DbPath = normalizedPath
+                        ParentDirectoryExists = parentDirectoryExists
+                        DbFileExists = dbFileExists
+                        DbPathIsDirectory = dbPathIsDirectory
+                        OpenedReadOnly = true
+                        OpenError = None
+                        SchemaVersion = schemaVersion
+                        MissingRequiredTables = missingRequiredTables
+                        MissingRequiredIndexes = missingRequiredIndexes
+                        IntegrityCheckRows = integrityRows
+                        ForeignKeyViolations = foreignKeyViolations
+                        ObjectCacheReadable = objectCacheReadable
+                        ObjectCacheError = objectCacheError
+                    }
+                with
+                | ex -> emptyReadOnlyInspection normalizedPath parentDirectoryExists dbFileExists dbPathIsDirectory false (Some ex.Message)
 
     let private tryGetMetaValue (connection: SqliteConnection) (key: string) =
         use cmd = connection.CreateCommand()

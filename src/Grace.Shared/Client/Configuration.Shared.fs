@@ -226,7 +226,7 @@ module Configuration =
 
     type GraceConfigurationInspectionError =
         | ConfigurationFileNotFound of string
-        | ConfigurationFileMalformed of string
+        | ConfigurationFileMalformed of path: string * message: string
 
     let private tryGetGraceIgnoreEntries graceIgnorePath =
         try
@@ -261,7 +261,7 @@ module Configuration =
         | Error errorMessage -> Error(ConfigurationFileNotFound errorMessage)
         | Ok graceConfigurationFilePath ->
             match parseConfigurationFile graceConfigurationFilePath with
-            | Error errorMessage -> Error(ConfigurationFileMalformed errorMessage)
+            | Error errorMessage -> Error(ConfigurationFileMalformed(graceConfigurationFilePath, errorMessage))
             | Ok graceConfigurationFromFile ->
                 let configuration = populateConfigurationPaths graceConfigurationFilePath graceConfigurationFromFile
                 let ignore = inspectGraceIgnore configuration.RootDirectory
