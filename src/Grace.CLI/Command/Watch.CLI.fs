@@ -44,6 +44,9 @@ open Grace.Types.Automation
 module Watch =
     exception private WatchCommandExit of int
 
+    let private uploadedFileVersions = ConcurrentDictionary<RelativePath * Sha256Hash * Blake3Hash, FileVersion>()
+
+    let private uploadedFileVersionIdentity (fileVersion: FileVersion) = (fileVersion.RelativePath, fileVersion.Sha256Hash, fileVersion.Blake3Hash)
 
     module private Options =
         let ownerId =
@@ -332,8 +335,21 @@ module Watch =
                     Colors.Verbose
                     $"new Sha256Hash: {dv.Sha256Hash.Substring(0, 8)}; DirectoryId: {dv.DirectoryVersionId.ToString().Substring(0, 9)}...; RelativePath: {dv.RelativePath}"
 
+            let directoryUploadedFileVersions =
+                let fileIdentities =
+                    newDirectoryVersions
+                    |> Seq.collect (fun directoryVersion -> directoryVersion.Files)
+                    |> Seq.map (fun fileVersion -> (fileVersion.RelativePath, fileVersion.Sha256Hash, fileVersion.Blake3Hash))
+                    |> HashSet
+
+                uploadedFileVersions.Values
+                |> Seq.filter (fun fileVersion -> fileIdentities.Contains(uploadedFileVersionIdentity fileVersion))
+                |> Seq.toArray
+
             // Upload the new directory versions.
-            let! result = uploadDirectoryVersions newDirectoryVersions correlationId
+            let directoryVersionsToSave = applyUploadedFileVersionsToDirectoryVersions directoryUploadedFileVersions newDirectoryVersions
+
+            let! result = saveDirectoryVersions directoryVersionsToSave correlationId
 
             match result with
             | Ok returnValue ->
@@ -376,6 +392,13 @@ module Watch =
                         let newGraceStatusWithUpdatedTime = { newGraceStatus with LastSuccessfulDirectoryVersionUpload = getCurrentInstant () }
                         // Apply incremental changes to the Grace Status DB.
                         do! applyGraceStatusIncremental newGraceStatusWithUpdatedTime newDirectoryVersions differences
+
+                        for fileVersion in directoryUploadedFileVersions do
+                            let mutable removedFileVersion = Unchecked.defaultof<FileVersion>
+
+                            uploadedFileVersions.TryRemove(uploadedFileVersionIdentity fileVersion, &removedFileVersion)
+                            |> ignore
+
                         //logToAnsiConsole Colors.Important $"Setting graceStatusHasChanged to false in updateGraceStatus(). Current value: {graceStatusHasChanged}."
                         graceStatusHasChanged <- false // We *just* changed it ourselves, so we don't have to re-process it in the timer loop.
                         return Some newGraceStatusWithUpdatedTime
@@ -400,9 +423,13 @@ module Watch =
                 getUploadMetadataForFilesParameters.FileVersions <- [| fileVersion |]
 
                 match! uploadFilesToObjectStorage getUploadMetadataForFilesParameters with
-                | Ok returnValue -> logToAnsiConsole Colors.Verbose $"File {fileVersion.GetObjectFileName} has been uploaded to storage."
-                | Error error -> logToAnsiConsole Colors.Error $"**Failed to upload {fileVersion.GetObjectFileName} to storage."
-            | None -> ()
+                | Ok returnValue ->
+                    for uploadedFileVersion in returnValue.ReturnValue do
+                        uploadedFileVersions[uploadedFileVersionIdentity uploadedFileVersion] <- uploadedFileVersion
+
+                    logToAnsiConsole Colors.Verbose $"File {fileVersion.GetObjectFileName} has been uploaded to storage."
+                | Error error -> raise (InvalidOperationException($"Failed to upload {fileVersion.GetObjectFileName} to storage: {error.Error}"))
+            | None -> raise (InvalidOperationException($"Failed to copy {fullPath} to the object cache before upload."))
         }
 
     /// Decompresses the GraceStatus information from the memory stream.

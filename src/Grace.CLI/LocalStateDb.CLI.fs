@@ -1415,6 +1415,7 @@ module LocalStateDb =
                                         ParentPath = directoryReader.GetString(1)
                                         DirectoryVersionId = Guid.Parse(directoryReader.GetString(2))
                                         Sha256Hash = directoryReader.GetString(3)
+                                        Blake3Hash = String.Empty
                                         SizeBytes = directoryReader.GetInt64(4)
                                         CreatedAt = Instant.FromUnixTimeTicks(directoryReader.GetInt64(5))
                                         LastWriteTimeUtc = DateTime(directoryReader.GetInt64(6), DateTimeKind.Utc)
@@ -1434,6 +1435,7 @@ module LocalStateDb =
                                         RelativePath = fileReader.GetString(0)
                                         DirectoryVersionId = Guid.Parse(fileReader.GetString(1))
                                         Sha256Hash = fileReader.GetString(2)
+                                        Blake3Hash = String.Empty
                                         IsBinary = fileReader.GetInt64(3) = 1L
                                         SizeBytes = fileReader.GetInt64(4)
                                         CreatedAt = Instant.FromUnixTimeTicks(fileReader.GetInt64(5))
