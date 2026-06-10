@@ -71,6 +71,12 @@ export interface ReferenceDto {
     referenceText?: string;
     /**
      * 
+     * @type {string}
+     * @memberof ReferenceDto
+     */
+    createdBy?: string;
+    /**
+     * 
      * @type {Date}
      * @memberof ReferenceDto
      */
@@ -103,6 +109,7 @@ export function ReferenceDtoFromJSONTyped(json: any, ignoreDiscriminator: boolea
         'sha256Hash': json['Sha256Hash'] == null ? undefined : json['Sha256Hash'],
         'referenceType': json['ReferenceType'] == null ? undefined : ReferenceTypeFromJSON(json['ReferenceType']),
         'referenceText': json['ReferenceText'] == null ? undefined : json['ReferenceText'],
+        'createdBy': json['CreatedBy'] == null ? undefined : json['CreatedBy'],
         'createdAt': json['CreatedAt'] == null ? undefined : (new Date(json['CreatedAt'])),
     };
 }
@@ -125,6 +132,7 @@ export function ReferenceDtoToJSONTyped(value?: ReferenceDto | null, ignoreDiscr
         'Sha256Hash': value['sha256Hash'],
         'ReferenceType': ReferenceTypeToJSON(value['referenceType']),
         'ReferenceText': value['referenceText'],
+        'CreatedBy': value['createdBy'],
         'CreatedAt': value['createdAt'] == null ? value['createdAt'] : value['createdAt'].toISOString(),
     };
 }

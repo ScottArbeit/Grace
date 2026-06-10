@@ -4,6 +4,7 @@ All URIs are relative to *http://localhost:5000*
 
 | Method | HTTP request | Description |
 |------------- | ------------- | -------------|
+| [**annotateBranch**](BranchesApi.md#annotatebranch) | **POST** /branch/annotate | Annotate a branch reference. |
 | [**checkpointBranch**](BranchesApi.md#checkpointbranch) | **POST** /branch/checkpoint | Checkpoint the current branch content. |
 | [**commitBranch**](BranchesApi.md#commitbranch) | **POST** /branch/commit | Commit the current branch content. |
 | [**createBranch**](BranchesApi.md#createbranch) | **POST** /branch/create | Create a branch. |
@@ -27,6 +28,79 @@ All URIs are relative to *http://localhost:5000*
 | [**saveBranch**](BranchesApi.md#savebranch) | **POST** /branch/save | Save the current branch content. |
 | [**tagBranch**](BranchesApi.md#tagbranch) | **POST** /branch/tag | Tag the current branch content. |
 
+
+
+## annotateBranch
+
+> BranchAnnotationReturnValue annotateBranch(annotateParameters)
+
+Annotate a branch reference.
+
+Annotates lines from an existing server-known reference in a branch. The API reads server-stored reference content and does not save local workspace state.
+
+### Example
+
+```ts
+import {
+  Configuration,
+  BranchesApi,
+} from '@grace-vcs/generated-openapi-probe';
+import type { AnnotateBranchRequest } from '@grace-vcs/generated-openapi-probe';
+
+async function example() {
+  console.log("🚀 Testing @grace-vcs/generated-openapi-probe SDK...");
+  const config = new Configuration({ 
+    // Configure HTTP bearer authorization: bearerAuth
+    accessToken: "YOUR BEARER TOKEN",
+  });
+  const api = new BranchesApi(config);
+
+  const body = {
+    // AnnotateParameters
+    annotateParameters: {"CorrelationId":"cli-20260604T181500Z-0001","Principal":"user:alice","OwnerId":"9dd5f81f-dc43-4839-9173-85d09394f30f","OrganizationId":"e35d64a9-b990-44f5-bf02-32ad7d15630c","RepositoryId":"ab6f35ef-6e01-440b-8f9b-c343a5272095","BranchId":"de7bf47d-23ae-4599-af68-68a317ea390d","IncludeDeleted":false,"TargetReferenceId":"c8f9bac8-d489-46c7-917f-b36b7d9efa9a","Path":"src/App.fs","StartLine":1,"EndLine":1,"ReferenceTypes":["Commit","Save"],"MaxReferences":1000,"IncludeLineText":true},
+  } satisfies AnnotateBranchRequest;
+
+  try {
+    const data = await api.annotateBranch(body);
+    console.log(data);
+  } catch (error) {
+    console.error(error);
+  }
+}
+
+// Run the test
+example().catch(console.error);
+```
+
+### Parameters
+
+
+| Name | Type | Description  | Notes |
+|------------- | ------------- | ------------- | -------------|
+| **annotateParameters** | [AnnotateParameters](AnnotateParameters.md) |  | |
+
+### Return type
+
+[**BranchAnnotationReturnValue**](BranchAnnotationReturnValue.md)
+
+### Authorization
+
+[bearerAuth](../README.md#bearerAuth)
+
+### HTTP request headers
+
+- **Content-Type**: `application/json`
+- **Accept**: `application/json`
+
+
+### HTTP response details
+| Status code | Description | Response headers |
+|-------------|-------------|------------------|
+| **200** | OK |  -  |
+| **400** | Bad Request |  -  |
+| **500** | Internal Server Error |  -  |
+
+[[Back to top]](#) [[Back to API list]](../README.md#api-endpoints) [[Back to Model list]](../README.md#models) [[Back to README]](../README.md)
 
 
 ## checkpointBranch

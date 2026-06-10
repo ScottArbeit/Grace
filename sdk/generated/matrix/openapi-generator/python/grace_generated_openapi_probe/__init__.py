@@ -37,6 +37,13 @@ __all__ = [
     "ApiKeyError",
     "ApiAttributeError",
     "ApiException",
+    "AnnotateParameters",
+    "AnnotationBoundary",
+    "AnnotationLine",
+    "AnnotationLineRange",
+    "AnnotationSourceReference",
+    "AnnotationSourceRow",
+    "AnnotationSpan",
     "ApprovalDecision",
     "ApprovalPolicy",
     "ApprovalPolicyParameters",
@@ -49,6 +56,8 @@ __all__ = [
     "ApprovalTimeoutAction",
     "ApproveApprovalRequestParameters",
     "BlockUploadIntent",
+    "BranchAnnotationApiDto",
+    "BranchAnnotationReturnValue",
     "BranchApiDto",
     "BranchCommandReturnValue",
     "BranchDto",
@@ -269,6 +278,13 @@ from grace_generated_openapi_probe.exceptions import ApiAttributeError as ApiAtt
 from grace_generated_openapi_probe.exceptions import ApiException as ApiException
 
 # import models into sdk package
+from grace_generated_openapi_probe.models.annotate_parameters import AnnotateParameters as AnnotateParameters
+from grace_generated_openapi_probe.models.annotation_boundary import AnnotationBoundary as AnnotationBoundary
+from grace_generated_openapi_probe.models.annotation_line import AnnotationLine as AnnotationLine
+from grace_generated_openapi_probe.models.annotation_line_range import AnnotationLineRange as AnnotationLineRange
+from grace_generated_openapi_probe.models.annotation_source_reference import AnnotationSourceReference as AnnotationSourceReference
+from grace_generated_openapi_probe.models.annotation_source_row import AnnotationSourceRow as AnnotationSourceRow
+from grace_generated_openapi_probe.models.annotation_span import AnnotationSpan as AnnotationSpan
 from grace_generated_openapi_probe.models.approval_decision import ApprovalDecision as ApprovalDecision
 from grace_generated_openapi_probe.models.approval_policy import ApprovalPolicy as ApprovalPolicy
 from grace_generated_openapi_probe.models.approval_policy_parameters import ApprovalPolicyParameters as ApprovalPolicyParameters
@@ -281,6 +297,8 @@ from grace_generated_openapi_probe.models.approval_scope import ApprovalScope as
 from grace_generated_openapi_probe.models.approval_timeout_action import ApprovalTimeoutAction as ApprovalTimeoutAction
 from grace_generated_openapi_probe.models.approve_approval_request_parameters import ApproveApprovalRequestParameters as ApproveApprovalRequestParameters
 from grace_generated_openapi_probe.models.block_upload_intent import BlockUploadIntent as BlockUploadIntent
+from grace_generated_openapi_probe.models.branch_annotation_api_dto import BranchAnnotationApiDto as BranchAnnotationApiDto
+from grace_generated_openapi_probe.models.branch_annotation_return_value import BranchAnnotationReturnValue as BranchAnnotationReturnValue
 from grace_generated_openapi_probe.models.branch_api_dto import BranchApiDto as BranchApiDto
 from grace_generated_openapi_probe.models.branch_command_return_value import BranchCommandReturnValue as BranchCommandReturnValue
 from grace_generated_openapi_probe.models.branch_dto import BranchDto as BranchDto

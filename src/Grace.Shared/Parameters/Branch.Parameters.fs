@@ -131,6 +131,8 @@ module Branch =
 
         member this.Validate() =
             [
+                if isNull this.ReferenceTypes then "ReferenceTypes must not be null."
+
                 match validateLineRange this.LineRange with
                 | Ok () -> ()
                 | Error errors -> yield! errors

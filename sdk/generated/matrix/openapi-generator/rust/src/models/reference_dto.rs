@@ -28,6 +28,8 @@ pub struct ReferenceDto {
     pub reference_type: Option<models::ReferenceType>,
     #[serde(rename = "ReferenceText", skip_serializing_if = "Option::is_none")]
     pub reference_text: Option<String>,
+    #[serde(rename = "CreatedBy", skip_serializing_if = "Option::is_none")]
+    pub created_by: Option<String>,
     #[serde(rename = "CreatedAt", skip_serializing_if = "Option::is_none")]
     pub created_at: Option<chrono::DateTime<chrono::FixedOffset>>,
 }
@@ -43,6 +45,7 @@ impl ReferenceDto {
             sha256_hash: None,
             reference_type: None,
             reference_text: None,
+            created_by: None,
             created_at: None,
         }
     }

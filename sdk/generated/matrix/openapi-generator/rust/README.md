@@ -51,6 +51,7 @@ Class | Method | HTTP request | Description
 *ApprovalsApi* | [**show_approval_policy**](docs/ApprovalsApi.md#show_approval_policy) | **POST** /approval/policy/show | Show an approval policy.
 *ApprovalsApi* | [**show_approval_request**](docs/ApprovalsApi.md#show_approval_request) | **POST** /approval/request/show | Show a workflow-generated approval request.
 *ApprovalsApi* | [**update_approval_policy**](docs/ApprovalsApi.md#update_approval_policy) | **POST** /approval/policy/update | Update an approval policy.
+*BranchesApi* | [**annotate_branch**](docs/BranchesApi.md#annotate_branch) | **POST** /branch/annotate | Annotate a branch reference.
 *BranchesApi* | [**checkpoint_branch**](docs/BranchesApi.md#checkpoint_branch) | **POST** /branch/checkpoint | Checkpoint the current branch content.
 *BranchesApi* | [**commit_branch**](docs/BranchesApi.md#commit_branch) | **POST** /branch/commit | Commit the current branch content.
 *BranchesApi* | [**create_branch**](docs/BranchesApi.md#create_branch) | **POST** /branch/create | Create a branch.
@@ -144,6 +145,13 @@ Class | Method | HTTP request | Description
 
 ## Documentation For Models
 
+ - [AnnotateParameters](docs/AnnotateParameters.md)
+ - [AnnotationBoundary](docs/AnnotationBoundary.md)
+ - [AnnotationLine](docs/AnnotationLine.md)
+ - [AnnotationLineRange](docs/AnnotationLineRange.md)
+ - [AnnotationSourceReference](docs/AnnotationSourceReference.md)
+ - [AnnotationSourceRow](docs/AnnotationSourceRow.md)
+ - [AnnotationSpan](docs/AnnotationSpan.md)
  - [ApprovalDecision](docs/ApprovalDecision.md)
  - [ApprovalPolicy](docs/ApprovalPolicy.md)
  - [ApprovalPolicyParameters](docs/ApprovalPolicyParameters.md)
@@ -156,6 +164,8 @@ Class | Method | HTTP request | Description
  - [ApprovalTimeoutAction](docs/ApprovalTimeoutAction.md)
  - [ApproveApprovalRequestParameters](docs/ApproveApprovalRequestParameters.md)
  - [BlockUploadIntent](docs/BlockUploadIntent.md)
+ - [BranchAnnotationApiDto](docs/BranchAnnotationApiDto.md)
+ - [BranchAnnotationReturnValue](docs/BranchAnnotationReturnValue.md)
  - [BranchApiDto](docs/BranchApiDto.md)
  - [BranchCommandReturnValue](docs/BranchCommandReturnValue.md)
  - [BranchDto](docs/BranchDto.md)

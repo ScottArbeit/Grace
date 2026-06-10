@@ -14,6 +14,16 @@
 
 import * as runtime from '../runtime';
 import {
+    type AnnotateParameters,
+    AnnotateParametersFromJSON,
+    AnnotateParametersToJSON,
+} from '../models/AnnotateParameters';
+import {
+    type BranchAnnotationReturnValue,
+    BranchAnnotationReturnValueFromJSON,
+    BranchAnnotationReturnValueToJSON,
+} from '../models/BranchAnnotationReturnValue';
+import {
     type BranchCommandReturnValue,
     BranchCommandReturnValueFromJSON,
     BranchCommandReturnValueToJSON,
@@ -78,6 +88,10 @@ import {
     ReferenceReturnValueFromJSON,
     ReferenceReturnValueToJSON,
 } from '../models/ReferenceReturnValue';
+
+export interface AnnotateBranchRequest {
+    annotateParameters: AnnotateParameters;
+}
 
 export interface CheckpointBranchRequest {
     createReferenceParameters: CreateReferenceParameters;
@@ -171,6 +185,63 @@ export interface TagBranchRequest {
  * 
  */
 export class BranchesApi extends runtime.BaseAPI {
+
+    /**
+     * Creates request options for annotateBranch without sending the request
+     */
+    async annotateBranchRequestOpts(requestParameters: AnnotateBranchRequest): Promise<runtime.RequestOpts> {
+        if (requestParameters['annotateParameters'] == null) {
+            throw new runtime.RequiredError(
+                'annotateParameters',
+                'Required parameter "annotateParameters" was null or undefined when calling annotateBranch().'
+            );
+        }
+
+        const queryParameters: any = {};
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+        headerParameters['Content-Type'] = 'application/json';
+
+        if (this.configuration && this.configuration.accessToken) {
+            const token = this.configuration.accessToken;
+            const tokenString = await token("bearerAuth", []);
+
+            if (tokenString) {
+                headerParameters["Authorization"] = `Bearer ${tokenString}`;
+            }
+        }
+
+        let urlPath = `/branch/annotate`;
+
+        return {
+            path: urlPath,
+            method: 'POST',
+            headers: headerParameters,
+            query: queryParameters,
+            body: AnnotateParametersToJSON(requestParameters['annotateParameters']),
+        };
+    }
+
+    /**
+     * Annotates lines from an existing server-known reference in a branch. The API reads server-stored reference content and does not save local workspace state.
+     * Annotate a branch reference.
+     */
+    async annotateBranchRaw(requestParameters: AnnotateBranchRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<BranchAnnotationReturnValue>> {
+        const requestOptions = await this.annotateBranchRequestOpts(requestParameters);
+        const response = await this.request(requestOptions, initOverrides);
+
+        return new runtime.JSONApiResponse(response, (jsonValue) => BranchAnnotationReturnValueFromJSON(jsonValue));
+    }
+
+    /**
+     * Annotates lines from an existing server-known reference in a branch. The API reads server-stored reference content and does not save local workspace state.
+     * Annotate a branch reference.
+     */
+    async annotateBranch(requestParameters: AnnotateBranchRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<BranchAnnotationReturnValue> {
+        const response = await this.annotateBranchRaw(requestParameters, initOverrides);
+        return await response.value();
+    }
 
     /**
      * Creates request options for checkpointBranch without sending the request

@@ -6,12 +6,16 @@ open Grace.Actors.Constants
 open Grace.Actors.Extensions.ActorProxy
 open Grace.Actors.Interfaces
 open Grace.Actors.Services
+open Grace.Server.Security
 open Grace.Server.Services
 open Grace.Server.Validations
 open Grace.Shared
+open Grace.Shared.AnnotationLineCore
 open Grace.Shared.Extensions
 open Grace.Shared.Parameters.Branch
 open Grace.Types
+open Grace.Types.Annotation
+open Grace.Types.Authorization
 open Grace.Types.Branch
 open Grace.Types.Diff
 open Grace.Types.Common
@@ -20,6 +24,7 @@ open Grace.Shared.Validation.Common
 open Grace.Shared.Validation.Errors
 open Grace.Shared.Validation.Utilities
 open Microsoft.AspNetCore.Http
+open Microsoft.Extensions.DependencyInjection
 open Microsoft.Extensions.Logging
 open System
 open System.Collections.Concurrent
@@ -35,6 +40,350 @@ module Branch =
     let activitySource = new ActivitySource("Branch")
 
     let log = ApplicationContext.loggerFactory.CreateLogger("Branch.Server")
+
+    let private annotationError correlationId message = GraceError.Create message correlationId
+
+    let private normalizeAnnotationPath (path: string) = normalizeFilePath path
+
+    let private isMalformedAnnotationPath (path: string) =
+        let normalized = normalizeAnnotationPath path
+
+        String.IsNullOrWhiteSpace normalized
+        || normalized.StartsWith("/", StringComparison.Ordinal)
+        || System.IO.Path.IsPathRooted(path)
+        || (normalized.Split('/', StringSplitOptions.RemoveEmptyEntries)
+            |> Array.exists (fun segment -> segment = "." || segment = ".."))
+
+    let private toAnnotationSourceReference (referenceDto: Reference.ReferenceDto) =
+        { AnnotationSourceReference.Default with
+            SourceReferenceId = $"{referenceDto.ReferenceId}"
+            ReferenceId = referenceDto.ReferenceId
+            ReferenceType = getDiscriminatedUnionCaseName referenceDto.ReferenceType
+            ReferenceText = referenceDto.ReferenceText
+            DirectoryVersionId = referenceDto.DirectoryId
+            CreatedAt = Some referenceDto.CreatedAt
+            CreatedBy = referenceDto.CreatedBy
+        }
+
+    let private tryFindFileVersion (path: RelativePath) (contents: DirectoryVersion.DirectoryVersionDto array) =
+        let normalizedPath = normalizeAnnotationPath path
+
+        contents
+        |> Seq.collect (fun directoryVersionDto -> directoryVersionDto.DirectoryVersion.Files :> seq<FileVersion>)
+        |> Seq.tryFind (fun fileVersion -> String.Equals(normalizeAnnotationPath fileVersion.RelativePath, normalizedPath, StringComparison.Ordinal))
+
+    let private getReferenceContents repositoryId correlationId (referenceDto: Reference.ReferenceDto) =
+        task {
+            let directoryActorProxy = DirectoryVersion.CreateActorProxy referenceDto.DirectoryId repositoryId correlationId
+            return! directoryActorProxy.GetRecursiveDirectoryVersions false correlationId
+        }
+
+    let private canReadReferenceBranch (context: HttpContext) (referenceDto: Reference.ReferenceDto) =
+        task {
+            let principals = PrincipalMapper.getPrincipals context.User
+            let claims = PrincipalMapper.getEffectiveClaims context.User
+            let evaluator = context.RequestServices.GetRequiredService<IGracePermissionEvaluator>()
+
+            let resource = Resource.Branch(referenceDto.OwnerId, referenceDto.OrganizationId, referenceDto.RepositoryId, referenceDto.BranchId)
+
+            match! evaluator.CheckAsync(principals, claims, Operation.BranchRead, resource) with
+            | Allowed _ -> return true
+            | Denied _ -> return false
+        }
+
+    let tryGetBasedOnReferenceId (referenceDto: Reference.ReferenceDto) =
+        referenceDto.Links
+        |> Seq.tryPick (function
+            | ReferenceLinkType.BasedOn referenceId when referenceId <> ReferenceId.Empty -> Some referenceId
+            | _ -> None)
+
+    let private tryGetStoredBasedOnReferenceId (syntheticBasedOnByReferenceId: Dictionary<ReferenceId, ReferenceId>) (referenceDto: Reference.ReferenceDto) =
+        match tryGetBasedOnReferenceId referenceDto with
+        | Some basedOnReferenceId ->
+            match syntheticBasedOnByReferenceId.TryGetValue referenceDto.ReferenceId with
+            | true, syntheticBasedOnReferenceId when syntheticBasedOnReferenceId = basedOnReferenceId -> None
+            | _ -> Some basedOnReferenceId
+        | None -> None
+
+    let private materializeAnnotationDocument
+        (context: HttpContext)
+        (repositoryDto: Repository.RepositoryDto)
+        (path: RelativePath)
+        (referenceDto: Reference.ReferenceDto)
+        =
+        task {
+            let correlationId = getCorrelationId context
+            let! contents = getReferenceContents repositoryDto.RepositoryId correlationId referenceDto
+
+            match tryFindFileVersion path contents with
+            | None -> return Ok None
+            | Some fileVersion ->
+                match! AnnotationMaterialization.materializeTargetText repositoryDto fileVersion correlationId context.RequestAborted with
+                | Ok materialized ->
+                    let document =
+                        { SourceReference = toAnnotationSourceReference referenceDto; Path = normalizeAnnotationPath path; Content = materialized.Bytes }
+
+                    return Ok(Some document)
+                | Error error -> return Error error
+        }
+
+    let internal unreadableAncestorBoundaryKind = "UnmaterializableAncestor"
+
+    let private effectiveHistoryDocument document basedOnReferenceId isAuthorized boundaryKind =
+        { Document = document; BasedOnReferenceId = basedOnReferenceId; IsAuthorized = isAuthorized; BoundaryKind = boundaryKind }
+
+    let private emptyAnnotationDocument path referenceDto =
+        { SourceReference = toAnnotationSourceReference referenceDto; Path = normalizeAnnotationPath path; Content = Array.empty }
+
+    let internal effectiveHistoryFromMaterializationResult path targetReferenceId referenceDto basedOnReferenceId materializationResult =
+        match materializationResult with
+        | Ok (Some document) -> Ok(effectiveHistoryDocument document basedOnReferenceId true None)
+        | Ok None -> Ok(effectiveHistoryDocument (emptyAnnotationDocument path referenceDto) basedOnReferenceId true None)
+        | Error materializationError when referenceDto.ReferenceId = targetReferenceId -> Error materializationError
+        | Error _ -> Ok(effectiveHistoryDocument (emptyAnnotationDocument path referenceDto) basedOnReferenceId true (Some unreadableAncestorBoundaryKind))
+
+    let internal buildEffectiveHistory
+        (context: HttpContext)
+        (repositoryDto: Repository.RepositoryDto)
+        (path: RelativePath)
+        (targetReferenceId: ReferenceId)
+        (references: Reference.ReferenceDto array)
+        =
+        task {
+            let basedOnByReferenceId =
+                let result = Dictionary<ReferenceId, ReferenceId option>()
+                let previousByBranchId = Dictionary<BranchId, ReferenceId>()
+
+                references
+                |> Array.filter (fun referenceDto -> referenceDto.DeletedAt.IsNone)
+                |> Array.sortBy (fun referenceDto -> referenceDto.CreatedAt)
+                |> Array.iter (fun referenceDto ->
+                    let basedOnReferenceId =
+                        match tryGetBasedOnReferenceId referenceDto with
+                        | Some referenceId -> Some referenceId
+                        | None ->
+                            match previousByBranchId.TryGetValue referenceDto.BranchId with
+                            | true, previousReferenceId -> Some previousReferenceId
+                            | false, _ -> None
+
+                    result[referenceDto.ReferenceId] <- basedOnReferenceId
+                    previousByBranchId[referenceDto.BranchId] <- referenceDto.ReferenceId)
+
+                result
+
+            let effectiveHistory = ResizeArray<EffectiveHistoryDocument>()
+            let mutable index = 0
+            let mutable error: GraceError option = None
+
+            while index < references.Length && error.IsNone do
+                let referenceDto = references[index]
+
+                let basedOnReferenceId =
+                    match basedOnByReferenceId.TryGetValue referenceDto.ReferenceId with
+                    | true, referenceId -> referenceId
+                    | false, _ -> None
+
+                let! isAuthorized = canReadReferenceBranch context referenceDto
+
+                if isAuthorized then
+                    match! materializeAnnotationDocument context repositoryDto path referenceDto with
+                    | materializationResult ->
+                        match effectiveHistoryFromMaterializationResult path targetReferenceId referenceDto basedOnReferenceId materializationResult with
+                        | Ok document -> effectiveHistory.Add document
+                        | Error materializationError -> error <- Some materializationError
+                else
+                    effectiveHistory.Add(effectiveHistoryDocument (emptyAnnotationDocument path referenceDto) basedOnReferenceId false None)
+
+                index <- index + 1
+
+            match error with
+            | Some error -> return Error error
+            | None -> return Ok(effectiveHistory.ToArray())
+        }
+
+    let private withBasedOnLink basedOnReferenceId (referenceDto: Reference.ReferenceDto) =
+        match tryGetBasedOnReferenceId referenceDto with
+        | Some _ -> referenceDto
+        | None ->
+            { referenceDto with
+                Links =
+                    referenceDto.Links
+                    |> Seq.append [ ReferenceLinkType.BasedOn basedOnReferenceId ]
+                    |> Array.ofSeq
+            }
+
+    type internal HistoryWindow = { References: Reference.ReferenceDto array; SyntheticBasedOnByReferenceId: Dictionary<ReferenceId, ReferenceId> }
+
+    let internal orderedHistoryWindowWithSyntheticBoundaries targetReferenceId maxReferences (references: Reference.ReferenceDto array) =
+        let ordered =
+            references
+            |> Array.filter (fun referenceDto -> referenceDto.DeletedAt.IsNone)
+            |> Array.sortBy (fun referenceDto -> referenceDto.CreatedAt)
+
+        let syntheticBasedOnByReferenceId = Dictionary<ReferenceId, ReferenceId>()
+
+        match ordered
+              |> Array.tryFindIndex (fun referenceDto -> referenceDto.ReferenceId = targetReferenceId)
+            with
+        | None -> { References = ordered |> Array.truncate maxReferences; SyntheticBasedOnByReferenceId = syntheticBasedOnByReferenceId }
+        | Some targetIndex ->
+            let startIndex = max 0 (targetIndex - maxReferences + 1)
+            let window = ordered[startIndex..targetIndex]
+
+            if startIndex > 0 && window.Length > 0 then
+                let basedOnReferenceId = ordered[startIndex - 1].ReferenceId
+
+                window[0] <- window[0] |> withBasedOnLink basedOnReferenceId
+
+                syntheticBasedOnByReferenceId[window[0].ReferenceId] <- basedOnReferenceId
+
+            { References = window; SyntheticBasedOnByReferenceId = syntheticBasedOnByReferenceId }
+
+    let internal orderedHistoryWindow targetReferenceId maxReferences (references: Reference.ReferenceDto array) =
+        (orderedHistoryWindowWithSyntheticBoundaries targetReferenceId maxReferences references)
+            .References
+
+    let private includeStoredBasedOnReferences
+        repositoryId
+        correlationId
+        maxReferences
+        (syntheticBasedOnByReferenceId: Dictionary<ReferenceId, ReferenceId>)
+        (references: Reference.ReferenceDto array)
+        =
+        task {
+            let effectiveReferences = ResizeArray<Reference.ReferenceDto>(references)
+
+            let knownReferenceIds =
+                HashSet<ReferenceId>(
+                    references
+                    |> Array.map (fun referenceDto -> referenceDto.ReferenceId)
+                )
+
+            let requestedBasedOnReferenceIds = HashSet<ReferenceId>()
+            let mutable index = 0
+
+            while index < effectiveReferences.Count do
+                let referenceDto = effectiveReferences[index]
+
+                match tryGetStoredBasedOnReferenceId syntheticBasedOnByReferenceId referenceDto with
+                | Some basedOnReferenceId when
+                    not (knownReferenceIds.Contains basedOnReferenceId)
+                    && requestedBasedOnReferenceIds.Add basedOnReferenceId
+                    ->
+                    let basedOnReferenceActorProxy = Reference.CreateActorProxy basedOnReferenceId repositoryId correlationId
+                    let! basedOnReference = basedOnReferenceActorProxy.Get correlationId
+
+                    if basedOnReference.ReferenceId <> ReferenceId.Empty
+                       && basedOnReference.DeletedAt.IsNone
+                       && basedOnReference.RepositoryId = repositoryId then
+                        let! branchReferences = getReferences basedOnReference.RepositoryId basedOnReference.BranchId Int32.MaxValue correlationId
+
+                        let basedOnHistoryWindow =
+                            if branchReferences
+                               |> Array.exists (fun branchReference -> branchReference.ReferenceId = basedOnReference.ReferenceId) then
+                                branchReferences
+                            else
+                                Array.append branchReferences [| basedOnReference |]
+                            |> orderedHistoryWindowWithSyntheticBoundaries basedOnReference.ReferenceId maxReferences
+
+                        for syntheticBasedOn in basedOnHistoryWindow.SyntheticBasedOnByReferenceId do
+                            syntheticBasedOnByReferenceId[syntheticBasedOn.Key] <- syntheticBasedOn.Value
+
+                        let mutable basedOnHistoryIndex = 0
+
+                        while basedOnHistoryIndex < basedOnHistoryWindow.References.Length do
+                            let basedOnHistoryReference = basedOnHistoryWindow.References[basedOnHistoryIndex]
+
+                            if not (knownReferenceIds.Contains basedOnHistoryReference.ReferenceId) then
+                                knownReferenceIds.Add basedOnHistoryReference.ReferenceId
+                                |> ignore
+
+                                effectiveReferences.Add basedOnHistoryReference
+
+                            basedOnHistoryIndex <- basedOnHistoryIndex + 1
+                | _ -> ()
+
+                index <- index + 1
+
+            return effectiveReferences.ToArray()
+        }
+
+    let private buildAnnotationForRequest (context: HttpContext) (parameters: AnnotateParameters) =
+        task {
+            let graceIds = getGraceIds context
+            let correlationId = getCorrelationId context
+
+            match parameters.Validate() with
+            | Error errors -> return Error(annotationError correlationId (String.Join(" ", errors)))
+            | Ok () when String.IsNullOrWhiteSpace parameters.Path ->
+                return Error(annotationError correlationId "Annotation Path must be a relative file path.")
+            | Ok () when isMalformedAnnotationPath parameters.Path ->
+                return Error(annotationError correlationId "Annotation Path must be a relative file path.")
+            | Ok () when parameters.TargetReferenceId = ReferenceId.Empty ->
+                return Error(annotationError correlationId (BranchError.getErrorMessage BranchError.InvalidReferenceId))
+            | Ok () ->
+                let normalizedPath = normalizeAnnotationPath parameters.Path
+                let repositoryActorProxy = Repository.CreateActorProxy graceIds.OrganizationId graceIds.RepositoryId correlationId
+                let! repositoryDto = repositoryActorProxy.Get correlationId
+
+                let referenceActorProxy = Reference.CreateActorProxy parameters.TargetReferenceId graceIds.RepositoryId correlationId
+                let! targetReference = referenceActorProxy.Get correlationId
+
+                if targetReference.ReferenceId = ReferenceId.Empty then
+                    return Error(annotationError correlationId (BranchError.getErrorMessage BranchError.ReferenceIdDoesNotExist))
+                elif targetReference.DeletedAt.IsSome then
+                    return Error(annotationError correlationId "Annotation target Reference has been deleted.")
+                elif targetReference.RepositoryId
+                     <> graceIds.RepositoryId
+                     || targetReference.BranchId <> graceIds.BranchId then
+                    return Error(annotationError correlationId "Annotation target Reference must belong to the requested repository and branch.")
+                else
+                    let! targetContents = getReferenceContents repositoryDto.RepositoryId correlationId targetReference
+
+                    match tryFindFileVersion normalizedPath targetContents with
+                    | None -> return Error(annotationError correlationId $"Annotation target path '{normalizedPath}' was not found in the target Reference.")
+                    | Some _ ->
+                        let! branchReferences = getReferences targetReference.RepositoryId targetReference.BranchId Int32.MaxValue correlationId
+
+                        let localHistoryWindow =
+                            if branchReferences
+                               |> Array.exists (fun referenceDto -> referenceDto.ReferenceId = targetReference.ReferenceId) then
+                                branchReferences
+                            else
+                                Array.append branchReferences [| targetReference |]
+                            |> orderedHistoryWindowWithSyntheticBoundaries targetReference.ReferenceId parameters.MaxReferences
+
+                        let! references =
+                            includeStoredBasedOnReferences
+                                targetReference.RepositoryId
+                                correlationId
+                                parameters.MaxReferences
+                                localHistoryWindow.SyntheticBasedOnByReferenceId
+                                localHistoryWindow.References
+
+                        match! buildEffectiveHistory context repositoryDto normalizedPath targetReference.ReferenceId references with
+                        | Error error -> return Error error
+                        | Ok history ->
+                            let traversal = AnnotationLineCore.traverseEffectiveBranchHistory targetReference.ReferenceId parameters.MaxReferences history
+
+                            match
+                                AnnotationLineCore.buildAnnotationFromEffectiveHistoryTraversal
+                                    (
+                                        parameters.LineRange,
+                                        targetReference.ReferenceId,
+                                        normalizedPath,
+                                        parameters.ReferenceTypes,
+                                        parameters.MaxReferences,
+                                        parameters.IncludeLineText,
+                                        traversal
+                                    )
+                                with
+                            | Error errors -> return Error(annotationError correlationId (String.Join(" ", errors)))
+                            | Ok annotation ->
+                                match Annotation.validate annotation with
+                                | Ok () -> return Ok annotation
+                                | Error errors -> return Error(annotationError correlationId (String.Join(" ", errors)))
+        }
 
     let processCommand<'T when 'T :> BranchParameters> (context: HttpContext) (validations: Validations<'T>) (command: 'T -> ValueTask<BranchCommand>) =
         task {
@@ -1069,6 +1418,77 @@ module Branch =
                     return!
                         context
                         |> result500ServerError (GraceError.CreateWithException ex String.Empty (getCorrelationId context))
+            }
+
+    /// Annotates a server-known file from an existing reference in a branch.
+    let Annotate: HttpHandler =
+        fun (next: HttpFunc) (context: HttpContext) ->
+            task {
+                let startTime = getCurrentInstant ()
+                let graceIds = getGraceIds context
+                let correlationId = getCorrelationId context
+
+                try
+                    let! parameters = context |> parse<AnnotateParameters>
+                    parameters.OwnerId <- graceIds.OwnerIdString
+                    parameters.OrganizationId <- graceIds.OrganizationIdString
+                    parameters.RepositoryId <- graceIds.RepositoryIdString
+                    parameters.BranchId <- graceIds.BranchIdString
+
+                    match! buildAnnotationForRequest context parameters with
+                    | Ok annotation ->
+                        let graceReturnValue =
+                            (GraceReturnValue.Create annotation correlationId)
+                                .enhance(getParametersAsDictionary parameters)
+                                .enhance(nameof OwnerId, graceIds.OwnerId)
+                                .enhance(nameof OrganizationId, graceIds.OrganizationId)
+                                .enhance(nameof RepositoryId, graceIds.RepositoryId)
+                                .enhance(nameof BranchId, graceIds.BranchId)
+                                .enhance ("Path", context.Request.Path.Value)
+
+                        let duration_ms = getDurationRightAligned_ms startTime
+
+                        log.LogInformation(
+                            "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Finished {path}; BranchId: {branchId}; TargetReferenceId: {targetReferenceId}.",
+                            getCurrentInstantExtended (),
+                            getMachineName,
+                            duration_ms,
+                            correlationId,
+                            context.Request.Path,
+                            graceIds.BranchIdString,
+                            parameters.TargetReferenceId
+                        )
+
+                        return! context |> result200Ok graceReturnValue
+                    | Error graceError ->
+                        graceError
+                            .enhance(getParametersAsDictionary parameters)
+                            .enhance(nameof OwnerId, graceIds.OwnerId)
+                            .enhance(nameof OrganizationId, graceIds.OrganizationId)
+                            .enhance(nameof RepositoryId, graceIds.RepositoryId)
+                            .enhance(nameof BranchId, graceIds.BranchId)
+                            .enhance ("Path", context.Request.Path.Value)
+                        |> ignore
+
+                        return! context |> result400BadRequest graceError
+                with
+                | ex ->
+                    let duration_ms = getDurationRightAligned_ms startTime
+
+                    log.LogError(
+                        ex,
+                        "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}.",
+                        getCurrentInstantExtended (),
+                        getMachineName,
+                        duration_ms,
+                        correlationId,
+                        context.Request.Path,
+                        graceIds.BranchIdString
+                    )
+
+                    return!
+                        context
+                        |> result500ServerError (GraceError.CreateWithException ex String.Empty correlationId)
             }
 
     /// Gets a list of references, given a list of reference IDs.

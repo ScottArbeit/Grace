@@ -3,6 +3,7 @@ namespace Grace.SDK
 open Grace.SDK.Common
 open Grace.Shared.Parameters.Branch
 open Grace.Shared.Utilities
+open Grace.Types.Annotation
 open Grace.Types.Branch
 open Grace.Types.Diff
 open Grace.Types.Reference
@@ -26,6 +27,10 @@ type Branch() =
     /// Assigns a specific version of the repository to be the next promotion in a branch.
     static member public Assign(parameters: AssignParameters) =
         postServer<AssignParameters, string> (parameters |> ensureCorrelationIdIsSet, $"branch/{nameof (Branch.Assign)}")
+
+    /// Annotates an existing server-known reference in a branch.
+    static member public Annotate(parameters: AnnotateParameters) =
+        postServer<AnnotateParameters, BranchAnnotationDto> (parameters |> ensureCorrelationIdIsSet, $"branch/{nameof (Branch.Annotate)}")
 
     /// Creates a promotion reference in the parent branch of this branch.
     static member public Promote(parameters: CreateReferenceParameters) =

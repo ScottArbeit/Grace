@@ -399,6 +399,41 @@
         '500':
           $ref: './Responses.OpenAPI.yaml#/500'
 
+  /branch/annotate:
+    post:
+      tags:
+        - Branches
+      summary: Annotate a branch reference.
+      description: Annotates lines from an existing server-known reference in a branch. The API reads server-stored reference content and does not save local workspace state.
+      operationId: AnnotateBranch
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: './Branch.Components.OpenAPI.yaml#/AnnotateParameters'
+            examples:
+              annotateBranch:
+                summary: Annotate one file line
+                value:
+                  <<: *getBranchExample
+                  TargetReferenceId: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
+                  Path: src/App.fs
+                  StartLine: 1
+                  EndLine: 1
+                  ReferenceTypes:
+                    - Commit
+                    - Save
+                  MaxReferences: 1000
+                  IncludeLineText: true
+      responses:
+        '200':
+          $ref: './Branch.Components.OpenAPI.yaml#/BranchAnnotationResponse'
+        '400':
+          $ref: './Responses.OpenAPI.yaml#/400'
+        '500':
+          $ref: './Responses.OpenAPI.yaml#/500'
+
   /branch/getParentBranch:
     post:
       tags:

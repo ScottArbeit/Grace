@@ -966,6 +966,46 @@ paths:
           $ref: '#/components/responses/400'
         '500':
           $ref: '#/components/responses/500'
+  /branch/annotate:
+    post:
+      tags:
+        - Branches
+      summary: Annotate a branch reference.
+      description: Annotates lines from an existing server-known reference in a branch. The API reads server-stored reference content and does not save local workspace state.
+      operationId: AnnotateBranch
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AnnotateParameters'
+            examples:
+              annotateBranch:
+                summary: Annotate one file line
+                value:
+                  CorrelationId: cli-20260604T181500Z-0001
+                  Principal: user:alice
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                  RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                  BranchId: de7bf47d-23ae-4599-af68-68a317ea390d
+                  IncludeDeleted: false
+                  TargetReferenceId: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
+                  Path: src/App.fs
+                  StartLine: 1
+                  EndLine: 1
+                  ReferenceTypes:
+                    - Commit
+                    - Save
+                  MaxReferences: 1000
+                  IncludeLineText: true
+      responses:
+        '200':
+          $ref: '#/components/responses/BranchAnnotationResponse'
+        '400':
+          $ref: '#/components/responses/400'
+        '500':
+          $ref: '#/components/responses/500'
   /branch/get:
     post:
       tags:
@@ -3447,20 +3487,6 @@ components:
       description: Parameters for the /branch/getReference endpoint.
       allOf:
         - $ref: '#/components/schemas/BranchQueryParameters'
-    GetReferencesParameters:
-      description: Parameters for /branch/getReferences and reference-type list endpoints.
-      allOf:
-        - $ref: '#/components/schemas/BranchParameters'
-        - type: object
-          properties:
-            FullSha:
-              type: boolean
-              example: false
-            MaxCount:
-              type: integer
-              format: int32
-              minimum: 1
-              example: 50
     GetDiffsForReferenceTypeParameters:
       description: Parameters for the /branch/getDiffsForReferenceType endpoint.
       allOf:
@@ -5004,6 +5030,243 @@ components:
         CorrelationId: cli-20260604T181500Z-0001
         Properties:
           Path: /branch/create
+    AnnotateParameters:
+      description: Parameters for the /branch/annotate endpoint.
+      allOf:
+        - $ref: '#/components/schemas/BranchParameters'
+        - type: object
+          properties:
+            TargetReferenceId:
+              $ref: '#/components/schemas/ReferenceId'
+            Path:
+              $ref: '#/components/schemas/RelativePath'
+            StartLine:
+              type: integer
+              format: int32
+              minimum: 1
+              example: 1
+            EndLine:
+              type: integer
+              format: int32
+              minimum: 1
+              example: 20
+            ReferenceTypes:
+              type: array
+              items:
+                $ref: '#/components/schemas/ReferenceType'
+            MaxReferences:
+              type: integer
+              format: int32
+              minimum: 1
+              maximum: 5000
+              example: 1000
+            IncludeLineText:
+              type: boolean
+              example: true
+    AnnotationLineRange:
+      description: Inclusive one-based line range.
+      type: object
+      properties:
+        StartLine:
+          type: integer
+          format: int32
+          minimum: 1
+        EndLine:
+          type: integer
+          format: int32
+          minimum: 1
+      required:
+        - StartLine
+        - EndLine
+    AnnotationLine:
+      description: One annotated target line.
+      type: object
+      properties:
+        LineNumber:
+          type: integer
+          format: int32
+          minimum: 1
+        Text:
+          type: string
+      required:
+        - LineNumber
+        - Text
+    AnnotationBoundary:
+      description: Boundary where annotation could not continue through history.
+      type: object
+      properties:
+        BoundaryId:
+          type: string
+        LineRange:
+          $ref: '#/components/schemas/AnnotationLineRange'
+        SourceRowIds:
+          type: array
+          items:
+            type: string
+      required:
+        - BoundaryId
+        - LineRange
+        - SourceRowIds
+    AnnotationSpan:
+      description: Annotated target span and its source rows.
+      type: object
+      properties:
+        SpanId:
+          type: string
+        BoundaryId:
+          type: string
+        LineRange:
+          $ref: '#/components/schemas/AnnotationLineRange'
+        SourceRowIds:
+          type: array
+          items:
+            type: string
+      required:
+        - SpanId
+        - BoundaryId
+        - LineRange
+        - SourceRowIds
+    AnnotationSourceRow:
+      description: Source row range for an annotation span.
+      type: object
+      properties:
+        SourceRowId:
+          type: string
+        SourceReferenceId:
+          type: string
+        Path:
+          $ref: '#/components/schemas/RelativePath'
+        LineRange:
+          $ref: '#/components/schemas/AnnotationLineRange'
+      required:
+        - SourceRowId
+        - SourceReferenceId
+        - Path
+        - LineRange
+    AnnotationSourceReference:
+      description: Reference that contributed annotation source rows.
+      type: object
+      properties:
+        SourceReferenceId:
+          type: string
+        ReferenceId:
+          $ref: '#/components/schemas/ReferenceId'
+        ReferenceType:
+          $ref: '#/components/schemas/ReferenceType'
+        ReferenceText:
+          $ref: '#/components/schemas/ReferenceText'
+        DirectoryVersionId:
+          type: string
+          format: uuid
+        CreatedAt:
+          $ref: '#/components/schemas/Instant'
+        CreatedBy:
+          type: string
+          nullable: true
+      required:
+        - SourceReferenceId
+        - ReferenceId
+        - ReferenceType
+        - ReferenceText
+        - DirectoryVersionId
+    BranchAnnotationApiDto:
+      description: Branch annotation result for an existing server-known reference.
+      type: object
+      properties:
+        Class:
+          type: string
+          example: BranchAnnotationDto
+        RequestedLineRange:
+          $ref: '#/components/schemas/AnnotationLineRange'
+        TargetReferenceId:
+          $ref: '#/components/schemas/ReferenceId'
+        Path:
+          $ref: '#/components/schemas/RelativePath'
+        ReferenceTypeFilter:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReferenceType'
+        MaxReferences:
+          type: integer
+          format: int32
+        IncludeLineText:
+          type: boolean
+        Lines:
+          type: array
+          items:
+            $ref: '#/components/schemas/AnnotationLine'
+        Boundaries:
+          type: array
+          items:
+            $ref: '#/components/schemas/AnnotationBoundary'
+        Spans:
+          type: array
+          items:
+            $ref: '#/components/schemas/AnnotationSpan'
+        SourceRows:
+          type: array
+          items:
+            $ref: '#/components/schemas/AnnotationSourceRow'
+        SourceReferences:
+          type: array
+          items:
+            $ref: '#/components/schemas/AnnotationSourceReference'
+      required:
+        - Class
+        - RequestedLineRange
+        - TargetReferenceId
+        - Path
+        - ReferenceTypeFilter
+        - MaxReferences
+        - IncludeLineText
+        - Lines
+        - Boundaries
+        - Spans
+        - SourceRows
+        - SourceReferences
+    BranchAnnotationReturnValue:
+      description: Grace response envelope whose ReturnValue contains a branch annotation.
+      type: object
+      properties:
+        ReturnValue:
+          $ref: '#/components/schemas/BranchAnnotationApiDto'
+        EventTime:
+          $ref: '#/components/schemas/Instant'
+        CorrelationId:
+          $ref: '#/components/schemas/CorrelationId'
+        Properties:
+          type: object
+          additionalProperties:
+            type: string
+      required:
+        - ReturnValue
+        - EventTime
+        - CorrelationId
+        - Properties
+      example:
+        ReturnValue:
+          Class: BranchAnnotationDto
+          RequestedLineRange:
+            StartLine: 1
+            EndLine: 1
+          TargetReferenceId: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
+          Path: src/App.fs
+          ReferenceTypeFilter:
+            - Commit
+            - Save
+          MaxReferences: 1000
+          IncludeLineText: true
+          Lines:
+            - LineNumber: 1
+              Text: module App
+          Boundaries: []
+          Spans: []
+          SourceRows: []
+          SourceReferences: []
+        EventTime: '2026-06-04T18:15:00Z'
+        CorrelationId: cli-20260604T181500Z-0001
+        Properties:
+          Path: /branch/annotate
     ReferenceApiDto:
       description: Public reference DTO returned through branch reference endpoints.
       type: object
@@ -5200,6 +5463,20 @@ components:
         CorrelationId: cli-20260604T181500Z-0001
         Properties:
           Path: /branch/getReference
+    GetReferencesParameters:
+      description: Parameters for /branch/getReferences and reference-type list endpoints.
+      allOf:
+        - $ref: '#/components/schemas/BranchParameters'
+        - type: object
+          properties:
+            FullSha:
+              type: boolean
+              example: false
+            MaxCount:
+              type: integer
+              format: int32
+              minimum: 1
+              example: 50
     ReferenceListReturnValue:
       description: Grace response envelope whose ReturnValue contains references.
       type: object
@@ -6522,6 +6799,12 @@ components:
                 CorrelationId: cli-20260604T181500Z-0001
                 Properties:
                   Path: /branch/create
+    BranchAnnotationResponse:
+      description: OK
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/BranchAnnotationReturnValue'
     BranchResponse:
       description: OK
       content:

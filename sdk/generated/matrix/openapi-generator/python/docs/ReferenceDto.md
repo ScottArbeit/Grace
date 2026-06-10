@@ -13,6 +13,7 @@ Name | Type | Description | Notes
 **sha256_hash** | **str** |  | [optional] 
 **reference_type** | [**ReferenceType**](ReferenceType.md) |  | [optional] 
 **reference_text** | **str** |  | [optional] 
+**created_by** | **str** |  | [optional] 
 **created_at** | **datetime** |  | [optional] 
 
 ## Example
