@@ -51,7 +51,7 @@ module Doctor =
                 OptionName.Check,
                 Required = false,
                 Description = "Filter the scaffolded doctor report by check ID or category. Repeat or separate values with commas.",
-                Arity = ArgumentArity.ZeroOrMore
+                Arity = ArgumentArity.OneOrMore
             )
 
         let strict =
@@ -117,11 +117,11 @@ module Doctor =
         | Unknown of string array
         | OfflineExcluded of string array
 
-    let private selectedCatalogEntries full offline requestedTokens =
+    let private selectedCatalogEntries full offline listOnly requestedTokens =
         let profileEntries =
             catalog
             |> Array.filter (fun check ->
-                (full || check.DefaultEnabled)
+                (full || listOnly || check.DefaultEnabled)
                 && (not offline || check.SupportsOffline))
 
         if Array.isEmpty requestedTokens then
@@ -159,8 +159,8 @@ module Doctor =
             else
                 Ok(selected |> Seq.toArray)
 
-    let private validateChecks parseResult full offline requestedTokens =
-        match selectedCatalogEntries full offline requestedTokens with
+    let private validateChecks parseResult full offline listOnly requestedTokens =
+        match selectedCatalogEntries full offline listOnly requestedTokens with
         | Ok checks -> Ok checks
         | Error (OfflineExcluded tokens) ->
             let tokens = String.Join(", ", tokens)
@@ -286,7 +286,7 @@ module Doctor =
                 parseResult.GetValue(Options.check)
                 |> tokenizeChecks
 
-            match validateChecks parseResult full offline requestedTokens with
+            match validateChecks parseResult full offline listChecks requestedTokens with
             | Error error -> renderOutput parseResult (Error error)
             | Ok checks ->
                 let report = createReport full offline strict listChecks requestedTokens checks

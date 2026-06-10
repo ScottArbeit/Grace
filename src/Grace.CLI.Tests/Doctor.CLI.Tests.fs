@@ -113,7 +113,24 @@ module DoctorCliTests =
             |> should equal "Ok"
 
             returnValue.GetProperty("Checks").GetArrayLength()
-            |> should be (greaterThan 0)
+            |> should equal 4
+
+            returnValue
+                .GetProperty("Catalog")
+                .GetArrayLength()
+            |> should equal 4
+
+            let catalogIds =
+                returnValue
+                    .GetProperty("Catalog")
+                    .EnumerateArray()
+                |> Seq.map (fun check -> check.GetProperty("Id").GetString())
+                |> Set.ofSeq
+
+            catalogIds
+            |> should contain "identity.auth-session"
+
+            catalogIds |> should contain "server.connectivity"
 
             let firstCheck = returnValue.GetProperty("Checks")[0]
 
@@ -122,6 +139,37 @@ module DoctorCliTests =
 
             Directory.Exists(Path.Combine(root, ".grace"))
             |> should equal false)
+
+    [<Test>]
+    let ``doctor list checks offline keeps only offline catalog entries`` () =
+        withTempDir (fun _ ->
+            let exitCode, standardOut, standardError =
+                runWithCapturedStdoutAndStderr [| "--output"
+                                                  "Json"
+                                                  "doctor"
+                                                  "--list-checks"
+                                                  "--offline" |]
+
+            exitCode |> should equal 0
+
+            use document = assertCleanJsonOutput standardOut standardError
+
+            let catalogIds =
+                document
+                    .RootElement
+                    .GetProperty("ReturnValue")
+                    .GetProperty("Catalog")
+                    .EnumerateArray()
+                |> Seq.map (fun check -> check.GetProperty("Id").GetString())
+                |> Set.ofSeq
+
+            catalogIds.Count |> should equal 2
+
+            catalogIds
+            |> should not' (contain "identity.auth-session")
+
+            catalogIds
+            |> should not' (contain "server.connectivity"))
 
     [<Test>]
     let ``doctor check filter accepts mixed case ids and categories`` () =
@@ -190,6 +238,30 @@ module DoctorCliTests =
 
             rootElement.GetProperty("Error").GetString()
             |> should contain "Unknown doctor check token"
+
+            let mutable returnValue = Unchecked.defaultof<JsonElement>
+
+            rootElement.TryGetProperty("ReturnValue", &returnValue)
+            |> should equal false)
+
+    [<Test>]
+    let ``doctor check followed by option-shaped token emits GraceError`` () =
+        withTempDir (fun _ ->
+            let exitCode, standardOut, standardError =
+                runWithCapturedStdoutAndStderr [| "--output"
+                                                  "Json"
+                                                  "doctor"
+                                                  "--check"
+                                                  "--strict" |]
+
+            exitCode |> should equal -1
+            standardError |> should equal String.Empty
+
+            use document = parseJsonOutput standardOut
+            let rootElement = document.RootElement
+
+            rootElement.GetProperty("Error").GetString()
+            |> should contain "Unknown doctor check token: --strict"
 
             let mutable returnValue = Unchecked.defaultof<JsonElement>
 

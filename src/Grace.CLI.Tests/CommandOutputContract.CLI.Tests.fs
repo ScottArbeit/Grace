@@ -871,9 +871,7 @@ module CommandOutputContractRegistryTests =
     let ``machine readable cli docs keep final inventory evidence current`` () =
         let markdown = File.ReadAllText(machineReadableDocPath)
 
-        let docsTrackedEntries =
-            CommandOutputContract.entries
-            |> List.filter (fun entry -> entry.Identity.CommandId <> "doctor")
+        let docsTrackedEntries = CommandOutputContract.entries
 
         let countDocsTracked predicate =
             docsTrackedEntries

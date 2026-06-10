@@ -7,6 +7,8 @@ open NUnit.Framework
 [<Parallelizable(ParallelScope.All)>]
 module DoctorCliParsingTests =
 
+    let emptyCheckCases: obj array = [| [| "doctor"; "--check" |] :> obj |]
+
     [<Test>]
     let ``doctor command accepts v1 options`` () =
         let parseResult =
@@ -49,6 +51,13 @@ module DoctorCliParsingTests =
     [<Test>]
     let ``doctor command rejects repair option in scaffold slice`` () =
         let parseResult = GraceCommand.rootCommand.Parse([| "doctor"; "--repair" |])
+
+        parseResult.Errors.Count
+        |> should be (greaterThan 0)
+
+    [<TestCaseSource(nameof emptyCheckCases)>]
+    let ``doctor command rejects check option without value`` (args: string array) =
+        let parseResult = GraceCommand.rootCommand.Parse(args)
 
         parseResult.Errors.Count
         |> should be (greaterThan 0)
