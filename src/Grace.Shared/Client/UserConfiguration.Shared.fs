@@ -62,6 +62,8 @@ module UserConfiguration =
 
     type UserConfigurationLoadResult = { Configuration: UserConfiguration; WasCorrupt: bool; ErrorMessage: string option; CreatedNew: bool }
 
+    type UserConfigurationInspection = { Path: string; Exists: bool; Configuration: UserConfiguration option; ErrorMessage: string option }
+
     let private normalizeHistory (history: HistoryConfiguration) =
         let normalized = if obj.ReferenceEquals(history, null) then HistoryConfiguration() else history
 
@@ -163,3 +165,20 @@ module UserConfiguration =
                 ErrorMessage = Some $"Failed to read user configuration: {ex.Message}"
                 CreatedNew = false
             }
+
+    let tryInspectUserConfiguration () =
+        let path = getUserConfigurationPath ()
+
+        if not <| File.Exists(path) then
+            { Path = path; Exists = false; Configuration = None; ErrorMessage = None }
+        else
+            try
+                let json = File.ReadAllText(path)
+                let configuration = JsonSerializer.Deserialize<UserConfiguration>(json, Constants.JsonSerializerOptions)
+
+                if obj.ReferenceEquals(configuration, null) then
+                    { Path = path; Exists = true; Configuration = None; ErrorMessage = Some "User configuration file is empty or invalid JSON." }
+                else
+                    { Path = path; Exists = true; Configuration = Some(normalizeConfiguration configuration); ErrorMessage = None }
+            with
+            | ex -> { Path = path; Exists = true; Configuration = None; ErrorMessage = Some $"Failed to read user configuration: {ex.Message}" }
