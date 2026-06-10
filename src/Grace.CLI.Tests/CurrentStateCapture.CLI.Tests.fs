@@ -105,9 +105,11 @@ module CurrentStateCaptureCliTests =
                 Environment.CurrentDirectory <- root
                 ensureConfigFile root
                 resetConfiguration ()
+                parseResult <- GraceCommand.rootCommand.Parse([||])
                 return! action root
             finally
                 Environment.CurrentDirectory <- previousDirectory
+                parseResult <- null
                 resetConfiguration ()
 
                 if Directory.Exists(root) then Directory.Delete(root, true)
@@ -520,6 +522,80 @@ module CurrentStateCaptureCliTests =
 
                         updatedFile.Blake3Hash
                         |> should equal newBlake3Hash
+                    })
+        }
+
+    [<Test>]
+    let ``scanForDifferences detects file change when only BLAKE3 changes`` () =
+        task {
+            do!
+                withTempConfiguration (fun root ->
+                    task {
+                        let relativePath = RelativePath "file.txt"
+                        let fullPath = Path.Combine(root, $"{relativePath}")
+                        let bytes = Encoding.UTF8.GetBytes("same sha seeded scan file with new blake3")
+
+                        File.WriteAllBytes(fullPath, bytes)
+
+                        let currentLastWriteTime = DateTime(2026, 6, 10, 12, 0, 0, DateTimeKind.Utc)
+                        let previousLastWriteTime = currentLastWriteTime.AddMinutes(-5.0)
+
+                        File.SetLastWriteTimeUtc(fullPath, currentLastWriteTime)
+
+                        let sha256Hash = computeSha256Hash bytes
+                        let currentBlake3Hash = Blake3Hash(ContentAddress.computeBlake3Hex bytes)
+
+                        let previousFileVersion =
+                            LocalFileVersion.CreateWithHashes
+                                relativePath
+                                sha256Hash
+                                (Blake3Hash "previous-blake3")
+                                false
+                                (int64 bytes.Length)
+                                (getCurrentInstant ())
+                                true
+                                previousLastWriteTime
+
+                        previousFileVersion.Blake3Hash
+                        |> should not' (equal currentBlake3Hash)
+
+                        let previousRoot =
+                            LocalDirectoryVersion.CreateWithHashes
+                                rootDirectoryId
+                                OwnerId.Empty
+                                OrganizationId.Empty
+                                RepositoryId.Empty
+                                Constants.RootDirectoryPath
+                                rootSha
+                                (Blake3Hash "previous-root-blake3")
+                                (List<DirectoryVersionId>())
+                                (List<LocalFileVersion>([| previousFileVersion |]))
+                                previousFileVersion.Size
+                                previousLastWriteTime
+
+                        let index = GraceIndex()
+
+                        index.TryAdd(previousRoot.DirectoryVersionId, previousRoot)
+                        |> ignore
+
+                        let previousStatus =
+                            { GraceStatus.Default with
+                                Index = index
+                                RootDirectoryId = previousRoot.DirectoryVersionId
+                                RootDirectorySha256Hash = previousRoot.Sha256Hash
+                            }
+
+                        let! differences = scanForDifferences previousStatus
+
+                        let matchingChanges =
+                            differences
+                                .Where(fun difference ->
+                                    difference.DifferenceType = DifferenceType.Change
+                                    && difference.FileSystemEntryType = FileSystemEntryType.File
+                                    && difference.RelativePath = relativePath)
+                                .ToList()
+
+                        matchingChanges.Count |> should equal 1
                     })
         }
 

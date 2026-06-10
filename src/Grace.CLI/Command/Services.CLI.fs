@@ -362,7 +362,7 @@ module Services =
     let scanForDifferences (previousGraceStatus: GraceStatus) =
         task {
             try
-                let lookupCache = Dictionary<FileSystemEntryType * RelativePath, (DateTime * Sha256Hash)>()
+                let lookupCache = Dictionary<FileSystemEntryType * RelativePath, (DateTime * Sha256Hash * Blake3Hash)>()
 
                 let differences = ConcurrentStack<FileSystemDifference>()
 
@@ -373,14 +373,14 @@ module Services =
 
                     lookupCache.TryAdd(
                         (FileSystemEntryType.Directory, directoryVersion.RelativePath),
-                        (directoryVersion.LastWriteTimeUtc, directoryVersion.Sha256Hash)
+                        (directoryVersion.LastWriteTimeUtc, directoryVersion.Sha256Hash, directoryVersion.Blake3Hash)
                     )
                     |> ignore
 
                     for file in directoryVersion.Files do
                         fileCount <- fileCount + 1
 
-                        lookupCache.TryAdd((FileSystemEntryType.File, file.RelativePath), (file.LastWriteTimeUtc, file.Sha256Hash))
+                        lookupCache.TryAdd((FileSystemEntryType.File, file.RelativePath), (file.LastWriteTimeUtc, file.Sha256Hash, file.Blake3Hash))
                         |> ignore
 
                 if parseResult |> isOutputFormat "Verbose" then
@@ -404,7 +404,7 @@ module Services =
 
                     // Check for changes
                     if lookupCache.ContainsKey((fileSystemEntryType, relativePath)) then
-                        let (knownLastWriteTimeUtc, existingSha256Hash) = lookupCache[(fileSystemEntryType, relativePath)]
+                        let (knownLastWriteTimeUtc, existingSha256Hash, existingBlake3Hash) = lookupCache[(fileSystemEntryType, relativePath)]
                         // Has the LastWriteTimeUtc changed from the one in GraceStatus?
                         if fileSystemEntryType.IsFile
                            && lastWriteTimeUtc <> knownLastWriteTimeUtc then
@@ -414,19 +414,19 @@ module Services =
 
                             match! createLocalFileVersion fileInfo with
                             | Some newFileVersion ->
-                                if newFileVersion.Sha256Hash <> existingSha256Hash then
+                                if newFileVersion.Sha256Hash <> existingSha256Hash
+                                   || newFileVersion.Blake3Hash <> existingBlake3Hash then
                                     differences.Push(FileSystemDifference.Create Change fileSystemEntryType relativePath)
 
                                     if parseResult |> isOutputFormat "Verbose" then
                                         logToAnsiConsole
                                             Colors.Verbose
-                                            $"scanForDifferences: Found change in file: {relativePath}; existing Sha256Hash: {getShortSha256Hash existingSha256Hash}; new Sha256Hash: {getShortSha256Hash newFileVersion.Sha256Hash}."
+                                            $"scanForDifferences: Found change in file: {relativePath}; existing Sha256Hash: {getShortSha256Hash existingSha256Hash}; new Sha256Hash: {getShortSha256Hash newFileVersion.Sha256Hash}; existing Blake3Hash: {existingBlake3Hash}; new Blake3Hash: {newFileVersion.Blake3Hash}."
                             | None -> ()
 
                 // Check for deletions
                 for keyValuePair in lookupCache do
                     let (fileSystemEntryType, relativePath) = keyValuePair.Key
-                    let (knownLastWriteTimeUtc, existingSha256Hash) = keyValuePair.Value
 
                     if
                         not
