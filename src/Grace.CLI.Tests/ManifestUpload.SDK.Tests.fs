@@ -211,6 +211,7 @@ type ManifestUploadSdkTests() =
                     Assert.That(uploadResult.UploadedBlockCount, Is.EqualTo(uploadedBlocks.Count))
                     Assert.That(uploadResult.FileVersion.ContentReference.ReferenceType, Is.EqualTo(FileContentReferenceType.FileManifest))
                     Assert.That(uploadResult.Manifest, Is.EqualTo(finalizedManifest))
+                    Assert.That(uploadResult.FileVersion.Blake3Hash, Is.EqualTo(Blake3Hash(ContentAddress.computeBlake3Hex payload)))
                     Assert.That(sessionIds |> Seq.distinct |> Seq.length, Is.EqualTo(1))
                     Assert.That(calls[0], Is.EqualTo("start"))
                     Assert.That(calls[calls.Count - 1], Is.EqualTo("finalize"))
@@ -256,6 +257,7 @@ type ManifestUploadSdkTests() =
                     let uploadResult = returnValue.ReturnValue
                     Assert.That(uploadResult.UsedManifestUpload, Is.False)
                     Assert.That(uploadResult.UploadedBlockCount, Is.EqualTo(0))
+                    Assert.That(uploadResult.FileVersion.Blake3Hash, Is.EqualTo(fileVersion.Blake3Hash))
                     Assert.That(uploadResult.FileVersion.ContentReference.ReferenceType, Is.EqualTo(FileContentReferenceType.WholeFileContent))
                     Assert.That(uploadResult.Manifest, Is.EqualTo(None))
                     Assert.That(uploadResult.UploadSessionId, Is.EqualTo(None))
@@ -343,7 +345,7 @@ type ManifestUploadSdkTests() =
             let wholeFileUpload (parameters: GetUploadMetadataForFilesParameters) =
                 task {
                     wholeFileFallbacks.Add(parameters.FileVersions)
-                    return Ok(GraceReturnValue.Create true correlationId)
+                    return Ok(GraceReturnValue.Create parameters.FileVersions correlationId)
                 }
 
             let parameters = ManifestUploadSdkTests.UploadParameters correlationId [| manifestFile; ineligibleFile |]
@@ -353,7 +355,7 @@ type ManifestUploadSdkTests() =
             match result with
             | Error error -> Assert.Fail($"{error.Error}{Environment.NewLine}{serialize error.Properties}")
             | Ok returnValue ->
-                Assert.That(returnValue.ReturnValue, Is.True)
+                Assert.That(returnValue.ReturnValue, Is.EquivalentTo([| manifestFile; ineligibleFile |]))
 
                 Assert.That(
                     manifestAttempts,

@@ -121,6 +121,26 @@ type SaveBoundaryActorTests() =
         Assert.That(filesToValidate[0].RelativePath, Is.EqualTo(wholeFile.RelativePath))
 
     [<Test>]
+    member _.ManifestSaveBoundaryRejectsMismatchedFileBlake3WhenPresent() =
+        let manifest = finalizedManifest ()
+        let fileVersion = manifestFile manifest
+        fileVersion.Blake3Hash <- Blake3Hash "wrong-blake3"
+
+        match DirectoryVersionActor.validateManifestBackedFileForSaveBoundary "corr-manifest-blake3-mismatch" fileVersion manifest with
+        | Ok () -> Assert.Fail("Expected manifest-backed FileVersion BLAKE3 mismatch to be rejected.")
+        | Error error -> Assert.That(error.Error, Does.Contain("FileVersion.Blake3Hash"))
+
+    [<Test>]
+    member _.ManifestSaveBoundaryAllowsLegacyEmptyFileBlake3() =
+        let manifest = finalizedManifest ()
+        let fileVersion = manifestFile manifest
+        fileVersion.Blake3Hash <- Blake3Hash String.Empty
+
+        match DirectoryVersionActor.validateManifestBackedFileForSaveBoundary "corr-manifest-empty-blake3" fileVersion manifest with
+        | Ok () -> ()
+        | Error error -> Assert.Fail($"Expected legacy empty BLAKE3 to be accepted, got {error.Error}.")
+
+    [<Test>]
     member _.SaveBoundaryAcceptsFinalizedManifestAfterDurableIncrementIntent() =
         let manifest = finalizedManifest ()
         let directoryVersion = directoryWith [ manifestFile manifest ]
