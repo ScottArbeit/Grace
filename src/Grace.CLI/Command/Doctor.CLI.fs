@@ -5,6 +5,7 @@ open Grace.CLI.Common
 open Grace.CLI.Text
 open Grace.Shared
 open Grace.Shared.Client
+open Grace.SDK
 open Grace.Types.Common
 open Spectre.Console
 open System
@@ -13,6 +14,9 @@ open System.CommandLine
 open System.CommandLine.Invocation
 open System.CommandLine.Parsing
 open System.IO
+open System.Net
+open System.Net.Http
+open System.Net.Http.Headers
 open System.Threading
 open System.Threading.Tasks
 
@@ -85,7 +89,19 @@ module Doctor =
     let private ObjectCacheIndexReadableCheckId = "object-cache.index-readable"
 
     [<Literal>]
+    let private ServerHealthzReachableCheckId = "server.healthz.reachable"
+
+    [<Literal>]
+    let private ServerLifecycleHeadersCheckId = "server.lifecycle.headers"
+
+    [<Literal>]
+    let private ServerAuthPrincipalAvailableCheckId = "server.auth-principal.available"
+
+    [<Literal>]
     let private ExpectedLocalStateSchemaVersion = "2"
+
+    [<Literal>]
+    let private DoctorServerProbeTimeoutMilliseconds = 1500
 
     module private Options =
         let full =
@@ -314,7 +330,32 @@ module Doctor =
                 Id = "server.connectivity"
                 Category = "Server"
                 Title = "Grace server connectivity"
-                Description = "Reserved for a later server connectivity diagnostic. Scaffold only; no network probe is executed."
+                Description =
+                    "Reserved compatibility catalog entry. Use the specific server.healthz, server.lifecycle, or server.auth-principal checks for active probes."
+                DefaultEnabled = false
+                SupportsOffline = false
+            }
+            {
+                Id = ServerHealthzReachableCheckId
+                Category = "Server"
+                Title = "Grace server /healthz reachability"
+                Description = "Resolves the effective Grace server URI and probes /healthz with a short timeout."
+                DefaultEnabled = false
+                SupportsOffline = false
+            }
+            {
+                Id = ServerLifecycleHeadersCheckId
+                Category = "Server"
+                Title = "Grace server lifecycle headers"
+                Description = "Surfaces Grace SDK lifecycle response headers from the anonymous /healthz probe."
+                DefaultEnabled = false
+                SupportsOffline = false
+            }
+            {
+                Id = ServerAuthPrincipalAvailableCheckId
+                Category = "Server"
+                Title = "Grace authenticated principal"
+                Description = "Optionally probes /auth/me only when a valid non-refreshing GRACE_TOKEN PAT is present."
                 DefaultEnabled = false
                 SupportsOffline = false
             }
@@ -334,23 +375,20 @@ module Doctor =
             |> Array.filter (String.IsNullOrWhiteSpace >> not)
             |> Array.distinctBy (fun value -> value.ToUpperInvariant())
 
-    type private SelectionError =
-        | Unknown of string array
-        | OfflineExcluded of string array
+    type private SelectionError = Unknown of string array
 
     let private selectedCatalogEntries full offline listOnly requestedTokens =
         let profileEntries =
             catalog
             |> Array.filter (fun check ->
                 (full || listOnly || check.DefaultEnabled)
-                && (not offline || check.SupportsOffline))
+                && (listOnly || not offline || check.SupportsOffline))
 
         if Array.isEmpty requestedTokens then
             Ok(profileEntries)
         else
             let selected = ResizeArray<LocalOutputDto.DoctorCheckDto>()
             let unknown = ResizeArray<string>()
-            let excludedOffline = ResizeArray<string>()
 
             for token in requestedTokens do
                 let matches =
@@ -363,29 +401,17 @@ module Doctor =
                     unknown.Add(token)
                 else
                     for check in matches do
-                        if offline && not check.SupportsOffline then
-                            excludedOffline.Add(check.Id)
-                        elif not (selected.Exists(fun existing -> existing.Id.Equals(check.Id, StringComparison.OrdinalIgnoreCase))) then
+                        if not (selected.Exists(fun existing -> existing.Id.Equals(check.Id, StringComparison.OrdinalIgnoreCase))) then
                             selected.Add(check)
 
             if unknown.Count > 0 then
                 Error(Unknown(unknown |> Seq.toArray))
-            elif excludedOffline.Count > 0 then
-                let tokens =
-                    excludedOffline
-                    |> Seq.distinctBy (fun value -> value.ToUpperInvariant())
-                    |> Seq.toArray
-
-                Error(OfflineExcluded tokens)
             else
                 Ok(selected |> Seq.toArray)
 
     let private validateChecks parseResult full offline listOnly requestedTokens =
         match selectedCatalogEntries full offline listOnly requestedTokens with
         | Ok checks -> Ok checks
-        | Error (OfflineExcluded tokens) ->
-            let tokens = String.Join(", ", tokens)
-            Error(GraceError.Create $"Doctor check token is not available in offline mode: {tokens}." (getCorrelationId parseResult))
         | Error (Unknown unknown) ->
             let tokens = String.Join(", ", unknown)
             Error(GraceError.Create $"Unknown doctor check token: {tokens}." (getCorrelationId parseResult))
@@ -401,16 +427,157 @@ module Doctor =
 
     type private DoctorInspectionContext =
         {
+            Offline: bool
             ConfigurationState: ConfigurationInspectionState
             UserConfiguration: UserConfiguration.UserConfigurationInspection
             EnvironmentServerUri: string option
             AuthInspection: Auth.AuthInspection
             LocalStateInspection: Lazy<LocalStateDb.ReadOnlyLocalStateInspection>
+            ServerHealthzInspection: Lazy<ServerProbeInspection>
         }
+
+    and private EffectiveServerUri =
+        | EffectiveServerUriResolved of Uri * string
+        | EffectiveServerUriUnavailable of string
+
+    and ServerProbeResponse =
+        {
+            StatusCode: HttpStatusCode
+            ReasonPhrase: string
+            LifecycleDiagnostics: ClientIdentity.LifecycleDiagnostics option
+            Body: string
+        }
+
+    and ServerProbeInspection =
+        | ServerProbeSucceeded of ServerProbeResponse
+        | ServerProbeSkipped of string
+        | ServerProbeInvalidUri of string
+        | ServerProbeTimedOut of string
+        | ServerProbeTlsFailed of string
+        | ServerProbeConnectionFailed of string
+        | ServerProbeFailed of string
 
     let private normalizeOptionalText value = if String.IsNullOrWhiteSpace(value) then None else Some(value.Trim())
 
-    let private createInspectionContext () =
+    type ServerProbeRequest = { BaseUri: Uri; RelativePath: string; BearerToken: string option; Timeout: TimeSpan }
+
+    let private normalizeBearerToken (token: string) =
+        let trimmed = token.Trim()
+
+        if trimmed.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase) then
+            trimmed.Substring("Bearer ".Length).Trim()
+        else
+            trimmed
+
+    let private buildProbeUri (baseUri: Uri) (relativePath: string) =
+        if not baseUri.IsAbsoluteUri then
+            Error "Effective server URI is not absolute."
+        elif
+            not (baseUri.Scheme.Equals(Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase))
+            && not (baseUri.Scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase))
+        then
+            Error $"Effective server URI uses unsupported scheme '{baseUri.Scheme}'."
+        else
+            let baseText = baseUri.AbsoluteUri.TrimEnd('/')
+            let pathText = relativePath.TrimStart('/')
+            Ok(Uri($"{baseText}/{pathText}"))
+
+    let private defaultServerProbe (request: ServerProbeRequest) =
+        task {
+            match buildProbeUri request.BaseUri request.RelativePath with
+            | Error message -> return ServerProbeInvalidUri message
+            | Ok requestUri ->
+                use cancellationSource = new CancellationTokenSource(request.Timeout)
+                use httpClient = new HttpClient()
+                httpClient.Timeout <- Timeout.InfiniteTimeSpan
+                ClientIdentity.applyHeaders httpClient |> ignore
+
+                use httpRequest = new HttpRequestMessage(HttpMethod.Get, requestUri)
+
+                match request.BearerToken with
+                | Some token -> httpRequest.Headers.Authorization <- AuthenticationHeaderValue("Bearer", token)
+                | None -> ()
+
+                try
+                    use! response = httpClient.SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, cancellationSource.Token)
+                    let! body = response.Content.ReadAsStringAsync(cancellationSource.Token)
+
+                    return
+                        ServerProbeSucceeded
+                            {
+                                StatusCode = response.StatusCode
+                                ReasonPhrase =
+                                    response.ReasonPhrase
+                                    |> Option.ofObj
+                                    |> Option.defaultValue String.Empty
+                                LifecycleDiagnostics = ClientIdentity.parseLifecycleDiagnostics response
+                                Body = body
+                            }
+                with
+                | :? OperationCanceledException when cancellationSource.IsCancellationRequested ->
+                    return ServerProbeTimedOut $"Timed out after {int request.Timeout.TotalMilliseconds} ms while probing {requestUri}."
+                | :? HttpRequestException as ex when
+                    not (isNull ex.InnerException)
+                    && ex
+                        .InnerException
+                        .GetType()
+                        .Name.Contains("Authentication", StringComparison.OrdinalIgnoreCase)
+                    ->
+                    return ServerProbeTlsFailed $"TLS negotiation failed while probing {requestUri}: {ex.Message}"
+                | :? HttpRequestException as ex -> return ServerProbeConnectionFailed $"Could not connect to {requestUri}: {ex.Message}"
+                | ex -> return ServerProbeFailed $"Unexpected server probe failure for {requestUri}: {ex.Message}"
+        }
+
+    let mutable private serverProbeFactory: ServerProbeRequest -> Task<ServerProbeInspection> = defaultServerProbe
+
+    let setServerProbeFactoryForTests factory = serverProbeFactory <- factory
+
+    let resetServerProbeFactoryForTests () = serverProbeFactory <- defaultServerProbe
+
+    let private resolveEffectiveServerUri (configurationState: ConfigurationInspectionState) environmentServerUri =
+        let tryResolve source value =
+            match Uri.TryCreate(value, UriKind.Absolute) with
+            | true, uri when
+                uri.Scheme = Uri.UriSchemeHttp
+                || uri.Scheme = Uri.UriSchemeHttps
+                ->
+                EffectiveServerUriResolved(uri, source)
+            | true, uri -> EffectiveServerUriUnavailable $"Effective server URI from {source} uses unsupported scheme '{uri.Scheme}'."
+            | false, _ -> EffectiveServerUriUnavailable $"Effective server URI from {source} is not an absolute URI: {value}."
+
+        match environmentServerUri with
+        | Some value -> tryResolve Constants.EnvironmentVariables.GraceServerUri value
+        | None ->
+            match configurationState with
+            | ConfigurationLoaded inspection -> tryResolve Constants.GraceConfigFileName inspection.Configuration.ServerUri
+            | ConfigurationMissing _ ->
+                EffectiveServerUriUnavailable
+                    $"No effective server URI was available because {Constants.GraceConfigFileName} was not found and {Constants.EnvironmentVariables.GraceServerUri} is not set."
+            | ConfigurationMalformed _ ->
+                EffectiveServerUriUnavailable
+                    $"No effective server URI was available because {ConfigFileParseCheckId} failed and {Constants.EnvironmentVariables.GraceServerUri} is not set."
+
+    let private validEnvironmentPat (authInspection: Auth.AuthInspection) =
+        if authInspection.GraceTokenValid then
+            Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.GraceToken)
+            |> normalizeOptionalText
+            |> Option.map normalizeBearerToken
+        else
+            None
+
+    let private probeServer relativePath bearerToken effectiveServerUri =
+        match effectiveServerUri with
+        | EffectiveServerUriUnavailable message -> Task.FromResult(ServerProbeInvalidUri message)
+        | EffectiveServerUriResolved (uri, _) ->
+            {
+                BaseUri = uri
+                RelativePath = relativePath
+                BearerToken = bearerToken
+                Timeout = TimeSpan.FromMilliseconds(float DoctorServerProbeTimeoutMilliseconds)
+            }
+            |> serverProbeFactory
+
+    let private createInspectionContext offline =
         let configurationState =
             match Configuration.tryInspectCurrentDirectoryConfiguration () with
             | Ok inspection -> ConfigurationLoaded inspection
@@ -423,14 +590,26 @@ module Doctor =
             | ConfigurationMalformed (path, _) -> Path.Combine(Path.GetDirectoryName(path), Constants.GraceLocalStateDbFileName)
             | ConfigurationMissing _ -> Path.Combine(Environment.CurrentDirectory, Constants.GraceConfigDirectory, Constants.GraceLocalStateDbFileName)
 
+        let environmentServerUri =
+            Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.GraceServerUri)
+            |> normalizeOptionalText
+
+        let effectiveServerUri = resolveEffectiveServerUri configurationState environmentServerUri
+
         {
+            Offline = offline
             ConfigurationState = configurationState
             UserConfiguration = UserConfiguration.tryInspectUserConfiguration ()
-            EnvironmentServerUri =
-                Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.GraceServerUri)
-                |> normalizeOptionalText
+            EnvironmentServerUri = environmentServerUri
             AuthInspection = Auth.inspectAuthEnvironment ()
             LocalStateInspection = lazy (LocalStateDb.inspectReadOnly localStateDbPath)
+            ServerHealthzInspection =
+                lazy
+                    (if offline then
+                         ServerProbeSkipped "Skipped because --offline is set; doctor did not perform any server network probe."
+                     else
+                         probeServer "healthz" None effectiveServerUri
+                         |> fun task -> task.GetAwaiter().GetResult())
         }
 
     let private checkResult checkId category title status severity summary : LocalOutputDto.DoctorCheckResultDto =
@@ -451,6 +630,45 @@ module Doctor =
     let private formatFieldNames (names: string array) = if Array.isEmpty names then "none" else String.Join(", ", names)
 
     let private formatListOrNone (values: string array) = if Array.isEmpty values then "none" else String.Join(", ", values)
+
+    let private lifecycleSummary (diagnostics: ClientIdentity.LifecycleDiagnostics) =
+        let details = ResizeArray<string>()
+
+        match diagnostics.Status with
+        | Some status -> details.Add($"status={status}")
+        | None -> ()
+
+        match diagnostics.UnsupportedAfter with
+        | Some unsupportedAfter -> details.Add($"unsupportedAfter={unsupportedAfter}")
+        | None -> ()
+
+        match diagnostics.MinimumVersion with
+        | Some minimumVersion -> details.Add($"minimumVersion={minimumVersion}")
+        | None -> ()
+
+        match diagnostics.RecommendedVersion with
+        | Some recommendedVersion -> details.Add($"recommendedVersion={recommendedVersion}")
+        | None -> ()
+
+        match diagnostics.UpdateUrl with
+        | Some updateUrl -> details.Add($"updateUrl={updateUrl}")
+        | None -> ()
+
+        String.Join("; ", details)
+
+    let private lifecycleHasWarning (diagnostics: ClientIdentity.LifecycleDiagnostics) =
+        diagnostics.UnsupportedAfterIsMalformed
+        || diagnostics.UpdateUrlIsHttps = Some false
+
+    let private probeFailureSummary inspection =
+        match inspection with
+        | ServerProbeSkipped message -> message
+        | ServerProbeInvalidUri message -> message
+        | ServerProbeTimedOut message -> message
+        | ServerProbeTlsFailed message -> message
+        | ServerProbeConnectionFailed message -> message
+        | ServerProbeFailed message -> message
+        | ServerProbeSucceeded response -> $"Server returned HTTP {(int response.StatusCode)} {response.ReasonPhrase}."
 
     let private localStateUnavailableSummary checkId (inspection: LocalStateDb.ReadOnlyLocalStateInspection) =
         if not inspection.ParentDirectoryExists then
@@ -531,6 +749,67 @@ module Doctor =
             if auth.M2mComplete || auth.CliComplete then ok summary
             elif auth.HasPartialM2m || auth.HasPartialCli then warning summary
             else skipped check summary
+        | ServerHealthzReachableCheckId ->
+            match context.ServerHealthzInspection.Value with
+            | ServerProbeSkipped message -> skipped check message
+            | ServerProbeSucceeded response when
+                int response.StatusCode >= 200
+                && int response.StatusCode <= 299
+                ->
+                ok $"Reached /healthz with HTTP {(int response.StatusCode)} {response.ReasonPhrase}; timeout was {DoctorServerProbeTimeoutMilliseconds} ms."
+            | ServerProbeSucceeded response ->
+                failed
+                    $"Reached /healthz but the server returned HTTP {(int response.StatusCode)} {response.ReasonPhrase}; check server health and GRACE_SERVER_URI."
+            | ServerProbeTimedOut message -> failed $"{message} Check the effective server URI, network path, proxy settings, or server startup state."
+            | ServerProbeTlsFailed message -> failed $"{message} Verify the server certificate and HTTPS endpoint configuration."
+            | ServerProbeConnectionFailed message -> failed $"{message} Check that the Grace server is running and reachable."
+            | ServerProbeInvalidUri message ->
+                failed
+                    $"{message} Set {Constants.EnvironmentVariables.GraceServerUri} or {Constants.GraceConfigFileName} serverUri to an absolute http/https URI."
+            | ServerProbeFailed message -> failed message
+        | ServerLifecycleHeadersCheckId ->
+            match context.ServerHealthzInspection.Value with
+            | ServerProbeSkipped message -> skipped check message
+            | ServerProbeSucceeded response ->
+                match response.LifecycleDiagnostics with
+                | None -> ok "No Grace SDK lifecycle headers were returned by /healthz."
+                | Some diagnostics when lifecycleHasWarning diagnostics ->
+                    warning
+                        $"Lifecycle headers were returned by /healthz with advisory warnings: {lifecycleSummary diagnostics}. Malformed unsupported-after dates or non-HTTPS update URLs should be corrected server-side."
+                | Some diagnostics -> ok $"Lifecycle headers were returned by /healthz: {lifecycleSummary diagnostics}."
+            | failure -> failed $"Could not inspect lifecycle headers because /healthz did not produce a response: {probeFailureSummary failure}"
+        | ServerAuthPrincipalAvailableCheckId ->
+            if context.Offline then
+                skipped check "Skipped because --offline is set; doctor did not perform the authenticated principal probe."
+            else
+                match validEnvironmentPat context.AuthInspection with
+                | None ->
+                    skipped
+                        check
+                        $"Skipped because no valid non-refreshing {Constants.EnvironmentVariables.GraceToken} PAT is available. Doctor did not use OIDC, token refresh, secure storage, browser, device-code, or SDK auth provider paths."
+                | Some token ->
+                    let effectiveServerUri = resolveEffectiveServerUri context.ConfigurationState context.EnvironmentServerUri
+
+                    match probeServer "auth/me" (Some token) effectiveServerUri
+                          |> fun task -> task.GetAwaiter().GetResult()
+                        with
+                    | ServerProbeSucceeded response when
+                        int response.StatusCode >= 200
+                        && int response.StatusCode <= 299
+                        ->
+                        ok
+                            $"Authenticated principal endpoint /auth/me returned HTTP {(int response.StatusCode)} {response.ReasonPhrase} using the non-refreshing {Constants.EnvironmentVariables.GraceToken} PAT source."
+                    | ServerProbeSucceeded response ->
+                        failed
+                            $"Authenticated principal endpoint /auth/me returned HTTP {(int response.StatusCode)} {response.ReasonPhrase}; verify the PAT, claims, and server authentication configuration."
+                    | ServerProbeTimedOut message -> failed $"{message} Check the effective server URI, network path, proxy settings, or server startup state."
+                    | ServerProbeTlsFailed message -> failed $"{message} Verify the server certificate and HTTPS endpoint configuration."
+                    | ServerProbeConnectionFailed message -> failed $"{message} Check that the Grace server is running and reachable."
+                    | ServerProbeInvalidUri message ->
+                        failed
+                            $"{message} Set {Constants.EnvironmentVariables.GraceServerUri} or {Constants.GraceConfigFileName} serverUri to an absolute http/https URI."
+                    | ServerProbeSkipped message -> skipped check message
+                    | ServerProbeFailed message -> failed message
         | StateDbFilePresentCheckId ->
             let inspection = context.LocalStateInspection.Value
 
@@ -775,7 +1054,7 @@ module Doctor =
             if listOnly then
                 checks |> Array.map listOnlyResultForCheck
             else
-                let context = createInspectionContext ()
+                let context = createInspectionContext offline
                 checks |> Array.map (resultForCheck context)
 
         let summary = summarize results
