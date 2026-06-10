@@ -997,7 +997,7 @@ module Services =
                     uploadWholeFilesToObjectStorage
                     parameters
                 with
-            | Ok _ -> return Ok(GraceReturnValue.Create true parameters.CorrelationId)
+            | Ok returnValue -> return Ok returnValue
             | Error error -> return Error error
         }
 

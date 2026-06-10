@@ -343,8 +343,10 @@ module Diff =
                                                      |> Seq.toArray)
                                             )
 
+                                        let mutable uploadedFileVersions = Array.empty
+
                                         match! uploadFilesToObjectStorage getUploadMetadataForFilesParameters with
-                                        | Ok returnValue -> ()
+                                        | Ok returnValue -> uploadedFileVersions <- returnValue.ReturnValue
                                         | Error error -> logToAnsiConsole Colors.Error $"Failed to upload changed files to object storage. {error}"
 
                                         t3.Value <- 100.0
@@ -364,7 +366,7 @@ module Diff =
 
                                                 saveParameters.DirectoryVersions <-
                                                     newDirectoryVersions
-                                                        .Select(fun dv -> dv.ToDirectoryVersion)
+                                                        .Select(toDirectoryVersionWithUploadedFiles uploadedFileVersions [])
                                                         .ToList()
 
                                                 match! DirectoryVersion.SaveDirectoryVersions saveParameters with
@@ -646,8 +648,10 @@ module Diff =
                                                          |> Seq.toArray)
                                                 )
 
+                                            let mutable uploadedFileVersions = Array.empty
+
                                             match! uploadFilesToObjectStorage getUploadMetadataForFilesParameters with
-                                            | Ok returnValue -> ()
+                                            | Ok returnValue -> uploadedFileVersions <- returnValue.ReturnValue
                                             | Error error -> logToAnsiConsole Colors.Error $"Failed to upload changed files to object storage. {error}"
 
                                             t3.Value <- 100.0
@@ -667,7 +671,7 @@ module Diff =
 
                                                     saveParameters.DirectoryVersions <-
                                                         newDirectoryVersions
-                                                            .Select(fun dv -> dv.ToDirectoryVersion)
+                                                            .Select(toDirectoryVersionWithUploadedFiles uploadedFileVersions [])
                                                             .ToList()
 
                                                     match! DirectoryVersion.SaveDirectoryVersions saveParameters with

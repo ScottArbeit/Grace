@@ -1219,6 +1219,8 @@ module Branch =
 
                                             let mutable lastFileUploadInstant = newGraceStatus.LastSuccessfulFileUpload
 
+                                            let mutable uploadedFileVersions = Array.empty
+
                                             if newFileVersions.Count() > 0 then
                                                 let getUploadMetadataForFilesParameters =
                                                     Storage.GetUploadMetadataForFilesParameters(
@@ -1236,7 +1238,8 @@ module Branch =
                                                     )
 
                                                 match! uploadFilesToObjectStorage getUploadMetadataForFilesParameters with
-                                                | Ok returnValue -> () //logToAnsiConsole Colors.Verbose $"Uploaded all files to object storage."
+                                                | Ok returnValue -> uploadedFileVersions <- returnValue.ReturnValue
+                                                //logToAnsiConsole Colors.Verbose $"Uploaded all files to object storage."
                                                 | Error error -> logToAnsiConsole Colors.Error $"Error uploading files to object storage: {error.Error}"
 
                                                 lastFileUploadInstant <- getCurrentInstant ()
@@ -1259,7 +1262,7 @@ module Branch =
 
                                                 saveParameters.DirectoryVersions <-
                                                     newDirectoryVersions
-                                                        .Select(fun dv -> dv.ToDirectoryVersion)
+                                                        .Select(toDirectoryVersionWithUploadedFiles uploadedFileVersions [])
                                                         .ToList()
 
                                                 saveParameters.CorrelationId <- getCorrelationId parseResult
@@ -1347,6 +1350,12 @@ module Branch =
                             )
 
                         let! uploadResult = uploadFilesToObjectStorage getUploadMetadataForFilesParameters
+
+                        let uploadedFileVersions =
+                            match uploadResult with
+                            | Ok returnValue -> returnValue.ReturnValue
+                            | Error _ -> Array.empty
+
                         let saveParameters = SaveDirectoryVersionsParameters()
                         saveParameters.OwnerId <- graceIds.OwnerIdString
                         saveParameters.OwnerName <- graceIds.OwnerName
@@ -1358,7 +1367,7 @@ module Branch =
 
                         saveParameters.DirectoryVersions <-
                             newDirectoryVersions
-                                .Select(fun dv -> dv.ToDirectoryVersion)
+                                .Select(toDirectoryVersionWithUploadedFiles uploadedFileVersions [])
                                 .ToList()
 
                         let! uploadDirectoryVersions = DirectoryVersion.SaveDirectoryVersions saveParameters
@@ -2875,13 +2884,13 @@ module Branch =
                                 match! uploadFilesToObjectStorage getUploadMetadataForFilesParameters with
                                 | Ok returnValue ->
                                     t |> setProgressTaskValue showOutput 100.0
-                                    return Ok(showOutput, parseResult, parameters, currentBranch, newDirectoryVersions)
+                                    return Ok(showOutput, parseResult, parameters, currentBranch, newDirectoryVersions, returnValue.ReturnValue)
                                 | Error error ->
                                     t |> setProgressTaskValue showOutput 50.0
                                     return Error error
                             else
                                 t |> setProgressTaskValue showOutput 100.0
-                                return Ok(showOutput, parseResult, parameters, currentBranch, newDirectoryVersions)
+                                return Ok(showOutput, parseResult, parameters, currentBranch, newDirectoryVersions, Array.empty)
                         }
 
                     // 5. Upload new directory versions.
@@ -2891,7 +2900,8 @@ module Branch =
                          parseResult: ParseResult,
                          parameters: SwitchParameters,
                          currentBranch: BranchDto,
-                         newDirectoryVersions: List<LocalDirectoryVersion>)
+                         newDirectoryVersions: List<LocalDirectoryVersion>,
+                         uploadedFileVersions)
                         =
                         task {
                             t |> startProgressTask showOutput
@@ -2909,7 +2919,7 @@ module Branch =
 
                                 saveParameters.DirectoryVersions <-
                                     newDirectoryVersions
-                                        .Select(fun dv -> dv.ToDirectoryVersion)
+                                        .Select(toDirectoryVersionWithUploadedFiles uploadedFileVersions [])
                                         .ToList()
 
                                 let! uploadDirectoryVersions = DirectoryVersion.SaveDirectoryVersions saveParameters

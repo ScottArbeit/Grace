@@ -679,6 +679,8 @@ module Reference =
 
                                             let mutable lastFileUploadInstant = newGraceStatus.LastSuccessfulFileUpload
 
+                                            let mutable uploadedFileVersions = Array.empty
+
                                             if newFileVersions.Count() > 0 then
                                                 let getUploadMetadataForFilesParameters =
                                                     GetUploadMetadataForFilesParameters(
@@ -696,7 +698,8 @@ module Reference =
                                                     )
 
                                                 match! uploadFilesToObjectStorage getUploadMetadataForFilesParameters with
-                                                | Ok returnValue -> () //logToAnsiConsole Colors.Verbose $"Uploaded all files to object storage."
+                                                | Ok returnValue -> uploadedFileVersions <- returnValue.ReturnValue
+                                                //logToAnsiConsole Colors.Verbose $"Uploaded all files to object storage."
                                                 | Error error -> logToAnsiConsole Colors.Error $"Error uploading files to object storage: {error.Error}"
 
                                                 lastFileUploadInstant <- getCurrentInstant ()
@@ -720,7 +723,7 @@ module Reference =
 
                                                 saveParameters.DirectoryVersions <-
                                                     newDirectoryVersions
-                                                        .Select(fun dv -> dv.ToDirectoryVersion)
+                                                        .Select(toDirectoryVersionWithUploadedFiles uploadedFileVersions [])
                                                         .ToList()
 
                                                 let! uploadDirectoryVersions = DirectoryVersion.SaveDirectoryVersions saveParameters
@@ -806,6 +809,12 @@ module Reference =
                             )
 
                         let! uploadResult = uploadFilesToObjectStorage getUploadMetadataForFilesParameters
+
+                        let uploadedFileVersions =
+                            match uploadResult with
+                            | Ok returnValue -> returnValue.ReturnValue
+                            | Error _ -> Array.empty
+
                         let saveParameters = SaveDirectoryVersionsParameters()
                         saveParameters.OwnerId <- graceIds.OwnerIdString
                         saveParameters.OwnerName <- graceIds.OwnerName
@@ -817,7 +826,7 @@ module Reference =
 
                         saveParameters.DirectoryVersions <-
                             newDirectoryVersions
-                                .Select(fun dv -> dv.ToDirectoryVersion)
+                                .Select(toDirectoryVersionWithUploadedFiles uploadedFileVersions [])
                                 .ToList()
 
                         let! uploadDirectoryVersions = DirectoryVersion.SaveDirectoryVersions saveParameters

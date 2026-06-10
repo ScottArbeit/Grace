@@ -440,6 +440,55 @@ module CurrentStateCaptureCliTests =
         |> should equal (Some manifest)
 
     [<Test>]
+    let ``directory upload overlay replaces local whole file content with uploaded manifest version`` () =
+        let manifest = finalizedManifest ()
+
+        let localFileVersion =
+            LocalFileVersion.CreateWithHashes
+                (RelativePath "large.bin")
+                (Sha256Hash "manifest-sha")
+                (Blake3Hash $"{manifest.FileContentHash}")
+                true
+                manifest.Size
+                (getCurrentInstant ())
+                true
+                DateTime.UtcNow
+
+        localFileVersion.ToFileVersion.ContentReference.ReferenceType
+        |> should equal FileContentReferenceType.WholeFileContent
+
+        let uploadedFileVersion = localFileVersion.ToFileVersion
+        uploadedFileVersion.ContentReference <- FileContentReference.FileManifest manifest
+
+        let localDirectoryVersion =
+            LocalDirectoryVersion.CreateWithHashes
+                (Guid.NewGuid())
+                OwnerId.Empty
+                OrganizationId.Empty
+                RepositoryId.Empty
+                Constants.RootDirectoryPath
+                (Sha256Hash "directory-sha")
+                (Blake3Hash "directory-blake3")
+                (List<DirectoryVersionId>())
+                (List<LocalFileVersion>([| localFileVersion |]))
+                localFileVersion.Size
+                DateTime.UtcNow
+
+        let directoryVersion = toDirectoryVersionWithUploadedFiles [ uploadedFileVersion ] [] localDirectoryVersion
+
+        directoryVersion.Files.Count |> should equal 1
+
+        directoryVersion.Files[0]
+            .ContentReference
+            .ReferenceType
+        |> should equal FileContentReferenceType.FileManifest
+
+        directoryVersion.Files[0]
+            .ContentReference
+            .Manifest
+        |> should equal (Some manifest)
+
+    [<Test>]
     let ``directory upload overlay preserves prior manifest backed unchanged file version`` () =
         let manifest = finalizedManifest ()
 
