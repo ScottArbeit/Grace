@@ -5,6 +5,7 @@ open Grace.CLI
 open Grace.CLI.Command
 open Grace.Shared
 open Grace.Shared.Client
+open Grace.Types
 open NUnit.Framework
 open Spectre.Console
 open System
@@ -36,6 +37,35 @@ module DoctorCliTests =
             Console.SetError(originalError)
             setAnsiConsoleOutput originalOut
 
+    let private authEnvNames =
+        [|
+            Constants.EnvironmentVariables.GraceToken
+            Constants.EnvironmentVariables.GraceTokenFile
+            Constants.EnvironmentVariables.GraceAuthOidcAuthority
+            Constants.EnvironmentVariables.GraceAuthOidcAudience
+            Constants.EnvironmentVariables.GraceAuthOidcCliClientId
+            Constants.EnvironmentVariables.GraceAuthOidcCliRedirectPort
+            Constants.EnvironmentVariables.GraceAuthOidcCliScopes
+            Constants.EnvironmentVariables.GraceAuthOidcM2mClientId
+            Constants.EnvironmentVariables.GraceAuthOidcM2mClientSecret
+            Constants.EnvironmentVariables.GraceAuthOidcM2mScopes
+            Constants.EnvironmentVariables.GraceServerUri
+        |]
+
+    let private withClearedAuthEnv (action: unit -> unit) =
+        let originalValues =
+            authEnvNames
+            |> Array.map (fun name -> name, Environment.GetEnvironmentVariable(name))
+
+        try
+            authEnvNames
+            |> Array.iter (fun name -> Environment.SetEnvironmentVariable(name, null))
+
+            action ()
+        finally
+            originalValues
+            |> Array.iter (fun (name, value) -> Environment.SetEnvironmentVariable(name, value))
+
     let private withTempDir (action: string -> unit) =
         let tempDir = Path.Combine(Path.GetTempPath(), $"grace-doctor-cli-tests-{Guid.NewGuid():N}")
         Directory.CreateDirectory(tempDir) |> ignore
@@ -43,7 +73,7 @@ module DoctorCliTests =
 
         try
             Environment.CurrentDirectory <- tempDir
-            action tempDir
+            withClearedAuthEnv (fun () -> action tempDir)
         finally
             Environment.CurrentDirectory <- originalDir
 
@@ -156,6 +186,21 @@ module DoctorCliTests =
 
         parseJsonOutput standardOut
 
+    let private findCheckById (checks: JsonElement) checkId =
+        checks.EnumerateArray()
+        |> Seq.find (fun check ->
+            check
+                .GetProperty("Id")
+                .GetString()
+                .Equals(checkId, StringComparison.Ordinal))
+
+    let private assertDoesNotContainSecrets (secrets: string list) (standardOut: string) (standardError: string) =
+        for secret in secrets do
+            standardOut |> should not' (contain secret)
+            standardError |> should not' (contain secret)
+
+    let private validPat () = PersonalAccessToken.formatToken "doctor-user" (Guid.NewGuid()) (Array.create 32 7uy)
+
     [<Test>]
     let ``doctor help works without config and shows v1 options`` () =
         withTempDir (fun root ->
@@ -197,12 +242,12 @@ module DoctorCliTests =
             |> should equal "Ok"
 
             returnValue.GetProperty("Checks").GetArrayLength()
-            |> should equal 11
+            |> should equal 15
 
             returnValue
                 .GetProperty("Catalog")
                 .GetArrayLength()
-            |> should equal 11
+            |> should equal 15
 
             let catalogIds =
                 returnValue
@@ -210,6 +255,18 @@ module DoctorCliTests =
                     .EnumerateArray()
                 |> Seq.map (fun check -> check.GetProperty("Id").GetString())
                 |> Set.ofSeq
+
+            catalogIds
+            |> should contain "auth.source.detected"
+
+            catalogIds
+            |> should contain "auth.env-token.valid"
+
+            catalogIds
+            |> should contain "auth.token-file.unsupported"
+
+            catalogIds
+            |> should contain "auth.oidc.configuration"
 
             catalogIds
             |> should contain "identity.auth-session"
@@ -254,12 +311,24 @@ module DoctorCliTests =
                 |> Seq.map (fun check -> check.GetProperty("Id").GetString())
                 |> Set.ofSeq
 
-            catalogIds.Count |> should equal 9
+            catalogIds.Count |> should equal 13
 
             catalogIds |> should contain "config.file.parse"
 
             catalogIds
             |> should contain "ignore.entries.parse"
+
+            catalogIds
+            |> should contain "auth.source.detected"
+
+            catalogIds
+            |> should contain "auth.env-token.valid"
+
+            catalogIds
+            |> should contain "auth.token-file.unsupported"
+
+            catalogIds
+            |> should contain "auth.oidc.configuration"
 
             catalogIds
             |> should not' (contain "identity.auth-session")
@@ -348,6 +417,292 @@ module DoctorCliTests =
 
                 checks[ 0 ].GetProperty("Status").GetString()
                 |> should equal "Ok"))
+
+    [<Test>]
+    let ``doctor auth detects valid GRACE_TOKEN without printing raw value`` () =
+        withTempDir (fun _ ->
+            let token = validPat ()
+
+            withEnv Constants.EnvironmentVariables.GraceToken (Some token) (fun () ->
+                let exitCode, standardOut, standardError =
+                    runWithCapturedStdoutAndStderr [| "--output"
+                                                      "Json"
+                                                      "doctor"
+                                                      "--check"
+                                                      "auth.source.detected"
+                                                      "--check"
+                                                      "auth.env-token.valid" |]
+
+                exitCode |> should equal 0
+                assertDoesNotContainSecrets [ token ] standardOut standardError
+
+                use document = assertCleanJsonOutput standardOut standardError
+
+                let checks =
+                    document
+                        .RootElement
+                        .GetProperty("ReturnValue")
+                        .GetProperty("Checks")
+
+                checks.GetArrayLength() |> should equal 2
+
+                (findCheckById checks "auth.source.detected")
+                    .GetProperty("Summary")
+                    .GetString()
+                |> should contain "GRACE_TOKEN PAT"
+
+                (findCheckById checks "auth.env-token.valid")
+                    .GetProperty("Status")
+                    .GetString()
+                |> should equal "Ok"))
+
+    [<TestCase("not-a-pat")>]
+    [<TestCase("Bearer not-a-pat")>]
+    [<TestCase("")>]
+    let ``doctor auth rejects invalid GRACE_TOKEN safely`` token =
+        withTempDir (fun _ ->
+            withEnv Constants.EnvironmentVariables.GraceToken (Some token) (fun () ->
+                let exitCode, standardOut, standardError =
+                    runWithCapturedStdoutAndStderr [| "--output"
+                                                      "Json"
+                                                      "doctor"
+                                                      "--check"
+                                                      "auth.env-token.valid" |]
+
+                exitCode |> should equal 1
+
+                if not (String.IsNullOrEmpty token) then
+                    assertDoesNotContainSecrets [ token ] standardOut standardError
+
+                use document = assertCleanJsonOutput standardOut standardError
+
+                let check =
+                    document
+                        .RootElement
+                        .GetProperty("ReturnValue")
+                        .GetProperty("Checks")[0]
+
+                check.GetProperty("Status").GetString()
+                |> should equal "Failed"
+
+                check.GetProperty("Summary").GetString()
+                |> should contain "GRACE_TOKEN"))
+
+    [<Test>]
+    let ``doctor auth reports unsupported GRACE_TOKEN_FILE with GRACE_TOKEN remediation`` () =
+        withTempDir (fun _ ->
+            let tokenFilePath = "C:\\secret\\grace-token.txt"
+
+            withEnv Constants.EnvironmentVariables.GraceTokenFile (Some tokenFilePath) (fun () ->
+                let exitCode, standardOut, standardError =
+                    runWithCapturedStdoutAndStderr [| "--output"
+                                                      "Json"
+                                                      "doctor"
+                                                      "--check"
+                                                      "auth.token-file.unsupported" |]
+
+                exitCode |> should equal 1
+                assertDoesNotContainSecrets [ tokenFilePath ] standardOut standardError
+
+                use document = assertCleanJsonOutput standardOut standardError
+
+                let check =
+                    document
+                        .RootElement
+                        .GetProperty("ReturnValue")
+                        .GetProperty("Checks")[0]
+
+                check.GetProperty("Status").GetString()
+                |> should equal "Failed"
+
+                check.GetProperty("Summary").GetString()
+                |> should contain "GRACE_TOKEN"))
+
+    [<Test>]
+    let ``doctor auth missing environment warns and skips token validation`` () =
+        withTempDir (fun _ ->
+            let exitCode, standardOut, standardError =
+                runWithCapturedStdoutAndStderr [| "--output"
+                                                  "Json"
+                                                  "doctor"
+                                                  "--check"
+                                                  "auth.source.detected"
+                                                  "--check"
+                                                  "auth.env-token.valid"
+                                                  "--check"
+                                                  "auth.oidc.configuration" |]
+
+            exitCode |> should equal 0
+
+            use document = assertCleanJsonOutput standardOut standardError
+
+            let checks =
+                document
+                    .RootElement
+                    .GetProperty("ReturnValue")
+                    .GetProperty("Checks")
+
+            (findCheckById checks "auth.source.detected")
+                .GetProperty("Status")
+                .GetString()
+            |> should equal "Warning"
+
+            (findCheckById checks "auth.env-token.valid")
+                .GetProperty("Status")
+                .GetString()
+            |> should equal "Skipped"
+
+            (findCheckById checks "auth.oidc.configuration")
+                .GetProperty("Status")
+                .GetString()
+            |> should equal "Skipped")
+
+    [<Test>]
+    let ``doctor auth reports partial OIDC M2M and CLI configuration without secret values`` () =
+        withTempDir (fun _ ->
+            let authority = "https://tenant.example.invalid/very-secret-authority"
+            let m2mSecret = "m2m-client-secret-value"
+            let cliClientId = "cli-client-secret-looking-id"
+
+            withEnv Constants.EnvironmentVariables.GraceAuthOidcAuthority (Some authority) (fun () ->
+                withEnv Constants.EnvironmentVariables.GraceAuthOidcM2mClientSecret (Some m2mSecret) (fun () ->
+                    withEnv Constants.EnvironmentVariables.GraceAuthOidcCliClientId (Some cliClientId) (fun () ->
+                        let exitCode, standardOut, standardError =
+                            runWithCapturedStdoutAndStderr [| "--output"
+                                                              "Json"
+                                                              "doctor"
+                                                              "--check"
+                                                              "auth.oidc.configuration" |]
+
+                        exitCode |> should equal 0
+                        assertDoesNotContainSecrets [ authority; m2mSecret; cliClientId ] standardOut standardError
+
+                        use document = assertCleanJsonOutput standardOut standardError
+
+                        let check =
+                            document
+                                .RootElement
+                                .GetProperty("ReturnValue")
+                                .GetProperty("Checks")[0]
+
+                        check.GetProperty("Status").GetString()
+                        |> should equal "Warning"
+
+                        check.GetProperty("Summary").GetString()
+                        |> should contain "partial"))))
+
+    [<Test>]
+    let ``doctor auth exact check selections are not filtered out`` () =
+        withTempDir (fun _ ->
+            for checkId in
+                [
+                    "auth.env-token.valid"
+                    "auth.token-file.unsupported"
+                    "auth.oidc.configuration"
+                ] do
+                let exitCode, standardOut, standardError =
+                    runWithCapturedStdoutAndStderr [| "--output"
+                                                      "Json"
+                                                      "doctor"
+                                                      "--check"
+                                                      checkId |]
+
+                exitCode |> should equal 0
+
+                use document = assertCleanJsonOutput standardOut standardError
+
+                let checks =
+                    document
+                        .RootElement
+                        .GetProperty("ReturnValue")
+                        .GetProperty("Checks")
+
+                checks.GetArrayLength() |> should equal 1
+
+                checks[ 0 ].GetProperty("Id").GetString()
+                |> should equal checkId)
+
+    [<TestCase("Json")>]
+    [<TestCase("Verbose")>]
+    let ``doctor auth select output is clean for valid and invalid auth states`` output =
+        withTempDir (fun _ ->
+            for token, expectedStatus in
+                [
+                    validPat (), "\"Ok\""
+                    "not-a-pat", "\"Failed\""
+                ] do
+                withEnv Constants.EnvironmentVariables.GraceToken (Some token) (fun () ->
+                    let exitCode, standardOut, standardError =
+                        runWithCapturedStdoutAndStderr [| "--output"
+                                                          output
+                                                          "doctor"
+                                                          "--check"
+                                                          "auth.env-token.valid"
+                                                          "--select"
+                                                          "Status" |]
+
+                    if expectedStatus = "\"Ok\"" then
+                        exitCode |> should equal 0
+                    else
+                        exitCode |> should equal 1
+
+                    standardError |> should equal String.Empty
+                    standardOut.Trim() |> should equal expectedStatus
+                    assertDoesNotContainSecrets [ token ] standardOut standardError
+
+                    standardOut
+                    |> should not' (contain "Grace doctor")
+
+                    standardOut |> should not' (contain "EventTime")))
+
+    [<TestCase("Silent")>]
+    [<TestCase("Minimal")>]
+    let ``doctor auth successful diagnostics emit no output for quiet output modes`` output =
+        withTempDir (fun _ ->
+            let token = validPat ()
+
+            withEnv Constants.EnvironmentVariables.GraceToken (Some token) (fun () ->
+                let exitCode, standardOut, standardError =
+                    runWithCapturedStdoutAndStderr [| "--output"
+                                                      output
+                                                      "doctor"
+                                                      "--check"
+                                                      "auth.env-token.valid" |]
+
+                exitCode |> should equal 0
+                standardOut |> should equal String.Empty
+                standardError |> should equal String.Empty))
+
+    [<Test>]
+    let ``doctor auth list checks includes S2 auth catalog ids`` () =
+        withTempDir (fun _ ->
+            let exitCode, standardOut, standardError =
+                runWithCapturedStdoutAndStderr [| "doctor"
+                                                  "--list-checks"
+                                                  "--select"
+                                                  "Catalog" |]
+
+            exitCode |> should equal 0
+            standardError |> should equal String.Empty
+
+            use document = JsonDocument.Parse(standardOut)
+
+            let catalogIds =
+                document.RootElement.EnumerateArray()
+                |> Seq.map (fun check -> check.GetProperty("Id").GetString())
+                |> Set.ofSeq
+
+            catalogIds
+            |> should contain "auth.source.detected"
+
+            catalogIds
+            |> should contain "auth.env-token.valid"
+
+            catalogIds
+            |> should contain "auth.token-file.unsupported"
+
+            catalogIds
+            |> should contain "auth.oidc.configuration")
 
     [<Test>]
     let ``doctor verbose select returns clean scalar for passing config check`` () =
