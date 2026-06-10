@@ -1924,7 +1924,10 @@ module Branch =
         AnsiConsole.WriteLine()
 
     let internal renderBranchAnnotationHumanOutput parseResult showMode (annotation: BranchAnnotationDto) =
-        if parseResult |> hasOutput then
+        if
+            (parseResult |> hasOutput)
+            && not (parseResult |> hasSelect)
+        then
             AnsiConsole.MarkupLine($"[{Colors.Important}]Branch annotation for {Markup.Escape(annotation.Path)} at Reference {annotation.TargetReferenceId}[/]")
 
             annotation.Spans

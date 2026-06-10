@@ -388,6 +388,21 @@ module CommandOutputContractRegistryTests =
         | None -> Assert.Fail("connect should have a registry entry.")
 
     [<Test>]
+    let ``branch annotate registry entry is mutating because implicit save can update local state`` () =
+        let identity = CommandOutputContract.commandIdentity [ "branch" ] "annotate"
+
+        match CommandOutputContract.tryFind identity with
+        | Some entry ->
+            entry.Mutating |> should equal true
+
+            entry.Category
+            |> should equal MutatingStateTransition
+
+            entry.ExecutionScope
+            |> should equal CompositeLocalAndServer
+        | None -> Assert.Fail("branch annotate should have a registry entry.")
+
+    [<Test>]
     let ``current common renderer entries keep the Grace envelope model`` () =
         let commonEntries =
             CommandOutputContract.entries

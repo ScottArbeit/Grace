@@ -345,3 +345,38 @@ module BranchCommandTests =
             .GetProperty("Path")
             .GetString()
         |> should equal "src/App.fs"
+
+    [<Test>]
+    let ``select output remains one machine readable document and skips human spans`` () =
+        let parseResult =
+            parse [| "branch"
+                     "annotate"
+                     "--path"
+                     "src/App.fs"
+                     "--show"
+                     "introduced"
+                     "--select"
+                     "Path" |]
+
+        let exitCode, output =
+            captureOutput (fun () ->
+                let result = Ok(GraceReturnValue.Create sampleAnnotation correlationId)
+                let rendered = Common.renderOutput parseResult result
+                Branch.renderBranchAnnotationHumanOutput parseResult Branch.Introduced sampleAnnotation
+                rendered)
+
+        exitCode |> should equal 0
+
+        output
+        |> should not' (contain "Introduced Reference")
+
+        output
+        |> should not' (contain "Branch annotation for")
+
+        use document = JsonDocument.Parse(output)
+
+        document.RootElement.ValueKind
+        |> should equal JsonValueKind.String
+
+        document.RootElement.GetString()
+        |> should equal "src/App.fs"
