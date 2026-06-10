@@ -402,7 +402,8 @@ module Common =
         static member FileManifest manifest =
             { Class = "FileContentReference"; ReferenceType = FileContentReferenceType.FileManifest; Manifest = Some manifest }
 
-    /// A FileVersion represents a version of a file in a repository with unique contents, and therefore with a unique SHA-256 hash. It is immutable.
+    /// A FileVersion represents a version of a file in a repository with unique contents, and therefore with unique
+    /// SHA-256 and BLAKE3 hashes. It is immutable.
     ///
     /// It is the server-side representation of the LocalFileVersion type, used for the local object cache.
     [<MessagePackObject; GenerateSerializer>]
@@ -416,6 +417,9 @@ module Common =
 
         [<Key(2)>]
         member val Sha256Hash: Sha256Hash = String.Empty with get, set
+
+        [<Key(8)>]
+        member val Blake3Hash: Blake3Hash = String.Empty with get, set
 
         [<Key(3)>]
         member val IsBinary: bool = false with get, set
@@ -432,10 +436,11 @@ module Common =
         [<Key(7)>]
         member val ContentReference: FileContentReference = FileContentReference.WholeFileContent with get, set
 
-        static member Create
+        static member CreateWithHashes
             //(repositoryId: RepositoryId)
             (relativePath: RelativePath)
             (sha256Hash: Sha256Hash)
+            (blake3Hash: Blake3Hash)
             (blobUri: string)
             (isBinary: bool)
             (size: int64)
@@ -445,6 +450,7 @@ module Common =
             //fileVersion.RepositoryId <- repositoryId
             fileVersion.RelativePath <- RelativePath(normalizeFilePath $"{relativePath}")
             fileVersion.Sha256Hash <- sha256Hash
+            fileVersion.Blake3Hash <- blake3Hash
             fileVersion.BlobUri <- blobUri
             fileVersion.IsBinary <- isBinary
             fileVersion.Size <- size
@@ -452,11 +458,21 @@ module Common =
             fileVersion.ContentReference <- FileContentReference.WholeFileContent
             fileVersion
 
+        static member Create
+            //(repositoryId: RepositoryId)
+            (relativePath: RelativePath)
+            (sha256Hash: Sha256Hash)
+            (blobUri: string)
+            (isBinary: bool)
+            (size: int64)
+            =
+            FileVersion.CreateWithHashes relativePath sha256Hash (Blake3Hash String.Empty) blobUri isBinary size
+
         static member Default = FileVersion.Create String.Empty String.Empty String.Empty false 0L
 
         /// Converts a FileVersion to a LocalFileVersion.
         member this.ToLocalFileVersion lastWriteTimeUtc =
-            LocalFileVersion.Create this.RelativePath this.Sha256Hash this.IsBinary this.Size this.CreatedAt true lastWriteTimeUtc
+            LocalFileVersion.CreateWithHashes this.RelativePath this.Sha256Hash this.Blake3Hash this.IsBinary this.Size this.CreatedAt true lastWriteTimeUtc
 
         /// Get the object directory file name, which includes the SHA256 Hash value. Example: hello.js -> hello_04bef0a4b298de9c02930234.js
         [<IgnoreMember>]
@@ -472,6 +488,7 @@ module Common =
                 this.Class = otherFileVersion.Class
                 && this.RelativePath = otherFileVersion.RelativePath
                 && this.Sha256Hash = otherFileVersion.Sha256Hash
+                && this.Blake3Hash = otherFileVersion.Blake3Hash
                 && this.IsBinary = otherFileVersion.IsBinary
                 && this.Size = otherFileVersion.Size
                 && this.CreatedAt = otherFileVersion.CreatedAt
@@ -480,9 +497,20 @@ module Common =
             | _ -> false
 
         override this.GetHashCode() =
-            HashCode.Combine(this.Class, this.RelativePath, this.Sha256Hash, this.IsBinary, this.Size, this.CreatedAt, this.BlobUri, this.ContentReference)
+            let mutable hashCode = HashCode()
+            hashCode.Add(this.Class)
+            hashCode.Add(this.RelativePath)
+            hashCode.Add(this.Sha256Hash)
+            hashCode.Add(this.Blake3Hash)
+            hashCode.Add(this.IsBinary)
+            hashCode.Add(this.Size)
+            hashCode.Add(this.CreatedAt)
+            hashCode.Add(this.BlobUri)
+            hashCode.Add(this.ContentReference)
+            hashCode.ToHashCode()
 
-    /// A LocalFileVersion represents a version of a file in a repository with unique contents, and therefore with a unique SHA-256 hash. It is immutable.
+    /// A LocalFileVersion represents a version of a file in a repository with unique contents, and therefore with
+    /// unique SHA-256 and BLAKE3 hashes. It is immutable.
     ///
     /// It is the local representation of the FileVersion type, used on the server.
     and [<CLIMutable; MessagePackObject>] LocalFileVersion =
@@ -495,6 +523,8 @@ module Common =
             RelativePath: RelativePath
             [<Key(2)>]
             Sha256Hash: Sha256Hash
+            [<Key(8)>]
+            Blake3Hash: Blake3Hash
             [<Key(3)>]
             IsBinary: bool
             [<Key(4)>]
@@ -507,10 +537,11 @@ module Common =
             LastWriteTimeUtc: DateTime
         }
 
-        static member Create
+        static member CreateWithHashes
             //(repositoryId: RepositoryId)
             (relativePath: RelativePath)
             (sha256Hash: Sha256Hash)
+            (blake3Hash: Blake3Hash)
             (isBinary: bool)
             (size: int64)
             (createdAt: Instant)
@@ -522,6 +553,7 @@ module Common =
                 //RepositoryId = repositoryId
                 RelativePath = RelativePath(normalizeFilePath $"{relativePath}")
                 Sha256Hash = sha256Hash
+                Blake3Hash = blake3Hash
                 IsBinary = isBinary
                 Size = size
                 CreatedAt = createdAt
@@ -529,9 +561,21 @@ module Common =
                 LastWriteTimeUtc = lastWriteTimeUtc
             }
 
+        static member Create
+            //(repositoryId: RepositoryId)
+            (relativePath: RelativePath)
+            (sha256Hash: Sha256Hash)
+            (isBinary: bool)
+            (size: int64)
+            (createdAt: Instant)
+            (uploadedToObjectStorage: bool)
+            (lastWriteTimeUtc: DateTime)
+            =
+            LocalFileVersion.CreateWithHashes relativePath sha256Hash (Blake3Hash String.Empty) isBinary size createdAt uploadedToObjectStorage lastWriteTimeUtc
+
         /// Converts a LocalFileVersion to a FileVersion. NOTE: at this point, we don't know the BlobUri.
         [<IgnoreMember>]
-        member this.ToFileVersion = FileVersion.Create this.RelativePath this.Sha256Hash String.Empty this.IsBinary this.Size
+        member this.ToFileVersion = FileVersion.CreateWithHashes this.RelativePath this.Sha256Hash this.Blake3Hash String.Empty this.IsBinary this.Size
 
         /// Get the object directory file name, which includes the SHA256 Hash value. Example: hello.js -> hello_04bef0a4b298de9c02930234.js
         [<IgnoreMember>]
@@ -541,55 +585,82 @@ module Common =
         [<IgnoreMember>]
         member this.RelativeDirectory = getRelativeDirectory $"{this.RelativePath}" ""
 
-    /// A DirectoryVersion represents a version of a directory in a repository with unique contents, and therefore with a unique SHA-256 hash.
+    /// A DirectoryVersion represents a version of a directory in a repository with unique contents, and therefore with
+    /// unique SHA-256 and BLAKE3 hashes.
     ///
     /// It is the server-side representation of the LocalDirectoryVersion type. LocalDirectoryVersion is used for the local object cache.
-    [<CLIMutable; MessagePackObject; GenerateSerializer>]
-    type DirectoryVersion =
-        {
-            [<Key(0)>]
-            Class: string
-            [<Key(1)>]
-            DirectoryVersionId: DirectoryVersionId
-            [<Key(2)>]
-            OwnerId: OwnerId
-            [<Key(3)>]
-            OrganizationId: OrganizationId
-            [<Key(4)>]
-            RepositoryId: RepositoryId
-            [<Key(5)>]
-            RelativePath: RelativePath
-            [<Key(6)>]
-            Sha256Hash: Sha256Hash
-            [<Key(7)>]
-            Directories: List<DirectoryVersionId>
-            [<Key(8)>]
-            Files: List<FileVersion>
-            [<Key(9)>]
-            Size: int64
-            [<Key(10)>]
-            CreatedAt: Instant
-            [<Key(11)>]
-            HashesValidated: bool
-        }
+    [<MessagePackObject; GenerateSerializer>]
+    type DirectoryVersion() =
+        [<Key(0)>]
+        member val Class: string = nameof DirectoryVersion with get, set
+
+        [<Key(1)>]
+        member val DirectoryVersionId: DirectoryVersionId = DirectoryVersionId.Empty with get, set
+
+        [<Key(2)>]
+        member val OwnerId: OwnerId = OwnerId.Empty with get, set
+
+        [<Key(3)>]
+        member val OrganizationId: OrganizationId = OrganizationId.Empty with get, set
+
+        [<Key(4)>]
+        member val RepositoryId: RepositoryId = RepositoryId.Empty with get, set
+
+        [<Key(5)>]
+        member val RelativePath: RelativePath = RelativePath String.Empty with get, set
+
+        [<Key(6)>]
+        member val Sha256Hash: Sha256Hash = Sha256Hash String.Empty with get, set
+
+        [<Key(12)>]
+        member val Blake3Hash: Blake3Hash = Blake3Hash String.Empty with get, set
+
+        [<Key(7)>]
+        member val Directories: List<DirectoryVersionId> = List<DirectoryVersionId>() with get, set
+
+        [<Key(8)>]
+        member val Files: List<FileVersion> = List<FileVersion>() with get, set
+
+        [<Key(9)>]
+        member val Size: int64 = InitialDirectorySize with get, set
+
+        [<Key(10)>]
+        member val CreatedAt: Instant = DefaultTimestamp with get, set
+
+        [<Key(11)>]
+        member val HashesValidated: bool = false with get, set
 
         static member GetKnownTypes() = GetKnownTypes<DirectoryVersion>()
 
-        static member Default =
-            {
-                Class = nameof DirectoryVersion
-                DirectoryVersionId = DirectoryVersionId.Empty
-                OwnerId = OwnerId.Empty
-                OrganizationId = OrganizationId.Empty
-                RepositoryId = RepositoryId.Empty
-                RelativePath = RelativePath String.Empty
-                Sha256Hash = Sha256Hash String.Empty
-                Directories = List<DirectoryVersionId>()
-                Files = List<FileVersion>()
-                Size = InitialDirectorySize
-                CreatedAt = DefaultTimestamp
-                HashesValidated = false
-            }
+        static member Default = DirectoryVersion()
+
+        static member CreateWithHashes
+            (directoryVersionId: DirectoryVersionId)
+            (ownerId: OwnerId)
+            (organizationId: OrganizationId)
+            (repositoryId: RepositoryId)
+            (relativePath: RelativePath)
+            (sha256Hash: Sha256Hash)
+            (blake3Hash: Blake3Hash)
+            (directories: List<DirectoryVersionId>)
+            (files: List<FileVersion>)
+            (size: int64)
+            =
+            let directoryVersion = DirectoryVersion()
+            directoryVersion.Class <- nameof DirectoryVersion
+            directoryVersion.DirectoryVersionId <- directoryVersionId
+            directoryVersion.OwnerId <- ownerId
+            directoryVersion.OrganizationId <- organizationId
+            directoryVersion.RepositoryId <- repositoryId
+            directoryVersion.RelativePath <- relativePath
+            directoryVersion.Sha256Hash <- sha256Hash
+            directoryVersion.Blake3Hash <- blake3Hash
+            directoryVersion.Directories <- directories
+            directoryVersion.Files <- files
+            directoryVersion.Size <- size
+            directoryVersion.CreatedAt <- getCurrentInstant ()
+            directoryVersion.HashesValidated <- false
+            directoryVersion
 
         static member Create
             (directoryVersionId: DirectoryVersionId)
@@ -602,29 +673,27 @@ module Common =
             (files: List<FileVersion>)
             (size: int64)
             =
-            {
-                Class = nameof DirectoryVersion
-                DirectoryVersionId = directoryVersionId
-                OwnerId = ownerId
-                OrganizationId = organizationId
-                RepositoryId = repositoryId
-                RelativePath = relativePath
-                Sha256Hash = sha256Hash
-                Directories = directories
-                Files = files
-                Size = size
-                CreatedAt = getCurrentInstant ()
-                HashesValidated = false
-            }
+            DirectoryVersion.CreateWithHashes
+                directoryVersionId
+                ownerId
+                organizationId
+                repositoryId
+                relativePath
+                sha256Hash
+                (Blake3Hash String.Empty)
+                directories
+                files
+                size
 
         member this.ToLocalDirectoryVersion lastWriteTimeUtc =
-            LocalDirectoryVersion.Create
+            LocalDirectoryVersion.CreateWithHashes
                 this.DirectoryVersionId
                 this.OwnerId
                 this.OrganizationId
                 this.RepositoryId
                 this.RelativePath
                 this.Sha256Hash
+                this.Blake3Hash
                 this.Directories
                 (this
                     .Files
@@ -633,52 +702,120 @@ module Common =
                 this.Size
                 lastWriteTimeUtc
 
-    /// A LocalDirectoryVersion represents a version of a directory in a repository with unique contents, and therefore with a unique SHA-256 hash.
+        override this.Equals(other: obj) =
+            match other with
+            | :? DirectoryVersion as otherDirectoryVersion ->
+                this.Class = otherDirectoryVersion.Class
+                && this.DirectoryVersionId = otherDirectoryVersion.DirectoryVersionId
+                && this.OwnerId = otherDirectoryVersion.OwnerId
+                && this.OrganizationId = otherDirectoryVersion.OrganizationId
+                && this.RepositoryId = otherDirectoryVersion.RepositoryId
+                && this.RelativePath = otherDirectoryVersion.RelativePath
+                && this.Sha256Hash = otherDirectoryVersion.Sha256Hash
+                && this.Blake3Hash = otherDirectoryVersion.Blake3Hash
+                && this.Directories.SequenceEqual(otherDirectoryVersion.Directories)
+                && this.Files.SequenceEqual(otherDirectoryVersion.Files)
+                && this.Size = otherDirectoryVersion.Size
+                && this.CreatedAt = otherDirectoryVersion.CreatedAt
+                && this.HashesValidated = otherDirectoryVersion.HashesValidated
+            | _ -> false
+
+        override this.GetHashCode() =
+            let mutable hashCode = HashCode()
+            hashCode.Add(this.Class)
+            hashCode.Add(this.DirectoryVersionId)
+            hashCode.Add(this.OwnerId)
+            hashCode.Add(this.OrganizationId)
+            hashCode.Add(this.RepositoryId)
+            hashCode.Add(this.RelativePath)
+            hashCode.Add(this.Sha256Hash)
+            hashCode.Add(this.Blake3Hash)
+
+            for directoryId in this.Directories do
+                hashCode.Add(directoryId)
+
+            for file in this.Files do
+                hashCode.Add(file)
+
+            hashCode.Add(this.Size)
+            hashCode.Add(this.CreatedAt)
+            hashCode.Add(this.HashesValidated)
+            hashCode.ToHashCode()
+
+    /// A LocalDirectoryVersion represents a version of a directory in a repository with unique contents, and therefore
+    /// with unique SHA-256 and BLAKE3 hashes.
     ///
     /// It is the local representation of the DirectoryVersion type. DirectoryVersion is used on the server.
-    and [<CLIMutable; MessagePackObject>] LocalDirectoryVersion =
-        {
-            [<Key(0)>]
-            Class: string
-            [<Key(1)>]
-            DirectoryVersionId: DirectoryVersionId
-            [<Key(2)>]
-            OwnerId: OwnerId
-            [<Key(3)>]
-            OrganizationId: OrganizationId
-            [<Key(4)>]
-            RepositoryId: RepositoryId
-            [<Key(5)>]
-            RelativePath: RelativePath
-            [<Key(6)>]
-            Sha256Hash: Sha256Hash
-            [<Key(7)>]
-            Directories: List<DirectoryVersionId>
-            [<Key(8)>]
-            Files: List<LocalFileVersion>
-            [<Key(9)>]
-            Size: int64
-            [<Key(10)>]
-            CreatedAt: Instant
-            [<Key(11)>]
-            LastWriteTimeUtc: DateTime
-        }
+    and [<MessagePackObject>] LocalDirectoryVersion() =
+        [<Key(0)>]
+        member val Class: string = "LocalDirectoryVersion" with get, set
 
-        static member Default =
-            {
-                Class = "LocalDirectoryVersion"
-                OwnerId = OwnerId.Empty
-                OrganizationId = OrganizationId.Empty
-                RepositoryId = RepositoryId.Empty
-                DirectoryVersionId = DirectoryVersionId.Empty
-                RelativePath = RelativePath String.Empty
-                Sha256Hash = Sha256Hash String.Empty
-                Directories = List<DirectoryVersionId>()
-                Files = List<LocalFileVersion>()
-                Size = InitialDirectorySize
-                CreatedAt = DefaultTimestamp
-                LastWriteTimeUtc = DateTime.UtcNow
-            }
+        [<Key(1)>]
+        member val DirectoryVersionId: DirectoryVersionId = DirectoryVersionId.Empty with get, set
+
+        [<Key(2)>]
+        member val OwnerId: OwnerId = OwnerId.Empty with get, set
+
+        [<Key(3)>]
+        member val OrganizationId: OrganizationId = OrganizationId.Empty with get, set
+
+        [<Key(4)>]
+        member val RepositoryId: RepositoryId = RepositoryId.Empty with get, set
+
+        [<Key(5)>]
+        member val RelativePath: RelativePath = RelativePath String.Empty with get, set
+
+        [<Key(6)>]
+        member val Sha256Hash: Sha256Hash = Sha256Hash String.Empty with get, set
+
+        [<Key(12)>]
+        member val Blake3Hash: Blake3Hash = Blake3Hash String.Empty with get, set
+
+        [<Key(7)>]
+        member val Directories: List<DirectoryVersionId> = List<DirectoryVersionId>() with get, set
+
+        [<Key(8)>]
+        member val Files: List<LocalFileVersion> = List<LocalFileVersion>() with get, set
+
+        [<Key(9)>]
+        member val Size: int64 = InitialDirectorySize with get, set
+
+        [<Key(10)>]
+        member val CreatedAt: Instant = DefaultTimestamp with get, set
+
+        [<Key(11)>]
+        member val LastWriteTimeUtc: DateTime = DateTime.UtcNow with get, set
+
+        static member Default = LocalDirectoryVersion()
+
+        static member CreateWithHashes
+            (directoryVersionId: DirectoryVersionId)
+            (ownerId: OwnerId)
+            (organizationId: OrganizationId)
+            (repositoryId: RepositoryId)
+            (relativePath: RelativePath)
+            (sha256Hash: Sha256Hash)
+            (blake3Hash: Blake3Hash)
+            (directories: List<DirectoryVersionId>)
+            (files: List<LocalFileVersion>)
+            (size: int64)
+            (lastWriteTimeUtc: DateTime)
+            =
+            let directoryVersion = LocalDirectoryVersion()
+            directoryVersion.Class <- "LocalDirectoryVersion"
+            directoryVersion.DirectoryVersionId <- directoryVersionId
+            directoryVersion.OwnerId <- ownerId
+            directoryVersion.OrganizationId <- organizationId
+            directoryVersion.RepositoryId <- repositoryId
+            directoryVersion.RelativePath <- relativePath
+            directoryVersion.Sha256Hash <- sha256Hash
+            directoryVersion.Blake3Hash <- blake3Hash
+            directoryVersion.Directories <- directories
+            directoryVersion.Files <- files
+            directoryVersion.Size <- size
+            directoryVersion.CreatedAt <- getCurrentInstant ()
+            directoryVersion.LastWriteTimeUtc <- lastWriteTimeUtc
+            directoryVersion
 
         static member Create
             (directoryVersionId: DirectoryVersionId)
@@ -692,37 +829,76 @@ module Common =
             (size: int64)
             (lastWriteTimeUtc: DateTime)
             =
-            {
-                Class = "LocalDirectoryVersion"
-                DirectoryVersionId = directoryVersionId
-                OwnerId = ownerId
-                OrganizationId = organizationId
-                RepositoryId = repositoryId
-                RelativePath = relativePath
-                Sha256Hash = sha256Hash
-                Directories = directories
-                Files = files
-                Size = size
-                CreatedAt = getCurrentInstant ()
-                LastWriteTimeUtc = lastWriteTimeUtc
-            }
+            LocalDirectoryVersion.CreateWithHashes
+                directoryVersionId
+                ownerId
+                organizationId
+                repositoryId
+                relativePath
+                sha256Hash
+                (Blake3Hash String.Empty)
+                directories
+                files
+                size
+                lastWriteTimeUtc
 
         /// Converts a LocalDirectoryVersion to a DirectoryVersion.
         [<IgnoreMember>]
         member this.ToDirectoryVersion =
-            DirectoryVersion.Create
+            DirectoryVersion.CreateWithHashes
                 this.DirectoryVersionId
                 this.OwnerId
                 this.OrganizationId
                 this.RepositoryId
                 this.RelativePath
                 this.Sha256Hash
+                this.Blake3Hash
                 this.Directories
                 (this
                     .Files
                     .Select(fun f -> f.ToFileVersion)
                     .ToList())
                 this.Size
+
+        override this.Equals(other: obj) =
+            match other with
+            | :? LocalDirectoryVersion as otherDirectoryVersion ->
+                this.Class = otherDirectoryVersion.Class
+                && this.DirectoryVersionId = otherDirectoryVersion.DirectoryVersionId
+                && this.OwnerId = otherDirectoryVersion.OwnerId
+                && this.OrganizationId = otherDirectoryVersion.OrganizationId
+                && this.RepositoryId = otherDirectoryVersion.RepositoryId
+                && this.RelativePath = otherDirectoryVersion.RelativePath
+                && this.Sha256Hash = otherDirectoryVersion.Sha256Hash
+                && this.Blake3Hash = otherDirectoryVersion.Blake3Hash
+                && this.Directories.SequenceEqual(otherDirectoryVersion.Directories)
+                && this.Files.SequenceEqual(otherDirectoryVersion.Files)
+                && this.Size = otherDirectoryVersion.Size
+                && this.CreatedAt = otherDirectoryVersion.CreatedAt
+                && this.LastWriteTimeUtc = otherDirectoryVersion.LastWriteTimeUtc
+            | _ -> false
+
+        override this.GetHashCode() =
+            let mutable hashCode = HashCode()
+            hashCode.Add(this.Class)
+            hashCode.Add(this.DirectoryVersionId)
+            hashCode.Add(this.OwnerId)
+            hashCode.Add(this.OrganizationId)
+            hashCode.Add(this.RepositoryId)
+            hashCode.Add(this.RelativePath)
+            hashCode.Add(this.Sha256Hash)
+            hashCode.Add(this.Blake3Hash)
+
+            for directoryId in this.Directories do
+                hashCode.Add(directoryId)
+
+            for file in this.Files do
+                hashCode.Add(file)
+
+            hashCode.Add(this.Size)
+            hashCode.Add(this.CreatedAt)
+            hashCode.Add(this.LastWriteTimeUtc)
+            hashCode.ToHashCode()
 
     /// Specifies whether a specific entry in a directory is a DirectoryVersion or a FileVersion.
     and [<KnownType("GetKnownTypes"); GenerateSerializer>] DirectoryEntry =
