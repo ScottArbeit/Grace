@@ -481,6 +481,56 @@ module CurrentStateCaptureCliTests =
         |> should equal (Some manifest)
 
     [<Test>]
+    let ``previous directory lookup parameters use requested repository ids`` () =
+        let requestedOwnerId = Guid.NewGuid()
+        let requestedOrganizationId = Guid.NewGuid()
+        let requestedRepositoryId = Guid.NewGuid()
+        let previousDirectoryVersionId = Guid.NewGuid()
+
+        let graceIds =
+            { GraceIds.Default with
+                OwnerId = requestedOwnerId
+                OwnerIdString = $"{requestedOwnerId}"
+                OwnerName = "requested-owner"
+                OrganizationId = requestedOrganizationId
+                OrganizationIdString = $"{requestedOrganizationId}"
+                OrganizationName = "requested-org"
+                RepositoryId = requestedRepositoryId
+                RepositoryIdString = $"{requestedRepositoryId}"
+                RepositoryName = "requested-repo"
+                CorrelationId = correlationId
+                HasOwner = true
+                HasOrganization = true
+                HasRepository = true
+            }
+
+        let parameters = createPreviousDirectoryVersionsParameters graceIds (List<DirectoryVersionId>([| previousDirectoryVersionId |])) correlationId
+
+        parameters.OwnerId
+        |> should equal $"{requestedOwnerId}"
+
+        parameters.OwnerName
+        |> should equal "requested-owner"
+
+        parameters.OrganizationId
+        |> should equal $"{requestedOrganizationId}"
+
+        parameters.OrganizationName
+        |> should equal "requested-org"
+
+        parameters.RepositoryId
+        |> should equal $"{requestedRepositoryId}"
+
+        parameters.RepositoryName
+        |> should equal "requested-repo"
+
+        parameters.DirectoryVersionId
+        |> should equal $"{previousDirectoryVersionId}"
+
+        parameters.DirectoryIds
+        |> should equal (List<DirectoryVersionId>([| previousDirectoryVersionId |]))
+
+    [<Test>]
     let ``directory upload overlay replaces local whole file content with uploaded manifest version`` () =
         let manifest = finalizedManifest ()
 

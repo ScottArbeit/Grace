@@ -174,6 +174,19 @@ type SaveBoundaryActorTests() =
         Assert.That(filesToValidate[0].RelativePath, Is.EqualTo(wholeFile.RelativePath))
 
     [<Test>]
+    member _.DirectoryVersionWholeFileValidationSetIncludesSameShaWhenBlake3Changes() =
+        let previousFile = wholeFile ()
+        let newFile = wholeFile ()
+        newFile.Blake3Hash <- Blake3Hash "7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f7f"
+
+        let filesToValidate = DirectoryVersionActor.getFilesToValidateForSaveBoundary (List<FileVersion>([ newFile ])) (List<FileVersion>([ previousFile ]))
+
+        Assert.That(filesToValidate, Has.Length.EqualTo(1))
+        Assert.That(filesToValidate[0].RelativePath, Is.EqualTo(newFile.RelativePath))
+        Assert.That(filesToValidate[0].Sha256Hash, Is.EqualTo(previousFile.Sha256Hash))
+        Assert.That(filesToValidate[0].Blake3Hash, Is.EqualTo(newFile.Blake3Hash))
+
+    [<Test>]
     member _.SaveBoundaryRejectsWholeFileWhenFileVersionBlake3DoesNotMatchStoredBytes() =
         let bytes = Encoding.UTF8.GetBytes("whole-file content with stale blake3")
         let fileVersion = wholeFileFromBytes "/small.txt" bytes

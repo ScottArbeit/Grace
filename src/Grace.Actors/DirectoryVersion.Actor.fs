@@ -139,8 +139,31 @@ module DirectoryVersion =
         (normalizeContentReference fileVersion)
             .ReferenceType = FileContentReferenceType.WholeFileContent
 
+    let private contentReferenceValidationKey (fileVersion: FileVersion) =
+        let contentReference = normalizeContentReference fileVersion
+
+        let manifestAddress =
+            match contentReference.Manifest with
+            | Some manifest -> $"{manifest.ManifestAddress}"
+            | None -> String.Empty
+
+        (fileVersion.RelativePath, fileVersion.Sha256Hash, fileVersion.Blake3Hash, contentReference.ReferenceType, manifestAddress)
+
     let getFilesToValidateForSaveBoundary (newFiles: List<FileVersion>) (previouslyValidatedFiles: List<FileVersion>) : FileVersion array =
-        getFilesToValidate newFiles previouslyValidatedFiles
+        let changedFiles =
+            if previouslyValidatedFiles.Count > 0 then
+                let previousFilesLookup =
+                    previouslyValidatedFiles
+                    |> Seq.map contentReferenceValidationKey
+                    |> HashSet
+
+                newFiles
+                    .Where(fun fileVersion -> not (previousFilesLookup.Contains(contentReferenceValidationKey fileVersion)))
+                    .ToArray()
+            else
+                newFiles.ToArray()
+
+        changedFiles
         |> Array.filter isWholeFileContentReference
 
     let private manifestValidationError correlationId (fileVersion: FileVersion) message =

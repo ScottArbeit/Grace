@@ -1354,7 +1354,25 @@ module Services =
             .Distinct()
             .ToList()
 
+    let internal createPreviousDirectoryVersionsParameters
+        (graceIds: GraceIds)
+        (previousDirectoryVersionIds: List<DirectoryVersionId>)
+        (correlationId: CorrelationId)
+        =
+        Parameters.DirectoryVersion.GetByDirectoryIdsParameters(
+            OwnerId = graceIds.OwnerIdString,
+            OwnerName = graceIds.OwnerName,
+            OrganizationId = graceIds.OrganizationIdString,
+            OrganizationName = graceIds.OrganizationName,
+            RepositoryId = graceIds.RepositoryIdString,
+            RepositoryName = graceIds.RepositoryName,
+            DirectoryVersionId = $"{previousDirectoryVersionIds[0]}",
+            DirectoryIds = previousDirectoryVersionIds,
+            CorrelationId = correlationId
+        )
+
     let internal getPreviousDirectoryVersionsForChangedDirectories
+        (graceIds: GraceIds)
         (previousGraceStatus: GraceStatus)
         (localDirectoryVersions: List<LocalDirectoryVersion>)
         (correlationId: CorrelationId)
@@ -1365,20 +1383,7 @@ module Services =
             if previousDirectoryVersionIds.Count = 0 then
                 return Ok(List<Grace.Types.Common.DirectoryVersion>())
             else
-                let current = Current()
-
-                let getByDirectoryIdParameters =
-                    Parameters.DirectoryVersion.GetByDirectoryIdsParameters(
-                        OwnerId = $"{current.OwnerId}",
-                        OwnerName = current.OwnerName,
-                        OrganizationId = $"{current.OrganizationId}",
-                        OrganizationName = current.OrganizationName,
-                        RepositoryId = $"{current.RepositoryId}",
-                        RepositoryName = current.RepositoryName,
-                        DirectoryVersionId = $"{previousDirectoryVersionIds[0]}",
-                        DirectoryIds = previousDirectoryVersionIds,
-                        CorrelationId = correlationId
-                    )
+                let getByDirectoryIdParameters = createPreviousDirectoryVersionsParameters graceIds previousDirectoryVersionIds correlationId
 
                 match! DirectoryVersion.GetByDirectoryIds getByDirectoryIdParameters with
                 | Ok returnValue ->
@@ -1388,6 +1393,25 @@ module Services =
                         |> List<Grace.Types.Common.DirectoryVersion>
                         |> Ok
                 | Error error -> return Error error
+        }
+
+    let internal currentRepositoryGraceIds correlationId =
+        let current = Current()
+
+        { GraceIds.Default with
+            OwnerId = current.OwnerId
+            OwnerIdString = $"{current.OwnerId}"
+            OwnerName = current.OwnerName
+            OrganizationId = current.OrganizationId
+            OrganizationIdString = $"{current.OrganizationId}"
+            OrganizationName = current.OrganizationName
+            RepositoryId = current.RepositoryId
+            RepositoryIdString = $"{current.RepositoryId}"
+            RepositoryName = current.RepositoryName
+            CorrelationId = correlationId
+            HasOwner = true
+            HasOrganization = true
+            HasRepository = true
         }
 
     let internal toDirectoryVersionWithUploadedFiles
@@ -2246,7 +2270,9 @@ module Services =
 
         let uploadDirectoryVersionsForCapture previousGraceStatus directoryVersions uploadedFileVersions =
             task {
-                match! getPreviousDirectoryVersionsForChangedDirectories previousGraceStatus directoryVersions correlationId with
+                let graceIds = currentRepositoryGraceIds correlationId
+
+                match! getPreviousDirectoryVersionsForChangedDirectories graceIds previousGraceStatus directoryVersions correlationId with
                 | Error error -> return Error error
                 | Ok previousDirectoryVersions ->
                     match! uploadDirectoryVersionsWithUploadedFiles directoryVersions uploadedFileVersions previousDirectoryVersions correlationId with

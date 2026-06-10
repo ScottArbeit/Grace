@@ -1255,6 +1255,7 @@ module Branch =
                                             if newDirectoryVersions.Count > 0 then
                                                 match!
                                                     getPreviousDirectoryVersionsForChangedDirectories
+                                                        graceIds
                                                         previousGraceStatus
                                                         newDirectoryVersions
                                                         (getCorrelationId parseResult)
@@ -1376,7 +1377,9 @@ module Branch =
                             | Ok returnValue -> returnValue.ReturnValue
                             | Error _ -> Array.empty
 
-                        match! getPreviousDirectoryVersionsForChangedDirectories previousGraceStatus newDirectoryVersions (getCorrelationId parseResult) with
+                        match!
+                            getPreviousDirectoryVersionsForChangedDirectories graceIds previousGraceStatus newDirectoryVersions (getCorrelationId parseResult)
+                            with
                         | Error error -> return Error error
                         | Ok previousDirectoryVersions ->
                             let saveParameters = SaveDirectoryVersionsParameters()
@@ -2931,7 +2934,12 @@ module Branch =
 
                             if currentBranch.SaveEnabled
                                && newDirectoryVersions.Any() then
-                                match! getPreviousDirectoryVersionsForChangedDirectories previousGraceStatus newDirectoryVersions (getCorrelationId parseResult)
+                                match!
+                                    getPreviousDirectoryVersionsForChangedDirectories
+                                        graceIds
+                                        previousGraceStatus
+                                        newDirectoryVersions
+                                        (getCorrelationId parseResult)
                                     with
                                 | Error error ->
                                     t |> setProgressTaskValue showOutput 50.0

@@ -332,8 +332,16 @@ module Watch =
                     Colors.Verbose
                     $"new Sha256Hash: {dv.Sha256Hash.Substring(0, 8)}; DirectoryId: {dv.DirectoryVersionId.ToString().Substring(0, 9)}...; RelativePath: {dv.RelativePath}"
 
-            // Upload the new directory versions.
-            let! result = uploadDirectoryVersions newDirectoryVersions correlationId
+            // Upload the new directory versions, preserving any manifest references from the previous server versions.
+            let graceIds = currentRepositoryGraceIds correlationId
+
+            let! result =
+                task {
+                    match! getPreviousDirectoryVersionsForChangedDirectories graceIds graceStatus newDirectoryVersions correlationId with
+                    | Error error -> return Error error
+                    | Ok previousDirectoryVersions ->
+                        return! uploadDirectoryVersionsWithUploadedFiles newDirectoryVersions Seq.empty<FileVersion> previousDirectoryVersions correlationId
+                }
 
             match result with
             | Ok returnValue ->

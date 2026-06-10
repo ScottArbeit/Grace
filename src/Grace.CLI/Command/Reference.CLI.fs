@@ -715,6 +715,7 @@ module Reference =
                                             if newDirectoryVersions.Count > 0 then
                                                 match!
                                                     getPreviousDirectoryVersionsForChangedDirectories
+                                                        graceIds
                                                         previousGraceStatus
                                                         newDirectoryVersions
                                                         graceIds.CorrelationId
@@ -833,7 +834,7 @@ module Reference =
                             | Ok returnValue -> returnValue.ReturnValue
                             | Error _ -> Array.empty
 
-                        match! getPreviousDirectoryVersionsForChangedDirectories previousGraceStatus newDirectoryVersions graceIds.CorrelationId with
+                        match! getPreviousDirectoryVersionsForChangedDirectories graceIds previousGraceStatus newDirectoryVersions graceIds.CorrelationId with
                         | Error error -> return Error error
                         | Ok previousDirectoryVersions ->
                             let saveParameters = SaveDirectoryVersionsParameters()

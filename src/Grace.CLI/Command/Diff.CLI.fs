@@ -359,6 +359,7 @@ module Diff =
                                             (task {
                                                 match!
                                                     getPreviousDirectoryVersionsForChangedDirectories
+                                                        graceIds
                                                         previousGraceStatus
                                                         newDirectoryVersions
                                                         (getCorrelationId parseResult)
@@ -682,6 +683,7 @@ module Diff =
                                                 (task {
                                                     match!
                                                         getPreviousDirectoryVersionsForChangedDirectories
+                                                            graceIds
                                                             previousGraceStatus
                                                             newDirectoryVersions
                                                             (getCorrelationId parseResult)

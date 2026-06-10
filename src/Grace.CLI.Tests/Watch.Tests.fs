@@ -3,6 +3,7 @@ namespace Grace.CLI.Tests
 open FsUnit
 open Grace.CLI
 open Grace.CLI.Command
+open Grace.CLI.Services
 open Grace.Shared
 open Grace.Shared.Client.Configuration
 open Grace.Shared.Utilities
@@ -14,6 +15,7 @@ open System
 open System.Collections.Generic
 open System.Diagnostics
 open System.IO
+open System.Text
 open System.Text.Json
 open System.Threading.Tasks
 
@@ -162,6 +164,29 @@ module WatchTests =
 
         if File.Exists(ipcFileName) then File.Delete(ipcFileName)
 
+    let private finalizedManifest () =
+        let bytes = Encoding.UTF8.GetBytes("watch manifest-backed file")
+
+        let block =
+            match ContentBlockFormat.encode [ { PhysicalOffset = 0L; Bytes = bytes } ] with
+            | Ok block -> block
+            | Error error ->
+                Assert.Fail($"Expected content block encoding to succeed, got {error}.")
+                Unchecked.defaultof<ContentBlockFormat.EncodedContentBlock>
+
+        let manifest =
+            FileManifest.Create(
+                ManifestAddress String.Empty,
+                RabinChunking.SuiteName,
+                FileContentHash(ContentAddress.computeBlake3Hex bytes),
+                int64 bytes.Length,
+                [
+                    ContentBlock.Create(block.Address, 0L, int64 bytes.Length)
+                ]
+            )
+
+        { manifest with ManifestAddress = ContentAddress.computeManifestAddressForManifest manifest }
+
     let private withTempRepo (action: string -> unit) =
         let tempDir = Path.Combine(Path.GetTempPath(), $"grace-watch-tests-{Guid.NewGuid():N}")
         let graceDir = Path.Combine(tempDir, Constants.GraceConfigDirectory)
@@ -218,6 +243,65 @@ module WatchTests =
             |> should contain "Unable to acquire an access token for SignalR notifications:"
 
             error |> should contain "test error"
+
+    [<Test>]
+    let ``watch save overlay preserves prior manifest backed unchanged file version`` () =
+        let manifest = finalizedManifest ()
+
+        let localFileVersion =
+            LocalFileVersion.CreateWithHashes
+                (RelativePath "large.bin")
+                (Sha256Hash "watch-manifest-sha")
+                (Blake3Hash $"{manifest.FileContentHash}")
+                true
+                manifest.Size
+                (getCurrentInstant ())
+                true
+                DateTime.UtcNow
+
+        let priorFileVersion = localFileVersion.ToFileVersion
+        priorFileVersion.ContentReference <- FileContentReference.FileManifest manifest
+
+        let previousDirectoryVersion =
+            DirectoryVersion.CreateWithHashes
+                (Guid.NewGuid())
+                OwnerId.Empty
+                OrganizationId.Empty
+                RepositoryId.Empty
+                Constants.RootDirectoryPath
+                (Sha256Hash "watch-previous-directory-sha")
+                (Blake3Hash "watch-previous-directory-blake3")
+                (List<DirectoryVersionId>())
+                (List<FileVersion>([| priorFileVersion |]))
+                localFileVersion.Size
+
+        let changedLocalDirectoryVersion =
+            LocalDirectoryVersion.CreateWithHashes
+                (Guid.NewGuid())
+                OwnerId.Empty
+                OrganizationId.Empty
+                RepositoryId.Empty
+                Constants.RootDirectoryPath
+                (Sha256Hash "watch-new-directory-sha")
+                (Blake3Hash "watch-new-directory-blake3")
+                (List<DirectoryVersionId>())
+                (List<LocalFileVersion>([| localFileVersion |]))
+                localFileVersion.Size
+                DateTime.UtcNow
+
+        let directoryVersion = toDirectoryVersionWithUploadedFiles Seq.empty<FileVersion> [ previousDirectoryVersion ] changedLocalDirectoryVersion
+
+        directoryVersion.Files.Count |> should equal 1
+
+        directoryVersion.Files[0]
+            .ContentReference
+            .ReferenceType
+        |> should equal FileContentReferenceType.FileManifest
+
+        directoryVersion.Files[0]
+            .ContentReference
+            .Manifest
+        |> should equal (Some manifest)
 
     [<Test>]
     let ``watch exits with auth guidance when no token is configured`` () =
