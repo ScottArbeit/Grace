@@ -211,6 +211,7 @@ module Storage =
                 metadata[nameof RepositoryName] <- $"{Current().RepositoryName}"
                 metadata[nameof RepositoryId] <- $"{Current().RepositoryId}"
                 metadata[nameof Sha256Hash] <- fileVersion.Sha256Hash
+                metadata[nameof Blake3Hash] <- fileVersion.Blake3Hash
                 metadata["UncompressedSize"] <- $"{fileInfo.Length}"
 
                 match Current().ObjectStorageProvider with
@@ -300,6 +301,7 @@ module Storage =
                             let returnValue = GraceReturnValue.Create "File successfully saved to object storage." correlationId
 
                             returnValue.Properties.Add(nameof Sha256Hash, fileVersion.Sha256Hash)
+                            returnValue.Properties.Add(nameof Blake3Hash, fileVersion.Blake3Hash)
                             returnValue.Properties.Add(nameof RelativePath, fileVersion.RelativePath)
                             returnValue.Properties.Add(nameof RepositoryId, repositoryId)
                             return Ok returnValue
@@ -308,6 +310,7 @@ module Storage =
                             let returnValue = GraceReturnValue.Create "File already exists in object storage." correlationId
 
                             returnValue.Properties.Add(nameof Sha256Hash, fileVersion.Sha256Hash)
+                            returnValue.Properties.Add(nameof Blake3Hash, fileVersion.Blake3Hash)
                             returnValue.Properties.Add(nameof RelativePath, fileVersion.RelativePath)
                             returnValue.Properties.Add(nameof RepositoryId, repositoryId)
                             return Ok returnValue
@@ -320,6 +323,7 @@ module Storage =
                             // If the file already exists in Blob Storage, we don't need to do anything.
                             let returnValue = GraceReturnValue.Create "File already exists in object storage." correlationId
                             returnValue.Properties.Add(nameof Sha256Hash, fileVersion.Sha256Hash)
+                            returnValue.Properties.Add(nameof Blake3Hash, fileVersion.Blake3Hash)
                             returnValue.Properties.Add(nameof RelativePath, fileVersion.RelativePath)
                             returnValue.Properties.Add(nameof RepositoryId, repositoryId)
                             return Ok returnValue

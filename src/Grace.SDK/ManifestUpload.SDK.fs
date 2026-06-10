@@ -169,8 +169,16 @@ module ManifestUpload =
         parameters.Manifest <- manifest
         parameters
 
-    let private manifestFileVersion (fileVersion: FileVersion) manifest =
-        let manifestVersion = FileVersion.Create fileVersion.RelativePath fileVersion.Sha256Hash fileVersion.BlobUri fileVersion.IsBinary fileVersion.Size
+    let private manifestFileVersion (fileVersion: FileVersion) (manifest: FileManifest) =
+        let manifestVersion =
+            FileVersion.CreateWithHashes
+                fileVersion.RelativePath
+                fileVersion.Sha256Hash
+                (Blake3Hash $"{manifest.FileContentHash}")
+                fileVersion.BlobUri
+                fileVersion.IsBinary
+                fileVersion.Size
+
         manifestVersion.CreatedAt <- fileVersion.CreatedAt
         manifestVersion.ContentReference <- FileContentReference.FileManifest manifest
         manifestVersion
