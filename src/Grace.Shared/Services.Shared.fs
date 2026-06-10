@@ -24,10 +24,10 @@ module Services =
 
             match result with
             | Ok result ->
-                result.Properties[key] <- safeValue
+                result.Properties[ key ] <- safeValue
                 Ok result
             | Error error ->
-                error.Properties[key] <- safeValue
+                error.Properties[ key ] <- safeValue
                 Error error
         else
             result
@@ -45,7 +45,9 @@ module Services =
                 true // Indicates that the object is okay to be returned to the pool
 
     /// An ObjectPool for IncrementalHash instances.
-    let incrementalHashPool = DefaultObjectPoolProvider().Create(IncrementalHashPolicy())
+    let incrementalHashPool =
+        DefaultObjectPoolProvider()
+            .Create(IncrementalHashPolicy())
 
     /// Computes the BLAKE3 value for a given file, presented as a stream.
     ///
@@ -57,7 +59,7 @@ module Services =
             // I did some informal perf testing on large files. This size was best, larger didn't help, and 64K keeps it on the small object heap.
             let bufferLength = 64 * 1024
 
-            let buffer = ArrayPool<byte>.Shared.Rent(bufferLength)
+            let buffer = ArrayPool<byte>.Shared.Rent (bufferLength)
             let mutable hasher = Hasher.New()
 
             try
@@ -77,7 +79,7 @@ module Services =
                 return FileContentHash(byteArrayToString blake3Bytes)
             finally
                 if not <| isNull buffer then
-                    ArrayPool<byte>.Shared.Return(buffer, clearArray = true)
+                    ArrayPool<byte>.Shared.Return (buffer, clearArray = true)
 
                 hasher.Dispose()
         }
@@ -101,7 +103,7 @@ module Services =
                     int (stream.Length)
 
             // Get a buffer to hold the part of the file we're going to check.
-            let startingBytes = ArrayPool<byte>.Shared.Rent(bytesToCheck)
+            let startingBytes = ArrayPool<byte>.Shared.Rent (bytesToCheck)
             //logToConsole $"In isBinaryFile: stream.Length: {stream.Length}. Rented byte array of length {bytesToCheck}."
 
             try
@@ -113,13 +115,18 @@ module Services =
                     //logToConsole $"In isBinaryFile: stream.Length: {stream.Length}. Finished reading stream."
 
                     // Search for a 0x00 character.
-                    return startingBytes.Take(bytesRead).Any(fun b -> char (b) = nulChar)
-                with ex ->
+                    return
+                        startingBytes
+                            .Take(bytesRead)
+                            .Any(fun b -> char (b) = nulChar)
+                with
+                | ex ->
                     //logToConsole $"In isBinaryFile: stream.Length: {stream.Length}. Caught exception: {ExceptionResponse.Create ex}."
                     return false
             finally
                 // Return the rented buffer to the pool, even if an exception is thrown.
-                if not <| isNull startingBytes then ArrayPool<byte>.Shared.Return(startingBytes)
+                if not <| isNull startingBytes then
+                    ArrayPool<byte>.Shared.Return (startingBytes)
         }
 
     /// Computes the SHA-256 value for a given file, presented as a stream.
@@ -131,7 +138,7 @@ module Services =
             let bufferLength = 64 * 1024
 
             // Using object pooling for both of these.
-            let buffer = ArrayPool<byte>.Shared.Rent(bufferLength)
+            let buffer = ArrayPool<byte>.Shared.Rent (bufferLength)
             let hasher = incrementalHashPool.Get()
 
             try
@@ -158,9 +165,51 @@ module Services =
                 return Sha256Hash sha256Hash
             finally
                 if not <| isNull buffer then
-                    ArrayPool<byte>.Shared.Return(buffer, clearArray = true)
+                    ArrayPool<byte>.Shared.Return (buffer, clearArray = true)
 
                 if not <| isNull hasher then incrementalHashPool.Return(hasher)
+        }
+
+    /// Computes both file content hashes from a single pass over a stream.
+    let computeHashesForFile (stream: Stream) (relativeFilePath: RelativePath) =
+        task {
+            if isNull stream then nullArg (nameof stream)
+
+            // I did some informal perf testing on large files. This size was best, larger didn't help, and 64K keeps it on the small object heap.
+            let bufferLength = 64 * 1024
+
+            let buffer = ArrayPool<byte>.Shared.Rent (bufferLength)
+            let sha256Hasher = incrementalHashPool.Get()
+            let mutable blake3Hasher = Hasher.New()
+
+            try
+                let mutable moreToRead = true
+
+                while moreToRead do
+                    let! bytesRead = stream.ReadAsync(buffer, 0, bufferLength)
+
+                    if bytesRead > 0 then
+                        sha256Hasher.AppendData(buffer, 0, bytesRead)
+                        blake3Hasher.Update(buffer.AsSpan(0, bytesRead))
+                    else
+                        moreToRead <- false
+
+                let sha256Bytes = stackalloc<byte> SHA256.HashSizeInBytes
+
+                sha256Hasher.GetHashAndReset(sha256Bytes)
+                |> ignore
+
+                let blake3Bytes = stackalloc<byte> Hash.Size
+                blake3Hasher.Finalize(blake3Bytes)
+
+                return Sha256Hash(byteArrayToString sha256Bytes), Blake3Hash(byteArrayToString blake3Bytes)
+            finally
+                if not <| isNull buffer then
+                    ArrayPool<byte>.Shared.Return (buffer, clearArray = true)
+
+                if not <| isNull sha256Hasher then incrementalHashPool.Return(sha256Hasher)
+
+                blake3Hasher.Dispose()
         }
 
     /// The hash algorithm to use for a DirectoryVersion preimage.
@@ -175,11 +224,13 @@ module Services =
 
     /// A child entry included in a DirectoryVersion preimage.
     type DirectoryVersionPreimageEntry =
-        { Kind: DirectoryVersionPreimageEntryKind
-          RelativePath: RelativePath
-          Size: int64
-          Blake3Hash: Blake3Hash
-          Sha256Hash: Sha256Hash }
+        {
+            Kind: DirectoryVersionPreimageEntryKind
+            RelativePath: RelativePath
+            Size: int64
+            Blake3Hash: Blake3Hash
+            Sha256Hash: Sha256Hash
+        }
 
         static member Create kind relativePath size blake3Hash sha256Hash =
             { Kind = kind; RelativePath = RelativePath(normalizeFilePath $"{relativePath}"); Size = size; Blake3Hash = blake3Hash; Sha256Hash = sha256Hash }
@@ -205,7 +256,10 @@ module Services =
         | DirectoryVersionHashAlgorithm.Blake3 -> entry.Blake3Hash
         | DirectoryVersionHashAlgorithm.Sha256 -> entry.Sha256Hash
 
-    let private encodeDirectoryVersionPath (path: RelativePath) = normalizeFilePath $"{path}" |> Encoding.UTF8.GetBytes |> Convert.ToBase64String
+    let private encodeDirectoryVersionPath (path: RelativePath) =
+        normalizeFilePath $"{path}"
+        |> Encoding.UTF8.GetBytes
+        |> Convert.ToBase64String
 
     /// Builds the versioned DirectoryVersion preimage used by both BLAKE3 and SHA-256 directory hashes.
     let directoryVersionPreimage algorithm (relativeDirectoryPath: RelativePath) (entries: seq<DirectoryVersionPreimageEntry>) =
@@ -269,10 +323,14 @@ module Services =
         computeSha256ForDirectoryEntries relativeDirectoryPath (Seq.append directoryEntries fileEntries)
 
     /// Gets the total size of the files contained within this specific directory. This does not include the size of any subdirectories.
-    let getDirectorySize (files: IList<FileVersion>) = files |> Seq.fold (fun (size: int64) file -> size + file.Size) 0L
+    let getDirectorySize (files: IList<FileVersion>) =
+        files
+        |> Seq.fold (fun (size: int64) file -> size + file.Size) 0L
 
     /// Gets the total size of the files contained within this specific directory. This does not include the size of any subdirectories.
-    let getLocalDirectorySize (files: IList<LocalFileVersion>) = files |> Seq.fold (fun (size: int64) file -> size + file.Size) 0L
+    let getLocalDirectorySize (files: IList<LocalFileVersion>) =
+        files
+        |> Seq.fold (fun (size: int64) file -> size + file.Size) 0L
 
     /// Gets the number of path segments for the longest relative path in GraceIndex.
     ///
