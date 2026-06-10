@@ -46,6 +46,18 @@ module Doctor =
     [<Literal>]
     let private IgnoreEntriesParseCheckId = "ignore.entries.parse"
 
+    [<Literal>]
+    let private AuthSourceDetectedCheckId = "auth.source.detected"
+
+    [<Literal>]
+    let private AuthEnvTokenValidCheckId = "auth.env-token.valid"
+
+    [<Literal>]
+    let private AuthTokenFileUnsupportedCheckId = "auth.token-file.unsupported"
+
+    [<Literal>]
+    let private AuthOidcConfigurationCheckId = "auth.oidc.configuration"
+
     module private Options =
         let full =
             new Option<bool>(
@@ -166,6 +178,38 @@ module Doctor =
                 SupportsOffline = true
             }
             {
+                Id = AuthSourceDetectedCheckId
+                Category = "Authentication"
+                Title = "Authentication source"
+                Description = "Classifies the likely local authentication source from environment configuration without acquiring credentials."
+                DefaultEnabled = true
+                SupportsOffline = true
+            }
+            {
+                Id = AuthEnvTokenValidCheckId
+                Category = "Authentication"
+                Title = "GRACE_TOKEN PAT shape"
+                Description = "Validates GRACE_TOKEN with the pure Grace PAT parser without printing or verifying the token."
+                DefaultEnabled = true
+                SupportsOffline = true
+            }
+            {
+                Id = AuthTokenFileUnsupportedCheckId
+                Category = "Authentication"
+                Title = "GRACE_TOKEN_FILE unsupported"
+                Description = "Reports unsupported token-file configuration and recommends GRACE_TOKEN."
+                DefaultEnabled = true
+                SupportsOffline = true
+            }
+            {
+                Id = AuthOidcConfigurationCheckId
+                Category = "Authentication"
+                Title = "OIDC environment configuration"
+                Description = "Checks OIDC M2M and CLI environment completeness without token requests or secure-store reads."
+                DefaultEnabled = true
+                SupportsOffline = true
+            }
+            {
                 Id = "identity.auth-session"
                 Category = "Identity"
                 Title = "Authentication session"
@@ -267,6 +311,7 @@ module Doctor =
             ConfigurationState: ConfigurationInspectionState
             UserConfiguration: UserConfiguration.UserConfigurationInspection
             EnvironmentServerUri: string option
+            AuthInspection: Auth.AuthInspection
         }
 
     let private normalizeOptionalText value = if String.IsNullOrWhiteSpace(value) then None else Some(value.Trim())
@@ -284,12 +329,42 @@ module Doctor =
             EnvironmentServerUri =
                 Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.GraceServerUri)
                 |> normalizeOptionalText
+            AuthInspection = Auth.inspectAuthEnvironment ()
         }
 
     let private checkResult checkId category title status severity summary : LocalOutputDto.DoctorCheckResultDto =
         { Id = checkId; Category = category; Title = title; Status = status; Severity = severity; Summary = summary }
 
     let private skipped (check: LocalOutputDto.DoctorCheckDto) summary = checkResult check.Id check.Category check.Title "Skipped" "Info" summary
+
+    let private missingRequiredFields (fields: Auth.AuthEnvironmentFieldStatus array) =
+        fields
+        |> Array.filter (fun field -> field.Required && not field.IsSet)
+        |> Array.map (fun field -> field.Name)
+
+    let private presentFieldNames (fields: Auth.AuthEnvironmentFieldStatus array) =
+        fields
+        |> Array.filter (fun field -> field.IsSet)
+        |> Array.map (fun field -> field.Name)
+
+    let private formatFieldNames (names: string array) = if Array.isEmpty names then "none" else String.Join(", ", names)
+
+    let private oidcSummary (auth: Auth.AuthInspection) =
+        let m2mMissing = missingRequiredFields auth.M2mFields
+        let cliMissing = missingRequiredFields auth.CliFields
+        let m2mPresent = presentFieldNames auth.M2mFields
+        let cliPresent = presentFieldNames auth.CliFields
+
+        if auth.M2mComplete && auth.CliComplete then
+            "OIDC M2M and CLI environment configuration are complete. No token was requested and no secure token storage was read."
+        elif auth.M2mComplete then
+            $"OIDC M2M environment configuration is complete; CLI OIDC is incomplete with missing required keys: {formatFieldNames cliMissing}. No token was requested."
+        elif auth.CliComplete then
+            $"OIDC CLI environment configuration is complete; M2M OIDC is incomplete with missing required keys: {formatFieldNames m2mMissing}. No browser, device-code flow, or secure token storage was used."
+        elif auth.HasPartialM2m || auth.HasPartialCli then
+            $"OIDC environment configuration is partial. M2M present keys: {formatFieldNames m2mPresent}; M2M missing required keys: {formatFieldNames m2mMissing}. CLI present keys: {formatFieldNames cliPresent}; CLI missing required keys: {formatFieldNames cliMissing}."
+        else
+            "No OIDC environment configuration was detected. Set the OIDC M2M or CLI environment keys, or provide GRACE_TOKEN."
 
     let private resultForCheck (context: DoctorInspectionContext) (check: LocalOutputDto.DoctorCheckDto) : LocalOutputDto.DoctorCheckResultDto =
         let ok summary = checkResult check.Id check.Category check.Title "Ok" "Info" summary
@@ -298,6 +373,49 @@ module Doctor =
 
         match check.Id with
         | CliCatalogCheckId -> ok "Doctor check catalog is available."
+        | AuthSourceDetectedCheckId ->
+            let auth = context.AuthInspection
+
+            if auth.HasUsableCredentialSource then
+                ok $"Likely authentication source: {auth.ActiveSource}. Doctor did not acquire, refresh, store, or validate credentials with a provider."
+            elif auth.GraceTokenError.IsSome then
+                warning $"Likely authentication source: {auth.ActiveSource}. {auth.GraceTokenError.Value}"
+            elif auth.GraceTokenFilePresent then
+                warning
+                    $"Likely authentication source: {auth.ActiveSource}. Local token files are unsupported; unset {Constants.EnvironmentVariables.GraceTokenFile} and set {Constants.EnvironmentVariables.GraceToken}."
+            elif auth.HasPartialM2m || auth.HasPartialCli then
+                warning $"No complete authentication source was detected. {oidcSummary auth}"
+            else
+                warning $"No authentication source was detected. Set {Constants.EnvironmentVariables.GraceToken}, OIDC M2M variables, or OIDC CLI variables."
+        | AuthEnvTokenValidCheckId ->
+            let auth = context.AuthInspection
+
+            if not auth.GraceTokenPresent then
+                skipped check $"{Constants.EnvironmentVariables.GraceToken} is not set; no environment PAT was validated."
+            elif auth.GraceTokenValid then
+                ok
+                    $"{Constants.EnvironmentVariables.GraceToken} is set and has a valid Grace PAT shape. The token value was not printed or verified against the server."
+            else
+                failed (
+                    auth.GraceTokenError
+                    |> Option.defaultValue
+                        $"{Constants.EnvironmentVariables.GraceToken} is not a valid Grace PAT. Set a token with prefix {Grace.Types.PersonalAccessToken.TokenPrefix}."
+                )
+        | AuthTokenFileUnsupportedCheckId ->
+            let auth = context.AuthInspection
+
+            if auth.GraceTokenFilePresent then
+                failed
+                    $"Local token files are unsupported. Unset {Constants.EnvironmentVariables.GraceTokenFile} and set {Constants.EnvironmentVariables.GraceToken} to a Grace PAT."
+            else
+                ok $"{Constants.EnvironmentVariables.GraceTokenFile} is not set."
+        | AuthOidcConfigurationCheckId ->
+            let auth = context.AuthInspection
+            let summary = oidcSummary auth
+
+            if auth.M2mComplete || auth.CliComplete then ok summary
+            elif auth.HasPartialM2m || auth.HasPartialCli then warning summary
+            else skipped check summary
         | ConfigFileDiscoverCheckId ->
             match context.ConfigurationState with
             | ConfigurationLoaded inspection -> ok $"Found {Constants.GraceConfigFileName} at {inspection.Path}; repository root {inspection.RootDirectory}."
