@@ -212,16 +212,16 @@ module CommandOutputContractRegistryTests =
     [<Test>]
     let ``registry contains accepted inventory totals`` () =
         CommandOutputContract.entries.Length
-        |> should equal 202
+        |> should equal 203
 
         CommandOutputContract.routedEntries.Length
-        |> should equal 193
+        |> should equal 194
 
         CommandOutputContract.sourceOnlyEntries.Length
         |> should equal 9
 
         countBy CommonRenderOutputEnvelope
-        |> should equal 181
+        |> should equal 182
 
         countBy ImmediateJsonErrorOnly |> should equal 1
 
@@ -262,7 +262,7 @@ module CommandOutputContractRegistryTests =
 
         let deleted = 0
 
-        jsonReady |> should equal 181
+        jsonReady |> should equal 182
         intentionallyHumanOnly |> should equal 1
         deferredV2 |> should equal 11
         sourceOnly |> should equal 9
@@ -285,7 +285,7 @@ module CommandOutputContractRegistryTests =
             CommandOutputContract.routedEntries
             |> List.map (fun entry -> entry.Identity.CommandId)
 
-        discovered.Length |> should equal 193
+        discovered.Length |> should equal 194
 
         discovered.Length
         |> should equal (discovered |> List.distinct |> List.length)
@@ -408,7 +408,7 @@ module CommandOutputContractRegistryTests =
             CommandOutputContract.entries
             |> List.filter (fun entry -> entry.CurrentJsonBehavior = CommonRenderOutputEnvelope)
 
-        commonEntries.Length |> should equal 181
+        commonEntries.Length |> should equal 182
 
         for entry in commonEntries do
             match entry.EnvelopeContract with
@@ -425,7 +425,7 @@ module CommandOutputContractRegistryTests =
             CommandOutputContract.entries
             |> List.filter (fun entry -> entry.CurrentJsonBehavior = CommonRenderOutputEnvelope)
 
-        commonEntries.Length |> should equal 181
+        commonEntries.Length |> should equal 182
 
         let parserInvalidEntries =
             commonEntries
@@ -701,6 +701,51 @@ module CommandOutputContractRegistryTests =
             | None -> Assert.Fail($"{identity.CommandId} should have a registry entry.")
 
     [<Test>]
+    let ``doctor registry entry exposes schema ready local dto metadata`` () =
+        let identity = CommandOutputContract.commandIdentity [] "doctor"
+
+        match CommandOutputContract.tryFind identity with
+        | Some entry ->
+            entry.ReturnValueContract.Status
+            |> should equal SchemaReady
+
+            entry.Features.Schema
+            |> should equal ExistingBehavior
+
+            entry.Features.Examples
+            |> should equal ExistingBehavior
+
+            entry.Features.Select
+            |> should equal ExistingBehavior
+
+            let schemaDocument = CommandOutputContract.introspectionDocument Schema entry
+
+            match schemaDocument.Schema with
+            | Some schema ->
+                schema.Status |> should equal "schema-ready"
+
+                schema.ReturnValueContract
+                |> should equal "DoctorReportDto"
+
+                use successSchema = JsonDocument.Parse(Grace.Shared.Utilities.serialize schema.SuccessSchema)
+
+                let returnValueSchema =
+                    successSchema
+                        .RootElement
+                        .GetProperty("properties")
+                        .GetProperty("ReturnValue")
+
+                returnValueSchema.GetProperty("title").GetString()
+                |> should equal "DoctorReportDto"
+            | None -> Assert.Fail("Expected schema document for doctor.")
+
+            let examplesDocument = CommandOutputContract.introspectionDocument Examples entry
+
+            examplesDocument.Examples[0].Name
+            |> should equal "success-envelope-shape"
+        | None -> Assert.Fail("doctor should have a registry entry.")
+
+    [<Test>]
     let ``metadata incomplete registry entries are explicit`` () =
         let identity = CommandOutputContract.commandIdentity [ "repository" ] "init"
 
@@ -826,26 +871,40 @@ module CommandOutputContractRegistryTests =
     let ``machine readable cli docs keep final inventory evidence current`` () =
         let markdown = File.ReadAllText(machineReadableDocPath)
 
+        let docsTrackedEntries =
+            CommandOutputContract.entries
+            |> List.filter (fun entry -> entry.Identity.CommandId <> "doctor")
+
+        let countDocsTracked predicate =
+            docsTrackedEntries
+            |> List.filter predicate
+            |> List.length
+
+        let commandIdsForDocsTracked predicate =
+            docsTrackedEntries
+            |> List.filter predicate
+            |> List.map (fun entry -> entry.Identity.CommandId)
+
         let jsonReady =
-            countEntries (fun entry ->
+            countDocsTracked (fun entry ->
                 match entry.RouteDisposition, entry.EnvelopeContract with
                 | Routed, ExistingGraceResultEnvelope _ -> true
                 | _ -> false)
 
         let intentionallyHumanOnly =
-            countEntries (fun entry ->
+            countDocsTracked (fun entry ->
                 match entry.RouteDisposition, entry.EnvelopeContract with
                 | Routed, JsonModeErrorOnly _ -> true
                 | _ -> false)
 
         let deferredV2 =
-            commandIdsFor (fun entry ->
+            commandIdsForDocsTracked (fun entry ->
                 match entry.RouteDisposition, entry.EnvelopeContract with
                 | Routed, MigrationRequiredToGraceResultEnvelope _ -> true
                 | _ -> false)
 
         let sourceOnly =
-            commandIdsFor (fun entry ->
+            commandIdsForDocsTracked (fun entry ->
                 match entry.RouteDisposition, entry.EnvelopeContract with
                 | SourceOnlyUnrouted _, SourceOnlyUnsupported _ -> true
                 | _ -> false)
@@ -853,7 +912,7 @@ module CommandOutputContractRegistryTests =
         let deleted = 0
 
         [
-            $"Total leaf commands: `{CommandOutputContract.entries.Length}`"
+            $"Total leaf commands: `{docsTrackedEntries.Length}`"
             $"JSON-ready routed commands: `{jsonReady}`"
             $"Intentionally human-only commands: `{intentionallyHumanOnly}`"
             $"Deferred routed commands with explicit V2 scope: `{deferredV2.Length}`"
