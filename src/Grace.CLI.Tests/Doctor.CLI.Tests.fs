@@ -12,9 +12,11 @@ open Spectre.Console
 open System
 open System.IO
 open System.Net
+open System.Security.Cryptography
 open System.Text
 open System.Text.Json
 open System.Threading.Tasks
+open Grace.Types.Common
 
 [<NonParallelizable>]
 module DoctorCliTests =
@@ -166,6 +168,116 @@ module DoctorCliTests =
             .ensureDbInitialized(localStateDbPath root)
             .GetAwaiter()
             .GetResult()
+
+    let private sha256Hex (text: string) =
+        use sha256 = SHA256.Create()
+
+        Encoding.UTF8.GetBytes(text)
+        |> sha256.ComputeHash
+        |> Convert.ToHexString
+        |> fun value -> value.ToLowerInvariant()
+
+    let private createSnapshotFile relativePath content lastWriteTime =
+        LocalFileVersion.Create
+            relativePath
+            (sha256Hex content)
+            false
+            (int64 (Encoding.UTF8.GetByteCount(content)))
+            (Grace.Shared.Utilities.getCurrentInstant ())
+            true
+            lastWriteTime
+
+    let private seedWorkingTreeSnapshot root =
+        writeGraceConfig root "http://127.0.0.1:5000"
+        |> ignore
+
+        let dbPath = localStateDbPath root
+
+        LocalStateDb.ensureDbInitialized (dbPath)
+        |> fun task -> task.GetAwaiter().GetResult()
+
+        let ownerId = Guid.NewGuid()
+        let organizationId = Guid.NewGuid()
+        let repositoryId = Guid.NewGuid()
+        let rootDirectoryId = Guid.NewGuid()
+        let homeDirectoryId = Guid.NewGuid()
+        let indexedWriteTime = DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc)
+        let changedPath = Path.Combine(root, "changed.txt")
+        let unchangedPath = Path.Combine(root, "mtime-only.txt")
+        let graceIgnorePath = Path.Combine(root, Constants.GraceIgnoreFileName)
+
+        File.WriteAllText(changedPath, "old content")
+        File.SetLastWriteTimeUtc(changedPath, indexedWriteTime)
+        File.WriteAllText(unchangedPath, "same content")
+        File.SetLastWriteTimeUtc(unchangedPath, indexedWriteTime)
+
+        let files =
+            ResizeArray(
+                [|
+                    createSnapshotFile "changed.txt" "old content" indexedWriteTime
+                    createSnapshotFile "deleted.txt" "deleted content" indexedWriteTime
+                    createSnapshotFile "mtime-only.txt" "same content" indexedWriteTime
+                |]
+            )
+
+        if File.Exists(graceIgnorePath) then
+            files.Add(createSnapshotFile Constants.GraceIgnoreFileName (File.ReadAllText(graceIgnorePath)) (File.GetLastWriteTimeUtc(graceIgnorePath)))
+
+        let homeDirectory =
+            LocalDirectoryVersion.Create
+                homeDirectoryId
+                ownerId
+                organizationId
+                repositoryId
+                "home"
+                "home-snapshot-hash"
+                (System.Collections.Generic.List<DirectoryVersionId>())
+                (System.Collections.Generic.List<LocalFileVersion>())
+                0L
+                indexedWriteTime
+
+        let rootChildDirectories =
+            if Directory.Exists(Path.Combine(root, "home")) then
+                System.Collections.Generic.List<DirectoryVersionId>([| homeDirectoryId |])
+            else
+                System.Collections.Generic.List<DirectoryVersionId>()
+
+        let rootFiles = files |> Seq.toArray
+
+        let rootDirectory =
+            LocalDirectoryVersion.Create
+                rootDirectoryId
+                ownerId
+                organizationId
+                repositoryId
+                Constants.RootDirectoryPath
+                "root-snapshot-hash"
+                rootChildDirectories
+                (System.Collections.Generic.List<LocalFileVersion>(rootFiles))
+                (rootFiles |> Array.sumBy (fun file -> file.Size))
+                indexedWriteTime
+
+        let indexEntries =
+            [|
+                System.Collections.Generic.KeyValuePair(rootDirectoryId, rootDirectory)
+
+                if Directory.Exists(Path.Combine(root, "home")) then
+                    System.Collections.Generic.KeyValuePair(homeDirectoryId, homeDirectory)
+            |]
+
+        let status =
+            { GraceStatus.Default with Index = GraceIndex(indexEntries); RootDirectoryId = rootDirectoryId; RootDirectorySha256Hash = "root-snapshot-hash" }
+
+        LocalStateDb.replaceStatusSnapshot dbPath status
+        |> fun task -> task.GetAwaiter().GetResult()
+
+        File.WriteAllText(changedPath, "new content")
+        File.SetLastWriteTimeUtc(changedPath, indexedWriteTime.AddMinutes(5.0))
+        File.WriteAllText(Path.Combine(root, "added.txt"), "added content")
+        File.WriteAllText(unchangedPath, "same content")
+        File.SetLastWriteTimeUtc(unchangedPath, indexedWriteTime.AddMinutes(10.0))
+
+        dbPath
 
     let private openRawConnection (dbPath: string) =
         let connection = new SqliteConnection($"Data Source={dbPath}")
@@ -350,12 +462,12 @@ module DoctorCliTests =
             |> should equal "Ok"
 
             returnValue.GetProperty("Checks").GetArrayLength()
-            |> should equal 26
+            |> should equal 27
 
             returnValue
                 .GetProperty("Catalog")
                 .GetArrayLength()
-            |> should equal 26
+            |> should equal 27
 
             let catalogIds =
                 returnValue
@@ -399,6 +511,8 @@ module DoctorCliTests =
 
             catalogIds
             |> should contain "object-cache.index-readable"
+
+            catalogIds |> should contain "working-tree.scan"
 
             catalogIds
             |> should contain "identity.auth-session"
@@ -453,7 +567,7 @@ module DoctorCliTests =
                         |> Seq.map (fun check -> check.GetProperty("Id").GetString())
                         |> Set.ofSeq
 
-                    catalogIds.Count |> should equal 26
+                    catalogIds.Count |> should equal 27
 
                     catalogIds |> should contain "config.file.parse"
 
@@ -1664,6 +1778,255 @@ module DoctorCliTests =
 
             for checkId in localStateCheckIds do
                 catalogIds |> should contain checkId)
+
+    [<Test>]
+    let ``doctor list checks includes working-tree scan catalog id`` () =
+        withTempDir (fun _ ->
+            let exitCode, standardOut, standardError =
+                runWithCapturedStdoutAndStderr [| "doctor"
+                                                  "--list-checks"
+                                                  "--select"
+                                                  "Catalog" |]
+
+            exitCode |> should equal 0
+            standardError |> should equal String.Empty
+
+            use document = JsonDocument.Parse(standardOut)
+
+            let catalogIds =
+                document.RootElement.EnumerateArray()
+                |> Seq.map (fun check -> check.GetProperty("Id").GetString())
+                |> Set.ofSeq
+
+            catalogIds |> should contain "working-tree.scan")
+
+    [<Test>]
+    let ``doctor default working-tree scan is skipped without traversing changed files`` () =
+        withTempDir (fun root ->
+            withIsolatedHome root (fun _ ->
+                let dbPath = seedWorkingTreeSnapshot root
+                let beforeRoot = snapshotFiles root
+
+                let exitCode, standardOut, standardError =
+                    runWithCapturedStdoutAndStderr [| "--output"
+                                                      "Json"
+                                                      "doctor"
+                                                      "--select"
+                                                      "Checks" |]
+
+                exitCode |> should equal 0
+                standardError |> should equal String.Empty
+                use document = JsonDocument.Parse(standardOut)
+
+                let checks = document.RootElement
+                let workingTree = findCheckById checks "working-tree.scan"
+
+                workingTree.GetProperty("Status").GetString()
+                |> should equal "Skipped"
+
+                workingTree.GetProperty("Summary").GetString()
+                |> should contain "Skipped in the default profile"
+
+                workingTree.GetProperty("Summary").GetString()
+                |> should not' (contain "differs")
+
+                snapshotFiles root |> should equal beforeRoot))
+
+    [<Test>]
+    let ``doctor full working-tree scan reports drift warning without mutation`` () =
+        withTempDir (fun root ->
+            withIsolatedHome root (fun _ ->
+                seedWorkingTreeSnapshot root |> ignore
+                let beforeRoot = snapshotFiles root
+
+                let exitCode, standardOut, standardError =
+                    runWithCapturedStdoutAndStderr [| "--output"
+                                                      "Json"
+                                                      "doctor"
+                                                      "--full"
+                                                      "--offline"
+                                                      "--select"
+                                                      "Checks" |]
+
+                exitCode |> should equal 0
+                standardError |> should equal String.Empty
+                use document = JsonDocument.Parse(standardOut)
+
+                let workingTree = findCheckById document.RootElement "working-tree.scan"
+
+                workingTree.GetProperty("Status").GetString()
+                |> should equal "Warning"
+
+                let summary = workingTree.GetProperty("Summary").GetString()
+
+                summary |> should contain "3 total"
+                summary |> should contain "1 added"
+                summary |> should contain "1 changed"
+                summary |> should contain "1 deleted"
+                summary |> should contain "grace maintenance scan"
+
+                summary
+                |> should contain "grace maintenance update-index"
+
+                summary |> should not' (contain "mtime-only.txt")
+
+                snapshotFiles root |> should equal beforeRoot))
+
+    [<Test>]
+    let ``doctor exact working-tree scan runs without full and excludes ignored and grace-owned paths`` () =
+        withTempDir (fun root ->
+            withIsolatedHome root (fun _ ->
+                File.WriteAllText(Path.Combine(root, Constants.GraceIgnoreFileName), "ignored.txt")
+                seedWorkingTreeSnapshot root |> ignore
+                File.WriteAllText(Path.Combine(root, "ignored.txt"), "ignored content")
+                File.WriteAllText(Path.Combine(root, Constants.GraceConfigDirectory, "grace-local.db-wal.extra"), "sidecar-ish content")
+                let beforeRoot = snapshotFiles root
+
+                let exitCode, standardOut, standardError =
+                    runWithCapturedStdoutAndStderr [| "--output"
+                                                      "Json"
+                                                      "doctor"
+                                                      "--check"
+                                                      "working-tree.scan"
+                                                      "--select"
+                                                      "Checks" |]
+
+                exitCode |> should equal 0
+                standardError |> should equal String.Empty
+                use document = JsonDocument.Parse(standardOut)
+
+                document.RootElement.GetArrayLength()
+                |> should equal 1
+
+                let workingTree = findCheckById document.RootElement "working-tree.scan"
+
+                workingTree.GetProperty("Status").GetString()
+                |> should equal "Warning"
+
+                let summary = workingTree.GetProperty("Summary").GetString()
+
+                summary |> should contain "3 total"
+                summary |> should not' (contain "ignored.txt")
+                summary |> should not' (contain ".grace")
+
+                snapshotFiles root |> should equal beforeRoot))
+
+    [<Test>]
+    let ``doctor working-tree category selector runs scan`` () =
+        withTempDir (fun root ->
+            withIsolatedHome root (fun _ ->
+                seedWorkingTreeSnapshot root |> ignore
+
+                let exitCode, standardOut, standardError =
+                    runWithCapturedStdoutAndStderr [| "--output"
+                                                      "Json"
+                                                      "doctor"
+                                                      "--check"
+                                                      "working-tree"
+                                                      "--select"
+                                                      "Checks" |]
+
+                exitCode |> should equal 0
+                standardError |> should equal String.Empty
+                use document = JsonDocument.Parse(standardOut)
+
+                document.RootElement.GetArrayLength()
+                |> should equal 1
+
+                let workingTree = findCheckById document.RootElement "working-tree.scan"
+
+                workingTree.GetProperty("Status").GetString()
+                |> should equal "Warning"))
+
+    [<TestCase("Silent")>]
+    [<TestCase("Minimal")>]
+    let ``doctor working-tree default quiet modes emit no successful diagnostic output`` output =
+        withTempDir (fun root ->
+            withIsolatedHome root (fun _ ->
+                seedWorkingTreeSnapshot root |> ignore
+                let indexedWriteTime = DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc)
+                File.WriteAllText(Path.Combine(root, "changed.txt"), "old content")
+                File.SetLastWriteTimeUtc(Path.Combine(root, "changed.txt"), indexedWriteTime)
+                File.WriteAllText(Path.Combine(root, "deleted.txt"), "deleted content")
+                File.SetLastWriteTimeUtc(Path.Combine(root, "deleted.txt"), indexedWriteTime)
+                File.Delete(Path.Combine(root, "added.txt"))
+
+                let exitCode, standardOut, standardError =
+                    runWithCapturedStdoutAndStderr [| "--output"
+                                                      output
+                                                      "doctor"
+                                                      "--check"
+                                                      "working-tree.scan" |]
+
+                exitCode |> should equal 0
+                standardOut |> should equal String.Empty
+                standardError |> should equal String.Empty))
+
+    [<Test>]
+    let ``doctor working-tree verbose select emits clean scalar without progress text`` () =
+        withTempDir (fun root ->
+            withIsolatedHome root (fun _ ->
+                seedWorkingTreeSnapshot root |> ignore
+
+                let exitCode, standardOut, standardError =
+                    runWithCapturedStdoutAndStderr [| "--output"
+                                                      "Verbose"
+                                                      "doctor"
+                                                      "--full"
+                                                      "--offline"
+                                                      "--select"
+                                                      "Status" |]
+
+                exitCode |> should equal 0
+                standardError |> should equal String.Empty
+                standardOut.Trim() |> should equal "\"Warning\""
+
+                standardOut
+                |> should not' (contain "Grace doctor")
+
+                standardOut
+                |> should not' (contain "scanForDifferences")
+
+                standardOut
+                |> should not' (contain "Working tree differs")))
+
+    [<Test>]
+    let ``doctor working-tree scan skips unreadable snapshot inside report without creating database`` () =
+        withTempDir (fun root ->
+            withIsolatedHome root (fun _ ->
+                writeGraceConfig root "http://127.0.0.1:5000"
+                |> ignore
+
+                let dbPath = localStateDbPath root
+
+                Directory.CreateDirectory(Path.GetDirectoryName(dbPath))
+                |> ignore
+
+                File.WriteAllText(dbPath, "not a sqlite database")
+                let beforeRoot = snapshotFiles root
+
+                let exitCode, standardOut, standardError =
+                    runWithCapturedStdoutAndStderr [| "--output"
+                                                      "Json"
+                                                      "doctor"
+                                                      "--check"
+                                                      "working-tree.scan"
+                                                      "--select"
+                                                      "Checks" |]
+
+                exitCode |> should equal 0
+                standardError |> should equal String.Empty
+                use document = JsonDocument.Parse(standardOut)
+
+                let workingTree = findCheckById document.RootElement "working-tree.scan"
+
+                workingTree.GetProperty("Status").GetString()
+                |> should equal "Skipped"
+
+                workingTree.GetProperty("Summary").GetString()
+                |> should contain "Skipped because"
+
+                snapshotFiles root |> should equal beforeRoot))
 
     [<Test>]
     let ``doctor selected non-local check does not open local-state database`` () =
