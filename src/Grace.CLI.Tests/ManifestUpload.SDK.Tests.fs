@@ -40,6 +40,8 @@ type ManifestUploadSdkTests() =
 
     static member private ComputeSha256Hash(bytes: byte array) = Sha256Hash(byteArrayToString (SHA256.HashData(bytes).AsSpan()))
 
+    static member private ComputeBlake3Hash(bytes: byte array) = Blake3Hash(ContentAddress.computeBlake3Hex bytes)
+
     static member private UploadParameters correlationId fileVersions =
         let parameters = GetUploadMetadataForFilesParameters()
         parameters.OwnerId <- "22222222-2222-2222-2222-222222222222"
@@ -148,7 +150,14 @@ type ManifestUploadSdkTests() =
             try
                 File.WriteAllBytes(tempPath, payload)
 
-                let fileVersion = FileVersion.Create "large.bin" (ManifestUploadSdkTests.ComputeSha256Hash payload) String.Empty true (int64 payload.Length)
+                let fileVersion =
+                    FileVersion.CreateWithHashes
+                        "large.bin"
+                        (ManifestUploadSdkTests.ComputeSha256Hash payload)
+                        String.Empty
+                        String.Empty
+                        true
+                        (int64 payload.Length)
 
                 let client: ManifestUpload.ManifestUploadClient =
                     {
@@ -211,6 +220,9 @@ type ManifestUploadSdkTests() =
                     Assert.That(uploadResult.UploadedBlockCount, Is.EqualTo(uploadedBlocks.Count))
                     Assert.That(uploadResult.FileVersion.ContentReference.ReferenceType, Is.EqualTo(FileContentReferenceType.FileManifest))
                     Assert.That(uploadResult.Manifest, Is.EqualTo(finalizedManifest))
+                    Assert.That(uploadResult.FileVersion.Blake3Hash, Is.EqualTo(uploadResult.Manifest.Value.FileContentHash))
+                    Assert.That(uploadResult.FileVersion.Blake3Hash, Is.EqualTo(ManifestUploadSdkTests.ComputeBlake3Hash payload))
+                    Assert.That(uploadResult.FileVersion.Sha256Hash, Is.EqualTo(ManifestUploadSdkTests.ComputeSha256Hash payload))
                     Assert.That(sessionIds |> Seq.distinct |> Seq.length, Is.EqualTo(1))
                     Assert.That(calls[0], Is.EqualTo("start"))
                     Assert.That(calls[calls.Count - 1], Is.EqualTo("finalize"))
@@ -234,7 +246,14 @@ type ManifestUploadSdkTests() =
             try
                 File.WriteAllBytes(tempPath, payload)
 
-                let fileVersion = FileVersion.Create "Tiny.fs" (ManifestUploadSdkTests.ComputeSha256Hash payload) String.Empty false (int64 payload.Length)
+                let fileVersion =
+                    FileVersion.CreateWithHashes
+                        "Tiny.fs"
+                        (ManifestUploadSdkTests.ComputeSha256Hash payload)
+                        String.Empty
+                        String.Empty
+                        false
+                        (int64 payload.Length)
 
                 let client: ManifestUpload.ManifestUploadClient =
                     {
@@ -257,6 +276,8 @@ type ManifestUploadSdkTests() =
                     Assert.That(uploadResult.UsedManifestUpload, Is.False)
                     Assert.That(uploadResult.UploadedBlockCount, Is.EqualTo(0))
                     Assert.That(uploadResult.FileVersion.ContentReference.ReferenceType, Is.EqualTo(FileContentReferenceType.WholeFileContent))
+                    Assert.That(uploadResult.FileVersion.Blake3Hash, Is.EqualTo(ManifestUploadSdkTests.ComputeBlake3Hash payload))
+                    Assert.That(uploadResult.FileVersion.Sha256Hash, Is.EqualTo(ManifestUploadSdkTests.ComputeSha256Hash payload))
                     Assert.That(uploadResult.Manifest, Is.EqualTo(None))
                     Assert.That(uploadResult.UploadSessionId, Is.EqualTo(None))
             finally

@@ -33,7 +33,14 @@ type AnnotationMaterializationServerTests() =
         gzipStream.Dispose()
         compressed.ToArray()
 
-    let fileVersion relativePath isBinary (bytes: byte array) = FileVersion.Create relativePath (sha256Hex bytes) String.Empty isBinary (int64 bytes.Length)
+    let fileVersion relativePath isBinary (bytes: byte array) =
+        FileVersion.CreateWithHashes
+            relativePath
+            (sha256Hex bytes)
+            (Blake3Hash(ContentAddress.computeBlake3Hex bytes))
+            String.Empty
+            isBinary
+            (int64 bytes.Length)
 
     let readerFrom (objects: IDictionary<string, byte array>) : AnnotationMaterialization.ObjectPayloadReader =
         fun objectKey correlationId _ ->
@@ -186,3 +193,27 @@ type AnnotationMaterializationServerTests() =
 
         materialize (readerFrom objects) target
         |> expectErrorContains "Invalid manifest reconstruction"
+
+    [<Test>]
+    member _.MaterializedBytesWithMismatchedBlake3HashAreRejected() =
+        let bytes = textBytes "actual materialized text"
+        let target = fileVersion "/src/Mismatch.fs" false bytes
+        target.Blake3Hash <- Blake3Hash(ContentAddress.computeBlake3Hex (textBytes "different text"))
+        let objectKey = StorageKeys.wholeFileContentObjectKey target
+        let objects = Dictionary<string, byte array>()
+        objects[objectKey] <- bytes
+
+        materialize (readerFrom objects) target
+        |> expectErrorContains "FileVersion.Blake3Hash"
+
+    [<Test>]
+    member _.MaterializedBytesWithMissingBlake3HashAreRejected() =
+        let bytes = textBytes "missing blake3 text"
+        let target = fileVersion "/src/MissingBlake3.fs" false bytes
+        target.Blake3Hash <- String.Empty
+        let objectKey = StorageKeys.wholeFileContentObjectKey target
+        let objects = Dictionary<string, byte array>()
+        objects[objectKey] <- bytes
+
+        materialize (readerFrom objects) target
+        |> expectErrorContains "has no FileVersion.Blake3Hash"

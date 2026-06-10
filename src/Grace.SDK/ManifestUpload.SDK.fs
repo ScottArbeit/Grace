@@ -169,8 +169,21 @@ module ManifestUpload =
         parameters.Manifest <- manifest
         parameters
 
-    let private manifestFileVersion (fileVersion: FileVersion) manifest =
-        let manifestVersion = FileVersion.Create fileVersion.RelativePath fileVersion.Sha256Hash fileVersion.BlobUri fileVersion.IsBinary fileVersion.Size
+    let private fileVersionWithBlake3Hash (fileVersion: FileVersion) (fileContentHash: FileContentHash) =
+        let version =
+            FileVersion.CreateWithHashes
+                fileVersion.RelativePath
+                fileVersion.Sha256Hash
+                (Blake3Hash $"{fileContentHash}")
+                fileVersion.BlobUri
+                fileVersion.IsBinary
+                fileVersion.Size
+
+        version.CreatedAt <- fileVersion.CreatedAt
+        version
+
+    let private manifestFileVersion (fileVersion: FileVersion) (manifest: FileManifest) =
+        let manifestVersion = fileVersionWithBlake3Hash fileVersion manifest.FileContentHash
         manifestVersion.CreatedAt <- fileVersion.CreatedAt
         manifestVersion.ContentReference <- FileContentReference.FileManifest manifest
         manifestVersion
@@ -237,7 +250,7 @@ module ManifestUpload =
                 claimedRangeIndex <- claimedRangeIndex + 1
 
     let uploadFileWithClient (client: ManifestUploadClient) (request: ManifestUploadRequest) : Task<GraceResult<ManifestUploadResult>> =
-        task {
+        async {
             if isNull (box request.FileVersion) then
                 return error request.CorrelationId "FileVersion is required for manifest upload."
             elif String.IsNullOrWhiteSpace request.LocalFilePath then
@@ -269,12 +282,18 @@ module ManifestUpload =
                     | None ->
                         let uploadSessionId = Guid.NewGuid()
 
-                        match! client.StartSession(buildStartParameters request uploadSessionId plan) with
+                        match!
+                            client.StartSession(buildStartParameters request uploadSessionId plan)
+                            |> Async.AwaitTask
+                            with
                         | Error error -> return Error error
                         | Ok _ ->
                             let claimedBlockAddresses = HashSet<ContentBlockAddress>()
 
-                            match! client.DiscoverContentBlocks(buildDiscoveryParameters request plan) with
+                            match!
+                                client.DiscoverContentBlocks(buildDiscoveryParameters request plan)
+                                |> Async.AwaitTask
+                                with
                             | Ok discoveryResult when
                                 not (isNull discoveryResult.ReturnValue.CandidateContentBlocks)
                                 && discoveryResult.ReturnValue.CandidateContentBlocks.Length > 0
@@ -292,11 +311,15 @@ module ManifestUpload =
                                             discoveryResult.ReturnValue.Policy.MinimumAcceptedReuseRunLength
                                             reuseHints
 
-                                    match! client.IssueDedupeDiscovery issueParameters with
+                                    match! client.IssueDedupeDiscovery issueParameters
+                                           |> Async.AwaitTask
+                                        with
                                     | Ok _ ->
                                         let claimParameters = buildClaimReuseRangesParameters request uploadSessionId 0 issueParameters.OperationId reuseHints
 
-                                        match! client.ClaimReuseRanges claimParameters with
+                                        match! client.ClaimReuseRanges claimParameters
+                                               |> Async.AwaitTask
+                                            with
                                         | Ok claimResult -> addFullyClaimedBlockAddresses plan claimedBlockAddresses claimResult.ReturnValue.Session
                                         | Error _ -> ()
                                     | Error _ -> ()
@@ -330,6 +353,7 @@ module ManifestUpload =
                                                         logicalBlockPlan.Offset
                                                         logicalBlockPlan.Size
                                                 )
+                                            |> Async.AwaitTask
                                             with
                                         | Error error -> errors.Add error
                                         | Ok _ -> ()
@@ -345,12 +369,15 @@ module ManifestUpload =
                                 if claimedBlockAddresses.Contains encodedBlock.Address then
                                     ()
                                 else
-                                    match! client.UploadContentBlock (buildUploadUriParameters request encodedBlock.Address) encodedBlock.Payload with
+                                    match! client.UploadContentBlock (buildUploadUriParameters request encodedBlock.Address) encodedBlock.Payload
+                                           |> Async.AwaitTask
+                                        with
                                     | Error error -> errors.Add error
                                     | Ok placementResult ->
                                         match!
                                             client.ConfirmBlockUploaded
                                                 (buildConfirmParameters request uploadSessionId index encodedBlock placementResult.ReturnValue)
+                                            |> Async.AwaitTask
                                             with
                                         | Error error -> errors.Add error
                                         | Ok _ -> uploadedBlockCount <- uploadedBlockCount + 1
@@ -360,14 +387,19 @@ module ManifestUpload =
                             if errors.Count > 0 then
                                 return Error errors[0]
                             else
-                                match! client.FinalizeManifest(buildFinalizeParameters request uploadSessionId manifest) with
+                                match!
+                                    client.FinalizeManifest(buildFinalizeParameters request uploadSessionId manifest)
+                                    |> Async.AwaitTask
+                                    with
                                 | Error error -> return Error error
                                 | Ok _ ->
+                                    let uploadedFileVersion = manifestFileVersion request.FileVersion manifest
+
                                     return
                                         Ok(
                                             GraceReturnValue.Create
                                                 {
-                                                    FileVersion = manifestFileVersion request.FileVersion manifest
+                                                    FileVersion = uploadedFileVersion
                                                     Manifest = Some manifest
                                                     UploadSessionId = Some uploadSessionId
                                                     UploadedBlockCount = uploadedBlockCount
@@ -376,11 +408,13 @@ module ManifestUpload =
                                                 request.CorrelationId
                                         )
                 | _ ->
+                    let fallbackFileVersion = fileVersionWithBlake3Hash request.FileVersion plan.FileContentHash
+
                     return
                         Ok(
                             GraceReturnValue.Create
                                 {
-                                    FileVersion = request.FileVersion
+                                    FileVersion = fallbackFileVersion
                                     Manifest = None
                                     UploadSessionId = None
                                     UploadedBlockCount = 0
@@ -389,6 +423,7 @@ module ManifestUpload =
                                 request.CorrelationId
                         )
         }
+        |> Async.StartAsTask
 
     let serverClient =
         {

@@ -62,11 +62,26 @@ type SaveBoundaryActorTests() =
     let finalizedManifest () = finalizedManifestWithBlockCopies 1
 
     let manifestFile (manifest: FileManifest) =
-        let fileVersion = FileVersion.Create "/large.bin" "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" String.Empty true manifest.Size
+        let fileVersion =
+            FileVersion.CreateWithHashes
+                "/large.bin"
+                "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+                (Blake3Hash $"{manifest.FileContentHash}")
+                String.Empty
+                true
+                manifest.Size
+
         fileVersion.ContentReference <- FileContentReference.FileManifest manifest
         fileVersion
 
-    let wholeFile () = FileVersion.Create "/small.txt" "abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd" String.Empty false 42L
+    let wholeFile () =
+        FileVersion.CreateWithHashes
+            "/small.txt"
+            "abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd"
+            "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262"
+            String.Empty
+            false
+            42L
 
     let referenceDto referenceType =
         { Grace.Types.Reference.ReferenceDto.Default with
@@ -108,6 +123,19 @@ type SaveBoundaryActorTests() =
         match result with
         | Ok _ -> Assert.Fail("Expected an unfinalized manifest reference to reject before save publication.")
         | Error error -> Assert.That(error.Error, Does.Contain("must be finalized before Save"))
+
+    [<Test>]
+    member _.SaveBoundaryRejectsManifestWhenFileVersionBlake3DoesNotMatchFileContentHash() =
+        let manifest = finalizedManifest ()
+        let fileVersion = manifestFile manifest
+        fileVersion.Blake3Hash <- Blake3Hash(ContentAddress.computeBlake3Hex (Encoding.UTF8.GetBytes("stale manifest bytes")))
+        let directoryVersion = directoryWith [ fileVersion ]
+
+        let result = ReferenceActor.planManifestSaveBoundary repositoryId referenceId directoryVersion "corr-blake3-mismatch"
+
+        match result with
+        | Ok _ -> Assert.Fail("Expected mismatched FileVersion.Blake3Hash to reject before save publication.")
+        | Error error -> Assert.That(error.Error, Does.Contain("FileVersion.Blake3Hash equal FileManifest.FileContentHash"))
 
     [<Test>]
     member _.DirectoryVersionWholeFileValidationSetIgnoresFinalizedManifestBackedFiles() =

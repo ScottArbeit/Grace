@@ -169,6 +169,12 @@ module DirectoryVersion =
                 Error(manifestValidationError correlationId fileVersion "must include a ChunkingSuiteId before Save.")
             elif not (ContentAddress.isValidAddress manifest.FileContentHash) then
                 Error(manifestValidationError correlationId fileVersion "has an invalid FileContentHash before Save.")
+            elif String.IsNullOrWhiteSpace fileVersion.Blake3Hash then
+                Error(manifestValidationError correlationId fileVersion "must include FileVersion.Blake3Hash before Save.")
+            elif not (ContentAddress.isValidAddress fileVersion.Blake3Hash) then
+                Error(manifestValidationError correlationId fileVersion "has an invalid FileVersion.Blake3Hash before Save.")
+            elif fileVersion.Blake3Hash <> manifest.FileContentHash then
+                Error(manifestValidationError correlationId fileVersion "must have FileVersion.Blake3Hash equal FileManifest.FileContentHash before Save.")
             elif manifest.Size <= 0L then
                 Error(manifestValidationError correlationId fileVersion "must have a positive size before Save.")
             elif fileVersion.Size <> manifest.Size then

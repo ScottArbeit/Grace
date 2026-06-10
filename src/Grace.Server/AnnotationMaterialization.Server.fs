@@ -38,6 +38,8 @@ module internal AnnotationMaterialization =
         |> Convert.ToHexString
         |> fun value -> value.ToLowerInvariant()
 
+    let private blake3Hex (bytes: byte array) = ContentAddress.computeBlake3Hex bytes
+
     let private validateFileVersionShape (fileVersion: FileVersion) correlationId =
         if isNull (box fileVersion) then
             Error(error correlationId "Annotation target FileVersion is required.")
@@ -70,6 +72,10 @@ module internal AnnotationMaterialization =
             && not (String.Equals(sha256Hex bytes, fileVersion.Sha256Hash, StringComparison.OrdinalIgnoreCase))
         then
             Error(error correlationId $"Annotation target '{fileVersion.RelativePath}' materialized bytes do not match FileVersion.Sha256Hash.")
+        elif String.IsNullOrWhiteSpace fileVersion.Blake3Hash then
+            Error(error correlationId $"Annotation target '{fileVersion.RelativePath}' has no FileVersion.Blake3Hash.")
+        elif not (String.Equals(blake3Hex bytes, fileVersion.Blake3Hash, StringComparison.OrdinalIgnoreCase)) then
+            Error(error correlationId $"Annotation target '{fileVersion.RelativePath}' materialized bytes do not match FileVersion.Blake3Hash.")
         else
             Ok(copyBytes bytes)
 

@@ -1138,7 +1138,7 @@ module Services =
             match! createLocalFileVersion fileInfo with
             | Some fileVersion ->
                 if fileVersion.Sha256Hash
-                    <> existingFileVersion.Sha256Hash then
+                   <> existingFileVersion.Sha256Hash then
                     directoryVersion.Files.RemoveAt(existingFileIndex)
                     directoryVersion.Files.Add(fileVersion)
                     directoryVersion.Size <- directoryVersion.Files.Sum(fun file -> int64 (file.Size))
@@ -1950,7 +1950,7 @@ module Services =
                         //logToAnsiConsole Colors.Deemphasized $"Attempt #{iteration} to copy file to object directory..."
                         File.Copy(sourceFileName = filePath, destFileName = tempFilePath, overwrite = true))
 
-                    // Now that we've copied it, compute the SHA-256 hash.
+                    // Now that we've copied it, compute the file content hashes.
                     let relativeFilePath = Path.GetRelativePath(Current().RootDirectory, filePath)
 
                     use tempFileStream = File.Open(tempFilePath, fileStreamOptionsRead)
@@ -1958,6 +1958,8 @@ module Services =
                     let! isBinary = isBinaryFile tempFileStream
                     tempFileStream.Position <- 0
                     let! sha256Hash = computeSha256ForFile tempFileStream relativeFilePath
+                    tempFileStream.Position <- 0
+                    let! blake3Hash = computeBlake3ForFile tempFileStream
                     //logToConsole $"filePath: {filePath}; tempFilePath: {tempFilePath}; SHA256: {sha256Hash}"
 
                     // I'm going to rename the temp file below, using the SHA-256 hash, so I'll close the file and dispose the stream first.
@@ -1987,7 +1989,16 @@ module Services =
                         //logToConsole $"Finished copyToObjectDirectory for {filePath}; isBinary: {isBinary}; moved temp file to object directory."
                         let relativePath = Path.GetRelativePath(Current().RootDirectory, filePath)
 
-                        return Some(FileVersion.Create (RelativePath relativePath) (Sha256Hash $"{sha256Hash}") ("") isBinary (objectFilePathInfo.Length))
+                        return
+                            Some(
+                                FileVersion.CreateWithHashes
+                                    (RelativePath relativePath)
+                                    (Sha256Hash $"{sha256Hash}")
+                                    (Blake3Hash $"{blake3Hash}")
+                                    ("")
+                                    isBinary
+                                    (objectFilePathInfo.Length)
+                            )
                     else
                         // If we do already have this exact version of the file, just delete the temp file.
                         File.Delete(tempFilePath)
