@@ -1354,7 +1354,7 @@ module Services =
             .Distinct()
             .ToList()
 
-    let private getPreviousDirectoryVersionsForChangedDirectories
+    let internal getPreviousDirectoryVersionsForChangedDirectories
         (previousGraceStatus: GraceStatus)
         (localDirectoryVersions: List<LocalDirectoryVersion>)
         (correlationId: CorrelationId)

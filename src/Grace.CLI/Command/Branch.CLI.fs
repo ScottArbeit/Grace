@@ -1251,25 +1251,36 @@ module Branch =
                                             let mutable lastDirectoryVersionUpload = newGraceStatus.LastSuccessfulDirectoryVersionUpload
 
                                             if newDirectoryVersions.Count > 0 then
-                                                let saveParameters = SaveDirectoryVersionsParameters()
-                                                saveParameters.OwnerId <- graceIds.OwnerIdString
-                                                saveParameters.OwnerName <- graceIds.OwnerName
-                                                saveParameters.OrganizationId <- graceIds.OrganizationIdString
-                                                saveParameters.OrganizationName <- graceIds.OrganizationName
-                                                saveParameters.RepositoryId <- graceIds.RepositoryIdString
-                                                saveParameters.RepositoryName <- graceIds.RepositoryName
-                                                saveParameters.DirectoryVersionId <- $"{newGraceStatus.RootDirectoryId}"
+                                                match!
+                                                    getPreviousDirectoryVersionsForChangedDirectories
+                                                        previousGraceStatus
+                                                        newDirectoryVersions
+                                                        (getCorrelationId parseResult)
+                                                with
+                                                | Ok previousDirectoryVersions ->
+                                                    let saveParameters = SaveDirectoryVersionsParameters()
+                                                    saveParameters.OwnerId <- graceIds.OwnerIdString
+                                                    saveParameters.OwnerName <- graceIds.OwnerName
+                                                    saveParameters.OrganizationId <- graceIds.OrganizationIdString
+                                                    saveParameters.OrganizationName <- graceIds.OrganizationName
+                                                    saveParameters.RepositoryId <- graceIds.RepositoryIdString
+                                                    saveParameters.RepositoryName <- graceIds.RepositoryName
+                                                    saveParameters.DirectoryVersionId <- $"{newGraceStatus.RootDirectoryId}"
 
-                                                saveParameters.DirectoryVersions <-
-                                                    newDirectoryVersions
-                                                        .Select(toDirectoryVersionWithUploadedFiles uploadedFileVersions [])
-                                                        .ToList()
+                                                    saveParameters.DirectoryVersions <-
+                                                        newDirectoryVersions
+                                                            .Select(toDirectoryVersionWithUploadedFiles uploadedFileVersions previousDirectoryVersions)
+                                                            .ToList()
 
-                                                saveParameters.CorrelationId <- getCorrelationId parseResult
+                                                    saveParameters.CorrelationId <- getCorrelationId parseResult
 
-                                                let! uploadDirectoryVersions = DirectoryVersion.SaveDirectoryVersions saveParameters
+                                                    let! uploadDirectoryVersions = DirectoryVersion.SaveDirectoryVersions saveParameters
 
-                                                lastDirectoryVersionUpload <- getCurrentInstant ()
+                                                    lastDirectoryVersionUpload <- getCurrentInstant ()
+                                                | Error error ->
+                                                    logToAnsiConsole
+                                                        Colors.Error
+                                                        $"Error retrieving previous directory versions for save: {error.Error}"
 
                                             t4.Value <- 100.0
 
@@ -1356,41 +1367,49 @@ module Branch =
                             | Ok returnValue -> returnValue.ReturnValue
                             | Error _ -> Array.empty
 
-                        let saveParameters = SaveDirectoryVersionsParameters()
-                        saveParameters.OwnerId <- graceIds.OwnerIdString
-                        saveParameters.OwnerName <- graceIds.OwnerName
-                        saveParameters.OrganizationId <- graceIds.OrganizationIdString
-                        saveParameters.OrganizationName <- graceIds.OrganizationName
-                        saveParameters.RepositoryId <- graceIds.RepositoryIdString
-                        saveParameters.RepositoryName <- graceIds.RepositoryName
-                        saveParameters.CorrelationId <- getCorrelationId parseResult
+                        match!
+                            getPreviousDirectoryVersionsForChangedDirectories
+                                previousGraceStatus
+                                newDirectoryVersions
+                                (getCorrelationId parseResult)
+                        with
+                        | Error error -> return Error error
+                        | Ok previousDirectoryVersions ->
+                            let saveParameters = SaveDirectoryVersionsParameters()
+                            saveParameters.OwnerId <- graceIds.OwnerIdString
+                            saveParameters.OwnerName <- graceIds.OwnerName
+                            saveParameters.OrganizationId <- graceIds.OrganizationIdString
+                            saveParameters.OrganizationName <- graceIds.OrganizationName
+                            saveParameters.RepositoryId <- graceIds.RepositoryIdString
+                            saveParameters.RepositoryName <- graceIds.RepositoryName
+                            saveParameters.CorrelationId <- getCorrelationId parseResult
 
-                        saveParameters.DirectoryVersions <-
-                            newDirectoryVersions
-                                .Select(toDirectoryVersionWithUploadedFiles uploadedFileVersions [])
-                                .ToList()
+                            saveParameters.DirectoryVersions <-
+                                newDirectoryVersions
+                                    .Select(toDirectoryVersionWithUploadedFiles uploadedFileVersions previousDirectoryVersions)
+                                    .ToList()
 
-                        let! uploadDirectoryVersions = DirectoryVersion.SaveDirectoryVersions saveParameters
-                        let rootDirectoryVersion = getRootDirectoryVersion previousGraceStatus
+                            let! uploadDirectoryVersions = DirectoryVersion.SaveDirectoryVersions saveParameters
+                            let rootDirectoryVersion = getRootDirectoryVersion previousGraceStatus
 
-                        let sdkParameters =
-                            Parameters.Branch.CreateReferenceParameters(
-                                BranchId = graceIds.BranchIdString,
-                                BranchName = graceIds.BranchName,
-                                OwnerId = graceIds.OwnerIdString,
-                                OwnerName = graceIds.OwnerName,
-                                OrganizationId = graceIds.OrganizationIdString,
-                                OrganizationName = graceIds.OrganizationName,
-                                RepositoryId = graceIds.RepositoryIdString,
-                                RepositoryName = graceIds.RepositoryName,
-                                DirectoryVersionId = rootDirectoryVersion.DirectoryVersionId,
-                                Sha256Hash = rootDirectoryVersion.Sha256Hash,
-                                Message = referenceMessage,
-                                CorrelationId = graceIds.CorrelationId
-                            )
+                            let sdkParameters =
+                                Parameters.Branch.CreateReferenceParameters(
+                                    BranchId = graceIds.BranchIdString,
+                                    BranchName = graceIds.BranchName,
+                                    OwnerId = graceIds.OwnerIdString,
+                                    OwnerName = graceIds.OwnerName,
+                                    OrganizationId = graceIds.OrganizationIdString,
+                                    OrganizationName = graceIds.OrganizationName,
+                                    RepositoryId = graceIds.RepositoryIdString,
+                                    RepositoryName = graceIds.RepositoryName,
+                                    DirectoryVersionId = rootDirectoryVersion.DirectoryVersionId,
+                                    Sha256Hash = rootDirectoryVersion.Sha256Hash,
+                                    Message = referenceMessage,
+                                    CorrelationId = graceIds.CorrelationId
+                                )
 
-                        let! result = command sdkParameters
-                        return result
+                            let! result = command sdkParameters
+                            return result
                 | Error error, _ -> return Error error
                 | _, Error error -> return Error error
             with
@@ -2908,30 +2927,38 @@ module Branch =
 
                             if currentBranch.SaveEnabled
                                && newDirectoryVersions.Any() then
-                                let saveParameters = SaveDirectoryVersionsParameters()
-                                saveParameters.OwnerId <- graceIds.OwnerIdString
-                                saveParameters.OwnerName <- graceIds.OwnerName
-                                saveParameters.OrganizationId <- graceIds.OrganizationIdString
-                                saveParameters.OrganizationName <- graceIds.OrganizationName
-                                saveParameters.RepositoryId <- graceIds.RepositoryIdString
-                                saveParameters.RepositoryName <- graceIds.RepositoryName
-                                saveParameters.CorrelationId <- getCorrelationId parseResult
-
-                                saveParameters.DirectoryVersions <-
-                                    newDirectoryVersions
-                                        .Select(toDirectoryVersionWithUploadedFiles uploadedFileVersions [])
-                                        .ToList()
-
-                                let! uploadDirectoryVersions = DirectoryVersion.SaveDirectoryVersions saveParameters
-
-                                match! DirectoryVersion.SaveDirectoryVersions saveParameters with
-                                | Ok returnValue ->
-                                    t |> setProgressTaskValue showOutput 100.0
-
-                                    return Ok(showOutput, parseResult, parameters, currentBranch, $"Save created prior to branch switch.")
+                                match!
+                                    getPreviousDirectoryVersionsForChangedDirectories
+                                        previousGraceStatus
+                                        newDirectoryVersions
+                                        (getCorrelationId parseResult)
+                                with
                                 | Error error ->
                                     t |> setProgressTaskValue showOutput 50.0
                                     return Error error
+                                | Ok previousDirectoryVersions ->
+                                    let saveParameters = SaveDirectoryVersionsParameters()
+                                    saveParameters.OwnerId <- graceIds.OwnerIdString
+                                    saveParameters.OwnerName <- graceIds.OwnerName
+                                    saveParameters.OrganizationId <- graceIds.OrganizationIdString
+                                    saveParameters.OrganizationName <- graceIds.OrganizationName
+                                    saveParameters.RepositoryId <- graceIds.RepositoryIdString
+                                    saveParameters.RepositoryName <- graceIds.RepositoryName
+                                    saveParameters.CorrelationId <- getCorrelationId parseResult
+
+                                    saveParameters.DirectoryVersions <-
+                                        newDirectoryVersions
+                                            .Select(toDirectoryVersionWithUploadedFiles uploadedFileVersions previousDirectoryVersions)
+                                            .ToList()
+
+                                    match! DirectoryVersion.SaveDirectoryVersions saveParameters with
+                                    | Ok returnValue ->
+                                        t |> setProgressTaskValue showOutput 100.0
+
+                                        return Ok(showOutput, parseResult, parameters, currentBranch, $"Save created prior to branch switch.")
+                                    | Error error ->
+                                        t |> setProgressTaskValue showOutput 50.0
+                                        return Error error
                             else
                                 t |> setProgressTaskValue showOutput 100.0
 

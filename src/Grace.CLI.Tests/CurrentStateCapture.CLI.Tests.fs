@@ -14,6 +14,7 @@ open NUnit.Framework
 open System
 open System.Collections.Generic
 open System.IO
+open System.Linq
 open System.Text
 open System.Threading.Tasks
 
@@ -546,6 +547,89 @@ module CurrentStateCaptureCliTests =
             .ContentReference
             .Manifest
         |> should equal (Some manifest)
+
+    [<Test>]
+    let ``directory upload overlay preserves prior manifest backed file when sibling file changes`` () =
+        let unchangedManifest = finalizedManifest ()
+        let changedManifest = finalizedManifest ()
+
+        let unchangedLocalFileVersion =
+            LocalFileVersion.CreateWithHashes
+                (RelativePath "large.bin")
+                (Sha256Hash "unchanged-manifest-sha")
+                (Blake3Hash $"{unchangedManifest.FileContentHash}")
+                true
+                unchangedManifest.Size
+                (getCurrentInstant ())
+                true
+                DateTime.UtcNow
+
+        let changedLocalFileVersion =
+            LocalFileVersion.CreateWithHashes
+                (RelativePath "changed.txt")
+                (Sha256Hash "changed-uploaded-sha")
+                (Blake3Hash $"{changedManifest.FileContentHash}")
+                true
+                changedManifest.Size
+                (getCurrentInstant ())
+                true
+                DateTime.UtcNow
+
+        let priorUnchangedFileVersion = unchangedLocalFileVersion.ToFileVersion
+        priorUnchangedFileVersion.ContentReference <- FileContentReference.FileManifest unchangedManifest
+
+        let uploadedChangedFileVersion = changedLocalFileVersion.ToFileVersion
+        uploadedChangedFileVersion.ContentReference <- FileContentReference.FileManifest changedManifest
+
+        let previousDirectoryVersion =
+            DirectoryVersion.CreateWithHashes
+                (Guid.NewGuid())
+                OwnerId.Empty
+                OrganizationId.Empty
+                RepositoryId.Empty
+                Constants.RootDirectoryPath
+                (Sha256Hash "previous-directory-sha")
+                (Blake3Hash "previous-directory-blake3")
+                (List<DirectoryVersionId>())
+                (List<FileVersion>([| priorUnchangedFileVersion |]))
+                unchangedLocalFileVersion.Size
+
+        let localDirectoryVersion =
+            LocalDirectoryVersion.CreateWithHashes
+                (Guid.NewGuid())
+                OwnerId.Empty
+                OrganizationId.Empty
+                RepositoryId.Empty
+                Constants.RootDirectoryPath
+                (Sha256Hash "new-directory-sha")
+                (Blake3Hash "new-directory-blake3")
+                (List<DirectoryVersionId>())
+                (List<LocalFileVersion>([| unchangedLocalFileVersion; changedLocalFileVersion |]))
+                (unchangedLocalFileVersion.Size + changedLocalFileVersion.Size)
+                DateTime.UtcNow
+
+        let directoryVersion =
+            toDirectoryVersionWithUploadedFiles [ uploadedChangedFileVersion ] [ previousDirectoryVersion ] localDirectoryVersion
+
+        directoryVersion.Files.Count |> should equal 2
+
+        let unchangedFile =
+            directoryVersion.Files.Single(fun fileVersion -> fileVersion.RelativePath = unchangedLocalFileVersion.RelativePath)
+
+        unchangedFile.ContentReference.ReferenceType
+        |> should equal FileContentReferenceType.FileManifest
+
+        unchangedFile.ContentReference.Manifest
+        |> should equal (Some unchangedManifest)
+
+        let changedFile =
+            directoryVersion.Files.Single(fun fileVersion -> fileVersion.RelativePath = changedLocalFileVersion.RelativePath)
+
+        changedFile.ContentReference.ReferenceType
+        |> should equal FileContentReferenceType.FileManifest
+
+        changedFile.ContentReference.Manifest
+        |> should equal (Some changedManifest)
 
     [<Test>]
     let ``created save reference id is parsed from response properties`` () =
