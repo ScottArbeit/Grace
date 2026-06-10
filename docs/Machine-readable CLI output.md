@@ -23,6 +23,7 @@ grace --output Json auth logout
 grace auth logout --schema
 grace auth logout --examples
 grace --output Json maintenance stats --select DirectoryCount
+grace --output Json doctor --select Status
 ```
 
 bash / zsh:
@@ -32,6 +33,7 @@ grace --output Json auth logout
 grace auth logout --schema
 grace auth logout --examples
 grace --output Json maintenance stats --select DirectoryCount
+grace --output Json doctor --select Status
 ```
 
 ## Output Envelopes
@@ -125,7 +127,7 @@ Rejected selectors return a JSON error envelope. They do not produce partial out
 
 ## Final Inventory Evidence
 
-The final registry-backed inventory for Epic #274 covers every CLI leaf command with exactly one disposition:
+The final registry-backed inventory covers every CLI leaf command with exactly one disposition:
 
 - Total leaf commands: `203`
 - JSON-ready routed commands: `182`
@@ -169,6 +171,9 @@ The `watch` command is not counted in those V2 routed-success migrations. It is 
 behavior because it is a continuous foreground workflow; JSON mode returns an explicit error envelope instead of
 starting the watcher.
 
+`doctor` is included in the JSON-ready routed count. It emits `DoctorReportDto` in the common Grace result envelope and
+supports `--schema`, `--examples`, and `--select`.
+
 ## Agent Recipes
 
 Use `--schema` first when an agent needs to understand a command contract without changing state:
@@ -192,10 +197,20 @@ $document = $json | ConvertFrom-Json
 $document.ReturnValue.DirectoryCount
 ```
 
+For diagnostics, `doctor` returns a structured report:
+
+```powershell
+$json = grace --output Json doctor --check auth
+$report = $json | ConvertFrom-Json
+$report.ReturnValue.Status
+$report.ReturnValue.Summary.Warning
+```
+
 When using `--select`, request only the `ReturnValue` field path the automation needs:
 
 ```powershell
 grace --output Json maintenance stats --select DirectoryCount
+grace --output Json doctor --select Status
 ```
 
 ## V2 Deferrals

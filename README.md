@@ -177,6 +177,17 @@ Once you have `GRACE_SERVER_URI` and `GRACE_TOKEN` set, run:
 grace auth whoami
 ```
 
+For a read-only diagnostic report that checks local configuration, authentication environment, local state, selected
+server probes, and machine-readable output shape, run:
+
+```powershell
+grace doctor
+grace --output Json doctor --select Status
+```
+
+See [Grace doctor](./docs/Grace%20doctor.md) for the check catalog, JSON contract, exit-code behavior, redaction notes,
+and repair deferrals.
+
 ### Machine-readable CLI output
 
 Agents, CI jobs, and scripts can request parseable CLI output with `--output Json`. Contracted commands emit exactly
@@ -190,6 +201,7 @@ grace --output Json maintenance stats
 grace maintenance stats --schema
 grace maintenance stats --examples
 grace --output Json maintenance stats --select DirectoryCount
+grace --output Json doctor --select Status
 ```
 
 bash / zsh:
@@ -199,6 +211,7 @@ grace --output Json maintenance stats
 grace maintenance stats --schema
 grace maintenance stats --examples
 grace --output Json maintenance stats --select DirectoryCount
+grace --output Json doctor --select Status
 ```
 
 `--select` is a V1 projection over `ReturnValue` only. Selectors such as `DirectoryCount` or
