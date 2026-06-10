@@ -43,6 +43,11 @@ For non-trivial tracked work:
 1. Commit after each completed slice.
 1. Open a normal ready-for-review PR. Do not open draft PRs unless the user asks for a draft.
 
+When a PR targets the default branch and should close an issue, reference the issue with one of GitHub's supported
+closing keywords: `close`, `closes`, `closed`, `fix`, `fixes`, `fixed`, `resolve`, `resolves`, or `resolved`. For
+epic-branch PRs, use non-closing wording such as `Related to #123` or `Part of #249`, then close the sub-issue manually
+after merge.
+
 For parallel work, separate product/DAG independence from merge/write-set independence. Parallelize only when the
 expected write sets are disjoint enough to avoid predictable churn. Serialize or merge-queue branches that touch shared
 project files such as `*.fsproj`, `Startup.Server.fs`, or the same test/helper files. For broad waves, consider a
@@ -63,9 +68,11 @@ When acting as the main implementation orchestrator, follow the repo policy:
 - Do not replace the worker by locally implementing or validating code fixes from the orchestrator role.
 - Use Codex Code Review Bot as the blocking PR review gate. Do not spawn local review-only subagents by default.
 - Monitor the PR body reactions: 👀 means the bot saw the latest commit and is reviewing; 👍🏻 means it found no issues.
-- If the bot writes findings in a PR comment, route the fix to a fresh worker subagent, then reply to the bot comment
-  with the fix commit and validation evidence, resolve the conversation, update `Review Status`, and wait for the next
-  bot review.
+- Inspect both top-level PR comments and inline comments attached to the bot pull request review; `gh pr view --json
+  comments` alone can miss review-thread findings.
+- If the bot writes findings in a top-level PR comment or inline pull-request-review comment, route the fix to a fresh
+  worker subagent, then reply to the bot comment with the fix commit and validation evidence, resolve the conversation,
+  update `Review Status`, and wait for the next bot review.
 
 If subagent tools are unavailable or cannot be used under the active tool policy, state that limitation and preserve the
 rest of the Grace workflow as far as possible.

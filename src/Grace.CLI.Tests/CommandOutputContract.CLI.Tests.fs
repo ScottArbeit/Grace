@@ -212,16 +212,16 @@ module CommandOutputContractRegistryTests =
     [<Test>]
     let ``registry contains accepted inventory totals`` () =
         CommandOutputContract.entries.Length
-        |> should equal 201
+        |> should equal 202
 
         CommandOutputContract.routedEntries.Length
-        |> should equal 192
+        |> should equal 193
 
         CommandOutputContract.sourceOnlyEntries.Length
         |> should equal 9
 
         countBy CommonRenderOutputEnvelope
-        |> should equal 180
+        |> should equal 181
 
         countBy ImmediateJsonErrorOnly |> should equal 1
 
@@ -262,7 +262,7 @@ module CommandOutputContractRegistryTests =
 
         let deleted = 0
 
-        jsonReady |> should equal 180
+        jsonReady |> should equal 181
         intentionallyHumanOnly |> should equal 1
         deferredV2 |> should equal 11
         sourceOnly |> should equal 9
@@ -285,7 +285,7 @@ module CommandOutputContractRegistryTests =
             CommandOutputContract.routedEntries
             |> List.map (fun entry -> entry.Identity.CommandId)
 
-        discovered.Length |> should equal 192
+        discovered.Length |> should equal 193
 
         discovered.Length
         |> should equal (discovered |> List.distinct |> List.length)
@@ -388,12 +388,27 @@ module CommandOutputContractRegistryTests =
         | None -> Assert.Fail("connect should have a registry entry.")
 
     [<Test>]
+    let ``branch annotate registry entry is mutating because implicit save can update local state`` () =
+        let identity = CommandOutputContract.commandIdentity [ "branch" ] "annotate"
+
+        match CommandOutputContract.tryFind identity with
+        | Some entry ->
+            entry.Mutating |> should equal true
+
+            entry.Category
+            |> should equal MutatingStateTransition
+
+            entry.ExecutionScope
+            |> should equal CompositeLocalAndServer
+        | None -> Assert.Fail("branch annotate should have a registry entry.")
+
+    [<Test>]
     let ``current common renderer entries keep the Grace envelope model`` () =
         let commonEntries =
             CommandOutputContract.entries
             |> List.filter (fun entry -> entry.CurrentJsonBehavior = CommonRenderOutputEnvelope)
 
-        commonEntries.Length |> should equal 180
+        commonEntries.Length |> should equal 181
 
         for entry in commonEntries do
             match entry.EnvelopeContract with
@@ -410,7 +425,7 @@ module CommandOutputContractRegistryTests =
             CommandOutputContract.entries
             |> List.filter (fun entry -> entry.CurrentJsonBehavior = CommonRenderOutputEnvelope)
 
-        commonEntries.Length |> should equal 180
+        commonEntries.Length |> should equal 181
 
         let parserInvalidEntries =
             commonEntries

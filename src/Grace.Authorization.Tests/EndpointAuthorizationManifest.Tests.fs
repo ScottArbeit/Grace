@@ -67,6 +67,29 @@ type EndpointAuthorizationManifestTests() =
         for method_, path in routes do
             assertRouteSecurity method_ path expectedSecurity
 
+    let assertRouteRequiresSecurity method_ path (expectedSecurity: EndpointSecurity) =
+        let matchingDefinitions =
+            definitions
+            |> List.filter (fun definition ->
+                definition.Method = method_
+                && definition.Path = path)
+
+        let rec includesSecurity actualSecurity =
+            actualSecurity = expectedSecurity
+            || match actualSecurity with
+               | AllOf requirements -> requirements |> List.exists includesSecurity
+               | _ -> false
+
+        match matchingDefinitions with
+        | [ definition ] ->
+            Assert.That(
+                includesSecurity definition.Security,
+                Is.True,
+                $"Expected {method_} {path} to require {expectedSecurity}, but manifest uses {definition.Security}."
+            )
+        | [] -> Assert.Fail($"Expected EndpointAuthorizationManifest to include {method_} {path}.")
+        | _ -> Assert.Fail($"Expected EndpointAuthorizationManifest to include one entry for {method_} {path}.")
+
     [<Test>]
     member _.ManifestCoversAllRoutes() =
         let startupRoutes = parseStartupRoutes () |> Set.ofList
@@ -226,6 +249,11 @@ type EndpointAuthorizationManifestTests() =
             "POST", "/storage/startManifestUploadSession"
         ]
         |> assertRoutesUseSecurity (Authorized(Operation.PathWrite, ResourceKind.Path))
+
+    [<Test>]
+    member _.BranchAnnotateRequiresBranchReadAndPathRead() =
+        assertRouteRequiresSecurity "POST" "/branch/annotate" (Authorized(Operation.BranchRead, ResourceKind.Branch))
+        assertRouteRequiresSecurity "POST" "/branch/annotate" (Authorized(Operation.PathRead, ResourceKind.Path))
 
     [<Test>]
     member _.SelectedWorkItemRoutesUseExpectedPolicies() =

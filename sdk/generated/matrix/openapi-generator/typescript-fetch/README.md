@@ -67,6 +67,7 @@ All URIs are relative to *http://localhost:5000*
 *ApprovalsApi* | [**showApprovalPolicy**](docs/ApprovalsApi.md#showapprovalpolicy) | **POST** /approval/policy/show | Show an approval policy.
 *ApprovalsApi* | [**showApprovalRequest**](docs/ApprovalsApi.md#showapprovalrequest) | **POST** /approval/request/show | Show a workflow-generated approval request.
 *ApprovalsApi* | [**updateApprovalPolicy**](docs/ApprovalsApi.md#updateapprovalpolicy) | **POST** /approval/policy/update | Update an approval policy.
+*BranchesApi* | [**annotateBranch**](docs/BranchesApi.md#annotatebranch) | **POST** /branch/annotate | Annotate a branch reference.
 *BranchesApi* | [**checkpointBranch**](docs/BranchesApi.md#checkpointbranch) | **POST** /branch/checkpoint | Checkpoint the current branch content.
 *BranchesApi* | [**commitBranch**](docs/BranchesApi.md#commitbranch) | **POST** /branch/commit | Commit the current branch content.
 *BranchesApi* | [**createBranch**](docs/BranchesApi.md#createbranch) | **POST** /branch/create | Create a branch.
@@ -160,6 +161,13 @@ All URIs are relative to *http://localhost:5000*
 
 ### Models
 
+- [AnnotateParameters](docs/AnnotateParameters.md)
+- [AnnotationBoundary](docs/AnnotationBoundary.md)
+- [AnnotationLine](docs/AnnotationLine.md)
+- [AnnotationLineRange](docs/AnnotationLineRange.md)
+- [AnnotationSourceReference](docs/AnnotationSourceReference.md)
+- [AnnotationSourceRow](docs/AnnotationSourceRow.md)
+- [AnnotationSpan](docs/AnnotationSpan.md)
 - [ApprovalDecision](docs/ApprovalDecision.md)
 - [ApprovalPolicy](docs/ApprovalPolicy.md)
 - [ApprovalPolicyParameters](docs/ApprovalPolicyParameters.md)
@@ -172,6 +180,8 @@ All URIs are relative to *http://localhost:5000*
 - [ApprovalTimeoutAction](docs/ApprovalTimeoutAction.md)
 - [ApproveApprovalRequestParameters](docs/ApproveApprovalRequestParameters.md)
 - [BlockUploadIntent](docs/BlockUploadIntent.md)
+- [BranchAnnotationApiDto](docs/BranchAnnotationApiDto.md)
+- [BranchAnnotationReturnValue](docs/BranchAnnotationReturnValue.md)
 - [BranchApiDto](docs/BranchApiDto.md)
 - [BranchCommandReturnValue](docs/BranchCommandReturnValue.md)
 - [BranchDto](docs/BranchDto.md)

@@ -35,7 +35,10 @@ open System.Threading.Tasks
 open System.Reactive.Linq
 open System.Threading
 open Grace.Shared.Parameters
+open Grace.Shared.Parameters.Branch
 open Grace.Shared.Parameters.Storage
+open Grace.Types.Branch
+open Grace.Types.Reference
 open System.Runtime.Intrinsics.Arm
 
 module Services =
@@ -1699,7 +1702,7 @@ module Services =
         }
 
     /// Creates a save reference with the given message.
-    let createSaveReference rootDirectoryVersion message correlationId =
+    let createSaveReference (rootDirectoryVersion: LocalDirectoryVersion) message correlationId =
         task {
             //Activity.Current <- new Activity("createSaveReference")
             let createReferenceParameters =
@@ -1732,6 +1735,195 @@ module Services =
             //Activity.Current.Dispose()
             return result
         }
+
+    type CliCurrentStateCaptureSource =
+        | ExplicitReference
+        | ExistingReference
+        | GraceWatch
+        | CreatedSave
+
+    type CliCurrentStateCaptureResult =
+        {
+            TargetReferenceId: ReferenceId
+            RootDirectoryId: DirectoryVersionId
+            RootDirectorySha256Hash: Sha256Hash
+            Source: CliCurrentStateCaptureSource
+            CreatedSaveMessage: string option
+        }
+
+    type CliCurrentStateCaptureOperations =
+        {
+            GetBranch: unit -> Task<GraceResult<BranchDto>>
+            GetGraceWatchStatus: unit -> Task<GraceWatchStatus option>
+            ReadGraceStatus: unit -> Task<GraceStatus>
+            ScanForDifferences: GraceStatus -> Task<List<FileSystemDifference>>
+            CopyUpdatedFilesToObjectCache: List<FileSystemDifference> -> Task<seq<LocalFileVersion>>
+            BuildUpdatedGraceStatus: GraceStatus -> List<FileSystemDifference> -> Task<GraceStatus * List<LocalDirectoryVersion>>
+            UploadFileVersions: seq<LocalFileVersion> -> Task<Result<unit, GraceError>>
+            UploadDirectoryVersions: List<LocalDirectoryVersion> -> Task<Result<unit, GraceError>>
+            ApplyGraceStatusIncremental: GraceStatus -> IEnumerable<LocalDirectoryVersion> -> IEnumerable<FileSystemDifference> -> Task<unit>
+            CreateSaveReference: LocalDirectoryVersion -> string -> Task<Result<ReferenceId, GraceError>>
+        }
+
+    let private referenceHasRootOnBranch branchId rootDirectoryId rootDirectorySha256Hash (referenceDto: ReferenceDto) =
+        referenceDto.ReferenceId <> ReferenceId.Empty
+        && referenceDto.BranchId = branchId
+        && referenceDto.DirectoryId = rootDirectoryId
+        && referenceDto.Sha256Hash = rootDirectorySha256Hash
+
+    let private tryFindReferenceForRoot rootDirectoryId rootDirectorySha256Hash (branchDto: BranchDto) =
+        [
+            branchDto.LatestReference
+            branchDto.LatestSave
+            branchDto.LatestCommit
+            branchDto.LatestCheckpoint
+            branchDto.LatestPromotion
+        ]
+        |> Seq.tryFind (referenceHasRootOnBranch branchDto.BranchId rootDirectoryId rootDirectorySha256Hash)
+
+    let private getChangedFileVersionsReferencedByUpdatedDirectories
+        (differences: List<FileSystemDifference>)
+        (directoryVersions: List<LocalDirectoryVersion>)
+        =
+        let changedFilePaths = HashSet<RelativePath>()
+
+        differences
+        |> Seq.iter (fun difference ->
+            match difference.DifferenceType, difference.FileSystemEntryType with
+            | (DifferenceType.Add
+              | DifferenceType.Change),
+              FileSystemEntryType.File ->
+                changedFilePaths.Add(difference.RelativePath)
+                |> ignore
+            | _ -> ())
+
+        directoryVersions
+        |> Seq.collect (fun directoryVersion -> directoryVersion.Files)
+        |> Seq.filter (fun fileVersion -> changedFilePaths.Contains fileVersion.RelativePath)
+        |> Seq.distinctBy (fun fileVersion -> fileVersion.RelativePath, fileVersion.Sha256Hash)
+        |> Seq.toList
+
+    let private saveDisabledError correlationId =
+        GraceError.Create "Save is disabled on this branch, and local changes require a Save before branch annotation can continue." correlationId
+
+    let private createCaptureResult source createdSaveMessage rootDirectoryId rootDirectorySha256Hash targetReferenceId =
+        {
+            TargetReferenceId = targetReferenceId
+            RootDirectoryId = rootDirectoryId
+            RootDirectorySha256Hash = rootDirectorySha256Hash
+            Source = source
+            CreatedSaveMessage = createdSaveMessage
+        }
+
+    let private createSaveForCurrentRoot operations branchDto saveMessage correlationId rootDirectoryVersion =
+        task {
+            if not branchDto.SaveEnabled then
+                return Error(saveDisabledError correlationId)
+            else
+                match! operations.CreateSaveReference rootDirectoryVersion saveMessage with
+                | Ok referenceId ->
+                    return
+                        Ok(
+                            createCaptureResult
+                                CreatedSave
+                                (Some saveMessage)
+                                rootDirectoryVersion.DirectoryVersionId
+                                rootDirectoryVersion.Sha256Hash
+                                referenceId
+                        )
+                | Error error -> return Error error
+        }
+
+    let resolveCliCurrentStateTargetReference operations (explicitReferenceId: ReferenceId option) (saveMessage: string) (correlationId: CorrelationId) =
+        task {
+            match explicitReferenceId with
+            | Some referenceId when referenceId <> ReferenceId.Empty ->
+                return Ok(createCaptureResult ExplicitReference None DirectoryVersionId.Empty (Sha256Hash String.Empty) referenceId)
+            | _ ->
+                match! operations.GetBranch() with
+                | Error error -> return Error error
+                | Ok branchReturnValue ->
+                    let branchDto = branchReturnValue.ReturnValue
+
+                    match! operations.GetGraceWatchStatus() with
+                    | Some graceWatchStatus ->
+                        match tryFindReferenceForRoot graceWatchStatus.RootDirectoryId graceWatchStatus.RootDirectorySha256Hash branchDto with
+                        | Some referenceDto ->
+                            return
+                                Ok(
+                                    createCaptureResult
+                                        GraceWatch
+                                        None
+                                        graceWatchStatus.RootDirectoryId
+                                        graceWatchStatus.RootDirectorySha256Hash
+                                        referenceDto.ReferenceId
+                                )
+                        | None ->
+                            let rootDirectoryVersion =
+                                LocalDirectoryVersion.Create
+                                    graceWatchStatus.RootDirectoryId
+                                    (Current().OwnerId)
+                                    (Current().OrganizationId)
+                                    (Current().RepositoryId)
+                                    Constants.RootDirectoryPath
+                                    graceWatchStatus.RootDirectorySha256Hash
+                                    (List<DirectoryVersionId>())
+                                    (List<LocalFileVersion>())
+                                    0L
+                                    DateTime.UtcNow
+
+                            return! createSaveForCurrentRoot operations branchDto saveMessage correlationId rootDirectoryVersion
+                    | None ->
+                        let! previousGraceStatus = operations.ReadGraceStatus()
+                        let! differences = operations.ScanForDifferences previousGraceStatus
+
+                        if differences.Count = 0 then
+                            match tryFindReferenceForRoot previousGraceStatus.RootDirectoryId previousGraceStatus.RootDirectorySha256Hash branchDto with
+                            | Some referenceDto ->
+                                return
+                                    Ok(
+                                        createCaptureResult
+                                            ExistingReference
+                                            None
+                                            previousGraceStatus.RootDirectoryId
+                                            previousGraceStatus.RootDirectorySha256Hash
+                                            referenceDto.ReferenceId
+                                    )
+                            | None ->
+                                return! createSaveForCurrentRoot operations branchDto saveMessage correlationId (getRootDirectoryVersion previousGraceStatus)
+                        elif not branchDto.SaveEnabled then
+                            return Error(saveDisabledError correlationId)
+                        else
+                            let! _ = operations.CopyUpdatedFilesToObjectCache differences
+                            let! (updatedGraceStatus, newDirectoryVersions) = operations.BuildUpdatedGraceStatus previousGraceStatus differences
+                            let fileVersionsToUpload = getChangedFileVersionsReferencedByUpdatedDirectories differences newDirectoryVersions
+
+                            match! operations.UploadFileVersions fileVersionsToUpload with
+                            | Error error -> return Error error
+                            | Ok () ->
+                                match! operations.UploadDirectoryVersions newDirectoryVersions with
+                                | Error error -> return Error error
+                                | Ok () ->
+                                    let updatedGraceStatus =
+                                        { updatedGraceStatus with
+                                            LastSuccessfulFileUpload = getCurrentInstant ()
+                                            LastSuccessfulDirectoryVersionUpload = getCurrentInstant ()
+                                        }
+
+                                    do! operations.ApplyGraceStatusIncremental updatedGraceStatus newDirectoryVersions differences
+                                    let rootDirectoryVersion = getRootDirectoryVersion updatedGraceStatus
+                                    return! createSaveForCurrentRoot operations branchDto saveMessage correlationId rootDirectoryVersion
+        }
+
+    let parseCreatedReferenceId correlationId (returnValue: GraceReturnValue<string>) =
+        let mutable referenceIdProperty = Unchecked.defaultof<obj>
+
+        if returnValue.Properties.TryGetValue(nameof ReferenceId, &referenceIdProperty) then
+            match Guid.TryParse(string referenceIdProperty) with
+            | true, referenceId -> Ok referenceId
+            | false, _ -> Error(GraceError.Create $"Save reference creation returned an invalid ReferenceId property: {referenceIdProperty}." correlationId)
+        else
+            Error(GraceError.Create "Save reference creation did not return a ReferenceId property." correlationId)
 
     /// Generates a temporary file name within the ObjectDirectory, and returns the full file path.
     /// This file name will be used to copy modified files into before renaming them with their proper names and SHA256 values.
@@ -1808,8 +2000,7 @@ module Services =
                 return None
         }
 
-    /// Copies new and updated files found in a list of FileSystemDifferences to the object directory.
-    let copyUpdatedFilesToObjectCache (t: ProgressTask) (differences: List<FileSystemDifference>) =
+    let private copyUpdatedFilesToObjectCacheCore (progressTask: ProgressTask option) (differences: List<FileSystemDifference>) =
         task {
             // Get the list of files that have been added or changed.
             let relativePathsOfUpdatedFiles =
@@ -1831,10 +2022,9 @@ module Services =
 
             // Create new LocalFileVersion instances for each updated file.
             let increment =
-                if differences.Count > 0 then
-                    (100.0 - t.Value) / float differences.Count
-                else
-                    0.0
+                match progressTask with
+                | Some t when differences.Count > 0 -> (100.0 - t.Value) / float differences.Count
+                | _ -> 0.0
 
             let newFileVersions = ConcurrentQueue<LocalFileVersion>()
 
@@ -1853,13 +2043,104 @@ module Services =
                                     logToAnsiConsole Colors.Error $"Failed to copy {relativePath} to object storage."
                                     ()
 
-                                t.Increment(increment)
+                                match progressTask with
+                                | Some t -> t.Increment(increment)
+                                | None -> ()
                             }
                         ))
                 )
 
             return newFileVersions
         }
+
+    /// Copies new and updated files found in a list of FileSystemDifferences to the object directory.
+    let copyUpdatedFilesToObjectCache (t: ProgressTask) (differences: List<FileSystemDifference>) = copyUpdatedFilesToObjectCacheCore (Some t) differences
+
+    let copyUpdatedFilesToObjectCacheWithoutProgress (differences: List<FileSystemDifference>) = copyUpdatedFilesToObjectCacheCore None differences
+
+    let defaultCliCurrentStateCaptureOperations (correlationId: CorrelationId) =
+        let getBranch () =
+            let current = Current()
+
+            let parameters =
+                GetBranchParameters(
+                    OwnerId = $"{current.OwnerId}",
+                    OwnerName = current.OwnerName,
+                    OrganizationId = $"{current.OrganizationId}",
+                    OrganizationName = current.OrganizationName,
+                    RepositoryId = $"{current.RepositoryId}",
+                    RepositoryName = current.RepositoryName,
+                    BranchId = $"{current.BranchId}",
+                    BranchName = current.BranchName,
+                    CorrelationId = correlationId
+                )
+
+            Grace.SDK.Branch.Get parameters
+
+        let uploadFileVersions (fileVersions: seq<LocalFileVersion>) =
+            task {
+                let current = Current()
+
+                let parameters =
+                    GetUploadMetadataForFilesParameters(
+                        OwnerId = $"{current.OwnerId}",
+                        OwnerName = current.OwnerName,
+                        OrganizationId = $"{current.OrganizationId}",
+                        OrganizationName = current.OrganizationName,
+                        RepositoryId = $"{current.RepositoryId}",
+                        RepositoryName = current.RepositoryName,
+                        CorrelationId = correlationId,
+                        FileVersions =
+                            (fileVersions
+                             |> Seq.map (fun localFileVersion -> localFileVersion.ToFileVersion)
+                             |> Seq.toArray)
+                    )
+
+                match! uploadFilesToObjectStorage parameters with
+                | Ok _ -> return Ok()
+                | Error error -> return Error error
+            }
+
+        let uploadDirectoryVersionsForCapture directoryVersions =
+            task {
+                match! uploadDirectoryVersions directoryVersions correlationId with
+                | Ok _ -> return Ok()
+                | Error error -> return Error error
+            }
+
+        let createSaveReferenceForCapture rootDirectoryVersion saveMessage =
+            task {
+                match! createSaveReference rootDirectoryVersion saveMessage correlationId with
+                | Ok returnValue -> return parseCreatedReferenceId correlationId returnValue
+                | Error error -> return Error error
+            }
+
+        {
+            GetBranch = getBranch
+            GetGraceWatchStatus = getGraceWatchStatus
+            ReadGraceStatus = readGraceStatusFile
+            ScanForDifferences = scanForDifferences
+            CopyUpdatedFilesToObjectCache =
+                fun differences ->
+                    task {
+                        let! copied = copyUpdatedFilesToObjectCacheWithoutProgress differences
+                        return copied :> seq<LocalFileVersion>
+                    }
+            BuildUpdatedGraceStatus = getNewGraceStatusAndDirectoryVersions
+            UploadFileVersions = uploadFileVersions
+            UploadDirectoryVersions = uploadDirectoryVersionsForCapture
+            ApplyGraceStatusIncremental = applyGraceStatusIncremental
+            CreateSaveReference = createSaveReferenceForCapture
+        }
+
+    let branchAnnotateImplicitSaveMessage = "Created during `grace branch annotate` operation."
+
+    let resolveCliCurrentStateTargetReferenceForBranchAnnotate (explicitReferenceId: ReferenceId option) (correlationId: CorrelationId) =
+        resolveCliCurrentStateTargetReference
+            (defaultCliCurrentStateCaptureOperations correlationId)
+            explicitReferenceId
+            branchAnnotateImplicitSaveMessage
+            correlationId
 
     let private matchesOptionName (option: Option) (optionName: string) =
         let normalizedName = optionName.TrimStart('-')

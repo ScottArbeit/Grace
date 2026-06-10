@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "issue": 221,
   "sourceProjection": "src/OpenAPI/Grace.OpenAPI.3.1.2.yaml",
-  "sourceProjectionSha256": "e2be4a02d2f63a3b9f4cdabe7f615ba0a5c98673618c132d063b9bbf4273f590",
+  "sourceProjectionSha256": "8827d0b15ab38c79d672c8c4f30a7446b9d7014967ada09f993528ce5ae9a995",
   "generatedAtPolicy": "not recorded; report is deterministic across machines except tool output directories",
   "toolVersions": {
     "pwsh": "PowerShell 7.6.2",
@@ -12,11 +12,11 @@
     "python": "Python 3.14.5",
     "cargo": "cargo 1.96.0 (30a34c682 2026-05-25)",
     "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)",
-    "docker": "Docker version 29.5.2, build 79eb04c",
+    "docker": "Docker version 29.5.3, build d1c06ef",
     "java": "unavailable",
     "openApiGenerator": "openapitools/openapi-generator-cli:v7.22.0",
     "kiota": "1.32.1+958a7d04f87c48ab4c0dba1c4e91032ad2f6b9cb",
-    "nswag": "NSwag version: 14.7.1.0"
+    "nswag": "unavailable"
   },
   "matrix": [
     {
@@ -28,8 +28,8 @@
       "conclusion": "Full projection fails before generation on malformed schema references/null schema properties.",
       "outputPath": "",
       "evidence": [
-        "OpenAPI error: #/paths/~1approval~1policy~1create/~1approval~1request~1approve/~1webhook~1rule~1create/~1webhook~1rule~1test/~1branch~1create/~1branch~1rebase/~1branch~1promote/~1branch~1commit/~1branch~1checkpoint/~1branch~1save/~1branch~1tag/~1branch~1enablePromotion/~1branch~1enableCommit/~1branch~1enableCheckpoint/~1branch~1enableSave/~1branch~1enableTag/~1branch~1delete/~1branch~1get/~1branch~1getParentBranch/~1branch~1getReference/~1branch~1getReferences/~1branch~1getPromotions/~1branch~1getCommits/~1branch~1getCheckpoints/~1branch~1getSaves/~1branch~1getTags/~1diff~1populate/~1diff~1getDiff/~1diff~1getDiffBySha256Hash/~1directory~1create/~1directory~1get/~1directory~1getDirectoryVersionsRecursive/~1directory~1getByDirectoryIds/~1directory~1getBySha256Hash/~1directory~1saveDirectoryVersions/~1organization~1create/~1organization~1setName/~1organization~1setType/~1organization~1setSearchVisibility/~1organization~1setDescription/~1organization~1listRepositories/~1organization~1delete/~1organization~1undelete/~1organization~1get/~1owner~1create/~1owner~1setName/~1owner~1setType/~1owner~1setSearchVisibility/~1owner~1setDescription/~1owner~1listOrganizations/~1owner~1delete/~1owner~1undelete/~1owner~1get/~1repository~1create/~1repository~1setVisibility/~1repository~1setName/~1repository~1setSaveDays/~1repository~1setCheckpointDays/~1repository~1setStatus/~1repository~1setDefaultServerApiVersion/~1repository~1setRecordSaves/~1repository~1setDescription/~1repository~1delete/~1repository~1undelete/~1repository~1exists/~1repository~1isEmpty/~1repository~1get/~1repository~1getBranches/~1repository~1getReferencesByReferenceId/~1repository~1getBranchesByBranchId/~1storage~1getDownloadUri/~1storage~1getContentBlockUploadUri/components/schemas/DirectoryVersion/properties/Directories/items - schema must be a map/object",
-        "OpenAPI error: #/paths/~1approval~1policy~1create/~1approval~1request~1approve/~1webhook~1rule~1create/~1webhook~1rule~1test/~1branch~1create/~1branch~1rebase/~1branch~1promote/~1branch~1commit/~1branch~1checkpoint/~1branch~1save/~1branch~1tag/~1branch~1enablePromotion/~1branch~1enableCommit/~1branch~1enableCheckpoint/~1branch~1enableSave/~1branch~1enableTag/~1branch~1delete/~1branch~1get/~1branch~1getParentBranch/~1branch~1getReference/~1branch~1getReferences/~1branch~1getPromotions/~1branch~1getCommits/~1branch~1getCheckpoints/~1branch~1getSaves/~1branch~1getTags/~1diff~1populate/~1diff~1getDiff/~1diff~1getDiffBySha256Hash/~1directory~1create/~1directory~1get/~1directory~1getDirectoryVersionsRecursive/~1directory~1getByDirectoryIds/~1directory~1getBySha256Hash/~1directory~1saveDirectoryVersions/~1organization~1create/~1organization~1setName/~1organization~1setType/~1organization~1setSearchVisibility/~1organization~1setDescription/~1organization~1listRepositories/~1organization~1delete/~1organization~1undelete/~1organization~1get/~1owner~1create/~1owner~1setName/~1owner~1setType/~1owner~1setSearchVisibility/~1owner~1setDescription/~1owner~1listOrganizations/~1owner~1delete/~1owner~1undelete/~1owner~1get/~1repository~1create/~1repository~1setVisibility/~1repository~1setName/~1repository~1setSaveDays/~1repository~1setCheckpointDays/~1repository~1setStatus/~1repository~1setDefaultServerApiVersion/~1repository~1setRecordSaves/~1repository~1setDescription/~1repository~1delete/~1repository~1undelete/~1repository~1exists/~1repository~1isEmpty/~1repository~1get/~1repository~1getBranches/~1repository~1getReferencesByReferenceId/~1repository~1getBranchesByBranchId/~1storage~1getDownloadUri/~1storage~1getContentBlockUploadUri/components/schemas/DirectoryVersion/properties/Files/items - schema must be a map/object",
+        "OpenAPI error: #/paths/~1approval~1policy~1create/~1approval~1request~1approve/~1webhook~1rule~1create/~1webhook~1rule~1test/~1branch~1create/~1branch~1rebase/~1branch~1promote/~1branch~1commit/~1branch~1checkpoint/~1branch~1save/~1branch~1tag/~1branch~1enablePromotion/~1branch~1enableCommit/~1branch~1enableCheckpoint/~1branch~1enableSave/~1branch~1enableTag/~1branch~1delete/~1branch~1annotate/~1branch~1get/~1branch~1getParentBranch/~1branch~1getReference/~1branch~1getReferences/~1branch~1getPromotions/~1branch~1getCommits/~1branch~1getCheckpoints/~1branch~1getSaves/~1branch~1getTags/~1diff~1populate/~1diff~1getDiff/~1diff~1getDiffBySha256Hash/~1directory~1create/~1directory~1get/~1directory~1getDirectoryVersionsRecursive/~1directory~1getByDirectoryIds/~1directory~1getBySha256Hash/~1directory~1saveDirectoryVersions/~1organization~1create/~1organization~1setName/~1organization~1setType/~1organization~1setSearchVisibility/~1organization~1setDescription/~1organization~1listRepositories/~1organization~1delete/~1organization~1undelete/~1organization~1get/~1owner~1create/~1owner~1setName/~1owner~1setType/~1owner~1setSearchVisibility/~1owner~1setDescription/~1owner~1listOrganizations/~1owner~1delete/~1owner~1undelete/~1owner~1get/~1repository~1create/~1repository~1setVisibility/~1repository~1setName/~1repository~1setSaveDays/~1repository~1setCheckpointDays/~1repository~1setStatus/~1repository~1setDefaultServerApiVersion/~1repository~1setRecordSaves/~1repository~1setDescription/~1repository~1delete/~1repository~1undelete/~1repository~1exists/~1repository~1isEmpty/~1repository~1get/~1repository~1getBranches/~1repository~1getReferencesByReferenceId/~1repository~1getBranchesByBranchId/~1storage~1getDownloadUri/~1storage~1getContentBlockUploadUri/components/schemas/DirectoryVersion/properties/Directories/items - schema must be a map/object",
+        "OpenAPI error: #/paths/~1approval~1policy~1create/~1approval~1request~1approve/~1webhook~1rule~1create/~1webhook~1rule~1test/~1branch~1create/~1branch~1rebase/~1branch~1promote/~1branch~1commit/~1branch~1checkpoint/~1branch~1save/~1branch~1tag/~1branch~1enablePromotion/~1branch~1enableCommit/~1branch~1enableCheckpoint/~1branch~1enableSave/~1branch~1enableTag/~1branch~1delete/~1branch~1annotate/~1branch~1get/~1branch~1getParentBranch/~1branch~1getReference/~1branch~1getReferences/~1branch~1getPromotions/~1branch~1getCommits/~1branch~1getCheckpoints/~1branch~1getSaves/~1branch~1getTags/~1diff~1populate/~1diff~1getDiff/~1diff~1getDiffBySha256Hash/~1directory~1create/~1directory~1get/~1directory~1getDirectoryVersionsRecursive/~1directory~1getByDirectoryIds/~1directory~1getBySha256Hash/~1directory~1saveDirectoryVersions/~1organization~1create/~1organization~1setName/~1organization~1setType/~1organization~1setSearchVisibility/~1organization~1setDescription/~1organization~1listRepositories/~1organization~1delete/~1organization~1undelete/~1organization~1get/~1owner~1create/~1owner~1setName/~1owner~1setType/~1owner~1setSearchVisibility/~1owner~1setDescription/~1owner~1listOrganizations/~1owner~1delete/~1owner~1undelete/~1owner~1get/~1repository~1create/~1repository~1setVisibility/~1repository~1setName/~1repository~1setSaveDays/~1repository~1setCheckpointDays/~1repository~1setStatus/~1repository~1setDefaultServerApiVersion/~1repository~1setRecordSaves/~1repository~1setDescription/~1repository~1delete/~1repository~1undelete/~1repository~1exists/~1repository~1isEmpty/~1repository~1get/~1repository~1getBranches/~1repository~1getReferencesByReferenceId/~1repository~1getBranchesByBranchId/~1storage~1getDownloadUri/~1storage~1getContentBlockUploadUri/components/schemas/DirectoryVersion/properties/Files/items - schema must be a map/object",
         "OpenAPI error: #/components/schemas/FileVersion/RepositoryId - Schema  property RepositoryId is null.",
         "OpenAPI error: #/components/schemas/FileVersion/RelativePath - Schema  property RelativePath is null.",
         "OpenAPI error: #/components/schemas/FileVersion/Sha256Hash - Schema  property Sha256Hash is null.",
@@ -50,8 +50,8 @@
       "conclusion": "Generation still fails on non-object DirectoryVersion collection items after validation rules are disabled.",
       "outputPath": "",
       "evidence": [
-        "OpenAPI error: #/paths/~1approval~1policy~1create/~1approval~1request~1approve/~1webhook~1rule~1create/~1webhook~1rule~1test/~1branch~1create/~1branch~1rebase/~1branch~1promote/~1branch~1commit/~1branch~1checkpoint/~1branch~1save/~1branch~1tag/~1branch~1enablePromotion/~1branch~1enableCommit/~1branch~1enableCheckpoint/~1branch~1enableSave/~1branch~1enableTag/~1branch~1delete/~1branch~1get/~1branch~1getParentBranch/~1branch~1getReference/~1branch~1getReferences/~1branch~1getPromotions/~1branch~1getCommits/~1branch~1getCheckpoints/~1branch~1getSaves/~1branch~1getTags/~1diff~1populate/~1diff~1getDiff/~1diff~1getDiffBySha256Hash/~1directory~1create/~1directory~1get/~1directory~1getDirectoryVersionsRecursive/~1directory~1getByDirectoryIds/~1directory~1getBySha256Hash/~1directory~1saveDirectoryVersions/~1organization~1create/~1organization~1setName/~1organization~1setType/~1organization~1setSearchVisibility/~1organization~1setDescription/~1organization~1listRepositories/~1organization~1delete/~1organization~1undelete/~1organization~1get/~1owner~1create/~1owner~1setName/~1owner~1setType/~1owner~1setSearchVisibility/~1owner~1setDescription/~1owner~1listOrganizations/~1owner~1delete/~1owner~1undelete/~1owner~1get/~1repository~1create/~1repository~1setVisibility/~1repository~1setName/~1repository~1setSaveDays/~1repository~1setCheckpointDays/~1repository~1setStatus/~1repository~1setDefaultServerApiVersion/~1repository~1setRecordSaves/~1repository~1setDescription/~1repository~1delete/~1repository~1undelete/~1repository~1exists/~1repository~1isEmpty/~1repository~1get/~1repository~1getBranches/~1repository~1getReferencesByReferenceId/~1repository~1getBranchesByBranchId/~1storage~1getDownloadUri/~1storage~1getContentBlockUploadUri/components/schemas/DirectoryVersion/properties/Directories/items - schema must be a map/object",
-        "OpenAPI error: #/paths/~1approval~1policy~1create/~1approval~1request~1approve/~1webhook~1rule~1create/~1webhook~1rule~1test/~1branch~1create/~1branch~1rebase/~1branch~1promote/~1branch~1commit/~1branch~1checkpoint/~1branch~1save/~1branch~1tag/~1branch~1enablePromotion/~1branch~1enableCommit/~1branch~1enableCheckpoint/~1branch~1enableSave/~1branch~1enableTag/~1branch~1delete/~1branch~1get/~1branch~1getParentBranch/~1branch~1getReference/~1branch~1getReferences/~1branch~1getPromotions/~1branch~1getCommits/~1branch~1getCheckpoints/~1branch~1getSaves/~1branch~1getTags/~1diff~1populate/~1diff~1getDiff/~1diff~1getDiffBySha256Hash/~1directory~1create/~1directory~1get/~1directory~1getDirectoryVersionsRecursive/~1directory~1getByDirectoryIds/~1directory~1getBySha256Hash/~1directory~1saveDirectoryVersions/~1organization~1create/~1organization~1setName/~1organization~1setType/~1organization~1setSearchVisibility/~1organization~1setDescription/~1organization~1listRepositories/~1organization~1delete/~1organization~1undelete/~1organization~1get/~1owner~1create/~1owner~1setName/~1owner~1setType/~1owner~1setSearchVisibility/~1owner~1setDescription/~1owner~1listOrganizations/~1owner~1delete/~1owner~1undelete/~1owner~1get/~1repository~1create/~1repository~1setVisibility/~1repository~1setName/~1repository~1setSaveDays/~1repository~1setCheckpointDays/~1repository~1setStatus/~1repository~1setDefaultServerApiVersion/~1repository~1setRecordSaves/~1repository~1setDescription/~1repository~1delete/~1repository~1undelete/~1repository~1exists/~1repository~1isEmpty/~1repository~1get/~1repository~1getBranches/~1repository~1getReferencesByReferenceId/~1repository~1getBranchesByBranchId/~1storage~1getDownloadUri/~1storage~1getContentBlockUploadUri/components/schemas/DirectoryVersion/properties/Files/items - schema must be a map/object"
+        "OpenAPI error: #/paths/~1approval~1policy~1create/~1approval~1request~1approve/~1webhook~1rule~1create/~1webhook~1rule~1test/~1branch~1create/~1branch~1rebase/~1branch~1promote/~1branch~1commit/~1branch~1checkpoint/~1branch~1save/~1branch~1tag/~1branch~1enablePromotion/~1branch~1enableCommit/~1branch~1enableCheckpoint/~1branch~1enableSave/~1branch~1enableTag/~1branch~1delete/~1branch~1annotate/~1branch~1get/~1branch~1getParentBranch/~1branch~1getReference/~1branch~1getReferences/~1branch~1getPromotions/~1branch~1getCommits/~1branch~1getCheckpoints/~1branch~1getSaves/~1branch~1getTags/~1diff~1populate/~1diff~1getDiff/~1diff~1getDiffBySha256Hash/~1directory~1create/~1directory~1get/~1directory~1getDirectoryVersionsRecursive/~1directory~1getByDirectoryIds/~1directory~1getBySha256Hash/~1directory~1saveDirectoryVersions/~1organization~1create/~1organization~1setName/~1organization~1setType/~1organization~1setSearchVisibility/~1organization~1setDescription/~1organization~1listRepositories/~1organization~1delete/~1organization~1undelete/~1organization~1get/~1owner~1create/~1owner~1setName/~1owner~1setType/~1owner~1setSearchVisibility/~1owner~1setDescription/~1owner~1listOrganizations/~1owner~1delete/~1owner~1undelete/~1owner~1get/~1repository~1create/~1repository~1setVisibility/~1repository~1setName/~1repository~1setSaveDays/~1repository~1setCheckpointDays/~1repository~1setStatus/~1repository~1setDefaultServerApiVersion/~1repository~1setRecordSaves/~1repository~1setDescription/~1repository~1delete/~1repository~1undelete/~1repository~1exists/~1repository~1isEmpty/~1repository~1get/~1repository~1getBranches/~1repository~1getReferencesByReferenceId/~1repository~1getBranchesByBranchId/~1storage~1getDownloadUri/~1storage~1getContentBlockUploadUri/components/schemas/DirectoryVersion/properties/Directories/items - schema must be a map/object",
+        "OpenAPI error: #/paths/~1approval~1policy~1create/~1approval~1request~1approve/~1webhook~1rule~1create/~1webhook~1rule~1test/~1branch~1create/~1branch~1rebase/~1branch~1promote/~1branch~1commit/~1branch~1checkpoint/~1branch~1save/~1branch~1tag/~1branch~1enablePromotion/~1branch~1enableCommit/~1branch~1enableCheckpoint/~1branch~1enableSave/~1branch~1enableTag/~1branch~1delete/~1branch~1annotate/~1branch~1get/~1branch~1getParentBranch/~1branch~1getReference/~1branch~1getReferences/~1branch~1getPromotions/~1branch~1getCommits/~1branch~1getCheckpoints/~1branch~1getSaves/~1branch~1getTags/~1diff~1populate/~1diff~1getDiff/~1diff~1getDiffBySha256Hash/~1directory~1create/~1directory~1get/~1directory~1getDirectoryVersionsRecursive/~1directory~1getByDirectoryIds/~1directory~1getBySha256Hash/~1directory~1saveDirectoryVersions/~1organization~1create/~1organization~1setName/~1organization~1setType/~1organization~1setSearchVisibility/~1organization~1setDescription/~1organization~1listRepositories/~1organization~1delete/~1organization~1undelete/~1organization~1get/~1owner~1create/~1owner~1setName/~1owner~1setType/~1owner~1setSearchVisibility/~1owner~1setDescription/~1owner~1listOrganizations/~1owner~1delete/~1owner~1undelete/~1owner~1get/~1repository~1create/~1repository~1setVisibility/~1repository~1setName/~1repository~1setSaveDays/~1repository~1setCheckpointDays/~1repository~1setStatus/~1repository~1setDefaultServerApiVersion/~1repository~1setRecordSaves/~1repository~1setDescription/~1repository~1delete/~1repository~1undelete/~1repository~1exists/~1repository~1isEmpty/~1repository~1get/~1repository~1getBranches/~1repository~1getReferencesByReferenceId/~1repository~1getBranchesByBranchId/~1storage~1getDownloadUri/~1storage~1getContentBlockUploadUri/components/schemas/DirectoryVersion/properties/Files/items - schema must be a map/object"
       ],
       "transportPolicySupport": "RequestAdapter middleware model is promising, but no generated output was available to compile.",
       "facadeFit": "Facade fit cannot be accepted until generation and import compile."
@@ -60,13 +60,11 @@
       "generator": "NSwag",
       "language": ".NET",
       "command": "npx --yes nswag openapi2csclient",
-      "exitCode": -1,
+      "exitCode": -2147450730,
       "outcome": "Rejected",
       "conclusion": "NSwag/NJsonSchema cannot parse array-valued schema properties such as FileVersion.RepositoryId.",
       "outputPath": "",
-      "evidence": [
-        "Newtonsoft.Json.JsonSerializationException: Cannot populate JSON array onto type 'NJsonSchema.JsonSchemaProperty'. Path 'components.schemas.FileVersion.properties.RepositoryId', line 1, position 134707."
-      ],
+      "evidence": [],
       "transportPolicySupport": "HttpClient partial-class customization would support transport policies if generation succeeded.",
       "facadeFit": "Facade fit is acceptable in principle, but parsing fails before a .NET compile probe."
     },
@@ -131,8 +129,8 @@
       "language": "Rust",
       "command": "docker run openapitools/openapi-generator-cli:v7.22.0 generate -g rust --skip-validate-spec",
       "exitCode": 0,
-      "outcome": "Accepted with guardrails",
-      "conclusion": "Rust feasibility is positive at cargo-check level, but naming churn and skipped spec validation keep it deferred.",
+      "outcome": "Rejected after probe failure",
+      "conclusion": "Required Rust generated client cargo check probe failed, so this accepted proof point is not satisfied.",
       "outputPath": "sdk\\generated\\matrix\\openapi-generator\\rust",
       "evidence": [
         "Errors:",
@@ -175,30 +173,28 @@
     {
       "name": "Rust generated client cargo check",
       "command": "cargo check",
-      "exitCode": 0,
-      "evidence": [
-        "Finished `dev` profile [unoptimized + debuginfo] target(s)"
-      ]
+      "exitCode": 101,
+      "evidence": []
     }
   ],
   "deterministicRegeneration": [
     {
       "path": "sdk/generated/matrix/openapi-generator/typescript-fetch",
-      "manifestSha256": "803293f25bb93e2c6e906debc4db2cd46c6f2ccb17ab3a537c06622443e30e3e"
+      "manifestSha256": "176ee137d570f743b70f4f471a9e3f004304a07ae35b88d6c6d630e882bc56fb"
     },
     {
       "path": "sdk/generated/matrix/openapi-generator/python",
-      "manifestSha256": "73de59d2d284a81afd75553b620781e76c9fecc693b039fab502d37cd71cd72d"
+      "manifestSha256": "257a7be3581a39d5d3d794b84e2a9019c724c83ad384957f7091ed2dc709b3f4"
     },
     {
       "path": "sdk/generated/matrix/openapi-generator/rust",
-      "manifestSha256": "ed17da30fe31cfb70fb786b31f03ec7b63fdba8b5f7e188930c060fb37db03e2"
+      "manifestSha256": "5c1a0a5e10da42d47a4b7e0876bc60cf78e09aa4ec4495d3cdb980bd61c22f03"
     }
   ],
-  "overallConclusion": "OpenAPI Generator is the only evaluated tool that produced compile/importable TS, Python, and Rust output, and only with --skip-validate-spec. Kiota and NSwag are rejected until OpenAPI schema-shape debt is fixed.",
-  "acceptedTier": "raw-openapi-generator-behind-facades",
+  "overallConclusion": "Accepted OpenAPI Generator proof points were not satisfied: Rust probe failed with exit code 101. Kiota and NSwag remain rejected until OpenAPI schema-shape debt is fixed.",
+  "acceptedTier": "none",
   "sdkGradeGeneratedClientAccepted": false,
-  "pendingSdkGradeRationale": "OpenAPI Generator TypeScript, Python, and Rust compile/import probes pass only with --skip-validate-spec; Kiota and NSwag remain rejected on schema-shape debt, so no SDK-grade generated-client package is accepted.",
+  "pendingSdkGradeRationale": "At least one accepted OpenAPI Generator raw-client proof point failed generation or compile/import probing; no generated-client tier is accepted by this run.",
   "traceability": {
     "B-043": "OpenAPI proof now validates committed generator matrix evidence as the raw generated-client acceptance path.",
     "B-044": "Stable SDK package export/import proof remains pending until package metadata, facade exports, import execution, and generator isolation are verified.",
@@ -208,7 +204,7 @@
   },
   "residualRisks": [
     "OpenAPI validation errors remain in DirectoryVersion, FileVersion, DiffPiece, FileDiff, FileSystemDifference, and GraceResult shapes.",
-    "OpenAPI Generator output is accepted only as a raw-client proof point behind facades, not as a stable package surface.",
-    "Rust feasibility is proven at cargo-check level, but Rust facade support remains deferred."
+    "OpenAPI Generator raw-client proof points are not accepted until generation and all required compile/import probes pass.",
+    "Rust feasibility is not proven by this run until the Rust cargo-check probe passes."
   ]
 }

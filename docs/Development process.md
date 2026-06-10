@@ -386,15 +386,51 @@ responsible for opening or updating the pull request and monitoring Codex Code R
 through the shell, do not ask GitHub `@codex review`, and do not spawn local review-only subagents for the normal Grace
 completion gate unless the maintainer explicitly changes the review mode for that task.
 
-Codex Code Review Bot communicates through PR-body emoji reactions and PR comments:
+Codex Code Review Bot communicates through PR-body emoji reactions, review summaries, top-level PR comments, and
+inline pull-request-review comments:
 
 - 👀 on the pull request body means the bot has seen the latest pushed commit and is reviewing it.
 - 👍🏻 on the pull request body means the bot found no issues for the latest reviewed commit.
-- A pull request comment from Codex Code Review Bot means it found one or more actionable issues.
+- A pull request comment or inline pull-request-review comment from Codex Code Review Bot means it found one or more
+  actionable issues.
 
 The orchestrator must verify that the bot signal applies to the latest pushed commit before treating the review gate as
 complete. Do not merge, close, or call a task review-complete while the latest bot state is still 👀, while a bot comment
 is unresolved, or while the bot has not yet reacted to the current head commit.
+
+Do not rely on `gh pr view --json comments` alone when checking for bot findings. That field only covers top-level PR
+comments and can miss inline comments stored under the pull request review. Inspect the latest bot review and its inline
+comments before merging. A GraphQL check should include `reviews.nodes.comments.nodes`, for example:
+
+```powershell
+$query = @'
+query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      headRefOid
+      comments(first: 50) { nodes { author { login } body url } }
+      reviews(first: 20) {
+        nodes {
+          author { login }
+          state
+          body
+          url
+          commit { oid }
+          comments(first: 50) { nodes { path line body url } }
+        }
+      }
+      reactionGroups { content users(first: 20) { totalCount nodes { login } } }
+    }
+  }
+}
+'@
+
+gh api graphql `
+  -f query="$query" `
+  -F owner="<owner>" `
+  -F name="<repo>" `
+  -F number="<pr-number>"
+```
 
 The review loop is blocking:
 
@@ -403,17 +439,19 @@ The review loop is blocking:
    or a bot review comment.
 3. If the bot switches the PR-body reaction to 👍🏻 and there are no unresolved bot review comments for the current head,
    record that no-issues state in `Review Status` and continue toward merge readiness.
-4. If the bot writes a PR comment with findings, update `Review Status`, then send the findings to a fresh
-   implementation subagent to address in the issue-owned branch/worktree.
+4. If the bot writes a top-level PR comment or inline pull-request-review comment with findings, update
+   `Review Status`, then send the findings to a fresh implementation subagent to address in the issue-owned
+   branch/worktree.
 5. If the review finds a missing acceptance-criterion class, repeated trap, or issue-template gap that could affect
    active future workers, amend the active future issues or templates before spawning parallel workers. Preserve issue
    history by appending an addendum unless replacing stale text is clearer and safe.
 6. The implementation subagent re-runs focused validation for the changed behavior or docs, plus broader validation when
    the fix touches shared or risky surfaces.
 7. The implementation subagent commits and pushes the review fix, then returns a new Ready For Review handoff.
-8. Reply to the Codex Code Review Bot comment with the outcome, fix commit, and validation evidence using the
-   [Review/Fix comment template](#reviewfix-comment-template). The comment must make the high-level outcome easy to
-   scan before the detailed issue and fix text. Resolve the GitHub conversation after the feedback has been satisfied.
+8. Reply to each Codex Code Review Bot top-level or inline review comment with the outcome, fix commit, and validation
+   evidence using the [Review/Fix comment template](#reviewfix-comment-template). The comment must make the high-level
+   outcome easy to scan before the detailed issue and fix text. Resolve the GitHub conversation after the feedback has
+   been satisfied.
 9. Update the pull request body's `Review Status` section with the fix commit, validation evidence, and link to the
    bot comment or fix reply.
 10. Wait for Codex Code Review Bot to review the new head commit. Repeat the loop until the bot reports no issues with
@@ -571,10 +609,11 @@ for project-specific conventions.
 ## Review And Integration
 
 Every pull request must link its related GitHub issue in the pull request body at creation time. For pull requests
-targeting `main`, use a GitHub closing keyword such as `Closes #123` when the merge should close the issue. For pull
-requests targeting an epic integration branch, use non-closing wording such as `Related to #123` or `Part of #249`;
-GitHub closing keywords are only reliable for the repository's default branch, so close the sub-issue manually after the
-pull request merges to the epic branch.
+targeting `main`, use one of GitHub's supported closing keywords when the merge should close the issue: `close`,
+`closes`, `closed`, `fix`, `fixes`, `fixed`, `resolve`, `resolves`, or `resolved`. The standard Grace form is
+`Closes #123` for same-repository issues. For pull requests targeting an epic integration branch, use non-closing
+wording such as `Related to #123` or `Part of #249`; GitHub ignores closing keywords on non-default-branch PRs, so close
+the sub-issue manually after the pull request merges to the epic branch.
 
 When opening or updating a pull request, include the evidence available at that point and keep adding standalone
 comments as the review loop continues:

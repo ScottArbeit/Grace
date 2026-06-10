@@ -559,6 +559,7 @@ module GraceCommand =
                 CommandNames =
                     [
                         "status"
+                        "annotate"
                         "list-contents"
                         "get-recursive-size"
                         "get"

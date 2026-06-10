@@ -18,6 +18,8 @@
     <Compile Include="Agent.CLI.Tests.fs" />
     <Compile Include="Auth.Tests.fs" />
     <Compile Include="AuthTokenBundle.Tests.fs" />
+    <Compile Include="Branch.CLI.Parsing.Tests.fs" />
+    <Compile Include="Branch.CLI.Tests.fs" />
     <Compile Include="Connect.CLI.Parsing.Tests.fs" />
     <Compile Include="Connect.CLI.Tests.fs" />
     <Compile Include="BuildInfo.Tests.fs" />
@@ -39,6 +41,7 @@
     <Compile Include="PromotionSet.CLI.Tests.fs" />
     <Compile Include="Maintenance.CLI.Tests.fs" />
     <Compile Include="CommandOutputContract.CLI.Tests.fs" />
+    <Compile Include="CurrentStateCapture.CLI.Tests.fs" />
     <Compile Include="Watch.Tests.fs" />
     <Compile Include="LocalPlanner.SDK.Tests.fs" />
     <Compile Include="ManifestUpload.SDK.Tests.fs" />

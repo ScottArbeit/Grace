@@ -29,6 +29,7 @@
     <Compile Include="StorageAuthorizationResources.Unit.Tests.fs" />
     <Compile Include="ValidateIds.Decisions.Tests.fs" />
     <Compile Include="Storage.Server.Tests.fs" />
+    <Compile Include="AnnotationMaterialization.Server.Tests.fs" />
     <Compile Include="DedupeIndex.Server.Tests.fs" />
     <Compile Include="Eventing.Server.Tests.fs" />
     <Compile Include="Notification.Server.Tests.fs" />
@@ -44,6 +45,7 @@
     <Compile Include="Policy.Validation.Derived.Tests.fs" />
     <Compile Include="Evidence.Determinism.Tests.fs" />
     <Compile Include="ReviewNotes.Determinism.Tests.fs" />
+    <Compile Include="AnnotationLineCore.Tests.fs" />
     <Compile Include="Review.Server.Tests.fs" />
     <Compile Include="WebhookDispatch.Server.Tests.fs" />
     <Compile Include="Queue.Server.Tests.fs" />

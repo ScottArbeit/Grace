@@ -3,6 +3,13 @@
 .travis.yml
 Cargo.toml
 README.md
+docs/AnnotateParameters.md
+docs/AnnotationBoundary.md
+docs/AnnotationLine.md
+docs/AnnotationLineRange.md
+docs/AnnotationSourceReference.md
+docs/AnnotationSourceRow.md
+docs/AnnotationSpan.md
 docs/ApprovalDecision.md
 docs/ApprovalPolicy.md
 docs/ApprovalPolicyParameters.md
@@ -16,6 +23,8 @@ docs/ApprovalTimeoutAction.md
 docs/ApprovalsApi.md
 docs/ApproveApprovalRequestParameters.md
 docs/BlockUploadIntent.md
+docs/BranchAnnotationApiDto.md
+docs/BranchAnnotationReturnValue.md
 docs/BranchApiDto.md
 docs/BranchCommandReturnValue.md
 docs/BranchDto.md
@@ -232,6 +241,13 @@ src/apis/owners_api.rs
 src/apis/repositories_api.rs
 src/apis/webhooks_api.rs
 src/lib.rs
+src/models/annotate_parameters.rs
+src/models/annotation_boundary.rs
+src/models/annotation_line.rs
+src/models/annotation_line_range.rs
+src/models/annotation_source_reference.rs
+src/models/annotation_source_row.rs
+src/models/annotation_span.rs
 src/models/approval_decision.rs
 src/models/approval_policy.rs
 src/models/approval_policy_parameters.rs
@@ -244,6 +260,8 @@ src/models/approval_scope.rs
 src/models/approval_timeout_action.rs
 src/models/approve_approval_request_parameters.rs
 src/models/block_upload_intent.rs
+src/models/branch_annotation_api_dto.rs
+src/models/branch_annotation_return_value.rs
 src/models/branch_api_dto.rs
 src/models/branch_command_return_value.rs
 src/models/branch_dto.rs

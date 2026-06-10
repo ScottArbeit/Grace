@@ -129,6 +129,39 @@
               format: int32
               minimum: 1
               example: 50
+    AnnotateParameters:
+      description: Parameters for the /branch/annotate endpoint.
+      allOf:
+        - $ref: '#/BranchParameters'
+        - type: object
+          properties:
+            TargetReferenceId:
+              $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/ReferenceId'
+            Path:
+              $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/RelativePath'
+            StartLine:
+              type: integer
+              format: int32
+              minimum: 1
+              example: 1
+            EndLine:
+              type: integer
+              format: int32
+              minimum: 1
+              example: 20
+            ReferenceTypes:
+              type: array
+              items:
+                $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/ReferenceType'
+            MaxReferences:
+              type: integer
+              format: int32
+              minimum: 1
+              maximum: 5000
+              example: 1000
+            IncludeLineText:
+              type: boolean
+              example: true
     GetDiffsForReferenceTypeParameters:
       description: Parameters for the /branch/getDiffsForReferenceType endpoint.
       allOf:
@@ -419,6 +452,189 @@
         CorrelationId: cli-20260604T181500Z-0001
         Properties:
           Path: /branch/getReferences
+    AnnotationLineRange:
+      description: Inclusive one-based line range.
+      type: object
+      properties:
+        StartLine:
+          type: integer
+          format: int32
+          minimum: 1
+        EndLine:
+          type: integer
+          format: int32
+          minimum: 1
+      required: [StartLine, EndLine]
+    AnnotationLine:
+      description: One annotated target line.
+      type: object
+      properties:
+        LineNumber:
+          type: integer
+          format: int32
+          minimum: 1
+        Text:
+          type: string
+      required: [LineNumber, Text]
+    AnnotationSourceReference:
+      description: Reference that contributed annotation source rows.
+      type: object
+      properties:
+        SourceReferenceId:
+          type: string
+        ReferenceId:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/ReferenceId'
+        ReferenceType:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/ReferenceType'
+        ReferenceText:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/ReferenceText'
+        DirectoryVersionId:
+          type: string
+          format: uuid
+        CreatedAt:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant'
+        CreatedBy:
+          type: string
+          nullable: true
+      required: [SourceReferenceId, ReferenceId, ReferenceType, ReferenceText, DirectoryVersionId]
+    AnnotationSourceRow:
+      description: Source row range for an annotation span.
+      type: object
+      properties:
+        SourceRowId:
+          type: string
+        SourceReferenceId:
+          type: string
+        Path:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/RelativePath'
+        LineRange:
+          $ref: '#/AnnotationLineRange'
+      required: [SourceRowId, SourceReferenceId, Path, LineRange]
+    AnnotationBoundary:
+      description: Boundary where annotation could not continue through history.
+      type: object
+      properties:
+        BoundaryId:
+          type: string
+        LineRange:
+          $ref: '#/AnnotationLineRange'
+        SourceRowIds:
+          type: array
+          items:
+            type: string
+        BoundaryKind:
+          type: string
+          description: Grace boundary reason explaining why annotation could not continue through history.
+      required: [BoundaryId, LineRange, SourceRowIds, BoundaryKind]
+    AnnotationSpan:
+      description: Annotated target span and its source rows.
+      type: object
+      properties:
+        SpanId:
+          type: string
+        BoundaryId:
+          type: string
+        LineRange:
+          $ref: '#/AnnotationLineRange'
+        SourceRowIds:
+          type: array
+          items:
+            type: string
+      required: [SpanId, BoundaryId, LineRange, SourceRowIds]
+    BranchAnnotationApiDto:
+      description: Branch annotation result for an existing server-known reference.
+      type: object
+      properties:
+        Class:
+          type: string
+          example: BranchAnnotationDto
+        RequestedLineRange:
+          $ref: '#/AnnotationLineRange'
+        TargetReferenceId:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/ReferenceId'
+        Path:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/RelativePath'
+        ReferenceTypeFilter:
+          type: array
+          items:
+            $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/ReferenceType'
+        MaxReferences:
+          type: integer
+          format: int32
+        IncludeLineText:
+          type: boolean
+        Lines:
+          type: array
+          items:
+            $ref: '#/AnnotationLine'
+        Boundaries:
+          type: array
+          items:
+            $ref: '#/AnnotationBoundary'
+        Spans:
+          type: array
+          items:
+            $ref: '#/AnnotationSpan'
+        SourceRows:
+          type: array
+          items:
+            $ref: '#/AnnotationSourceRow'
+        SourceReferences:
+          type: array
+          items:
+            $ref: '#/AnnotationSourceReference'
+      required:
+        - Class
+        - RequestedLineRange
+        - TargetReferenceId
+        - Path
+        - ReferenceTypeFilter
+        - MaxReferences
+        - IncludeLineText
+        - Lines
+        - Boundaries
+        - Spans
+        - SourceRows
+        - SourceReferences
+    BranchAnnotationReturnValue:
+      description: Grace response envelope whose ReturnValue contains a branch annotation.
+      type: object
+      properties:
+        ReturnValue:
+          $ref: '#/BranchAnnotationApiDto'
+        EventTime:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant'
+        CorrelationId:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/CorrelationId'
+        Properties:
+          type: object
+          additionalProperties:
+            type: string
+      required: [ReturnValue, EventTime, CorrelationId, Properties]
+      example:
+        ReturnValue:
+          Class: BranchAnnotationDto
+          RequestedLineRange:
+            StartLine: 1
+            EndLine: 1
+          TargetReferenceId: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
+          Path: src/App.fs
+          ReferenceTypeFilter:
+            - Commit
+            - Save
+          MaxReferences: 1000
+          IncludeLineText: true
+          Lines:
+            - LineNumber: 1
+              Text: module App
+          Boundaries: []
+          Spans: []
+          SourceRows: []
+          SourceReferences: []
+        EventTime: '2026-06-04T18:15:00Z'
+        CorrelationId: cli-20260604T181500Z-0001
+        Properties:
+          Path: /branch/annotate
     BranchCommandResponse:
       description: OK
       content:
@@ -455,3 +671,9 @@
         application/json:
           schema:
             $ref: '#/ReferenceListReturnValue'
+    BranchAnnotationResponse:
+      description: OK
+      content:
+        application/json:
+          schema:
+            $ref: '#/BranchAnnotationReturnValue'

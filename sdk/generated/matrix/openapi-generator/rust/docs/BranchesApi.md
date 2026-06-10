@@ -4,6 +4,7 @@ All URIs are relative to *http://localhost:5000*
 
 Method | HTTP request | Description
 ------------- | ------------- | -------------
+[**annotate_branch**](BranchesApi.md#annotate_branch) | **POST** /branch/annotate | Annotate a branch reference.
 [**checkpoint_branch**](BranchesApi.md#checkpoint_branch) | **POST** /branch/checkpoint | Checkpoint the current branch content.
 [**commit_branch**](BranchesApi.md#commit_branch) | **POST** /branch/commit | Commit the current branch content.
 [**create_branch**](BranchesApi.md#create_branch) | **POST** /branch/create | Create a branch.
@@ -27,6 +28,36 @@ Method | HTTP request | Description
 [**save_branch**](BranchesApi.md#save_branch) | **POST** /branch/save | Save the current branch content.
 [**tag_branch**](BranchesApi.md#tag_branch) | **POST** /branch/tag | Tag the current branch content.
 
+
+
+## annotate_branch
+
+> models::BranchAnnotationReturnValue annotate_branch(annotate_parameters)
+Annotate a branch reference.
+
+Annotates lines from an existing server-known reference in a branch. The API reads server-stored reference content and does not save local workspace state.
+
+### Parameters
+
+
+Name | Type | Description  | Required | Notes
+------------- | ------------- | ------------- | ------------- | -------------
+**annotate_parameters** | [**AnnotateParameters**](AnnotateParameters.md) |  | [required] |
+
+### Return type
+
+[**models::BranchAnnotationReturnValue**](BranchAnnotationReturnValue.md)
+
+### Authorization
+
+[bearerAuth](../README.md#bearerAuth)
+
+### HTTP request headers
+
+- **Content-Type**: application/json
+- **Accept**: application/json
+
+[[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
 
 
 ## checkpoint_branch
