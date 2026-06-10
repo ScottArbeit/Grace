@@ -119,7 +119,7 @@ module CurrentStateCaptureCliTests =
             CopyUpdatedFilesToObjectCache = fun _ -> Task.FromResult(Seq.empty<LocalFileVersion>)
             BuildUpdatedGraceStatus = fun status _ -> Task.FromResult(status, List<LocalDirectoryVersion>())
             UploadFileVersions = fun _ -> Task.FromResult(Ok([]))
-            UploadDirectoryVersions = fun _ _ -> Task.FromResult(Ok())
+            UploadDirectoryVersions = fun _ _ _ -> Task.FromResult(Ok())
             ApplyGraceStatusIncremental = fun _ _ _ -> Task.FromResult(())
             CreateSaveReference = fun _ _ -> Task.FromResult(Ok(Guid.NewGuid()))
         }
@@ -255,7 +255,7 @@ module CurrentStateCaptureCliTests =
                 ScanForDifferences = fun _ -> Task.FromResult(differences)
                 BuildUpdatedGraceStatus = fun _ _ -> Task.FromResult(updatedStatus, List<LocalDirectoryVersion>([| updatedRoot |]))
                 UploadDirectoryVersions =
-                    fun _ _ ->
+                    fun _ _ _ ->
                         uploadedDirectories <- true
                         Task.FromResult(Ok())
                 ApplyGraceStatusIncremental =
@@ -425,7 +425,66 @@ module CurrentStateCaptureCliTests =
                 localFileVersion.Size
                 DateTime.UtcNow
 
-        let directoryVersion = toDirectoryVersionWithUploadedFiles [ uploadedFileVersion ] localDirectoryVersion
+        let directoryVersion = toDirectoryVersionWithUploadedFiles [ uploadedFileVersion ] [] localDirectoryVersion
+
+        directoryVersion.Files.Count |> should equal 1
+
+        directoryVersion.Files[0]
+            .ContentReference
+            .ReferenceType
+        |> should equal FileContentReferenceType.FileManifest
+
+        directoryVersion.Files[0]
+            .ContentReference
+            .Manifest
+        |> should equal (Some manifest)
+
+    [<Test>]
+    let ``directory upload overlay preserves prior manifest backed unchanged file version`` () =
+        let manifest = finalizedManifest ()
+
+        let localFileVersion =
+            LocalFileVersion.CreateWithHashes
+                (RelativePath "large.bin")
+                (Sha256Hash "manifest-sha")
+                (Blake3Hash $"{manifest.FileContentHash}")
+                true
+                manifest.Size
+                (getCurrentInstant ())
+                true
+                DateTime.UtcNow
+
+        let priorFileVersion = localFileVersion.ToFileVersion
+        priorFileVersion.ContentReference <- FileContentReference.FileManifest manifest
+
+        let previousDirectoryVersion =
+            DirectoryVersion.CreateWithHashes
+                (Guid.NewGuid())
+                OwnerId.Empty
+                OrganizationId.Empty
+                RepositoryId.Empty
+                Constants.RootDirectoryPath
+                (Sha256Hash "previous-directory-sha")
+                (Blake3Hash "previous-directory-blake3")
+                (List<DirectoryVersionId>())
+                (List<FileVersion>([| priorFileVersion |]))
+                localFileVersion.Size
+
+        let localDirectoryVersion =
+            LocalDirectoryVersion.CreateWithHashes
+                (Guid.NewGuid())
+                OwnerId.Empty
+                OrganizationId.Empty
+                RepositoryId.Empty
+                Constants.RootDirectoryPath
+                (Sha256Hash "new-directory-sha")
+                (Blake3Hash "new-directory-blake3")
+                (List<DirectoryVersionId>())
+                (List<LocalFileVersion>([| localFileVersion |]))
+                localFileVersion.Size
+                DateTime.UtcNow
+
+        let directoryVersion = toDirectoryVersionWithUploadedFiles [] [ previousDirectoryVersion ] localDirectoryVersion
 
         directoryVersion.Files.Count |> should equal 1
 

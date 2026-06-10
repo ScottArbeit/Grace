@@ -1331,9 +1331,79 @@ module Services =
                 return (previousGraceStatus, newDirectoryVersions)
         }
 
-    let internal toDirectoryVersionWithUploadedFiles (uploadedFileVersions: seq<FileVersion>) (localDirectoryVersion: LocalDirectoryVersion) =
-        let uploadedByIdentity =
-            uploadedFileVersions
+    let private hasManifestContentReference (fileVersion: FileVersion) =
+        not (isNull (box fileVersion))
+        && not (isNull (box fileVersion.ContentReference))
+        && fileVersion.ContentReference.ReferenceType = FileContentReferenceType.FileManifest
+        && fileVersion.ContentReference.Manifest.IsSome
+
+    let private previousDirectoryVersionIdsForChangedDirectories (previousGraceStatus: GraceStatus) (localDirectoryVersions: seq<LocalDirectoryVersion>) =
+        let changedDirectoryPaths =
+            localDirectoryVersions
+            |> Seq.map (fun directoryVersion -> directoryVersion.RelativePath)
+            |> HashSet<RelativePath>
+
+        previousGraceStatus
+            .Index
+            .Values
+            .Where(fun directoryVersion ->
+                changedDirectoryPaths.Contains directoryVersion.RelativePath
+                && directoryVersion.DirectoryVersionId
+                   <> DirectoryVersionId.Empty)
+            .Select(fun directoryVersion -> directoryVersion.DirectoryVersionId)
+            .Distinct()
+            .ToList()
+
+    let private getPreviousDirectoryVersionsForChangedDirectories
+        (previousGraceStatus: GraceStatus)
+        (localDirectoryVersions: List<LocalDirectoryVersion>)
+        (correlationId: CorrelationId)
+        =
+        task {
+            let previousDirectoryVersionIds = previousDirectoryVersionIdsForChangedDirectories previousGraceStatus localDirectoryVersions
+
+            if previousDirectoryVersionIds.Count = 0 then
+                return Ok(List<Grace.Types.Common.DirectoryVersion>())
+            else
+                let current = Current()
+
+                let getByDirectoryIdParameters =
+                    Parameters.DirectoryVersion.GetByDirectoryIdsParameters(
+                        OwnerId = $"{current.OwnerId}",
+                        OwnerName = current.OwnerName,
+                        OrganizationId = $"{current.OrganizationId}",
+                        OrganizationName = current.OrganizationName,
+                        RepositoryId = $"{current.RepositoryId}",
+                        RepositoryName = current.RepositoryName,
+                        DirectoryVersionId = $"{previousDirectoryVersionIds[0]}",
+                        DirectoryIds = previousDirectoryVersionIds,
+                        CorrelationId = correlationId
+                    )
+
+                match! DirectoryVersion.GetByDirectoryIds getByDirectoryIdParameters with
+                | Ok returnValue ->
+                    return
+                        returnValue.ReturnValue
+                        |> Seq.map (fun directoryVersionDto -> directoryVersionDto.DirectoryVersion)
+                        |> List<Grace.Types.Common.DirectoryVersion>
+                        |> Ok
+                | Error error -> return Error error
+        }
+
+    let internal toDirectoryVersionWithUploadedFiles
+        (uploadedFileVersions: seq<FileVersion>)
+        (previousDirectoryVersions: seq<Grace.Types.Common.DirectoryVersion>)
+        (localDirectoryVersion: LocalDirectoryVersion)
+        =
+        let fileVersionOverlays =
+            Seq.append
+                uploadedFileVersions
+                (previousDirectoryVersions
+                 |> Seq.collect (fun directoryVersion -> directoryVersion.Files)
+                 |> Seq.filter hasManifestContentReference)
+
+        let fileVersionOverlaysByIdentity =
+            fileVersionOverlays
                 .GroupBy(fun fileVersion -> (fileVersion.RelativePath, fileVersion.Sha256Hash))
                 .ToDictionary((fun group -> group.Key), (fun group -> group.First()))
 
@@ -1341,7 +1411,7 @@ module Services =
             localDirectoryVersion
                 .Files
                 .Select(fun localFileVersion ->
-                    match uploadedByIdentity.TryGetValue((localFileVersion.RelativePath, localFileVersion.Sha256Hash)) with
+                    match fileVersionOverlaysByIdentity.TryGetValue((localFileVersion.RelativePath, localFileVersion.Sha256Hash)) with
                     | true, uploadedFileVersion -> uploadedFileVersion
                     | false, _ -> localFileVersion.ToFileVersion)
                 .ToList()
@@ -1360,10 +1430,15 @@ module Services =
 
     /// Ensures that the provided directory versions are uploaded to Grace Server.
     /// This will add new directory versions, and ignore existing directory versions, as they are immutable.
-    let uploadDirectoryVersionsWithUploadedFiles (localDirectoryVersions: List<LocalDirectoryVersion>) uploadedFileVersions correlationId =
+    let uploadDirectoryVersionsWithUploadedFiles
+        (localDirectoryVersions: List<LocalDirectoryVersion>)
+        uploadedFileVersions
+        previousDirectoryVersions
+        correlationId
+        =
         let directoryVersions =
             localDirectoryVersions
-                .Select(toDirectoryVersionWithUploadedFiles uploadedFileVersions)
+                .Select(toDirectoryVersionWithUploadedFiles uploadedFileVersions previousDirectoryVersions)
                 .ToList()
 
         let saveParameters = SaveDirectoryVersionsParameters()
@@ -1381,7 +1456,7 @@ module Services =
     /// Ensures that the provided directory versions are uploaded to Grace Server.
     /// This will add new directory versions, and ignore existing directory versions, as they are immutable.
     let uploadDirectoryVersions (localDirectoryVersions: List<LocalDirectoryVersion>) correlationId =
-        uploadDirectoryVersionsWithUploadedFiles localDirectoryVersions Seq.empty<FileVersion> correlationId
+        uploadDirectoryVersionsWithUploadedFiles localDirectoryVersions Seq.empty<FileVersion> Seq.empty<Grace.Types.Common.DirectoryVersion> correlationId
 
     /// The full path of the inter-process communication file that grace watch uses to communicate with other invocations of Grace.
     let IpcFileName () = Path.Combine(Path.GetTempPath(), "Grace", Current().BranchName, Constants.IpcFileName)
@@ -1812,7 +1887,7 @@ module Services =
             CopyUpdatedFilesToObjectCache: List<FileSystemDifference> -> Task<seq<LocalFileVersion>>
             BuildUpdatedGraceStatus: GraceStatus -> List<FileSystemDifference> -> Task<GraceStatus * List<LocalDirectoryVersion>>
             UploadFileVersions: seq<LocalFileVersion> -> Task<Result<FileVersion list, GraceError>>
-            UploadDirectoryVersions: List<LocalDirectoryVersion> -> seq<FileVersion> -> Task<Result<unit, GraceError>>
+            UploadDirectoryVersions: GraceStatus -> List<LocalDirectoryVersion> -> seq<FileVersion> -> Task<Result<unit, GraceError>>
             ApplyGraceStatusIncremental: GraceStatus -> IEnumerable<LocalDirectoryVersion> -> IEnumerable<FileSystemDifference> -> Task<unit>
             CreateSaveReference: LocalDirectoryVersion -> string -> Task<Result<ReferenceId, GraceError>>
         }
@@ -1953,7 +2028,7 @@ module Services =
                             match! operations.UploadFileVersions fileVersionsToUpload with
                             | Error error -> return Error error
                             | Ok uploadedFileVersions ->
-                                match! operations.UploadDirectoryVersions newDirectoryVersions uploadedFileVersions with
+                                match! operations.UploadDirectoryVersions previousGraceStatus newDirectoryVersions uploadedFileVersions with
                                 | Error error -> return Error error
                                 | Ok () ->
                                     let updatedGraceStatus =
@@ -2169,11 +2244,14 @@ module Services =
                 | Error error -> return Error error
             }
 
-        let uploadDirectoryVersionsForCapture directoryVersions uploadedFileVersions =
+        let uploadDirectoryVersionsForCapture previousGraceStatus directoryVersions uploadedFileVersions =
             task {
-                match! uploadDirectoryVersionsWithUploadedFiles directoryVersions uploadedFileVersions correlationId with
-                | Ok _ -> return Ok()
+                match! getPreviousDirectoryVersionsForChangedDirectories previousGraceStatus directoryVersions correlationId with
                 | Error error -> return Error error
+                | Ok previousDirectoryVersions ->
+                    match! uploadDirectoryVersionsWithUploadedFiles directoryVersions uploadedFileVersions previousDirectoryVersions correlationId with
+                    | Ok _ -> return Ok()
+                    | Error error -> return Error error
             }
 
         let createSaveReferenceForCapture rootDirectoryVersion saveMessage =

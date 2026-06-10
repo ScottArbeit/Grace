@@ -223,12 +223,16 @@ type AnnotationMaterializationServerTests() =
         Assert.That(result.Bytes = bytes, Is.True)
 
     [<Test>]
-    member _.ManifestBackedContentWithMissingBlake3HashIsRejected() =
+    member _.LegacyManifestBackedContentWithMissingBlake3HashMaterializesUsingManifestFileContentHash() =
         let bytes = textBytes "manifest missing blake3 text"
         let target, block = manifestFile "/src/ManifestMissingBlake3.fs" bytes
         target.Blake3Hash <- String.Empty
         let objects = Dictionary<string, byte array>()
         objects[StorageKeys.contentBlockObjectKey block.Address] <- block.Payload
 
-        materialize (readerFrom objects) target
-        |> expectErrorContains "has no FileVersion.Blake3Hash"
+        let result =
+            materialize (readerFrom objects) target
+            |> expectOk
+
+        Assert.That(result.Text, Is.EqualTo("manifest missing blake3 text"))
+        Assert.That(result.Bytes = bytes, Is.True)
