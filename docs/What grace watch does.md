@@ -41,7 +41,8 @@ Of course, it's open-source, please feel free to examine [Watch.CLI.fs](https://
   - `grace watch` doesn't keep the Grace Status file in memory while it's running. It's so fast to read and deserialize it when it's needed that we make the tradeoff to release the memory rather than hold it indefinitely, especially given that there will be many times that the user isn't coding and `grace watch` should have as small of a memory footprint as possible.
 - When a new or updated file is detected, `grace watch` will:
   - Copy the file to your user temp directory, using a system-generated temporary file name.
-  - Compute the SHA-256 hash of the file, using the algorithm described [here](How%20Grace%20computes%20the%20SHA-256%20value.md).
+  - Compute the current byte-only SHA-256 hash of the file, using the algorithm described
+    in the [SHA-256 value documentation](How%20Grace%20computes%20the%20SHA-256%20value.md).
   - Rename the file, inserting the SHA-256 hash, and move it to the repository's `.grace/objects` directory.
   - Upload the file from `.grace/objects` to the Object Storage provider that the repository is configured to use.
   - Recompute the directory versions from the file that was updated up to the root directory.
@@ -50,19 +51,20 @@ Of course, it's open-source, please feel free to examine [Watch.CLI.fs](https://
   - Create a Save reference by calling Grace Server's `/branch/createSave` endpoint.
 - When a promotion event from your parent branch is sent to `grace watch` by the server, `grace watch` will run auto-rebase.
 - Every 4.8 minutes, `grace watch` will recompute and rewrite the Grace interprocess-communication (IPC) file, which requires reading and deserializing the local Grace Status file. The size of the IPC file is under 1K for small repos, and scales with the number of directories in the repo. A repo with 275 directories would fit in a 10K IPC file, and a repo with 2,750 directories would fit in a 100K IPC file. They're usually very small.
-  > Long story about why we rewrite the file: Imagine that you're at the command line, and you run `grace checkpoint -m ...`. That instance of Grace uses the existence of the IPC file as proof that `grace watch` is running in a separate process. `grace watch` writes the IPC file as soon as it starts, and, deletes it in a `try...finally` clause when it exits. In other words: in any normal exit, including exits caused by unhandled exceptions, the IPC file will be deleted when `grace watch` exits. However: it's possible that `grace watch` could be killed before it has a chance to execute that `finally` clause. For instance, in Windows, if I open Task Manager, right-click on the `grace watch` process, and hit `End Task`, the process dies immediately, and does not execute the `finally` clause. To ensure that there's not a stale IPC file laying around, Grace checks the value of the UpdatedAt field; if it's more than 5 minutes old, Grace will ignore the IPC file and assume that `grace watch` isn't running. So: _that's_ why the IPC file gets refreshed every 4.8 minutes: it resets the UpdatedAt field so the file stays under 5 minutes old.
+  > Long story about why we rewrite the file: Imagine that you're at the command line, and you run `grace checkpoint -m ...`. That instance of Grace uses the existence of the IPC file as proof that `grace watch` is running in a separate process. `grace watch` writes the IPC file as soon as it starts, and, deletes it in a `try...finally` clause when it exits. In other words: in any normal exit, including exits caused by unhandled exceptions, the IPC file will be deleted when `grace watch` exits. However: it's possible that `grace watch` could be killed before it has a chance to execute that `finally` clause. For instance, in Windows, if I open Task Manager, right-click on the `grace watch` process, and hit `End Task`, the process dies immediately, and does not execute the `finally` clause. To ensure that there's not a stale IPC file laying around, Grace checks the value of the UpdatedAt field; if it's more than 5 minutes old, Grace will ignore the IPC file and assume that `grace watch` isn't running. So: *that's* why the IPC file gets refreshed every 4.8 minutes: it resets the UpdatedAt field so the file stays under 5 minutes old.
 - Once a minute, `grace watch` does the fullest of garbage collection:
-  
+
   `GC.Collect(2, GCCollectionMode.Forced, blocking = true, compacting = true)`
-  
+
   This ensures that `grace watch` keeps the smallest possible memory footprint, and takes single-digit µs when there's nothing to collect.
-  
+
   > The .NET Runtime has excellent heuristics for when to run GC, but the biggest factor is memory pressure. If the OS isn't signaling that there's memory pressure on the system, GC's don't happen much. With `grace watch` running on a developer box with many GB's of RAM available, it's likely that there won't be much memory pressure, and it would rarely perform garbage collection. `grace watch` might look like it's taking up a lot of memory (from doing things like auto-upload, auto-rebase, and updating the IPC file), but it would all be Gen 0 references, ready to be collected.
   >
   > Given that there will be many times that a user isn't working in a repository, releasing memory proactively is the right thing to do.
 
 ## Process Monitor: `grace watch` is very quiet
-This is a Windows-specific story, but it illustrates what `grace watch` is doing, or _not_ doing, regardless of platform. Those of you familiar with Windows administration will be familiar with [Sysinternals Tools](https://learn.microsoft.com/en-us/sysinternals/), originally written by, and still partially maintained by, Microsoft Azure CTO Mark Russinovich. Before he was the CTO and Chief Architect of Azure, he was the Chief Architect of Windows, and he literally wrote the book _Windows Internals_, which is a great read if you're an OS nerd of any kind. Sysinternals Tools, after 20+ years, are still essential advanced tools to know on Windows.
+
+This is a Windows-specific story, but it illustrates what `grace watch` is doing, or *not* doing, regardless of platform. Those of you familiar with Windows administration will be familiar with [Sysinternals Tools](https://learn.microsoft.com/en-us/sysinternals/), originally written by, and still partially maintained by, Microsoft Azure CTO Mark Russinovich. Before he was the CTO and Chief Architect of Azure, he was the Chief Architect of Windows, and he literally wrote the book *Windows Internals*, which is a great read if you're an OS nerd of any kind. Sysinternals Tools, after 20+ years, are still essential advanced tools to know on Windows.
 
 One of the Sysinternals Tools is [Process Monitor](https://learn.microsoft.com/en-us/sysinternals/downloads/procmon), which allows you to watch every file, networking, registry, and process/thread event happening in the system in real-time. Process Monitor has excellent filtering, and when using it just to observe `grace watch`, what I can tell you is: if nothing from the list above is happening at exactly that moment, `grace watch` does nothing that Process Monitor can detect. No file events, no network events, just sometimes a thread creation/deletion event, managed by the .NET Runtime and not controlled by `grace watch`.
 
@@ -71,10 +73,13 @@ I left it running for 20 minutes with Process Monitor; aside from the IPC file r
 I can't make it any quieter than that.
 
 ## Future items
+
 ### Running local tasks
+
 `grace watch` is intended to be able to run local tasks in response to repository events, but, aside from `grace rebase`, that functionality hasn't been written yet. When it is, we'll document it and add it to the section above.
 
 ### Telemetry
+
 `grace watch` does not currently collect or send any telemetry, but I intend to before Grace ships. There will be clearly-documented ways to turn it off, if you'd prefer, and proper GDPR (and related) handling in place. The intention of this telemetry is to understand usage patterns and errors in using Grace, and to then use that data to improve both functionality and performance.
 
 For any of you who have used a telemetry provider – like Datadog, or Azure Monitor, or Application Insights, or any of a hundred others – to understand the usage of your own apps, you know what I mean. Detailed telemetry will never be kept longer than 30 days.
