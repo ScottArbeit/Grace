@@ -147,7 +147,10 @@ module Configuration =
             // Deserialize the JSON configuration file into a GraceConfiguration object
             let graceConfiguration = JsonSerializer.Deserialize<GraceConfiguration>(buffer, Constants.JsonSerializerOptions)
 
-            Ok graceConfiguration
+            if obj.ReferenceEquals(graceConfiguration, null) then
+                Error "Configuration file is empty or invalid JSON."
+            else
+                Ok graceConfiguration
         with
         | ex -> Error $"Exception: {ex.Message}{Environment.NewLine}Stack trace: {ex.StackTrace}"
 
@@ -201,6 +204,43 @@ module Configuration =
 
         graceConfiguration.IsPopulated <- true
         graceConfiguration
+
+    type GraceIgnoreInspection = { Path: string; Exists: bool; Entries: string array; FileEntries: string array; DirectoryEntries: string array }
+
+    type GraceConfigurationInspection = { Path: string; RootDirectory: string; Configuration: GraceConfiguration; Ignore: GraceIgnoreInspection }
+
+    let inspectGraceIgnore rootDirectory =
+        let graceIgnorePath = Path.Combine(rootDirectory, Constants.GraceIgnoreFileName)
+        let entries = getGraceIgnoreEntries graceIgnorePath
+
+        {
+            Path = graceIgnorePath
+            Exists = File.Exists(graceIgnorePath)
+            Entries = entries
+            FileEntries =
+                entries
+                |> Array.where (fun graceIgnoreLine -> not <| pathContainsSeparator graceIgnoreLine)
+            DirectoryEntries =
+                entries
+                |> Array.where (fun graceIgnoreLine -> pathContainsSeparator graceIgnoreLine)
+        }
+
+    let tryInspectCurrentDirectoryConfiguration () =
+        match findGraceConfigurationFile () with
+        | Error errorMessage -> Error errorMessage
+        | Ok graceConfigurationFilePath ->
+            match parseConfigurationFile graceConfigurationFilePath with
+            | Error errorMessage -> Error errorMessage
+            | Ok graceConfigurationFromFile ->
+                let configuration = populateDerivedFields graceConfigurationFilePath graceConfigurationFromFile
+
+                Ok
+                    {
+                        Path = graceConfigurationFilePath
+                        RootDirectory = configuration.RootDirectory
+                        Configuration = configuration
+                        Ignore = inspectGraceIgnore configuration.RootDirectory
+                    }
 
     let private createDefaultConfigurationFile () =
         let graceConfigurationFilePath = Path.Combine(Environment.CurrentDirectory, Constants.GraceConfigDirectory, Constants.GraceConfigFileName)

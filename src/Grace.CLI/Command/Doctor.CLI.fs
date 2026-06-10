@@ -3,6 +3,7 @@ namespace Grace.CLI.Command
 open Grace.CLI.Common
 open Grace.CLI.Text
 open Grace.Shared
+open Grace.Shared.Client
 open Grace.Types.Common
 open Spectre.Console
 open System
@@ -17,6 +18,33 @@ module Doctor =
 
     [<Literal>]
     let ReportVersion = "doctor-report-v1"
+
+    [<Literal>]
+    let private CliCatalogCheckId = "cli.catalog"
+
+    [<Literal>]
+    let private ConfigFileDiscoverCheckId = "config.file.discover"
+
+    [<Literal>]
+    let private ConfigFileParseCheckId = "config.file.parse"
+
+    [<Literal>]
+    let private ConfigRepositoryIdentityCheckId = "config.repository.identity"
+
+    [<Literal>]
+    let private ConfigServerUriCheckId = "config.server-uri.valid"
+
+    [<Literal>]
+    let private ServerUriConsistencyCheckId = "server-uri.consistency"
+
+    [<Literal>]
+    let private UserConfigDiscoverCheckId = "user-config.file.discover"
+
+    [<Literal>]
+    let private UserConfigParseCheckId = "user-config.file.parse"
+
+    [<Literal>]
+    let private IgnoreEntriesParseCheckId = "ignore.entries.parse"
 
     module private Options =
         let full =
@@ -66,18 +94,74 @@ module Doctor =
     let catalog: LocalOutputDto.DoctorCheckDto array =
         [|
             {
-                Id = "cli.catalog"
+                Id = CliCatalogCheckId
                 Category = "CLI"
                 Title = "CLI command catalog"
-                Description = "Verifies that the Grace CLI command catalog is available. Scaffold only; no runtime probe is executed."
+                Description = "Verifies that the Grace CLI command catalog is available."
                 DefaultEnabled = true
                 SupportsOffline = true
             }
             {
-                Id = "configuration.config-file"
+                Id = ConfigFileDiscoverCheckId
                 Category = "Configuration"
-                Title = "Grace configuration file"
-                Description = "Reserved for a later configuration-file diagnostic. Scaffold only; no file is read in this slice."
+                Title = "Grace configuration discovery"
+                Description = "Finds .grace/graceconfig.json by walking upward from the current directory without creating it."
+                DefaultEnabled = true
+                SupportsOffline = true
+            }
+            {
+                Id = ConfigFileParseCheckId
+                Category = "Configuration"
+                Title = "Grace configuration parse"
+                Description = "Reads .grace/graceconfig.json without rewriting or normalizing it."
+                DefaultEnabled = true
+                SupportsOffline = true
+            }
+            {
+                Id = ConfigRepositoryIdentityCheckId
+                Category = "Configuration"
+                Title = "Repository identity"
+                Description = "Reports whether the repository configuration includes owner, organization, repository, and branch identity values."
+                DefaultEnabled = true
+                SupportsOffline = true
+            }
+            {
+                Id = ConfigServerUriCheckId
+                Category = "Configuration"
+                Title = "Configured server URI"
+                Description = "Validates the server URI stored in .grace/graceconfig.json without probing the server."
+                DefaultEnabled = true
+                SupportsOffline = true
+            }
+            {
+                Id = ServerUriConsistencyCheckId
+                Category = "Configuration"
+                Title = "Server URI consistency"
+                Description = "Compares the configured server URI with GRACE_SERVER_URI when both are present."
+                DefaultEnabled = true
+                SupportsOffline = true
+            }
+            {
+                Id = UserConfigDiscoverCheckId
+                Category = "User configuration"
+                Title = "User configuration discovery"
+                Description = "Checks whether ~/.grace/userconfig.json exists without creating it."
+                DefaultEnabled = true
+                SupportsOffline = true
+            }
+            {
+                Id = UserConfigParseCheckId
+                Category = "User configuration"
+                Title = "User configuration parse"
+                Description = "Reads ~/.grace/userconfig.json without creating or rewriting it."
+                DefaultEnabled = true
+                SupportsOffline = true
+            }
+            {
+                Id = IgnoreEntriesParseCheckId
+                Category = "Ignore"
+                Title = ".graceignore entries"
+                Description = "Reads .graceignore entries, ignoring comments and blank lines, without creating the file."
                 DefaultEnabled = true
                 SupportsOffline = true
             }
@@ -173,14 +257,156 @@ module Doctor =
         not (parseResult |> json)
         && (parseResult |> hasOutput)
 
-    let private resultForCheck (check: LocalOutputDto.DoctorCheckDto) : LocalOutputDto.DoctorCheckResultDto =
+    type private ConfigurationInspectionState =
+        | ConfigurationLoaded of Configuration.GraceConfigurationInspection
+        | ConfigurationMissing of string
+        | ConfigurationMalformed of string
+
+    type private DoctorInspectionContext =
+        {
+            ConfigurationState: ConfigurationInspectionState
+            UserConfiguration: UserConfiguration.UserConfigurationInspection
+            EnvironmentServerUri: string option
+        }
+
+    let private normalizeOptionalText value = if String.IsNullOrWhiteSpace(value) then None else Some(value.Trim())
+
+    let private createInspectionContext () =
+        let configurationState =
+            match Configuration.tryInspectCurrentDirectoryConfiguration () with
+            | Ok inspection -> ConfigurationLoaded inspection
+            | Error message when message.Contains(Constants.GraceConfigFileName, StringComparison.OrdinalIgnoreCase) -> ConfigurationMissing message
+            | Error message -> ConfigurationMalformed message
+
+        {
+            ConfigurationState = configurationState
+            UserConfiguration = UserConfiguration.tryInspectUserConfiguration ()
+            EnvironmentServerUri =
+                Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.GraceServerUri)
+                |> normalizeOptionalText
+        }
+
+    let private checkResult checkId category title status severity summary : LocalOutputDto.DoctorCheckResultDto =
+        { Id = checkId; Category = category; Title = title; Status = status; Severity = severity; Summary = summary }
+
+    let private skipped (check: LocalOutputDto.DoctorCheckDto) summary = checkResult check.Id check.Category check.Title "Skipped" "Info" summary
+
+    let private resultForCheck (context: DoctorInspectionContext) (check: LocalOutputDto.DoctorCheckDto) : LocalOutputDto.DoctorCheckResultDto =
+        let ok summary = checkResult check.Id check.Category check.Title "Ok" "Info" summary
+        let warning summary = checkResult check.Id check.Category check.Title "Warning" "Warning" summary
+        let failed summary = checkResult check.Id check.Category check.Title "Failed" "Error" summary
+
+        match check.Id with
+        | CliCatalogCheckId -> ok "Doctor check catalog is available."
+        | ConfigFileDiscoverCheckId ->
+            match context.ConfigurationState with
+            | ConfigurationLoaded inspection -> ok $"Found {Constants.GraceConfigFileName} at {inspection.Path}; repository root {inspection.RootDirectory}."
+            | ConfigurationMissing message -> warning $"{message} No configuration file was created."
+            | ConfigurationMalformed _ -> ok $"Found {Constants.GraceConfigFileName}, but parsing is reported by {ConfigFileParseCheckId}."
+        | ConfigFileParseCheckId ->
+            match context.ConfigurationState with
+            | ConfigurationLoaded inspection -> ok $"Parsed {inspection.Path} without rewriting it."
+            | ConfigurationMissing _ -> skipped check $"Skipped because {ConfigFileDiscoverCheckId} did not find {Constants.GraceConfigFileName}."
+            | ConfigurationMalformed message -> failed $"Could not parse {Constants.GraceConfigFileName}: {message}"
+        | ConfigRepositoryIdentityCheckId ->
+            match context.ConfigurationState with
+            | ConfigurationLoaded inspection ->
+                let configuration = inspection.Configuration
+
+                let missing =
+                    [|
+                        if configuration.OwnerId = OwnerId.Empty then "ownerId"
+
+                        if String.IsNullOrWhiteSpace(string configuration.OwnerName) then "ownerName"
+
+                        if configuration.OrganizationId = OrganizationId.Empty then "organizationId"
+
+                        if String.IsNullOrWhiteSpace(string configuration.OrganizationName) then
+                            "organizationName"
+
+                        if configuration.RepositoryId = RepositoryId.Empty then "repositoryId"
+
+                        if String.IsNullOrWhiteSpace(string configuration.RepositoryName) then
+                            "repositoryName"
+
+                        if configuration.BranchId = BranchId.Empty then "branchId"
+
+                        if String.IsNullOrWhiteSpace(string configuration.BranchName) then "branchName"
+                    |]
+
+                if Array.isEmpty missing then
+                    ok $"Repository identity is populated for root {inspection.RootDirectory}."
+                else
+                    let missingText = String.Join(", ", missing)
+                    warning $"Repository identity has blank or empty values: {missingText}."
+            | ConfigurationMissing _ -> skipped check $"Skipped because {ConfigFileDiscoverCheckId} did not find {Constants.GraceConfigFileName}."
+            | ConfigurationMalformed _ -> skipped check $"Skipped because {ConfigFileParseCheckId} failed."
+        | ConfigServerUriCheckId ->
+            match context.ConfigurationState with
+            | ConfigurationLoaded inspection ->
+                match Uri.TryCreate(inspection.Configuration.ServerUri, UriKind.Absolute) with
+                | true, uri when
+                    uri.Scheme = Uri.UriSchemeHttp
+                    || uri.Scheme = Uri.UriSchemeHttps
+                    ->
+                    let normalizedUri = uri.AbsoluteUri.TrimEnd('/')
+                    ok $"Configured server URI is {normalizedUri}."
+                | true, uri -> warning $"Configured server URI uses unsupported scheme '{uri.Scheme}'."
+                | false, _ -> failed $"Configured server URI is not an absolute URI: {inspection.Configuration.ServerUri}."
+            | ConfigurationMissing _ -> skipped check $"Skipped because {ConfigFileDiscoverCheckId} did not find {Constants.GraceConfigFileName}."
+            | ConfigurationMalformed _ -> skipped check $"Skipped because {ConfigFileParseCheckId} failed."
+        | ServerUriConsistencyCheckId ->
+            match context.ConfigurationState, context.EnvironmentServerUri with
+            | ConfigurationLoaded inspection, Some environmentServerUri ->
+                match Uri.TryCreate(inspection.Configuration.ServerUri, UriKind.Absolute), Uri.TryCreate(environmentServerUri, UriKind.Absolute) with
+                | (true, configured), (true, environmentValue) ->
+                    let configuredValue = configured.AbsoluteUri.TrimEnd('/')
+                    let environmentValue = environmentValue.AbsoluteUri.TrimEnd('/')
+
+                    if configuredValue.Equals(environmentValue, StringComparison.OrdinalIgnoreCase) then
+                        ok $"Configured server URI and {Constants.EnvironmentVariables.GraceServerUri} match."
+                    else
+                        warning $"Configured server URI '{configuredValue}' differs from {Constants.EnvironmentVariables.GraceServerUri} '{environmentValue}'."
+                | _, (false, _) -> warning $"{Constants.EnvironmentVariables.GraceServerUri} is not an absolute URI: {environmentServerUri}."
+                | (false, _), _ -> skipped check $"Skipped because {ConfigServerUriCheckId} did not produce a valid configured URI."
+            | ConfigurationLoaded _, None ->
+                ok $"{Constants.EnvironmentVariables.GraceServerUri} is not set; configuration server URI is the active local value."
+            | ConfigurationMissing _, _ -> skipped check $"Skipped because {ConfigFileDiscoverCheckId} did not find {Constants.GraceConfigFileName}."
+            | ConfigurationMalformed _, _ -> skipped check $"Skipped because {ConfigFileParseCheckId} failed."
+        | UserConfigDiscoverCheckId ->
+            if context.UserConfiguration.Exists then
+                ok $"Found user configuration at {context.UserConfiguration.Path}."
+            else
+                warning $"User configuration file was not found at {context.UserConfiguration.Path}; no file was created."
+        | UserConfigParseCheckId ->
+            if not context.UserConfiguration.Exists then
+                skipped check $"Skipped because {UserConfigDiscoverCheckId} did not find userconfig.json."
+            else
+                match context.UserConfiguration.ErrorMessage with
+                | Some message -> failed $"Could not parse user configuration: {message}"
+                | None -> ok $"Parsed user configuration at {context.UserConfiguration.Path} without rewriting it."
+        | IgnoreEntriesParseCheckId ->
+            match context.ConfigurationState with
+            | ConfigurationLoaded inspection ->
+                let ignore = inspection.Ignore
+
+                if ignore.Exists then
+                    ok
+                        $".graceignore has {ignore.Entries.Length} active entries: {ignore.FileEntries.Length} file patterns and {ignore.DirectoryEntries.Length} directory patterns."
+                else
+                    warning $".graceignore was not found at {ignore.Path}; no file was created."
+            | ConfigurationMissing _ -> skipped check $"Skipped because {ConfigFileDiscoverCheckId} did not find {Constants.GraceConfigFileName}."
+            | ConfigurationMalformed _ -> skipped check $"Skipped because {ConfigFileParseCheckId} failed."
+        | _ -> skipped check "No diagnostic implementation is registered for this check."
+
+    let private listOnlyResultForCheck (check: LocalOutputDto.DoctorCheckDto) : LocalOutputDto.DoctorCheckResultDto =
         {
             Id = check.Id
             Category = check.Category
             Title = check.Title
-            Status = "Ok"
+            Status = "Skipped"
             Severity = "Info"
-            Summary = "Scaffolded check only; no diagnostic probe ran in this slice."
+            Summary = "Catalog discovery only; diagnostic probes were not run."
         }
 
     let private summarize (checks: LocalOutputDto.DoctorCheckResultDto array) =
@@ -214,7 +440,13 @@ module Doctor =
             0
 
     let createReportForChecks full offline listOnly (checks: LocalOutputDto.DoctorCheckDto array) =
-        let results = checks |> Array.map resultForCheck
+        let results =
+            if listOnly then
+                checks |> Array.map listOnlyResultForCheck
+            else
+                let context = createInspectionContext ()
+                checks |> Array.map (resultForCheck context)
+
         let summary = summarize results
         let status = reportStatus summary
 

@@ -4,6 +4,7 @@ open FsUnit
 open Grace.CLI
 open Grace.CLI.Command
 open Grace.Shared
+open Grace.Shared.Client
 open NUnit.Framework
 open Spectre.Console
 open System
@@ -51,6 +52,85 @@ module DoctorCliTests =
                     Directory.Delete(tempDir, true)
                 with
                 | _ -> ()
+
+    let private withEnv (name: string) (value: string option) (action: unit -> unit) =
+        let original = Environment.GetEnvironmentVariable(name)
+
+        match value with
+        | Some v -> Environment.SetEnvironmentVariable(name, v)
+        | None -> Environment.SetEnvironmentVariable(name, null)
+
+        try
+            action ()
+        finally
+            Environment.SetEnvironmentVariable(name, original)
+
+    let private withIsolatedHome (root: string) (action: string -> unit) =
+        let home = Path.Combine(root, "home")
+        Directory.CreateDirectory(home) |> ignore
+
+        withEnv "USERPROFILE" (Some home) (fun () ->
+            withEnv "HOME" (Some home) (fun () -> withEnv Constants.EnvironmentVariables.GraceServerUri None (fun () -> action home)))
+
+    let private writeGraceConfig root serverUri =
+        let graceDir = Path.Combine(root, Constants.GraceConfigDirectory)
+        Directory.CreateDirectory(graceDir) |> ignore
+        let ownerId = string (Guid.NewGuid())
+        let organizationId = string (Guid.NewGuid())
+        let repositoryId = string (Guid.NewGuid())
+        let branchId = string (Guid.NewGuid())
+
+        File.WriteAllText(
+            Path.Combine(graceDir, Constants.GraceConfigFileName),
+            sprintf
+                """
+{
+  "ownerId": "%s",
+  "ownerName": "owner",
+  "organizationId": "%s",
+  "organizationName": "org",
+  "repositoryId": "%s",
+  "repositoryName": "repo",
+  "branchId": "%s",
+  "branchName": "main",
+  "serverUri": "%s",
+  "configurationVersion": "0.1",
+  "programVersion": "0.1"
+}
+"""
+                ownerId
+                organizationId
+                repositoryId
+                branchId
+                serverUri
+        )
+
+    let private snapshotFiles root =
+        if Directory.Exists(root) then
+            Directory.GetFiles(root, "*", SearchOption.AllDirectories)
+            |> Array.map (fun path -> Path.GetRelativePath(root, path), File.GetLastWriteTimeUtc(path), FileInfo(path).Length)
+            |> Array.sortBy (fun (relativePath, _, _) -> relativePath)
+        else
+            Array.empty
+
+    let private withUserConfigTemporarilyMissing (action: string -> unit) =
+        let userConfigPath = UserConfiguration.getUserConfigurationPath ()
+        let backupPath = Path.Combine(Path.GetTempPath(), $"grace-userconfig-backup-{Guid.NewGuid():N}.json")
+        let existed = File.Exists(userConfigPath)
+        let userConfigDirectory = Path.GetDirectoryName(userConfigPath)
+
+        try
+            if existed then File.Move(userConfigPath, backupPath)
+
+            action userConfigPath
+        finally
+            if File.Exists(userConfigPath) then File.Delete(userConfigPath)
+
+            if existed then
+                Directory.CreateDirectory(userConfigDirectory)
+                |> ignore
+
+                File.Move(backupPath, userConfigPath)
 
     let private parseJsonOutput (output: string) =
         output
@@ -113,12 +193,12 @@ module DoctorCliTests =
             |> should equal "Ok"
 
             returnValue.GetProperty("Checks").GetArrayLength()
-            |> should equal 4
+            |> should equal 11
 
             returnValue
                 .GetProperty("Catalog")
                 .GetArrayLength()
-            |> should equal 4
+            |> should equal 11
 
             let catalogIds =
                 returnValue
@@ -131,6 +211,13 @@ module DoctorCliTests =
             |> should contain "identity.auth-session"
 
             catalogIds |> should contain "server.connectivity"
+            catalogIds |> should contain "config.file.parse"
+
+            catalogIds
+            |> should contain "user-config.file.discover"
+
+            catalogIds
+            |> should contain "ignore.entries.parse"
 
             let firstCheck = returnValue.GetProperty("Checks")[0]
 
@@ -163,7 +250,12 @@ module DoctorCliTests =
                 |> Seq.map (fun check -> check.GetProperty("Id").GetString())
                 |> Set.ofSeq
 
-            catalogIds.Count |> should equal 2
+            catalogIds.Count |> should equal 9
+
+            catalogIds |> should contain "config.file.parse"
+
+            catalogIds
+            |> should contain "ignore.entries.parse"
 
             catalogIds
             |> should not' (contain "identity.auth-session")
@@ -193,7 +285,8 @@ module DoctorCliTests =
                     .GetProperty("ReturnValue")
                     .GetProperty("Checks")
 
-            checks.GetArrayLength() |> should equal 2)
+            checks.GetArrayLength()
+            |> should be (greaterThanOrEqualTo 5))
 
     [<Test>]
     let ``doctor explicit check includes non-default catalog entry without full`` () =
@@ -219,6 +312,209 @@ module DoctorCliTests =
 
             checks[ 0 ].GetProperty("Id").GetString()
             |> should equal "identity.auth-session")
+
+    [<Test>]
+    let ``doctor explicit config check is not filtered out without full`` () =
+        withTempDir (fun root ->
+            withIsolatedHome root (fun _ ->
+                writeGraceConfig root "http://127.0.0.1:5000"
+
+                let exitCode, standardOut, standardError =
+                    runWithCapturedStdoutAndStderr [| "--output"
+                                                      "Json"
+                                                      "doctor"
+                                                      "--check"
+                                                      "config.file.parse" |]
+
+                exitCode |> should equal 0
+
+                use document = assertCleanJsonOutput standardOut standardError
+
+                let checks =
+                    document
+                        .RootElement
+                        .GetProperty("ReturnValue")
+                        .GetProperty("Checks")
+
+                checks.GetArrayLength() |> should equal 1
+
+                checks[ 0 ].GetProperty("Id").GetString()
+                |> should equal "config.file.parse"
+
+                checks[ 0 ].GetProperty("Status").GetString()
+                |> should equal "Ok"))
+
+    [<Test>]
+    let ``doctor verbose select returns clean scalar for passing config check`` () =
+        withTempDir (fun root ->
+            withIsolatedHome root (fun _ ->
+                writeGraceConfig root "http://127.0.0.1:5000"
+
+                let exitCode, standardOut, standardError =
+                    runWithCapturedStdoutAndStderr [| "--output"
+                                                      "Verbose"
+                                                      "doctor"
+                                                      "--check"
+                                                      "config.file.parse"
+                                                      "--select"
+                                                      "Status" |]
+
+                exitCode |> should equal 0
+                standardError |> should equal String.Empty
+                standardOut.Trim() |> should equal "\"Ok\""
+
+                standardOut
+                |> should not' (contain "Grace doctor")
+
+                standardOut |> should not' (contain "EventTime")))
+
+    [<Test>]
+    let ``doctor reports config server uri mismatch and ignore counts without mutating files`` () =
+        withTempDir (fun root ->
+            withIsolatedHome root (fun home ->
+                writeGraceConfig root "http://127.0.0.1:5000"
+
+                File.WriteAllText(
+                    Path.Combine(root, Constants.GraceIgnoreFileName),
+                    """
+# comment
+bin/
+obj/
+*.tmp
+
+notes.txt # inline comment
+"""
+                )
+
+                let beforeRoot = snapshotFiles root
+                let beforeHome = snapshotFiles home
+
+                withEnv Constants.EnvironmentVariables.GraceServerUri (Some "http://127.0.0.1:6000") (fun () ->
+                    let exitCode, standardOut, standardError =
+                        runWithCapturedStdoutAndStderr [| "--output"
+                                                          "Json"
+                                                          "doctor"
+                                                          "--check"
+                                                          "config.file.parse"
+                                                          "--check"
+                                                          "server-uri.consistency"
+                                                          "--check"
+                                                          "ignore.entries.parse" |]
+
+                    exitCode |> should equal 0
+
+                    use document = assertCleanJsonOutput standardOut standardError
+
+                    let checks =
+                        document
+                            .RootElement
+                            .GetProperty("ReturnValue")
+                            .GetProperty("Checks")
+
+                    checks.GetArrayLength() |> should equal 3
+
+                    checks[ 0 ].GetProperty("Status").GetString()
+                    |> should equal "Ok"
+
+                    checks[ 1 ].GetProperty("Status").GetString()
+                    |> should equal "Warning"
+
+                    checks[ 2 ].GetProperty("Summary").GetString()
+                    |> should contain "4 active entries"
+
+                    snapshotFiles root |> should equal beforeRoot
+                    snapshotFiles home |> should equal beforeHome
+
+                    File.Exists(Path.Combine(root, Constants.GraceConfigDirectory, Constants.GraceLocalStateDbFileName))
+                    |> should equal false)))
+
+    [<Test>]
+    let ``doctor malformed config fails parse and selected skipped dependent output stays clean`` () =
+        withTempDir (fun root ->
+            withIsolatedHome root (fun home ->
+                let graceDir = Path.Combine(root, Constants.GraceConfigDirectory)
+                Directory.CreateDirectory(graceDir) |> ignore
+                File.WriteAllText(Path.Combine(graceDir, Constants.GraceConfigFileName), "{ not json")
+
+                let beforeRoot = snapshotFiles root
+                let beforeHome = snapshotFiles home
+
+                let exitCode, standardOut, standardError =
+                    runWithCapturedStdoutAndStderr [| "--output"
+                                                      "Verbose"
+                                                      "doctor"
+                                                      "--check"
+                                                      "config.file.parse"
+                                                      "--check"
+                                                      "ignore.entries.parse"
+                                                      "--select"
+                                                      "Checks" |]
+
+                exitCode |> should equal 1
+                standardError |> should equal String.Empty
+
+                standardOut
+                    .TrimStart()
+                    .StartsWith("[", StringComparison.Ordinal)
+                |> should equal true
+
+                standardOut
+                |> should not' (contain "Grace doctor")
+
+                standardOut |> should not' (contain "EventTime")
+
+                use document = JsonDocument.Parse(standardOut)
+                let checks = document.RootElement
+
+                checks.GetArrayLength() |> should equal 2
+
+                checks[ 0 ].GetProperty("Status").GetString()
+                |> should equal "Failed"
+
+                checks[ 1 ].GetProperty("Status").GetString()
+                |> should equal "Skipped"
+
+                snapshotFiles root |> should equal beforeRoot
+                snapshotFiles home |> should equal beforeHome))
+
+    [<Test>]
+    let ``doctor missing user config reports warning without creating user grace directory`` () =
+        withTempDir (fun root ->
+            withIsolatedHome root (fun home ->
+                withUserConfigTemporarilyMissing (fun userConfigPath ->
+                    let beforeHome = snapshotFiles home
+                    let beforeUserConfigExists = File.Exists(userConfigPath)
+
+                    let exitCode, standardOut, standardError =
+                        runWithCapturedStdoutAndStderr [| "--output"
+                                                          "Json"
+                                                          "doctor"
+                                                          "--check"
+                                                          "user-config.file.discover" |]
+
+                    exitCode |> should equal 0
+
+                    use document = assertCleanJsonOutput standardOut standardError
+
+                    let check =
+                        document
+                            .RootElement
+                            .GetProperty("ReturnValue")
+                            .GetProperty("Checks")[0]
+
+                    check.GetProperty("Status").GetString()
+                    |> should equal "Warning"
+
+                    check.GetProperty("Summary").GetString()
+                    |> should contain "no file was created"
+
+                    snapshotFiles home |> should equal beforeHome
+
+                    File.Exists(userConfigPath)
+                    |> should equal beforeUserConfigExists
+
+                    Directory.Exists(Path.Combine(home, Constants.GraceConfigDirectory))
+                    |> should equal false)))
 
     [<Test>]
     let ``doctor invalid check emits GraceError in json mode`` () =
@@ -300,17 +596,22 @@ module DoctorCliTests =
     [<TestCase("Minimal")>]
     let ``doctor suppresses successful human output for quiet output modes`` output =
         withTempDir (fun root ->
-            let exitCode, standardOut, standardError =
-                runWithCapturedStdoutAndStderr [| "--output"
-                                                  output
-                                                  "doctor" |]
+            withIsolatedHome root (fun _ ->
+                writeGraceConfig root "http://127.0.0.1:5000"
 
-            exitCode |> should equal 0
-            standardOut |> should equal String.Empty
-            standardError |> should equal String.Empty
+                let exitCode, standardOut, standardError =
+                    runWithCapturedStdoutAndStderr [| "--output"
+                                                      output
+                                                      "doctor"
+                                                      "--check"
+                                                      "config.file.parse" |]
 
-            Directory.Exists(Path.Combine(root, ".grace"))
-            |> should equal false)
+                exitCode |> should equal 0
+                standardOut |> should equal String.Empty
+                standardError |> should equal String.Empty
+
+                File.Exists(Path.Combine(root, Constants.GraceConfigDirectory, Constants.GraceLocalStateDbFileName))
+                |> should equal false))
 
     [<TestCase("Json")>]
     [<TestCase("Verbose")>]
@@ -325,7 +626,7 @@ module DoctorCliTests =
 
             exitCode |> should equal 0
             standardError |> should equal String.Empty
-            standardOut.Trim() |> should equal "\"Ok\""
+            standardOut.Trim() |> should equal "\"Warning\""
 
             Directory.Exists(Path.Combine(root, ".grace"))
             |> should equal false)
