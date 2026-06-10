@@ -11,8 +11,10 @@ open NUnit.Framework
 open Spectre.Console
 open System
 open System.IO
+open System.Net
 open System.Text
 open System.Text.Json
+open System.Threading.Tasks
 
 [<NonParallelizable>]
 module DoctorCliTests =
@@ -267,6 +269,46 @@ module DoctorCliTests =
             "object-cache.index-readable"
         |]
 
+    let private serverCheckIds =
+        [|
+            "server.healthz.reachable"
+            "server.lifecycle.headers"
+            "server.auth-principal.available"
+        |]
+
+    let private withDoctorServerProbeFactory factory action =
+        Doctor.setServerProbeFactoryForTests factory
+
+        try
+            action ()
+        finally
+            Doctor.resetServerProbeFactoryForTests ()
+
+    let private successfulProbeWithLifecycle diagnostics =
+        Doctor.ServerProbeSucceeded
+            {
+                StatusCode = HttpStatusCode.OK
+                ReasonPhrase = "OK"
+                LifecycleDiagnostics = diagnostics
+                Body = """{"GraceUserId":"doctor-user","Claims":["repo.read"]}"""
+            }
+
+    let private noLifecycleProbe = successfulProbeWithLifecycle None
+
+    let private lifecycleDiagnostics status unsupportedAfter minimumVersion recommendedVersion updateUrl updateUrlIsHttps unsupportedAfterIsMalformed =
+        let diagnostics: Grace.SDK.ClientIdentity.LifecycleDiagnostics =
+            {
+                Status = status
+                UnsupportedAfter = unsupportedAfter
+                UnsupportedAfterIsMalformed = unsupportedAfterIsMalformed
+                MinimumVersion = minimumVersion
+                RecommendedVersion = recommendedVersion
+                UpdateUrl = updateUrl
+                UpdateUrlIsHttps = updateUrlIsHttps
+            }
+
+        Some diagnostics
+
     [<Test>]
     let ``doctor help works without config and shows v1 options`` () =
         withTempDir (fun root ->
@@ -308,12 +350,12 @@ module DoctorCliTests =
             |> should equal "Ok"
 
             returnValue.GetProperty("Checks").GetArrayLength()
-            |> should equal 23
+            |> should equal 26
 
             returnValue
                 .GetProperty("Catalog")
                 .GetArrayLength()
-            |> should equal 23
+            |> should equal 26
 
             let catalogIds =
                 returnValue
@@ -364,6 +406,9 @@ module DoctorCliTests =
             catalogIds |> should contain "server.connectivity"
             catalogIds |> should contain "config.file.parse"
 
+            for checkId in serverCheckIds do
+                catalogIds |> should contain checkId
+
             catalogIds
             |> should contain "user-config.file.discover"
 
@@ -379,58 +424,690 @@ module DoctorCliTests =
             |> should equal false)
 
     [<Test>]
-    let ``doctor list checks offline keeps only offline catalog entries`` () =
+    let ``doctor list checks offline keeps full catalog without probing`` () =
         withTempDir (fun _ ->
-            let exitCode, standardOut, standardError =
-                runWithCapturedStdoutAndStderr [| "--output"
-                                                  "Json"
-                                                  "doctor"
-                                                  "--list-checks"
-                                                  "--offline" |]
+            let requestCount = ref 0
 
-            exitCode |> should equal 0
+            withDoctorServerProbeFactory
+                (fun _ ->
+                    incr requestCount
+                    Task.FromResult noLifecycleProbe)
+                (fun () ->
+                    let exitCode, standardOut, standardError =
+                        runWithCapturedStdoutAndStderr [| "--output"
+                                                          "Json"
+                                                          "doctor"
+                                                          "--list-checks"
+                                                          "--offline" |]
 
-            use document = assertCleanJsonOutput standardOut standardError
+                    exitCode |> should equal 0
 
-            let catalogIds =
-                document
-                    .RootElement
-                    .GetProperty("ReturnValue")
-                    .GetProperty("Catalog")
-                    .EnumerateArray()
-                |> Seq.map (fun check -> check.GetProperty("Id").GetString())
-                |> Set.ofSeq
+                    use document = assertCleanJsonOutput standardOut standardError
 
-            catalogIds.Count |> should equal 21
+                    let catalogIds =
+                        document
+                            .RootElement
+                            .GetProperty("ReturnValue")
+                            .GetProperty("Catalog")
+                            .EnumerateArray()
+                        |> Seq.map (fun check -> check.GetProperty("Id").GetString())
+                        |> Set.ofSeq
 
-            catalogIds |> should contain "config.file.parse"
+                    catalogIds.Count |> should equal 26
 
-            catalogIds
-            |> should contain "ignore.entries.parse"
+                    catalogIds |> should contain "config.file.parse"
 
-            catalogIds
-            |> should contain "auth.source.detected"
+                    catalogIds
+                    |> should contain "ignore.entries.parse"
 
-            catalogIds
-            |> should contain "auth.env-token.valid"
+                    catalogIds
+                    |> should contain "auth.source.detected"
 
-            catalogIds
-            |> should contain "auth.token-file.unsupported"
+                    catalogIds
+                    |> should contain "auth.env-token.valid"
 
-            catalogIds
-            |> should contain "auth.oidc.configuration"
+                    catalogIds
+                    |> should contain "auth.token-file.unsupported"
 
-            catalogIds
-            |> should contain "state.db.file-present"
+                    catalogIds
+                    |> should contain "auth.oidc.configuration"
 
-            catalogIds
-            |> should contain "object-cache.index-readable"
+                    catalogIds
+                    |> should contain "state.db.file-present"
 
-            catalogIds
-            |> should not' (contain "identity.auth-session")
+                    catalogIds
+                    |> should contain "object-cache.index-readable"
 
-            catalogIds
-            |> should not' (contain "server.connectivity"))
+                    catalogIds
+                    |> should contain "identity.auth-session"
+
+                    for checkId in serverCheckIds do
+                        catalogIds |> should contain checkId
+
+                    !requestCount |> should equal 0))
+
+    [<Test>]
+    let ``doctor server healthz reachable warns when lifecycle status is deprecated`` () =
+        withTempDir (fun root ->
+            withIsolatedHome root (fun _ ->
+                writeGraceConfig root "http://configured.example.test/base"
+                |> ignore
+
+                let requests = ResizeArray<Doctor.ServerProbeRequest>()
+
+                let diagnostics =
+                    lifecycleDiagnostics
+                        (Some "deprecated")
+                        (Some "2026-12-01")
+                        (Some "0.1.0")
+                        (Some "0.2.0")
+                        (Some "https://github.com/ScottArbeit/Grace/releases")
+                        (Some true)
+                        false
+
+                withDoctorServerProbeFactory
+                    (fun request ->
+                        requests.Add(request)
+                        Task.FromResult(successfulProbeWithLifecycle diagnostics))
+                    (fun () ->
+                        let exitCode, standardOut, standardError =
+                            runWithCapturedStdoutAndStderr [| "--output"
+                                                              "Json"
+                                                              "doctor"
+                                                              "--check"
+                                                              "server.healthz.reachable"
+                                                              "--check"
+                                                              "server.lifecycle.headers" |]
+
+                        exitCode |> should equal 0
+
+                        use document = assertCleanJsonOutput standardOut standardError
+
+                        let checks =
+                            document
+                                .RootElement
+                                .GetProperty("ReturnValue")
+                                .GetProperty("Checks")
+
+                        (findCheckById checks "server.healthz.reachable")
+                            .GetProperty("Status")
+                            .GetString()
+                        |> should equal "Ok"
+
+                        let lifecycle = findCheckById checks "server.lifecycle.headers"
+
+                        lifecycle.GetProperty("Status").GetString()
+                        |> should equal "Warning"
+
+                        lifecycle.GetProperty("Summary").GetString()
+                        |> should contain "deprecated"
+
+                        requests.Count |> should equal 1
+
+                        requests[0].BaseUri.AbsoluteUri
+                        |> should equal "http://configured.example.test/base"
+
+                        requests[0].RelativePath |> should equal "healthz"
+                        requests[0].BearerToken |> should equal None)))
+
+    [<Test>]
+    let ``doctor server healthz uses GRACE_SERVER_URI over config and reports mismatch separately`` () =
+        withTempDir (fun root ->
+            withIsolatedHome root (fun _ ->
+                writeGraceConfig root "http://configured.example.test"
+                |> ignore
+
+                let requests = ResizeArray<Doctor.ServerProbeRequest>()
+
+                withEnv Constants.EnvironmentVariables.GraceServerUri (Some "http://environment.example.test") (fun () ->
+                    withDoctorServerProbeFactory
+                        (fun request ->
+                            requests.Add(request)
+                            Task.FromResult noLifecycleProbe)
+                        (fun () ->
+                            let exitCode, standardOut, standardError =
+                                runWithCapturedStdoutAndStderr [| "--output"
+                                                                  "Json"
+                                                                  "doctor"
+                                                                  "--check"
+                                                                  "server-uri.consistency"
+                                                                  "--check"
+                                                                  "server.healthz.reachable" |]
+
+                            exitCode |> should equal 0
+
+                            use document = assertCleanJsonOutput standardOut standardError
+
+                            let checks =
+                                document
+                                    .RootElement
+                                    .GetProperty("ReturnValue")
+                                    .GetProperty("Checks")
+
+                            (findCheckById checks "server-uri.consistency")
+                                .GetProperty("Status")
+                                .GetString()
+                            |> should equal "Warning"
+
+                            (findCheckById checks "server.healthz.reachable")
+                                .GetProperty("Status")
+                                .GetString()
+                            |> should equal "Ok"
+
+                            requests.Count |> should equal 1
+
+                            requests[0].BaseUri.AbsoluteUri
+                            |> should equal "http://environment.example.test/"))))
+
+    [<Test>]
+    let ``doctor server healthz classifies non-success timeout tls connection and malformed uri findings`` () =
+        withTempDir (fun root ->
+            withIsolatedHome root (fun _ ->
+                for probeResult, expectedText in
+                    [
+                        Doctor.ServerProbeSucceeded
+                            { StatusCode = HttpStatusCode.ServiceUnavailable; ReasonPhrase = "Service Unavailable"; LifecycleDiagnostics = None; Body = "" },
+                        "503"
+                        Doctor.ServerProbeTimedOut "Timed out after 1500 ms while probing http://example.test/healthz.", "Timed out"
+                        Doctor.ServerProbeTlsFailed "TLS negotiation failed while probing https://example.test/healthz: certificate error", "TLS"
+                        Doctor.ServerProbeConnectionFailed "Could not connect to http://example.test/healthz: connection refused", "connect"
+                    ] do
+                    writeGraceConfig root "http://example.test"
+                    |> ignore
+
+                    withDoctorServerProbeFactory
+                        (fun _ -> Task.FromResult probeResult)
+                        (fun () ->
+                            let exitCode, standardOut, standardError =
+                                runWithCapturedStdoutAndStderr [| "--output"
+                                                                  "Json"
+                                                                  "doctor"
+                                                                  "--check"
+                                                                  "server.healthz.reachable" |]
+
+                            exitCode |> should equal 1
+
+                            use document = assertCleanJsonOutput standardOut standardError
+
+                            let check =
+                                document
+                                    .RootElement
+                                    .GetProperty("ReturnValue")
+                                    .GetProperty("Checks")[0]
+
+                            check.GetProperty("Status").GetString()
+                            |> should equal "Failed"
+
+                            check.GetProperty("Summary").GetString()
+                            |> should contain expectedText)
+
+                let lifecycleRejectionDiagnostics =
+                    lifecycleDiagnostics
+                        (Some "unsupported")
+                        (Some "2026-12-01")
+                        (Some "0.1.0")
+                        (Some "0.2.0")
+                        (Some "https://github.com/ScottArbeit/Grace/releases")
+                        (Some true)
+                        false
+
+                let lifecycleRejection =
+                    Doctor.ServerProbeSucceeded
+                        {
+                            StatusCode = HttpStatusCode.UpgradeRequired
+                            ReasonPhrase = "Upgrade Required"
+                            LifecycleDiagnostics = lifecycleRejectionDiagnostics
+                            Body = ""
+                        }
+
+                withDoctorServerProbeFactory
+                    (fun _ -> Task.FromResult lifecycleRejection)
+                    (fun () ->
+                        let exitCode, standardOut, standardError =
+                            runWithCapturedStdoutAndStderr [| "--output"
+                                                              "Json"
+                                                              "doctor"
+                                                              "--check"
+                                                              "server.healthz.reachable" |]
+
+                        exitCode |> should equal 1
+
+                        use document = assertCleanJsonOutput standardOut standardError
+
+                        let check =
+                            document
+                                .RootElement
+                                .GetProperty("ReturnValue")
+                                .GetProperty("Checks")[0]
+
+                        check.GetProperty("Status").GetString()
+                        |> should equal "Failed"
+
+                        let summary = check.GetProperty("Summary").GetString()
+
+                        summary |> should contain "unsupported"
+
+                        summary
+                        |> should contain "Update the Grace CLI/SDK"
+
+                        summary
+                        |> should not' (contain "check server health and GRACE_SERVER_URI"))
+
+                writeGraceConfig root "not-a-uri" |> ignore
+
+                let requestCount = ref 0
+
+                withDoctorServerProbeFactory
+                    (fun _ ->
+                        incr requestCount
+                        Task.FromResult noLifecycleProbe)
+                    (fun () ->
+                        let exitCode, standardOut, standardError =
+                            runWithCapturedStdoutAndStderr [| "--output"
+                                                              "Json"
+                                                              "doctor"
+                                                              "--check"
+                                                              "server.healthz.reachable" |]
+
+                        exitCode |> should equal 1
+
+                        use document = assertCleanJsonOutput standardOut standardError
+
+                        let check =
+                            document
+                                .RootElement
+                                .GetProperty("ReturnValue")
+                                .GetProperty("Checks")[0]
+
+                        check.GetProperty("Status").GetString()
+                        |> should equal "Failed"
+
+                        check.GetProperty("Summary").GetString()
+                        |> should contain "not an absolute URI"
+
+                        !requestCount |> should equal 0)))
+
+    [<Test>]
+    let ``doctor server lifecycle malformed date and non https update url warn cleanly`` () =
+        withTempDir (fun root ->
+            withIsolatedHome root (fun _ ->
+                writeGraceConfig root "http://example.test"
+                |> ignore
+
+                let diagnostics =
+                    lifecycleDiagnostics (Some "unsupported") (Some "not-a-date") (Some "0.1.0") None (Some "http://example.test/update") (Some false) true
+
+                withDoctorServerProbeFactory
+                    (fun _ -> Task.FromResult(successfulProbeWithLifecycle diagnostics))
+                    (fun () ->
+                        let exitCode, standardOut, standardError =
+                            runWithCapturedStdoutAndStderr [| "--output"
+                                                              "Json"
+                                                              "doctor"
+                                                              "--check"
+                                                              "server.lifecycle.headers" |]
+
+                        exitCode |> should equal 0
+
+                        use document = assertCleanJsonOutput standardOut standardError
+
+                        let check =
+                            document
+                                .RootElement
+                                .GetProperty("ReturnValue")
+                                .GetProperty("Checks")[0]
+
+                        check.GetProperty("Status").GetString()
+                        |> should equal "Warning"
+
+                        check.GetProperty("Summary").GetString()
+                        |> should contain "not-a-date"
+
+                        let summary = check.GetProperty("Summary").GetString()
+
+                        summary
+                        |> should contain "updateUrl=<suppressed because server value was not HTTPS>"
+
+                        summary
+                        |> should not' (contain "http://example.test/update"))))
+
+    [<Test>]
+    let ``doctor server explicit checks offline skip without network calls`` () =
+        withTempDir (fun root ->
+            withIsolatedHome root (fun _ ->
+                writeGraceConfig root "http://example.test"
+                |> ignore
+
+                let requestCount = ref 0
+
+                withDoctorServerProbeFactory
+                    (fun _ ->
+                        incr requestCount
+                        Task.FromResult noLifecycleProbe)
+                    (fun () ->
+                        let exitCode, standardOut, standardError =
+                            runWithCapturedStdoutAndStderr [| "--output"
+                                                              "Json"
+                                                              "doctor"
+                                                              "--offline"
+                                                              "--check"
+                                                              "server.healthz.reachable"
+                                                              "--check"
+                                                              "server.lifecycle.headers"
+                                                              "--check"
+                                                              "server.auth-principal.available" |]
+
+                        exitCode |> should equal 0
+
+                        use document = assertCleanJsonOutput standardOut standardError
+
+                        let checks =
+                            document
+                                .RootElement
+                                .GetProperty("ReturnValue")
+                                .GetProperty("Checks")
+
+                        checks.GetArrayLength() |> should equal 3
+
+                        for check in checks.EnumerateArray() do
+                            check.GetProperty("Status").GetString()
+                            |> should equal "Skipped"
+
+                            check.GetProperty("Summary").GetString()
+                            |> should contain "--offline"
+
+                        !requestCount |> should equal 0)))
+
+    [<Test>]
+    let ``doctor server principal skips without valid PAT and runs with non refreshing PAT only`` () =
+        withTempDir (fun root ->
+            withIsolatedHome root (fun _ ->
+                writeGraceConfig root "http://example.test"
+                |> ignore
+
+                let requestCount = ref 0
+
+                withDoctorServerProbeFactory
+                    (fun _ ->
+                        incr requestCount
+                        Task.FromResult noLifecycleProbe)
+                    (fun () ->
+                        let exitCode, standardOut, standardError =
+                            runWithCapturedStdoutAndStderr [| "--output"
+                                                              "Json"
+                                                              "doctor"
+                                                              "--check"
+                                                              "server.auth-principal.available" |]
+
+                        exitCode |> should equal 0
+
+                        use document = assertCleanJsonOutput standardOut standardError
+
+                        let check =
+                            document
+                                .RootElement
+                                .GetProperty("ReturnValue")
+                                .GetProperty("Checks")[0]
+
+                        check.GetProperty("Status").GetString()
+                        |> should equal "Skipped"
+
+                        check.GetProperty("Summary").GetString()
+                        |> should contain "no valid non-refreshing"
+
+                        !requestCount |> should equal 0)
+
+                withEnv Constants.EnvironmentVariables.GraceToken (Some "not-a-pat") (fun () ->
+                    withDoctorServerProbeFactory
+                        (fun _ ->
+                            incr requestCount
+                            Task.FromResult noLifecycleProbe)
+                        (fun () ->
+                            let exitCode, standardOut, standardError =
+                                runWithCapturedStdoutAndStderr [| "--output"
+                                                                  "Json"
+                                                                  "doctor"
+                                                                  "--check"
+                                                                  "server.auth-principal.available" |]
+
+                            exitCode |> should equal 0
+                            use document = assertCleanJsonOutput standardOut standardError
+
+                            let check =
+                                document
+                                    .RootElement
+                                    .GetProperty("ReturnValue")
+                                    .GetProperty("Checks")[0]
+
+                            check.GetProperty("Status").GetString()
+                            |> should equal "Skipped"
+
+                            !requestCount |> should equal 0))
+
+                let token = validPat ()
+                let principalRequests = ResizeArray<Doctor.ServerProbeRequest>()
+
+                withEnv Constants.EnvironmentVariables.GraceToken (Some token) (fun () ->
+                    withDoctorServerProbeFactory
+                        (fun request ->
+                            principalRequests.Add(request)
+                            Task.FromResult noLifecycleProbe)
+                        (fun () ->
+                            let exitCode, standardOut, standardError =
+                                runWithCapturedStdoutAndStderr [| "--output"
+                                                                  "Json"
+                                                                  "doctor"
+                                                                  "--check"
+                                                                  "server.auth-principal.available" |]
+
+                            exitCode |> should equal 0
+                            assertDoesNotContainSecrets [ token ] standardOut standardError
+
+                            use document = assertCleanJsonOutput standardOut standardError
+
+                            let check =
+                                document
+                                    .RootElement
+                                    .GetProperty("ReturnValue")
+                                    .GetProperty("Checks")[0]
+
+                            check.GetProperty("Status").GetString()
+                            |> should equal "Ok"
+
+                            principalRequests.Count |> should equal 1
+
+                            principalRequests[0].RelativePath
+                            |> should equal "auth/me"
+
+                            principalRequests[0].BearerToken
+                            |> should equal (Some token)))))
+
+    [<Test>]
+    let ``doctor server output modes and select stay clean`` () =
+        withTempDir (fun root ->
+            withIsolatedHome root (fun _ ->
+                writeGraceConfig root "http://example.test"
+                |> ignore
+
+                withDoctorServerProbeFactory
+                    (fun _ -> Task.FromResult noLifecycleProbe)
+                    (fun () ->
+                        for output in [ "Silent"; "Minimal" ] do
+                            let exitCode, standardOut, standardError =
+                                runWithCapturedStdoutAndStderr [| "--output"
+                                                                  output
+                                                                  "doctor"
+                                                                  "--check"
+                                                                  "server.healthz.reachable" |]
+
+                            exitCode |> should equal 0
+                            standardOut |> should equal String.Empty
+                            standardError |> should equal String.Empty
+
+                        let exitCode, standardOut, standardError =
+                            runWithCapturedStdoutAndStderr [| "--output"
+                                                              "Verbose"
+                                                              "doctor"
+                                                              "--check"
+                                                              "server.healthz.reachable"
+                                                              "--select"
+                                                              "Status" |]
+
+                        exitCode |> should equal 0
+                        standardError |> should equal String.Empty
+                        standardOut.Trim() |> should equal "\"Ok\""
+
+                        standardOut
+                        |> should not' (contain "Grace doctor")
+
+                        standardOut |> should not' (contain "healthz"))))
+
+    [<Test>]
+    let ``doctor server selected output is clean for failure warning offline and principal cases`` () =
+        withTempDir (fun root ->
+            withIsolatedHome root (fun _ ->
+                writeGraceConfig root "http://example.test"
+                |> ignore
+
+                let assertSelectedStatus expectedExitCode expectedStatus args probeResult token =
+                    let requestCount = ref 0
+
+                    withEnv Constants.EnvironmentVariables.GraceToken token (fun () ->
+                        withDoctorServerProbeFactory
+                            (fun _ ->
+                                incr requestCount
+                                Task.FromResult probeResult)
+                            (fun () ->
+                                let exitCode, standardOut, standardError = runWithCapturedStdoutAndStderr args
+
+                                exitCode |> should equal expectedExitCode
+                                standardError |> should equal String.Empty
+                                standardOut.Trim() |> should equal expectedStatus
+
+                                standardOut
+                                |> should not' (contain "Grace doctor")
+
+                                standardOut |> should not' (contain "EventTime")
+
+                                if Array.contains "--offline" args then !requestCount |> should equal 0))
+
+                assertSelectedStatus
+                    1
+                    "\"Failed\""
+                    [|
+                        "--output"
+                        "Verbose"
+                        "doctor"
+                        "--check"
+                        "server.healthz.reachable"
+                        "--select"
+                        "Status"
+                    |]
+                    (Doctor.ServerProbeConnectionFailed "Could not connect to http://example.test/healthz: connection refused")
+                    None
+
+                let warningDiagnostics =
+                    lifecycleDiagnostics (Some "unsupported") (Some "not-a-date") (Some "0.1.0") None (Some "http://example.test/update") (Some false) true
+
+                assertSelectedStatus
+                    0
+                    "\"Warning\""
+                    [|
+                        "--output"
+                        "Verbose"
+                        "doctor"
+                        "--check"
+                        "server.lifecycle.headers"
+                        "--select"
+                        "Status"
+                    |]
+                    (successfulProbeWithLifecycle warningDiagnostics)
+                    None
+
+                assertSelectedStatus
+                    0
+                    "\"Ok\""
+                    [|
+                        "--output"
+                        "Verbose"
+                        "doctor"
+                        "--offline"
+                        "--check"
+                        "server.healthz.reachable"
+                        "--select"
+                        "Status"
+                    |]
+                    noLifecycleProbe
+                    None
+
+                assertSelectedStatus
+                    0
+                    "\"Ok\""
+                    [|
+                        "--output"
+                        "Verbose"
+                        "doctor"
+                        "--check"
+                        "server.auth-principal.available"
+                        "--select"
+                        "Status"
+                    |]
+                    noLifecycleProbe
+                    None
+
+                let token = validPat ()
+
+                assertSelectedStatus
+                    0
+                    "\"Ok\""
+                    [|
+                        "--output"
+                        "Verbose"
+                        "doctor"
+                        "--check"
+                        "server.auth-principal.available"
+                        "--select"
+                        "Status"
+                    |]
+                    noLifecycleProbe
+                    (Some token)))
+
+    [<Test>]
+    let ``doctor server exact check selections are not filtered out`` () =
+        withTempDir (fun root ->
+            withIsolatedHome root (fun _ ->
+                writeGraceConfig root "http://example.test"
+                |> ignore
+
+                let assertExactCheck checkId =
+                    let exitCode, standardOut, standardError =
+                        runWithCapturedStdoutAndStderr [| "--output"
+                                                          "Json"
+                                                          "doctor"
+                                                          "--check"
+                                                          checkId |]
+
+                    exitCode |> should equal 0
+
+                    use document = assertCleanJsonOutput standardOut standardError
+
+                    let checks =
+                        document
+                            .RootElement
+                            .GetProperty("ReturnValue")
+                            .GetProperty("Checks")
+
+                    checks.GetArrayLength() |> should equal 1
+
+                    let actualCheckId = checks[ 0 ].GetProperty("Id").GetString()
+                    actualCheckId |> should equal checkId
+
+                withDoctorServerProbeFactory
+                    (fun _ -> Task.FromResult noLifecycleProbe)
+                    (fun () ->
+                        assertExactCheck "server.healthz.reachable"
+                        assertExactCheck "server.lifecycle.headers"
+                        assertExactCheck "server.auth-principal.available")))
 
     [<Test>]
     let ``doctor check filter accepts mixed case ids and categories`` () =
@@ -1966,7 +2643,7 @@ notes.txt # inline comment
     [<Test>]
     let ``doctor diagnostic exit codes map warning and failure reports`` () =
         let warningReport =
-            Doctor.createReportForChecks false false false Doctor.catalog
+            Doctor.createReportForChecks false true false Doctor.catalog
             |> Doctor.withStatus "Warning"
 
         Doctor.diagnosticExitCode false warningReport
