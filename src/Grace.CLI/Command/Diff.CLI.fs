@@ -320,7 +320,6 @@ module Diff =
 
                                         let! (updatedGraceStatus, newDirectoryVersions) = getNewGraceStatusAndDirectoryVersions previousGraceStatus differences
 
-                                        do! applyGraceStatusIncremental updatedGraceStatus newDirectoryVersions differences
                                         rootDirectoryId <- updatedGraceStatus.RootDirectoryId
                                         rootDirectorySha256Hash <- updatedGraceStatus.RootDirectorySha256Hash
                                         previousDirectoryIds <- updatedGraceStatus.Index.Keys.ToHashSet()
@@ -343,9 +342,13 @@ module Diff =
                                                      |> Seq.toArray)
                                             )
 
-                                        match! uploadFilesToObjectStorage getUploadMetadataForFilesParameters with
-                                        | Ok returnValue -> ()
-                                        | Error error -> logToAnsiConsole Colors.Error $"Failed to upload changed files to object storage. {error}"
+                                        let! uploadResult = uploadFilesToObjectStorage getUploadMetadataForFilesParameters
+
+                                        let uploadedFileVersions =
+                                            match uploadResult with
+                                            | Ok returnValue -> returnValue.ReturnValue
+                                            | Error error ->
+                                                raise (InvalidOperationException($"Failed to upload changed files to object storage. {error.Error}"))
 
                                         t3.Value <- 100.0
 
@@ -363,13 +366,11 @@ module Diff =
                                                 saveParameters.CorrelationId <- getCorrelationId parseResult
 
                                                 saveParameters.DirectoryVersions <-
-                                                    newDirectoryVersions
-                                                        .Select(fun dv -> dv.ToDirectoryVersion)
-                                                        .ToList()
+                                                    applyUploadedFileVersionsToDirectoryVersions uploadedFileVersions newDirectoryVersions
 
                                                 match! DirectoryVersion.SaveDirectoryVersions saveParameters with
                                                 | Ok returnValue -> ()
-                                                | Error error -> logToAnsiConsole Colors.Error $"Failed to upload new directory versions. {error}"
+                                                | Error error -> raise (InvalidOperationException($"Failed to upload new directory versions. {error.Error}"))
                                             })
                                                 .Wait()
 
@@ -387,9 +388,11 @@ module Diff =
                                                         (getCorrelationId parseResult)
                                                     with
                                                 | Ok saveReference -> ()
-                                                | Error error -> logToAnsiConsole Colors.Error $"Failed to create a save reference. {error}"
+                                                | Error error -> raise (InvalidOperationException($"Failed to create a save reference. {error.Error}"))
                                             })
                                                 .Wait()
+
+                                            do! applyGraceStatusIncremental updatedGraceStatus newDirectoryVersions differences
 
                                         t5.Value <- 100.0
 
@@ -623,7 +626,6 @@ module Diff =
                                             let! (updatedGraceStatus, newDirectoryVersions) =
                                                 getNewGraceStatusAndDirectoryVersions previousGraceStatus differences
 
-                                            do! applyGraceStatusIncremental updatedGraceStatus newDirectoryVersions differences
                                             rootDirectoryId <- updatedGraceStatus.RootDirectoryId
                                             rootDirectorySha256Hash <- updatedGraceStatus.RootDirectorySha256Hash
                                             previousDirectoryIds <- updatedGraceStatus.Index.Keys.ToHashSet()
@@ -646,9 +648,13 @@ module Diff =
                                                          |> Seq.toArray)
                                                 )
 
-                                            match! uploadFilesToObjectStorage getUploadMetadataForFilesParameters with
-                                            | Ok returnValue -> ()
-                                            | Error error -> logToAnsiConsole Colors.Error $"Failed to upload changed files to object storage. {error}"
+                                            let! uploadResult = uploadFilesToObjectStorage getUploadMetadataForFilesParameters
+
+                                            let uploadedFileVersions =
+                                                match uploadResult with
+                                                | Ok returnValue -> returnValue.ReturnValue
+                                                | Error error ->
+                                                    raise (InvalidOperationException($"Failed to upload changed files to object storage. {error.Error}"))
 
                                             t3.Value <- 100.0
 
@@ -666,13 +672,12 @@ module Diff =
                                                     saveParameters.CorrelationId <- getCorrelationId parseResult
 
                                                     saveParameters.DirectoryVersions <-
-                                                        newDirectoryVersions
-                                                            .Select(fun dv -> dv.ToDirectoryVersion)
-                                                            .ToList()
+                                                        applyUploadedFileVersionsToDirectoryVersions uploadedFileVersions newDirectoryVersions
 
                                                     match! DirectoryVersion.SaveDirectoryVersions saveParameters with
                                                     | Ok returnValue -> ()
-                                                    | Error error -> logToAnsiConsole Colors.Error $"Failed to upload new directory versions. {error}"
+                                                    | Error error ->
+                                                        raise (InvalidOperationException($"Failed to upload new directory versions. {error.Error}"))
                                                 })
                                                     .Wait()
 
@@ -689,9 +694,11 @@ module Diff =
                                                             (getCorrelationId parseResult)
                                                         with
                                                     | Ok saveReference -> ()
-                                                    | Error error -> logToAnsiConsole Colors.Error $"Failed to create a save reference. {error}"
+                                                    | Error error -> raise (InvalidOperationException($"Failed to create a save reference. {error.Error}"))
                                                 })
                                                     .Wait()
+
+                                                do! applyGraceStatusIncremental updatedGraceStatus newDirectoryVersions differences
 
                                             t5.Value <- 100.0
 
