@@ -304,6 +304,55 @@ module WatchTests =
         |> should equal (Some manifest)
 
     [<Test>]
+    let ``watch save overlay preserves newly uploaded manifest backed file version`` () =
+        let manifest = finalizedManifest ()
+
+        let localFileVersion =
+            LocalFileVersion.CreateWithHashes
+                (RelativePath "large.bin")
+                (Sha256Hash "watch-uploaded-manifest-sha")
+                (Blake3Hash $"{manifest.FileContentHash}")
+                true
+                manifest.Size
+                (getCurrentInstant ())
+                true
+                DateTime.UtcNow
+
+        localFileVersion.ToFileVersion.ContentReference.ReferenceType
+        |> should equal FileContentReferenceType.WholeFileContent
+
+        let uploadedFileVersion = localFileVersion.ToFileVersion
+        uploadedFileVersion.ContentReference <- FileContentReference.FileManifest manifest
+
+        let changedLocalDirectoryVersion =
+            LocalDirectoryVersion.CreateWithHashes
+                (Guid.NewGuid())
+                OwnerId.Empty
+                OrganizationId.Empty
+                RepositoryId.Empty
+                Constants.RootDirectoryPath
+                (Sha256Hash "watch-uploaded-directory-sha")
+                (Blake3Hash "watch-uploaded-directory-blake3")
+                (List<DirectoryVersionId>())
+                (List<LocalFileVersion>([| localFileVersion |]))
+                localFileVersion.Size
+                DateTime.UtcNow
+
+        let directoryVersion = toDirectoryVersionWithUploadedFiles [ uploadedFileVersion ] Seq.empty<DirectoryVersion> changedLocalDirectoryVersion
+
+        directoryVersion.Files.Count |> should equal 1
+
+        directoryVersion.Files[0]
+            .ContentReference
+            .ReferenceType
+        |> should equal FileContentReferenceType.FileManifest
+
+        directoryVersion.Files[0]
+            .ContentReference
+            .Manifest
+        |> should equal (Some manifest)
+
+    [<Test>]
     let ``watch exits with auth guidance when no token is configured`` () =
         withTempRepo (fun _ ->
             clearWatchAuthEnv (fun () ->

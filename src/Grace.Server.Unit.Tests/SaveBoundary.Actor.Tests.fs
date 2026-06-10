@@ -9,13 +9,54 @@ open NodaTime
 open NUnit.Framework
 open System
 open System.Collections.Generic
+open System.IO
 open System.Security.Cryptography
 open System.Text
+open System.Threading
+open System.Threading.Tasks
 
 module DirectoryVersionActor = Grace.Actors.DirectoryVersion
 module ManifestContributionWorkflowActor = Grace.Actors.ManifestContributionWorkflow
 module ReferenceActor = Grace.Actors.Reference
 module RepositoryContentCounterActor = Grace.Actors.RepositoryContentCounter
+
+type private ChunkedReadOnlyStream(bytes: byte array) =
+    inherit Stream()
+
+    let mutable position = 0
+    let mutable maxRequestedReadCount = 0
+
+    member _.MaxRequestedReadCount = maxRequestedReadCount
+
+    override _.CanRead = true
+    override _.CanSeek = false
+    override _.CanWrite = false
+    override _.Length = int64 bytes.Length
+
+    override _.Position
+        with get () = int64 position
+        and set _ = raise (NotSupportedException())
+
+    override _.Flush() = ()
+    override _.Seek(_, _) = raise (NotSupportedException())
+    override _.SetLength(_) = raise (NotSupportedException())
+    override _.Write(_, _, _) = raise (NotSupportedException())
+
+    override _.Read(buffer, offset, count) =
+        maxRequestedReadCount <- max maxRequestedReadCount count
+
+        if position >= bytes.Length then
+            0
+        else
+            let bytesToCopy = min count (bytes.Length - position)
+            Array.Copy(bytes, position, buffer, offset, bytesToCopy)
+            position <- position + bytesToCopy
+            bytesToCopy
+
+    override this.ReadAsync(buffer, offset, count, _cancellationToken) = Task.FromResult(this.Read(buffer, offset, count))
+
+    override _.CopyToAsync(_destination, _bufferSize, _cancellationToken) =
+        raise (InvalidOperationException("Whole-stream buffering is not allowed in this test."))
 
 [<Parallelizable(ParallelScope.All)>]
 type SaveBoundaryActorTests() =
@@ -217,6 +258,19 @@ type SaveBoundaryActorTests() =
             Assert.That(validatedFileVersion.Blake3Hash, Is.EqualTo(actualBlake3))
             Assert.That(fileVersion.Blake3Hash, Is.EqualTo(actualBlake3))
         | other -> Assert.Fail($"Expected successful validation with BLAKE3 backfill, got {other}.")
+
+    [<Test>]
+    member _.DirectoryVersionWholeFileHashComputationStreamsWithoutCopyingWholeObject() =
+        let bytes = Array.init ((64 * 1024 * 2) + 17) (fun index -> byte (index % 251))
+        use stream = new ChunkedReadOnlyStream(bytes)
+
+        let computedSha256Hash, computedBlake3Hash =
+            (DirectoryVersionActor.computeWholeFileContentHashes stream)
+                .Result
+
+        Assert.That(computedSha256Hash, Is.EqualTo(Sha256Hash(byteArrayToString (SHA256.HashData(bytes).AsSpan()))))
+        Assert.That(computedBlake3Hash, Is.EqualTo(Blake3Hash(ContentAddress.computeBlake3Hex bytes)))
+        Assert.That(stream.MaxRequestedReadCount, Is.LessThanOrEqualTo(64 * 1024))
 
     [<Test>]
     member _.SaveBoundaryAcceptsFinalizedManifestAfterDurableIncrementIntent() =

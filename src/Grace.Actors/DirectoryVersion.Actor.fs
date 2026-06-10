@@ -39,6 +39,7 @@ open System.Threading.Tasks
 open System.Reflection.Metadata
 open MessagePack
 open System.Threading
+open Blake3
 open Azure.Storage
 
 module DirectoryVersion =
@@ -65,14 +66,43 @@ module DirectoryVersion =
 
             Valid(fileVersion, computedSha256Hash, computedBlake3Hash, elapsedMs)
 
-    let private computeWholeFileContentHashes (stream: Stream) =
+    let internal computeWholeFileContentHashes (stream: Stream) =
         task {
-            use content = new MemoryStream()
-            do! stream.CopyToAsync(content)
-            let bytes = content.ToArray()
-            let sha256Hash = Sha256Hash(byteArrayToString (SHA256.HashData(bytes).AsSpan()))
-            let blake3Hash = Blake3Hash(ContentAddress.computeBlake3Hex bytes)
-            return sha256Hash, blake3Hash
+            if isNull stream then nullArg (nameof stream)
+
+            let bufferLength = 64 * 1024
+            let buffer = ArrayPool<byte>.Shared.Rent (bufferLength)
+            use sha256 = IncrementalHash.CreateHash(HashAlgorithmName.SHA256)
+            let mutable blake3 = Hasher.New()
+
+            try
+                let mutable moreToRead = true
+
+                while moreToRead do
+                    let! bytesRead = stream.ReadAsync(buffer, 0, bufferLength)
+
+                    if bytesRead > 0 then
+                        let chunk = buffer.AsSpan(0, bytesRead)
+                        sha256.AppendData(chunk)
+                        blake3.Update(chunk)
+                    else
+                        moreToRead <- false
+
+                let sha256Bytes = stackalloc<byte> SHA256.HashSizeInBytes
+                sha256.GetHashAndReset(sha256Bytes) |> ignore
+
+                let blake3Bytes = stackalloc<byte> Hash.Size
+                blake3.Finalize(blake3Bytes)
+
+                let sha256Hash = Sha256Hash(byteArrayToString sha256Bytes)
+                let blake3Hash = Blake3Hash(byteArrayToString blake3Bytes)
+
+                return sha256Hash, blake3Hash
+            finally
+                if not <| isNull buffer then
+                    ArrayPool<byte>.Shared.Return (buffer, clearArray = true)
+
+                blake3.Dispose()
         }
 
     /// Validates a single file's SHA-256 and BLAKE3 hashes by downloading from storage and computing.

@@ -298,6 +298,7 @@ module CurrentStateCaptureCliTests =
         let updatedRootId = Guid.NewGuid()
         let updatedRootSha = Sha256Hash "updated-root-sha"
         let mutable createdSave = false
+        let mutable appliedStatus = false
 
         let differences =
             List<FileSystemDifference>(
@@ -315,6 +316,10 @@ module CurrentStateCaptureCliTests =
                 ScanForDifferences = fun _ -> Task.FromResult(differences)
                 BuildUpdatedGraceStatus = fun _ _ -> Task.FromResult(updatedStatus, List<LocalDirectoryVersion>([| updatedRoot |]))
                 UploadDirectoryVersions = fun _ _ _ -> Task.FromResult(Error uploadError)
+                ApplyGraceStatusIncremental =
+                    fun _ _ _ ->
+                        appliedStatus <- true
+                        Task.FromResult(())
                 CreateSaveReference =
                     fun _ _ ->
                         createdSave <- true
@@ -332,6 +337,7 @@ module CurrentStateCaptureCliTests =
             |> should contain "previous directory lookup failed"
 
             createdSave |> should equal false
+            appliedStatus |> should equal false
 
     [<Test>]
     let ``local changes upload changed file versions already present in object cache`` () =

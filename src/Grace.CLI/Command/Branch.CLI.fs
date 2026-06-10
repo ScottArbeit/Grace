@@ -1277,9 +1277,12 @@ module Branch =
 
                                                     saveParameters.CorrelationId <- getCorrelationId parseResult
 
-                                                    let! uploadDirectoryVersions = DirectoryVersion.SaveDirectoryVersions saveParameters
-
-                                                    lastDirectoryVersionUpload <- getCurrentInstant ()
+                                                    match! DirectoryVersion.SaveDirectoryVersions saveParameters with
+                                                    | Ok _ -> lastDirectoryVersionUpload <- getCurrentInstant ()
+                                                    | Error error ->
+                                                        t4.Value <- 50.0
+                                                        priorDirectoryLookupError <- Some error
+                                                        implicitSaveError <- Some error
                                                 | Error error ->
                                                     logToAnsiConsole Colors.Error $"Error retrieving previous directory versions for save: {error.Error}"
 
@@ -1396,27 +1399,29 @@ module Branch =
                                     .Select(toDirectoryVersionWithUploadedFiles uploadedFileVersions previousDirectoryVersions)
                                     .ToList()
 
-                            let! uploadDirectoryVersions = DirectoryVersion.SaveDirectoryVersions saveParameters
-                            let rootDirectoryVersion = getRootDirectoryVersion previousGraceStatus
+                            match! DirectoryVersion.SaveDirectoryVersions saveParameters with
+                            | Error error -> return Error error
+                            | Ok _ ->
+                                let rootDirectoryVersion = getRootDirectoryVersion previousGraceStatus
 
-                            let sdkParameters =
-                                Parameters.Branch.CreateReferenceParameters(
-                                    BranchId = graceIds.BranchIdString,
-                                    BranchName = graceIds.BranchName,
-                                    OwnerId = graceIds.OwnerIdString,
-                                    OwnerName = graceIds.OwnerName,
-                                    OrganizationId = graceIds.OrganizationIdString,
-                                    OrganizationName = graceIds.OrganizationName,
-                                    RepositoryId = graceIds.RepositoryIdString,
-                                    RepositoryName = graceIds.RepositoryName,
-                                    DirectoryVersionId = rootDirectoryVersion.DirectoryVersionId,
-                                    Sha256Hash = rootDirectoryVersion.Sha256Hash,
-                                    Message = referenceMessage,
-                                    CorrelationId = graceIds.CorrelationId
-                                )
+                                let sdkParameters =
+                                    Parameters.Branch.CreateReferenceParameters(
+                                        BranchId = graceIds.BranchIdString,
+                                        BranchName = graceIds.BranchName,
+                                        OwnerId = graceIds.OwnerIdString,
+                                        OwnerName = graceIds.OwnerName,
+                                        OrganizationId = graceIds.OrganizationIdString,
+                                        OrganizationName = graceIds.OrganizationName,
+                                        RepositoryId = graceIds.RepositoryIdString,
+                                        RepositoryName = graceIds.RepositoryName,
+                                        DirectoryVersionId = rootDirectoryVersion.DirectoryVersionId,
+                                        Sha256Hash = rootDirectoryVersion.Sha256Hash,
+                                        Message = referenceMessage,
+                                        CorrelationId = graceIds.CorrelationId
+                                    )
 
-                            let! result = command sdkParameters
-                            return result
+                                let! result = command sdkParameters
+                                return result
                 | Error error, _ -> return Error error
                 | _, Error error -> return Error error
             with

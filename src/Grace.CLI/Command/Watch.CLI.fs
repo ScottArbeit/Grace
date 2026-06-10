@@ -317,7 +317,7 @@ module Watch =
     let updateObjectCacheFile (newDirectoryVersions: List<LocalDirectoryVersion>) = task { do! upsertObjectCache newDirectoryVersions }
 
     /// Updates the Grace Status file's Index with updates detected from the file system.
-    let updateGraceStatus graceStatus correlationId =
+    let updateGraceStatus graceStatus uploadedFileVersions correlationId =
         task {
             // Get the list of differences between what's in the working directory, and what Grace Index knows about.
             let! differences = scanForDifferences graceStatus
@@ -340,7 +340,7 @@ module Watch =
                     match! getPreviousDirectoryVersionsForChangedDirectories graceIds graceStatus newDirectoryVersions correlationId with
                     | Error error -> return Error error
                     | Ok previousDirectoryVersions ->
-                        return! uploadDirectoryVersionsWithUploadedFiles newDirectoryVersions Seq.empty<FileVersion> previousDirectoryVersions correlationId
+                        return! uploadDirectoryVersionsWithUploadedFiles newDirectoryVersions uploadedFileVersions previousDirectoryVersions correlationId
                 }
 
             match result with
@@ -408,9 +408,13 @@ module Watch =
                 getUploadMetadataForFilesParameters.FileVersions <- [| fileVersion |]
 
                 match! uploadFilesToObjectStorage getUploadMetadataForFilesParameters with
-                | Ok returnValue -> logToAnsiConsole Colors.Verbose $"File {fileVersion.GetObjectFileName} has been uploaded to storage."
-                | Error error -> logToAnsiConsole Colors.Error $"**Failed to upload {fileVersion.GetObjectFileName} to storage."
-            | None -> ()
+                | Ok returnValue ->
+                    logToAnsiConsole Colors.Verbose $"File {fileVersion.GetObjectFileName} has been uploaded to storage."
+                    return returnValue.ReturnValue :> seq<FileVersion>
+                | Error error ->
+                    logToAnsiConsole Colors.Error $"**Failed to upload {fileVersion.GetObjectFileName} to storage."
+                    return Seq.empty<FileVersion>
+            | None -> return Seq.empty<FileVersion>
         }
 
     /// Decompresses the GraceStatus information from the memory stream.
@@ -465,6 +469,7 @@ module Watch =
 
                     let mutable lastFileUploadInstant = graceStatus.LastSuccessfulFileUpload
                     let mutable processedAnyFile = false
+                    let uploadedFileVersions = List<FileVersion>()
 
                     /// This is just a way to throw away the unit value from the ConcurrentDictionary.
                     let mutable unitValue = ()
@@ -483,7 +488,8 @@ module Watch =
                     for fileName in filesToProcess.Keys.Take(50) do
                         if filesToProcess.TryRemove(fileName, &unitValue) then
                             logToAnsiConsole Colors.Verbose $"Processing {fileName}. filesToProcess.Count: {filesToProcess.Count}."
-                            do! copyFileToObjectDirectoryAndUploadToStorage getUploadMetadataForFilesParameters (FilePath fileName)
+                            let! uploadedFileVersion = copyFileToObjectDirectoryAndUploadToStorage getUploadMetadataForFilesParameters (FilePath fileName)
+                            uploadedFileVersions.AddRange(uploadedFileVersion)
                             processedAnyFile <- true
                             lastFileUploadInstant <- getCurrentInstant ()
 
@@ -497,7 +503,7 @@ module Watch =
                         let! graceStatusSnapshot = readGraceStatusFile ()
                         graceStatus <- graceStatusSnapshot
 
-                        match! (updateGraceStatus graceStatus correlationId) with
+                        match! (updateGraceStatus graceStatus uploadedFileVersions correlationId) with
                         | Some newGraceStatus -> graceStatus <- newGraceStatus
                         | None ->
                             logToAnsiConsole Colors.Important $"Grace Status file was not updated."
