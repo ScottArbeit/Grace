@@ -141,6 +141,14 @@ module LocalStateDbTests =
         else
             Directory.GetFiles(directoryPath, "grace-local.corrupt.*.db")
 
+    let private snapshotFile (path: string) =
+        if File.Exists(path) then
+            use stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite ||| FileShare.Delete)
+            use reader = new BinaryReader(stream)
+            Some(reader.ReadBytes(int stream.Length), File.GetLastWriteTimeUtc(path))
+        else
+            None
+
     let private seedSchemaVersionOnly (dbPath: string) (schemaVersion: string) =
         Directory.CreateDirectory(Path.GetDirectoryName(dbPath))
         |> ignore
@@ -520,6 +528,162 @@ module LocalStateDbTests =
                 if File.Exists(shmPath) then
                     File.GetLastWriteTimeUtc(shmPath)
                     |> should be (greaterThan oldTime)
+            })
+
+    [<Test>]
+    let ``read-only inspection reports valid database metadata`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                do! LocalStateDb.ensureDbInitialized configuration.GraceStatusFile
+
+                let inspection = LocalStateDb.inspectReadOnly configuration.GraceStatusFile
+
+                inspection.OpenedReadOnly |> should equal true
+                inspection.OpenError |> should equal None
+
+                inspection.SchemaVersion
+                |> should equal (Some "2")
+
+                inspection.MissingRequiredTables
+                |> should equal Array.empty<string>
+
+                inspection.MissingRequiredIndexes
+                |> should equal Array.empty<string>
+
+                inspection.IntegrityCheckRows
+                |> should equal [| "ok" |]
+
+                inspection.ForeignKeyViolations
+                |> should equal Array.empty<string>
+
+                inspection.ObjectCacheReadable
+                |> should equal (Some true)
+
+                inspection.ObjectCacheError |> should equal None
+            })
+
+    [<Test>]
+    let ``read-only inspection does not create missing parent or database`` () =
+        withTempDir (fun root _ ->
+            task {
+                let missingDbPath = Path.Combine(root, "missing-grace", Constants.GraceLocalStateDbFileName)
+
+                let inspection = LocalStateDb.inspectReadOnly missingDbPath
+
+                inspection.ParentDirectoryExists
+                |> should equal false
+
+                inspection.DbFileExists |> should equal false
+                inspection.OpenedReadOnly |> should equal false
+
+                Directory.Exists(Path.GetDirectoryName(missingDbPath))
+                |> should equal false
+
+                File.Exists(missingDbPath) |> should equal false
+            })
+
+    [<Test>]
+    let ``read-only inspection preserves corrupt bytes sidecars and backups`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                Directory.CreateDirectory(Path.GetDirectoryName(configuration.GraceStatusFile))
+                |> ignore
+
+                let corruptBytes = Encoding.UTF8.GetBytes("this is not a sqlite database")
+                File.WriteAllBytes(configuration.GraceStatusFile, corruptBytes)
+
+                let oldTime = DateTime.UtcNow.AddDays(-2.0)
+
+                let sidecars =
+                    [| "-journal"; "-wal"; "-shm" |]
+                    |> Array.map (fun suffix -> configuration.GraceStatusFile + suffix)
+
+                for sidecar in sidecars do
+                    File.WriteAllText(sidecar, $"sentinel-{Path.GetFileName(sidecar)}")
+                    File.SetLastWriteTimeUtc(sidecar, oldTime)
+
+                let dbBefore = snapshotFile configuration.GraceStatusFile
+                let sidecarsBefore = sidecars |> Array.map snapshotFile
+
+                let backupsBefore =
+                    getCorruptBackups configuration.GraceStatusFile
+                    |> Array.length
+
+                let inspection = LocalStateDb.inspectReadOnly configuration.GraceStatusFile
+
+                inspection.OpenedReadOnly |> should equal false
+                inspection.OpenError.IsSome |> should equal true
+
+                snapshotFile configuration.GraceStatusFile
+                |> should equal dbBefore
+
+                sidecars
+                |> Array.map snapshotFile
+                |> should equal sidecarsBefore
+
+                let backupsAfter =
+                    getCorruptBackups configuration.GraceStatusFile
+                    |> Array.length
+
+                backupsAfter |> should equal backupsBefore
+            })
+
+    [<Test>]
+    let ``read-only inspection reports schema mismatch without corrupt backup`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                seedSchemaVersionOnly configuration.GraceStatusFile "0"
+                let dbBefore = snapshotFile configuration.GraceStatusFile
+
+                let backupsBefore =
+                    getCorruptBackups configuration.GraceStatusFile
+                    |> Array.length
+
+                let inspection = LocalStateDb.inspectReadOnly configuration.GraceStatusFile
+
+                inspection.OpenedReadOnly |> should equal true
+
+                inspection.SchemaVersion
+                |> should equal (Some "0")
+
+                inspection.MissingRequiredTables
+                |> should contain "status_meta"
+
+                inspection.MissingRequiredIndexes
+                |> should contain "ix_object_cache_files_path_hash"
+
+                snapshotFile configuration.GraceStatusFile
+                |> should equal dbBefore
+
+                let backupsAfter =
+                    getCorruptBackups configuration.GraceStatusFile
+                    |> Array.length
+
+                backupsAfter |> should equal backupsBefore
+            })
+
+    [<Test>]
+    let ``read-only inspection reports foreign-key inconsistency without repair`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                do! LocalStateDb.ensureDbInitialized configuration.GraceStatusFile
+
+                use connection = openRawConnection configuration.GraceStatusFile
+                executeNonQuery connection "PRAGMA foreign_keys = OFF;"
+
+                executeNonQuery
+                    connection
+                    "INSERT INTO object_cache_directory_files (directory_version_id, relative_path, sha256_hash, is_binary, size_bytes, created_at_unix_ticks, uploaded_to_object_storage, last_write_time_utc_ticks) VALUES ('00000000-0000-0000-0000-000000000111', 'orphan.txt', 'hash', 0, 1, 0, 0, 0);"
+
+                let inspection = LocalStateDb.inspectReadOnly configuration.GraceStatusFile
+
+                inspection.OpenedReadOnly |> should equal true
+
+                inspection.ForeignKeyViolations.Length
+                |> should be (greaterThan 0)
+
+                let orphanCount = executeScalarInt connection "SELECT COUNT(*) FROM object_cache_directory_files WHERE relative_path = 'orphan.txt';"
+                orphanCount |> should equal 1
             })
 
     [<Test>]

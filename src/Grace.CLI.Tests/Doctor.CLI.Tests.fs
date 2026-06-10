@@ -6,10 +6,12 @@ open Grace.CLI.Command
 open Grace.Shared
 open Grace.Shared.Client
 open Grace.Types
+open Microsoft.Data.Sqlite
 open NUnit.Framework
 open Spectre.Console
 open System
 open System.IO
+open System.Text
 open System.Text.Json
 
 [<NonParallelizable>]
@@ -137,6 +139,51 @@ module DoctorCliTests =
 
         Path.Combine(graceDir, Constants.GraceConfigFileName)
 
+    let private localStateDbPath root = Path.Combine(root, Constants.GraceConfigDirectory, Constants.GraceLocalStateDbFileName)
+
+    let private getCorruptBackups root =
+        let graceDir = Path.Combine(root, Constants.GraceConfigDirectory)
+
+        if Directory.Exists(graceDir) then
+            Directory.GetFiles(graceDir, "grace-local.corrupt.*.db")
+        else
+            Array.empty
+
+    let private ensureValidLocalStateDb root =
+        writeGraceConfig root "http://127.0.0.1:5000"
+        |> ignore
+
+        LocalStateDb
+            .ensureDbInitialized(localStateDbPath root)
+            .GetAwaiter()
+            .GetResult()
+
+    let private openRawConnection (dbPath: string) =
+        let connection = new SqliteConnection($"Data Source={dbPath}")
+        connection.Open()
+        connection
+
+    let private executeNonQuery (connection: SqliteConnection) (sql: string) =
+        use cmd = connection.CreateCommand()
+        cmd.CommandText <- sql
+        cmd.ExecuteNonQuery() |> ignore
+
+    let private seedSchemaVersionOnly (dbPath: string) (schemaVersion: string) =
+        Directory.CreateDirectory(Path.GetDirectoryName(dbPath))
+        |> ignore
+
+        use connection = openRawConnection dbPath
+        executeNonQuery connection "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);"
+        executeNonQuery connection $"INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '{schemaVersion}');"
+
+    let private snapshotFile (path: string) =
+        if File.Exists(path) then
+            use stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite ||| FileShare.Delete)
+            use reader = new BinaryReader(stream)
+            Some(Convert.ToBase64String(reader.ReadBytes(int stream.Length)), File.GetLastWriteTimeUtc(path))
+        else
+            None
+
     let private snapshotFiles root =
         if Directory.Exists(root) then
             Directory.GetFiles(root, "*", SearchOption.AllDirectories)
@@ -201,6 +248,18 @@ module DoctorCliTests =
 
     let private validPat () = PersonalAccessToken.formatToken "doctor-user" (Guid.NewGuid()) (Array.create 32 7uy)
 
+    let private localStateCheckIds =
+        [|
+            "state.db.file-present"
+            "state.db.read-only-open"
+            "state.db.schema-version"
+            "state.db.required-tables"
+            "state.db.required-indexes"
+            "state.db.integrity-check"
+            "state.db.foreign-key-check"
+            "object-cache.index-readable"
+        |]
+
     [<Test>]
     let ``doctor help works without config and shows v1 options`` () =
         withTempDir (fun root ->
@@ -242,12 +301,12 @@ module DoctorCliTests =
             |> should equal "Ok"
 
             returnValue.GetProperty("Checks").GetArrayLength()
-            |> should equal 15
+            |> should equal 23
 
             returnValue
                 .GetProperty("Catalog")
                 .GetArrayLength()
-            |> should equal 15
+            |> should equal 23
 
             let catalogIds =
                 returnValue
@@ -267,6 +326,30 @@ module DoctorCliTests =
 
             catalogIds
             |> should contain "auth.oidc.configuration"
+
+            catalogIds
+            |> should contain "state.db.file-present"
+
+            catalogIds
+            |> should contain "state.db.read-only-open"
+
+            catalogIds
+            |> should contain "state.db.schema-version"
+
+            catalogIds
+            |> should contain "state.db.required-tables"
+
+            catalogIds
+            |> should contain "state.db.required-indexes"
+
+            catalogIds
+            |> should contain "state.db.integrity-check"
+
+            catalogIds
+            |> should contain "state.db.foreign-key-check"
+
+            catalogIds
+            |> should contain "object-cache.index-readable"
 
             catalogIds
             |> should contain "identity.auth-session"
@@ -311,7 +394,7 @@ module DoctorCliTests =
                 |> Seq.map (fun check -> check.GetProperty("Id").GetString())
                 |> Set.ofSeq
 
-            catalogIds.Count |> should equal 13
+            catalogIds.Count |> should equal 21
 
             catalogIds |> should contain "config.file.parse"
 
@@ -329,6 +412,12 @@ module DoctorCliTests =
 
             catalogIds
             |> should contain "auth.oidc.configuration"
+
+            catalogIds
+            |> should contain "state.db.file-present"
+
+            catalogIds
+            |> should contain "object-cache.index-readable"
 
             catalogIds
             |> should not' (contain "identity.auth-session")
@@ -869,6 +958,354 @@ module DoctorCliTests =
 
             catalogIds
             |> should contain "auth.oidc.configuration")
+
+    [<Test>]
+    let ``doctor list checks includes local-state and object-cache catalog ids`` () =
+        withTempDir (fun _ ->
+            let exitCode, standardOut, standardError =
+                runWithCapturedStdoutAndStderr [| "doctor"
+                                                  "--list-checks"
+                                                  "--select"
+                                                  "Catalog" |]
+
+            exitCode |> should equal 0
+            standardError |> should equal String.Empty
+
+            use document = JsonDocument.Parse(standardOut)
+
+            let catalogIds =
+                document.RootElement.EnumerateArray()
+                |> Seq.map (fun check -> check.GetProperty("Id").GetString())
+                |> Set.ofSeq
+
+            for checkId in localStateCheckIds do
+                catalogIds |> should contain checkId)
+
+    [<Test>]
+    let ``doctor local-state valid database reports read-only metadata checks`` () =
+        withTempDir (fun root ->
+            withIsolatedHome root (fun _ ->
+                ensureValidLocalStateDb root
+
+                let args =
+                    [|
+                        yield "--output"
+                        yield "Json"
+                        yield "doctor"
+
+                        for checkId in localStateCheckIds do
+                            yield "--check"
+                            yield checkId
+                    |]
+
+                let exitCode, standardOut, standardError = runWithCapturedStdoutAndStderr args
+
+                exitCode |> should equal 0
+
+                use document = assertCleanJsonOutput standardOut standardError
+
+                let checks =
+                    document
+                        .RootElement
+                        .GetProperty("ReturnValue")
+                        .GetProperty("Checks")
+
+                checks.GetArrayLength()
+                |> should equal localStateCheckIds.Length
+
+                for checkId in localStateCheckIds do
+                    let check = findCheckById checks checkId
+
+                    check.GetProperty("Status").GetString()
+                    |> should equal "Ok"
+
+                (findCheckById checks "state.db.schema-version")
+                    .GetProperty("Summary")
+                    .GetString()
+                |> should contain "schema_version is 2"
+
+                (findCheckById checks "object-cache.index-readable")
+                    .GetProperty("Summary")
+                    .GetString()
+                |> should contain "without mutation"))
+
+    [<Test>]
+    let ``doctor missing local-state parent reports check result without creating files`` () =
+        withTempDir (fun root ->
+            let beforeRoot = snapshotFiles root
+
+            let exitCode, standardOut, standardError =
+                runWithCapturedStdoutAndStderr [| "--output"
+                                                  "Json"
+                                                  "doctor"
+                                                  "--check"
+                                                  "state.db.file-present"
+                                                  "--check"
+                                                  "state.db.read-only-open" |]
+
+            exitCode |> should equal 0
+
+            use document = assertCleanJsonOutput standardOut standardError
+
+            let checks =
+                document
+                    .RootElement
+                    .GetProperty("ReturnValue")
+                    .GetProperty("Checks")
+
+            (findCheckById checks "state.db.file-present")
+                .GetProperty("Status")
+                .GetString()
+            |> should equal "Warning"
+
+            (findCheckById checks "state.db.read-only-open")
+                .GetProperty("Status")
+                .GetString()
+            |> should equal "Skipped"
+
+            Directory.Exists(Path.Combine(root, Constants.GraceConfigDirectory))
+            |> should equal false
+
+            snapshotFiles root |> should equal beforeRoot)
+
+    [<Test>]
+    let ``doctor missing local-state database warns without creating database`` () =
+        withTempDir (fun root ->
+            withIsolatedHome root (fun _ ->
+                writeGraceConfig root "http://127.0.0.1:5000"
+                |> ignore
+
+                let dbPath = localStateDbPath root
+                File.Exists(dbPath) |> should equal false
+                let beforeRoot = snapshotFiles root
+
+                let exitCode, standardOut, standardError =
+                    runWithCapturedStdoutAndStderr [| "--output"
+                                                      "Json"
+                                                      "doctor"
+                                                      "--check"
+                                                      "state.db.file-present"
+                                                      "--check"
+                                                      "state.db.schema-version" |]
+
+                exitCode |> should equal 0
+
+                use document = assertCleanJsonOutput standardOut standardError
+
+                let checks =
+                    document
+                        .RootElement
+                        .GetProperty("ReturnValue")
+                        .GetProperty("Checks")
+
+                (findCheckById checks "state.db.file-present")
+                    .GetProperty("Status")
+                    .GetString()
+                |> should equal "Warning"
+
+                (findCheckById checks "state.db.schema-version")
+                    .GetProperty("Status")
+                    .GetString()
+                |> should equal "Skipped"
+
+                File.Exists(dbPath) |> should equal false
+                snapshotFiles root |> should equal beforeRoot))
+
+    [<Test>]
+    let ``doctor local-state database path occupied by directory reports failure without mutation`` () =
+        withTempDir (fun root ->
+            withIsolatedHome root (fun _ ->
+                writeGraceConfig root "http://127.0.0.1:5000"
+                |> ignore
+
+                let dbPath = localStateDbPath root
+                Directory.CreateDirectory(dbPath) |> ignore
+                let beforeRoot = snapshotFiles root
+
+                let exitCode, standardOut, standardError =
+                    runWithCapturedStdoutAndStderr [| "--output"
+                                                      "Json"
+                                                      "doctor"
+                                                      "--check"
+                                                      "state.db.file-present"
+                                                      "--check"
+                                                      "state.db.read-only-open" |]
+
+                exitCode |> should equal 1
+
+                use document = assertCleanJsonOutput standardOut standardError
+
+                let checks =
+                    document
+                        .RootElement
+                        .GetProperty("ReturnValue")
+                        .GetProperty("Checks")
+
+                (findCheckById checks "state.db.file-present")
+                    .GetProperty("Status")
+                    .GetString()
+                |> should equal "Failed"
+
+                (findCheckById checks "state.db.read-only-open")
+                    .GetProperty("Status")
+                    .GetString()
+                |> should equal "Failed"
+
+                Directory.Exists(dbPath) |> should equal true
+                snapshotFiles root |> should equal beforeRoot))
+
+    [<Test>]
+    let ``doctor corrupt local-state database reports failure without moving bytes or sidecars`` () =
+        withTempDir (fun root ->
+            withIsolatedHome root (fun _ ->
+                writeGraceConfig root "http://127.0.0.1:5000"
+                |> ignore
+
+                let dbPath = localStateDbPath root
+                let bytes = Encoding.UTF8.GetBytes("not a sqlite database")
+                File.WriteAllBytes(dbPath, bytes)
+
+                let oldTime = DateTime.UtcNow.AddDays(-3.0)
+
+                let sidecars =
+                    [| "-journal"; "-wal"; "-shm" |]
+                    |> Array.map (fun suffix -> dbPath + suffix)
+
+                for sidecar in sidecars do
+                    File.WriteAllText(sidecar, "sentinel")
+                    File.SetLastWriteTimeUtc(sidecar, oldTime)
+
+                let dbBefore = snapshotFile dbPath
+                let sidecarsBefore = sidecars |> Array.map snapshotFile
+                let corruptBefore = getCorruptBackups root |> Array.length
+
+                let exitCode, standardOut, standardError =
+                    runWithCapturedStdoutAndStderr [| "--output"
+                                                      "Verbose"
+                                                      "doctor"
+                                                      "--check"
+                                                      "state.db.read-only-open"
+                                                      "--select"
+                                                      "Status" |]
+
+                exitCode |> should equal 1
+                standardError |> should equal String.Empty
+                standardOut.Trim() |> should equal "\"Failed\""
+
+                standardOut
+                |> should not' (contain "Grace doctor")
+
+                standardOut
+                |> should not' (contain "not a sqlite database")
+
+                snapshotFile dbPath |> should equal dbBefore
+
+                sidecars
+                |> Array.map snapshotFile
+                |> should equal sidecarsBefore
+
+                let corruptAfter = getCorruptBackups root |> Array.length
+                corruptAfter |> should equal corruptBefore))
+
+    [<Test>]
+    let ``doctor schema mismatch fails without corrupt backup`` () =
+        withTempDir (fun root ->
+            withIsolatedHome root (fun _ ->
+                writeGraceConfig root "http://127.0.0.1:5000"
+                |> ignore
+
+                let dbPath = localStateDbPath root
+                seedSchemaVersionOnly dbPath "0"
+                let dbBefore = snapshotFile dbPath
+                let corruptBefore = getCorruptBackups root |> Array.length
+
+                let exitCode, standardOut, standardError =
+                    runWithCapturedStdoutAndStderr [| "--output"
+                                                      "Json"
+                                                      "doctor"
+                                                      "--check"
+                                                      "state.db.schema-version"
+                                                      "--check"
+                                                      "state.db.required-tables"
+                                                      "--check"
+                                                      "object-cache.index-readable" |]
+
+                exitCode |> should equal 1
+
+                use document = assertCleanJsonOutput standardOut standardError
+
+                let checks =
+                    document
+                        .RootElement
+                        .GetProperty("ReturnValue")
+                        .GetProperty("Checks")
+
+                (findCheckById checks "state.db.schema-version")
+                    .GetProperty("Status")
+                    .GetString()
+                |> should equal "Failed"
+
+                (findCheckById checks "state.db.required-tables")
+                    .GetProperty("Summary")
+                    .GetString()
+                |> should contain "status_meta"
+
+                (findCheckById checks "object-cache.index-readable")
+                    .GetProperty("Status")
+                    .GetString()
+                |> should equal "Failed"
+
+                snapshotFile dbPath |> should equal dbBefore
+
+                let corruptAfter = getCorruptBackups root |> Array.length
+                corruptAfter |> should equal corruptBefore))
+
+    [<Test>]
+    let ``doctor local-state exact check selections are not filtered out`` () =
+        withTempDir (fun root ->
+            withIsolatedHome root (fun _ ->
+                ensureValidLocalStateDb root
+
+                for checkId in localStateCheckIds do
+                    let exitCode, standardOut, standardError =
+                        runWithCapturedStdoutAndStderr [| "--output"
+                                                          "Json"
+                                                          "doctor"
+                                                          "--check"
+                                                          checkId |]
+
+                    exitCode |> should equal 0
+
+                    use document = assertCleanJsonOutput standardOut standardError
+
+                    let checks =
+                        document
+                            .RootElement
+                            .GetProperty("ReturnValue")
+                            .GetProperty("Checks")
+
+                    checks.GetArrayLength() |> should equal 1
+
+                    checks[ 0 ].GetProperty("Id").GetString()
+                    |> should equal checkId))
+
+    [<TestCase("Silent")>]
+    [<TestCase("Minimal")>]
+    let ``doctor local-state successful diagnostics emit no output for quiet output modes`` output =
+        withTempDir (fun root ->
+            withIsolatedHome root (fun _ ->
+                ensureValidLocalStateDb root
+
+                let exitCode, standardOut, standardError =
+                    runWithCapturedStdoutAndStderr [| "--output"
+                                                      output
+                                                      "doctor"
+                                                      "--check"
+                                                      "state.db.schema-version" |]
+
+                exitCode |> should equal 0
+                standardOut |> should equal String.Empty
+                standardError |> should equal String.Empty))
 
     [<Test>]
     let ``doctor verbose select returns clean scalar for passing config check`` () =
