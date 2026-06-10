@@ -294,6 +294,46 @@ module CurrentStateCaptureCliTests =
         | Error error -> Assert.Fail($"Expected auto-save success, got: {error.Error}")
 
     [<Test>]
+    let ``local changes propagate directory upload failure before creating save reference`` () =
+        let updatedRootId = Guid.NewGuid()
+        let updatedRootSha = Sha256Hash "updated-root-sha"
+        let mutable createdSave = false
+
+        let differences =
+            List<FileSystemDifference>(
+                [|
+                    FileSystemDifference.Create DifferenceType.Add FileSystemEntryType.Directory (RelativePath "new-folder")
+                |]
+            )
+
+        let updatedStatus = graceStatus updatedRootId updatedRootSha
+        let updatedRoot = rootDirectoryVersion updatedRootId updatedRootSha
+        let uploadError = GraceError.Create "previous directory lookup failed" correlationId
+
+        let operations =
+            { defaultOperations (branch true ReferenceDto.Default) with
+                ScanForDifferences = fun _ -> Task.FromResult(differences)
+                BuildUpdatedGraceStatus = fun _ _ -> Task.FromResult(updatedStatus, List<LocalDirectoryVersion>([| updatedRoot |]))
+                UploadDirectoryVersions = fun _ _ _ -> Task.FromResult(Error uploadError)
+                CreateSaveReference =
+                    fun _ _ ->
+                        createdSave <- true
+                        Task.FromResult(Ok(Guid.NewGuid()))
+            }
+
+        let result =
+            (resolveCliCurrentStateTargetReference operations None branchAnnotateImplicitSaveMessage correlationId)
+                .Result
+
+        match result with
+        | Ok captured -> Assert.Fail($"Expected directory upload failure, got: {captured}")
+        | Error error ->
+            error.Error
+            |> should contain "previous directory lookup failed"
+
+            createdSave |> should equal false
+
+    [<Test>]
     let ``local changes upload changed file versions already present in object cache`` () =
         let updatedRootId = Guid.NewGuid()
         let updatedRootSha = Sha256Hash "updated-root-sha"
@@ -604,17 +644,21 @@ module CurrentStateCaptureCliTests =
                 (Sha256Hash "new-directory-sha")
                 (Blake3Hash "new-directory-blake3")
                 (List<DirectoryVersionId>())
-                (List<LocalFileVersion>([| unchangedLocalFileVersion; changedLocalFileVersion |]))
-                (unchangedLocalFileVersion.Size + changedLocalFileVersion.Size)
+                (List<LocalFileVersion>(
+                    [|
+                        unchangedLocalFileVersion
+                        changedLocalFileVersion
+                    |]
+                ))
+                (unchangedLocalFileVersion.Size
+                 + changedLocalFileVersion.Size)
                 DateTime.UtcNow
 
-        let directoryVersion =
-            toDirectoryVersionWithUploadedFiles [ uploadedChangedFileVersion ] [ previousDirectoryVersion ] localDirectoryVersion
+        let directoryVersion = toDirectoryVersionWithUploadedFiles [ uploadedChangedFileVersion ] [ previousDirectoryVersion ] localDirectoryVersion
 
         directoryVersion.Files.Count |> should equal 2
 
-        let unchangedFile =
-            directoryVersion.Files.Single(fun fileVersion -> fileVersion.RelativePath = unchangedLocalFileVersion.RelativePath)
+        let unchangedFile = directoryVersion.Files.Single(fun fileVersion -> fileVersion.RelativePath = unchangedLocalFileVersion.RelativePath)
 
         unchangedFile.ContentReference.ReferenceType
         |> should equal FileContentReferenceType.FileManifest
@@ -622,8 +666,7 @@ module CurrentStateCaptureCliTests =
         unchangedFile.ContentReference.Manifest
         |> should equal (Some unchangedManifest)
 
-        let changedFile =
-            directoryVersion.Files.Single(fun fileVersion -> fileVersion.RelativePath = changedLocalFileVersion.RelativePath)
+        let changedFile = directoryVersion.Files.Single(fun fileVersion -> fileVersion.RelativePath = changedLocalFileVersion.RelativePath)
 
         changedFile.ContentReference.ReferenceType
         |> should equal FileContentReferenceType.FileManifest

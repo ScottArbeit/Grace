@@ -266,6 +266,8 @@ module Diff =
                 let graceIds = getNormalizedIdsAndNames parseResult
 
                 if parseResult |> hasOutput then
+                    let mutable implicitSaveError: GraceError option = None
+
                     do!
                         progress
                             .Columns(progressColumns)
@@ -378,8 +380,11 @@ module Diff =
 
                                                     match! DirectoryVersion.SaveDirectoryVersions saveParameters with
                                                     | Ok returnValue -> ()
-                                                    | Error error -> logToAnsiConsole Colors.Error $"Failed to upload new directory versions. {error}"
+                                                    | Error error ->
+                                                        implicitSaveError <- Some error
+                                                        logToAnsiConsole Colors.Error $"Failed to upload new directory versions. {error}"
                                                 | Error error ->
+                                                    implicitSaveError <- Some error
                                                     logToAnsiConsole Colors.Error $"Failed to retrieve previous directory versions for save. {error}"
                                             })
                                                 .Wait()
@@ -388,7 +393,8 @@ module Diff =
 
                                         t5.StartTask()
 
-                                        if newDirectoryVersions.Count > 0 then
+                                        if newDirectoryVersions.Count > 0
+                                           && implicitSaveError.IsNone then
                                             (task {
                                                 match!
                                                     createSaveReference
@@ -515,10 +521,13 @@ module Diff =
                                 //AnsiConsole.MarkupLine($"[{Colors.Error}]{error.Error.EscapeMarkup()}[/]")
                                 })
 
-                    for markup in markupList do
-                        writeMarkup markup
+                    match implicitSaveError with
+                    | Some error -> return (Error error) |> renderOutput parseResult
+                    | None ->
+                        for markup in markupList do
+                            writeMarkup markup
 
-                    return 0
+                        return 0
                 else
                     // Do the thing here
                     return 0
@@ -584,6 +593,8 @@ module Diff =
                     let graceIds = getNormalizedIdsAndNames parseResult
 
                     if parseResult |> hasOutput then
+                        let mutable implicitSaveError: GraceError option = None
+
                         do!
                             progress
                                 .Columns(progressColumns)
@@ -692,8 +703,11 @@ module Diff =
 
                                                         match! DirectoryVersion.SaveDirectoryVersions saveParameters with
                                                         | Ok returnValue -> ()
-                                                        | Error error -> logToAnsiConsole Colors.Error $"Failed to upload new directory versions. {error}"
+                                                        | Error error ->
+                                                            implicitSaveError <- Some error
+                                                            logToAnsiConsole Colors.Error $"Failed to upload new directory versions. {error}"
                                                     | Error error ->
+                                                        implicitSaveError <- Some error
                                                         logToAnsiConsole Colors.Error $"Failed to retrieve previous directory versions for save. {error}"
                                                 })
                                                     .Wait()
@@ -702,7 +716,8 @@ module Diff =
 
                                             t5.StartTask()
 
-                                            if newDirectoryVersions.Count > 0 then
+                                            if newDirectoryVersions.Count > 0
+                                               && implicitSaveError.IsNone then
                                                 (task {
                                                     match!
                                                         createSaveReference
@@ -746,10 +761,13 @@ module Diff =
                                         t6.Value <- 100.0
                                     })
 
-                        for markup in markupList do
-                            writeMarkup markup
+                        match implicitSaveError with
+                        | Some error -> return (Error error) |> renderOutput parseResult
+                        | None ->
+                            for markup in markupList do
+                                writeMarkup markup
 
-                        return 0
+                            return 0
                     else
                         // Do the thing here
                         return 0

@@ -1,6 +1,7 @@
 namespace Grace.Server.Tests
 
 open Grace.Shared
+open Grace.Shared.Utilities
 open Grace.Types.ManifestContributionWorkflow
 open Grace.Types.RepositoryContentCounter
 open Grace.Types.Common
@@ -8,6 +9,7 @@ open NodaTime
 open NUnit.Framework
 open System
 open System.Collections.Generic
+open System.Security.Cryptography
 open System.Text
 
 module DirectoryVersionActor = Grace.Actors.DirectoryVersion
@@ -82,6 +84,15 @@ type SaveBoundaryActorTests() =
             String.Empty
             false
             42L
+
+    let wholeFileFromBytes relativePath (bytes: byte array) =
+        FileVersion.CreateWithHashes
+            relativePath
+            (Sha256Hash(byteArrayToString (SHA256.HashData(bytes).AsSpan())))
+            (Blake3Hash(ContentAddress.computeBlake3Hex bytes))
+            String.Empty
+            false
+            (int64 bytes.Length)
 
     let referenceDto referenceType =
         { Grace.Types.Reference.ReferenceDto.Default with
@@ -161,6 +172,38 @@ type SaveBoundaryActorTests() =
 
         Assert.That(filesToValidate, Has.Length.EqualTo(1))
         Assert.That(filesToValidate[0].RelativePath, Is.EqualTo(wholeFile.RelativePath))
+
+    [<Test>]
+    member _.SaveBoundaryRejectsWholeFileWhenFileVersionBlake3DoesNotMatchStoredBytes() =
+        let bytes = Encoding.UTF8.GetBytes("whole-file content with stale blake3")
+        let fileVersion = wholeFileFromBytes "/small.txt" bytes
+        let actualBlake3 = fileVersion.Blake3Hash
+        fileVersion.Blake3Hash <- Blake3Hash(ContentAddress.computeBlake3Hex (Encoding.UTF8.GetBytes("stale whole-file bytes")))
+
+        let result = DirectoryVersionActor.validateWholeFileHashesForSaveBoundary fileVersion fileVersion.Sha256Hash actualBlake3 1.0
+
+        match result with
+        | DirectoryVersionActor.Blake3HashMismatch (mismatchedFileVersion, expected, computed, _) ->
+            Assert.That(mismatchedFileVersion.RelativePath, Is.EqualTo(fileVersion.RelativePath))
+            Assert.That(expected, Is.EqualTo(fileVersion.Blake3Hash))
+            Assert.That(computed, Is.EqualTo(actualBlake3))
+        | other -> Assert.Fail($"Expected BLAKE3 hash mismatch, got {other}.")
+
+    [<Test>]
+    member _.SaveBoundaryBackfillsLegacyWholeFileWithMissingBlake3HashAfterStoredBytesValidate() =
+        let bytes = Encoding.UTF8.GetBytes("legacy whole-file content missing blake3")
+        let fileVersion = wholeFileFromBytes "/legacy-small.txt" bytes
+        let actualBlake3 = fileVersion.Blake3Hash
+        fileVersion.Blake3Hash <- Blake3Hash String.Empty
+
+        let result = DirectoryVersionActor.validateWholeFileHashesForSaveBoundary fileVersion fileVersion.Sha256Hash actualBlake3 1.0
+
+        match result with
+        | DirectoryVersionActor.Valid (validatedFileVersion, _, computedBlake3, _) ->
+            Assert.That(computedBlake3, Is.EqualTo(actualBlake3))
+            Assert.That(validatedFileVersion.Blake3Hash, Is.EqualTo(actualBlake3))
+            Assert.That(fileVersion.Blake3Hash, Is.EqualTo(actualBlake3))
+        | other -> Assert.Fail($"Expected successful validation with BLAKE3 backfill, got {other}.")
 
     [<Test>]
     member _.SaveBoundaryAcceptsFinalizedManifestAfterDurableIncrementIntent() =
