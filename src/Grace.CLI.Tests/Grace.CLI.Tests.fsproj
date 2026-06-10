@@ -39,6 +39,7 @@
     <Compile Include="PromotionSet.CLI.Tests.fs" />
     <Compile Include="Maintenance.CLI.Tests.fs" />
     <Compile Include="CommandOutputContract.CLI.Tests.fs" />
+    <Compile Include="CurrentStateCapture.CLI.Tests.fs" />
     <Compile Include="Watch.Tests.fs" />
     <Compile Include="LocalPlanner.SDK.Tests.fs" />
     <Compile Include="ManifestUpload.SDK.Tests.fs" />
