@@ -2248,14 +2248,18 @@ module Services =
                             SELECT TOP 1 c.State
                             FROM c
                             WHERE STARTSWITH(c.State[0].Event.created.Sha256Hash, @sha256Hash, true)
-                                AND STRINGEQUALS(c.State[0].Event.created.RelativePath, @relativePath, true)
+                                AND (
+                                    STRINGEQUALS(c.State[0].Event.created.RelativePath, @rootRelativePath, true)
+                                    OR STRINGEQUALS(c.State[0].Event.created.RelativePath, @slashRootRelativePath, true)
+                                )
                                 AND c.GrainType = @grainType
                                 AND c.PartitionKey = @partitionKey
                             ORDER BY c.State[0].Event.created.CreatedAt DESC
                             """
                         )
                             .WithParameter("@sha256Hash", sha256Hash)
-                            .WithParameter("@relativePath", Constants.RootDirectoryPath)
+                            .WithParameter("@rootRelativePath", Constants.RootDirectoryPath)
+                            .WithParameter("@slashRootRelativePath", RelativePath "/")
                             .WithParameter("@grainType", StateName.DirectoryVersion)
                             .WithParameter("@partitionKey", repositoryId)
 
