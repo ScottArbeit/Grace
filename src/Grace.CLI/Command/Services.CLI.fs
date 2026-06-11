@@ -2428,6 +2428,15 @@ module Services =
                     let objectFilePath = Path.Combine(objectDirectoryPath, objectFileName)
                     //logToConsole $"relativeDirectoryPath: {relativeDirectoryPath}; objectFileName: {objectFileName}; objectFilePath: {objectFilePath}"
 
+                    let createFileVersion (objectFilePathInfo: FileInfo) =
+                        FileVersion.CreateWithHashes
+                            (RelativePath relativeFilePath)
+                            (Sha256Hash $"{sha256Hash}")
+                            blake3Hash
+                            String.Empty
+                            isBinary
+                            objectFilePathInfo.Length
+
                     // If we don't already have this file, with this exact SHA256, make sure the directory exists,
                     //   and rename the temp file to the proper SHA256-enhanced name of the file.
                     if not (File.Exists(objectFilePath)) then
@@ -2440,23 +2449,23 @@ module Services =
                         let objectFilePathInfo = FileInfo(objectFilePath)
                         //logToConsole $"After creating FileInfo; Exists: {objectFilePathInfo.Exists}; FullName = {objectFilePathInfo.FullName}..."
                         //logToConsole $"Finished copyToObjectDirectory for {filePath}; isBinary: {isBinary}; moved temp file to object directory."
-                        let relativePath = Path.GetRelativePath(Current().RootDirectory, filePath)
-
-                        return
-                            Some(
-                                FileVersion.CreateWithHashes
-                                    (RelativePath relativePath)
-                                    (Sha256Hash $"{sha256Hash}")
-                                    blake3Hash
-                                    String.Empty
-                                    isBinary
-                                    objectFilePathInfo.Length
-                            )
+                        return Some(createFileVersion objectFilePathInfo)
                     else
-                        // If we do already have this exact version of the file, just delete the temp file.
-                        File.Delete(tempFilePath)
-                        //logToConsole $"Finished copyToObjectDirectory for {filePath}; object file already exists; deleted temp file."
-                        return None
+                        use objectFileStream = File.Open(objectFilePath, fileStreamOptionsRead)
+                        let! existingFileContentHash = computeBlake3ForFile objectFileStream
+                        let existingBlake3Hash = Blake3Hash $"{existingFileContentHash}"
+                        do! objectFileStream.DisposeAsync()
+
+                        if existingBlake3Hash <> blake3Hash then
+                            File.Move(tempFilePath, objectFilePath, true)
+                            let objectFilePathInfo = FileInfo(objectFilePath)
+                            return Some(createFileVersion objectFilePathInfo)
+                        else
+                            // The object already exists with matching SHA-256 and BLAKE3. Keep returning a version so
+                            // cache-hit changed files remain available to manifest upload/overlay callers.
+                            File.Delete(tempFilePath)
+                            let objectFilePathInfo = FileInfo(objectFilePath)
+                            return Some(createFileVersion objectFilePathInfo)
                 //return result
                 else
                     logToAnsiConsole Colors.Error $"File {filePath} does not exist."
