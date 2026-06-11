@@ -431,7 +431,14 @@ module Watch =
             let fileInfo = FileInfo(fullPath)
 
             match! createLocalFileVersion fileInfo with
-            | Some localFileVersion when File.Exists(localFileVersion.FullObjectPath) -> return Some localFileVersion.ToFileVersion
+            | Some localFileVersion ->
+                let relativeDirectoryPath = getLocalRelativeDirectory fullPath (Current().RootDirectory)
+                let objectFilePath = Path.Combine(Current().ObjectDirectory, relativeDirectoryPath, localFileVersion.GetObjectFileName)
+
+                if File.Exists(objectFilePath) then
+                    return Some localFileVersion.ToFileVersion
+                else
+                    return None
             | _ -> return None
         }
 
