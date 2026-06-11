@@ -155,6 +155,21 @@ module DirectoryVersion =
 
     let private hasMissingHash (value: string) = String.IsNullOrWhiteSpace value
 
+    let private hasValidatedLegacyDirectoryBlake3Gap (directoryVersion: DirectoryVersion) =
+        hasMissingHash directoryVersion.Blake3Hash
+        && not (hasMissingHash directoryVersion.Sha256Hash)
+        && directoryVersion.HashesValidated
+
+    let private hasLegacyManifestBackedFileBlake3Gap (fileVersion: FileVersion) =
+        let contentReference = normalizeContentReference fileVersion
+
+        match contentReference.ReferenceType, contentReference.Manifest with
+        | FileContentReferenceType.FileManifest, Some manifest ->
+            not (String.IsNullOrWhiteSpace manifest.FileContentHash)
+            && ContentAddress.isValidAddress manifest.FileContentHash
+            && fileVersion.Size = manifest.Size
+        | _ -> false
+
     let normalizeDirectoryVersionForSaveBoundary (directoryVersion: DirectoryVersion) =
         if directoryVersion.Size
            <> Constants.InitialDirectorySize then
@@ -220,7 +235,10 @@ module DirectoryVersion =
                                 directoryVersion
                                 $"has child directory '{childDirectoryVersion.RelativePath}' without Sha256Hash."
                         )
-                elif hasMissingHash childDirectoryVersion.Blake3Hash then
+                elif
+                    hasMissingHash childDirectoryVersion.Blake3Hash
+                    && not (hasValidatedLegacyDirectoryBlake3Gap childDirectoryVersion)
+                then
                     error <-
                         Some(
                             directoryVersionHashError
@@ -239,7 +257,10 @@ module DirectoryVersion =
 
                 if hasMissingHash fileVersion.Sha256Hash then
                     error <- Some(directoryVersionHashError correlationId directoryVersion $"has child file '{fileVersion.RelativePath}' without Sha256Hash.")
-                elif hasMissingHash fileVersion.Blake3Hash then
+                elif
+                    hasMissingHash fileVersion.Blake3Hash
+                    && not (hasLegacyManifestBackedFileBlake3Gap fileVersion)
+                then
                     error <- Some(directoryVersionHashError correlationId directoryVersion $"has child file '{fileVersion.RelativePath}' without Blake3Hash.")
 
                 fileIndex <- fileIndex + 1
@@ -283,7 +304,17 @@ module DirectoryVersion =
                     error <- Some(directoryVersionHashError correlationId directoryVersion $"references missing child DirectoryVersionId '{childDirectoryId}'.")
                 else
                     let! childDirectoryDto = childDirectoryActor.Get correlationId
-                    childDirectoryVersions.Add childDirectoryDto.DirectoryVersion
+                    let childDirectoryVersion = childDirectoryDto.DirectoryVersion
+
+                    if
+                        hasMissingHash childDirectoryVersion.Blake3Hash
+                        && not (hasMissingHash childDirectoryVersion.Sha256Hash)
+                    then
+                        // The child came from an existing actor, so this local DTO can carry the persisted-child marker
+                        // that lets parent saves tolerate immutable SHA-only legacy children without relaxing new creates.
+                        childDirectoryVersion.HashesValidated <- true
+
+                    childDirectoryVersions.Add childDirectoryVersion
 
                 childIndex <- childIndex + 1
 
