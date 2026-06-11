@@ -367,18 +367,6 @@ module DirectoryVersion =
                         let repositoryActorProxy = Repository.CreateActorProxy graceIds.OrganizationId graceIds.RepositoryId correlationId
                         let! repositoryDto = repositoryActorProxy.Get(correlationId)
 
-                        let routeHashError =
-                            parameters.DirectoryVersions
-                            |> Seq.tryPick (fun directoryVersion ->
-                                if String.IsNullOrWhiteSpace $"{directoryVersion.Blake3Hash}" then
-                                    Some(
-                                        GraceError.Create
-                                            $"DirectoryVersion '{directoryVersion.RelativePath}' must include DirectoryVersion.Blake3Hash before Save."
-                                            correlationId
-                                    )
-                                else
-                                    None)
-
                         let orderedDirectoryVersions =
                             parameters.DirectoryVersions
                             |> Seq.sortByDescending (fun directoryVersion ->
@@ -393,31 +381,37 @@ module DirectoryVersion =
                                     .Length)
                             |> Seq.toArray
 
-                        match routeHashError with
-                        | Some graceError -> results.Enqueue(Error graceError)
-                        | None ->
-                            for directoryVersion in orderedDirectoryVersions do
-                                try
-                                    // Check if the directory version exists. If it doesn't, create it.
-                                    let directoryVersionActor = DirectoryVersion.CreateActorProxy directoryVersion.DirectoryVersionId repositoryId correlationId
+                        for directoryVersion in orderedDirectoryVersions do
+                            try
+                                // Check if the directory version exists. If it doesn't, create it.
+                                let directoryVersionActor = DirectoryVersion.CreateActorProxy directoryVersion.DirectoryVersionId repositoryId correlationId
 
-                                    let! exists = directoryVersionActor.Exists parameters.CorrelationId
-                                    //logToConsole $"In SaveDirectoryVersions: {dv.DirectoryId} exists: {exists}"
-                                    if not <| exists then
+                                let! exists = directoryVersionActor.Exists parameters.CorrelationId
+                                //logToConsole $"In SaveDirectoryVersions: {dv.DirectoryId} exists: {exists}"
+                                if not <| exists then
+                                    if String.IsNullOrWhiteSpace $"{directoryVersion.Blake3Hash}" then
+                                        results.Enqueue(
+                                            Error(
+                                                GraceError.Create
+                                                    $"DirectoryVersion '{directoryVersion.RelativePath}' must include DirectoryVersion.Blake3Hash before Save."
+                                                    correlationId
+                                            )
+                                        )
+                                    else
                                         let! createResult =
                                             directoryVersionActor.Handle
                                                 (DirectoryVersionCommand.Create(directoryVersion, repositoryDto))
                                                 (createMetadata context)
 
                                         results.Enqueue(createResult)
-                                with
-                                | ex ->
-                                    let exceptionResponse = Utilities.ExceptionResponse.Create ex
+                            with
+                            | ex ->
+                                let exceptionResponse = Utilities.ExceptionResponse.Create ex
 
-                                    logToConsole
-                                        $"****Error in SaveDirectoryVersions: directoryVersion.Directories.Count: {directoryVersion.Directories.Count}; directoryVersion.Files.Count: {directoryVersion.Files.Count}."
+                                logToConsole
+                                    $"****Error in SaveDirectoryVersions: directoryVersion.Directories.Count: {directoryVersion.Directories.Count}; directoryVersion.Files.Count: {directoryVersion.Files.Count}."
 
-                                    logToConsole $"{exceptionResponse}"
+                                logToConsole $"{exceptionResponse}"
 
                         let firstError =
                             results

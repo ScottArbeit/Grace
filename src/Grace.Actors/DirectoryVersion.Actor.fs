@@ -175,6 +175,23 @@ module DirectoryVersion =
         && not (hasMissingHash fileVersion.Sha256Hash)
         && isWholeFileContentReference fileVersion
 
+    let private contentReferenceIdentity (fileVersion: FileVersion) =
+        let contentReference = normalizeContentReference fileVersion
+
+        match contentReference.ReferenceType, contentReference.Manifest with
+        | FileContentReferenceType.FileManifest, Some manifest -> $"{contentReference.ReferenceType}:{manifest.ManifestAddress}"
+        | referenceType, _ -> $"{referenceType}"
+
+    let private fileIdentity (fileVersion: FileVersion) =
+        (fileVersion.RelativePath, fileVersion.Size, fileVersion.Sha256Hash, fileVersion.Blake3Hash, contentReferenceIdentity fileVersion)
+
+    let private hasUnchangedLegacyWholeFileBlake3Gap (previouslyValidatedFiles: FileVersion seq) (fileVersion: FileVersion) =
+        hasLegacyWholeFileBlake3Gap fileVersion
+        && previouslyValidatedFiles
+           |> Seq.exists (fun previousFile ->
+               hasLegacyWholeFileBlake3Gap previousFile
+               && fileIdentity previousFile = fileIdentity fileVersion)
+
     let normalizeDirectoryVersionForSaveBoundary (directoryVersion: DirectoryVersion) =
         if directoryVersion.Size
            <> Constants.InitialDirectorySize then
@@ -217,9 +234,15 @@ module DirectoryVersion =
 
         computeSha256ForDirectoryEntries relativePath entries, computeBlake3ForDirectory relativePath entries
 
-    let validateDirectoryVersionHashesWithChildren correlationId (directoryVersion: DirectoryVersion) (childDirectoryVersions: seq<DirectoryVersion>) =
+    let validateDirectoryVersionHashesWithChildrenAndPreviousFiles
+        correlationId
+        (directoryVersion: DirectoryVersion)
+        (childDirectoryVersions: seq<DirectoryVersion>)
+        (previouslyValidatedFiles: FileVersion seq)
+        =
         let mutable error: GraceError option = None
         let childDirectoryVersions = childDirectoryVersions |> Seq.toArray
+        let previouslyValidatedFiles = previouslyValidatedFiles |> Seq.toArray
 
         if hasMissingHash directoryVersion.Sha256Hash then
             error <- Some(directoryVersionHashError correlationId directoryVersion "must include DirectoryVersion.Sha256Hash before Save.")
@@ -265,7 +288,7 @@ module DirectoryVersion =
                 elif
                     hasMissingHash fileVersion.Blake3Hash
                     && not (hasLegacyManifestBackedFileBlake3Gap fileVersion)
-                    && not (hasLegacyWholeFileBlake3Gap fileVersion)
+                    && not (hasUnchangedLegacyWholeFileBlake3Gap previouslyValidatedFiles fileVersion)
                 then
                     error <- Some(directoryVersionHashError correlationId directoryVersion $"has child file '{fileVersion.RelativePath}' without Blake3Hash.")
 
@@ -293,6 +316,9 @@ module DirectoryVersion =
                 )
             else
                 Ok()
+
+    let validateDirectoryVersionHashesWithChildren correlationId (directoryVersion: DirectoryVersion) (childDirectoryVersions: seq<DirectoryVersion>) =
+        validateDirectoryVersionHashesWithChildrenAndPreviousFiles correlationId directoryVersion childDirectoryVersions Array.empty<FileVersion>
 
     let private getChildDirectoryVersionsForValidation repositoryId correlationId (directoryVersion: DirectoryVersion) =
         task {
@@ -1006,7 +1032,24 @@ module DirectoryVersion =
                                 match! getChildDirectoryVersionsForValidation repositoryDto.RepositoryId metadata.CorrelationId directoryVersion with
                                 | Error graceError -> return Error graceError
                                 | Ok childDirectoryVersions ->
-                                    match validateDirectoryVersionHashesWithChildren metadata.CorrelationId directoryVersion childDirectoryVersions with
+                                    let! mostRecentDirectoryVersion =
+                                        getMostRecentDirectoryVersionByRelativePath
+                                            repositoryDto.RepositoryId
+                                            directoryVersion.RelativePath
+                                            metadata.CorrelationId
+
+                                    let previouslyValidatedFiles =
+                                        match mostRecentDirectoryVersion with
+                                        | Some previousDirectoryVersion -> previousDirectoryVersion.Files :> seq<FileVersion>
+                                        | None -> Seq.empty
+
+                                    match
+                                        validateDirectoryVersionHashesWithChildrenAndPreviousFiles
+                                            metadata.CorrelationId
+                                            directoryVersion
+                                            childDirectoryVersions
+                                            previouslyValidatedFiles
+                                        with
                                     | Error graceError -> return Error graceError
                                     | Ok () -> return Ok command
 
