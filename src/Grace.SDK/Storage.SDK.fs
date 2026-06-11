@@ -42,6 +42,13 @@ module Storage =
 
     let private contentBlockPlacement contentBlockAddress etag = { ObjectKey = StorageKeys.contentBlockObjectKey contentBlockAddress; ETag = etag }
 
+    let internal getLocalObjectCacheFileName (fileVersion: FileVersion) =
+        if String.IsNullOrWhiteSpace(string fileVersion.Blake3Hash) then
+            fileVersion.GetObjectFileName
+        else
+            let file = FileInfo($"{fileVersion.RelativePath}")
+            $"{file.Name.Replace(file.Extension, String.Empty)}_{fileVersion.Sha256Hash}_{fileVersion.Blake3Hash}{file.Extension}"
+
     let internal readStringResponseWithLifecycle (response: HttpResponseMessage) correlationId errorPrefix =
         task {
             let! responseText = response.Content.ReadAsStringAsync()
@@ -82,9 +89,11 @@ module Storage =
                             else
                                 getNativeFilePath fileVersion.RelativeDirectory
 
-                        let tempFilePath = Path.Combine(Path.GetTempPath(), relativeDirectory, fileVersion.GetObjectFileName)
+                        let localObjectCacheFileName = getLocalObjectCacheFileName fileVersion
 
-                        let objectFilePath = Path.Combine(Current().ObjectDirectory, fileVersion.RelativePath, fileVersion.GetObjectFileName)
+                        let tempFilePath = Path.Combine(Path.GetTempPath(), relativeDirectory, localObjectCacheFileName)
+
+                        let objectFilePath = Path.Combine(Current().ObjectDirectory, fileVersion.RelativePath, localObjectCacheFileName)
 
                         let tempFileInfo = FileInfo(tempFilePath)
                         let objectFileInfo = FileInfo(objectFilePath)
@@ -243,8 +252,7 @@ module Storage =
                                     $"""attachment; creation-date="{fileVersion.CreatedAt.ToString(InstantPattern.General.PatternText, CultureInfo.InvariantCulture)}" """
                             )
 
-                        let objectFilePath =
-                            $"{Current().ObjectDirectory}{Path.DirectorySeparatorChar}{fileVersion.RelativePath}{Path.DirectorySeparatorChar}{fileVersion.GetObjectFileName}"
+                        let objectFilePath = Path.Combine(Current().ObjectDirectory, string fileVersion.RelativePath, getLocalObjectCacheFileName fileVersion)
 
                         let normalizedObjectFilePath = Path.GetFullPath(objectFilePath)
 
