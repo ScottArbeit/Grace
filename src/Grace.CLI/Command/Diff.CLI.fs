@@ -365,8 +365,20 @@ module Diff =
                                                 saveParameters.RepositoryName <- graceIds.RepositoryName
                                                 saveParameters.CorrelationId <- getCorrelationId parseResult
 
+                                                let! savedDirectoryVersionsResult =
+                                                    getSavedDirectoryVersionsForRootDirectory previousGraceStatus.RootDirectoryId (getCorrelationId parseResult)
+
+                                                let savedDirectoryVersions =
+                                                    match savedDirectoryVersionsResult with
+                                                    | Ok returnValue -> returnValue
+                                                    | Error error ->
+                                                        raise (InvalidOperationException($"Failed to retrieve saved directory versions. {error.Error}"))
+
                                                 saveParameters.DirectoryVersions <-
-                                                    applyUploadedFileVersionsToDirectoryVersions uploadedFileVersions newDirectoryVersions
+                                                    applyUploadedFileVersionsToDirectoryVersionsWithSavedDirectoryVersions
+                                                        uploadedFileVersions
+                                                        savedDirectoryVersions
+                                                        newDirectoryVersions
 
                                                 match! DirectoryVersion.SaveDirectoryVersions saveParameters with
                                                 | Ok returnValue -> ()
@@ -671,8 +683,22 @@ module Diff =
                                                     saveParameters.RepositoryName <- graceIds.RepositoryName
                                                     saveParameters.CorrelationId <- getCorrelationId parseResult
 
+                                                    let! savedDirectoryVersionsResult =
+                                                        getSavedDirectoryVersionsForRootDirectory
+                                                            previousGraceStatus.RootDirectoryId
+                                                            (getCorrelationId parseResult)
+
+                                                    let savedDirectoryVersions =
+                                                        match savedDirectoryVersionsResult with
+                                                        | Ok returnValue -> returnValue
+                                                        | Error error ->
+                                                            raise (InvalidOperationException($"Failed to retrieve saved directory versions. {error.Error}"))
+
                                                     saveParameters.DirectoryVersions <-
-                                                        applyUploadedFileVersionsToDirectoryVersions uploadedFileVersions newDirectoryVersions
+                                                        applyUploadedFileVersionsToDirectoryVersionsWithSavedDirectoryVersions
+                                                            uploadedFileVersions
+                                                            savedDirectoryVersions
+                                                            newDirectoryVersions
 
                                                     match! DirectoryVersion.SaveDirectoryVersions saveParameters with
                                                     | Ok returnValue -> ()
