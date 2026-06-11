@@ -27,7 +27,7 @@ from pydantic_core import to_jsonable_python
 
 class BranchQueryParameters(BaseModel):
     """
-    Parameters for branch query endpoints that can resolve a branch or reference by hash or reference id.
+    Parameters for branch query endpoints that can resolve a branch or reference by SHA-256 hash or reference id.
     """ # noqa: E501
     correlation_id: Optional[StrictStr] = Field(default=None, description="Body DTO correlation id copied into Grace command/event metadata after request parsing. This field is distinct from the X-Correlation-Id transport header.", alias="CorrelationId")
     principal: Optional[StrictStr] = Field(default=None, description="The entity on whose behalf the action is being performed.", alias="Principal")
@@ -40,9 +40,8 @@ class BranchQueryParameters(BaseModel):
     branch_id: Optional[UUID] = Field(default=None, alias="BranchId")
     branch_name: Optional[StrictStr] = Field(default=None, alias="BranchName")
     sha256_hash: Optional[StrictStr] = Field(default=None, alias="Sha256Hash")
-    blake3_hash: Optional[StrictStr] = Field(default=None, alias="Blake3Hash")
     reference_id: Optional[UUID] = Field(default=None, alias="ReferenceId")
-    __properties: ClassVar[List[str]] = ["CorrelationId", "Principal", "OwnerId", "OwnerName", "OrganizationId", "OrganizationName", "RepositoryId", "RepositoryName", "BranchId", "BranchName", "Sha256Hash", "Blake3Hash", "ReferenceId"]
+    __properties: ClassVar[List[str]] = ["CorrelationId", "Principal", "OwnerId", "OwnerName", "OrganizationId", "OrganizationName", "RepositoryId", "RepositoryName", "BranchId", "BranchName", "Sha256Hash", "ReferenceId"]
 
     model_config = ConfigDict(
         validate_by_name=True,
@@ -106,7 +105,6 @@ class BranchQueryParameters(BaseModel):
             "BranchId": obj.get("BranchId"),
             "BranchName": obj.get("BranchName"),
             "Sha256Hash": obj.get("Sha256Hash"),
-            "Blake3Hash": obj.get("Blake3Hash"),
             "ReferenceId": obj.get("ReferenceId")
         })
         return _obj
