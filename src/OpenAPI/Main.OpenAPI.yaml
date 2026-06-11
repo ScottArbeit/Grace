@@ -160,6 +160,8 @@ paths:
     $ref: './Directory.Paths.OpenAPI.yaml#/~1directory~1getByDirectoryIds'
   /directory/getBySha256Hash:
     $ref: './Directory.Paths.OpenAPI.yaml#/~1directory~1getBySha256Hash'
+  /directory/getByBlake3Hash:
+    $ref: './Directory.Paths.OpenAPI.yaml#/~1directory~1getByBlake3Hash'
   /directory/saveDirectoryVersions:
     $ref: './Directory.Paths.OpenAPI.yaml#/~1directory~1saveDirectoryVersions'
       
@@ -379,6 +381,8 @@ components:
       $ref: 'Directory.Components.OpenAPI.yaml#/GetByDirectoryIdsParameters'
     GetBySha256HashParameters:
       $ref: 'Directory.Components.OpenAPI.yaml#/GetBySha256HashParameters'
+    GetByBlake3HashParameters:
+      $ref: 'Directory.Components.OpenAPI.yaml#/GetByBlake3HashParameters'
     SaveDirectoryVersionsParameters:
       $ref: 'Directory.Components.OpenAPI.yaml#/SaveDirectoryVersionsParameters'
 

@@ -101,6 +101,7 @@ __all__ = [
     "DirectoryParameters",
     "DirectoryVersion",
     "DirectoryVersionApiDto",
+    "DirectoryVersionHashLookupReturnValue",
     "DirectoryVersionListReturnValue",
     "DirectoryVersionReturnValue",
     "DiscoverContentBlocksParameters",
@@ -122,6 +123,7 @@ __all__ = [
     "GetBranchVersionParameters",
     "GetBranchesByBranchIdParameters",
     "GetBranchesParameters",
+    "GetByBlake3HashParameters",
     "GetByDirectoryIdsParameters",
     "GetBySha256HashParameters",
     "GetContentBlockDownloadUriParameters",
@@ -342,6 +344,7 @@ from grace_generated_openapi_probe.models.directory_command_return_value import 
 from grace_generated_openapi_probe.models.directory_parameters import DirectoryParameters as DirectoryParameters
 from grace_generated_openapi_probe.models.directory_version import DirectoryVersion as DirectoryVersion
 from grace_generated_openapi_probe.models.directory_version_api_dto import DirectoryVersionApiDto as DirectoryVersionApiDto
+from grace_generated_openapi_probe.models.directory_version_hash_lookup_return_value import DirectoryVersionHashLookupReturnValue as DirectoryVersionHashLookupReturnValue
 from grace_generated_openapi_probe.models.directory_version_list_return_value import DirectoryVersionListReturnValue as DirectoryVersionListReturnValue
 from grace_generated_openapi_probe.models.directory_version_return_value import DirectoryVersionReturnValue as DirectoryVersionReturnValue
 from grace_generated_openapi_probe.models.discover_content_blocks_parameters import DiscoverContentBlocksParameters as DiscoverContentBlocksParameters
@@ -363,6 +366,7 @@ from grace_generated_openapi_probe.models.get_branch_parameters import GetBranch
 from grace_generated_openapi_probe.models.get_branch_version_parameters import GetBranchVersionParameters as GetBranchVersionParameters
 from grace_generated_openapi_probe.models.get_branches_by_branch_id_parameters import GetBranchesByBranchIdParameters as GetBranchesByBranchIdParameters
 from grace_generated_openapi_probe.models.get_branches_parameters import GetBranchesParameters as GetBranchesParameters
+from grace_generated_openapi_probe.models.get_by_blake3_hash_parameters import GetByBlake3HashParameters as GetByBlake3HashParameters
 from grace_generated_openapi_probe.models.get_by_directory_ids_parameters import GetByDirectoryIdsParameters as GetByDirectoryIdsParameters
 from grace_generated_openapi_probe.models.get_by_sha256_hash_parameters import GetBySha256HashParameters as GetBySha256HashParameters
 from grace_generated_openapi_probe.models.get_content_block_download_uri_parameters import GetContentBlockDownloadUriParameters as GetContentBlockDownloadUriParameters

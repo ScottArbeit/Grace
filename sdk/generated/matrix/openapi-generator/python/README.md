@@ -147,6 +147,7 @@ Class | Method | HTTP request | Description
 *DiffsApi* | [**populate_diff**](docs/DiffsApi.md#populate_diff) | **POST** /diff/populate | Populate a diff actor.
 *DirectoriesApi* | [**create_directory_version**](docs/DirectoriesApi.md#create_directory_version) | **POST** /directory/create | Create a new directory version.
 *DirectoriesApi* | [**get_directory_version**](docs/DirectoriesApi.md#get_directory_version) | **POST** /directory/get | Get a directory version.
+*DirectoriesApi* | [**get_directory_version_by_blake3_hash**](docs/DirectoriesApi.md#get_directory_version_by_blake3_hash) | **POST** /directory/getByBlake3Hash | Get a directory version by BLAKE3 hash.
 *DirectoriesApi* | [**get_directory_version_by_sha256_hash**](docs/DirectoriesApi.md#get_directory_version_by_sha256_hash) | **POST** /directory/getBySha256Hash | Get a directory version by SHA-256 hash.
 *DirectoriesApi* | [**list_directory_versions_by_id**](docs/DirectoriesApi.md#list_directory_versions_by_id) | **POST** /directory/getByDirectoryIds | List directory versions by id.
 *DirectoriesApi* | [**list_directory_versions_recursive**](docs/DirectoriesApi.md#list_directory_versions_recursive) | **POST** /directory/getDirectoryVersionsRecursive | List a directory version and its children.
@@ -277,6 +278,7 @@ Class | Method | HTTP request | Description
  - [DirectoryParameters](docs/DirectoryParameters.md)
  - [DirectoryVersion](docs/DirectoryVersion.md)
  - [DirectoryVersionApiDto](docs/DirectoryVersionApiDto.md)
+ - [DirectoryVersionHashLookupReturnValue](docs/DirectoryVersionHashLookupReturnValue.md)
  - [DirectoryVersionListReturnValue](docs/DirectoryVersionListReturnValue.md)
  - [DirectoryVersionReturnValue](docs/DirectoryVersionReturnValue.md)
  - [DiscoverContentBlocksParameters](docs/DiscoverContentBlocksParameters.md)
@@ -298,6 +300,7 @@ Class | Method | HTTP request | Description
  - [GetBranchVersionParameters](docs/GetBranchVersionParameters.md)
  - [GetBranchesByBranchIdParameters](docs/GetBranchesByBranchIdParameters.md)
  - [GetBranchesParameters](docs/GetBranchesParameters.md)
+ - [GetByBlake3HashParameters](docs/GetByBlake3HashParameters.md)
  - [GetByDirectoryIdsParameters](docs/GetByDirectoryIdsParameters.md)
  - [GetBySha256HashParameters](docs/GetBySha256HashParameters.md)
  - [GetContentBlockDownloadUriParameters](docs/GetContentBlockDownloadUriParameters.md)
