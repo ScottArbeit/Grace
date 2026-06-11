@@ -17,7 +17,7 @@ open SQLitePCL
 
 module LocalStateDb =
     [<Literal>]
-    let private SchemaVersion = "3"
+    let private SchemaVersion = "2"
 
     [<Literal>]
     let private BusyTimeoutMs = 30000
