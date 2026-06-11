@@ -469,7 +469,9 @@ module Notification =
                     | _ -> return None
                 | ReferenceEvent referenceEvent ->
                     match referenceEvent.Event with
-                    | ReferenceEventType.Created (_, _, _, repositoryId, branchId, _, _, referenceType, _, links) when referenceType = ReferenceType.Promotion ->
+                    | ReferenceEventType.Created (_, _, _, repositoryId, branchId, _, _, _, referenceType, _, links) when
+                        referenceType = ReferenceType.Promotion
+                        ->
                         match tryGetTerminalPromotionSetId links with
                         | Some promotionSetId ->
                             let! branchDto = getBranchDto branchId repositoryId correlationId
@@ -675,6 +677,7 @@ module Notification =
                                                   branchId,
                                                   directoryId,
                                                   sha256Hash,
+                                                  blake3Hash,
                                                   referenceType,
                                                   referenceText,
                                                   links) ->
