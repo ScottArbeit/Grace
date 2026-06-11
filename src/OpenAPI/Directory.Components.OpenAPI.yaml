@@ -134,6 +134,21 @@
           additionalProperties:
             type: string
       required: [ReturnValue, EventTime, CorrelationId, Properties]
+    DirectoryVersionHashLookupReturnValue:
+      description: Grace response envelope whose ReturnValue contains a raw directory version.
+      type: object
+      properties:
+        ReturnValue:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/DirectoryVersion'
+        EventTime:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant'
+        CorrelationId:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/CorrelationId'
+        Properties:
+          type: object
+          additionalProperties:
+            type: string
+      required: [ReturnValue, EventTime, CorrelationId, Properties]
     DirectoryVersionListReturnValue:
       description: Grace response envelope whose ReturnValue contains directory version DTOs.
       type: object
@@ -167,6 +182,12 @@
         application/json:
           schema:
             $ref: '#/DirectoryVersionReturnValue'
+    DirectoryVersionHashLookupResponse:
+      description: OK
+      content:
+        application/json:
+          schema:
+            $ref: '#/DirectoryVersionHashLookupReturnValue'
     DirectoryVersionListResponse:
       description: OK
       content:
