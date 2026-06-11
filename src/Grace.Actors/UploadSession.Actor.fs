@@ -2,6 +2,7 @@ namespace Grace.Actors
 
 open Grace.Actors.Constants
 open Grace.Actors.Context
+open Grace.Actors.Extensions.ActorProxy
 open Grace.Actors.Interfaces
 open Grace.Actors.Services
 open Grace.Shared
@@ -315,6 +316,40 @@ module UploadSession =
     let private decodedLogicalLength (decodedBlock: ContentBlockFormat.DecodedContentBlock) =
         decodedBlock.Chunks
         |> Array.sumBy (fun chunk -> int64 chunk.Length)
+
+    let private manifestBlockAddresses (manifest: FileManifest) =
+        let addresses = HashSet<ContentBlockAddress>()
+
+        if
+            not (isNull (box manifest))
+            && not (isNull manifest.Blocks)
+        then
+            for block in manifest.Blocks do
+                if not (isNull (box block)) then addresses.Add(block.Address) |> ignore
+
+        addresses
+
+    let createContentBlockMetadataMergeCommandsForFinalizedUploads storagePoolId finalizeOperationId (session: UploadSessionDto) (manifest: FileManifest) =
+        let manifestAddresses = manifestBlockAddresses manifest
+        let commands = ResizeArray<ContentBlockMetadataCommand>()
+        let seen = HashSet<ContentBlockAddress>()
+
+        for confirmedBlock in session.ConfirmedBlockUploads do
+            if manifestAddresses.Contains confirmedBlock.ContentBlockAddress
+               && seen.Add confirmedBlock.ContentBlockAddress then
+                commands.Add(
+                    ContentBlockMetadataCommand.MergePhysicalRanges
+                        {
+                            OperationId = $"{finalizeOperationId}:content-block-metadata:{confirmedBlock.ContentBlockAddress}"
+                            StoragePoolId = storagePoolId
+                            ContentBlockAddress = confirmedBlock.ContentBlockAddress
+                            BlockFormatVersion = 1s
+                            StoragePlacement = confirmedBlock.StoragePlacement
+                            Ranges = confirmedBlock.Ranges
+                        }
+                )
+
+        commands.ToArray()
 
     let private manifestValidationErrorMessage error =
         match error with
@@ -755,6 +790,8 @@ module UploadSession =
                     | Ok decision ->
                         if not decision.Events.IsEmpty then do! this.ApplyEvents decision.Events
 
+                        let mutable sideEffectError: GraceError option = None
+
                         match command with
                         | UploadSessionCommand.Abandon operationId when not decision.WasIdempotentReplay ->
                             let reminderState =
@@ -795,31 +832,63 @@ module UploadSession =
                                         (ReminderState.UploadSessionPhysicalDeletion reminderState)
                                         metadata.CorrelationId
 
-                            let dedupeIndexActor = DedupeIndexActor.CreateActorProxy metadata.CorrelationId
+                            let storagePoolId = DedupeIndex.storagePoolIdForRepositoryId decision.Session.RepositoryId
 
-                            do!
-                                dedupeIndexActor.RegisterFinalizedManifest
-                                    {
-                                        StoragePoolId = DedupeIndex.storagePoolIdForRepositoryId decision.Session.RepositoryId
-                                        Session = decision.Session
-                                        Manifest = finalize.Manifest
-                                        BlockPayloads = finalize.BlockPayloads
-                                    }
-                                    metadata.CorrelationId
-                                :> Task
+                            let metadataCommands =
+                                createContentBlockMetadataMergeCommandsForFinalizedUploads storagePoolId finalize.OperationId decision.Session finalize.Manifest
+
+                            let mutable metadataIndex = 0
+                            let mutable metadataError = None
+
+                            while metadataIndex < metadataCommands.Length
+                                  && metadataError.IsNone do
+                                match metadataCommands[metadataIndex] with
+                                | ContentBlockMetadataCommand.MergePhysicalRanges merge ->
+                                    let actorKey = ContentBlockMetadataActorKey.Create merge.StoragePoolId merge.ContentBlockAddress
+
+                                    let metadataActor =
+                                        orleansClient.CreateActorProxyWithCorrelationId<IContentBlockMetadataActor>(actorKey, metadata.CorrelationId)
+
+                                    let! metadataResult = metadataActor.Handle metadataCommands[metadataIndex] metadata
+
+                                    match metadataResult with
+                                    | Ok _ -> ()
+                                    | Error error -> metadataError <- Some error
+                                | _ -> ()
+
+                                metadataIndex <- metadataIndex + 1
+
+                            match metadataError with
+                            | Some error -> sideEffectError <- Some error
+                            | None ->
+                                let dedupeIndexActor = DedupeIndexActor.CreateActorProxy metadata.CorrelationId
+
+                                do!
+                                    dedupeIndexActor.RegisterFinalizedManifest
+                                        {
+                                            StoragePoolId = storagePoolId
+                                            Session = decision.Session
+                                            Manifest = finalize.Manifest
+                                            BlockPayloads = finalize.BlockPayloads
+                                        }
+                                        metadata.CorrelationId
+                                    :> Task
                         | UploadSessionCommand.DeletePhysicalState _ ->
                             do! this.CompactPhysicalStateEvents()
                             this.DeactivateOnIdle()
                         | _ -> ()
 
-                        let returnValue =
-                            (GraceReturnValue.Create decision metadata.CorrelationId)
-                                .enhance(nameof RepositoryId, decision.Session.RepositoryId)
-                                .enhance(nameof UploadSessionId, decision.Session.UploadSessionId)
-                                .enhance(nameof UploadSessionOperationId, decision.OperationId)
-                                .enhance (nameof UploadSessionLifecycleState, decision.Session.LifecycleState)
+                        match sideEffectError with
+                        | Some error -> return Error error
+                        | None ->
+                            let returnValue =
+                                (GraceReturnValue.Create decision metadata.CorrelationId)
+                                    .enhance(nameof RepositoryId, decision.Session.RepositoryId)
+                                    .enhance(nameof UploadSessionId, decision.Session.UploadSessionId)
+                                    .enhance(nameof UploadSessionOperationId, decision.OperationId)
+                                    .enhance (nameof UploadSessionLifecycleState, decision.Session.LifecycleState)
 
-                        return Ok returnValue
+                            return Ok returnValue
                     | Error error ->
                         log.LogWarning(
                             "{CurrentInstant}: Node: {HostName}; CorrelationId: {CorrelationId}; Rejected UploadSession command {Command}. Error: {Error}",
