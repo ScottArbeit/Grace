@@ -1263,6 +1263,8 @@ module Branch =
                                                 | Ok _ -> ()
                                                 | Error error -> raise (InvalidOperationException($"Error uploading directory versions: {error.Error}"))
 
+                                                newGraceStatus <- syncGraceStatusRootDirectoryHash newGraceStatus
+                                                rootDirectoryVersion.Value <- (newGraceStatus.RootDirectoryId, newGraceStatus.RootDirectorySha256Hash)
                                                 lastDirectoryVersionUpload <- getCurrentInstant ()
 
                                             t4.Value <- 100.0
@@ -1363,7 +1365,8 @@ module Branch =
                         | Ok _ -> ()
                         | Error error -> raise (InvalidOperationException($"Error uploading directory versions: {error.Error}"))
 
-                        let rootDirectoryVersion = getRootDirectoryVersion previousGraceStatus
+                        let newGraceIndex = syncGraceStatusRootDirectoryHash newGraceIndex
+                        let rootDirectoryVersion = getRootDirectoryVersion newGraceIndex
 
                         let sdkParameters =
                             Parameters.Branch.CreateReferenceParameters(
