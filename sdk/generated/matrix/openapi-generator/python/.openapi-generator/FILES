@@ -73,6 +73,7 @@ docs/DirectoryCommandReturnValue.md
 docs/DirectoryParameters.md
 docs/DirectoryVersion.md
 docs/DirectoryVersionApiDto.md
+docs/DirectoryVersionHashLookupReturnValue.md
 docs/DirectoryVersionListReturnValue.md
 docs/DirectoryVersionReturnValue.md
 docs/DiscoverContentBlocksParameters.md
@@ -94,6 +95,7 @@ docs/GetBranchParameters.md
 docs/GetBranchVersionParameters.md
 docs/GetBranchesByBranchIdParameters.md
 docs/GetBranchesParameters.md
+docs/GetByBlake3HashParameters.md
 docs/GetByDirectoryIdsParameters.md
 docs/GetBySha256HashParameters.md
 docs/GetContentBlockDownloadUriParameters.md
@@ -310,6 +312,7 @@ grace_generated_openapi_probe/models/directory_command_return_value.py
 grace_generated_openapi_probe/models/directory_parameters.py
 grace_generated_openapi_probe/models/directory_version.py
 grace_generated_openapi_probe/models/directory_version_api_dto.py
+grace_generated_openapi_probe/models/directory_version_hash_lookup_return_value.py
 grace_generated_openapi_probe/models/directory_version_list_return_value.py
 grace_generated_openapi_probe/models/directory_version_return_value.py
 grace_generated_openapi_probe/models/discover_content_blocks_parameters.py
@@ -331,6 +334,7 @@ grace_generated_openapi_probe/models/get_branch_parameters.py
 grace_generated_openapi_probe/models/get_branch_version_parameters.py
 grace_generated_openapi_probe/models/get_branches_by_branch_id_parameters.py
 grace_generated_openapi_probe/models/get_branches_parameters.py
+grace_generated_openapi_probe/models/get_by_blake3_hash_parameters.py
 grace_generated_openapi_probe/models/get_by_directory_ids_parameters.py
 grace_generated_openapi_probe/models/get_by_sha256_hash_parameters.py
 grace_generated_openapi_probe/models/get_content_block_download_uri_parameters.py
@@ -539,6 +543,7 @@ test/test_directory_command_return_value.py
 test/test_directory_parameters.py
 test/test_directory_version.py
 test/test_directory_version_api_dto.py
+test/test_directory_version_hash_lookup_return_value.py
 test/test_directory_version_list_return_value.py
 test/test_directory_version_return_value.py
 test/test_discover_content_blocks_parameters.py
@@ -560,6 +565,7 @@ test/test_get_branch_parameters.py
 test/test_get_branch_version_parameters.py
 test/test_get_branches_by_branch_id_parameters.py
 test/test_get_branches_parameters.py
+test/test_get_by_blake3_hash_parameters.py
 test/test_get_by_directory_ids_parameters.py
 test/test_get_by_sha256_hash_parameters.py
 test/test_get_content_block_download_uri_parameters.py
