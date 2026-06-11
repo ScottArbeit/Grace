@@ -216,7 +216,7 @@ module LocalStateDbTests =
                 use cmd = connection.CreateCommand()
                 cmd.CommandText <- "SELECT value FROM meta WHERE key = 'schema_version';"
                 let schemaVersion = cmd.ExecuteScalar() :?> string
-                schemaVersion |> should equal "3"
+                schemaVersion |> should equal "2"
 
                 cmd.CommandText <- "SELECT COUNT(*) FROM status_meta;"
                 let statusMetaCount = Convert.ToInt32(cmd.ExecuteScalar())
@@ -478,7 +478,7 @@ module LocalStateDbTests =
 
                 use connection = openRawConnection configuration.GraceStatusFile
                 let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
-                schemaVersion |> should equal "3"
+                schemaVersion |> should equal "2"
 
                 let corruptAfter =
                     getCorruptBackups configuration.GraceStatusFile
@@ -505,7 +505,7 @@ module LocalStateDbTests =
 
                 use connection = openRawConnection configuration.GraceStatusFile
                 let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
-                schemaVersion |> should equal "3"
+                schemaVersion |> should equal "2"
 
                 let corruptAfter =
                     getCorruptBackups configuration.GraceStatusFile
@@ -558,7 +558,7 @@ module LocalStateDbTests =
                 inspection.OpenError |> should equal None
 
                 inspection.SchemaVersion
-                |> should equal (Some "3")
+                |> should equal (Some "2")
 
                 inspection.MissingRequiredTables
                 |> should equal Array.empty<string>
@@ -602,7 +602,7 @@ module LocalStateDbTests =
                 inspection.OpenError |> should equal None
 
                 inspection.SchemaVersion
-                |> should equal (Some "3")
+                |> should equal (Some "2")
 
                 inspection.IntegrityCheckRows
                 |> should equal [| "ok" |]
@@ -803,7 +803,7 @@ module LocalStateDbTests =
             })
 
     [<Test>]
-    let ``ensureDbInitialized does not overwrite existing status_meta row`` () =
+    let ``ensureDbInitialized preserves existing schema v2 status_meta row`` () =
         withTempDir (fun _ configuration ->
             task {
                 Directory.CreateDirectory(Path.GetDirectoryName(configuration.GraceStatusFile))
@@ -821,19 +821,31 @@ module LocalStateDbTests =
                     connection
                     "CREATE TABLE IF NOT EXISTS status_meta (id INTEGER PRIMARY KEY CHECK (id = 1), root_directory_version_id TEXT NOT NULL, root_directory_sha256_hash TEXT NOT NULL, last_successful_file_upload_unix_ticks INTEGER NOT NULL, last_successful_directory_version_upload_unix_ticks INTEGER NOT NULL);"
 
-                executeNonQuery connection "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '3');"
+                executeNonQuery connection "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '2');"
 
                 executeNonQuery
                     connection
                     $"INSERT OR REPLACE INTO status_meta (id, root_directory_version_id, root_directory_sha256_hash, last_successful_file_upload_unix_ticks, last_successful_directory_version_upload_unix_ticks) VALUES (1, '{rootId}', '{rootHash}', {ticks}, {ticks});"
 
+                let corruptBefore =
+                    getCorruptBackups configuration.GraceStatusFile
+                    |> Array.length
+
                 do! LocalStateDb.ensureDbInitialized configuration.GraceStatusFile
 
                 use connection2 = openRawConnection configuration.GraceStatusFile
+                let schemaVersion = executeScalarString connection2 "SELECT value FROM meta WHERE key = 'schema_version';"
                 let readRootId = executeScalarString connection2 "SELECT root_directory_version_id FROM status_meta WHERE id = 1;"
                 let readRootHash = executeScalarString connection2 "SELECT root_directory_sha256_hash FROM status_meta WHERE id = 1;"
+                schemaVersion |> should equal "2"
                 readRootId |> should equal (rootId.ToString())
                 readRootHash |> should equal rootHash
+
+                let corruptAfter =
+                    getCorruptBackups configuration.GraceStatusFile
+                    |> Array.length
+
+                corruptAfter |> should equal corruptBefore
             })
 
     [<Test>]
@@ -1013,7 +1025,7 @@ module LocalStateDbTests =
 
                 use connection = openRawConnection configuration.GraceStatusFile
                 let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
-                schemaVersion |> should equal "3"
+                schemaVersion |> should equal "2"
 
                 let statusMetaCount = executeScalarInt connection "SELECT COUNT(*) FROM status_meta;"
                 statusMetaCount |> should equal 1
@@ -1039,7 +1051,7 @@ module LocalStateDbTests =
 
                 use connection = openRawConnection configuration.GraceStatusFile
                 let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
-                schemaVersion |> should equal "3"
+                schemaVersion |> should equal "2"
             })
 
     [<Test>]
@@ -1854,7 +1866,7 @@ module LocalStateDbTests =
                     integrity.ToLowerInvariant() |> should equal "ok"
 
                     let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
-                    schemaVersion |> should equal "3"
+                    schemaVersion |> should equal "2"
 
                     let statusMetaCount = executeScalarInt connection "SELECT COUNT(*) FROM status_meta;"
                     statusMetaCount |> should equal 1
