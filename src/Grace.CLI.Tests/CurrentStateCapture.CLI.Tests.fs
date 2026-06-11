@@ -262,6 +262,58 @@ module CurrentStateCaptureCliTests =
         | Error error -> Assert.Fail($"Expected auto-save success, got: {error.Error}")
 
     [<Test>]
+    let ``changed file upload selection comes from updated directory versions`` () =
+        let changedPath = RelativePath "src/cached-large.bin"
+        let unchangedPath = RelativePath "src/unchanged-large.bin"
+
+        let changedFile =
+            LocalFileVersion.CreateWithHashes
+                changedPath
+                (Sha256Hash "changed-file-sha")
+                (Blake3Hash "changed-file-blake3")
+                true
+                42L
+                (Grace.Shared.Utilities.getCurrentInstant ())
+                true
+                DateTime.UtcNow
+
+        let unchangedFile =
+            LocalFileVersion.CreateWithHashes
+                unchangedPath
+                (Sha256Hash "unchanged-file-sha")
+                (Blake3Hash "unchanged-file-blake3")
+                true
+                43L
+                (Grace.Shared.Utilities.getCurrentInstant ())
+                true
+                DateTime.UtcNow
+
+        let differences =
+            List<FileSystemDifference>(
+                [|
+                    FileSystemDifference.Create DifferenceType.Change FileSystemEntryType.File changedPath
+                    FileSystemDifference.Create DifferenceType.Add FileSystemEntryType.Directory (RelativePath "src/new-folder")
+                |]
+            )
+
+        let updatedRoot =
+            LocalDirectoryVersion.Create
+                rootDirectoryId
+                OwnerId.Empty
+                OrganizationId.Empty
+                RepositoryId.Empty
+                Constants.RootDirectoryPath
+                rootSha
+                (List<DirectoryVersionId>())
+                (List<LocalFileVersion>([| changedFile; unchangedFile |]))
+                (changedFile.Size + unchangedFile.Size)
+                DateTime.UtcNow
+
+        let selected = getChangedFileVersionsReferencedByUpdatedDirectories differences (List<LocalDirectoryVersion>([| updatedRoot |]))
+
+        selected |> should equal [ changedFile ]
+
+    [<Test>]
     let ``local changes upload changed file versions already present in object cache`` () =
         let updatedRootId = Guid.NewGuid()
         let updatedRootSha = Sha256Hash "updated-root-sha"
