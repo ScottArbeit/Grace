@@ -534,6 +534,11 @@ module Branch =
 
     let private fallbackGuidString hasValue supplied fallbackValue = if hasValue then supplied |> valueOrEmpty else fallbackValue |> guidToString
 
+    let internal switchHashLocatorEvidence (sha256Hash: string) (blake3Hash: string) =
+        if not <| String.IsNullOrEmpty(sha256Hash) then sha256Hash, blake3Hash
+        elif not <| String.IsNullOrEmpty(blake3Hash) then String.Empty, blake3Hash
+        else String.Empty, String.Empty
+
     // Create subcommand.
     type Create() =
         inherit AsynchronousCommandLineAction()
@@ -3188,7 +3193,9 @@ module Branch =
                             not
                             <| String.IsNullOrEmpty(switchParameters.Sha256Hash)
                         then
-                            getVersionToSwitchToFromHash switchParameters.Sha256Hash String.Empty t (showOutput, parseResult, parameters, currentBranch)
+                            let sha256Hash, blake3Hash = switchHashLocatorEvidence switchParameters.Sha256Hash switchParameters.Blake3Hash
+
+                            getVersionToSwitchToFromHash sha256Hash blake3Hash t (showOutput, parseResult, parameters, currentBranch)
                         elif
                             not
                             <| String.IsNullOrEmpty(switchParameters.Blake3Hash)
