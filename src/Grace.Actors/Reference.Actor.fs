@@ -114,11 +114,17 @@ module Reference =
         && referenceDto.ReferenceType = ReferenceType.Save
 
     let validateReferenceRootDirectoryVersionHashes correlationId repositoryId directoryId sha256Hash blake3Hash (directoryVersion: DirectoryVersion) =
+        let rootRelativePath = directoryVersion.RelativePath
+
+        let isRootDirectoryRelativePath =
+            rootRelativePath = Constants.RootDirectoryPath
+            || rootRelativePath = "/"
+
         let directoryVersionBlake3IsEmpty = String.IsNullOrWhiteSpace(string directoryVersion.Blake3Hash)
         let commandBlake3IsEmpty = String.IsNullOrWhiteSpace(string blake3Hash)
 
         let isLegacyEmptyBlake3Root =
-            directoryVersion.RelativePath = Constants.RootDirectoryPath
+            isRootDirectoryRelativePath
             && directoryVersionBlake3IsEmpty
             && commandBlake3IsEmpty
 
@@ -128,8 +134,7 @@ module Reference =
                     .enhance(nameof RepositoryId, repositoryId)
                     .enhance (nameof DirectoryVersionId, directoryId)
             )
-        elif directoryVersion.RelativePath
-             <> Constants.RootDirectoryPath then
+        elif not isRootDirectoryRelativePath then
             Error(
                 (GraceError.Create "Reference root DirectoryVersion must use the repository root path." correlationId)
                     .enhance(nameof RepositoryId, repositoryId)
