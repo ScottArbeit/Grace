@@ -13,11 +13,11 @@
     },
     {
       "path": "Branch.Components.OpenAPI.yaml",
-      "sha256": "13efeae2820c627de2895acbe2a72ae3a3ab869b19f503b0b8d8a721db8d65a0"
+      "sha256": "8b7ca46fbe9be0b540c3c91410f665a2a29365c729d7ad97555f06371e1003fb"
     },
     {
       "path": "Branch.Paths.OpenAPI.yaml",
-      "sha256": "458ab2b5df216e77919d04edf3ab6d93c8b109e8e684a4f498cd4a07fd880caa"
+      "sha256": "3e49189483f9ccad5319cf37436007083544402effb632b0fe55da99052f4588"
     },
     {
       "path": "Diff.Components.OpenAPI.yaml",
@@ -108,26 +108,26 @@
     {
       "path": "Grace.OpenAPI.yaml",
       "kind": "canonical-bundle",
-      "sourceDigest": "64b9436f84b6f0ecef09bdfabae9d2ba970b8bac7f0aca50b041030c93d3623e",
+      "sourceDigest": "6e2e3fe0d94b97a2a7d754e91a2482fc1d809de491885e527b71b1cdf2674af7",
       "generator": "@redocly/cli",
       "generatorVersion": "2.31.6",
       "command": "pwsh ./src/OpenAPI/generate-openapi-projections.ps1",
-      "sha256": "616fc487c9236e33e397f9a4c2d78fb6ae89fce59178fd697baa085affe901f2"
+      "sha256": "16848e4e521d387e833041faa448ea7c0c3075f4ade2b95743ab7852269f0a56"
     },
     {
       "path": "Grace.OpenAPI.3.1.2.yaml",
       "kind": "generator-projection",
-      "sourceDigest": "64b9436f84b6f0ecef09bdfabae9d2ba970b8bac7f0aca50b041030c93d3623e",
+      "sourceDigest": "6e2e3fe0d94b97a2a7d754e91a2482fc1d809de491885e527b71b1cdf2674af7",
       "generator": "@redocly/cli",
       "generatorVersion": "2.31.6",
       "command": "pwsh ./src/OpenAPI/generate-openapi-projections.ps1",
       "lossReport": "Grace.OpenAPI.3.1.2.loss-report.json",
-      "sha256": "e120cd7c738f592c412908f2dd3b6ad3fe8899219200dd6bbbdf1f3297047a14"
+      "sha256": "a74375609c2f039772c338fe93958406ea6adca40d2c4ac31907c4d8f72e0849"
     },
     {
       "path": "Grace.OpenAPI.3.1.2.loss-report.json",
       "kind": "projection-loss-report",
-      "sourceDigest": "64b9436f84b6f0ecef09bdfabae9d2ba970b8bac7f0aca50b041030c93d3623e",
+      "sourceDigest": "6e2e3fe0d94b97a2a7d754e91a2482fc1d809de491885e527b71b1cdf2674af7",
       "generator": "@redocly/cli",
       "generatorVersion": "2.31.6",
       "command": "pwsh ./src/OpenAPI/generate-openapi-projections.ps1",

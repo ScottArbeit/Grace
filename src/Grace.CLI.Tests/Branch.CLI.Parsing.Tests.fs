@@ -12,6 +12,7 @@ module BranchCommandParsingTests =
     let private repositoryId = Guid.NewGuid()
     let private branchId = Guid.NewGuid()
     let private referenceId = Guid.NewGuid()
+    let private blake3Hash = "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adcd1e8c76d9a8885f16a39f"
 
     let private withIds (args: string array) =
         Array.append
@@ -83,6 +84,34 @@ module BranchCommandParsingTests =
                               "src/App.fs"
                               "--show"
                               "source" |]
+        |> ignore
+
+    [<TestCase("switch")>]
+    [<TestCase("list-contents")>]
+    [<TestCase("get-recursive-size")>]
+    let ``branch version locator commands parse BLAKE3 hash option`` commandName =
+        assertParses [| "branch"
+                        commandName
+                        "--blake3-hash"
+                        blake3Hash |]
+        |> ignore
+
+    [<Test>]
+    let ``branch assign parses BLAKE3 hash option`` () =
+        assertParses [| "branch"
+                        "assign"
+                        "--blake3-hash"
+                        blake3Hash |]
+        |> ignore
+
+    [<Test>]
+    let ``branch switch keeps branch name precedence options available beside BLAKE3 locator`` () =
+        assertParses [| "branch"
+                        "switch"
+                        "--to-branch-name"
+                        "af1349b9"
+                        "--blake3-hash"
+                        blake3Hash |]
         |> ignore
 
     [<Test>]
