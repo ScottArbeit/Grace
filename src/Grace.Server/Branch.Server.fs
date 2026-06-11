@@ -656,6 +656,15 @@ module Branch =
             | None -> return createCommand (directoryVersionId, sha256Hash, blake3Hash, referenceText)
         }
 
+    let validateReferenceRootLocator (parameters: CreateReferenceParameters) =
+        Input.oneOfTheseValuesMustBeProvided
+            [|
+                parameters.DirectoryVersionId
+                parameters.Sha256Hash
+                parameters.Blake3Hash
+            |]
+            BranchError.EitherDirectoryVersionIdOrSha256HashRequired
+
     let processQuery<'T, 'U when 'T :> BranchParameters>
         (context: HttpContext)
         (parameters: 'T)
@@ -929,6 +938,7 @@ module Branch =
                         String.maxLength parameters.Message 2048 BranchError.StringIsTooLong
                         String.isEmptyOrValidSha256HashPrefix parameters.Sha256Hash BranchError.InvalidSha256Hash
                         String.isEmptyOrValidBlake3HashPrefix parameters.Blake3Hash BranchError.InvalidBlake3Hash
+                        validateReferenceRootLocator parameters
                         Branch.branchAllowsReferenceType
                             graceIds.OwnerId
                             graceIds.OrganizationId
@@ -967,6 +977,7 @@ module Branch =
                         String.maxLength parameters.Message 2048 BranchError.StringIsTooLong
                         String.isEmptyOrValidSha256HashPrefix parameters.Sha256Hash BranchError.InvalidSha256Hash
                         String.isEmptyOrValidBlake3HashPrefix parameters.Blake3Hash BranchError.InvalidBlake3Hash
+                        validateReferenceRootLocator parameters
                         Branch.branchAllowsReferenceType
                             graceIds.OwnerId
                             graceIds.OrganizationId
@@ -1004,6 +1015,7 @@ module Branch =
                         String.maxLength parameters.Message 2048 BranchError.StringIsTooLong
                         String.isEmptyOrValidSha256HashPrefix parameters.Sha256Hash BranchError.InvalidSha256Hash
                         String.isEmptyOrValidBlake3HashPrefix parameters.Blake3Hash BranchError.InvalidBlake3Hash
+                        validateReferenceRootLocator parameters
                         Branch.branchAllowsReferenceType
                             graceIds.OwnerId
                             graceIds.OrganizationId
@@ -1043,6 +1055,7 @@ module Branch =
                         String.maxLength parameters.Message 4096 BranchError.StringIsTooLong
                         String.isEmptyOrValidSha256HashPrefix parameters.Sha256Hash BranchError.InvalidSha256Hash
                         String.isEmptyOrValidBlake3HashPrefix parameters.Blake3Hash BranchError.InvalidBlake3Hash
+                        validateReferenceRootLocator parameters
                         Branch.branchAllowsReferenceType
                             graceIds.OwnerId
                             graceIds.OrganizationId
@@ -1080,6 +1093,7 @@ module Branch =
                         String.maxLength parameters.Message 2048 BranchError.StringIsTooLong
                         String.isEmptyOrValidSha256HashPrefix parameters.Sha256Hash BranchError.InvalidSha256Hash
                         String.isEmptyOrValidBlake3HashPrefix parameters.Blake3Hash BranchError.InvalidBlake3Hash
+                        validateReferenceRootLocator parameters
                         Branch.branchAllowsReferenceType
                             graceIds.OwnerId
                             graceIds.OrganizationId
@@ -1117,6 +1131,7 @@ module Branch =
                         String.maxLength parameters.Message 2048 BranchError.StringIsTooLong
                         String.isEmptyOrValidSha256HashPrefix parameters.Sha256Hash BranchError.InvalidSha256Hash
                         String.isEmptyOrValidBlake3HashPrefix parameters.Blake3Hash BranchError.InvalidBlake3Hash
+                        validateReferenceRootLocator parameters
                         Branch.branchAllowsReferenceType
                             graceIds.OwnerId
                             graceIds.OrganizationId
