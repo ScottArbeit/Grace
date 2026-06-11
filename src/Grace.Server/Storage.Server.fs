@@ -56,6 +56,32 @@ module Storage =
 
         StorageKeys.wholeFileContentObjectKey fileVersion
 
+    let private getLegacyWholeFileContentObjectKey (fileVersion: FileVersion) =
+        normalizeWholeFileContentReference fileVersion
+        |> ignore
+
+        StorageKeys.legacyWholeFileContentObjectKey fileVersion
+
+    let private getReadableWholeFileContentObjectKey (repositoryDto: RepositoryDto) (fileVersion: FileVersion) correlationId =
+        task {
+            let currentBlobName = getWholeFileContentObjectKey fileVersion
+
+            if StorageKeys.hasBlake3SpecificWholeFileContentObjectKey fileVersion then
+                let! currentBlobClient = getAzureBlobClient repositoryDto currentBlobName correlationId
+                let! currentExists = currentBlobClient.ExistsAsync()
+
+                if currentExists.Value then
+                    return currentBlobName
+                else
+                    let legacyBlobName = getLegacyWholeFileContentObjectKey fileVersion
+                    let! legacyBlobClient = getAzureBlobClient repositoryDto legacyBlobName correlationId
+                    let! legacyExists = legacyBlobClient.ExistsAsync()
+
+                    if legacyExists.Value then return legacyBlobName else return currentBlobName
+            else
+                return currentBlobName
+        }
+
     let private getContentBlockObjectKey (contentBlockAddress: ContentBlockAddress) = StorageKeys.contentBlockObjectKey contentBlockAddress
 
     let private resolveStorageIds (graceIds: GraceIds) (parameters: StorageParameters) =
@@ -377,7 +403,7 @@ module Storage =
         task {
             match repositoryDto.ObjectStorageProvider with
             | AzureBlobStorage ->
-                let blobName = getWholeFileContentObjectKey fileVersion
+                let! blobName = getReadableWholeFileContentObjectKey repositoryDto fileVersion (getCorrelationId context)
                 let! blobClient = getAzureBlobClient repositoryDto blobName (getCorrelationId context)
                 let! azureResponse = blobClient.GetPropertiesAsync()
                 let blobProperties = azureResponse.Value
@@ -405,7 +431,7 @@ module Storage =
                     let repositoryActor = Repository.CreateActorProxy organizationId repositoryId correlationId
                     let! repositoryDto = repositoryActor.Get correlationId
 
-                    let blobName = getWholeFileContentObjectKey parameters.FileVersion
+                    let! blobName = getReadableWholeFileContentObjectKey repositoryDto parameters.FileVersion correlationId
                     let! downloadUri = getUriWithReadSharedAccessSignature repositoryDto blobName correlationId
                     context.SetStatusCode StatusCodes.Status200OK
                     //log.LogTrace("fileVersion: {fileVersion.RelativePath}; downloadUri: {downloadUri}", [| parameters.FileVersion.RelativePath, downloadUri |])
@@ -887,6 +913,7 @@ module Storage =
                                                     RelativePath = fileVersion.RelativePath
                                                     BlobUriWithSasToken = blobUriWithSasToken
                                                     Sha256Hash = fileVersion.Sha256Hash
+                                                    Blake3Hash = fileVersion.Blake3Hash
                                                     ContentReference = contentReference
                                                 }
 
