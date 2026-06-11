@@ -20,28 +20,21 @@ import json
 
 from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field, StrictStr
-from typing import Any, ClassVar, Dict, List, Optional
-from uuid import UUID
-from grace_generated_openapi_probe.models.reference_type import ReferenceType
+from typing import Any, ClassVar, Dict, List
+from grace_generated_openapi_probe.models.directory_version import DirectoryVersion
 from typing import Optional, Set
 from typing_extensions import Self
 from pydantic_core import to_jsonable_python
 
-class ReferenceDto(BaseModel):
+class DirectoryVersionHashLookupReturnValue(BaseModel):
     """
-    (automatically generated)
+    Grace response envelope whose ReturnValue contains a raw directory version.
     """ # noqa: E501
-    var_class: Optional[StrictStr] = Field(default=None, alias="Class")
-    reference_id: Optional[UUID] = Field(default=None, alias="ReferenceId")
-    branch_id: Optional[UUID] = Field(default=None, alias="BranchId")
-    directory_id: Optional[UUID] = Field(default=None, alias="DirectoryId")
-    sha256_hash: Optional[StrictStr] = Field(default=None, alias="Sha256Hash")
-    blake3_hash: Optional[StrictStr] = Field(default=None, alias="Blake3Hash")
-    reference_type: Optional[ReferenceType] = Field(default=None, alias="ReferenceType")
-    reference_text: Optional[StrictStr] = Field(default=None, alias="ReferenceText")
-    created_by: Optional[StrictStr] = Field(default=None, alias="CreatedBy")
-    created_at: Optional[datetime] = Field(default=None, alias="CreatedAt")
-    __properties: ClassVar[List[str]] = ["Class", "ReferenceId", "BranchId", "DirectoryId", "Sha256Hash", "Blake3Hash", "ReferenceType", "ReferenceText", "CreatedBy", "CreatedAt"]
+    return_value: DirectoryVersion = Field(alias="ReturnValue")
+    event_time: datetime = Field(alias="EventTime")
+    correlation_id: StrictStr = Field(description="Body DTO correlation id copied into Grace command/event metadata after request parsing. This field is distinct from the X-Correlation-Id transport header, which correlates the HTTP request/response exchange.", alias="CorrelationId")
+    properties: Dict[str, StrictStr] = Field(alias="Properties")
+    __properties: ClassVar[List[str]] = ["ReturnValue", "EventTime", "CorrelationId", "Properties"]
 
     model_config = ConfigDict(
         validate_by_name=True,
@@ -61,7 +54,7 @@ class ReferenceDto(BaseModel):
 
     @classmethod
     def from_json(cls, json_str: str) -> Optional[Self]:
-        """Create an instance of ReferenceDto from a JSON string"""
+        """Create an instance of DirectoryVersionHashLookupReturnValue from a JSON string"""
         return cls.from_dict(json.loads(json_str))
 
     def to_dict(self) -> Dict[str, Any]:
@@ -82,11 +75,14 @@ class ReferenceDto(BaseModel):
             exclude=excluded_fields,
             exclude_none=True,
         )
+        # override the default output from pydantic by calling `to_dict()` of return_value
+        if self.return_value:
+            _dict['ReturnValue'] = self.return_value.to_dict()
         return _dict
 
     @classmethod
     def from_dict(cls, obj: Optional[Dict[str, Any]]) -> Optional[Self]:
-        """Create an instance of ReferenceDto from a dict"""
+        """Create an instance of DirectoryVersionHashLookupReturnValue from a dict"""
         if obj is None:
             return None
 
@@ -94,16 +90,10 @@ class ReferenceDto(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
-            "Class": obj.get("Class"),
-            "ReferenceId": obj.get("ReferenceId"),
-            "BranchId": obj.get("BranchId"),
-            "DirectoryId": obj.get("DirectoryId"),
-            "Sha256Hash": obj.get("Sha256Hash"),
-            "Blake3Hash": obj.get("Blake3Hash"),
-            "ReferenceType": obj.get("ReferenceType"),
-            "ReferenceText": obj.get("ReferenceText"),
-            "CreatedBy": obj.get("CreatedBy"),
-            "CreatedAt": obj.get("CreatedAt")
+            "ReturnValue": DirectoryVersion.from_dict(obj["ReturnValue"]) if obj.get("ReturnValue") is not None else None,
+            "EventTime": obj.get("EventTime"),
+            "CorrelationId": obj.get("CorrelationId"),
+            "Properties": obj.get("Properties")
         })
         return _obj
 
