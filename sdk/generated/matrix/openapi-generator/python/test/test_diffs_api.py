@@ -34,6 +34,13 @@ class TestDiffsApi(unittest.TestCase):
         """
         pass
 
+    def test_get_diff_by_blake3_hash(self) -> None:
+        """Test case for get_diff_by_blake3_hash
+
+        Get a diff by BLAKE3 hash.
+        """
+        pass
+
     def test_get_diff_by_sha256_hash(self) -> None:
         """Test case for get_diff_by_sha256_hash
 

@@ -36,6 +36,7 @@
     <Compile Include="Notification.Server.Tests.fs" />
     <Compile Include="PromotionSet.CommandValidation.Tests.fs" />
     <Compile Include="PromotionSet.DirectoryHash.Tests.fs" />
+    <Compile Include="Diff.Actor.Tests.fs" />
     <Compile Include="UploadSession.Actor.Tests.fs" />
     <Compile Include="ContentBlockMetadata.Actor.Tests.fs" />
     <Compile Include="RepositoryContentCounter.Actor.Tests.fs" />

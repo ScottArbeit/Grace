@@ -99,6 +99,7 @@ docs/GetByDirectoryIdsParameters.md
 docs/GetBySha256HashParameters.md
 docs/GetContentBlockDownloadUriParameters.md
 docs/GetContentBlockUploadUriParameters.md
+docs/GetDiffByBlake3HashParameters.md
 docs/GetDiffByReferenceTypeParameters.md
 docs/GetDiffBySha256HashParameters.md
 docs/GetDiffParameters.md
@@ -334,6 +335,7 @@ src/models/get_by_directory_ids_parameters.rs
 src/models/get_by_sha256_hash_parameters.rs
 src/models/get_content_block_download_uri_parameters.rs
 src/models/get_content_block_upload_uri_parameters.rs
+src/models/get_diff_by_blake3_hash_parameters.rs
 src/models/get_diff_by_reference_type_parameters.rs
 src/models/get_diff_by_sha256_hash_parameters.rs
 src/models/get_diff_parameters.rs
