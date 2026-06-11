@@ -628,11 +628,7 @@ module Connect =
 
                 match fileVersionsByRelativePath.TryGetValue(entryRelativePath) with
                 | true, fileVersion ->
-                    let objectFileName =
-                        if String.IsNullOrWhiteSpace(entry.Comment) then
-                            fileVersion.GetObjectFileName
-                        else
-                            entry.Comment
+                    let objectFileName = getLocalObjectCacheFileName fileVersion.RelativePath fileVersion.Sha256Hash fileVersion.Blake3Hash
 
                     let fileInfo = FileInfo(Path.Combine(Current().RootDirectory, fileVersion.RelativePath))
 
