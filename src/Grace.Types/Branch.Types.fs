@@ -38,13 +38,13 @@ module Branch =
             initialPermissions: ReferenceType seq
         | Rebase of basedOn: ReferenceId
         | SetName of newName: BranchName
-        | Assign of directoryVersionId: DirectoryVersionId * sha256Hash: Sha256Hash * referenceText: ReferenceText
-        | Promote of directoryVersionId: DirectoryVersionId * sha256Hash: Sha256Hash * referenceText: ReferenceText
-        | Commit of directoryVersionId: DirectoryVersionId * sha256Hash: Sha256Hash * referenceText: ReferenceText
-        | Checkpoint of directoryVersionId: DirectoryVersionId * sha256Hash: Sha256Hash * referenceText: ReferenceText
-        | Save of directoryVersionId: DirectoryVersionId * sha256Hash: Sha256Hash * referenceText: ReferenceText
-        | Tag of directoryVersionId: DirectoryVersionId * sha256Hash: Sha256Hash * referenceText: ReferenceText
-        | CreateExternal of directoryVersionId: DirectoryVersionId * sha256Hash: Sha256Hash * referenceText: ReferenceText
+        | Assign of directoryVersionId: DirectoryVersionId * sha256Hash: Sha256Hash * blake3Hash: Blake3Hash * referenceText: ReferenceText
+        | Promote of directoryVersionId: DirectoryVersionId * sha256Hash: Sha256Hash * blake3Hash: Blake3Hash * referenceText: ReferenceText
+        | Commit of directoryVersionId: DirectoryVersionId * sha256Hash: Sha256Hash * blake3Hash: Blake3Hash * referenceText: ReferenceText
+        | Checkpoint of directoryVersionId: DirectoryVersionId * sha256Hash: Sha256Hash * blake3Hash: Blake3Hash * referenceText: ReferenceText
+        | Save of directoryVersionId: DirectoryVersionId * sha256Hash: Sha256Hash * blake3Hash: Blake3Hash * referenceText: ReferenceText
+        | Tag of directoryVersionId: DirectoryVersionId * sha256Hash: Sha256Hash * blake3Hash: Blake3Hash * referenceText: ReferenceText
+        | CreateExternal of directoryVersionId: DirectoryVersionId * sha256Hash: Sha256Hash * blake3Hash: Blake3Hash * referenceText: ReferenceText
         | EnableAssign of enabled: bool
         | EnablePromotion of enabled: bool
         | EnableCommit of enabled: bool
@@ -76,13 +76,48 @@ module Branch =
             initialPermissions: ReferenceType seq
         | Rebased of basedOn: ReferenceId
         | NameSet of newName: BranchName
-        | Assigned of referenceDto: ReferenceDto * directoryVersionId: DirectoryVersionId * sha256Hash: Sha256Hash * referenceText: ReferenceText
-        | Promoted of referenceDto: ReferenceDto * directoryVersionId: DirectoryVersionId * sha256Hash: Sha256Hash * referenceText: ReferenceText
-        | Committed of referenceDto: ReferenceDto * directoryVersionId: DirectoryVersionId * sha256Hash: Sha256Hash * referenceText: ReferenceText
-        | Checkpointed of referenceDto: ReferenceDto * directoryVersionId: DirectoryVersionId * sha256Hash: Sha256Hash * referenceText: ReferenceText
-        | Saved of referenceDto: ReferenceDto * directoryVersionId: DirectoryVersionId * sha256Hash: Sha256Hash * referenceText: ReferenceText
-        | Tagged of referenceDto: ReferenceDto * directoryVersionId: DirectoryVersionId * sha256Hash: Sha256Hash * referenceText: ReferenceText
-        | ExternalCreated of referenceDto: ReferenceDto * directoryVersionId: DirectoryVersionId * sha256Hash: Sha256Hash * referenceText: ReferenceText
+        | Assigned of
+            referenceDto: ReferenceDto *
+            directoryVersionId: DirectoryVersionId *
+            sha256Hash: Sha256Hash *
+            blake3Hash: Blake3Hash *
+            referenceText: ReferenceText
+        | Promoted of
+            referenceDto: ReferenceDto *
+            directoryVersionId: DirectoryVersionId *
+            sha256Hash: Sha256Hash *
+            blake3Hash: Blake3Hash *
+            referenceText: ReferenceText
+        | Committed of
+            referenceDto: ReferenceDto *
+            directoryVersionId: DirectoryVersionId *
+            sha256Hash: Sha256Hash *
+            blake3Hash: Blake3Hash *
+            referenceText: ReferenceText
+        | Checkpointed of
+            referenceDto: ReferenceDto *
+            directoryVersionId: DirectoryVersionId *
+            sha256Hash: Sha256Hash *
+            blake3Hash: Blake3Hash *
+            referenceText: ReferenceText
+        | Saved of
+            referenceDto: ReferenceDto *
+            directoryVersionId: DirectoryVersionId *
+            sha256Hash: Sha256Hash *
+            blake3Hash: Blake3Hash *
+            referenceText: ReferenceText
+        | Tagged of
+            referenceDto: ReferenceDto *
+            directoryVersionId: DirectoryVersionId *
+            sha256Hash: Sha256Hash *
+            blake3Hash: Blake3Hash *
+            referenceText: ReferenceText
+        | ExternalCreated of
+            referenceDto: ReferenceDto *
+            directoryVersionId: DirectoryVersionId *
+            sha256Hash: Sha256Hash *
+            blake3Hash: Blake3Hash *
+            referenceText: ReferenceText
         | EnabledAssign of enabled: bool
         | EnabledPromotion of enabled: bool
         | EnabledCommit of enabled: bool
@@ -223,23 +258,24 @@ module Branch =
 
                     { currentBranchDto with BasedOn = basedOnReferenceDto }
                 | NameSet branchName -> { currentBranchDto with BranchName = branchName }
-                | Assigned (referenceDto, directoryVersion, sha256Hash, referenceText) ->
+                | Assigned (referenceDto, directoryVersion, sha256Hash, blake3Hash, referenceText) ->
                     { currentBranchDto with LatestPromotion = referenceDto; BasedOn = referenceDto; ShouldRecomputeLatestReferences = true }
 
-                | Promoted (referenceDto, directoryVersion, sha256Hash, referenceText) ->
+                | Promoted (referenceDto, directoryVersion, sha256Hash, blake3Hash, referenceText) ->
                     { currentBranchDto with LatestPromotion = referenceDto; BasedOn = referenceDto; ShouldRecomputeLatestReferences = true }
 
-                | Committed (referenceDto, directoryVersion, sha256Hash, referenceText) ->
+                | Committed (referenceDto, directoryVersion, sha256Hash, blake3Hash, referenceText) ->
                     { currentBranchDto with LatestCommit = referenceDto; ShouldRecomputeLatestReferences = true }
 
-                | Checkpointed (referenceDto, directoryVersion, sha256Hash, referenceText) ->
+                | Checkpointed (referenceDto, directoryVersion, sha256Hash, blake3Hash, referenceText) ->
                     { currentBranchDto with LatestCheckpoint = referenceDto; ShouldRecomputeLatestReferences = true }
 
-                | Saved (referenceDto, directoryVersion, sha256Hash, referenceText) ->
+                | Saved (referenceDto, directoryVersion, sha256Hash, blake3Hash, referenceText) ->
                     { currentBranchDto with LatestSave = referenceDto; ShouldRecomputeLatestReferences = true }
 
-                | Tagged (referenceDto, directoryVersion, sha256Hash, referenceText) -> { currentBranchDto with ShouldRecomputeLatestReferences = true }
-                | ExternalCreated (referenceDto, directoryVersion, sha256Hash, referenceText) ->
+                | Tagged (referenceDto, directoryVersion, sha256Hash, blake3Hash, referenceText) ->
+                    { currentBranchDto with ShouldRecomputeLatestReferences = true }
+                | ExternalCreated (referenceDto, directoryVersion, sha256Hash, blake3Hash, referenceText) ->
                     { currentBranchDto with ShouldRecomputeLatestReferences = true }
                 | EnabledAssign enabled -> { currentBranchDto with AssignEnabled = enabled }
                 | EnabledPromotion enabled -> { currentBranchDto with PromotionEnabled = enabled }

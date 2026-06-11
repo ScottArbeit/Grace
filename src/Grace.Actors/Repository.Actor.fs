@@ -152,6 +152,7 @@ module Repository =
                                             (BranchCommand.Promote(
                                                 emptyDirectoryId,
                                                 emptySha256Hash,
+                                                emptyBlake3Hash,
                                                 (getLocalizedString StringResourceName.InitialPromotionMessage)
                                             ))
                                             repositoryEvent.Metadata

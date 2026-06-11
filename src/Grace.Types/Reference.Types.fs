@@ -18,6 +18,7 @@ module Reference =
             BranchId: BranchId
             DirectoryVersionId: DirectoryVersionId
             Sha256Hash: Sha256Hash
+            Blake3Hash: Blake3Hash
             DeleteReason: DeleteReason
             CorrelationId: CorrelationId
         }
@@ -32,6 +33,7 @@ module Reference =
             BranchId: BranchId *
             DirectoryId: DirectoryVersionId *
             Sha256Hash: Sha256Hash *
+            Blake3Hash: Blake3Hash *
             ReferenceType: ReferenceType *
             ReferenceText: ReferenceText *
             Links: ReferenceLinkType seq
@@ -54,6 +56,7 @@ module Reference =
             BranchId: BranchId *
             DirectoryId: DirectoryVersionId *
             Sha256Hash: Sha256Hash *
+            Blake3Hash: Blake3Hash *
             ReferenceType: ReferenceType *
             ReferenceText: ReferenceText *
             Links: ReferenceLinkType seq
@@ -85,6 +88,7 @@ module Reference =
             BranchId: BranchId
             DirectoryId: DirectoryVersionId
             Sha256Hash: Sha256Hash
+            Blake3Hash: Blake3Hash
             ReferenceType: ReferenceType
             ReferenceText: ReferenceText
             Links: ReferenceLinkType seq
@@ -105,6 +109,7 @@ module Reference =
                 BranchId = BranchId.Empty
                 DirectoryId = DirectoryVersionId.Empty
                 Sha256Hash = Sha256Hash String.Empty
+                Blake3Hash = Blake3Hash String.Empty
                 ReferenceType = Save
                 ReferenceText = ReferenceText String.Empty
                 Links = Seq.empty
@@ -119,7 +124,17 @@ module Reference =
         static member UpdateDto referenceEvent currentReferenceDto =
             let newReferenceDto =
                 match referenceEvent.Event with
-                | Created (referenceId, ownerId, organizationId, repositoryId, branchId, directoryId, sha256Hash, referenceType, referenceText, links) ->
+                | Created (referenceId,
+                           ownerId,
+                           organizationId,
+                           repositoryId,
+                           branchId,
+                           directoryId,
+                           sha256Hash,
+                           blake3Hash,
+                           referenceType,
+                           referenceText,
+                           links) ->
                     { currentReferenceDto with
                         ReferenceId = referenceId
                         OwnerId = ownerId
@@ -128,6 +143,7 @@ module Reference =
                         BranchId = branchId
                         DirectoryId = directoryId
                         Sha256Hash = sha256Hash
+                        Blake3Hash = blake3Hash
                         ReferenceType = referenceType
                         ReferenceText = referenceText
                         Links = links
