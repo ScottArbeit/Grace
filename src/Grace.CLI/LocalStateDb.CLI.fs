@@ -494,6 +494,13 @@ module LocalStateDb =
                 parameters.AddWithValue("$last_dir", defaultStatus.LastSuccessfulDirectoryVersionUpload.ToUnixTimeTicks())
                 |> ignore)
 
+    let private hasRequiredWritableSchema (connection: SqliteConnection) =
+        columnExists connection "status_meta" "root_directory_blake3_hash"
+        && columnExists connection "status_directories" "blake3_hash"
+        && columnExists connection "status_files" "blake3_hash"
+        && columnExists connection "object_cache_directories" "blake3_hash"
+        && columnExists connection "object_cache_directory_files" "blake3_hash"
+
     let private recreateDatabase (dbPath: string) =
         try
             SqliteConnection.ClearAllPools()
@@ -574,6 +581,12 @@ module LocalStateDb =
                                                     let createdAtTicks = getCurrentInstant().ToUnixTimeTicks()
                                                     setMetaValue connection "schema_version" SchemaVersion
                                                     setMetaValue connection "created_at_unix_ticks" $"{createdAtTicks}"
+
+                                                if
+                                                    not recreate
+                                                    && not (hasRequiredWritableSchema connection)
+                                                then
+                                                    recreate <- true
 
                                                 if not recreate then
                                                     logTrace "status_meta ensuring default row"
@@ -675,7 +688,22 @@ module LocalStateDb =
             Blake3Hash String.Empty
 
     let private setStatusMeta (connection: SqliteConnection) (graceStatus: GraceStatus) =
-        let rootDirectoryBlake3Hash = getRootDirectoryBlake3Hash graceStatus
+        let incomingRootDirectoryBlake3Hash = getRootDirectoryBlake3Hash graceStatus
+
+        let statusHasRootIdentity =
+            graceStatus.RootDirectoryId
+            <> DirectoryVersionId.Empty
+            || not (String.IsNullOrWhiteSpace(string graceStatus.RootDirectorySha256Hash))
+
+        let rootDirectoryBlake3Hash =
+            if not (String.IsNullOrWhiteSpace(string incomingRootDirectoryBlake3Hash)) then
+                incomingRootDirectoryBlake3Hash
+            elif not statusHasRootIdentity then
+                incomingRootDirectoryBlake3Hash
+            else
+                match readStatusMetaInternal connection with
+                | Some meta when not (String.IsNullOrWhiteSpace(string meta.RootDirectoryBlake3Hash)) -> meta.RootDirectoryBlake3Hash
+                | _ -> incomingRootDirectoryBlake3Hash
 
         executeNonQueryWithParams
             connection
