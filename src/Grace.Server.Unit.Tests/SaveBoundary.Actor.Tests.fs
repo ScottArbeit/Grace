@@ -70,6 +70,9 @@ type SaveBoundaryActorTests() =
 
     let wholeFile () = FileVersion.Create "/small.txt" "abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd" String.Empty false 42L
 
+    let fileWithHashes (relativePath: string) (sha256Hash: string) (blake3Hash: string) size =
+        FileVersion.CreateWithHashes (RelativePath relativePath) (Sha256Hash sha256Hash) (Blake3Hash blake3Hash) String.Empty false size
+
     let referenceDto referenceType =
         { Grace.Types.Reference.ReferenceDto.Default with
             ReferenceId = referenceId
@@ -92,6 +95,32 @@ type SaveBoundaryActorTests() =
             fileList
             (fileList
              |> Seq.sumBy (fun fileVersion -> fileVersion.Size))
+
+    let hashedDirectory directoryId relativePath (childDirectories: DirectoryVersion seq) (files: FileVersion seq) =
+        let childDirectories = childDirectories |> Seq.toArray
+        let files = List<FileVersion>(files)
+        let sha256Hash, blake3Hash = DirectoryVersionActor.computeDirectoryVersionHashesFromChildren relativePath childDirectories files
+
+        Grace.Types.Common.DirectoryVersion.CreateWithHashes
+            directoryId
+            ownerId
+            organizationId
+            repositoryId
+            relativePath
+            sha256Hash
+            blake3Hash
+            (List<DirectoryVersionId>(
+                childDirectories
+                |> Seq.map (fun directoryVersion -> directoryVersion.DirectoryVersionId)
+            ))
+            files
+            (files
+             |> Seq.sumBy (fun fileVersion -> fileVersion.Size))
+
+    let assertDirectoryHashesValid directoryVersion childDirectories =
+        match DirectoryVersionActor.validateDirectoryVersionHashesWithChildren "corr-directory-hash" directoryVersion childDirectories with
+        | Ok () -> ()
+        | Error error -> Assert.Fail($"Expected DirectoryVersion hashes to validate, got {error.Error}.")
 
     let expectPlan result =
         match result with
@@ -141,6 +170,144 @@ type SaveBoundaryActorTests() =
         match DirectoryVersionActor.validateManifestBackedFileForSaveBoundary "corr-manifest-empty-blake3" fileVersion manifest with
         | Ok () -> ()
         | Error error -> Assert.Fail($"Expected legacy empty BLAKE3 to be accepted, got {error.Error}.")
+
+    [<Test>]
+    member _.DirectoryVersionHashValidationRequiresDirectoryBlake3BeforeSave() =
+        let directoryVersion = hashedDirectory directoryVersionId (RelativePath "/") [] []
+        directoryVersion.Blake3Hash <- Blake3Hash String.Empty
+
+        match DirectoryVersionActor.validateDirectoryVersionHashesWithChildren "corr-missing-directory-blake3" directoryVersion [] with
+        | Ok () -> Assert.Fail("Expected missing DirectoryVersion.Blake3Hash to reject before Save.")
+        | Error error -> Assert.That(error.Error, Does.Contain("DirectoryVersion.Blake3Hash"))
+
+    [<Test>]
+    member _.DirectoryVersionHashValidationRejectsMismatchedDirectoryBlake3BeforeSave() =
+        let directoryVersion = hashedDirectory directoryVersionId (RelativePath "/") [] []
+        directoryVersion.Blake3Hash <- Blake3Hash "0000000000000000000000000000000000000000000000000000000000000000"
+
+        match DirectoryVersionActor.validateDirectoryVersionHashesWithChildren "corr-mismatched-directory-blake3" directoryVersion [] with
+        | Ok () -> Assert.Fail("Expected mismatched DirectoryVersion.Blake3Hash to reject before Save.")
+        | Error error -> Assert.That(error.Error, Does.Contain("mismatched Blake3Hash"))
+
+    [<Test>]
+    member _.DirectoryVersionHashValidationRejectsMismatchedDirectorySha256BeforeSave() =
+        let directoryVersion = hashedDirectory directoryVersionId (RelativePath "/") [] []
+        directoryVersion.Sha256Hash <- Sha256Hash "0000000000000000000000000000000000000000000000000000000000000000"
+
+        match DirectoryVersionActor.validateDirectoryVersionHashesWithChildren "corr-mismatched-directory-sha" directoryVersion [] with
+        | Ok () -> Assert.Fail("Expected mismatched DirectoryVersion.Sha256Hash to reject before Save.")
+        | Error error -> Assert.That(error.Error, Does.Contain("mismatched Sha256Hash"))
+
+    [<Test>]
+    member _.DirectoryVersionHashValidationNormalizesJsonOmittedZeroSizeBeforeSave() =
+        let directoryVersion = hashedDirectory directoryVersionId (RelativePath "/empty/") [] []
+        directoryVersion.Size <- Constants.InitialDirectorySize
+
+        let normalizedDirectoryVersion = DirectoryVersionActor.normalizeDirectoryVersionForSaveBoundary directoryVersion
+
+        Assert.That(normalizedDirectoryVersion.Size, Is.EqualTo(0L))
+        assertDirectoryHashesValid normalizedDirectoryVersion []
+
+    [<Test>]
+    member _.DirectoryVersionHashValidationRejectsMissingChildDirectoryBlake3() =
+        let child = hashedDirectory (Guid.NewGuid()) (RelativePath "/src/") [] []
+        child.Blake3Hash <- Blake3Hash String.Empty
+        let parent = hashedDirectory directoryVersionId (RelativePath "/") [ child ] []
+
+        match DirectoryVersionActor.validateDirectoryVersionHashesWithChildren "corr-missing-child-directory-blake3" parent [ child ] with
+        | Ok () -> Assert.Fail("Expected missing child DirectoryVersion.Blake3Hash to reject before Save.")
+        | Error error ->
+            Assert.That(
+                error.Error,
+                Does
+                    .Contain("child directory")
+                    .And.Contain("Blake3Hash")
+            )
+
+    [<Test>]
+    member _.DirectoryVersionHashValidationRejectsMissingChildFileBlake3() =
+        let fileVersion =
+            fileWithHashes
+                "/a.txt"
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                1L
+
+        let directoryVersion = hashedDirectory directoryVersionId (RelativePath "/") [] [ fileVersion ]
+        fileVersion.Blake3Hash <- Blake3Hash String.Empty
+
+        match DirectoryVersionActor.validateDirectoryVersionHashesWithChildren "corr-missing-child-file-blake3" directoryVersion [] with
+        | Ok () -> Assert.Fail("Expected missing child file Blake3Hash to reject before Save.")
+        | Error error ->
+            Assert.That(
+                error.Error,
+                Does
+                    .Contain("child file")
+                    .And.Contain("Blake3Hash")
+            )
+
+    [<Test>]
+    member _.DirectoryVersionHashesAreStableForReorderedChildren() =
+        let fileA =
+            fileWithHashes
+                "/a.txt"
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                1L
+
+        let fileB =
+            fileWithHashes
+                "/b.txt"
+                "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+                1L
+
+        let first = hashedDirectory directoryVersionId (RelativePath "/") [] [ fileA; fileB ]
+        let second = hashedDirectory directoryVersionId (RelativePath "/") [] [ fileB; fileA ]
+
+        Assert.That(second.Sha256Hash, Is.EqualTo(first.Sha256Hash))
+        Assert.That(second.Blake3Hash, Is.EqualTo(first.Blake3Hash))
+        assertDirectoryHashesValid first []
+
+    [<Test>]
+    member _.DirectoryVersionHashesIncludeChildNamesAndMovedDirectoryPath() =
+        let sameSha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        let sameBlake = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        let fileA = fileWithHashes "/a.txt" sameSha sameBlake 10L
+        let fileB = fileWithHashes "/b.txt" sameSha sameBlake 10L
+
+        let namedA = hashedDirectory directoryVersionId (RelativePath "/") [] [ fileA ]
+        let namedB = hashedDirectory directoryVersionId (RelativePath "/") [] [ fileB ]
+        let movedA = hashedDirectory directoryVersionId (RelativePath "/moved/") [] [ fileA ]
+
+        Assert.That(namedB.Sha256Hash, Is.Not.EqualTo(namedA.Sha256Hash))
+        Assert.That(namedB.Blake3Hash, Is.Not.EqualTo(namedA.Blake3Hash))
+        Assert.That(movedA.Sha256Hash, Is.Not.EqualTo(namedA.Sha256Hash))
+        Assert.That(movedA.Blake3Hash, Is.Not.EqualTo(namedA.Blake3Hash))
+
+    [<Test>]
+    member _.DirectoryVersionHashesPreserveManifestBackedSiblingHashData() =
+        let manifest = finalizedManifest ()
+        let manifestBackedFile = manifestFile manifest
+        manifestBackedFile.Blake3Hash <- Blake3Hash manifest.FileContentHash
+
+        let changedFile =
+            fileWithHashes
+                "/changed.txt"
+                "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+                12L
+
+        let directoryVersion = hashedDirectory directoryVersionId (RelativePath "/") [] [ manifestBackedFile; changedFile ]
+
+        assertDirectoryHashesValid directoryVersion []
+
+        Assert.That(
+            directoryVersion.Files[0]
+                .ContentReference
+                .ReferenceType,
+            Is.EqualTo(FileContentReferenceType.FileManifest)
+        )
 
     [<Test>]
     member _.ManifestSaveBoundaryRejectsAbsentContentBlockMetadataRanges() =
