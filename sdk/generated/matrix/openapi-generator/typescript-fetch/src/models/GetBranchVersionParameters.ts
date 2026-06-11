@@ -90,6 +90,12 @@ export interface GetBranchVersionParameters {
      * @type {string}
      * @memberof GetBranchVersionParameters
      */
+    blake3Hash?: string;
+    /**
+     * 
+     * @type {string}
+     * @memberof GetBranchVersionParameters
+     */
     referenceId?: string;
     /**
      * 
@@ -127,6 +133,7 @@ export function GetBranchVersionParametersFromJSONTyped(json: any, ignoreDiscrim
         'branchId': json['BranchId'] == null ? undefined : json['BranchId'],
         'branchName': json['BranchName'] == null ? undefined : json['BranchName'],
         'sha256Hash': json['Sha256Hash'] == null ? undefined : json['Sha256Hash'],
+        'blake3Hash': json['Blake3Hash'] == null ? undefined : json['Blake3Hash'],
         'referenceId': json['ReferenceId'] == null ? undefined : json['ReferenceId'],
         'includeDeleted': json['IncludeDeleted'] == null ? undefined : json['IncludeDeleted'],
     };
@@ -154,6 +161,7 @@ export function GetBranchVersionParametersToJSONTyped(value?: GetBranchVersionPa
         'BranchId': value['branchId'],
         'BranchName': value['branchName'],
         'Sha256Hash': value['sha256Hash'],
+        'Blake3Hash': value['blake3Hash'],
         'ReferenceId': value['referenceId'],
         'IncludeDeleted': value['includeDeleted'],
     };
