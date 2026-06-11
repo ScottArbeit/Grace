@@ -1,4 +1,4 @@
-# GetBranchVersionParameters
+# BranchHashQueryParameters
 
 ## Properties
 
@@ -17,7 +17,6 @@ Name | Type | Description | Notes
 **sha256_hash** | Option<**String**> |  | [optional]
 **reference_id** | Option<**uuid::Uuid**> |  | [optional]
 **blake3_hash** | Option<**String**> |  | [optional]
-**include_deleted** | Option<**bool**> |  | [optional]
 
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
 

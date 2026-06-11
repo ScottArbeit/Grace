@@ -48,6 +48,7 @@ class TestCreateReferenceParameters(unittest.TestCase):
                 branch_name = 'MyBranch',
                 directory_version_id = '33a4e36b-828f-4fae-9343-50b6560dc842',
                 sha256_hash = '805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243',
+                blake3_hash = '9A35D91B2F631BE9025DE753139B88F7B1E71385C412BC3986FF2F38F230841D',
                 message = 'Capture release candidate.'
             )
         else:

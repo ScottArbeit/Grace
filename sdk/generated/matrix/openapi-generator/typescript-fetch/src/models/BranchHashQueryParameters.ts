@@ -14,109 +14,103 @@
 
 import { mapValues } from '../runtime';
 /**
- * Parameters for the /branch/getVersion endpoint.
+ * Parameters for branch query endpoints that support SHA-256, BLAKE3, or reference id locators.
  * @export
- * @interface GetBranchVersionParameters
+ * @interface BranchHashQueryParameters
  */
-export interface GetBranchVersionParameters {
+export interface BranchHashQueryParameters {
     /**
      * Body DTO correlation id copied into Grace command/event metadata after request parsing. This field is distinct from the X-Correlation-Id transport header.
      * @type {string}
-     * @memberof GetBranchVersionParameters
+     * @memberof BranchHashQueryParameters
      */
     correlationId?: string;
     /**
      * The entity on whose behalf the action is being performed.
      * @type {string}
-     * @memberof GetBranchVersionParameters
+     * @memberof BranchHashQueryParameters
      */
     principal?: string;
     /**
      * 
      * @type {string}
-     * @memberof GetBranchVersionParameters
+     * @memberof BranchHashQueryParameters
      */
     ownerId?: string;
     /**
      * 
      * @type {string}
-     * @memberof GetBranchVersionParameters
+     * @memberof BranchHashQueryParameters
      */
     ownerName?: string;
     /**
      * 
      * @type {string}
-     * @memberof GetBranchVersionParameters
+     * @memberof BranchHashQueryParameters
      */
     organizationId?: string;
     /**
      * 
      * @type {string}
-     * @memberof GetBranchVersionParameters
+     * @memberof BranchHashQueryParameters
      */
     organizationName?: string;
     /**
      * 
      * @type {string}
-     * @memberof GetBranchVersionParameters
+     * @memberof BranchHashQueryParameters
      */
     repositoryId?: string;
     /**
      * 
      * @type {string}
-     * @memberof GetBranchVersionParameters
+     * @memberof BranchHashQueryParameters
      */
     repositoryName?: string;
     /**
      * 
      * @type {string}
-     * @memberof GetBranchVersionParameters
+     * @memberof BranchHashQueryParameters
      */
     branchId?: string;
     /**
      * 
      * @type {string}
-     * @memberof GetBranchVersionParameters
+     * @memberof BranchHashQueryParameters
      */
     branchName?: string;
     /**
      * 
      * @type {string}
-     * @memberof GetBranchVersionParameters
+     * @memberof BranchHashQueryParameters
      */
     sha256Hash?: string;
     /**
      * 
      * @type {string}
-     * @memberof GetBranchVersionParameters
+     * @memberof BranchHashQueryParameters
      */
     referenceId?: string;
     /**
      * 
      * @type {string}
-     * @memberof GetBranchVersionParameters
+     * @memberof BranchHashQueryParameters
      */
     blake3Hash?: string;
-    /**
-     * 
-     * @type {boolean}
-     * @memberof GetBranchVersionParameters
-     */
-    includeDeleted?: boolean;
 }
 
 /**
- * Check if a given object implements the GetBranchVersionParameters interface.
+ * Check if a given object implements the BranchHashQueryParameters interface.
  */
-export function instanceOfGetBranchVersionParameters(value: object): value is GetBranchVersionParameters {
+export function instanceOfBranchHashQueryParameters(value: object): value is BranchHashQueryParameters {
     return true;
 }
 
-export function GetBranchVersionParametersFromJSON(json: any): GetBranchVersionParameters {
-    return GetBranchVersionParametersFromJSONTyped(json, false);
+export function BranchHashQueryParametersFromJSON(json: any): BranchHashQueryParameters {
+    return BranchHashQueryParametersFromJSONTyped(json, false);
 }
 
-export function GetBranchVersionParametersFromJSONTyped(json: any, ignoreDiscriminator: boolean): GetBranchVersionParameters {
+export function BranchHashQueryParametersFromJSONTyped(json: any, ignoreDiscriminator: boolean): BranchHashQueryParameters {
     if (json == null) {
         return json;
     }
@@ -135,15 +129,14 @@ export function GetBranchVersionParametersFromJSONTyped(json: any, ignoreDiscrim
         'sha256Hash': json['Sha256Hash'] == null ? undefined : json['Sha256Hash'],
         'referenceId': json['ReferenceId'] == null ? undefined : json['ReferenceId'],
         'blake3Hash': json['Blake3Hash'] == null ? undefined : json['Blake3Hash'],
-        'includeDeleted': json['IncludeDeleted'] == null ? undefined : json['IncludeDeleted'],
     };
 }
 
-export function GetBranchVersionParametersToJSON(json: any): GetBranchVersionParameters {
-    return GetBranchVersionParametersToJSONTyped(json, false);
+export function BranchHashQueryParametersToJSON(json: any): BranchHashQueryParameters {
+    return BranchHashQueryParametersToJSONTyped(json, false);
 }
 
-export function GetBranchVersionParametersToJSONTyped(value?: GetBranchVersionParameters | null, ignoreDiscriminator: boolean = false): any {
+export function BranchHashQueryParametersToJSONTyped(value?: BranchHashQueryParameters | null, ignoreDiscriminator: boolean = false): any {
     if (value == null) {
         return value;
     }
@@ -163,7 +156,6 @@ export function GetBranchVersionParametersToJSONTyped(value?: GetBranchVersionPa
         'Sha256Hash': value['sha256Hash'],
         'ReferenceId': value['referenceId'],
         'Blake3Hash': value['blake3Hash'],
-        'IncludeDeleted': value['includeDeleted'],
     };
 }
 

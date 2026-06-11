@@ -30,6 +30,7 @@ docs/BranchApiDto.md
 docs/BranchCommandReturnValue.md
 docs/BranchDto.md
 docs/BranchDtoUpdatedAt.md
+docs/BranchHashQueryParameters.md
 docs/BranchParameters.md
 docs/BranchQueryParameters.md
 docs/BranchReturnValue.md
@@ -274,6 +275,7 @@ grace_generated_openapi_probe/models/branch_api_dto.py
 grace_generated_openapi_probe/models/branch_command_return_value.py
 grace_generated_openapi_probe/models/branch_dto.py
 grace_generated_openapi_probe/models/branch_dto_updated_at.py
+grace_generated_openapi_probe/models/branch_hash_query_parameters.py
 grace_generated_openapi_probe/models/branch_parameters.py
 grace_generated_openapi_probe/models/branch_query_parameters.py
 grace_generated_openapi_probe/models/branch_return_value.py
@@ -502,6 +504,7 @@ test/test_branch_api_dto.py
 test/test_branch_command_return_value.py
 test/test_branch_dto.py
 test/test_branch_dto_updated_at.py
+test/test_branch_hash_query_parameters.py
 test/test_branch_parameters.py
 test/test_branch_query_parameters.py
 test/test_branch_return_value.py
