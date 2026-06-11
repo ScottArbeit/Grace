@@ -29,6 +29,12 @@ module DiffBlobGrainStorage =
         ]
         |> List.distinct
 
+    let etagForWriteTarget readBlobName writeBlobName etag =
+        if String.Equals(readBlobName, writeBlobName, StringComparison.Ordinal) then
+            etag
+        else
+            null
+
 type DiffBlobGrainStorage(storageName: string, blobServiceClient: BlobServiceClient, containerName: string) =
 
     let getContainer () = blobServiceClient.GetBlobContainerClient(containerName)
@@ -54,7 +60,7 @@ type DiffBlobGrainStorage(storageName: string, blobServiceClient: BlobServiceCli
             try
                 let blob = container.GetBlobClient(blobName)
                 let! response = blob.DownloadContentAsync()
-                return Some(response.Value.Content, response.Value.Details.ETag.ToString())
+                return Some(response.Value.Content, response.Value.Details.ETag.ToString(), blobName)
             with
             | :? RequestFailedException as ex when isNotFoundOrInvalidResourceName ex -> return None
         }
@@ -73,8 +79,9 @@ type DiffBlobGrainStorage(storageName: string, blobServiceClient: BlobServiceCli
                     index <- index + 1
 
                 match found with
-                | Some (content, etag) ->
-                    grainState.ETag <- etag
+                | Some (content, etag, blobName) ->
+                    let writeBlobName = DiffBlobGrainStorage.safeBlobName stateName grainId
+                    grainState.ETag <- DiffBlobGrainStorage.etagForWriteTarget blobName writeBlobName etag
                     grainState.RecordExists <- true
                     grainState.State <- deserializeState content
                 | None -> resetState grainState
