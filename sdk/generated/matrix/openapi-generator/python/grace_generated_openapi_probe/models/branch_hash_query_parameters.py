@@ -18,16 +18,16 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictStr
+from pydantic import BaseModel, ConfigDict, Field, StrictStr
 from typing import Any, ClassVar, Dict, List, Optional
 from uuid import UUID
 from typing import Optional, Set
 from typing_extensions import Self
 from pydantic_core import to_jsonable_python
 
-class GetBranchVersionParameters(BaseModel):
+class BranchHashQueryParameters(BaseModel):
     """
-    Parameters for the /branch/getVersion endpoint.
+    Parameters for branch query endpoints that support SHA-256, BLAKE3, or reference id locators.
     """ # noqa: E501
     correlation_id: Optional[StrictStr] = Field(default=None, description="Body DTO correlation id copied into Grace command/event metadata after request parsing. This field is distinct from the X-Correlation-Id transport header.", alias="CorrelationId")
     principal: Optional[StrictStr] = Field(default=None, description="The entity on whose behalf the action is being performed.", alias="Principal")
@@ -42,8 +42,7 @@ class GetBranchVersionParameters(BaseModel):
     sha256_hash: Optional[StrictStr] = Field(default=None, alias="Sha256Hash")
     reference_id: Optional[UUID] = Field(default=None, alias="ReferenceId")
     blake3_hash: Optional[StrictStr] = Field(default=None, alias="Blake3Hash")
-    include_deleted: Optional[StrictBool] = Field(default=None, alias="IncludeDeleted")
-    __properties: ClassVar[List[str]] = ["CorrelationId", "Principal", "OwnerId", "OwnerName", "OrganizationId", "OrganizationName", "RepositoryId", "RepositoryName", "BranchId", "BranchName", "Sha256Hash", "ReferenceId", "Blake3Hash", "IncludeDeleted"]
+    __properties: ClassVar[List[str]] = ["CorrelationId", "Principal", "OwnerId", "OwnerName", "OrganizationId", "OrganizationName", "RepositoryId", "RepositoryName", "BranchId", "BranchName", "Sha256Hash", "ReferenceId", "Blake3Hash"]
 
     model_config = ConfigDict(
         validate_by_name=True,
@@ -63,7 +62,7 @@ class GetBranchVersionParameters(BaseModel):
 
     @classmethod
     def from_json(cls, json_str: str) -> Optional[Self]:
-        """Create an instance of GetBranchVersionParameters from a JSON string"""
+        """Create an instance of BranchHashQueryParameters from a JSON string"""
         return cls.from_dict(json.loads(json_str))
 
     def to_dict(self) -> Dict[str, Any]:
@@ -88,7 +87,7 @@ class GetBranchVersionParameters(BaseModel):
 
     @classmethod
     def from_dict(cls, obj: Optional[Dict[str, Any]]) -> Optional[Self]:
-        """Create an instance of GetBranchVersionParameters from a dict"""
+        """Create an instance of BranchHashQueryParameters from a dict"""
         if obj is None:
             return None
 
@@ -108,8 +107,7 @@ class GetBranchVersionParameters(BaseModel):
             "BranchName": obj.get("BranchName"),
             "Sha256Hash": obj.get("Sha256Hash"),
             "ReferenceId": obj.get("ReferenceId"),
-            "Blake3Hash": obj.get("Blake3Hash"),
-            "IncludeDeleted": obj.get("IncludeDeleted")
+            "Blake3Hash": obj.get("Blake3Hash")
         })
         return _obj
 
