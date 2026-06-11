@@ -740,6 +740,7 @@ module Reference =
                                                 | Error error -> raise (InvalidOperationException($"Error uploading directory versions: {error.Error}"))
 
                                                 newGraceStatus <- syncGraceStatusRootDirectoryHash newGraceStatus
+                                                rootDirectoryVersion.Value <- (newGraceStatus.RootDirectoryId, newGraceStatus.RootDirectorySha256Hash)
                                                 lastDirectoryVersionUpload <- getCurrentInstant ()
 
                                             t4.Value <- 100.0

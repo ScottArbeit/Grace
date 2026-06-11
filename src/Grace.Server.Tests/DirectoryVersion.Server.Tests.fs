@@ -53,7 +53,7 @@ module DirectoryVersionServerTestHelpers =
             blake3Hash
             (List<DirectoryVersionId>(childDirectoryIds))
             (List<FileVersion>())
-            0L
+            Constants.InitialDirectorySize
 
     let createParameters (directoryVersion: DirectoryVersionModel) =
         let parameters = Parameters.DirectoryVersion.CreateParameters()
