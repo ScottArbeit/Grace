@@ -36,3 +36,9 @@ module Diff =
         inherit DiffParameters()
         member val public Sha256Hash1 = Sha256Hash String.Empty with get, set
         member val public Sha256Hash2 = Sha256Hash String.Empty with get, set
+
+    /// Parameters used by the /diff/getDiffByBlake3Hash endpoint.
+    type GetDiffByBlake3HashParameters() =
+        inherit DiffParameters()
+        member val public Blake3Hash1 = Blake3Hash String.Empty with get, set
+        member val public Blake3Hash2 = Blake3Hash String.Empty with get, set
