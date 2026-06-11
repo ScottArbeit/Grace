@@ -289,6 +289,7 @@ type WebhookDispatchUnitTests() =
                             otherBranchId,
                             Guid.NewGuid(),
                             Sha256Hash String.Empty,
+                            Blake3Hash String.Empty,
                             ReferenceType.Promotion,
                             "promotion",
                             [
