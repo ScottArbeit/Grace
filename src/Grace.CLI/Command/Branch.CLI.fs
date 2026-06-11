@@ -1199,29 +1199,12 @@ module Branch =
 
                                             t3.StartTask() // Upload to object storage.
 
-                                            let updatedRelativePaths =
-                                                differences
-                                                    .Select(fun difference ->
-                                                        match difference.DifferenceType with
-                                                        | Add ->
-                                                            match difference.FileSystemEntryType with
-                                                            | FileSystemEntryType.File -> Some difference.RelativePath
-                                                            | FileSystemEntryType.Directory -> None
-                                                        | Change ->
-                                                            match difference.FileSystemEntryType with
-                                                            | FileSystemEntryType.File -> Some difference.RelativePath
-                                                            | FileSystemEntryType.Directory -> None
-                                                        | Delete -> None)
-                                                    .Where(fun relativePathOption -> relativePathOption.IsSome)
-                                                    .Select(fun relativePath -> relativePath.Value)
-
-                                            // let newFileVersions = updatedRelativePaths.Select(fun relativePath ->
-                                            //     newDirectoryVersions.First(fun dv -> dv.Files.Exists(fun file -> file.RelativePath = relativePath)).Files.First(fun file -> file.RelativePath = relativePath))
+                                            let fileVersionsToUpload = getChangedFileVersionsReferencedByUpdatedDirectories differences newDirectoryVersions
 
                                             let mutable lastFileUploadInstant = newGraceStatus.LastSuccessfulFileUpload
                                             let mutable uploadedFileVersions = Array.empty<FileVersion>
 
-                                            if newFileVersions.Count() > 0 then
+                                            if fileVersionsToUpload.Count() > 0 then
                                                 let getUploadMetadataForFilesParameters =
                                                     Storage.GetUploadMetadataForFilesParameters(
                                                         OwnerId = graceIds.OwnerIdString,
@@ -1232,7 +1215,7 @@ module Branch =
                                                         RepositoryName = graceIds.RepositoryName,
                                                         CorrelationId = getCorrelationId parseResult,
                                                         FileVersions =
-                                                            (newFileVersions
+                                                            (fileVersionsToUpload
                                                              |> Seq.map (fun localFileVersion -> localFileVersion.ToFileVersion)
                                                              |> Seq.toArray)
                                                     )
@@ -1329,27 +1312,7 @@ module Branch =
 
                         let! (newGraceIndex, newDirectoryVersions) = getNewGraceStatusAndDirectoryVersions previousGraceStatus differences
 
-                        let updatedRelativePaths =
-                            differences
-                                .Select(fun difference ->
-                                    match difference.DifferenceType with
-                                    | Add ->
-                                        match difference.FileSystemEntryType with
-                                        | FileSystemEntryType.File -> Some difference.RelativePath
-                                        | FileSystemEntryType.Directory -> None
-                                    | Change ->
-                                        match difference.FileSystemEntryType with
-                                        | FileSystemEntryType.File -> Some difference.RelativePath
-                                        | FileSystemEntryType.Directory -> None
-                                    | Delete -> None)
-                                .Where(fun relativePathOption -> relativePathOption.IsSome)
-                                .Select(fun relativePath -> relativePath.Value)
-
-                        let newFileVersions =
-                            updatedRelativePaths.Select (fun relativePath ->
-                                newDirectoryVersions
-                                    .First(fun dv -> dv.Files.Exists(fun file -> file.RelativePath = relativePath))
-                                    .Files.First(fun file -> file.RelativePath = relativePath))
+                        let newFileVersions = getChangedFileVersionsReferencedByUpdatedDirectories differences newDirectoryVersions
 
                         let getUploadMetadataForFilesParameters =
                             Storage.GetUploadMetadataForFilesParameters(
@@ -2869,27 +2832,7 @@ module Branch =
 
                             if currentBranch.SaveEnabled
                                && newDirectoryVersions.Any() then
-                                let updatedRelativePaths =
-                                    differences
-                                        .Select(fun difference ->
-                                            match difference.DifferenceType with
-                                            | Add ->
-                                                match difference.FileSystemEntryType with
-                                                | FileSystemEntryType.File -> Some difference.RelativePath
-                                                | FileSystemEntryType.Directory -> None
-                                            | Change ->
-                                                match difference.FileSystemEntryType with
-                                                | FileSystemEntryType.File -> Some difference.RelativePath
-                                                | FileSystemEntryType.Directory -> None
-                                            | Delete -> None)
-                                        .Where(fun relativePathOption -> relativePathOption.IsSome)
-                                        .Select(fun relativePath -> relativePath.Value)
-
-                                let newFileVersions =
-                                    updatedRelativePaths.Select (fun relativePath ->
-                                        newDirectoryVersions
-                                            .First(fun dv -> dv.Files.Exists(fun file -> file.RelativePath = relativePath))
-                                            .Files.First(fun file -> file.RelativePath = relativePath))
+                                let newFileVersions = getChangedFileVersionsReferencedByUpdatedDirectories differences newDirectoryVersions
 
                                 logToAnsiConsole
                                     Colors.Verbose
