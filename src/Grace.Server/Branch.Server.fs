@@ -830,7 +830,8 @@ module Branch =
                                     )
                                 )
                         elif not <| String.IsNullOrEmpty(parameters.Sha256Hash) then
-                            match! getDirectoryVersionBySha256Hash (Guid.Parse(graceIds.RepositoryIdString)) parameters.Sha256Hash parameters.CorrelationId with
+                            match! getRootDirectoryVersionBySha256Hash (Guid.Parse(graceIds.RepositoryIdString)) parameters.Sha256Hash parameters.CorrelationId
+                                with
                             | Some directoryVersion ->
                                 return
                                     Some(
