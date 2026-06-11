@@ -3,9 +3,11 @@ namespace Grace.CLI.Tests
 open FsUnit
 open Grace.CLI
 open Grace.CLI.Services
+open Grace.Shared.Client.Configuration
 open Grace.Shared
 open Grace.Shared.Constants
 open Grace.Types.Branch
+open Grace.Types.DirectoryVersion
 open Grace.Types.Common
 open Grace.Types.Reference
 open NUnit.Framework
@@ -77,6 +79,41 @@ module CurrentStateCaptureCliTests =
             )
 
         FileContentReference.FileManifest { manifest with ManifestAddress = ContentAddress.computeManifestAddressForManifest manifest }
+
+    let private configureForRoot (root: string) =
+        let configuration = GraceConfiguration()
+        configuration.OwnerId <- Guid.NewGuid()
+        configuration.OrganizationId <- Guid.NewGuid()
+        configuration.RepositoryId <- Guid.NewGuid()
+        configuration.RootDirectory <- root
+        configuration.StandardizedRootDirectory <- Grace.Shared.Utilities.normalizeFilePath root
+        configuration.GraceDirectory <- Path.Combine(root, Constants.GraceConfigDirectory)
+        configuration.ObjectDirectory <- Path.Combine(configuration.GraceDirectory, Constants.GraceObjectsDirectory)
+        configuration.GraceStatusFile <- Path.Combine(configuration.GraceDirectory, Constants.GraceLocalStateDbFileName)
+        configuration.GraceObjectCacheFile <- configuration.GraceStatusFile
+        configuration.ConfigurationDirectory <- configuration.GraceDirectory
+        configuration.IsPopulated <- true
+        updateConfiguration configuration
+        configuration
+
+    let private withTempRepo (action: string -> GraceConfiguration -> unit) =
+        let root = Path.Combine(Path.GetTempPath(), $"grace-current-state-{Guid.NewGuid():N}")
+        let previousDirectory = Environment.CurrentDirectory
+        let previousConfiguration = if configurationFileExists () then Some(Current()) else None
+
+        try
+            Directory.CreateDirectory(root) |> ignore
+            Environment.CurrentDirectory <- root
+            let configuration = configureForRoot root
+            action root configuration
+        finally
+            Environment.CurrentDirectory <- previousDirectory
+
+            match previousConfiguration with
+            | Some configuration -> updateConfiguration configuration
+            | None -> resetConfiguration ()
+
+            if Directory.Exists(root) then Directory.Delete(root, true)
 
     let private defaultOperations branchDto =
         {
@@ -834,6 +871,83 @@ module CurrentStateCaptureCliTests =
                 |> should equal relativePath
         finally
             if Directory.Exists(root) then Directory.Delete(root, true)
+
+    [<Test>]
+    let ``updateWorkingDirectory replaces same-sha file when blake3 changes`` () =
+        withTempRepo (fun root configuration ->
+            let relativePath = RelativePath "collision.txt"
+            let sharedSha256Hash = Sha256Hash "same-sha256"
+            let previousBlake3Hash = Blake3Hash "previous-blake3"
+            let updatedBlake3Hash = Blake3Hash "updated-blake3"
+            let previousBytes = Encoding.UTF8.GetBytes("old-bytes")
+            let updatedBytes = Encoding.UTF8.GetBytes("new-bytes")
+            let workingFilePath = Path.Combine(root, string relativePath)
+
+            File.WriteAllBytes(workingFilePath, previousBytes)
+
+            let previousFile =
+                LocalFileVersion.CreateWithHashes
+                    relativePath
+                    sharedSha256Hash
+                    previousBlake3Hash
+                    false
+                    (int64 previousBytes.Length)
+                    (Grace.Shared.Utilities.getCurrentInstant ())
+                    true
+                    DateTime.UtcNow
+
+            let previousRoot =
+                LocalDirectoryVersion.CreateWithHashes
+                    rootDirectoryId
+                    configuration.OwnerId
+                    configuration.OrganizationId
+                    configuration.RepositoryId
+                    Constants.RootDirectoryPath
+                    rootSha
+                    (Blake3Hash "previous-root-blake3")
+                    (List<DirectoryVersionId>())
+                    (List<LocalFileVersion>([| previousFile |]))
+                    (int64 previousBytes.Length)
+                    DateTime.UtcNow
+
+            let previousIndex = GraceIndex()
+
+            previousIndex.TryAdd(rootDirectoryId, previousRoot)
+            |> ignore
+
+            let previousStatus = { GraceStatus.Default with Index = previousIndex; RootDirectoryId = rootDirectoryId; RootDirectorySha256Hash = rootSha }
+
+            let updatedFile = FileVersion.CreateWithHashes relativePath sharedSha256Hash updatedBlake3Hash String.Empty false (int64 updatedBytes.Length)
+
+            let updatedRoot =
+                DirectoryVersion.CreateWithHashes
+                    (Guid.NewGuid())
+                    configuration.OwnerId
+                    configuration.OrganizationId
+                    configuration.RepositoryId
+                    Constants.RootDirectoryPath
+                    (Sha256Hash "updated-root-sha")
+                    (Blake3Hash "updated-root-blake3")
+                    (List<DirectoryVersionId>())
+                    (List<FileVersion>([| updatedFile |]))
+                    (int64 updatedBytes.Length)
+
+            let updatedDto = { DirectoryVersionDto.Default with DirectoryVersion = updatedRoot; RecursiveSize = int64 updatedBytes.Length }
+
+            let updatedLocalFile = updatedFile.ToLocalFileVersion DateTime.UtcNow
+
+            Directory.CreateDirectory(Path.GetDirectoryName(updatedLocalFile.FullObjectPath))
+            |> ignore
+
+            File.WriteAllBytes(updatedLocalFile.FullObjectPath, updatedBytes)
+
+            let updatedStatus = graceStatus updatedRoot.DirectoryVersionId updatedRoot.Sha256Hash
+
+            updateWorkingDirectory previousStatus updatedStatus [| updatedDto |] correlationId
+            |> fun task -> task.GetAwaiter().GetResult()
+
+            File.ReadAllBytes(workingFilePath)
+            |> should equal updatedBytes)
 
     [<Test>]
     let ``read-only current-state scan treats empty stored BLAKE3 as unknown when SHA-256 still matches`` () =
