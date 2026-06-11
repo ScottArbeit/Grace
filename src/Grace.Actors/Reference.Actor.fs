@@ -29,9 +29,6 @@ open System.Threading.Tasks
 
 module Reference =
 
-    [<Literal>]
-    let private DefaultStoragePoolId = "default"
-
     type ManifestSaveContributionPlan =
         {
             RepositoryId: RepositoryId
@@ -58,14 +55,17 @@ module Reference =
         | ManifestContributionDirection.Increment -> ManifestContributionWorkflowOperationId $"save:{referenceId:N}:{manifestAddress}:fanout"
         | ManifestContributionDirection.Decrement -> ManifestContributionWorkflowOperationId $"save-expiry:{referenceId:N}:{manifestAddress}:fanout"
 
-    let private workflowRangesForManifest (manifest: FileManifest) =
+    let private workflowRangesForManifest repositoryId (manifest: FileManifest) =
+        let storagePoolId = DedupeIndex.storagePoolIdForRepositoryId repositoryId
+        let seenContentBlocks = HashSet<ContentBlockAddress>()
         let ranges = ResizeArray<ManifestContributionWorkflowRange>()
         let mutable index = 0
 
         while index < manifest.Blocks.Count do
             let block = manifest.Blocks[index]
 
-            ranges.Add({ StoragePoolId = StoragePoolId DefaultStoragePoolId; ContentBlockAddress = block.Address; OrdinalStart = index; OrdinalCount = 1 })
+            if seenContentBlocks.Add block.Address then
+                ranges.Add({ StoragePoolId = storagePoolId; ContentBlockAddress = block.Address; OrdinalStart = 0; OrdinalCount = 1 })
 
             index <- index + 1
 
@@ -96,7 +96,7 @@ module Reference =
                     ReferenceId = referenceId
                     Manifest = manifest
                     CounterCommand = RepositoryContentCounterCommand.AddReference(operationId, repositoryId, manifest.ManifestAddress)
-                    WorkflowRanges = workflowRangesForManifest manifest
+                    WorkflowRanges = workflowRangesForManifest repositoryId manifest
                 })
             |> Ok
 
