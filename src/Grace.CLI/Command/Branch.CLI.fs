@@ -1204,7 +1204,9 @@ module Branch =
                                             t4.Value <- 100.0
 
                                             rootDirectoryVersion.Value <-
-                                                (graceWatchStatus.RootDirectoryId, graceWatchStatus.RootDirectorySha256Hash, Blake3Hash String.Empty)
+                                                (graceWatchStatus.RootDirectoryId,
+                                                 graceWatchStatus.RootDirectorySha256Hash,
+                                                 graceWatchStatus.RootDirectoryBlake3Hash)
                                         | None ->
                                             t0.StartTask() // Read Grace status file.
                                             let! previousGraceStatus = readGraceStatusFile ()
