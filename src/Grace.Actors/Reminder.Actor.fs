@@ -172,12 +172,13 @@ module Reminder =
                             return! uploadSessionActorProxy.ReceiveReminderAsync reminderDto
                         | ActorName.Diff ->
                             // Example reminderDto.ActorId: "diffactor/15b50c9573064ecb9850a0a5dc7419cf1e7b6f83471542f8ba0b9b0262356f08"
+                            // Legacy persisted reminders used "diffactor/15b50c95-7306-4ecb-9850-a0a5dc7419cf*1e7b6f83-4715-42f8-ba0b-9b0262356f08".
                             let directoryVersionKey = reminderDto.ActorId.Split("/").[1]
+                            Diff.ParsePrimaryKey directoryVersionKey |> ignore
 
                             let diffActorProxy =
-                                Diff.CreateActorProxy
-                                    (Guid.ParseExact(directoryVersionKey.Substring(0, 32), "N"))
-                                    (Guid.ParseExact(directoryVersionKey.Substring(32, 32), "N"))
+                                Diff.CreateActorProxyForPrimaryKey
+                                    directoryVersionKey
                                     reminderDto.OwnerId
                                     reminderDto.OrganizationId
                                     reminderDto.RepositoryId
