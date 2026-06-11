@@ -167,6 +167,37 @@ type SaveBoundaryActorTests() =
         | Error error -> Assert.Fail($"Expected existing ContentBlock metadata to be accepted before Save, got {error.Error}.")
 
     [<Test>]
+    member _.ManifestSaveBoundaryChecksEachContentBlockAtOrdinalZero() =
+        let manifest = finalizedManifestWithBlockCopies 2
+        let queries = ResizeArray<ContentBlockRangeQuery>()
+
+        let getRangePresence _ query =
+            queries.Add(query)
+            Task.FromResult ContentBlockRangePresence.Reclaimable
+
+        match (DirectoryVersionActor.validateManifestReferencesForSaveBoundaryWithResolver getRangePresence "corr-ordinal-zero" [ manifest ])
+            .Result
+            with
+        | Ok () ->
+            Assert.That(queries, Has.Count.EqualTo(2))
+
+            Assert.That(
+                queries
+                |> Seq.forall (fun query -> query.OrdinalStart = 0 && query.OrdinalCount = 1),
+                Is.True
+            )
+        | Error error -> Assert.Fail($"Expected multi-block manifest metadata checks to use content-block ordinal zero, got {error.Error}.")
+
+    [<Test>]
+    member _.ManifestSaveBoundaryUsesRepositoryDerivedContentBlockMetadataPool() =
+        let contentBlockAddress = ContentBlockAddress "block-address"
+        let expected = $"{DedupeIndex.storagePoolIdForRepositoryId repositoryId}|{contentBlockAddress}"
+
+        let actual = DirectoryVersionActor.contentBlockMetadataActorKeyForSaveBoundary repositoryId contentBlockAddress
+
+        Assert.That(actual, Is.EqualTo(expected))
+
+    [<Test>]
     member _.SaveBoundaryAcceptsFinalizedManifestAfterDurableIncrementIntent() =
         let manifest = finalizedManifest ()
         let directoryVersion = directoryWith [ manifestFile manifest ]
