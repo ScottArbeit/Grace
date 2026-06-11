@@ -150,6 +150,219 @@ module DirectoryVersion =
         getFilesToValidate newFiles previouslyValidatedFiles
         |> Array.filter isWholeFileContentReference
 
+    let private directoryVersionHashError correlationId (directoryVersion: DirectoryVersion) message =
+        GraceError.Create $"DirectoryVersion '{directoryVersion.RelativePath}' {message}" correlationId
+
+    let private hasMissingHash (value: string) = String.IsNullOrWhiteSpace value
+
+    let private hasValidatedLegacyDirectoryBlake3Gap (directoryVersion: DirectoryVersion) =
+        hasMissingHash directoryVersion.Blake3Hash
+        && not (hasMissingHash directoryVersion.Sha256Hash)
+        && directoryVersion.HashesValidated
+
+    let private hasLegacyManifestBackedFileBlake3Gap (fileVersion: FileVersion) =
+        let contentReference = normalizeContentReference fileVersion
+
+        match contentReference.ReferenceType, contentReference.Manifest with
+        | FileContentReferenceType.FileManifest, Some manifest ->
+            hasMissingHash fileVersion.Blake3Hash
+            && not (String.IsNullOrWhiteSpace manifest.FileContentHash)
+            && ContentAddress.isValidAddress manifest.FileContentHash
+            && fileVersion.Size = manifest.Size
+        | _ -> false
+
+    let private hasLegacyWholeFileBlake3Gap (fileVersion: FileVersion) =
+        hasMissingHash fileVersion.Blake3Hash
+        && not (hasMissingHash fileVersion.Sha256Hash)
+        && isWholeFileContentReference fileVersion
+
+    let private contentReferenceIdentity (fileVersion: FileVersion) =
+        let contentReference = normalizeContentReference fileVersion
+
+        match contentReference.ReferenceType, contentReference.Manifest with
+        | FileContentReferenceType.FileManifest, Some manifest -> $"{contentReference.ReferenceType}:{manifest.ManifestAddress}"
+        | referenceType, _ -> $"{referenceType}"
+
+    let private fileIdentity (fileVersion: FileVersion) =
+        (fileVersion.RelativePath, fileVersion.Size, fileVersion.Sha256Hash, fileVersion.Blake3Hash, contentReferenceIdentity fileVersion)
+
+    let private hasUnchangedLegacyWholeFileBlake3Gap (previouslyValidatedFiles: FileVersion seq) (fileVersion: FileVersion) =
+        hasLegacyWholeFileBlake3Gap fileVersion
+        && previouslyValidatedFiles
+           |> Seq.exists (fun previousFile ->
+               hasLegacyWholeFileBlake3Gap previousFile
+               && fileIdentity previousFile = fileIdentity fileVersion)
+
+    let private hasUnchangedLegacyManifestBackedFileBlake3Gap (previouslyValidatedFiles: FileVersion seq) (fileVersion: FileVersion) =
+        hasLegacyManifestBackedFileBlake3Gap fileVersion
+        && previouslyValidatedFiles
+           |> Seq.exists (fun previousFile ->
+               hasLegacyManifestBackedFileBlake3Gap previousFile
+               && fileIdentity previousFile = fileIdentity fileVersion)
+
+    let normalizeDirectoryVersionForSaveBoundary (directoryVersion: DirectoryVersion) =
+        if directoryVersion.Size
+           <> Constants.InitialDirectorySize then
+            directoryVersion
+        else
+            let normalizedDirectoryVersion = DirectoryVersion()
+            normalizedDirectoryVersion.Class <- directoryVersion.Class
+            normalizedDirectoryVersion.DirectoryVersionId <- directoryVersion.DirectoryVersionId
+            normalizedDirectoryVersion.OwnerId <- directoryVersion.OwnerId
+            normalizedDirectoryVersion.OrganizationId <- directoryVersion.OrganizationId
+            normalizedDirectoryVersion.RepositoryId <- directoryVersion.RepositoryId
+            normalizedDirectoryVersion.RelativePath <- directoryVersion.RelativePath
+            normalizedDirectoryVersion.Sha256Hash <- directoryVersion.Sha256Hash
+            normalizedDirectoryVersion.Blake3Hash <- directoryVersion.Blake3Hash
+            normalizedDirectoryVersion.Directories <- directoryVersion.Directories
+            normalizedDirectoryVersion.Files <- directoryVersion.Files
+            normalizedDirectoryVersion.Size <- getDirectorySize directoryVersion.Files
+            normalizedDirectoryVersion.CreatedAt <- directoryVersion.CreatedAt
+            normalizedDirectoryVersion.HashesValidated <- directoryVersion.HashesValidated
+            normalizedDirectoryVersion
+
+    let computeDirectoryVersionHashesFromChildren (relativePath: RelativePath) (childDirectoryVersions: seq<DirectoryVersion>) (files: seq<FileVersion>) =
+        let directoryEntries =
+            childDirectoryVersions
+            |> Seq.map (fun directoryVersion ->
+                DirectoryVersionPreimageEntry.Directory
+                    directoryVersion.RelativePath
+                    directoryVersion.Size
+                    directoryVersion.Blake3Hash
+                    directoryVersion.Sha256Hash)
+
+        let fileEntries =
+            files
+            |> Seq.map (fun fileVersion ->
+                DirectoryVersionPreimageEntry.File fileVersion.RelativePath fileVersion.Size fileVersion.Blake3Hash fileVersion.Sha256Hash)
+
+        let entries =
+            Seq.append directoryEntries fileEntries
+            |> Seq.toArray
+
+        computeSha256ForDirectoryEntries relativePath entries, computeBlake3ForDirectory relativePath entries
+
+    let validateDirectoryVersionHashesWithChildrenAndPreviousFiles
+        correlationId
+        (directoryVersion: DirectoryVersion)
+        (childDirectoryVersions: seq<DirectoryVersion>)
+        (previouslyValidatedFiles: FileVersion seq)
+        =
+        let mutable error: GraceError option = None
+        let childDirectoryVersions = childDirectoryVersions |> Seq.toArray
+        let previouslyValidatedFiles = previouslyValidatedFiles |> Seq.toArray
+
+        if hasMissingHash directoryVersion.Sha256Hash then
+            error <- Some(directoryVersionHashError correlationId directoryVersion "must include DirectoryVersion.Sha256Hash before Save.")
+        elif hasMissingHash directoryVersion.Blake3Hash then
+            error <- Some(directoryVersionHashError correlationId directoryVersion "must include DirectoryVersion.Blake3Hash before Save.")
+        else
+            let mutable childIndex = 0
+
+            while childIndex < childDirectoryVersions.Length
+                  && error.IsNone do
+                let childDirectoryVersion = childDirectoryVersions[childIndex]
+
+                if hasMissingHash childDirectoryVersion.Sha256Hash then
+                    error <-
+                        Some(
+                            directoryVersionHashError
+                                correlationId
+                                directoryVersion
+                                $"has child directory '{childDirectoryVersion.RelativePath}' without Sha256Hash."
+                        )
+                elif
+                    hasMissingHash childDirectoryVersion.Blake3Hash
+                    && not (hasValidatedLegacyDirectoryBlake3Gap childDirectoryVersion)
+                then
+                    error <-
+                        Some(
+                            directoryVersionHashError
+                                correlationId
+                                directoryVersion
+                                $"has child directory '{childDirectoryVersion.RelativePath}' without Blake3Hash."
+                        )
+
+                childIndex <- childIndex + 1
+
+            let mutable fileIndex = 0
+
+            while fileIndex < directoryVersion.Files.Count
+                  && error.IsNone do
+                let fileVersion = directoryVersion.Files[fileIndex]
+
+                if hasMissingHash fileVersion.Sha256Hash then
+                    error <- Some(directoryVersionHashError correlationId directoryVersion $"has child file '{fileVersion.RelativePath}' without Sha256Hash.")
+                elif
+                    hasMissingHash fileVersion.Blake3Hash
+                    && not (hasUnchangedLegacyManifestBackedFileBlake3Gap previouslyValidatedFiles fileVersion)
+                    && not (hasUnchangedLegacyWholeFileBlake3Gap previouslyValidatedFiles fileVersion)
+                then
+                    error <- Some(directoryVersionHashError correlationId directoryVersion $"has child file '{fileVersion.RelativePath}' without Blake3Hash.")
+
+                fileIndex <- fileIndex + 1
+
+        match error with
+        | Some error -> Error error
+        | None ->
+            let expectedSha256Hash, expectedBlake3Hash =
+                computeDirectoryVersionHashesFromChildren directoryVersion.RelativePath childDirectoryVersions directoryVersion.Files
+
+            if expectedSha256Hash <> directoryVersion.Sha256Hash then
+                Error(
+                    directoryVersionHashError
+                        correlationId
+                        directoryVersion
+                        $"has mismatched Sha256Hash. Expected {expectedSha256Hash}; received {directoryVersion.Sha256Hash}."
+                )
+            elif expectedBlake3Hash <> directoryVersion.Blake3Hash then
+                Error(
+                    directoryVersionHashError
+                        correlationId
+                        directoryVersion
+                        $"has mismatched Blake3Hash. Expected {expectedBlake3Hash}; received {directoryVersion.Blake3Hash}."
+                )
+            else
+                Ok()
+
+    let validateDirectoryVersionHashesWithChildren correlationId (directoryVersion: DirectoryVersion) (childDirectoryVersions: seq<DirectoryVersion>) =
+        validateDirectoryVersionHashesWithChildrenAndPreviousFiles correlationId directoryVersion childDirectoryVersions Array.empty<FileVersion>
+
+    let private getChildDirectoryVersionsForValidation repositoryId correlationId (directoryVersion: DirectoryVersion) =
+        task {
+            let childDirectoryVersions = ResizeArray<DirectoryVersion>()
+            let mutable error: GraceError option = None
+            let mutable childIndex = 0
+
+            while childIndex < directoryVersion.Directories.Count
+                  && error.IsNone do
+                let childDirectoryId = directoryVersion.Directories[childIndex]
+                let childDirectoryActor = DirectoryVersion.CreateActorProxy childDirectoryId repositoryId correlationId
+                let! exists = childDirectoryActor.Exists correlationId
+
+                if not exists then
+                    error <- Some(directoryVersionHashError correlationId directoryVersion $"references missing child DirectoryVersionId '{childDirectoryId}'.")
+                else
+                    let! childDirectoryDto = childDirectoryActor.Get correlationId
+                    let childDirectoryVersion = normalizeDirectoryVersionForSaveBoundary childDirectoryDto.DirectoryVersion
+
+                    if
+                        hasMissingHash childDirectoryVersion.Blake3Hash
+                        && not (hasMissingHash childDirectoryVersion.Sha256Hash)
+                    then
+                        // The child came from an existing actor, so this local DTO can carry the persisted-child marker
+                        // that lets parent saves tolerate immutable SHA-only legacy children without relaxing new creates.
+                        childDirectoryVersion.HashesValidated <- true
+
+                    childDirectoryVersions.Add childDirectoryVersion
+
+                childIndex <- childIndex + 1
+
+            match error with
+            | Some error -> return Error error
+            | None -> return Ok(childDirectoryVersions.ToArray())
+        }
+
     let private manifestValidationError correlationId (fileVersion: FileVersion) message =
         GraceError.Create $"FileManifest reference for '{fileVersion.RelativePath}' {message}" correlationId
 
@@ -824,7 +1037,29 @@ module DirectoryVersion =
                                             metadata.CorrelationId
                                     )
                             else
-                                return Ok command
+                                match! getChildDirectoryVersionsForValidation repositoryDto.RepositoryId metadata.CorrelationId directoryVersion with
+                                | Error graceError -> return Error graceError
+                                | Ok childDirectoryVersions ->
+                                    let! mostRecentDirectoryVersion =
+                                        getMostRecentDirectoryVersionByRelativePath
+                                            repositoryDto.RepositoryId
+                                            directoryVersion.RelativePath
+                                            metadata.CorrelationId
+
+                                    let previouslyValidatedFiles =
+                                        match mostRecentDirectoryVersion with
+                                        | Some previousDirectoryVersion -> previousDirectoryVersion.Files :> seq<FileVersion>
+                                        | None -> Seq.empty
+
+                                    match
+                                        validateDirectoryVersionHashesWithChildrenAndPreviousFiles
+                                            metadata.CorrelationId
+                                            directoryVersion
+                                            childDirectoryVersions
+                                            previouslyValidatedFiles
+                                        with
+                                    | Error graceError -> return Error graceError
+                                    | Ok () -> return Ok command
 
                         | _ ->
                             if directoryVersionDto.DirectoryVersion.CreatedAt = DirectoryVersion.Default.CreatedAt then
@@ -1093,7 +1328,13 @@ module DirectoryVersion =
                         this.correlationId <- metadata.CorrelationId
                         currentCommand <- getDiscriminatedUnionCaseName command
 
-                        match! isValid command metadata with
+                        let normalizedCommand =
+                            match command with
+                            | DirectoryVersionCommand.Create (directoryVersion, repositoryDto) ->
+                                DirectoryVersionCommand.Create(normalizeDirectoryVersionForSaveBoundary directoryVersion, repositoryDto)
+                            | _ -> command
+
+                        match! isValid normalizedCommand metadata with
                         | Ok command -> return! processCommand command metadata
                         | Error error -> return Error error
                     with
