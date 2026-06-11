@@ -29,6 +29,7 @@ docs/BranchApiDto.md
 docs/BranchCommandReturnValue.md
 docs/BranchDto.md
 docs/BranchDtoUpdatedAt.md
+docs/BranchHashQueryParameters.md
 docs/BranchParameters.md
 docs/BranchQueryParameters.md
 docs/BranchReturnValue.md
@@ -269,6 +270,7 @@ src/models/branch_api_dto.rs
 src/models/branch_command_return_value.rs
 src/models/branch_dto.rs
 src/models/branch_dto_updated_at.rs
+src/models/branch_hash_query_parameters.rs
 src/models/branch_parameters.rs
 src/models/branch_query_parameters.rs
 src/models/branch_return_value.rs

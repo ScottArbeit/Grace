@@ -1,4 +1,4 @@
-# GetReferenceParameters
+# BranchHashQueryParameters
 
 ## Properties
 
@@ -16,6 +16,7 @@ Name | Type | Description | Notes
 **branch_name** | Option<**String**> |  | [optional]
 **sha256_hash** | Option<**String**> |  | [optional]
 **reference_id** | Option<**uuid::Uuid**> |  | [optional]
+**blake3_hash** | Option<**String**> |  | [optional]
 
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
 
