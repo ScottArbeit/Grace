@@ -15,10 +15,10 @@
 
 import unittest
 
-from grace_generated_openapi_probe.models.repository_references_return_value import RepositoryReferencesReturnValue
+from grace_generated_openapi_probe.models.directory_version_hash_lookup_return_value import DirectoryVersionHashLookupReturnValue
 
-class TestRepositoryReferencesReturnValue(unittest.TestCase):
-    """RepositoryReferencesReturnValue unit test stubs"""
+class TestDirectoryVersionHashLookupReturnValue(unittest.TestCase):
+    """DirectoryVersionHashLookupReturnValue unit test stubs"""
 
     def setUp(self):
         pass
@@ -26,29 +26,27 @@ class TestRepositoryReferencesReturnValue(unittest.TestCase):
     def tearDown(self):
         pass
 
-    def make_instance(self, include_optional) -> RepositoryReferencesReturnValue:
-        """Test RepositoryReferencesReturnValue
+    def make_instance(self, include_optional) -> DirectoryVersionHashLookupReturnValue:
+        """Test DirectoryVersionHashLookupReturnValue
             include_optional is a boolean, when False only required
             params are included, when True both required and
             optional params are included """
-        # uncomment below to create an instance of `RepositoryReferencesReturnValue`
+        # uncomment below to create an instance of `DirectoryVersionHashLookupReturnValue`
         """
-        model = RepositoryReferencesReturnValue()
+        model = DirectoryVersionHashLookupReturnValue()
         if include_optional:
-            return RepositoryReferencesReturnValue(
-                return_value = [
-                    grace_generated_openapi_probe.models.reference_dto.ReferenceDto(
-                        class = '', 
-                        reference_id = 'c8f9bac8-d489-46c7-917f-b36b7d9efa9a', 
-                        branch_id = 'de7bf47d-23ae-4599-af68-68a317ea390d', 
-                        directory_id = '33a4e36b-828f-4fae-9343-50b6560dc842', 
-                        sha256_hash = '805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243', 
-                        blake3_hash = '9A35D91B2F631BE9025DE753139B88F7B1E71385C412BC3986FF2F38F230841D', 
-                        reference_type = 'Commit', 
-                        reference_text = '', 
-                        created_by = '', 
-                        created_at = datetime.datetime.strptime('2013-10-20 19:20:30.00', '%Y-%m-%d %H:%M:%S.%f'), )
-                    ],
+            return DirectoryVersionHashLookupReturnValue(
+                return_value = grace_generated_openapi_probe.models.directory_version.DirectoryVersion(
+                    class = '', 
+                    directories = [
+                        null
+                        ], 
+                    files = [
+                        null
+                        ], 
+                    size = 56, 
+                    recursive_size = 56, 
+                    created_at = datetime.datetime.strptime('2013-10-20 19:20:30.00', '%Y-%m-%d %H:%M:%S.%f'), ),
                 event_time = datetime.datetime.strptime('2013-10-20 19:20:30.00', '%Y-%m-%d %H:%M:%S.%f'),
                 correlation_id = 'cli-20260604T181500Z-0001',
                 properties = {
@@ -56,20 +54,18 @@ class TestRepositoryReferencesReturnValue(unittest.TestCase):
                     }
             )
         else:
-            return RepositoryReferencesReturnValue(
-                return_value = [
-                    grace_generated_openapi_probe.models.reference_dto.ReferenceDto(
-                        class = '', 
-                        reference_id = 'c8f9bac8-d489-46c7-917f-b36b7d9efa9a', 
-                        branch_id = 'de7bf47d-23ae-4599-af68-68a317ea390d', 
-                        directory_id = '33a4e36b-828f-4fae-9343-50b6560dc842', 
-                        sha256_hash = '805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243', 
-                        blake3_hash = '9A35D91B2F631BE9025DE753139B88F7B1E71385C412BC3986FF2F38F230841D', 
-                        reference_type = 'Commit', 
-                        reference_text = '', 
-                        created_by = '', 
-                        created_at = datetime.datetime.strptime('2013-10-20 19:20:30.00', '%Y-%m-%d %H:%M:%S.%f'), )
-                    ],
+            return DirectoryVersionHashLookupReturnValue(
+                return_value = grace_generated_openapi_probe.models.directory_version.DirectoryVersion(
+                    class = '', 
+                    directories = [
+                        null
+                        ], 
+                    files = [
+                        null
+                        ], 
+                    size = 56, 
+                    recursive_size = 56, 
+                    created_at = datetime.datetime.strptime('2013-10-20 19:20:30.00', '%Y-%m-%d %H:%M:%S.%f'), ),
                 event_time = datetime.datetime.strptime('2013-10-20 19:20:30.00', '%Y-%m-%d %H:%M:%S.%f'),
                 correlation_id = 'cli-20260604T181500Z-0001',
                 properties = {
@@ -78,8 +74,8 @@ class TestRepositoryReferencesReturnValue(unittest.TestCase):
         )
         """
 
-    def testRepositoryReferencesReturnValue(self):
-        """Test RepositoryReferencesReturnValue"""
+    def testDirectoryVersionHashLookupReturnValue(self):
+        """Test DirectoryVersionHashLookupReturnValue"""
         # inst_req_only = self.make_instance(include_optional=False)
         # inst_req_and_optional = self.make_instance(include_optional=True)
 

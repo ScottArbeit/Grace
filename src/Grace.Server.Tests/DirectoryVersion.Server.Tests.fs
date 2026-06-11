@@ -90,6 +90,15 @@ module DirectoryVersionServerTestHelpers =
         parameters.CorrelationId <- generateCorrelationId ()
         parameters
 
+    let getByBlake3HashParameters (repositoryId: string) (blake3Hash: Blake3Hash) =
+        let parameters = Parameters.DirectoryVersion.GetByBlake3HashParameters()
+        parameters.OwnerId <- ownerId
+        parameters.OrganizationId <- organizationId
+        parameters.RepositoryId <- repositoryId
+        parameters.Blake3Hash <- blake3Hash
+        parameters.CorrelationId <- generateCorrelationId ()
+        parameters
+
     let saveParameters (repositoryId: string) (directoryVersions: DirectoryVersionModel seq) =
         let parameters = Parameters.DirectoryVersion.SaveDirectoryVersionsParameters()
         parameters.OwnerId <- ownerId
@@ -182,6 +191,14 @@ type DirectoryVersionServer() =
             let! getBySha = deserializeContent<GraceReturnValue<DirectoryVersionServerTestHelpers.DirectoryVersionModel>> getByShaResponse
 
             DirectoryVersionServerTestHelpers.assertDirectoryVersion root getBySha.ReturnValue
+
+            let getByBlake3Parameters = DirectoryVersionServerTestHelpers.getByBlake3HashParameters repositoryId root.Blake3Hash
+
+            let! getByBlake3Response = Client.PostAsync("/directory/getByBlake3Hash", createJsonContent getByBlake3Parameters)
+            do! DirectoryVersionServerTestHelpers.assertOk getByBlake3Response
+            let! getByBlake3 = deserializeContent<GraceReturnValue<DirectoryVersionServerTestHelpers.DirectoryVersionModel>> getByBlake3Response
+
+            DirectoryVersionServerTestHelpers.assertDirectoryVersion root getByBlake3.ReturnValue
 
             let! recursiveResponse =
                 Client.PostAsync(
