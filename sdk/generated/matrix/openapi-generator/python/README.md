@@ -143,6 +143,7 @@ Class | Method | HTTP request | Description
 *BranchesApi* | [**save_branch**](docs/BranchesApi.md#save_branch) | **POST** /branch/save | Save the current branch content.
 *BranchesApi* | [**tag_branch**](docs/BranchesApi.md#tag_branch) | **POST** /branch/tag | Tag the current branch content.
 *DiffsApi* | [**get_diff**](docs/DiffsApi.md#get_diff) | **POST** /diff/getDiff | Get a diff.
+*DiffsApi* | [**get_diff_by_blake3_hash**](docs/DiffsApi.md#get_diff_by_blake3_hash) | **POST** /diff/getDiffByBlake3Hash | Get a diff by BLAKE3 hash.
 *DiffsApi* | [**get_diff_by_sha256_hash**](docs/DiffsApi.md#get_diff_by_sha256_hash) | **POST** /diff/getDiffBySha256Hash | Get a diff by SHA-256 hash.
 *DiffsApi* | [**populate_diff**](docs/DiffsApi.md#populate_diff) | **POST** /diff/populate | Populate a diff actor.
 *DirectoriesApi* | [**create_directory_version**](docs/DirectoriesApi.md#create_directory_version) | **POST** /directory/create | Create a new directory version.
@@ -305,6 +306,7 @@ Class | Method | HTTP request | Description
  - [GetBySha256HashParameters](docs/GetBySha256HashParameters.md)
  - [GetContentBlockDownloadUriParameters](docs/GetContentBlockDownloadUriParameters.md)
  - [GetContentBlockUploadUriParameters](docs/GetContentBlockUploadUriParameters.md)
+ - [GetDiffByBlake3HashParameters](docs/GetDiffByBlake3HashParameters.md)
  - [GetDiffByReferenceTypeParameters](docs/GetDiffByReferenceTypeParameters.md)
  - [GetDiffBySha256HashParameters](docs/GetDiffBySha256HashParameters.md)
  - [GetDiffParameters](docs/GetDiffParameters.md)

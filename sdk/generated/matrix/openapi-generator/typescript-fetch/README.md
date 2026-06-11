@@ -104,6 +104,7 @@ All URIs are relative to *http://localhost:5000*
 *DefaultApi* | [**registerContentBlockUpload**](docs/DefaultApi.md#registercontentblockupload) | **POST** /storage/registerContentBlockUpload | Registers a ContentBlock upload intent.
 *DefaultApi* | [**startManifestUploadSession**](docs/DefaultApi.md#startmanifestuploadsession) | **POST** /storage/startManifestUploadSession | Starts a manifest upload session.
 *DiffsApi* | [**getDiff**](docs/DiffsApi.md#getdiff) | **POST** /diff/getDiff | Get a diff.
+*DiffsApi* | [**getDiffByBlake3Hash**](docs/DiffsApi.md#getdiffbyblake3hash) | **POST** /diff/getDiffByBlake3Hash | Get a diff by BLAKE3 hash.
 *DiffsApi* | [**getDiffBySha256Hash**](docs/DiffsApi.md#getdiffbysha256hash) | **POST** /diff/getDiffBySha256Hash | Get a diff by SHA-256 hash.
 *DiffsApi* | [**populateDiff**](docs/DiffsApi.md#populatediff) | **POST** /diff/populate | Populate a diff actor.
 *DirectoriesApi* | [**createDirectoryVersion**](docs/DirectoriesApi.md#createdirectoryversion) | **POST** /directory/create | Create a new directory version.
@@ -253,6 +254,7 @@ All URIs are relative to *http://localhost:5000*
 - [GetBySha256HashParameters](docs/GetBySha256HashParameters.md)
 - [GetContentBlockDownloadUriParameters](docs/GetContentBlockDownloadUriParameters.md)
 - [GetContentBlockUploadUriParameters](docs/GetContentBlockUploadUriParameters.md)
+- [GetDiffByBlake3HashParameters](docs/GetDiffByBlake3HashParameters.md)
 - [GetDiffByReferenceTypeParameters](docs/GetDiffByReferenceTypeParameters.md)
 - [GetDiffBySha256HashParameters](docs/GetDiffBySha256HashParameters.md)
 - [GetDiffParameters](docs/GetDiffParameters.md)
