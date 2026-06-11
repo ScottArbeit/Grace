@@ -25,6 +25,7 @@ export * from './BranchApiDto';
 export * from './BranchCommandReturnValue';
 export * from './BranchDto';
 export * from './BranchDtoUpdatedAt';
+export * from './BranchHashQueryParameters';
 export * from './BranchParameters';
 export * from './BranchQueryParameters';
 export * from './BranchReturnValue';

@@ -40,9 +40,9 @@ class SwitchParameters(BaseModel):
     branch_id: Optional[UUID] = Field(default=None, alias="BranchId")
     branch_name: Optional[StrictStr] = Field(default=None, alias="BranchName")
     sha256_hash: Optional[StrictStr] = Field(default=None, alias="Sha256Hash")
-    blake3_hash: Optional[StrictStr] = Field(default=None, alias="Blake3Hash")
     reference_id: Optional[UUID] = Field(default=None, alias="ReferenceId")
-    __properties: ClassVar[List[str]] = ["CorrelationId", "Principal", "OwnerId", "OwnerName", "OrganizationId", "OrganizationName", "RepositoryId", "RepositoryName", "BranchId", "BranchName", "Sha256Hash", "Blake3Hash", "ReferenceId"]
+    blake3_hash: Optional[StrictStr] = Field(default=None, alias="Blake3Hash")
+    __properties: ClassVar[List[str]] = ["CorrelationId", "Principal", "OwnerId", "OwnerName", "OrganizationId", "OrganizationName", "RepositoryId", "RepositoryName", "BranchId", "BranchName", "Sha256Hash", "ReferenceId", "Blake3Hash"]
 
     model_config = ConfigDict(
         validate_by_name=True,
@@ -106,8 +106,8 @@ class SwitchParameters(BaseModel):
             "BranchId": obj.get("BranchId"),
             "BranchName": obj.get("BranchName"),
             "Sha256Hash": obj.get("Sha256Hash"),
-            "Blake3Hash": obj.get("Blake3Hash"),
-            "ReferenceId": obj.get("ReferenceId")
+            "ReferenceId": obj.get("ReferenceId"),
+            "Blake3Hash": obj.get("Blake3Hash")
         })
         return _obj
 
