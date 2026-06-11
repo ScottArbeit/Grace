@@ -475,6 +475,39 @@ module ContentBlockMetadata =
                 metadataDto <- applyEvents events metadataDto
             }
 
+        member private this.HandleCommand (command: ContentBlockMetadataCommand) (eventMetadata: EventMetadata) =
+            task {
+                this.correlationId <- eventMetadata.CorrelationId
+                RequestContext.Set(Constants.CurrentCommandProperty, commandName command)
+
+                match decideCommand state.State metadataDto command eventMetadata with
+                | Ok decision ->
+                    if not decision.Events.IsEmpty then do! this.ApplyEvents decision.Events
+
+                    let dedupeIndexActor = DedupeIndexActor.CreateActorProxy eventMetadata.CorrelationId
+
+                    do! dedupeIndexActor.WriteAfterAuthoritativeMetadata decision.Metadata eventMetadata.CorrelationId :> Task
+
+                    let returnValue =
+                        (GraceReturnValue.Create decision eventMetadata.CorrelationId)
+                            .enhance(nameof StoragePoolId, decision.Metadata.StoragePoolId)
+                            .enhance(nameof ContentBlockAddress, decision.Metadata.ContentBlockAddress)
+                            .enhance (nameof MetadataVersion, decision.Metadata.MetadataVersion)
+
+                    return Ok returnValue
+                | Error error ->
+                    log.LogWarning(
+                        "{CurrentInstant}: Node: {HostName}; CorrelationId: {CorrelationId}; Rejected ContentBlockMetadata command {Command}. Error: {Error}",
+                        getCurrentInstantExtended (),
+                        getMachineName,
+                        eventMetadata.CorrelationId,
+                        commandName command,
+                        error.Error
+                    )
+
+                    return Error error
+            }
+
         interface IContentBlockMetadataActor with
             member this.Exists correlationId =
                 this.correlationId <- correlationId
@@ -500,35 +533,6 @@ module ContentBlockMetadata =
                 | None -> ContentBlockRangePresence.Absent
                 |> returnTask
 
-            member this.Handle command eventMetadata =
-                task {
-                    this.correlationId <- eventMetadata.CorrelationId
-                    RequestContext.Set(Constants.CurrentCommandProperty, commandName command)
+            member this.Handle command eventMetadata = this.HandleCommand command eventMetadata
 
-                    match decideCommand state.State metadataDto command eventMetadata with
-                    | Ok decision ->
-                        if not decision.Events.IsEmpty then do! this.ApplyEvents decision.Events
-
-                        let dedupeIndexActor = DedupeIndexActor.CreateActorProxy eventMetadata.CorrelationId
-
-                        do! dedupeIndexActor.WriteAfterAuthoritativeMetadata decision.Metadata eventMetadata.CorrelationId :> Task
-
-                        let returnValue =
-                            (GraceReturnValue.Create decision eventMetadata.CorrelationId)
-                                .enhance(nameof StoragePoolId, decision.Metadata.StoragePoolId)
-                                .enhance(nameof ContentBlockAddress, decision.Metadata.ContentBlockAddress)
-                                .enhance (nameof MetadataVersion, decision.Metadata.MetadataVersion)
-
-                        return Ok returnValue
-                    | Error error ->
-                        log.LogWarning(
-                            "{CurrentInstant}: Node: {HostName}; CorrelationId: {CorrelationId}; Rejected ContentBlockMetadata command {Command}. Error: {Error}",
-                            getCurrentInstantExtended (),
-                            getMachineName,
-                            eventMetadata.CorrelationId,
-                            commandName command,
-                            error.Error
-                        )
-
-                        return Error error
-                }
+            member this.MergePhysicalRanges merge eventMetadata = this.HandleCommand (ContentBlockMetadataCommand.MergePhysicalRanges merge) eventMetadata

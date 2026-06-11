@@ -603,6 +603,10 @@ module Interfaces =
         /// Validates whole-record metadata updates and converts them to persisted events.
         abstract member Handle: command: ContentBlockMetadataCommand -> eventMetadata: EventMetadata -> Task<GraceResult<ContentBlockMetadataDecision>>
 
+        /// Validates merged physical ranges and converts them to persisted events.
+        abstract member MergePhysicalRanges:
+            merge: MergeContentBlockPhysicalRanges -> eventMetadata: EventMetadata -> Task<GraceResult<ContentBlockMetadataDecision>>
+
     /// Defines the operations for the cluster-scoped dedupe discovery index actor.
     [<Interface>]
     type IDedupeIndexActor =
