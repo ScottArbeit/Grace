@@ -2946,7 +2946,19 @@ module Branch =
                                 saveParameters.RepositoryName <- graceIds.RepositoryName
                                 saveParameters.CorrelationId <- getCorrelationId parseResult
 
-                                saveParameters.DirectoryVersions <- applyUploadedFileVersionsToDirectoryVersions uploadedFileVersions newDirectoryVersions
+                                let! savedDirectoryVersionsResult =
+                                    getSavedDirectoryVersionsForRootDirectory previousGraceStatus.RootDirectoryId (getCorrelationId parseResult)
+
+                                let savedDirectoryVersions =
+                                    match savedDirectoryVersionsResult with
+                                    | Ok returnValue -> returnValue
+                                    | Error error -> raise (InvalidOperationException($"Error retrieving saved directory versions: {error.Error}"))
+
+                                saveParameters.DirectoryVersions <-
+                                    applyUploadedFileVersionsToDirectoryVersionsWithSavedDirectoryVersions
+                                        uploadedFileVersions
+                                        savedDirectoryVersions
+                                        newDirectoryVersions
 
                                 match! DirectoryVersion.SaveDirectoryVersions saveParameters with
                                 | Ok returnValue ->
