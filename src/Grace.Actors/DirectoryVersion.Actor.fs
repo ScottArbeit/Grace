@@ -170,6 +170,11 @@ module DirectoryVersion =
             && fileVersion.Size = manifest.Size
         | _ -> false
 
+    let private hasLegacyWholeFileBlake3Gap (fileVersion: FileVersion) =
+        hasMissingHash fileVersion.Blake3Hash
+        && not (hasMissingHash fileVersion.Sha256Hash)
+        && isWholeFileContentReference fileVersion
+
     let normalizeDirectoryVersionForSaveBoundary (directoryVersion: DirectoryVersion) =
         if directoryVersion.Size
            <> Constants.InitialDirectorySize then
@@ -260,6 +265,7 @@ module DirectoryVersion =
                 elif
                     hasMissingHash fileVersion.Blake3Hash
                     && not (hasLegacyManifestBackedFileBlake3Gap fileVersion)
+                    && not (hasLegacyWholeFileBlake3Gap fileVersion)
                 then
                     error <- Some(directoryVersionHashError correlationId directoryVersion $"has child file '{fileVersion.RelativePath}' without Blake3Hash.")
 
