@@ -184,11 +184,8 @@ module Reference =
                 ->
                 let! directoryVersion = getDirectoryVersion repositoryId directoryId referenceEvent.Metadata.CorrelationId
 
-                if
-                    directoryVersion.DirectoryVersionId = directoryId
-                    && directoryVersion.Sha256Hash = sha256Hash
-                    && not (String.IsNullOrWhiteSpace(string directoryVersion.Blake3Hash))
-                then
+                match ReferenceDto.TryGetLegacyRootDirectoryHashRepair directoryId sha256Hash blake3Hash directoryVersion with
+                | Some (repairedSha256Hash, repairedBlake3Hash) ->
                     return
                         { referenceEvent with
                             Event =
@@ -199,16 +196,15 @@ module Reference =
                                     repositoryId,
                                     branchId,
                                     directoryId,
-                                    sha256Hash,
-                                    directoryVersion.Blake3Hash,
+                                    repairedSha256Hash,
+                                    repairedBlake3Hash,
                                     referenceType,
                                     referenceText,
                                     links
                                 )
                         },
                         true
-                else
-                    return referenceEvent, false
+                | None -> return referenceEvent, false
             | _ -> return referenceEvent, false
         }
 
