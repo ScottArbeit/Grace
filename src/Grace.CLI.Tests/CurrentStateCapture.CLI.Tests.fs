@@ -624,7 +624,10 @@ module CurrentStateCaptureCliTests =
                 (List<FileVersion>([| savedManifestFile |]))
                 unchangedLocalLegacyFile.Size
 
-        let mutable savedDirectoryFiles = List<FileVersion>()
+        let mutable savedDirectoryVersions = List<DirectoryVersion>()
+        let mutable createdSaveRoot = Unchecked.defaultof<LocalDirectoryVersion>
+        let mutable appliedStatus = GraceStatus.Default
+        let mutable appliedDirectoryVersions = List<LocalDirectoryVersion>()
 
         let differences =
             List<FileSystemDifference>(
@@ -661,9 +664,17 @@ module CurrentStateCaptureCliTests =
                 GetSavedDirectoryVersions = fun _ -> Task.FromResult(Ok [| savedRoot |])
                 UploadDirectoryVersions =
                     fun directoryVersions ->
-                        savedDirectoryFiles <- directoryVersions[0].Files
+                        savedDirectoryVersions <- directoryVersions
                         Task.FromResult(Ok())
-                CreateSaveReference = fun _ _ -> Task.FromResult(Ok(createdSaveId))
+                ApplyGraceStatusIncremental =
+                    fun status directoryVersions _ ->
+                        appliedStatus <- status
+                        appliedDirectoryVersions <- List<LocalDirectoryVersion>(directoryVersions)
+                        Task.FromResult(())
+                CreateSaveReference =
+                    fun rootDirectoryVersion _ ->
+                        createdSaveRoot <- rootDirectoryVersion
+                        Task.FromResult(Ok(createdSaveId))
             }
 
         let result =
@@ -675,10 +686,15 @@ module CurrentStateCaptureCliTests =
             captured.TargetReferenceId
             |> should equal createdSaveId
 
-            savedDirectoryFiles.Count |> should equal 2
+            savedDirectoryVersions.Count |> should equal 1
+
+            let savedDirectoryVersion = savedDirectoryVersions[0]
+
+            savedDirectoryVersion.Files.Count
+            |> should equal 2
 
             let unchangedSavedFile =
-                savedDirectoryFiles
+                savedDirectoryVersion.Files
                 |> Seq.find (fun fileVersion -> fileVersion.RelativePath = unchangedPath)
 
             unchangedSavedFile.Blake3Hash
@@ -686,6 +702,25 @@ module CurrentStateCaptureCliTests =
 
             unchangedSavedFile.ContentReference.ReferenceType
             |> should equal FileContentReferenceType.FileManifest
+
+            createdSaveRoot.Sha256Hash
+            |> should equal savedDirectoryVersion.Sha256Hash
+
+            createdSaveRoot.Blake3Hash
+            |> should equal savedDirectoryVersion.Blake3Hash
+
+            appliedStatus.RootDirectorySha256Hash
+            |> should equal savedDirectoryVersion.Sha256Hash
+
+            let appliedRoot =
+                appliedDirectoryVersions
+                |> Seq.find (fun directoryVersion -> directoryVersion.DirectoryVersionId = updatedRootId)
+
+            appliedRoot.Sha256Hash
+            |> should equal savedDirectoryVersion.Sha256Hash
+
+            appliedRoot.Blake3Hash
+            |> should equal savedDirectoryVersion.Blake3Hash
         | Error error -> Assert.Fail($"Expected auto-save success, got: {error.Error}")
 
     [<Test>]
