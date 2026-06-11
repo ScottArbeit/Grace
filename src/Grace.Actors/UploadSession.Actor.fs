@@ -849,7 +849,7 @@ module UploadSession =
                                     let metadataActor =
                                         orleansClient.CreateActorProxyWithCorrelationId<IContentBlockMetadataActor>(actorKey, metadata.CorrelationId)
 
-                                    let! metadataResult = metadataActor.Handle metadataCommands[metadataIndex] metadata
+                                    let! metadataResult = metadataActor.MergePhysicalRanges merge metadata
 
                                     match metadataResult with
                                     | Ok _ -> ()
