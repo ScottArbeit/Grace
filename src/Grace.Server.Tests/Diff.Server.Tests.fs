@@ -8,7 +8,6 @@ open Grace.Types.Common
 open Grace.Types.Diff
 open NUnit.Framework
 open System
-open System.Collections.Generic
 open System.Net
 
 module DiffServerTestHelpers =
@@ -43,18 +42,6 @@ module DiffServerTestHelpers =
         parameters
 
     let private prefix (length: int) (hash: Blake3Hash) = (string hash).Substring(0, length)
-
-    let shortestUniqueBlake3Prefix (selected: Blake3Hash) (others: Blake3Hash seq) =
-        let selectedText = string selected
-        let otherTexts = others |> Seq.map string |> Seq.toArray
-        let mutable prefixLength = 2
-
-        while prefixLength < selectedText.Length
-              && otherTexts
-                 |> Array.exists (fun otherText -> otherText.StartsWith(selectedText.Substring(0, prefixLength), StringComparison.OrdinalIgnoreCase)) do
-            prefixLength <- prefixLength + 1
-
-        selectedText.Substring(0, prefixLength)
 
     let createSameBlake3PrefixDirectoryPair repositoryId pathPrefix =
         let candidates =
@@ -100,7 +87,7 @@ type DiffServer() =
         }
 
     [<Test>]
-    member _.GetDiffByBlake3HashFullAndUniquePrefixMatchesSha256Diff() =
+    member _.GetDiffByBlake3HashFullHashMatchesSha256Diff() =
         task {
             let repositoryId = repositoryIds[0]
             let child = DirectoryVersionServerTestHelpers.createDirectoryVersion (Guid.NewGuid()) repositoryId $"/src/{Guid.NewGuid():N}/" []
@@ -111,18 +98,10 @@ type DiffServer() =
             do! DirectoryVersionServerTestHelpers.createDirectoryVersionAsync rootWithChild
             do! DirectoryVersionServerTestHelpers.createDirectoryVersionAsync emptyRoot
 
-            let uniquePrefix =
-                DiffServerTestHelpers.shortestUniqueBlake3Prefix
-                    rootWithChild.Blake3Hash
-                    [
-                        child.Blake3Hash
-                        emptyRoot.Blake3Hash
-                    ]
-
             let! blake3Response =
                 Client.PostAsync(
                     "/diff/getDiffByBlake3Hash",
-                    createJsonContent (DiffServerTestHelpers.getDiffByBlake3HashParameters repositoryId (Blake3Hash uniquePrefix) emptyRoot.Blake3Hash)
+                    createJsonContent (DiffServerTestHelpers.getDiffByBlake3HashParameters repositoryId rootWithChild.Blake3Hash emptyRoot.Blake3Hash)
                 )
 
             let! blake3Body = blake3Response.Content.ReadAsStringAsync()
