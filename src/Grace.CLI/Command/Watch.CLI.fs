@@ -365,6 +365,8 @@ module Watch =
 
                 match result with
                 | Ok returnValue ->
+                    let newGraceStatus = syncGraceStatusRootDirectoryHash newGraceStatus
+
                     do! updateObjectCacheFile newDirectoryVersions
 
                     let fileDifferences =
