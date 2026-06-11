@@ -44,6 +44,9 @@ open Grace.Types.Automation
 module Watch =
     exception private WatchCommandExit of int
 
+    let private uploadedFileVersions = ConcurrentDictionary<RelativePath * Sha256Hash * Blake3Hash, FileVersion>()
+
+    let private uploadedFileVersionIdentity (fileVersion: FileVersion) = (fileVersion.RelativePath, fileVersion.Sha256Hash, fileVersion.Blake3Hash)
 
     module private Options =
         let ownerId =
@@ -332,78 +335,154 @@ module Watch =
                     Colors.Verbose
                     $"new Sha256Hash: {dv.Sha256Hash.Substring(0, 8)}; DirectoryId: {dv.DirectoryVersionId.ToString().Substring(0, 9)}...; RelativePath: {dv.RelativePath}"
 
-            // Upload the new directory versions.
-            let! result = uploadDirectoryVersions newDirectoryVersions correlationId
+            let directoryUploadedFileVersions =
+                let fileIdentities =
+                    newDirectoryVersions
+                    |> Seq.collect (fun directoryVersion -> directoryVersion.Files)
+                    |> Seq.map (fun fileVersion -> (fileVersion.RelativePath, fileVersion.Sha256Hash, fileVersion.Blake3Hash))
+                    |> HashSet
 
-            match result with
-            | Ok returnValue ->
-                do! updateObjectCacheFile newDirectoryVersions
+                uploadedFileVersions.Values
+                |> Seq.filter (fun fileVersion -> fileIdentities.Contains(uploadedFileVersionIdentity fileVersion))
+                |> Seq.toArray
 
-                let fileDifferences =
-                    differences
-                        .Where(fun diff -> diff.FileSystemEntryType = FileSystemEntryType.File)
-                        .ToList()
+            let! savedDirectoryVersionsResult = getSavedDirectoryVersionsForRootDirectory graceStatus.RootDirectoryId correlationId
 
-                let message =
-                    if fileDifferences |> Seq.isEmpty then
-                        String.Empty
-                    else
-                        let sb = stringBuilderPool.Get()
-
-                        try
-                            for fileDifference in fileDifferences do
-                                //sb.AppendLine($"{(getDiscriminatedUnionCaseNameToString fileDifference.DifferenceType)}: {fileDifference.RelativePath}") |> ignore
-                                match fileDifference.DifferenceType with
-                                | Change ->
-                                    sb.AppendLine($"{fileDifference.RelativePath}")
-                                    |> ignore
-                                | Add ->
-                                    sb.AppendLine($"Add {fileDifference.RelativePath}")
-                                    |> ignore
-                                | Delete ->
-                                    sb.AppendLine($"Delete {fileDifference.RelativePath}")
-                                    |> ignore
-
-                            let saveMessage = sb.ToString()
-                            saveMessage.Remove(saveMessage.LastIndexOf(Environment.NewLine), Environment.NewLine.Length)
-                        finally
-                            stringBuilderPool.Return(sb)
-
-                // If there are changes either to files or just to directories, create a save reference.
-                if (differences.Count > 0) then
-                    match! createSaveReference (getRootDirectoryVersion newGraceStatus) message correlationId with
-                    | Ok returnValue ->
-                        let newGraceStatusWithUpdatedTime = { newGraceStatus with LastSuccessfulDirectoryVersionUpload = getCurrentInstant () }
-                        // Apply incremental changes to the Grace Status DB.
-                        do! applyGraceStatusIncremental newGraceStatusWithUpdatedTime newDirectoryVersions differences
-                        //logToAnsiConsole Colors.Important $"Setting graceStatusHasChanged to false in updateGraceStatus(). Current value: {graceStatusHasChanged}."
-                        graceStatusHasChanged <- false // We *just* changed it ourselves, so we don't have to re-process it in the timer loop.
-                        return Some newGraceStatusWithUpdatedTime
-                    | Error error ->
-                        logToAnsiConsole Colors.Error $"{Markup.Escape(error.Error)}"
-                        return None
-                else
-                    // There were no changes to process, so just return the existing GraceStatus.
-                    //logToAnsiConsole Colors.Verbose "No fileDifferences or newDirectoryVersions to process; not updating GraceStatus."
-                    return Some graceStatus
+            match savedDirectoryVersionsResult with
             | Error error ->
                 logToAnsiConsole Colors.Error $"{Markup.Escape(error.Error)}"
                 return None
+            | Ok savedDirectoryVersions ->
+                // Upload the new directory versions.
+                let directoryVersionsToSave =
+                    applyUploadedFileVersionsToDirectoryVersionsWithSavedDirectoryVersions
+                        directoryUploadedFileVersions
+                        savedDirectoryVersions
+                        newDirectoryVersions
+
+                let! result = saveDirectoryVersions directoryVersionsToSave correlationId
+
+                match result with
+                | Ok returnValue ->
+                    do! updateObjectCacheFile newDirectoryVersions
+
+                    let fileDifferences =
+                        differences
+                            .Where(fun diff -> diff.FileSystemEntryType = FileSystemEntryType.File)
+                            .ToList()
+
+                    let message =
+                        if fileDifferences |> Seq.isEmpty then
+                            String.Empty
+                        else
+                            let sb = stringBuilderPool.Get()
+
+                            try
+                                for fileDifference in fileDifferences do
+                                    //sb.AppendLine($"{(getDiscriminatedUnionCaseNameToString fileDifference.DifferenceType)}: {fileDifference.RelativePath}") |> ignore
+                                    match fileDifference.DifferenceType with
+                                    | Change ->
+                                        sb.AppendLine($"{fileDifference.RelativePath}")
+                                        |> ignore
+                                    | Add ->
+                                        sb.AppendLine($"Add {fileDifference.RelativePath}")
+                                        |> ignore
+                                    | Delete ->
+                                        sb.AppendLine($"Delete {fileDifference.RelativePath}")
+                                        |> ignore
+
+                                let saveMessage = sb.ToString()
+                                saveMessage.Remove(saveMessage.LastIndexOf(Environment.NewLine), Environment.NewLine.Length)
+                            finally
+                                stringBuilderPool.Return(sb)
+
+                    // If there are changes either to files or just to directories, create a save reference.
+                    if (differences.Count > 0) then
+                        match! createSaveReference (getRootDirectoryVersion newGraceStatus) message correlationId with
+                        | Ok returnValue ->
+                            let newGraceStatusWithUpdatedTime = { newGraceStatus with LastSuccessfulDirectoryVersionUpload = getCurrentInstant () }
+                            // Apply incremental changes to the Grace Status DB.
+                            do! applyGraceStatusIncremental newGraceStatusWithUpdatedTime newDirectoryVersions differences
+
+                            for fileVersion in directoryUploadedFileVersions do
+                                let mutable removedFileVersion = Unchecked.defaultof<FileVersion>
+
+                                uploadedFileVersions.TryRemove(uploadedFileVersionIdentity fileVersion, &removedFileVersion)
+                                |> ignore
+
+                            //logToAnsiConsole Colors.Important $"Setting graceStatusHasChanged to false in updateGraceStatus(). Current value: {graceStatusHasChanged}."
+                            graceStatusHasChanged <- false // We *just* changed it ourselves, so we don't have to re-process it in the timer loop.
+                            return Some newGraceStatusWithUpdatedTime
+                        | Error error ->
+                            logToAnsiConsole Colors.Error $"{Markup.Escape(error.Error)}"
+                            return None
+                    else
+                        // There were no changes to process, so just return the existing GraceStatus.
+                        //logToAnsiConsole Colors.Verbose "No fileDifferences or newDirectoryVersions to process; not updating GraceStatus."
+                        return Some graceStatus
+                | Error error ->
+                    logToAnsiConsole Colors.Error $"{Markup.Escape(error.Error)}"
+                    return None
+        }
+
+    let private getCachedFileVersionForUploadSkip (fullPath: FilePath) =
+        task {
+            let fileInfo = FileInfo(fullPath)
+
+            match! createLocalFileVersion fileInfo with
+            | Some localFileVersion ->
+                let relativeDirectoryPath = getLocalRelativeDirectory fullPath (Current().RootDirectory)
+                let objectFilePath = Path.Combine(Current().ObjectDirectory, relativeDirectoryPath, localFileVersion.GetObjectFileName)
+
+                if File.Exists(objectFilePath) then
+                    return Some localFileVersion.ToFileVersion
+                else
+                    return None
+            | _ -> return None
+        }
+
+    let internal uploadFileVersionToStorage
+        (uploadFileVersions: GetUploadMetadataForFilesParameters -> Task<GraceResult<FileVersion array>>)
+        (getUploadMetadataForFilesParameters: GetUploadMetadataForFilesParameters)
+        (fileVersion: FileVersion)
+        =
+        task {
+            getUploadMetadataForFilesParameters.FileVersions <- [| fileVersion |]
+
+            match! uploadFileVersions getUploadMetadataForFilesParameters with
+            | Ok returnValue ->
+                for uploadedFileVersion in returnValue.ReturnValue do
+                    uploadedFileVersions[uploadedFileVersionIdentity uploadedFileVersion] <- uploadedFileVersion
+
+                logToAnsiConsole Colors.Verbose $"File {fileVersion.GetObjectFileName} has been uploaded to storage."
+            | Error error -> raise (InvalidOperationException($"Failed to upload {fileVersion.GetObjectFileName} to storage: {error.Error}"))
+        }
+
+    let internal copyFileToObjectDirectoryAndUploadToStorageWithClients
+        (copyFileToObjectCache: FilePath -> Task<FileVersion option>)
+        (getCachedFileVersion: FilePath -> Task<FileVersion option>)
+        (uploadFileVersions: GetUploadMetadataForFilesParameters -> Task<GraceResult<FileVersion array>>)
+        (getUploadMetadataForFilesParameters: GetUploadMetadataForFilesParameters)
+        fullPath
+        =
+        task {
+            //logToConsole $"*In fileChanged for {fullPath}."
+            match! copyFileToObjectCache fullPath with
+            | Some fileVersion -> do! uploadFileVersionToStorage uploadFileVersions getUploadMetadataForFilesParameters fileVersion
+            | None ->
+                match! getCachedFileVersion fullPath with
+                | Some fileVersion -> do! uploadFileVersionToStorage uploadFileVersions getUploadMetadataForFilesParameters fileVersion
+                | None -> raise (InvalidOperationException($"Failed to copy {fullPath} to the object cache before upload."))
         }
 
     /// Copies a file from the working directory to the object directory, with its SHA-256 hash, and then uploads it to storage.
     let copyFileToObjectDirectoryAndUploadToStorage (getUploadMetadataForFilesParameters: GetUploadMetadataForFilesParameters) fullPath =
-        task {
-            //logToConsole $"*In fileChanged for {fullPath}."
-            match! copyToObjectDirectory fullPath with
-            | Some fileVersion ->
-                getUploadMetadataForFilesParameters.FileVersions <- [| fileVersion |]
-
-                match! uploadFilesToObjectStorage getUploadMetadataForFilesParameters with
-                | Ok returnValue -> logToAnsiConsole Colors.Verbose $"File {fileVersion.GetObjectFileName} has been uploaded to storage."
-                | Error error -> logToAnsiConsole Colors.Error $"**Failed to upload {fileVersion.GetObjectFileName} to storage."
-            | None -> ()
-        }
+        copyFileToObjectDirectoryAndUploadToStorageWithClients
+            copyToObjectDirectory
+            getCachedFileVersionForUploadSkip
+            uploadFilesToObjectStorage
+            getUploadMetadataForFilesParameters
+            fullPath
 
     /// Decompresses the GraceStatus information from the memory stream.
     let retrieveGraceStatusFromMemoryStream () =

@@ -101,7 +101,7 @@ module Doctor =
     let private ServerAuthPrincipalAvailableCheckId = "server.auth-principal.available"
 
     [<Literal>]
-    let private ExpectedLocalStateSchemaVersion = "2"
+    let private ExpectedLocalStateSchemaVersion = "3"
 
     [<Literal>]
     let private DoctorServerProbeTimeoutMilliseconds = 1500
