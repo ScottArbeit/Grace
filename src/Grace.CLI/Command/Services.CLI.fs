@@ -2039,11 +2039,16 @@ module Services =
 
                         if findFileVersionFromPreviousGraceStatus.Count() > 0 then
                             let fileVersionFromPreviousGraceStatus = findFileVersionFromPreviousGraceStatus.First()
-                            // If the length is different, or the Sha256Hash is changing in the new version, we'll delete the
+                            // If the length or content identity changes in the new version, we'll delete the
                             //   file in the working directory, and copy the version from the object cache to replace it.
                             if existingFileOnDisk.Length <> fileVersion.Size
                                || fileVersionFromPreviousGraceStatus.Sha256Hash
-                                  <> fileVersion.Sha256Hash then
+                                  <> fileVersion.Sha256Hash
+                               || (fileVersionFromPreviousGraceStatus.Blake3Hash
+                                   <> Blake3Hash String.Empty
+                                   && fileVersion.Blake3Hash <> Blake3Hash String.Empty
+                                   && fileVersionFromPreviousGraceStatus.Blake3Hash
+                                      <> fileVersion.Blake3Hash) then
                                 //logToAnsiConsole
                                 //    Colors.Verbose
                                 //    $"Replacing {fileVersion.FullName}; previous length: {fileVersionFromPreviousGraceStatus.Size}; new length: {fileVersion.Size}."
