@@ -2,6 +2,7 @@ namespace Grace.Server.Tests
 
 open Grace.Server.Tests.Services
 open Grace.Shared
+open Grace.Shared.Services
 open Grace.Shared.Utilities
 open Grace.Shared.Validation.Errors
 open Grace.Types
@@ -16,23 +17,40 @@ open System.Net.Http
 module DirectoryVersionServerTestHelpers =
     type DirectoryVersionModel = Grace.Types.Common.DirectoryVersion
 
-    let private sha256 (index: int) = Convert.ToString(index, 16).PadLeft(64, '0')
-
     let createDirectoryVersion
         (directoryVersionId: DirectoryVersionId)
         (repositoryId: string)
         (relativePath: RelativePath)
-        (hashIndex: int)
-        (childDirectoryIds: DirectoryVersionId seq)
+        (childDirectoryVersions: DirectoryVersionModel seq)
         : DirectoryVersionModel
         =
-        DirectoryVersionModel.Create
+        let childDirectoryVersions = childDirectoryVersions |> Seq.toArray
+
+        let childDirectoryIds =
+            childDirectoryVersions
+            |> Seq.map (fun directoryVersion -> directoryVersion.DirectoryVersionId)
+
+        let entries =
+            childDirectoryVersions
+            |> Seq.map (fun directoryVersion ->
+                DirectoryVersionPreimageEntry.Directory
+                    directoryVersion.RelativePath
+                    directoryVersion.Size
+                    directoryVersion.Blake3Hash
+                    directoryVersion.Sha256Hash)
+            |> Seq.toArray
+
+        let sha256Hash = computeSha256ForDirectoryEntries relativePath entries
+        let blake3Hash = computeBlake3ForDirectory relativePath entries
+
+        DirectoryVersionModel.CreateWithHashes
             directoryVersionId
             (Guid.Parse ownerId)
             (Guid.Parse organizationId)
             (Guid.Parse repositoryId)
             relativePath
-            (sha256 hashIndex)
+            sha256Hash
+            blake3Hash
             (List<DirectoryVersionId>(childDirectoryIds))
             (List<FileVersion>())
             0L
@@ -118,6 +136,7 @@ module DirectoryVersionServerTestHelpers =
         Assert.That(actual.DirectoryVersion.RepositoryId, Is.EqualTo(expected.RepositoryId))
         Assert.That(actual.DirectoryVersion.RelativePath, Is.EqualTo(expected.RelativePath))
         Assert.That(actual.DirectoryVersion.Sha256Hash, Is.EqualTo(expected.Sha256Hash))
+        Assert.That(actual.DirectoryVersion.Blake3Hash, Is.EqualTo(expected.Blake3Hash))
         Assert.That(actual.DirectoryVersion.HashesValidated, Is.True)
 
     let assertDirectoryVersion (expected: DirectoryVersionModel) (actual: DirectoryVersionModel) =
@@ -127,6 +146,7 @@ module DirectoryVersionServerTestHelpers =
         Assert.That(actual.RepositoryId, Is.EqualTo(expected.RepositoryId))
         Assert.That(actual.RelativePath, Is.EqualTo(expected.RelativePath))
         Assert.That(actual.Sha256Hash, Is.EqualTo(expected.Sha256Hash))
+        Assert.That(actual.Blake3Hash, Is.EqualTo(expected.Blake3Hash))
         Assert.That(actual.HashesValidated, Is.True)
 
 [<NonParallelizable>]
@@ -139,9 +159,9 @@ type DirectoryVersionServer() =
             let childId = Guid.NewGuid()
             let rootId = Guid.NewGuid()
 
-            let child = DirectoryVersionServerTestHelpers.createDirectoryVersion childId repositoryId "/src/" 0x101 []
+            let child = DirectoryVersionServerTestHelpers.createDirectoryVersion childId repositoryId "/src/" []
 
-            let root = DirectoryVersionServerTestHelpers.createDirectoryVersion rootId repositoryId "/" 0x102 [ childId ]
+            let root = DirectoryVersionServerTestHelpers.createDirectoryVersion rootId repositoryId "/" [ child ]
 
             do! DirectoryVersionServerTestHelpers.createDirectoryVersionAsync child
             do! DirectoryVersionServerTestHelpers.createDirectoryVersionAsync root
@@ -193,9 +213,9 @@ type DirectoryVersionServer() =
             let childId = Guid.NewGuid()
             let rootId = Guid.NewGuid()
 
-            let child = DirectoryVersionServerTestHelpers.createDirectoryVersion childId repositoryId "/docs/" 0x201 []
+            let child = DirectoryVersionServerTestHelpers.createDirectoryVersion childId repositoryId "/docs/" []
 
-            let root = DirectoryVersionServerTestHelpers.createDirectoryVersion rootId repositoryId "/" 0x202 [ childId ]
+            let root = DirectoryVersionServerTestHelpers.createDirectoryVersion rootId repositoryId "/" [ child ]
 
             let! saveResponse =
                 Client.PostAsync(
