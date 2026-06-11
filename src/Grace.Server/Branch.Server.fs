@@ -600,6 +600,17 @@ module Branch =
                     return None
                 else
                     return Some directoryVersion
+            elif
+                not (String.IsNullOrEmpty(string blake3Hash))
+                && not (String.IsNullOrEmpty(string sha256Hash))
+            then
+                match! getRootDirectoryVersionByBlake3Hash repositoryId blake3Hash correlationId with
+                | Some directoryVersion when
+                    (string directoryVersion.Sha256Hash)
+                        .StartsWith(string sha256Hash, StringComparison.OrdinalIgnoreCase)
+                    ->
+                    return Some directoryVersion
+                | _ -> return None
             elif not (String.IsNullOrEmpty(string blake3Hash)) then
                 return! getRootDirectoryVersionByBlake3Hash repositoryId blake3Hash correlationId
             elif not (String.IsNullOrEmpty(string sha256Hash)) then
@@ -856,14 +867,20 @@ module Branch =
                 context.Request.Body.Seek(0L, IO.SeekOrigin.Begin)
                 |> ignore
 
-                match! command parameters with
-                | Some command -> return! processCommand context validations (fun parameters -> ValueTask<BranchCommand>(command))
-                | None ->
+                match! String.isEmptyOrValidBlake3HashPrefix parameters.Blake3Hash BranchError.InvalidBlake3Hash with
+                | Error error ->
                     return!
                         context
-                        |> result400BadRequest (
-                            GraceError.Create (getErrorMessage BranchError.EitherDirectoryVersionIdOrSha256HashRequired) (getCorrelationId context)
-                        )
+                        |> result400BadRequest (GraceError.Create (BranchError.getErrorMessage error) (getCorrelationId context))
+                | Ok () ->
+                    match! command parameters with
+                    | Some command -> return! processCommand context validations (fun parameters -> ValueTask<BranchCommand>(command))
+                    | None ->
+                        return!
+                            context
+                            |> result400BadRequest (
+                                GraceError.Create (getErrorMessage BranchError.EitherDirectoryVersionIdOrSha256HashRequired) (getCorrelationId context)
+                            )
             }
 
     /// Creates a promotion reference in the parent of the specified branch, based on the most-recent commit.
@@ -2225,7 +2242,7 @@ module Branch =
                                 not
                                 <| String.IsNullOrEmpty(listContentsParameters.Blake3Hash)
                             then
-                                match! getRootDirectoryVersionByBlake3Hash graceIds.RepositoryId listContentsParameters.Blake3Hash correlationId with
+                                match! Services.getDirectoryVersionByBlake3Hash graceIds.RepositoryId listContentsParameters.Blake3Hash correlationId with
                                 | Some directoryVersion ->
                                     let directoryActorProxy = DirectoryVersion.CreateActorProxy directoryVersion.DirectoryVersionId repositoryId correlationId
 
