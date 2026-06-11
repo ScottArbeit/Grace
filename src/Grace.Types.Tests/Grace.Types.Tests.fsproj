@@ -15,6 +15,7 @@
     <Compile Include="EventMetadata.Types.Tests.fs" />
     <Compile Include="Automation.Types.Tests.fs" />
     <Compile Include="Reference.Types.Tests.fs" />
+    <Compile Include="Branch.Types.Tests.fs" />
     <Compile Include="Annotation.Types.Tests.fs" />
     <Compile Include="PromotionSet.ConflictModel.Types.Tests.fs" />
     <Compile Include="PromotionSet.Types.Tests.fs" />

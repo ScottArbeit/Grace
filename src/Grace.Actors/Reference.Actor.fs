@@ -113,6 +113,101 @@ module Reference =
         referenceDto.ReferenceId <> ReferenceId.Empty
         && referenceDto.ReferenceType = ReferenceType.Save
 
+    let validateReferenceRootDirectoryVersionHashes correlationId repositoryId directoryId sha256Hash blake3Hash (directoryVersion: DirectoryVersion) =
+        let rootRelativePath = directoryVersion.RelativePath
+
+        let isRootDirectoryRelativePath =
+            rootRelativePath = Constants.RootDirectoryPath
+            || rootRelativePath = "/"
+
+        let directoryVersionBlake3IsEmpty = String.IsNullOrWhiteSpace(string directoryVersion.Blake3Hash)
+        let commandBlake3IsEmpty = String.IsNullOrWhiteSpace(string blake3Hash)
+
+        let isLegacyEmptyBlake3Root =
+            isRootDirectoryRelativePath
+            && directoryVersionBlake3IsEmpty
+            && commandBlake3IsEmpty
+
+        if directoryVersion.DirectoryVersionId = DirectoryVersionId.Empty then
+            Error(
+                (GraceError.Create "Reference root DirectoryVersion does not exist." correlationId)
+                    .enhance(nameof RepositoryId, repositoryId)
+                    .enhance (nameof DirectoryVersionId, directoryId)
+            )
+        elif not isRootDirectoryRelativePath then
+            Error(
+                (GraceError.Create "Reference root DirectoryVersion must use the repository root path." correlationId)
+                    .enhance(nameof RepositoryId, repositoryId)
+                    .enhance(nameof DirectoryVersionId, directoryId)
+                    .enhance (nameof RelativePath, directoryVersion.RelativePath)
+            )
+        elif directoryVersionBlake3IsEmpty
+             && not commandBlake3IsEmpty then
+            Error(
+                (GraceError.Create "Reference root DirectoryVersion must include Blake3Hash before reference creation." correlationId)
+                    .enhance(nameof RepositoryId, repositoryId)
+                    .enhance (nameof DirectoryVersionId, directoryId)
+            )
+        elif commandBlake3IsEmpty
+             && not isLegacyEmptyBlake3Root then
+            Error(
+                (GraceError.Create "Reference command must include the root DirectoryVersion Blake3Hash." correlationId)
+                    .enhance(nameof RepositoryId, repositoryId)
+                    .enhance (nameof DirectoryVersionId, directoryId)
+            )
+        elif directoryVersion.Sha256Hash <> sha256Hash then
+            Error(
+                (GraceError.Create "Reference command Sha256Hash does not match the root DirectoryVersion Sha256Hash." correlationId)
+                    .enhance(nameof RepositoryId, repositoryId)
+                    .enhance(nameof DirectoryVersionId, directoryId)
+                    .enhance (nameof Sha256Hash, sha256Hash)
+            )
+        elif directoryVersion.Blake3Hash <> blake3Hash
+             && not isLegacyEmptyBlake3Root then
+            Error(
+                (GraceError.Create "Reference command Blake3Hash does not match the root DirectoryVersion Blake3Hash." correlationId)
+                    .enhance(nameof RepositoryId, repositoryId)
+                    .enhance(nameof DirectoryVersionId, directoryId)
+                    .enhance (nameof Blake3Hash, blake3Hash)
+            )
+        else
+            Ok()
+
+    let internal repairLegacyCreatedEventBlake3
+        (getDirectoryVersion: RepositoryId -> DirectoryVersionId -> CorrelationId -> Task<DirectoryVersion>)
+        (referenceEvent: ReferenceEvent)
+        =
+        task {
+            match referenceEvent.Event with
+            | Created (referenceId, ownerId, organizationId, repositoryId, branchId, directoryId, sha256Hash, blake3Hash, referenceType, referenceText, links) when
+                String.IsNullOrWhiteSpace(string blake3Hash)
+                ->
+                let! directoryVersion = getDirectoryVersion repositoryId directoryId referenceEvent.Metadata.CorrelationId
+
+                match ReferenceDto.TryGetLegacyRootDirectoryHashRepair directoryId sha256Hash blake3Hash directoryVersion with
+                | Some (repairedSha256Hash, repairedBlake3Hash) ->
+                    return
+                        { referenceEvent with
+                            Event =
+                                Created(
+                                    referenceId,
+                                    ownerId,
+                                    organizationId,
+                                    repositoryId,
+                                    branchId,
+                                    directoryId,
+                                    repairedSha256Hash,
+                                    repairedBlake3Hash,
+                                    referenceType,
+                                    referenceText,
+                                    links
+                                )
+                        },
+                        true
+                | None -> return referenceEvent, false
+            | _ -> return referenceEvent, false
+        }
+
     let tryCreateManifestContributionStart plan intent =
         match intent with
         | RepositoryContentCounterIntent.IncrementManifestReferenceCount (repositoryId, manifestAddress) when
@@ -243,15 +338,38 @@ module Reference =
         member val private correlationId: CorrelationId = String.Empty with get, set
 
         override this.OnActivateAsync(ct) =
-            let activateStartTime = getCurrentInstant ()
+            task {
+                let activateStartTime = getCurrentInstant ()
 
-            logActorActivation log this.IdentityString activateStartTime (getActorActivationMessage state.RecordExists)
+                logActorActivation log this.IdentityString activateStartTime (getActorActivationMessage state.RecordExists)
 
-            referenceDto <-
-                state.State
-                |> Seq.fold (fun referenceDto event -> ReferenceDto.UpdateDto event referenceDto) referenceDto
+                let getDirectoryVersion repositoryId directoryId correlationId =
+                    task {
+                        let directoryVersionActorProxy = DirectoryVersion.CreateActorProxy directoryId repositoryId correlationId
+                        let! directoryVersionDto = directoryVersionActorProxy.Get correlationId
+                        return directoryVersionDto.DirectoryVersion
+                    }
 
-            Task.CompletedTask
+                let! repairResults =
+                    state.State
+                    |> Seq.map (fun referenceEvent -> task { return! repairLegacyCreatedEventBlake3 getDirectoryVersion referenceEvent })
+                    |> Task.WhenAll
+
+                let repairedLegacyCreatedEvent =
+                    repairResults
+                    |> Array.exists (fun (_, wasRepaired) -> wasRepaired)
+
+                if repairedLegacyCreatedEvent then
+                    state.State.Clear()
+                    state.State.AddRange(repairResults |> Array.map fst)
+                    do! state.WriteStateAsync()
+
+                referenceDto <-
+                    repairResults
+                    |> Array.map fst
+                    |> Seq.fold (fun referenceDto event -> ReferenceDto.UpdateDto event referenceDto) referenceDto
+            }
+            :> Task
 
         interface IGraceReminderWithGuidKey with
             /// Schedules a Grace reminder.
@@ -369,7 +487,17 @@ module Reference =
 
                     // If this is a Save or Checkpoint reference, schedule a physical deletion based on the default delays from the repository.
                     match referenceEvent.Event with
-                    | Created (referenceId, ownerId, organizationId, repositoryId, branchId, directoryId, sha256Hash, referenceType, referenceText, links) ->
+                    | Created (referenceId,
+                               ownerId,
+                               organizationId,
+                               repositoryId,
+                               branchId,
+                               directoryId,
+                               sha256Hash,
+                               blake3Hash,
+                               referenceType,
+                               referenceText,
+                               links) ->
                         do!
                             match referenceDto.ReferenceType with
                             | ReferenceType.Save ->
@@ -383,6 +511,7 @@ module Reference =
                                             BranchId = referenceDto.BranchId
                                             DirectoryVersionId = referenceDto.DirectoryId
                                             Sha256Hash = referenceDto.Sha256Hash
+                                            Blake3Hash = referenceDto.Blake3Hash
                                             DeleteReason = $"Save: automatic deletion after {repositoryDto.SaveDays} days"
                                             CorrelationId = correlationId
                                         }
@@ -406,6 +535,7 @@ module Reference =
                                             BranchId = referenceDto.BranchId
                                             DirectoryVersionId = referenceDto.DirectoryId
                                             Sha256Hash = referenceDto.Sha256Hash
+                                            Blake3Hash = referenceDto.Blake3Hash
                                             DeleteReason = $"Checkpoint: automatic deletion after {repositoryDto.CheckpointDays} days"
                                             CorrelationId = correlationId
                                         }
@@ -489,7 +619,17 @@ module Reference =
                             return Error(GraceError.Create (getErrorMessage ReferenceError.DuplicateCorrelationId) metadata.CorrelationId)
                         else
                             match command with
-                            | Create (referenceId, ownerId, organizationId, repositoryId, branchId, directoryId, sha256Hash, referenceType, referenceText, links) ->
+                            | Create (referenceId,
+                                      ownerId,
+                                      organizationId,
+                                      repositoryId,
+                                      branchId,
+                                      directoryId,
+                                      sha256Hash,
+                                      blake3Hash,
+                                      referenceType,
+                                      referenceText,
+                                      links) ->
                                 match referenceDto.UpdatedAt with
                                 | Some _ -> return Error(GraceError.Create (getErrorMessage ReferenceError.ReferenceAlreadyExists) metadata.CorrelationId)
                                 | None -> return Ok command
@@ -526,6 +666,21 @@ module Reference =
                                 | Ok plans -> return! applyManifestContributionBoundary plans metadata
                         }
 
+                    let validateRootDirectoryVersionHashes repositoryId directoryId sha256Hash blake3Hash =
+                        task {
+                            let directoryVersionActorProxy = DirectoryVersion.CreateActorProxy directoryId repositoryId metadata.CorrelationId
+                            let! directoryVersionDto = directoryVersionActorProxy.Get metadata.CorrelationId
+
+                            return
+                                validateReferenceRootDirectoryVersionHashes
+                                    metadata.CorrelationId
+                                    repositoryId
+                                    directoryId
+                                    sha256Hash
+                                    blake3Hash
+                                    directoryVersionDto.DirectoryVersion
+                        }
+
                     task {
                         let! (referenceEventTypeResult: Result<ReferenceEventType, GraceError>) =
                             task {
@@ -537,26 +692,31 @@ module Reference =
                                           branchId,
                                           directoryId,
                                           sha256Hash,
+                                          blake3Hash,
                                           referenceType,
                                           referenceText,
                                           links) ->
-                                    match! applySaveManifestBoundary referenceId repositoryId directoryId referenceType with
+                                    match! validateRootDirectoryVersionHashes repositoryId directoryId sha256Hash blake3Hash with
                                     | Ok () ->
-                                        return
-                                            Ok(
-                                                Created(
-                                                    referenceId,
-                                                    ownerId,
-                                                    organizationId,
-                                                    repositoryId,
-                                                    branchId,
-                                                    directoryId,
-                                                    sha256Hash,
-                                                    referenceType,
-                                                    referenceText,
-                                                    links
+                                        match! applySaveManifestBoundary referenceId repositoryId directoryId referenceType with
+                                        | Ok () ->
+                                            return
+                                                Ok(
+                                                    Created(
+                                                        referenceId,
+                                                        ownerId,
+                                                        organizationId,
+                                                        repositoryId,
+                                                        branchId,
+                                                        directoryId,
+                                                        sha256Hash,
+                                                        blake3Hash,
+                                                        referenceType,
+                                                        referenceText,
+                                                        links
+                                                    )
                                                 )
-                                            )
+                                        | Error graceError -> return Error graceError
                                     | Error graceError -> return Error graceError
                                 | AddLink link -> return Ok(LinkAdded link)
                                 | RemoveLink link -> return Ok(LinkRemoved link)
@@ -590,6 +750,7 @@ module Reference =
                                             BranchId = referenceDto.BranchId
                                             DirectoryVersionId = referenceDto.DirectoryId
                                             Sha256Hash = referenceDto.Sha256Hash
+                                            Blake3Hash = referenceDto.Blake3Hash
                                             DeleteReason = deleteReason
                                             CorrelationId = metadata.CorrelationId
                                         }

@@ -150,6 +150,8 @@
           $ref: Shared.Components.OpenAPI.yaml#/components/schemas/DirectoryId
         Sha256Hash:
           $ref: Shared.Components.OpenAPI.yaml#/components/schemas/Sha256Hash
+        Blake3Hash:
+          $ref: Shared.Components.OpenAPI.yaml#/components/schemas/Blake3Hash
         ReferenceType:
           $ref: Shared.Components.OpenAPI.yaml#/components/schemas/ReferenceType
         ReferenceText:

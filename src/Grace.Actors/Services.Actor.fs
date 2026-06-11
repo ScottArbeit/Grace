@@ -1303,6 +1303,113 @@ module Services =
             isNotDeletedReference referenceDto
             && hasPromotionSetTerminalLink referenceDto)
 
+    let internal getRootDirectoryVersionByDirectoryVersionId (repositoryId: RepositoryId) (directoryVersionId: DirectoryVersionId) correlationId =
+        task {
+            let mutable directoryVersion = DirectoryVersion.Default
+
+            match actorStateStorageProvider with
+            | Unknown -> ()
+            | AzureCosmosDb ->
+                let indexMetrics = stringBuilderPool.Get()
+                let requestCharge = stringBuilderPool.Get()
+
+                try
+                    let queryDefinition =
+                        QueryDefinition(
+                            """
+                            SELECT TOP 1 c.State
+                            FROM c
+                            WHERE STRINGEQUALS(c.State[0].Event.created.DirectoryVersionId, @directoryVersionId, true)
+                                AND (
+                                    STRINGEQUALS(c.State[0].Event.created.RelativePath, @rootRelativePath, true)
+                                    OR STRINGEQUALS(c.State[0].Event.created.RelativePath, @slashRootRelativePath, true)
+                                )
+                                AND c.GrainType = @grainType
+                                AND c.PartitionKey = @partitionKey
+                            ORDER BY c.State[0].Event.created.CreatedAt DESC
+                            """
+                        )
+                            .WithParameter("@directoryVersionId", $"{directoryVersionId}")
+                            .WithParameter("@rootRelativePath", Constants.RootDirectoryPath)
+                            .WithParameter("@slashRootRelativePath", RelativePath "/")
+                            .WithParameter("@grainType", StateName.DirectoryVersion)
+                            .WithParameter("@partitionKey", repositoryId)
+
+                    let iterator = cosmosContainer.GetItemQueryIterator<DirectoryVersionEventValue>(queryDefinition, requestOptions = queryRequestOptions)
+
+                    while iterator.HasMoreResults
+                          && directoryVersion.DirectoryVersionId = DirectoryVersionId.Empty do
+                        let! results = DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> iterator.ReadNextAsync())
+
+                        indexMetrics.Append($"{results.IndexMetrics}, ")
+                        |> ignore
+
+                        requestCharge.Append($"{results.RequestCharge:F3}, ")
+                        |> ignore
+
+                        let eventsForAllDirectories = results.Resource |> Seq.toArray
+                        let mutable index = 0
+
+                        while index < eventsForAllDirectories.Length
+                              && directoryVersion.DirectoryVersionId = DirectoryVersionId.Empty do
+                            let directoryVersionDto =
+                                eventsForAllDirectories[index].State
+                                |> Array.fold
+                                    (fun directoryVersionDto directoryEvent ->
+                                        directoryVersionDto
+                                        |> DirectoryVersionDto.UpdateDto directoryEvent)
+                                    DirectoryVersionDto.Default
+
+                            directoryVersion <- directoryVersionDto.DirectoryVersion
+                            index <- index + 1
+
+                    if (indexMetrics.Length >= 2)
+                       && (requestCharge.Length >= 2)
+                       && Activity.Current <> null then
+                        Activity
+                            .Current
+                            .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
+                            .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
+                        |> ignore
+                finally
+                    stringBuilderPool.Return(indexMetrics)
+                    stringBuilderPool.Return(requestCharge)
+            | MongoDB -> ()
+
+            if directoryVersion.DirectoryVersionId
+               <> DirectoryVersionId.Empty then
+                return Some directoryVersion
+            else
+                return None
+        }
+
+    let internal hydrateLegacyReferenceProjectionBlake3
+        (getDirectoryVersion: RepositoryId -> DirectoryVersionId -> CorrelationId -> Task<DirectoryVersion option>)
+        correlationId
+        (referenceDto: ReferenceDto)
+        =
+        task {
+            if String.IsNullOrWhiteSpace(string referenceDto.Blake3Hash) then
+                let! directoryVersion = getDirectoryVersion referenceDto.RepositoryId referenceDto.DirectoryId correlationId
+
+                match directoryVersion with
+                | Some rootDirectoryVersion ->
+                    let hydratedReferenceDto, _ = ReferenceDto.HydrateLegacyRootDirectoryHash rootDirectoryVersion referenceDto
+                    return hydratedReferenceDto
+                | None -> return referenceDto
+            else
+                return referenceDto
+        }
+
+    let internal projectReferenceEventsWithLegacyBlake3Hydration getDirectoryVersion correlationId referenceEvents =
+        task {
+            let referenceDto =
+                referenceEvents
+                |> Array.fold (fun current referenceEvent -> current |> ReferenceDto.UpdateDto referenceEvent) ReferenceDto.Default
+
+            return! hydrateLegacyReferenceProjectionBlake3 getDirectoryVersion correlationId referenceDto
+        }
+
     /// Gets a list of references that match a provided SHA-256 hash.
     let getReferencesBySha256Hash (repositoryId: RepositoryId) (branchId: BranchId) (sha256Hash: Sha256Hash) (maxCount: int) =
         task {
@@ -1344,19 +1451,19 @@ module Services =
                         requestCharge.Append($"{results.RequestCharge:F3}, ")
                         |> ignore
 
-                        let eventsForAllReferences = results.Resource
+                        let eventsForAllReferences = results.Resource |> Seq.toArray
+                        let mutable index = 0
 
-                        eventsForAllReferences
-                        |> Seq.iter (fun eventsForOneReference ->
-                            let referenceDto =
-                                eventsForOneReference.State
-                                |> Array.fold
-                                    (fun referenceDto referenceEvent ->
-                                        referenceDto
-                                        |> ReferenceDto.UpdateDto referenceEvent)
-                                    ReferenceDto.Default
+                        while index < eventsForAllReferences.Length do
+                            let! referenceDto =
+                                projectReferenceEventsWithLegacyBlake3Hydration
+                                    getRootDirectoryVersionByDirectoryVersionId
+                                    "getReferencesBySha256Hash"
+                                    eventsForAllReferences[index].State
 
-                            if isNotDeletedReference referenceDto then references.Add(referenceDto))
+                            if isNotDeletedReference referenceDto then references.Add(referenceDto)
+
+                            index <- index + 1
 
                     if (indexMetrics.Length >= 2)
                        && (requestCharge.Length >= 2)
@@ -1424,19 +1531,19 @@ module Services =
                         requestCharge.Append($"{results.RequestCharge:F3}, ")
                         |> ignore
 
-                        let eventsForAllReferences = results.Resource
+                        let eventsForAllReferences = results.Resource |> Seq.toArray
+                        let mutable index = 0
 
-                        eventsForAllReferences
-                        |> Seq.iter (fun eventsForOneReference ->
-                            let referenceDto =
-                                eventsForOneReference.State
-                                |> Array.fold
-                                    (fun referenceDto referenceEvent ->
-                                        referenceDto
-                                        |> ReferenceDto.UpdateDto referenceEvent)
-                                    ReferenceDto.Default
+                        while index < eventsForAllReferences.Length do
+                            let! referenceDto =
+                                projectReferenceEventsWithLegacyBlake3Hydration
+                                    getRootDirectoryVersionByDirectoryVersionId
+                                    correlationId
+                                    eventsForAllReferences[index].State
 
-                            references.Add(referenceDto))
+                            references.Add(referenceDto)
+
+                            index <- index + 1
 
                     //logToConsole
                     //    $"In Services.Actor.getReferences: BranchId: {branchId}; RepositoryId: {repositoryId}; Retrieved {references.Count} references.{Environment.NewLine}{printQueryDefinition queryDefinition}{Environment.NewLine}{serialize references}"
@@ -1613,19 +1720,19 @@ module Services =
                         requestCharge.Append($"{results.RequestCharge:F3}, ")
                         |> ignore
 
-                        let eventsForAllReferences = results.Resource
+                        let eventsForAllReferences = results.Resource |> Seq.toArray
+                        let mutable index = 0
 
-                        eventsForAllReferences
-                        |> Seq.iter (fun eventsForOneReference ->
-                            let referenceDto =
-                                eventsForOneReference.State
-                                |> Array.fold
-                                    (fun referenceDto referenceEvent ->
-                                        referenceDto
-                                        |> ReferenceDto.UpdateDto referenceEvent)
-                                    ReferenceDto.Default
+                        while index < eventsForAllReferences.Length do
+                            let! referenceDto =
+                                projectReferenceEventsWithLegacyBlake3Hydration
+                                    getRootDirectoryVersionByDirectoryVersionId
+                                    correlationId
+                                    eventsForAllReferences[index].State
 
-                            references.Add(referenceDto))
+                            references.Add(referenceDto)
+
+                            index <- index + 1
 
                     if indexMetrics.Length >= 2
                        && requestCharge.Length >= 2
@@ -1697,9 +1804,11 @@ module Services =
 
                         while index < eventsForAllReferences.Length
                               && latestReference.IsNone do
-                            let referenceDto =
-                                eventsForAllReferences[index].State
-                                |> Array.fold (fun current referenceEvent -> current |> ReferenceDto.UpdateDto referenceEvent) ReferenceDto.Default
+                            let! referenceDto =
+                                projectReferenceEventsWithLegacyBlake3Hydration
+                                    getRootDirectoryVersionByDirectoryVersionId
+                                    "getLatestReference"
+                                    eventsForAllReferences[index].State
 
                             if isNotDeletedReference referenceDto then latestReference <- Some referenceDto
 
@@ -1776,11 +1885,11 @@ module Services =
 
                                             while index < eventsForAllReferences.Length
                                                   && not foundForType do
-                                                let referenceDto =
-                                                    eventsForAllReferences[index].State
-                                                    |> Array.fold
-                                                        (fun current referenceEvent -> current |> ReferenceDto.UpdateDto referenceEvent)
-                                                        ReferenceDto.Default
+                                                let! referenceDto =
+                                                    projectReferenceEventsWithLegacyBlake3Hydration
+                                                        getRootDirectoryVersionByDirectoryVersionId
+                                                        "getLatestReferenceByReferenceTypes"
+                                                        eventsForAllReferences[index].State
 
                                                 if isNotDeletedReference referenceDto then
                                                     referenceDtos.TryAdd(referenceType, referenceDto)
@@ -1868,9 +1977,11 @@ module Services =
 
                         while index < eventsForAllReferences.Length
                               && latestReference.IsNone do
-                            let referenceDto =
-                                eventsForAllReferences[index].State
-                                |> Array.fold (fun current referenceEvent -> current |> ReferenceDto.UpdateDto referenceEvent) ReferenceDto.Default
+                            let! referenceDto =
+                                projectReferenceEventsWithLegacyBlake3Hydration
+                                    getRootDirectoryVersionByDirectoryVersionId
+                                    "getLatestReferenceByType"
+                                    eventsForAllReferences[index].State
 
                             if isNotDeletedReference referenceDto then latestReference <- Some referenceDto
 
@@ -1938,9 +2049,11 @@ module Services =
 
                         while index < eventsForAllReferences.Length
                               && latestPromotion.IsNone do
-                            let referenceDto =
-                                eventsForAllReferences[index].State
-                                |> Array.fold (fun current referenceEvent -> current |> ReferenceDto.UpdateDto referenceEvent) ReferenceDto.Default
+                            let! referenceDto =
+                                projectReferenceEventsWithLegacyBlake3Hydration
+                                    getRootDirectoryVersionByDirectoryVersionId
+                                    "getLatestPromotion"
+                                    eventsForAllReferences[index].State
 
                             if isNotDeletedReference referenceDto
                                && hasPromotionSetTerminalLink referenceDto then
@@ -2248,14 +2361,18 @@ module Services =
                             SELECT TOP 1 c.State
                             FROM c
                             WHERE STARTSWITH(c.State[0].Event.created.Sha256Hash, @sha256Hash, true)
-                                AND STRINGEQUALS(c.State[0].Event.created.RelativePath, @relativePath, true)
+                                AND (
+                                    STRINGEQUALS(c.State[0].Event.created.RelativePath, @rootRelativePath, true)
+                                    OR STRINGEQUALS(c.State[0].Event.created.RelativePath, @slashRootRelativePath, true)
+                                )
                                 AND c.GrainType = @grainType
                                 AND c.PartitionKey = @partitionKey
                             ORDER BY c.State[0].Event.created.CreatedAt DESC
                             """
                         )
                             .WithParameter("@sha256Hash", sha256Hash)
-                            .WithParameter("@relativePath", Constants.RootDirectoryPath)
+                            .WithParameter("@rootRelativePath", Constants.RootDirectoryPath)
+                            .WithParameter("@slashRootRelativePath", RelativePath "/")
                             .WithParameter("@grainType", StateName.DirectoryVersion)
                             .WithParameter("@partitionKey", repositoryId)
 
@@ -2448,19 +2565,18 @@ module Services =
                                 clientElapsedTime
                                 + results.Diagnostics.GetClientElapsedTime()
 
-                            let eventsForAllReferences = results.Resource
+                            let eventsForAllReferences = results.Resource |> Seq.toArray
+                            let mutable index = 0
 
-                            eventsForAllReferences
-                            |> Seq.iter (fun eventsForOneReference ->
-                                let referenceDto =
-                                    eventsForOneReference.State
-                                    |> Array.fold
-                                        (fun referenceDto referenceEvent ->
-                                            referenceDto
-                                            |> ReferenceDto.UpdateDto referenceEvent)
-                                        ReferenceDto.Default
+                            while index < eventsForAllReferences.Length do
+                                let! referenceDto =
+                                    projectReferenceEventsWithLegacyBlake3Hydration
+                                        getRootDirectoryVersionByDirectoryVersionId
+                                        correlationId
+                                        eventsForAllReferences[index].State
 
-                                queryResults.Add(referenceDto.ReferenceId, referenceDto))
+                                queryResults.Add(referenceDto.ReferenceId, referenceDto)
+                                index <- index + 1
 
                         // Add the results to the list in the same order as the supplied referenceIds.
                         referenceIds
