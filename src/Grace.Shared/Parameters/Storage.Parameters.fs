@@ -168,7 +168,14 @@ module Storage =
             Message: string
         }
 
-    type UploadMetadata = { RelativePath: RelativePath; BlobUriWithSasToken: Uri; Sha256Hash: Sha256Hash; ContentReference: FileContentReference }
+    type UploadMetadata =
+        {
+            RelativePath: RelativePath
+            BlobUriWithSasToken: Uri
+            Sha256Hash: Sha256Hash
+            Blake3Hash: Blake3Hash
+            ContentReference: FileContentReference
+        }
 
     type GetUploadMetadataForFilesParameters() =
         inherit StorageParameters()
