@@ -567,13 +567,14 @@ module Branch =
                 return! context |> result500ServerError graceError
         }
 
-    let private tryResolveRootDirectoryVersionForReferenceCommand repositoryId directoryVersionId sha256Hash correlationId =
+    let private tryResolveRootDirectoryVersionForReferenceCommand repositoryId directoryVersionId sha256Hash blake3Hash correlationId =
         task {
             if directoryVersionId <> DirectoryVersionId.Empty then
                 let directoryVersionActorProxy = DirectoryVersion.CreateActorProxy directoryVersionId repositoryId correlationId
                 let! directoryVersionDto = directoryVersionActorProxy.Get correlationId
                 let directoryVersion = directoryVersionDto.DirectoryVersion
                 let requestedSha256Hash = string sha256Hash
+                let requestedBlake3Hash = string blake3Hash
 
                 if directoryVersion.DirectoryVersionId = DirectoryVersionId.Empty then
                     return None
@@ -589,8 +590,18 @@ module Branch =
                     )
                 then
                     return None
+                elif
+                    not (String.IsNullOrEmpty requestedBlake3Hash)
+                    && not (
+                        (string directoryVersion.Blake3Hash)
+                            .StartsWith(requestedBlake3Hash, StringComparison.OrdinalIgnoreCase)
+                    )
+                then
+                    return None
                 else
                     return Some directoryVersion
+            elif not (String.IsNullOrEmpty(string blake3Hash)) then
+                return! getRootDirectoryVersionByBlake3Hash repositoryId blake3Hash correlationId
             elif not (String.IsNullOrEmpty(string sha256Hash)) then
                 return! getRootDirectoryVersionBySha256Hash repositoryId sha256Hash correlationId
             else
@@ -602,14 +613,15 @@ module Branch =
         repositoryId
         directoryVersionId
         sha256Hash
+        blake3Hash
         referenceText
         correlationId
         =
         task {
-            match! tryResolveRootDirectoryVersionForReferenceCommand repositoryId directoryVersionId sha256Hash correlationId with
+            match! tryResolveRootDirectoryVersionForReferenceCommand repositoryId directoryVersionId sha256Hash blake3Hash correlationId with
             | Some directoryVersion ->
                 return createCommand (directoryVersion.DirectoryVersionId, directoryVersion.Sha256Hash, directoryVersion.Blake3Hash, referenceText)
-            | None -> return createCommand (directoryVersionId, sha256Hash, Blake3Hash String.Empty, referenceText)
+            | None -> return createCommand (directoryVersionId, sha256Hash, blake3Hash, referenceText)
         }
 
     let processQuery<'T, 'U when 'T :> BranchParameters>
@@ -795,11 +807,13 @@ module Branch =
 
                 let validations (parameters: AssignParameters) =
                     [|
-                        String.isValidSha256Hash parameters.Sha256Hash BranchError.Sha256HashIsRequired
+                        String.isEmptyOrValidSha256HashPrefix parameters.Sha256Hash BranchError.InvalidSha256Hash
+                        String.isEmptyOrValidBlake3HashPrefix parameters.Blake3Hash BranchError.InvalidBlake3Hash
                         Input.oneOfTheseValuesMustBeProvided
                             [|
                                 parameters.DirectoryVersionId
                                 parameters.Sha256Hash
+                                parameters.Blake3Hash
                             |]
                             BranchError.EitherDirectoryVersionIdOrSha256HashRequired
                         Branch.branchAllowsAssign
@@ -814,37 +828,25 @@ module Branch =
 
                 let command (parameters: AssignParameters) =
                     task {
-                        if parameters.DirectoryVersionId <> Guid.Empty then
-                            let directoryVersionActorProxy =
-                                DirectoryVersion.CreateActorProxy parameters.DirectoryVersionId repositoryId parameters.CorrelationId
-
-                            let! directoryVersionDto = directoryVersionActorProxy.Get(parameters.CorrelationId)
-
+                        match!
+                            tryResolveRootDirectoryVersionForReferenceCommand
+                                repositoryId
+                                parameters.DirectoryVersionId
+                                parameters.Sha256Hash
+                                parameters.Blake3Hash
+                                parameters.CorrelationId
+                            with
+                        | Some directoryVersion ->
                             return
                                 Some(
                                     Assign(
-                                        parameters.DirectoryVersionId,
-                                        directoryVersionDto.DirectoryVersion.Sha256Hash,
-                                        directoryVersionDto.DirectoryVersion.Blake3Hash,
+                                        directoryVersion.DirectoryVersionId,
+                                        directoryVersion.Sha256Hash,
+                                        directoryVersion.Blake3Hash,
                                         ReferenceText parameters.Message
                                     )
                                 )
-                        elif not <| String.IsNullOrEmpty(parameters.Sha256Hash) then
-                            match! getRootDirectoryVersionBySha256Hash (Guid.Parse(graceIds.RepositoryIdString)) parameters.Sha256Hash parameters.CorrelationId
-                                with
-                            | Some directoryVersion ->
-                                return
-                                    Some(
-                                        Assign(
-                                            directoryVersion.DirectoryVersionId,
-                                            directoryVersion.Sha256Hash,
-                                            directoryVersion.Blake3Hash,
-                                            ReferenceText parameters.Message
-                                        )
-                                    )
-                            | None -> return None
-                        else
-                            return None
+                        | None -> return None
                     }
 
                 let! parameters = context |> parse<AssignParameters>
@@ -874,7 +876,8 @@ module Branch =
                     [|
                         String.isNotEmpty parameters.Message BranchError.MessageIsRequired
                         String.maxLength parameters.Message 2048 BranchError.StringIsTooLong
-                        String.isValidSha256Hash parameters.Sha256Hash BranchError.Sha256HashIsRequired
+                        String.isEmptyOrValidSha256HashPrefix parameters.Sha256Hash BranchError.InvalidSha256Hash
+                        String.isEmptyOrValidBlake3HashPrefix parameters.Blake3Hash BranchError.InvalidBlake3Hash
                         Branch.branchAllowsReferenceType
                             graceIds.OwnerId
                             graceIds.OrganizationId
@@ -892,6 +895,7 @@ module Branch =
                         graceIds.RepositoryId
                         parameters.DirectoryVersionId
                         parameters.Sha256Hash
+                        parameters.Blake3Hash
                         (ReferenceText parameters.Message)
                         parameters.CorrelationId
                     |> ValueTask<BranchCommand>
@@ -910,7 +914,8 @@ module Branch =
                     [|
                         String.isNotEmpty parameters.Message BranchError.MessageIsRequired
                         String.maxLength parameters.Message 2048 BranchError.StringIsTooLong
-                        String.isValidSha256Hash parameters.Sha256Hash BranchError.Sha256HashIsRequired
+                        String.isEmptyOrValidSha256HashPrefix parameters.Sha256Hash BranchError.InvalidSha256Hash
+                        String.isEmptyOrValidBlake3HashPrefix parameters.Blake3Hash BranchError.InvalidBlake3Hash
                         Branch.branchAllowsReferenceType
                             graceIds.OwnerId
                             graceIds.OrganizationId
@@ -928,6 +933,7 @@ module Branch =
                         graceIds.RepositoryId
                         parameters.DirectoryVersionId
                         parameters.Sha256Hash
+                        parameters.Blake3Hash
                         (ReferenceText parameters.Message)
                         parameters.CorrelationId
                     |> ValueTask<BranchCommand>
@@ -945,7 +951,8 @@ module Branch =
                 let validations (parameters: CreateReferenceParameters) =
                     [|
                         String.maxLength parameters.Message 2048 BranchError.StringIsTooLong
-                        String.isValidSha256Hash parameters.Sha256Hash BranchError.Sha256HashIsRequired
+                        String.isEmptyOrValidSha256HashPrefix parameters.Sha256Hash BranchError.InvalidSha256Hash
+                        String.isEmptyOrValidBlake3HashPrefix parameters.Blake3Hash BranchError.InvalidBlake3Hash
                         Branch.branchAllowsReferenceType
                             graceIds.OwnerId
                             graceIds.OrganizationId
@@ -963,6 +970,7 @@ module Branch =
                         graceIds.RepositoryId
                         parameters.DirectoryVersionId
                         parameters.Sha256Hash
+                        parameters.Blake3Hash
                         (ReferenceText parameters.Message)
                         parameters.CorrelationId
                     |> ValueTask<BranchCommand>
@@ -982,7 +990,8 @@ module Branch =
                 let validations (parameters: CreateReferenceParameters) =
                     [|
                         String.maxLength parameters.Message 4096 BranchError.StringIsTooLong
-                        String.isValidSha256Hash parameters.Sha256Hash BranchError.Sha256HashIsRequired
+                        String.isEmptyOrValidSha256HashPrefix parameters.Sha256Hash BranchError.InvalidSha256Hash
+                        String.isEmptyOrValidBlake3HashPrefix parameters.Blake3Hash BranchError.InvalidBlake3Hash
                         Branch.branchAllowsReferenceType
                             graceIds.OwnerId
                             graceIds.OrganizationId
@@ -1000,6 +1009,7 @@ module Branch =
                         graceIds.RepositoryId
                         parameters.DirectoryVersionId
                         parameters.Sha256Hash
+                        parameters.Blake3Hash
                         (ReferenceText parameters.Message)
                         parameters.CorrelationId
                     |> ValueTask<BranchCommand>
@@ -1017,7 +1027,8 @@ module Branch =
                 let validations (parameters: CreateReferenceParameters) =
                     [|
                         String.maxLength parameters.Message 2048 BranchError.StringIsTooLong
-                        String.isValidSha256Hash parameters.Sha256Hash BranchError.Sha256HashIsRequired
+                        String.isEmptyOrValidSha256HashPrefix parameters.Sha256Hash BranchError.InvalidSha256Hash
+                        String.isEmptyOrValidBlake3HashPrefix parameters.Blake3Hash BranchError.InvalidBlake3Hash
                         Branch.branchAllowsReferenceType
                             graceIds.OwnerId
                             graceIds.OrganizationId
@@ -1035,6 +1046,7 @@ module Branch =
                         graceIds.RepositoryId
                         parameters.DirectoryVersionId
                         parameters.Sha256Hash
+                        parameters.Blake3Hash
                         (ReferenceText parameters.Message)
                         parameters.CorrelationId
                     |> ValueTask<BranchCommand>
@@ -1052,7 +1064,8 @@ module Branch =
                 let validations (parameters: CreateReferenceParameters) =
                     [|
                         String.maxLength parameters.Message 2048 BranchError.StringIsTooLong
-                        String.isValidSha256Hash parameters.Sha256Hash BranchError.Sha256HashIsRequired
+                        String.isEmptyOrValidSha256HashPrefix parameters.Sha256Hash BranchError.InvalidSha256Hash
+                        String.isEmptyOrValidBlake3HashPrefix parameters.Blake3Hash BranchError.InvalidBlake3Hash
                         Branch.branchAllowsReferenceType
                             graceIds.OwnerId
                             graceIds.OrganizationId
@@ -1070,6 +1083,7 @@ module Branch =
                         graceIds.RepositoryId
                         parameters.DirectoryVersionId
                         parameters.Sha256Hash
+                        parameters.Blake3Hash
                         (ReferenceText parameters.Message)
                         parameters.CorrelationId
                     |> ValueTask<BranchCommand>
@@ -2168,7 +2182,8 @@ module Branch =
                 try
                     let validations (parameters: ListContentsParameters) =
                         [|
-                            String.isEmptyOrValidSha256Hash parameters.Sha256Hash BranchError.InvalidSha256Hash
+                            String.isEmptyOrValidSha256HashPrefix parameters.Sha256Hash BranchError.InvalidSha256Hash
+                            String.isEmptyOrValidBlake3HashPrefix parameters.Blake3Hash BranchError.InvalidBlake3Hash
                             Guid.isValidAndNotEmptyGuid parameters.ReferenceId BranchError.InvalidReferenceId
                         |]
 
@@ -2179,6 +2194,7 @@ module Branch =
                             if
                                 String.IsNullOrEmpty(listContentsParameters.ReferenceId)
                                 && String.IsNullOrEmpty(listContentsParameters.Sha256Hash)
+                                && String.IsNullOrEmpty(listContentsParameters.Blake3Hash)
                             then
                                 // If we don't have a referenceId or sha256Hash, we'll get the contents of the most recent reference in the branch.
                                 let! branchDto = actorProxy.Get correlationId
@@ -2205,6 +2221,17 @@ module Branch =
 
                                 let! recursiveSize = directoryActorProxy.GetRecursiveSize correlationId
                                 return recursiveSize
+                            elif
+                                not
+                                <| String.IsNullOrEmpty(listContentsParameters.Blake3Hash)
+                            then
+                                match! getRootDirectoryVersionByBlake3Hash graceIds.RepositoryId listContentsParameters.Blake3Hash correlationId with
+                                | Some directoryVersion ->
+                                    let directoryActorProxy = DirectoryVersion.CreateActorProxy directoryVersion.DirectoryVersionId repositoryId correlationId
+
+                                    let! recursiveSize = directoryActorProxy.GetRecursiveSize correlationId
+                                    return recursiveSize
+                                | None -> return Constants.InitialDirectorySize
                             else
                                 // By process of elimination, we have a Sha256Hash, so we'll retrieve the DirectoryVersion using that..
                                 match! Services.getDirectoryVersionBySha256Hash graceIds.RepositoryId listContentsParameters.Sha256Hash correlationId with
@@ -2264,7 +2291,8 @@ module Branch =
                 try
                     let validations (parameters: ListContentsParameters) =
                         [|
-                            String.isEmptyOrValidSha256Hash parameters.Sha256Hash BranchError.InvalidSha256Hash
+                            String.isEmptyOrValidSha256HashPrefix parameters.Sha256Hash BranchError.InvalidSha256Hash
+                            String.isEmptyOrValidBlake3HashPrefix parameters.Blake3Hash BranchError.InvalidBlake3Hash
                             Guid.isValidAndNotEmptyGuid parameters.ReferenceId BranchError.InvalidReferenceId
                         |]
 
@@ -2275,6 +2303,7 @@ module Branch =
                             if
                                 String.IsNullOrEmpty(listContentsParameters.ReferenceId)
                                 && String.IsNullOrEmpty(listContentsParameters.Sha256Hash)
+                                && String.IsNullOrEmpty(listContentsParameters.Blake3Hash)
                             then
                                 // If we don't have a referenceId or sha256Hash, we'll get the contents of the most recent reference in the branch.
                                 let! branchDto = actorProxy.Get correlationId
@@ -2304,6 +2333,18 @@ module Branch =
                                 let! contents = directoryActorProxy.GetRecursiveDirectoryVersions listContentsParameters.ForceRecompute correlationId
 
                                 return contents
+                            elif
+                                not
+                                <| String.IsNullOrEmpty(listContentsParameters.Blake3Hash)
+                            then
+                                match! getRootDirectoryVersionByBlake3Hash graceIds.RepositoryId listContentsParameters.Blake3Hash correlationId with
+                                | Some directoryVersion ->
+                                    let directoryActorProxy = DirectoryVersion.CreateActorProxy directoryVersion.DirectoryVersionId repositoryId correlationId
+
+                                    let! contents = directoryActorProxy.GetRecursiveDirectoryVersions listContentsParameters.ForceRecompute correlationId
+
+                                    return contents
+                                | None -> return Array.Empty<DirectoryVersion.DirectoryVersionDto>()
                             else
                                 // By process of elimination, we have a Sha256Hash, so we'll retrieve the DirectoryVersion using that..
                                 match! getRootDirectoryVersionBySha256Hash graceIds.RepositoryId listContentsParameters.Sha256Hash correlationId with
@@ -2355,7 +2396,8 @@ module Branch =
 
     let private getVersionValidations (parameters: GetBranchVersionParameters) =
         [|
-            String.isEmptyOrValidSha256Hash parameters.Sha256Hash BranchError.InvalidSha256Hash
+            String.isEmptyOrValidSha256HashPrefix parameters.Sha256Hash BranchError.InvalidSha256Hash
+            String.isEmptyOrValidBlake3HashPrefix parameters.Blake3Hash BranchError.InvalidBlake3Hash
             Guid.isValidAndNotEmptyGuid parameters.ReferenceId BranchError.InvalidReferenceId
         |]
 
@@ -2369,6 +2411,8 @@ module Branch =
         task {
             if not <| String.IsNullOrEmpty(parameters.Sha256Hash) then
                 return! getRootDirectoryVersionBySha256Hash repositoryId parameters.Sha256Hash correlationId
+            elif not <| String.IsNullOrEmpty(parameters.Blake3Hash) then
+                return! getRootDirectoryVersionByBlake3Hash repositoryId parameters.Blake3Hash correlationId
             elif
                 not
                 <| String.IsNullOrEmpty(parameters.ReferenceId)

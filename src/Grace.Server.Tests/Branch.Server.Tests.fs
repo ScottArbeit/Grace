@@ -338,6 +338,36 @@ module BranchServerTestHelpers =
             return! Client.PostAsync("/branch/assign", createJsonContent parameters)
         }
 
+    let saveReferenceByBlake3ResponseAsync repositoryId (branch: Branch.BranchDto) directoryVersionId blake3Hash =
+        task {
+            let parameters = Parameters.Branch.CreateReferenceParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.BranchId <- $"{branch.BranchId}"
+            parameters.DirectoryVersionId <- directoryVersionId
+            parameters.Blake3Hash <- blake3Hash
+            parameters.Message <- "BLAKE3 root locator route proof save"
+            parameters.CorrelationId <- generateCorrelationId ()
+
+            return! Client.PostAsync("/branch/save", createJsonContent parameters)
+        }
+
+    let assignReferenceByBlake3ResponseAsync repositoryId (branch: Branch.BranchDto) directoryVersionId blake3Hash =
+        task {
+            let parameters = Parameters.Branch.AssignParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.BranchId <- $"{branch.BranchId}"
+            parameters.DirectoryVersionId <- directoryVersionId
+            parameters.Blake3Hash <- blake3Hash
+            parameters.Message <- "BLAKE3 root locator route proof assign"
+            parameters.CorrelationId <- generateCorrelationId ()
+
+            return! Client.PostAsync("/branch/assign", createJsonContent parameters)
+        }
+
     let enableAssignAsync repositoryId (branch: Branch.BranchDto) =
         task {
             let parameters = Parameters.Branch.EnableFeatureParameters()
@@ -439,6 +469,61 @@ module BranchServerTestHelpers =
             Assert.Fail("Could not generate a root/child SHA prefix collision for the assign regression test.")
             Unchecked.defaultof<Grace.Types.Common.DirectoryVersion * Grace.Types.Common.DirectoryVersion * string>
 
+    let createDotRootWithChildBlake3PrefixCollision repositoryId childBasePath excludedRootHashes =
+        let mutable collision = None
+        let mutable attempt = 0
+        let prefixLength = 3
+
+        while collision.IsNone && attempt < 32768 do
+            let child, root = createDotRootWithChildDirectoryVersions repositoryId $"{childBasePath}/{attempt}"
+
+            let rootPrefix =
+                (string root.Blake3Hash)
+                    .Substring(0, prefixLength)
+
+            let excludedRootMatches =
+                excludedRootHashes
+                |> Seq.exists (fun excludedHash ->
+                    (string excludedHash)
+                        .StartsWith(rootPrefix, StringComparison.OrdinalIgnoreCase))
+
+            if not excludedRootMatches
+               && (string child.Blake3Hash)
+                   .StartsWith(rootPrefix, StringComparison.OrdinalIgnoreCase) then
+                child.CreatedAt <- getCurrentInstant ()
+                collision <- Some(child, root, rootPrefix)
+
+            attempt <- attempt + 1
+
+        match collision with
+        | Some collision -> collision
+        | None ->
+            Assert.Fail("Could not generate a root/child BLAKE3 prefix collision for the assign regression test.")
+            Unchecked.defaultof<Grace.Types.Common.DirectoryVersion * Grace.Types.Common.DirectoryVersion * string>
+
+    let createSameBlake3PrefixRootPair repositoryId pathPrefix =
+        let candidates =
+            [|
+                for index in 0..512 ->
+                    let child, root = createDotRootWithChildDirectoryVersions repositoryId $"{pathPrefix}/{index}"
+                    child, root
+            |]
+
+        candidates
+        |> Array.groupBy (fun (_, root) -> (string root.Blake3Hash).Substring(0, 2))
+        |> Array.tryPick (fun (sharedPrefix, matches) ->
+            if matches.Length >= 2 then
+                let firstChild, firstRoot = matches[0]
+                let secondChild, secondRoot = matches[1]
+                Some(firstChild, firstRoot, secondChild, secondRoot, sharedPrefix)
+            else
+                None)
+        |> function
+            | Some pair -> pair
+            | None ->
+                Assert.Fail("Could not generate same-prefix BLAKE3 root DirectoryVersions for branch route tests.")
+                Unchecked.defaultof<Grace.Types.Common.DirectoryVersion * Grace.Types.Common.DirectoryVersion * Grace.Types.Common.DirectoryVersion * Grace.Types.Common.DirectoryVersion * string>
+
     let shortestUniquePrefix (selected: Sha256Hash) (other: Sha256Hash) =
         let selectedHash = string selected
         let otherHash = string other
@@ -446,6 +531,18 @@ module BranchServerTestHelpers =
 
         while prefixLength < selectedHash.Length
               && otherHash.StartsWith(selectedHash.Substring(0, prefixLength), StringComparison.OrdinalIgnoreCase) do
+            prefixLength <- prefixLength + 1
+
+        selectedHash.Substring(0, prefixLength)
+
+    let shortestUniqueBlake3Prefix (selected: Blake3Hash) (others: Blake3Hash seq) =
+        let selectedHash = string selected
+        let otherHashes = others |> Seq.map string |> Seq.toArray
+        let mutable prefixLength = 2
+
+        while prefixLength < selectedHash.Length
+              && (otherHashes
+                  |> Array.exists (fun otherHash -> otherHash.StartsWith(selectedHash.Substring(0, prefixLength), StringComparison.OrdinalIgnoreCase))) do
             prefixLength <- prefixLength + 1
 
         selectedHash.Substring(0, prefixLength)
@@ -708,6 +805,49 @@ type BranchServer() =
         }
 
     [<Test>]
+    member _.SaveWithBlake3FullAndUniquePrefixHydratesFullRootHashes() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let branchId = repositoryDefaultBranchIds[0]
+            let! parentBranch = BranchServerTestHelpers.getBranchAsync repositoryId branchId
+            let! fullHashBranch = BranchServerTestHelpers.createBranchAsync repositoryId parentBranch $"Blake3Full{Guid.NewGuid():N}"
+            let! prefixBranch = BranchServerTestHelpers.createBranchAsync repositoryId parentBranch $"Blake3Prefix{Guid.NewGuid():N}"
+            let child, root = BranchServerTestHelpers.createDotRootWithChildDirectoryVersions repositoryId $"blake3-prefix/{Guid.NewGuid():N}"
+
+            do! BranchServerTestHelpers.saveDirectoryVersionsAsync repositoryId [ child; root ]
+
+            let! fullHashResponse =
+                BranchServerTestHelpers.saveReferenceByBlake3ResponseAsync repositoryId fullHashBranch DirectoryVersionId.Empty root.Blake3Hash
+
+            let! fullHashBody = fullHashResponse.Content.ReadAsStringAsync()
+            Assert.That(fullHashResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), fullHashBody)
+
+            let rootBlake3Prefix =
+                BranchServerTestHelpers.shortestUniqueBlake3Prefix
+                    root.Blake3Hash
+                    [
+                        child.Blake3Hash
+                        parentBranch.BasedOn.Blake3Hash
+                    ]
+
+            let! prefixResponse =
+                BranchServerTestHelpers.saveReferenceByBlake3ResponseAsync repositoryId prefixBranch DirectoryVersionId.Empty (Blake3Hash rootBlake3Prefix)
+
+            let! prefixBody = prefixResponse.Content.ReadAsStringAsync()
+            Assert.That(prefixResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), prefixBody)
+
+            let! fullHashSavedBranch = BranchServerTestHelpers.getBranchAsync repositoryId $"{fullHashBranch.BranchId}"
+            Assert.That(fullHashSavedBranch.LatestSave.DirectoryId, Is.EqualTo(root.DirectoryVersionId))
+            Assert.That(fullHashSavedBranch.LatestSave.Sha256Hash, Is.EqualTo(root.Sha256Hash))
+            Assert.That(fullHashSavedBranch.LatestSave.Blake3Hash, Is.EqualTo(root.Blake3Hash))
+
+            let! prefixSavedBranch = BranchServerTestHelpers.getBranchAsync repositoryId $"{prefixBranch.BranchId}"
+            Assert.That(prefixSavedBranch.LatestSave.DirectoryId, Is.EqualTo(root.DirectoryVersionId))
+            Assert.That(prefixSavedBranch.LatestSave.Sha256Hash, Is.EqualTo(root.Sha256Hash))
+            Assert.That(prefixSavedBranch.LatestSave.Blake3Hash, Is.EqualTo(root.Blake3Hash))
+        }
+
+    [<Test>]
     member _.AssignWithShaOnlyRootPrefixIgnoresNewerChildDirectoryMatch() =
         task {
             let repositoryId = repositoryIds[0]
@@ -735,6 +875,121 @@ type BranchServer() =
         }
 
     [<Test>]
+    member _.AssignWithBlake3OnlyRootPrefixIgnoresNewerChildDirectoryMatch() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let branchId = repositoryDefaultBranchIds[0]
+            let! parentBranch = BranchServerTestHelpers.getBranchAsync repositoryId branchId
+            let! branch = BranchServerTestHelpers.createBranchAsync repositoryId parentBranch $"AssignBlake3Prefix{Guid.NewGuid():N}"
+
+            let child, root, sharedPrefix =
+                BranchServerTestHelpers.createDotRootWithChildBlake3PrefixCollision
+                    repositoryId
+                    $"assign-blake3-prefix/{Guid.NewGuid():N}"
+                    [ parentBranch.BasedOn.Blake3Hash ]
+
+            do! BranchServerTestHelpers.saveDirectoryVersionsAsync repositoryId [ root; child ]
+            do! BranchServerTestHelpers.enableAssignAsync repositoryId branch
+
+            let! response = BranchServerTestHelpers.assignReferenceByBlake3ResponseAsync repositoryId branch DirectoryVersionId.Empty (Blake3Hash sharedPrefix)
+            let! responseBody = response.Content.ReadAsStringAsync()
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK), responseBody)
+
+            let! assignedBranch = BranchServerTestHelpers.getBranchAsync repositoryId $"{branch.BranchId}"
+            Assert.That(assignedBranch.LatestPromotion.DirectoryId, Is.EqualTo(root.DirectoryVersionId))
+            Assert.That(assignedBranch.LatestPromotion.Sha256Hash, Is.EqualTo(root.Sha256Hash))
+            Assert.That(assignedBranch.LatestPromotion.Blake3Hash, Is.EqualTo(root.Blake3Hash))
+        }
+
+    [<Test>]
+    member _.AssignWithDirectoryVersionIdAndMismatchedBlake3FailsBeforeMutation() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let branchId = repositoryDefaultBranchIds[0]
+            let! parentBranch = BranchServerTestHelpers.getBranchAsync repositoryId branchId
+            let! branch = BranchServerTestHelpers.createBranchAsync repositoryId parentBranch $"AssignMismatchedBlake3{Guid.NewGuid():N}"
+            let child, root = BranchServerTestHelpers.createDotRootWithChildDirectoryVersions repositoryId $"assign-mismatch/{Guid.NewGuid():N}"
+
+            do! BranchServerTestHelpers.saveDirectoryVersionsAsync repositoryId [ child; root ]
+            do! BranchServerTestHelpers.enableAssignAsync repositoryId branch
+
+            let beforeBranch = branch
+
+            let mismatchedBlake3 =
+                if (string root.Blake3Hash)
+                    .StartsWith("0", StringComparison.Ordinal) then
+                    Blake3Hash "1fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+                else
+                    Blake3Hash "0fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+
+            let! response = BranchServerTestHelpers.assignReferenceByBlake3ResponseAsync repositoryId branch root.DirectoryVersionId mismatchedBlake3
+
+            let! responseBody = response.Content.ReadAsStringAsync()
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), responseBody)
+
+            let! afterBranch = BranchServerTestHelpers.getBranchAsync repositoryId $"{branch.BranchId}"
+            Assert.That(afterBranch.LatestPromotion.ReferenceId, Is.EqualTo(beforeBranch.LatestPromotion.ReferenceId))
+            Assert.That(afterBranch.LatestPromotion.DirectoryId, Is.EqualTo(beforeBranch.LatestPromotion.DirectoryId))
+        }
+
+    [<Test>]
+    member _.SaveWithMalformedZeroAndAmbiguousBlake3LocatorsFailsBeforeMutation() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let branchId = repositoryDefaultBranchIds[0]
+            let! parentBranch = BranchServerTestHelpers.getBranchAsync repositoryId branchId
+            let! malformedBranch = BranchServerTestHelpers.createBranchAsync repositoryId parentBranch $"MalformedBlake3{Guid.NewGuid():N}"
+            let! zeroBranch = BranchServerTestHelpers.createBranchAsync repositoryId parentBranch $"ZeroBlake3{Guid.NewGuid():N}"
+            let! ambiguousBranch = BranchServerTestHelpers.createBranchAsync repositoryId parentBranch $"AmbiguousBlake3{Guid.NewGuid():N}"
+
+            let firstChild, firstRoot, secondChild, secondRoot, sharedPrefix =
+                BranchServerTestHelpers.createSameBlake3PrefixRootPair repositoryId $"ambiguous-branch-blake3/{Guid.NewGuid():N}"
+
+            do!
+                BranchServerTestHelpers.saveDirectoryVersionsAsync
+                    repositoryId
+                    [
+                        firstChild
+                        firstRoot
+                        secondChild
+                        secondRoot
+                    ]
+
+            let assertLatestSaveUnchanged repositoryId (beforeBranch: Branch.BranchDto) =
+                task {
+                    let! afterBranch = BranchServerTestHelpers.getBranchAsync repositoryId $"{beforeBranch.BranchId}"
+                    Assert.That(afterBranch.LatestSave.ReferenceId, Is.EqualTo(beforeBranch.LatestSave.ReferenceId))
+                    Assert.That(afterBranch.LatestSave.DirectoryId, Is.EqualTo(beforeBranch.LatestSave.DirectoryId))
+                }
+
+            let! malformedResponse =
+                BranchServerTestHelpers.saveReferenceByBlake3ResponseAsync repositoryId malformedBranch DirectoryVersionId.Empty (Blake3Hash "not-a-blake3")
+
+            let! malformedBody = malformedResponse.Content.ReadAsStringAsync()
+            Assert.That(malformedResponse.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), malformedBody)
+            Assert.That((deserialize<GraceError> malformedBody).Error, Is.EqualTo(BranchError.getErrorMessage BranchError.InvalidBlake3Hash))
+            do! assertLatestSaveUnchanged repositoryId malformedBranch
+
+            let! zeroResponse =
+                BranchServerTestHelpers.saveReferenceByBlake3ResponseAsync
+                    repositoryId
+                    zeroBranch
+                    DirectoryVersionId.Empty
+                    (Blake3Hash "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff")
+
+            let! zeroBody = zeroResponse.Content.ReadAsStringAsync()
+            Assert.That(zeroResponse.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), zeroBody)
+            do! assertLatestSaveUnchanged repositoryId zeroBranch
+
+            let! ambiguousResponse =
+                BranchServerTestHelpers.saveReferenceByBlake3ResponseAsync repositoryId ambiguousBranch DirectoryVersionId.Empty (Blake3Hash sharedPrefix)
+
+            let! ambiguousBody = ambiguousResponse.Content.ReadAsStringAsync()
+            Assert.That(ambiguousResponse.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), ambiguousBody)
+            do! assertLatestSaveUnchanged repositoryId ambiguousBranch
+        }
+
+    [<Test>]
     member _.SaveWithShaOnlyChildDirectoryPrefixDoesNotCreateRootReference() =
         task {
             let repositoryId = repositoryIds[0]
@@ -747,6 +1002,32 @@ type BranchServer() =
 
             let childOnlyPrefix = BranchServerTestHelpers.shortestUniquePrefix child.Sha256Hash root.Sha256Hash
             let! response = BranchServerTestHelpers.saveReferenceResponseAsync repositoryId branch DirectoryVersionId.Empty (Sha256Hash childOnlyPrefix)
+            let! responseBody = response.Content.ReadAsStringAsync()
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), responseBody)
+            Assert.That(responseBody, Does.Contain("Reference root DirectoryVersion does not exist."))
+        }
+
+    [<Test>]
+    member _.SaveWithBlake3ChildDirectoryPrefixDoesNotCreateRootReference() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let branchId = repositoryDefaultBranchIds[0]
+            let! parentBranch = BranchServerTestHelpers.getBranchAsync repositoryId branchId
+            let! branch = BranchServerTestHelpers.createBranchAsync repositoryId parentBranch $"Blake3ChildPrefix{Guid.NewGuid():N}"
+            let child, root = BranchServerTestHelpers.createDotRootWithChildDirectoryVersions repositoryId $"blake3-child-prefix/{Guid.NewGuid():N}"
+
+            do! BranchServerTestHelpers.saveDirectoryVersionsAsync repositoryId [ child; root ]
+
+            let childOnlyPrefix =
+                BranchServerTestHelpers.shortestUniqueBlake3Prefix
+                    child.Blake3Hash
+                    [
+                        root.Blake3Hash
+                        parentBranch.BasedOn.Blake3Hash
+                    ]
+
+            let! response = BranchServerTestHelpers.saveReferenceByBlake3ResponseAsync repositoryId branch DirectoryVersionId.Empty (Blake3Hash childOnlyPrefix)
+
             let! responseBody = response.Content.ReadAsStringAsync()
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), responseBody)
             Assert.That(responseBody, Does.Contain("Reference root DirectoryVersion does not exist."))

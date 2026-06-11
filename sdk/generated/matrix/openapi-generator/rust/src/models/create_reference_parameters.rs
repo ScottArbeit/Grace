@@ -40,6 +40,8 @@ pub struct CreateReferenceParameters {
     pub directory_version_id: Option<uuid::Uuid>,
     #[serde(rename = "Sha256Hash", skip_serializing_if = "Option::is_none")]
     pub sha256_hash: Option<String>,
+    #[serde(rename = "Blake3Hash", skip_serializing_if = "Option::is_none")]
+    pub blake3_hash: Option<String>,
     #[serde(rename = "Message", skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
 }
@@ -60,6 +62,7 @@ impl CreateReferenceParameters {
             branch_name: None,
             directory_version_id: None,
             sha256_hash: None,
+            blake3_hash: None,
             message: None,
         }
     }

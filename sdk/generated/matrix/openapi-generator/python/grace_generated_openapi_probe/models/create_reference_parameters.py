@@ -41,8 +41,9 @@ class CreateReferenceParameters(BaseModel):
     branch_name: Optional[StrictStr] = Field(default=None, alias="BranchName")
     directory_version_id: Optional[UUID] = Field(default=None, alias="DirectoryVersionId")
     sha256_hash: Optional[StrictStr] = Field(default=None, alias="Sha256Hash")
+    blake3_hash: Optional[StrictStr] = Field(default=None, alias="Blake3Hash")
     message: Optional[StrictStr] = Field(default=None, alias="Message")
-    __properties: ClassVar[List[str]] = ["CorrelationId", "Principal", "OwnerId", "OwnerName", "OrganizationId", "OrganizationName", "RepositoryId", "RepositoryName", "BranchId", "BranchName", "DirectoryVersionId", "Sha256Hash", "Message"]
+    __properties: ClassVar[List[str]] = ["CorrelationId", "Principal", "OwnerId", "OwnerName", "OrganizationId", "OrganizationName", "RepositoryId", "RepositoryName", "BranchId", "BranchName", "DirectoryVersionId", "Sha256Hash", "Blake3Hash", "Message"]
 
     model_config = ConfigDict(
         validate_by_name=True,
@@ -107,6 +108,7 @@ class CreateReferenceParameters(BaseModel):
             "BranchName": obj.get("BranchName"),
             "DirectoryVersionId": obj.get("DirectoryVersionId"),
             "Sha256Hash": obj.get("Sha256Hash"),
+            "Blake3Hash": obj.get("Blake3Hash"),
             "Message": obj.get("Message")
         })
         return _obj
