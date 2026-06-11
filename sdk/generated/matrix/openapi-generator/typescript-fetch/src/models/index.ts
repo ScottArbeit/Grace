@@ -91,6 +91,7 @@ export * from './GetByDirectoryIdsParameters';
 export * from './GetBySha256HashParameters';
 export * from './GetContentBlockDownloadUriParameters';
 export * from './GetContentBlockUploadUriParameters';
+export * from './GetDiffByBlake3HashParameters';
 export * from './GetDiffByReferenceTypeParameters';
 export * from './GetDiffBySha256HashParameters';
 export * from './GetDiffParameters';

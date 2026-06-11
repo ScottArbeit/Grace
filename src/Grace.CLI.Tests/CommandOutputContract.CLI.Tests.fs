@@ -212,10 +212,10 @@ module CommandOutputContractRegistryTests =
     [<Test>]
     let ``registry contains accepted inventory totals`` () =
         CommandOutputContract.entries.Length
-        |> should equal 203
+        |> should equal 204
 
         CommandOutputContract.routedEntries.Length
-        |> should equal 194
+        |> should equal 195
 
         CommandOutputContract.sourceOnlyEntries.Length
         |> should equal 9
@@ -226,7 +226,7 @@ module CommandOutputContractRegistryTests =
         countBy ImmediateJsonErrorOnly |> should equal 1
 
         countBy HumanProgressOnlySuccess
-        |> should equal 10
+        |> should equal 11
 
         countBy PartialManualSuccess |> should equal 0
         countBy ManualJsonUnenveloped |> should equal 0
@@ -264,7 +264,7 @@ module CommandOutputContractRegistryTests =
 
         jsonReady |> should equal 182
         intentionallyHumanOnly |> should equal 1
-        deferredV2 |> should equal 11
+        deferredV2 |> should equal 12
         sourceOnly |> should equal 9
         deleted |> should equal 0
 
@@ -285,7 +285,7 @@ module CommandOutputContractRegistryTests =
             CommandOutputContract.routedEntries
             |> List.map (fun entry -> entry.Identity.CommandId)
 
-        discovered.Length |> should equal 194
+        discovered.Length |> should equal 195
 
         discovered.Length
         |> should equal (discovered |> List.distinct |> List.length)

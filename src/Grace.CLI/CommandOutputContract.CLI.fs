@@ -973,6 +973,7 @@ module CommandOutputContract =
             row [ "candidate" ] "retry" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
             row [ "config" ] "write" true false common_renderOutput_envelope read_or_mutating_verify local_client ReuseExistingApiOrSdkDto
             row [] "connect" true true common_renderOutput_envelope progress_local_workflow composite_local_server RequiresCliDto
+            row [ "diff" ] "blake3" true true human_progress_only_success progress_local_workflow composite_local_server RequiresCliDto
             row [ "diff" ] "checkpoint" true true human_progress_only_success progress_local_workflow composite_local_server RequiresCliDto
             row [ "diff" ] "commit" true true human_progress_only_success progress_local_workflow composite_local_server RequiresCliDto
             row [ "diff" ] "directoryid" true true human_progress_only_success progress_local_workflow composite_local_server RequiresCliDto
