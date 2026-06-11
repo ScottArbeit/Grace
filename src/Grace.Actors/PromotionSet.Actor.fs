@@ -1810,6 +1810,7 @@ module PromotionSet =
                             promotionSetDto.TargetBranchId,
                             step.AppliedDirectoryVersionId,
                             directoryVersionDto.DirectoryVersion.Sha256Hash,
+                            directoryVersionDto.DirectoryVersion.Blake3Hash,
                             ReferenceType.Promotion,
                             referenceText,
                             links

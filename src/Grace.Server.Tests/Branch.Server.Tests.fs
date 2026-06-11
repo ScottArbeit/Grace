@@ -185,7 +185,7 @@ module BranchServerTestHelpers =
 
     let private blake3Hex (bytes: byte array) = ContentAddress.computeBlake3Hex bytes
 
-    let private createRootDirectoryVersion (repositoryId: string) (fileVersion: FileVersion) =
+    let createRootDirectoryVersion (repositoryId: string) (fileVersion: FileVersion) =
         let entries =
             [|
                 DirectoryVersionPreimageEntry.File fileVersion.RelativePath fileVersion.Size fileVersion.Blake3Hash fileVersion.Sha256Hash
@@ -205,6 +205,49 @@ module BranchServerTestHelpers =
             (List<DirectoryVersionId>())
             (List<FileVersion>([ fileVersion ]))
             fileVersion.Size
+
+    let private normalizedDirectorySizeForHash (directoryVersion: Grace.Types.Common.DirectoryVersion) =
+        if directoryVersion.Size = Constants.InitialDirectorySize then
+            0L
+        else
+            directoryVersion.Size
+
+    let private createDirectoryVersion
+        (directoryVersionId: DirectoryVersionId)
+        (repositoryId: string)
+        (relativePath: RelativePath)
+        (childDirectoryVersions: Grace.Types.Common.DirectoryVersion seq)
+        =
+        let childDirectoryVersions = childDirectoryVersions |> Seq.toArray
+
+        let childDirectoryIds =
+            childDirectoryVersions
+            |> Seq.map (fun directoryVersion -> directoryVersion.DirectoryVersionId)
+
+        let entries =
+            childDirectoryVersions
+            |> Seq.map (fun directoryVersion ->
+                DirectoryVersionPreimageEntry.Directory
+                    directoryVersion.RelativePath
+                    (normalizedDirectorySizeForHash directoryVersion)
+                    directoryVersion.Blake3Hash
+                    directoryVersion.Sha256Hash)
+            |> Seq.toArray
+
+        let sha256Hash = computeSha256ForDirectoryEntries relativePath entries
+        let blake3Hash = computeBlake3ForDirectory relativePath entries
+
+        Grace.Types.Common.DirectoryVersion.CreateWithHashes
+            directoryVersionId
+            (Guid.Parse ownerId)
+            (Guid.Parse organizationId)
+            (Guid.Parse repositoryId)
+            relativePath
+            sha256Hash
+            blake3Hash
+            (List<DirectoryVersionId>(childDirectoryIds))
+            (List<FileVersion>())
+            Constants.InitialDirectorySize
 
     let private gzipBytes (bytes: byte array) =
         use compressed = new MemoryStream()
@@ -247,6 +290,65 @@ module BranchServerTestHelpers =
             parameters.DirectoryVersions.Add(directoryVersion)
 
             let! response = Client.PostAsync("/directory/saveDirectoryVersions", createJsonContent parameters)
+            do! assertOk response
+        }
+
+    let saveDirectoryVersionsAsync repositoryId (directoryVersions: Grace.Types.Common.DirectoryVersion seq) =
+        task {
+            let parameters = Parameters.DirectoryVersion.SaveDirectoryVersionsParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.CorrelationId <- generateCorrelationId ()
+
+            for directoryVersion in directoryVersions do
+                parameters.DirectoryVersions.Add(directoryVersion)
+
+            let! response = Client.PostAsync("/directory/saveDirectoryVersions", createJsonContent parameters)
+            do! assertOk response
+        }
+
+    let saveReferenceResponseAsync repositoryId (branch: Branch.BranchDto) directoryVersionId sha256Hash =
+        task {
+            let parameters = Parameters.Branch.CreateReferenceParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.BranchId <- $"{branch.BranchId}"
+            parameters.DirectoryVersionId <- directoryVersionId
+            parameters.Sha256Hash <- sha256Hash
+            parameters.Message <- "Root hash hydration route proof save"
+            parameters.CorrelationId <- generateCorrelationId ()
+
+            return! Client.PostAsync("/branch/save", createJsonContent parameters)
+        }
+
+    let assignReferenceResponseAsync repositoryId (branch: Branch.BranchDto) directoryVersionId sha256Hash =
+        task {
+            let parameters = Parameters.Branch.AssignParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.BranchId <- $"{branch.BranchId}"
+            parameters.DirectoryVersionId <- directoryVersionId
+            parameters.Sha256Hash <- sha256Hash
+            parameters.Message <- "Root hash hydration route proof assign"
+            parameters.CorrelationId <- generateCorrelationId ()
+
+            return! Client.PostAsync("/branch/assign", createJsonContent parameters)
+        }
+
+    let enableAssignAsync repositoryId (branch: Branch.BranchDto) =
+        task {
+            let parameters = Parameters.Branch.EnableFeatureParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.BranchId <- $"{branch.BranchId}"
+            parameters.Enabled <- true
+            parameters.CorrelationId <- generateCorrelationId ()
+
+            let! response = Client.PostAsync("/branch/enableAssign", createJsonContent parameters)
             do! assertOk response
         }
 
@@ -297,6 +399,56 @@ module BranchServerTestHelpers =
             finally
                 if Directory.Exists(tempRoot) then Directory.Delete(tempRoot, true)
         }
+
+    let createDotRootWithChildDirectoryVersions repositoryId childRelativePath =
+        let child = createDirectoryVersion (Guid.NewGuid()) repositoryId childRelativePath []
+        let root = createDirectoryVersion (Guid.NewGuid()) repositoryId Constants.RootDirectoryPath [ child ]
+        child, root
+
+    let createSlashRootDirectoryVersion repositoryId = createDirectoryVersion (Guid.NewGuid()) repositoryId (RelativePath "/") []
+
+    let createDotRootWithChildShaPrefixCollision repositoryId childBasePath excludedRootHashes =
+        let mutable collision = None
+        let mutable attempt = 0
+        let prefixLength = 3
+
+        while collision.IsNone && attempt < 32768 do
+            let child, root = createDotRootWithChildDirectoryVersions repositoryId $"{childBasePath}/{attempt}"
+
+            let rootPrefix =
+                (string root.Sha256Hash)
+                    .Substring(0, prefixLength)
+
+            let excludedRootMatches =
+                excludedRootHashes
+                |> Seq.exists (fun excludedHash ->
+                    (string excludedHash)
+                        .StartsWith(rootPrefix, StringComparison.OrdinalIgnoreCase))
+
+            if not excludedRootMatches
+               && (string child.Sha256Hash)
+                   .StartsWith(rootPrefix, StringComparison.OrdinalIgnoreCase) then
+                child.CreatedAt <- getCurrentInstant ()
+                collision <- Some(child, root, rootPrefix)
+
+            attempt <- attempt + 1
+
+        match collision with
+        | Some collision -> collision
+        | None ->
+            Assert.Fail("Could not generate a root/child SHA prefix collision for the assign regression test.")
+            Unchecked.defaultof<Grace.Types.Common.DirectoryVersion * Grace.Types.Common.DirectoryVersion * string>
+
+    let shortestUniquePrefix (selected: Sha256Hash) (other: Sha256Hash) =
+        let selectedHash = string selected
+        let otherHash = string other
+        let mutable prefixLength = 2
+
+        while prefixLength < selectedHash.Length
+              && otherHash.StartsWith(selectedHash.Substring(0, prefixLength), StringComparison.OrdinalIgnoreCase) do
+            prefixLength <- prefixLength + 1
+
+        selectedHash.Substring(0, prefixLength)
 
     let createAnnotatableReferenceWithContentAsync repositoryId (branch: Branch.BranchDto) relativePath (content: string) =
         task {
@@ -509,6 +661,113 @@ type BranchServer() =
 
             do! BranchServerTestHelpers.assertMissingRepositoryAsync ()
             do! BranchServerTestHelpers.assertMissingBranchAsync repositoryId
+        }
+
+    [<Test>]
+    member _.SaveWithDirectoryVersionIdAndShaPrefixHydratesFullRootHashes() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let branchId = repositoryDefaultBranchIds[0]
+            let! parentBranch = BranchServerTestHelpers.getBranchAsync repositoryId branchId
+            let! branch = BranchServerTestHelpers.createBranchAsync repositoryId parentBranch $"RootPrefix{Guid.NewGuid():N}"
+            let child, root = BranchServerTestHelpers.createDotRootWithChildDirectoryVersions repositoryId $"prefix/{Guid.NewGuid():N}"
+
+            do! BranchServerTestHelpers.saveDirectoryVersionsAsync repositoryId [ child; root ]
+
+            let rootShaPrefix = (string root.Sha256Hash).Substring(0, 8)
+            let! response = BranchServerTestHelpers.saveReferenceResponseAsync repositoryId branch root.DirectoryVersionId (Sha256Hash rootShaPrefix)
+            let! responseBody = response.Content.ReadAsStringAsync()
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK), responseBody)
+
+            let! savedBranch = BranchServerTestHelpers.getBranchAsync repositoryId $"{branch.BranchId}"
+            Assert.That(savedBranch.LatestSave.DirectoryId, Is.EqualTo(root.DirectoryVersionId))
+            Assert.That(savedBranch.LatestSave.Sha256Hash, Is.EqualTo(root.Sha256Hash))
+            Assert.That(savedBranch.LatestSave.Blake3Hash, Is.EqualTo(root.Blake3Hash))
+        }
+
+    [<Test>]
+    member _.SaveWithShaOnlySlashRootHydratesFullRootHashes() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let branchId = repositoryDefaultBranchIds[0]
+            let! parentBranch = BranchServerTestHelpers.getBranchAsync repositoryId branchId
+            let! branch = BranchServerTestHelpers.createBranchAsync repositoryId parentBranch $"SlashRoot{Guid.NewGuid():N}"
+
+            let root = BranchServerTestHelpers.createSlashRootDirectoryVersion repositoryId
+
+            do! BranchServerTestHelpers.saveDirectoryVersionsAsync repositoryId [ root ]
+
+            let! response = BranchServerTestHelpers.saveReferenceResponseAsync repositoryId branch DirectoryVersionId.Empty root.Sha256Hash
+            let! responseBody = response.Content.ReadAsStringAsync()
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK), responseBody)
+
+            let! savedBranch = BranchServerTestHelpers.getBranchAsync repositoryId $"{branch.BranchId}"
+            Assert.That(savedBranch.LatestSave.DirectoryId, Is.EqualTo(root.DirectoryVersionId))
+            Assert.That(savedBranch.LatestSave.Sha256Hash, Is.EqualTo(root.Sha256Hash))
+            Assert.That(savedBranch.LatestSave.Blake3Hash, Is.EqualTo(root.Blake3Hash))
+        }
+
+    [<Test>]
+    member _.AssignWithShaOnlyRootPrefixIgnoresNewerChildDirectoryMatch() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let branchId = repositoryDefaultBranchIds[0]
+            let! parentBranch = BranchServerTestHelpers.getBranchAsync repositoryId branchId
+            let! branch = BranchServerTestHelpers.createBranchAsync repositoryId parentBranch $"AssignRootPrefix{Guid.NewGuid():N}"
+
+            let child, root, sharedPrefix =
+                BranchServerTestHelpers.createDotRootWithChildShaPrefixCollision
+                    repositoryId
+                    $"assign-prefix/{Guid.NewGuid():N}"
+                    [ parentBranch.BasedOn.Sha256Hash ]
+
+            do! BranchServerTestHelpers.saveDirectoryVersionsAsync repositoryId [ root; child ]
+            do! BranchServerTestHelpers.enableAssignAsync repositoryId branch
+
+            let! response = BranchServerTestHelpers.assignReferenceResponseAsync repositoryId branch DirectoryVersionId.Empty (Sha256Hash sharedPrefix)
+            let! responseBody = response.Content.ReadAsStringAsync()
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK), responseBody)
+
+            let! assignedBranch = BranchServerTestHelpers.getBranchAsync repositoryId $"{branch.BranchId}"
+            Assert.That(assignedBranch.LatestPromotion.DirectoryId, Is.EqualTo(root.DirectoryVersionId))
+            Assert.That(assignedBranch.LatestPromotion.Sha256Hash, Is.EqualTo(root.Sha256Hash))
+            Assert.That(assignedBranch.LatestPromotion.Blake3Hash, Is.EqualTo(root.Blake3Hash))
+        }
+
+    [<Test>]
+    member _.SaveWithShaOnlyChildDirectoryPrefixDoesNotCreateRootReference() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let branchId = repositoryDefaultBranchIds[0]
+            let! parentBranch = BranchServerTestHelpers.getBranchAsync repositoryId branchId
+            let! branch = BranchServerTestHelpers.createBranchAsync repositoryId parentBranch $"ChildPrefix{Guid.NewGuid():N}"
+            let child, root = BranchServerTestHelpers.createDotRootWithChildDirectoryVersions repositoryId $"child-prefix/{Guid.NewGuid():N}"
+
+            do! BranchServerTestHelpers.saveDirectoryVersionsAsync repositoryId [ child; root ]
+
+            let childOnlyPrefix = BranchServerTestHelpers.shortestUniquePrefix child.Sha256Hash root.Sha256Hash
+            let! response = BranchServerTestHelpers.saveReferenceResponseAsync repositoryId branch DirectoryVersionId.Empty (Sha256Hash childOnlyPrefix)
+            let! responseBody = response.Content.ReadAsStringAsync()
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), responseBody)
+            Assert.That(responseBody, Does.Contain("Reference root DirectoryVersion does not exist."))
+        }
+
+    [<Test>]
+    member _.SaveWithChildDirectoryVersionIdAndShaPrefixDoesNotCreateRootReference() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let branchId = repositoryDefaultBranchIds[0]
+            let! parentBranch = BranchServerTestHelpers.getBranchAsync repositoryId branchId
+            let! branch = BranchServerTestHelpers.createBranchAsync repositoryId parentBranch $"ChildIdPrefix{Guid.NewGuid():N}"
+            let child, root = BranchServerTestHelpers.createDotRootWithChildDirectoryVersions repositoryId $"child-id-prefix/{Guid.NewGuid():N}"
+
+            do! BranchServerTestHelpers.saveDirectoryVersionsAsync repositoryId [ child; root ]
+
+            let childShaPrefix = (string child.Sha256Hash).Substring(0, 8)
+            let! response = BranchServerTestHelpers.saveReferenceResponseAsync repositoryId branch child.DirectoryVersionId (Sha256Hash childShaPrefix)
+            let! responseBody = response.Content.ReadAsStringAsync()
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), responseBody)
+            Assert.That(responseBody, Does.Contain("Reference root DirectoryVersion must use the repository root path."))
         }
 
     [<Test>]
