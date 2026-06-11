@@ -134,6 +134,7 @@ module EndpointAuthorizationManifest =
             endpoint "POST" "/directory/get" Authenticated
             endpoint "POST" "/directory/getByDirectoryIds" Authenticated
             endpoint "POST" "/directory/getBySha256Hash" Authenticated
+            endpoint "POST" "/directory/getByBlake3Hash" Authenticated
             endpoint "POST" "/directory/getDirectoryVersionsRecursive" Authenticated
             endpoint "POST" "/directory/getZipFile" Authenticated
             endpoint "POST" "/directory/saveDirectoryVersions" Authenticated
