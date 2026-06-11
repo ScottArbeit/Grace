@@ -211,6 +211,24 @@ module LocalStateDbTests =
             connection
             $"INSERT OR REPLACE INTO status_meta (id, root_directory_version_id, root_directory_sha256_hash, root_directory_blake3_hash, last_successful_file_upload_unix_ticks, last_successful_directory_version_upload_unix_ticks) VALUES (1, '{rootId}', '{rootSha256Hash}', '{rootBlake3Hash}', {ticks}, {ticks});"
 
+    let private seedPartialV4WithoutRootBlake3Column (dbPath: string) (rootId: Guid) rootSha256Hash ticks =
+        Directory.CreateDirectory(Path.GetDirectoryName(dbPath))
+        |> ignore
+
+        use connection = openRawConnection dbPath
+        executeNonQuery connection "PRAGMA journal_mode = WAL;"
+        executeNonQuery connection "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);"
+
+        executeNonQuery
+            connection
+            "CREATE TABLE IF NOT EXISTS status_meta (id INTEGER PRIMARY KEY CHECK (id = 1), root_directory_version_id TEXT NOT NULL, root_directory_sha256_hash TEXT NOT NULL, last_successful_file_upload_unix_ticks INTEGER NOT NULL, last_successful_directory_version_upload_unix_ticks INTEGER NOT NULL);"
+
+        executeNonQuery connection "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '4');"
+
+        executeNonQuery
+            connection
+            $"INSERT OR REPLACE INTO status_meta (id, root_directory_version_id, root_directory_sha256_hash, last_successful_file_upload_unix_ticks, last_successful_directory_version_upload_unix_ticks) VALUES (1, '{rootId}', '{rootSha256Hash}', {ticks}, {ticks});"
+
     let private createTestStatus (rootId: Guid) (rootHash: string) (ticks: int64) =
         { GraceStatus.Default with
             RootDirectoryId = rootId
@@ -961,6 +979,41 @@ module LocalStateDbTests =
             })
 
     [<Test>]
+    let ``ensureDbInitialized recreates partial schema v4 database missing root blake3 column`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                let rootId = Guid.NewGuid()
+                let rootHash = "partial-v4-root-hash"
+                let ticks = 1234567890L
+
+                seedPartialV4WithoutRootBlake3Column configuration.GraceStatusFile rootId rootHash ticks
+
+                let corruptBefore =
+                    getCorruptBackups configuration.GraceStatusFile
+                    |> Array.length
+
+                do! LocalStateDb.ensureDbInitialized configuration.GraceStatusFile
+
+                use connection = openRawConnection configuration.GraceStatusFile
+                let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
+
+                let rootBlake3Columns =
+                    executeScalarInt connection "SELECT COUNT(*) FROM pragma_table_info('status_meta') WHERE name = 'root_directory_blake3_hash';"
+
+                let statusMetaCount = executeScalarInt connection "SELECT COUNT(*) FROM status_meta;"
+
+                schemaVersion |> should equal "4"
+                rootBlake3Columns |> should equal 1
+                statusMetaCount |> should equal 1
+
+                let corruptAfter =
+                    getCorruptBackups configuration.GraceStatusFile
+                    |> Array.length
+
+                corruptAfter |> should equal (corruptBefore + 1)
+            })
+
+    [<Test>]
     let ``journal mode is WAL after initialization`` () =
         withTempDir (fun _ configuration ->
             task {
@@ -1654,6 +1707,82 @@ module LocalStateDbTests =
 
                 fileRead2.LastWriteTimeUtc.Ticks
                 |> should equal lastWrite2.Ticks
+            })
+
+    [<Test>]
+    let ``applyStatusIncremental preserves root blake3 metadata for meta-only status updates`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                let now = Instant.FromUnixTimeTicks(5300L)
+                let lastWrite = DateTime(2022, 2, 3, 4, 5, 6, DateTimeKind.Utc)
+                let rootId = Guid.NewGuid()
+
+                let rootDir = createDirectoryVersion configuration rootId Constants.RootDirectoryPath "root-hash" [||] [||] 0L lastWrite
+
+                let index = GraceIndex()
+                index.TryAdd(rootId, rootDir) |> ignore
+
+                let statusWithRoot =
+                    { GraceStatus.Default with
+                        Index = index
+                        RootDirectoryId = rootId
+                        RootDirectorySha256Hash = rootDir.Sha256Hash
+                        LastSuccessfulFileUpload = now
+                        LastSuccessfulDirectoryVersionUpload = now
+                    }
+
+                do! LocalStateDb.replaceStatusSnapshot configuration.GraceStatusFile statusWithRoot
+
+                let metaOnlyStatus =
+                    { statusWithRoot with
+                        Index = GraceIndex()
+                        LastSuccessfulFileUpload = Instant.FromUnixTimeTicks(5400L)
+                        LastSuccessfulDirectoryVersionUpload = Instant.FromUnixTimeTicks(5400L)
+                    }
+
+                do! LocalStateDb.applyStatusIncremental configuration.GraceStatusFile metaOnlyStatus [] []
+
+                let! meta = LocalStateDb.readStatusMeta configuration.GraceStatusFile
+
+                meta.RootDirectoryBlake3Hash
+                |> should equal rootDir.Blake3Hash
+
+                meta.LastSuccessfulFileUpload
+                |> should equal metaOnlyStatus.LastSuccessfulFileUpload
+            })
+
+    [<Test>]
+    let ``replaceStatusSnapshot writes empty root blake3 for default status`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                let now = Instant.FromUnixTimeTicks(5450L)
+                let lastWrite = DateTime(2022, 2, 4, 5, 6, 7, DateTimeKind.Utc)
+                let rootId = Guid.NewGuid()
+
+                let rootDir = createDirectoryVersion configuration rootId Constants.RootDirectoryPath "root-hash" [||] [||] 0L lastWrite
+
+                let index = GraceIndex()
+                index.TryAdd(rootId, rootDir) |> ignore
+
+                let statusWithRoot =
+                    { GraceStatus.Default with
+                        Index = index
+                        RootDirectoryId = rootId
+                        RootDirectorySha256Hash = rootDir.Sha256Hash
+                        LastSuccessfulFileUpload = now
+                        LastSuccessfulDirectoryVersionUpload = now
+                    }
+
+                do! LocalStateDb.replaceStatusSnapshot configuration.GraceStatusFile statusWithRoot
+                do! LocalStateDb.replaceStatusSnapshot configuration.GraceStatusFile GraceStatus.Default
+
+                let! meta = LocalStateDb.readStatusMeta configuration.GraceStatusFile
+
+                meta.RootDirectoryId
+                |> should equal DirectoryVersionId.Empty
+
+                meta.RootDirectoryBlake3Hash
+                |> should equal (Blake3Hash String.Empty)
             })
 
     [<Test>]
