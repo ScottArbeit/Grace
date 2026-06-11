@@ -25,6 +25,14 @@ module StorageKeys =
     /// Builds the current repository-scoped object key for whole-file content.
     let wholeFileContentObjectKey (fileVersion: FileVersion) = $"{fileVersion.RelativePath}/{wholeFileContentObjectFileName fileVersion}"
 
+    /// Builds the legacy SHA-only repository-scoped object key for whole-file content.
+    let legacyWholeFileContentObjectKey (fileVersion: FileVersion) = $"{fileVersion.RelativePath}/{fileVersion.GetObjectFileName}"
+
+    /// Returns true when the current whole-file key differs from the legacy SHA-only key.
+    let hasBlake3SpecificWholeFileContentObjectKey (fileVersion: FileVersion) =
+        wholeFileContentObjectKey fileVersion
+        <> legacyWholeFileContentObjectKey fileVersion
+
     /// Builds the StoragePool-scoped object key for a content-addressed ContentBlock payload.
     let contentBlockObjectKey (contentBlockAddress: ContentBlockAddress) = $"{CasPrefix}/{ContentBlocksPrefix}/{contentBlockAddress}"
 

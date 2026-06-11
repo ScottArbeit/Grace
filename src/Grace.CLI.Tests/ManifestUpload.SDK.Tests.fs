@@ -160,6 +160,33 @@ type ManifestUploadSdkTests() =
         Assert.That(Storage.getLocalObjectCacheFileName fileVersion, Is.EqualTo(fileVersion.GetObjectFileName))
 
     [<Test>]
+    member _.UploadMetadataMatchingIncludesBlake3WhenPathAndShaCollide() =
+        let firstFileVersion =
+            FileVersion.CreateWithHashes (RelativePath "src/cache/collision.txt") (Sha256Hash "same-sha256") (Blake3Hash "first-blake3") String.Empty false 10L
+
+        let secondFileVersion =
+            FileVersion.CreateWithHashes (RelativePath "src/cache/collision.txt") (Sha256Hash "same-sha256") (Blake3Hash "second-blake3") String.Empty false 10L
+
+        let uploadMetadata: Parameters.Storage.UploadMetadata =
+            {
+                RelativePath = secondFileVersion.RelativePath
+                BlobUriWithSasToken = Uri("https://example.test/upload")
+                Sha256Hash = secondFileVersion.Sha256Hash
+                Blake3Hash = secondFileVersion.Blake3Hash
+                ContentReference = FileContentReference.WholeFileContent
+            }
+
+        let matchedFileVersion =
+            Services.findFileVersionForUploadMetadata
+                [|
+                    firstFileVersion
+                    secondFileVersion
+                |]
+                uploadMetadata
+
+        Assert.That(matchedFileVersion, Is.EqualTo(secondFileVersion))
+
+    [<Test>]
     member _.ManifestUploadFlowStartsUploadsConfirmsAndFinalizesNewBlocksOnly() =
         task {
             let payload = ManifestUploadSdkTests.PseudoRandomBytes 220000
