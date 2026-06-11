@@ -250,6 +250,10 @@ module DirectoryVersion =
         | Some graceError -> Error graceError
         | None -> Ok(manifests.Values |> Seq.toList)
 
+    let contentBlockMetadataActorKeyForSaveBoundary repositoryId contentBlockAddress =
+        let storagePoolId = DedupeIndex.storagePoolIdForRepositoryId repositoryId
+        $"{storagePoolId}|{contentBlockAddress}"
+
     let validateManifestReferencesForSaveBoundaryWithResolver
         (getRangePresence: ContentBlockAddress -> ContentBlockRangeQuery -> Task<ContentBlockRangePresence>)
         correlationId
@@ -267,14 +271,14 @@ module DirectoryVersion =
 
                 while blockIndex < manifest.Blocks.Count && error.IsNone do
                     let block = manifest.Blocks[blockIndex]
-                    let query: ContentBlockRangeQuery = { OrdinalStart = blockIndex; OrdinalCount = 1 }
+                    let query: ContentBlockRangeQuery = { OrdinalStart = 0; OrdinalCount = 1 }
                     let! presence = getRangePresence block.Address query
 
                     if presence = ContentBlockRangePresence.Absent then
                         error <-
                             Some(
                                 GraceError.Create
-                                    $"FileManifest '{manifest.ManifestAddress}' references ContentBlock '{block.Address}' at ordinal {blockIndex}, but no finalized ContentBlock metadata range exists."
+                                    $"FileManifest '{manifest.ManifestAddress}' references ContentBlock '{block.Address}' at manifest block index {blockIndex}, but no finalized ContentBlock metadata range exists at content-block ordinal 0."
                                     correlationId
                             )
 
@@ -288,11 +292,9 @@ module DirectoryVersion =
                 | None -> Ok()
         }
 
-    let private validateManifestReferencesForSaveBoundary correlationId manifests =
+    let private validateManifestReferencesForSaveBoundary repositoryId correlationId manifests =
         let getRangePresence contentBlockAddress query =
-            let storagePoolId = StoragePoolId DefaultStoragePoolId
-            let actorKey = $"{storagePoolId}|{contentBlockAddress}"
-
+            let actorKey = contentBlockMetadataActorKeyForSaveBoundary repositoryId contentBlockAddress
             let metadataActor = orleansClient.CreateActorProxyWithCorrelationId<IContentBlockMetadataActor>(actorKey, correlationId)
 
             metadataActor.GetRangePresence query correlationId
@@ -841,7 +843,7 @@ module DirectoryVersion =
                                         match getManifestReferencesForSaveBoundary directoryVersion metadata.CorrelationId with
                                         | Error graceError -> return Error graceError
                                         | Ok manifests ->
-                                            match! validateManifestReferencesForSaveBoundary metadata.CorrelationId manifests with
+                                            match! validateManifestReferencesForSaveBoundary repositoryDto.RepositoryId metadata.CorrelationId manifests with
                                             | Error graceError -> return Error graceError
                                             | Ok () ->
 
