@@ -149,6 +149,45 @@ module Reference =
         else
             Ok()
 
+    let internal repairLegacyCreatedEventBlake3
+        (getDirectoryVersion: RepositoryId -> DirectoryVersionId -> CorrelationId -> Task<DirectoryVersion>)
+        (referenceEvent: ReferenceEvent)
+        =
+        task {
+            match referenceEvent.Event with
+            | Created (referenceId, ownerId, organizationId, repositoryId, branchId, directoryId, sha256Hash, blake3Hash, referenceType, referenceText, links) when
+                String.IsNullOrWhiteSpace(string blake3Hash)
+                ->
+                let! directoryVersion = getDirectoryVersion repositoryId directoryId referenceEvent.Metadata.CorrelationId
+
+                if
+                    directoryVersion.DirectoryVersionId = directoryId
+                    && directoryVersion.Sha256Hash = sha256Hash
+                    && not (String.IsNullOrWhiteSpace(string directoryVersion.Blake3Hash))
+                then
+                    return
+                        { referenceEvent with
+                            Event =
+                                Created(
+                                    referenceId,
+                                    ownerId,
+                                    organizationId,
+                                    repositoryId,
+                                    branchId,
+                                    directoryId,
+                                    sha256Hash,
+                                    directoryVersion.Blake3Hash,
+                                    referenceType,
+                                    referenceText,
+                                    links
+                                )
+                        },
+                        true
+                else
+                    return referenceEvent, false
+            | _ -> return referenceEvent, false
+        }
+
     let tryCreateManifestContributionStart plan intent =
         match intent with
         | RepositoryContentCounterIntent.IncrementManifestReferenceCount (repositoryId, manifestAddress) when
@@ -279,15 +318,38 @@ module Reference =
         member val private correlationId: CorrelationId = String.Empty with get, set
 
         override this.OnActivateAsync(ct) =
-            let activateStartTime = getCurrentInstant ()
+            task {
+                let activateStartTime = getCurrentInstant ()
 
-            logActorActivation log this.IdentityString activateStartTime (getActorActivationMessage state.RecordExists)
+                logActorActivation log this.IdentityString activateStartTime (getActorActivationMessage state.RecordExists)
 
-            referenceDto <-
-                state.State
-                |> Seq.fold (fun referenceDto event -> ReferenceDto.UpdateDto event referenceDto) referenceDto
+                let getDirectoryVersion repositoryId directoryId correlationId =
+                    task {
+                        let directoryVersionActorProxy = DirectoryVersion.CreateActorProxy directoryId repositoryId correlationId
+                        let! directoryVersionDto = directoryVersionActorProxy.Get correlationId
+                        return directoryVersionDto.DirectoryVersion
+                    }
 
-            Task.CompletedTask
+                let! repairResults =
+                    state.State
+                    |> Seq.map (fun referenceEvent -> task { return! repairLegacyCreatedEventBlake3 getDirectoryVersion referenceEvent })
+                    |> Task.WhenAll
+
+                let repairedLegacyCreatedEvent =
+                    repairResults
+                    |> Array.exists (fun (_, wasRepaired) -> wasRepaired)
+
+                if repairedLegacyCreatedEvent then
+                    state.State.Clear()
+                    state.State.AddRange(repairResults |> Array.map fst)
+                    do! state.WriteStateAsync()
+
+                referenceDto <-
+                    repairResults
+                    |> Array.map fst
+                    |> Seq.fold (fun referenceDto event -> ReferenceDto.UpdateDto event referenceDto) referenceDto
+            }
+            :> Task
 
         interface IGraceReminderWithGuidKey with
             /// Schedules a Grace reminder.
