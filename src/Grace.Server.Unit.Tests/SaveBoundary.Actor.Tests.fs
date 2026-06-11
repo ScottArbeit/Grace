@@ -247,7 +247,7 @@ type SaveBoundaryActorTests() =
         | Error error -> Assert.Fail($"Expected validated legacy child DirectoryVersion without BLAKE3 to validate, got {error.Error}.")
 
     [<Test>]
-    member _.DirectoryVersionHashValidationAllowsLegacyWholeFileBlake3Gap() =
+    member _.DirectoryVersionHashValidationRejectsNewWholeFileBlake3Gap() =
         let fileVersion =
             fileWithHashes
                 "/a.txt"
@@ -259,8 +259,45 @@ type SaveBoundaryActorTests() =
         let directoryVersion = hashedDirectory directoryVersionId (RelativePath "/") [] [ fileVersion ]
 
         match DirectoryVersionActor.validateDirectoryVersionHashesWithChildren "corr-legacy-whole-file-blake3" directoryVersion [] with
+        | Ok () -> Assert.Fail("Expected new whole-file FileVersion without BLAKE3 to reject before Save.")
+        | Error error ->
+            Assert.That(
+                error.Error,
+                Does
+                    .Contain("child file")
+                    .And.Contain("Blake3Hash")
+            )
+
+    [<Test>]
+    member _.DirectoryVersionHashValidationAllowsUnchangedLegacyWholeFileBlake3Gap() =
+        let fileVersion =
+            fileWithHashes
+                "/a.txt"
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                1L
+
+        fileVersion.Blake3Hash <- Blake3Hash String.Empty
+
+        let previousFileVersion =
+            fileWithHashes
+                "/a.txt"
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                1L
+
+        previousFileVersion.Blake3Hash <- Blake3Hash String.Empty
+        let directoryVersion = hashedDirectory directoryVersionId (RelativePath "/") [] [ fileVersion ]
+
+        match
+            DirectoryVersionActor.validateDirectoryVersionHashesWithChildrenAndPreviousFiles
+                "corr-legacy-whole-file-blake3"
+                directoryVersion
+                []
+                [ previousFileVersion ]
+            with
         | Ok () -> ()
-        | Error error -> Assert.Fail($"Expected legacy whole-file FileVersion without BLAKE3 to validate, got {error.Error}.")
+        | Error error -> Assert.Fail($"Expected unchanged legacy whole-file FileVersion without BLAKE3 to validate, got {error.Error}.")
 
     [<Test>]
     member _.DirectoryVersionHashValidationRejectsMissingManifestChildFileBlake3() =
