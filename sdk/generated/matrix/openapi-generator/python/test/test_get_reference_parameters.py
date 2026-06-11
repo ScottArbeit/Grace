@@ -47,6 +47,7 @@ class TestGetReferenceParameters(unittest.TestCase):
                 branch_id = 'de7bf47d-23ae-4599-af68-68a317ea390d',
                 branch_name = 'MyBranch',
                 sha256_hash = '805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243',
+                blake3_hash = '9A35D91B2F631BE9025DE753139B88F7B1E71385C412BC3986FF2F38F230841D',
                 reference_id = 'c8f9bac8-d489-46c7-917f-b36b7d9efa9a'
             )
         else:
