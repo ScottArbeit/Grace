@@ -578,7 +578,8 @@ module Branch =
                 if directoryVersion.DirectoryVersionId = DirectoryVersionId.Empty then
                     return None
                 elif directoryVersion.RelativePath
-                     <> Constants.RootDirectoryPath then
+                     <> Constants.RootDirectoryPath
+                     && directoryVersion.RelativePath <> "/" then
                     return None
                 elif
                     not (String.IsNullOrEmpty requestedSha256Hash)
