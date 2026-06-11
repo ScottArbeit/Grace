@@ -132,6 +132,26 @@ type ManifestUploadSdkTests() =
         Assert.That(Storage.isExistingContentBlockUploadConflict forbidden, Is.False)
 
     [<Test>]
+    member _.WholeFileLocalObjectCacheNameIncludesBlake3WithoutChangingRemoteObjectName() =
+        let fileVersion =
+            FileVersion.CreateWithHashes
+                (RelativePath "src/cache/whole-file.txt")
+                (Sha256Hash "sha256-value")
+                (Blake3Hash "blake3-value")
+                String.Empty
+                false
+                10L
+
+        Assert.That(fileVersion.GetObjectFileName, Is.EqualTo("whole-file_sha256-value.txt"))
+        Assert.That(Storage.getLocalObjectCacheFileName fileVersion, Is.EqualTo("whole-file_sha256-value_blake3-value.txt"))
+
+    [<Test>]
+    member _.WholeFileLocalObjectCacheNameKeepsLegacyShaOnlyNameWithoutBlake3() =
+        let fileVersion = FileVersion.Create (RelativePath "src/cache/legacy-file.txt") (Sha256Hash "sha256-value") String.Empty false 10L
+
+        Assert.That(Storage.getLocalObjectCacheFileName fileVersion, Is.EqualTo(fileVersion.GetObjectFileName))
+
+    [<Test>]
     member _.ManifestUploadFlowStartsUploadsConfirmsAndFinalizesNewBlocksOnly() =
         task {
             let payload = ManifestUploadSdkTests.PseudoRandomBytes 220000
