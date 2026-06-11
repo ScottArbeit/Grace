@@ -96,6 +96,26 @@ module Services =
     let mutable parseResult: ParseResult = null
     let mutable private invocationCorrelationId: CorrelationId option = None
 
+    let private directoryVersionPreimageEntries (directories: seq<LocalDirectoryVersion>) (files: seq<LocalFileVersion>) =
+        let directoryEntries =
+            directories
+            |> Seq.map (fun directory -> DirectoryVersionPreimageEntry.Directory directory.RelativePath directory.Size directory.Blake3Hash directory.Sha256Hash)
+
+        let fileEntries =
+            files
+            |> Seq.map (fun file -> DirectoryVersionPreimageEntry.File file.RelativePath file.Size file.Blake3Hash file.Sha256Hash)
+
+        Seq.append directoryEntries fileEntries
+        |> Seq.toArray
+
+    let private computeDirectoryVersionHashes relativeDirectoryPath directories files =
+        let entries = directoryVersionPreimageEntries directories files
+
+        let sha256Hash = computeSha256ForDirectoryEntries relativeDirectoryPath entries
+        let blake3Hash = computeBlake3ForDirectory relativeDirectoryPath entries
+
+        sha256Hash, blake3Hash
+
     let resetInvocationCorrelationId () = invocationCorrelationId <- None
 
     let getCliAssemblyFileVersion () =
@@ -696,7 +716,10 @@ module Services =
                                             let subdirectoryRelativePath = Path.GetRelativePath(Current().RootDirectory, subdirectoryInfo.FullName)
 
 
-                                            let! (subdirectoryVersions: List<LocalDirectoryVersion>, filesInSubdirectory: List<LocalFileVersion>, sha256Hash) =
+                                            let! (subdirectoryVersions: List<LocalDirectoryVersion>,
+                                                  filesInSubdirectory: List<LocalFileVersion>,
+                                                  sha256Hash,
+                                                  blake3Hash) =
                                                 collectDirectoriesAndFiles subdirectoryRelativePath previousDirectoryVersions newGraceStatus parseResult
 
                                             // Check if we already have a LocalDirectoryVersion for this subdirectory.
@@ -713,7 +736,9 @@ module Services =
                                             // If the DirectoryId is Guid.Empty (from LocalDirectoryVersion.Default), or the Sha256Hash doesn't match, create a new LocalDirectoryVersion reflecting the changes.
                                             if existingSubdirectoryVersion.DirectoryVersionId = Guid.Empty
                                                || existingSubdirectoryVersion.Sha256Hash
-                                                  <> sha256Hash then
+                                                  <> sha256Hash
+                                               || existingSubdirectoryVersion.Blake3Hash
+                                                  <> blake3Hash then
                                                 let directoryIds =
                                                     subdirectoryVersions
                                                         .OrderBy(fun d -> d.RelativePath)
@@ -721,13 +746,14 @@ module Services =
                                                         .ToList()
 
                                                 let subdirectoryVersion =
-                                                    LocalDirectoryVersion.Create
+                                                    LocalDirectoryVersion.CreateWithHashes
                                                         (Guid.NewGuid())
                                                         (Current().OwnerId)
                                                         (Current().OrganizationId)
                                                         (Current().RepositoryId)
                                                         (RelativePath(normalizeFilePath subdirectoryRelativePath))
                                                         sha256Hash
+                                                        blake3Hash
                                                         directoryIds
                                                         filesInSubdirectory
                                                         (getLocalDirectorySize filesInSubdirectory)
@@ -774,13 +800,13 @@ module Services =
                 let! (directories, files) = getDirectoryContents previousDirectoryVersions directoryInfo
                 //for file in files do processedThings.Enqueue(file.RelativePath)
 
-                let sha256Hash = computeSha256ForDirectory relativeDirectoryPath directories files
+                let sha256Hash, blake3Hash = computeDirectoryVersionHashes relativeDirectoryPath directories files
 
-                return (directories, files, sha256Hash)
+                return (directories, files, sha256Hash, blake3Hash)
             with
             | ex ->
                 logToAnsiConsole Colors.Error $"Exception in collectDirectoriesAndFiles: {ExceptionResponse.Create ex}"
-                return (List<LocalDirectoryVersion>(), List<LocalFileVersion>(), Sha256Hash.Empty)
+                return (List<LocalDirectoryVersion>(), List<LocalFileVersion>(), Sha256Hash.Empty, Blake3Hash String.Empty)
         }
 
     /// Creates the Grace index file by scanning the repository's working directory.
@@ -801,7 +827,7 @@ module Services =
                     then
                         logToAnsiConsole Colors.Error $"createNewGraceStatusFile: Failed to add {kvp.Value.RelativePath} to previousDirectoryVersions."
 
-                let! (subdirectoriesInRootDirectory, filesInRootDirectory, rootSha256Hash) =
+                let! (subdirectoriesInRootDirectory, filesInRootDirectory, rootSha256Hash, rootBlake3Hash) =
                     collectDirectoriesAndFiles Constants.RootDirectoryPath previousDirectoryVersions newGraceStatus parseResult
 
                 //let getBySha256HashParameters = GetBySha256HashParameters(RepositoryId = $"{Current().RepositoryId}", Sha256Hash = rootSha256Hash)
@@ -817,7 +843,8 @@ module Services =
                             )
                             .Value
 
-                    if previousRootDirectoryVersion.Sha256Hash = rootSha256Hash then
+                    if previousRootDirectoryVersion.Sha256Hash = rootSha256Hash
+                       && previousRootDirectoryVersion.Blake3Hash = rootBlake3Hash then
                         previousRootDirectoryVersion
                     else
                         let subdirectoryIds =
@@ -826,13 +853,14 @@ module Services =
                                 .Select(fun d -> d.DirectoryVersionId)
                                 .ToList()
 
-                        LocalDirectoryVersion.Create
+                        LocalDirectoryVersion.CreateWithHashes
                             (Guid.NewGuid())
                             (Current().OwnerId)
                             (Current().OrganizationId)
                             (Current().RepositoryId)
                             (RelativePath(normalizeFilePath Constants.RootDirectoryPath))
                             (Sha256Hash rootSha256Hash)
+                            rootBlake3Hash
                             subdirectoryIds
                             filesInRootDirectory
                             (getLocalDirectorySize filesInRootDirectory)
@@ -1212,40 +1240,80 @@ module Services =
 
         let savedManifestBackedByIdentity = Dictionary<RelativePath * Sha256Hash * Blake3Hash, FileVersion>()
         let savedManifestBackedByLegacyIdentity = Dictionary<RelativePath * Sha256Hash, FileVersion>()
+        let savedDirectoryVersionsById = Dictionary<DirectoryVersionId, DirectoryVersion>()
 
         for savedDirectoryVersion in savedDirectoryVersions do
+            savedDirectoryVersionsById[savedDirectoryVersion.DirectoryVersionId] <- savedDirectoryVersion
+
             for savedFileVersion in savedDirectoryVersion.Files do
                 if isManifestBackedFileVersion savedFileVersion then
                     savedManifestBackedByIdentity[uploadedFileVersionIdentity savedFileVersion] <- savedFileVersion
 
                     savedManifestBackedByLegacyIdentity[legacyUploadedFileVersionIdentity savedFileVersion] <- savedFileVersion
 
-        let directoryVersions = List<DirectoryVersion>()
+        let directoryVersions = Dictionary<DirectoryVersionId, DirectoryVersion>()
+        let localDirectoryVersionsById = Dictionary<DirectoryVersionId, LocalDirectoryVersion>()
 
         for localDirectoryVersion in localDirectoryVersions do
-            let directoryVersion = localDirectoryVersion.ToDirectoryVersion
+            localDirectoryVersionsById[localDirectoryVersion.DirectoryVersionId] <- localDirectoryVersion
 
-            for index in 0 .. directoryVersion.Files.Count - 1 do
-                let fileVersion = directoryVersion.Files[index]
-                let mutable uploadedFileVersion = Unchecked.defaultof<FileVersion>
+        let rec buildDirectoryVersion (localDirectoryVersion: LocalDirectoryVersion) =
+            if directoryVersions.ContainsKey localDirectoryVersion.DirectoryVersionId then
+                directoryVersions[localDirectoryVersion.DirectoryVersionId]
+            else
+                let directoryVersion = localDirectoryVersion.ToDirectoryVersion
 
-                if uploadedByIdentity.TryGetValue(uploadedFileVersionIdentity fileVersion, &uploadedFileVersion) then
-                    directoryVersion.Files[ index ] <- uploadedFileVersion
-                else
-                    let mutable savedManifestBackedFileVersion = Unchecked.defaultof<FileVersion>
+                for index in 0 .. directoryVersion.Files.Count - 1 do
+                    let fileVersion = directoryVersion.Files[index]
+                    let mutable uploadedFileVersion = Unchecked.defaultof<FileVersion>
 
-                    if savedManifestBackedByIdentity.TryGetValue(uploadedFileVersionIdentity fileVersion, &savedManifestBackedFileVersion) then
-                        directoryVersion.Files[ index ] <- savedManifestBackedFileVersion
-                    elif
-                        savedManifestBackedByLegacyIdentity.TryGetValue(legacyUploadedFileVersionIdentity fileVersion, &savedManifestBackedFileVersion)
-                        && (hasMissingBlake3Hash fileVersion
-                            || hasMissingBlake3Hash savedManifestBackedFileVersion)
-                    then
-                        directoryVersion.Files[ index ] <- savedManifestBackedFileVersion
+                    if uploadedByIdentity.TryGetValue(uploadedFileVersionIdentity fileVersion, &uploadedFileVersion) then
+                        directoryVersion.Files[ index ] <- uploadedFileVersion
+                    else
+                        let mutable savedManifestBackedFileVersion = Unchecked.defaultof<FileVersion>
 
-            directoryVersions.Add directoryVersion
+                        if savedManifestBackedByIdentity.TryGetValue(uploadedFileVersionIdentity fileVersion, &savedManifestBackedFileVersion) then
+                            directoryVersion.Files[ index ] <- savedManifestBackedFileVersion
+                        elif
+                            savedManifestBackedByLegacyIdentity.TryGetValue(legacyUploadedFileVersionIdentity fileVersion, &savedManifestBackedFileVersion)
+                            && (hasMissingBlake3Hash fileVersion
+                                || hasMissingBlake3Hash savedManifestBackedFileVersion)
+                        then
+                            directoryVersion.Files[ index ] <- savedManifestBackedFileVersion
 
-        directoryVersions
+                let localChildDirectories = List<LocalDirectoryVersion>()
+
+                for childDirectoryId in directoryVersion.Directories do
+                    let mutable localChildDirectoryVersion = Unchecked.defaultof<LocalDirectoryVersion>
+                    let mutable savedChildDirectoryVersion = Unchecked.defaultof<DirectoryVersion>
+
+                    if localDirectoryVersionsById.TryGetValue(childDirectoryId, &localChildDirectoryVersion) then
+                        let childDirectoryVersion = buildDirectoryVersion localChildDirectoryVersion
+
+                        localChildDirectories.Add(childDirectoryVersion.ToLocalDirectoryVersion localChildDirectoryVersion.LastWriteTimeUtc)
+                    elif savedDirectoryVersionsById.TryGetValue(childDirectoryId, &savedChildDirectoryVersion) then
+                        localChildDirectories.Add(savedChildDirectoryVersion.ToLocalDirectoryVersion localDirectoryVersion.LastWriteTimeUtc)
+                    else
+                        failwith
+                            $"Unable to resolve child DirectoryVersionId '{childDirectoryId}' while recomputing DirectoryVersion '{directoryVersion.RelativePath}'."
+
+                let localFiles =
+                    directoryVersion
+                        .Files
+                        .Select(fun fileVersion -> fileVersion.ToLocalFileVersion localDirectoryVersion.LastWriteTimeUtc)
+                        .ToList()
+
+                let sha256Hash, blake3Hash = computeDirectoryVersionHashes directoryVersion.RelativePath localChildDirectories localFiles
+
+                directoryVersion.Sha256Hash <- sha256Hash
+                directoryVersion.Blake3Hash <- blake3Hash
+                directoryVersions[directoryVersion.DirectoryVersionId] <- directoryVersion
+                directoryVersion
+
+        localDirectoryVersions
+        |> Seq.map buildDirectoryVersion
+        |> Seq.toList
+        |> List<DirectoryVersion>
 
     let applyUploadedFileVersionsToDirectoryVersions
         (uploadedFileVersions: IEnumerable<FileVersion>)
@@ -1287,19 +1355,21 @@ module Services =
                 List<LocalDirectoryVersion>()
 
         // Get the new SHA-256 hash for the updated contents of this directory.
-        let newSha256Hash = computeSha256ForDirectory (previousDirectoryVersion.RelativePath) subdirectoryVersions previousDirectoryVersion.Files
+        let newSha256Hash, newBlake3Hash =
+            computeDirectoryVersionHashes previousDirectoryVersion.RelativePath subdirectoryVersions previousDirectoryVersion.Files
 
         let directoryInfo = DirectoryInfo(Path.Combine(Current().RootDirectory, previousDirectoryVersion.RelativePath))
 
         // Create a new LocalDirectoryVersion that contains a new Id and the updated SHA-256 hash.
         let newDirectoryVersion =
-            LocalDirectoryVersion.Create
+            LocalDirectoryVersion.CreateWithHashes
                 (Guid.NewGuid())
                 previousDirectoryVersion.OwnerId
                 previousDirectoryVersion.OrganizationId
                 previousDirectoryVersion.RepositoryId
                 previousDirectoryVersion.RelativePath
                 newSha256Hash
+                newBlake3Hash
                 previousDirectoryVersion.Directories
                 previousDirectoryVersion.Files
                 (getLocalDirectorySize previousDirectoryVersion.Files)
@@ -1335,19 +1405,20 @@ module Services =
             Some(processChangedDirectoryVersion newGraceStatus previousDirectoryVersion)
         else
             let directoryInfo = DirectoryInfo(Path.Combine(Current().RootDirectory, difference.RelativePath))
-            let sha256Hash = computeSha256ForDirectory difference.RelativePath (List()) (List())
+            let sha256Hash, blake3Hash = computeDirectoryVersionHashes difference.RelativePath (List()) (List())
 
             Some(
-                LocalDirectoryVersion.Create
+                LocalDirectoryVersion.CreateWithHashes
                     (Guid.NewGuid())
                     previousRootVersion.OwnerId
                     previousRootVersion.OrganizationId
                     previousRootVersion.RepositoryId
                     difference.RelativePath
                     sha256Hash
+                    blake3Hash
                     (List())
                     (List())
-                    Constants.InitialDirectorySize
+                    0L
                     directoryInfo.LastWriteTimeUtc
             )
 
