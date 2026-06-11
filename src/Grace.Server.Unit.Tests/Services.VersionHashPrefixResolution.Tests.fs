@@ -32,6 +32,9 @@ type ServicesVersionHashPrefixResolutionTests() =
     let uniqueSha256 = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
     let ambiguousSha256 = "abffff0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
     let unrelatedSha256 = "cdffff0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
+    let uniqueBlake3 = "ba5eba11abcdef0123456789abcdef0123456789abcdef0123456789abcdef01"
+    let ambiguousBlake3 = "ba5e9999abcdef0123456789abcdef0123456789abcdef0123456789abcdef01"
+    let unrelatedBlake3 = "cd5e9999abcdef0123456789abcdef0123456789abcdef0123456789abcdef01"
 
     [<Test>]
     member _.Sha256PrefixResolutionReturnsNoMatchesForZeroScopedCandidates() =
@@ -172,3 +175,119 @@ type ServicesVersionHashPrefixResolutionTests() =
         match resolution with
         | Services.UniqueMatch actual -> Assert.That(actual.ReferenceId, Is.EqualTo(shaOnly.ReferenceId))
         | _ -> Assert.Fail($"Expected SHA-256-only match, got {resolution}.")
+
+    [<Test>]
+    member _.Blake3PrefixResolutionReturnsNoMatchesForZeroScopedCandidates() =
+        let resolution =
+            [
+                candidate 1 repositoryId (Guid.NewGuid()) "ba-only-in-sha256" unrelatedBlake3
+            ]
+            |> Services.resolveScopedVersionHashPrefix "ba" (fun candidate -> candidate.Blake3Hash)
+
+        match resolution with
+        | Services.NoMatches -> Assert.Pass()
+        | _ -> Assert.Fail($"Expected zero BLAKE3 matches, got {resolution}.")
+
+    [<Test>]
+    member _.Blake3FullHashAndUniquePrefixResolveSameDirectoryVersionAsSha256() =
+        let expected = candidate 1 repositoryId (Guid.NewGuid()) uniqueSha256 uniqueBlake3
+
+        let candidates =
+            [
+                expected
+                candidate 2 repositoryId (Guid.NewGuid()) unrelatedSha256 unrelatedBlake3
+            ]
+
+        let shaResolution =
+            candidates
+            |> Services.resolveScopedVersionHashPrefix uniqueSha256 (fun candidate -> candidate.Sha256Hash)
+
+        let blake3FullResolution =
+            candidates
+            |> Services.resolveScopedVersionHashPrefix uniqueBlake3 (fun candidate -> candidate.Blake3Hash)
+
+        let blake3PrefixResolution =
+            candidates
+            |> Services.resolveScopedVersionHashPrefix "ba5eba" (fun candidate -> candidate.Blake3Hash)
+
+        match shaResolution, blake3FullResolution, blake3PrefixResolution with
+        | Services.UniqueMatch shaMatch, Services.UniqueMatch blake3FullMatch, Services.UniqueMatch blake3PrefixMatch ->
+            Assert.That(blake3FullMatch.DirectoryVersionId, Is.EqualTo(shaMatch.DirectoryVersionId))
+            Assert.That(blake3PrefixMatch.DirectoryVersionId, Is.EqualTo(shaMatch.DirectoryVersionId))
+        | _ ->
+            Assert.Fail(
+                $"Expected SHA-256, full BLAKE3, and prefix BLAKE3 unique matches; got {shaResolution}, {blake3FullResolution}, {blake3PrefixResolution}."
+            )
+
+    [<Test>]
+    member _.Blake3PrefixResolutionReturnsAmbiguousMatchesInsteadOfFirstMatch() =
+        let first = candidate 1 repositoryId (Guid.NewGuid()) uniqueSha256 uniqueBlake3
+        let second = candidate 2 repositoryId (Guid.NewGuid()) ambiguousSha256 ambiguousBlake3
+
+        let resolution =
+            [
+                first
+                second
+                candidate 3 repositoryId (Guid.NewGuid()) unrelatedSha256 "ba5e1111abcdef0123456789abcdef0123456789abcdef0123456789abcdef01"
+            ]
+            |> Services.resolveScopedVersionHashPrefix "ba5e" (fun candidate -> candidate.Blake3Hash)
+
+        match resolution with
+        | Services.AmbiguousMatches matches ->
+            Assert.That(matches, Has.Length.EqualTo(Services.maxVersionHashPrefixResolutionMatches))
+
+            Assert.That(
+                matches
+                |> Array.map (fun candidate -> candidate.DirectoryVersionId),
+                Does.Contain(first.DirectoryVersionId)
+            )
+
+            Assert.That(
+                matches
+                |> Array.map (fun candidate -> candidate.DirectoryVersionId),
+                Does.Contain(second.DirectoryVersionId)
+            )
+        | _ -> Assert.Fail($"Expected ambiguous BLAKE3 matches, got {resolution}.")
+
+    [<Test>]
+    member _.TwoCharacterBlake3PrefixUsesRepositoryScope() =
+        let expected = candidate 1 repositoryId (Guid.NewGuid()) uniqueSha256 uniqueBlake3
+        let samePrefixOtherRepository = candidate 2 otherRepositoryId (Guid.NewGuid()) ambiguousSha256 ambiguousBlake3
+
+        let scopedCandidates =
+            [ expected; samePrefixOtherRepository ]
+            |> List.filter (fun candidate -> candidate.RepositoryId = repositoryId)
+
+        let resolution =
+            scopedCandidates
+            |> Services.resolveScopedVersionHashPrefix "ba" (fun candidate -> candidate.Blake3Hash)
+
+        match resolution with
+        | Services.UniqueMatch actual -> Assert.That(actual.DirectoryVersionId, Is.EqualTo(expected.DirectoryVersionId))
+        | _ -> Assert.Fail($"Expected repository-scoped BLAKE3 unique match, got {resolution}.")
+
+    [<Test>]
+    member _.LegacyDirectoryVersionWithoutBlake3HashCannotSatisfyBlake3Lookup() =
+        let resolution =
+            [
+                candidate 1 repositoryId (Guid.NewGuid()) uniqueSha256 String.Empty
+                candidate 2 repositoryId (Guid.NewGuid()) unrelatedSha256 unrelatedBlake3
+            ]
+            |> Services.resolveScopedVersionHashPrefix "ba" (fun candidate -> candidate.Blake3Hash)
+
+        match resolution with
+        | Services.NoMatches -> Assert.Pass()
+        | _ -> Assert.Fail($"Expected missing legacy BLAKE3 hash to be ignored, got {resolution}.")
+
+    [<Test>]
+    member _.Blake3ResolutionDoesNotMixSha256NamespaceMatches() =
+        let shaOnly = candidate 1 repositoryId (Guid.NewGuid()) "ba5eba11abcdef0123456789abcdef0123456789abcdef0123456789abcdef01" unrelatedBlake3
+        let blake3Only = candidate 2 repositoryId (Guid.NewGuid()) unrelatedSha256 uniqueBlake3
+
+        let resolution =
+            [ shaOnly; blake3Only ]
+            |> Services.resolveScopedVersionHashPrefix "ba5eba" (fun candidate -> candidate.Blake3Hash)
+
+        match resolution with
+        | Services.UniqueMatch actual -> Assert.That(actual.ReferenceId, Is.EqualTo(blake3Only.ReferenceId))
+        | _ -> Assert.Fail($"Expected BLAKE3-only match, got {resolution}.")

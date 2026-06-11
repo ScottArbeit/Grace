@@ -11,6 +11,7 @@ Name | Type | Description | Notes
 **branch_id** | **UUID** |  | [optional] 
 **directory_id** | **UUID** |  | [optional] 
 **sha256_hash** | **str** |  | [optional] 
+**blake3_hash** | **str** |  | [optional] 
 **reference_type** | [**ReferenceType**](ReferenceType.md) |  | [optional] 
 **reference_text** | **str** |  | [optional] 
 **created_by** | **str** |  | [optional] 
