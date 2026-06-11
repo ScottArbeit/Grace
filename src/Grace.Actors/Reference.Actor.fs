@@ -114,19 +114,37 @@ module Reference =
         && referenceDto.ReferenceType = ReferenceType.Save
 
     let validateReferenceRootDirectoryVersionHashes correlationId repositoryId directoryId sha256Hash blake3Hash (directoryVersion: DirectoryVersion) =
+        let directoryVersionBlake3IsEmpty = String.IsNullOrWhiteSpace(string directoryVersion.Blake3Hash)
+        let commandBlake3IsEmpty = String.IsNullOrWhiteSpace(string blake3Hash)
+
+        let isLegacyEmptyBlake3Root =
+            directoryVersion.RelativePath = Constants.RootDirectoryPath
+            && directoryVersionBlake3IsEmpty
+            && commandBlake3IsEmpty
+
         if directoryVersion.DirectoryVersionId = DirectoryVersionId.Empty then
             Error(
                 (GraceError.Create "Reference root DirectoryVersion does not exist." correlationId)
                     .enhance(nameof RepositoryId, repositoryId)
                     .enhance (nameof DirectoryVersionId, directoryId)
             )
-        elif String.IsNullOrWhiteSpace(string directoryVersion.Blake3Hash) then
+        elif directoryVersion.RelativePath
+             <> Constants.RootDirectoryPath then
+            Error(
+                (GraceError.Create "Reference root DirectoryVersion must use the repository root path." correlationId)
+                    .enhance(nameof RepositoryId, repositoryId)
+                    .enhance(nameof DirectoryVersionId, directoryId)
+                    .enhance (nameof RelativePath, directoryVersion.RelativePath)
+            )
+        elif directoryVersionBlake3IsEmpty
+             && not commandBlake3IsEmpty then
             Error(
                 (GraceError.Create "Reference root DirectoryVersion must include Blake3Hash before reference creation." correlationId)
                     .enhance(nameof RepositoryId, repositoryId)
                     .enhance (nameof DirectoryVersionId, directoryId)
             )
-        elif String.IsNullOrWhiteSpace(string blake3Hash) then
+        elif commandBlake3IsEmpty
+             && not isLegacyEmptyBlake3Root then
             Error(
                 (GraceError.Create "Reference command must include the root DirectoryVersion Blake3Hash." correlationId)
                     .enhance(nameof RepositoryId, repositoryId)
@@ -139,7 +157,8 @@ module Reference =
                     .enhance(nameof DirectoryVersionId, directoryId)
                     .enhance (nameof Sha256Hash, sha256Hash)
             )
-        elif directoryVersion.Blake3Hash <> blake3Hash then
+        elif directoryVersion.Blake3Hash <> blake3Hash
+             && not isLegacyEmptyBlake3Root then
             Error(
                 (GraceError.Create "Reference command Blake3Hash does not match the root DirectoryVersion Blake3Hash." correlationId)
                     .enhance(nameof RepositoryId, repositoryId)
