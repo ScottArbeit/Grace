@@ -588,6 +588,43 @@ module Branch =
     let processCommand<'T when 'T :> BranchParameters> (context: HttpContext) (validations: Validations<'T>) (command: 'T -> ValueTask<BranchCommand>) =
         processCommandWithPostSuccess context validations command (fun () -> Task.FromResult(Ok()))
 
+    let private tryResolveRootDirectoryVersionForReferenceCommand repositoryId directoryVersionId sha256Hash correlationId =
+        task {
+            if directoryVersionId <> DirectoryVersionId.Empty then
+                let directoryVersionActorProxy = DirectoryVersion.CreateActorProxy directoryVersionId repositoryId correlationId
+                let! directoryVersionDto = directoryVersionActorProxy.Get correlationId
+                let directoryVersion = directoryVersionDto.DirectoryVersion
+
+                if directoryVersion.DirectoryVersionId = DirectoryVersionId.Empty then
+                    return None
+                elif
+                    not (String.IsNullOrEmpty(string sha256Hash))
+                    && directoryVersion.Sha256Hash <> sha256Hash
+                then
+                    return None
+                else
+                    return Some directoryVersion
+            elif not (String.IsNullOrEmpty(string sha256Hash)) then
+                return! getDirectoryVersionBySha256Hash repositoryId sha256Hash correlationId
+            else
+                return None
+        }
+
+    let private referenceCommandFromRoot
+        (createCommand: DirectoryVersionId * Sha256Hash * Blake3Hash * ReferenceText -> BranchCommand)
+        repositoryId
+        directoryVersionId
+        sha256Hash
+        referenceText
+        correlationId
+        =
+        task {
+            match! tryResolveRootDirectoryVersionForReferenceCommand repositoryId directoryVersionId sha256Hash correlationId with
+            | Some directoryVersion ->
+                return createCommand (directoryVersion.DirectoryVersionId, directoryVersion.Sha256Hash, directoryVersion.Blake3Hash, referenceText)
+            | None -> return createCommand (directoryVersionId, sha256Hash, Blake3Hash String.Empty, referenceText)
+        }
+
     let processQuery<'T, 'U when 'T :> BranchParameters>
         (context: HttpContext)
         (parameters: 'T)
@@ -810,11 +847,26 @@ module Branch =
                             let! directoryVersionDto = directoryVersionActorProxy.Get(parameters.CorrelationId)
 
                             return
-                                Some(Assign(parameters.DirectoryVersionId, directoryVersionDto.DirectoryVersion.Sha256Hash, ReferenceText parameters.Message))
+                                Some(
+                                    Assign(
+                                        parameters.DirectoryVersionId,
+                                        directoryVersionDto.DirectoryVersion.Sha256Hash,
+                                        directoryVersionDto.DirectoryVersion.Blake3Hash,
+                                        ReferenceText parameters.Message
+                                    )
+                                )
                         elif not <| String.IsNullOrEmpty(parameters.Sha256Hash) then
                             match! getDirectoryVersionBySha256Hash (Guid.Parse(graceIds.RepositoryIdString)) parameters.Sha256Hash parameters.CorrelationId with
                             | Some directoryVersion ->
-                                return Some(Assign(directoryVersion.DirectoryVersionId, directoryVersion.Sha256Hash, ReferenceText parameters.Message))
+                                return
+                                    Some(
+                                        Assign(
+                                            directoryVersion.DirectoryVersionId,
+                                            directoryVersion.Sha256Hash,
+                                            directoryVersion.Blake3Hash,
+                                            ReferenceText parameters.Message
+                                        )
+                                    )
                             | None -> return None
                         else
                             return None
@@ -860,8 +912,14 @@ module Branch =
                     |]
 
                 let command (parameters: CreateReferenceParameters) =
-                    Promote(parameters.DirectoryVersionId, parameters.Sha256Hash, ReferenceText parameters.Message)
-                    |> returnValueTask
+                    referenceCommandFromRoot
+                        Promote
+                        graceIds.RepositoryId
+                        parameters.DirectoryVersionId
+                        parameters.Sha256Hash
+                        (ReferenceText parameters.Message)
+                        parameters.CorrelationId
+                    |> ValueTask<BranchCommand>
 
                 context.Items.Add("Command", nameof Promote)
                 return! processCommand context validations command
@@ -890,8 +948,14 @@ module Branch =
                     |]
 
                 let command (parameters: CreateReferenceParameters) =
-                    BranchCommand.Commit(parameters.DirectoryVersionId, parameters.Sha256Hash, ReferenceText parameters.Message)
-                    |> returnValueTask
+                    referenceCommandFromRoot
+                        BranchCommand.Commit
+                        graceIds.RepositoryId
+                        parameters.DirectoryVersionId
+                        parameters.Sha256Hash
+                        (ReferenceText parameters.Message)
+                        parameters.CorrelationId
+                    |> ValueTask<BranchCommand>
 
                 context.Items.Add("Command", nameof Commit)
                 return! processCommand context validations command
@@ -919,8 +983,14 @@ module Branch =
                     |]
 
                 let command (parameters: CreateReferenceParameters) =
-                    BranchCommand.Checkpoint(parameters.DirectoryVersionId, parameters.Sha256Hash, ReferenceText parameters.Message)
-                    |> returnValueTask
+                    referenceCommandFromRoot
+                        BranchCommand.Checkpoint
+                        graceIds.RepositoryId
+                        parameters.DirectoryVersionId
+                        parameters.Sha256Hash
+                        (ReferenceText parameters.Message)
+                        parameters.CorrelationId
+                    |> ValueTask<BranchCommand>
 
                 context.Items.Add("Command", nameof Checkpoint)
                 return! processCommand context validations command
@@ -950,8 +1020,14 @@ module Branch =
                     |]
 
                 let command (parameters: CreateReferenceParameters) =
-                    BranchCommand.Save(parameters.DirectoryVersionId, parameters.Sha256Hash, ReferenceText parameters.Message)
-                    |> returnValueTask
+                    referenceCommandFromRoot
+                        BranchCommand.Save
+                        graceIds.RepositoryId
+                        parameters.DirectoryVersionId
+                        parameters.Sha256Hash
+                        (ReferenceText parameters.Message)
+                        parameters.CorrelationId
+                    |> ValueTask<BranchCommand>
 
                 context.Items.Add("Command", nameof Save)
                 return! processCommand context validations command
@@ -979,8 +1055,14 @@ module Branch =
                     |]
 
                 let command (parameters: CreateReferenceParameters) =
-                    BranchCommand.Tag(parameters.DirectoryVersionId, parameters.Sha256Hash, ReferenceText parameters.Message)
-                    |> returnValueTask
+                    referenceCommandFromRoot
+                        BranchCommand.Tag
+                        graceIds.RepositoryId
+                        parameters.DirectoryVersionId
+                        parameters.Sha256Hash
+                        (ReferenceText parameters.Message)
+                        parameters.CorrelationId
+                    |> ValueTask<BranchCommand>
 
                 context.Items.Add("Command", nameof Tag)
                 return! processCommand context validations command
@@ -1008,8 +1090,14 @@ module Branch =
                     |]
 
                 let command (parameters: CreateReferenceParameters) =
-                    BranchCommand.CreateExternal(parameters.DirectoryVersionId, parameters.Sha256Hash, ReferenceText parameters.Message)
-                    |> returnValueTask
+                    referenceCommandFromRoot
+                        BranchCommand.CreateExternal
+                        graceIds.RepositoryId
+                        parameters.DirectoryVersionId
+                        parameters.Sha256Hash
+                        (ReferenceText parameters.Message)
+                        parameters.CorrelationId
+                    |> ValueTask<BranchCommand>
 
                 context.Items.Add("Command", nameof CreateExternal)
                 return! processCommand context validations command

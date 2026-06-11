@@ -137,6 +137,7 @@ module private EventingIntegrationHelpers =
                         branchId,
                         Guid.NewGuid(),
                         Sha256Hash String.Empty,
+                        Blake3Hash String.Empty,
                         referenceType,
                         $"{referenceType}-reference",
                         Seq.empty
