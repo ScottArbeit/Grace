@@ -3020,7 +3020,6 @@ module Branch =
                                     BranchId = switchParameters.ToBranchId,
                                     BranchName = switchParameters.ToBranchName,
                                     Sha256Hash = switchParameters.Sha256Hash,
-                                    Blake3Hash = switchParameters.Blake3Hash,
                                     ReferenceId = switchParameters.ReferenceId,
                                     CorrelationId = graceIds.CorrelationId
                                 )

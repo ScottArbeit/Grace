@@ -62,6 +62,7 @@ __all__ = [
     "BranchCommandReturnValue",
     "BranchDto",
     "BranchDtoUpdatedAt",
+    "BranchHashQueryParameters",
     "BranchParameters",
     "BranchQueryParameters",
     "BranchReturnValue",
@@ -306,6 +307,7 @@ from grace_generated_openapi_probe.models.branch_api_dto import BranchApiDto as 
 from grace_generated_openapi_probe.models.branch_command_return_value import BranchCommandReturnValue as BranchCommandReturnValue
 from grace_generated_openapi_probe.models.branch_dto import BranchDto as BranchDto
 from grace_generated_openapi_probe.models.branch_dto_updated_at import BranchDtoUpdatedAt as BranchDtoUpdatedAt
+from grace_generated_openapi_probe.models.branch_hash_query_parameters import BranchHashQueryParameters as BranchHashQueryParameters
 from grace_generated_openapi_probe.models.branch_parameters import BranchParameters as BranchParameters
 from grace_generated_openapi_probe.models.branch_query_parameters import BranchQueryParameters as BranchQueryParameters
 from grace_generated_openapi_probe.models.branch_return_value import BranchReturnValue as BranchReturnValue
