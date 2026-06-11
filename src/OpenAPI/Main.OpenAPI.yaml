@@ -149,6 +149,8 @@ paths:
     $ref: './Diff.Paths.OpenAPI.yaml#/~1diff~1getDiff'
   /diff/getDiffBySha256Hash:
     $ref: './Diff.Paths.OpenAPI.yaml#/~1diff~1getDiffBySha256Hash'
+  /diff/getDiffByBlake3Hash:
+    $ref: './Diff.Paths.OpenAPI.yaml#/~1diff~1getDiffByBlake3Hash'
   
   /directory/create:
     $ref: './Directory.Paths.OpenAPI.yaml#/~1directory~1create'
@@ -370,6 +372,8 @@ components:
       $ref: 'Diff.Components.OpenAPI.yaml#/GetDiffByReferenceTypeParameters'
     GetDiffBySha256HashParameters:
       $ref: 'Diff.Components.OpenAPI.yaml#/GetDiffBySha256HashParameters'
+    GetDiffByBlake3HashParameters:
+      $ref: 'Diff.Components.OpenAPI.yaml#/GetDiffByBlake3HashParameters'
     
     DirectoryParameters:
       $ref: 'Directory.Components.OpenAPI.yaml#/DirectoryParameters'

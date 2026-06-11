@@ -5,6 +5,7 @@ All URIs are relative to *http://localhost:5000*
 Method | HTTP request | Description
 ------------- | ------------- | -------------
 [**get_diff**](DiffsApi.md#get_diff) | **POST** /diff/getDiff | Get a diff.
+[**get_diff_by_blake3_hash**](DiffsApi.md#get_diff_by_blake3_hash) | **POST** /diff/getDiffByBlake3Hash | Get a diff by BLAKE3 hash.
 [**get_diff_by_sha256_hash**](DiffsApi.md#get_diff_by_sha256_hash) | **POST** /diff/getDiffBySha256Hash | Get a diff by SHA-256 hash.
 [**populate_diff**](DiffsApi.md#populate_diff) | **POST** /diff/populate | Populate a diff actor.
 
@@ -23,6 +24,36 @@ Retrieves the contents of the diff between two directory versions.
 Name | Type | Description  | Required | Notes
 ------------- | ------------- | ------------- | ------------- | -------------
 **get_diff_parameters** | [**GetDiffParameters**](GetDiffParameters.md) |  | [required] |
+
+### Return type
+
+[**models::DiffReturnValue**](DiffReturnValue.md)
+
+### Authorization
+
+[bearerAuth](../README.md#bearerAuth)
+
+### HTTP request headers
+
+- **Content-Type**: application/json
+- **Accept**: application/json
+
+[[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
+
+
+## get_diff_by_blake3_hash
+
+> models::DiffReturnValue get_diff_by_blake3_hash(get_diff_by_blake3_hash_parameters)
+Get a diff by BLAKE3 hash.
+
+Retrieves a diff by comparing two directory versions identified by BLAKE3 hash or unique BLAKE3 prefix.
+
+### Parameters
+
+
+Name | Type | Description  | Required | Notes
+------------- | ------------- | ------------- | ------------- | -------------
+**get_diff_by_blake3_hash_parameters** | [**GetDiffByBlake3HashParameters**](GetDiffByBlake3HashParameters.md) |  | [required] |
 
 ### Return type
 
