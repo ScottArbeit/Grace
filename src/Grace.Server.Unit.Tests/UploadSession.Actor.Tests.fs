@@ -682,6 +682,75 @@ type UploadSessionActorTests() =
         | Error error -> Assert.Fail($"Expected finalize to succeed, got {error.Error}.")
 
     [<Test>]
+    member _.FinalizeManifestCreatesRepositoryPoolMetadataForUploadedBlocks() =
+        let firstBytes = Text.Encoding.UTF8.GetBytes("hello first")
+        let secondBytes = Text.Encoding.UTF8.GetBytes("hello second")
+        let fileBytes = Array.concat [ firstBytes; secondBytes ]
+        let firstBlock = encodedBlock firstBytes
+        let secondBlock = encodedBlock secondBytes
+        let manifest = manifestFor fileBytes [| firstBlock; secondBlock |]
+
+        let session =
+            { UploadSessionDto.Default with
+                ConfirmedBlockUploads =
+                    [|
+                        {
+                            ContentBlockAddress = firstBlock.Address
+                            PayloadLength = firstBlock.Payload.LongLength
+                            StoragePlacement = { ObjectKey = $"cas/content-blocks/{firstBlock.Address}"; ETag = Some "etag-first" }
+                            Ranges =
+                                [|
+                                    {
+                                        OrdinalStart = 0
+                                        OrdinalCount = 1
+                                        ActiveManifestCount = 0
+                                        PhysicalOffset = 0L
+                                        PhysicalLength = int64 firstBytes.Length
+                                    }
+                                |]
+                            ConfirmedAt = timestamp
+                        }
+                        {
+                            ContentBlockAddress = secondBlock.Address
+                            PayloadLength = secondBlock.Payload.LongLength
+                            StoragePlacement = { ObjectKey = $"cas/content-blocks/{secondBlock.Address}"; ETag = Some "etag-second" }
+                            Ranges =
+                                [|
+                                    {
+                                        OrdinalStart = 0
+                                        OrdinalCount = 1
+                                        ActiveManifestCount = 0
+                                        PhysicalOffset = 0L
+                                        PhysicalLength = int64 secondBytes.Length
+                                    }
+                                |]
+                            ConfirmedAt = timestamp
+                        }
+                    |]
+            }
+
+        let expectedStoragePoolId = DedupeIndex.storagePoolIdForRepositoryId repositoryId
+
+        let commands = UploadSessionActor.createContentBlockMetadataMergeCommandsForFinalizedUploads expectedStoragePoolId "op-finalize" session manifest
+
+        Assert.That(commands, Has.Length.EqualTo(2))
+
+        let assertMerge command (expectedAddress: ContentBlockAddress) (expectedObjectKey: string) =
+            match command with
+            | ContentBlockMetadataCommand.MergePhysicalRanges merge ->
+                Assert.That(merge.OperationId, Is.EqualTo($"op-finalize:content-block-metadata:{expectedAddress}"))
+                Assert.That(merge.StoragePoolId, Is.EqualTo(expectedStoragePoolId))
+                Assert.That(merge.ContentBlockAddress, Is.EqualTo(expectedAddress))
+                Assert.That(merge.StoragePlacement.ObjectKey, Is.EqualTo(expectedObjectKey))
+                Assert.That(merge.Ranges, Has.Length.EqualTo(1))
+                Assert.That(merge.Ranges[0].OrdinalStart, Is.EqualTo(0))
+                Assert.That(merge.Ranges[0].OrdinalCount, Is.EqualTo(1))
+            | _ -> Assert.Fail("Expected uploaded block finalization to create ContentBlockMetadata MergePhysicalRanges commands.")
+
+        assertMerge commands[0] firstBlock.Address $"cas/content-blocks/{firstBlock.Address}"
+        assertMerge commands[1] secondBlock.Address $"cas/content-blocks/{secondBlock.Address}"
+
+    [<Test>]
     member _.FinalizeManifestFromClaimedReuseRangeValidatesReconstructionAndFinalizes() =
         let fileBytes = Text.Encoding.UTF8.GetBytes("reuse range bytes")
         let block = encodedBlock fileBytes
