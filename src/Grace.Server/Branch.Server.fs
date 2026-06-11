@@ -640,6 +640,48 @@ module Branch =
                 return None
         }
 
+    let private tryResolveRootDirectoryVersionForHashQuery repositoryId sha256Hash blake3Hash correlationId =
+        task {
+            if
+                not (String.IsNullOrEmpty(string blake3Hash))
+                && not (String.IsNullOrEmpty(string sha256Hash))
+            then
+                match! getRootDirectoryVersionByBlake3Hash repositoryId blake3Hash correlationId with
+                | Some directoryVersion when
+                    (string directoryVersion.Sha256Hash)
+                        .StartsWith(string sha256Hash, StringComparison.OrdinalIgnoreCase)
+                    ->
+                    return Some directoryVersion
+                | _ -> return None
+            elif not (String.IsNullOrEmpty(string blake3Hash)) then
+                return! getRootDirectoryVersionByBlake3Hash repositoryId blake3Hash correlationId
+            elif not (String.IsNullOrEmpty(string sha256Hash)) then
+                return! getRootDirectoryVersionBySha256Hash repositoryId sha256Hash correlationId
+            else
+                return None
+        }
+
+    let private tryResolveDirectoryVersionForHashQuery repositoryId sha256Hash blake3Hash correlationId =
+        task {
+            if
+                not (String.IsNullOrEmpty(string blake3Hash))
+                && not (String.IsNullOrEmpty(string sha256Hash))
+            then
+                match! Services.getDirectoryVersionByBlake3Hash repositoryId blake3Hash correlationId with
+                | Some directoryVersion when
+                    (string directoryVersion.Sha256Hash)
+                        .StartsWith(string sha256Hash, StringComparison.OrdinalIgnoreCase)
+                    ->
+                    return Some directoryVersion
+                | _ -> return None
+            elif not (String.IsNullOrEmpty(string blake3Hash)) then
+                return! Services.getDirectoryVersionByBlake3Hash repositoryId blake3Hash correlationId
+            elif not (String.IsNullOrEmpty(string sha256Hash)) then
+                return! Services.getDirectoryVersionBySha256Hash repositoryId sha256Hash correlationId
+            else
+                return None
+        }
+
     let private referenceCommandFromRoot
         (createCommand: DirectoryVersionId * Sha256Hash * Blake3Hash * ReferenceText -> BranchCommand)
         repositoryId
@@ -910,20 +952,26 @@ module Branch =
                 context.Request.Body.Seek(0L, IO.SeekOrigin.Begin)
                 |> ignore
 
-                match! String.isEmptyOrValidBlake3HashPrefix parameters.Blake3Hash BranchError.InvalidBlake3Hash with
+                match! String.isEmptyOrValidSha256HashPrefix parameters.Sha256Hash BranchError.InvalidSha256Hash with
                 | Error error ->
                     return!
                         context
                         |> result400BadRequest (GraceError.Create (BranchError.getErrorMessage error) (getCorrelationId context))
                 | Ok () ->
-                    match! command parameters with
-                    | Some command -> return! processCommand context validations (fun parameters -> ValueTask<BranchCommand>(command))
-                    | None ->
+                    match! String.isEmptyOrValidBlake3HashPrefix parameters.Blake3Hash BranchError.InvalidBlake3Hash with
+                    | Error error ->
                         return!
                             context
-                            |> result400BadRequest (
-                                GraceError.Create (getErrorMessage BranchError.EitherDirectoryVersionIdOrSha256HashRequired) (getCorrelationId context)
-                            )
+                            |> result400BadRequest (GraceError.Create (BranchError.getErrorMessage error) (getCorrelationId context))
+                    | Ok () ->
+                        match! command parameters with
+                        | Some command -> return! processCommand context validations (fun parameters -> ValueTask<BranchCommand>(command))
+                        | None ->
+                            return!
+                                context
+                                |> result400BadRequest (
+                                    GraceError.Create (getErrorMessage BranchError.EitherDirectoryVersionIdOrSha256HashRequired) (getCorrelationId context)
+                                )
             }
 
     /// Creates a promotion reference in the parent of the specified branch, based on the most-recent commit.
@@ -2287,20 +2335,14 @@ module Branch =
 
                                 let! recursiveSize = directoryActorProxy.GetRecursiveSize correlationId
                                 return recursiveSize
-                            elif
-                                not
-                                <| String.IsNullOrEmpty(listContentsParameters.Blake3Hash)
-                            then
-                                match! Services.getDirectoryVersionByBlake3Hash graceIds.RepositoryId listContentsParameters.Blake3Hash correlationId with
-                                | Some directoryVersion ->
-                                    let directoryActorProxy = DirectoryVersion.CreateActorProxy directoryVersion.DirectoryVersionId repositoryId correlationId
-
-                                    let! recursiveSize = directoryActorProxy.GetRecursiveSize correlationId
-                                    return recursiveSize
-                                | None -> return Constants.InitialDirectorySize
                             else
-                                // By process of elimination, we have a Sha256Hash, so we'll retrieve the DirectoryVersion using that..
-                                match! Services.getDirectoryVersionBySha256Hash graceIds.RepositoryId listContentsParameters.Sha256Hash correlationId with
+                                match!
+                                    tryResolveDirectoryVersionForHashQuery
+                                        graceIds.RepositoryId
+                                        listContentsParameters.Sha256Hash
+                                        listContentsParameters.Blake3Hash
+                                        correlationId
+                                    with
                                 | Some directoryVersion ->
                                     let directoryActorProxy = DirectoryVersion.CreateActorProxy directoryVersion.DirectoryVersionId repositoryId correlationId
 
@@ -2399,21 +2441,14 @@ module Branch =
                                 let! contents = directoryActorProxy.GetRecursiveDirectoryVersions listContentsParameters.ForceRecompute correlationId
 
                                 return contents
-                            elif
-                                not
-                                <| String.IsNullOrEmpty(listContentsParameters.Blake3Hash)
-                            then
-                                match! getRootDirectoryVersionByBlake3Hash graceIds.RepositoryId listContentsParameters.Blake3Hash correlationId with
-                                | Some directoryVersion ->
-                                    let directoryActorProxy = DirectoryVersion.CreateActorProxy directoryVersion.DirectoryVersionId repositoryId correlationId
-
-                                    let! contents = directoryActorProxy.GetRecursiveDirectoryVersions listContentsParameters.ForceRecompute correlationId
-
-                                    return contents
-                                | None -> return Array.Empty<DirectoryVersion.DirectoryVersionDto>()
                             else
-                                // By process of elimination, we have a Sha256Hash, so we'll retrieve the DirectoryVersion using that..
-                                match! getRootDirectoryVersionBySha256Hash graceIds.RepositoryId listContentsParameters.Sha256Hash correlationId with
+                                match!
+                                    tryResolveRootDirectoryVersionForHashQuery
+                                        graceIds.RepositoryId
+                                        listContentsParameters.Sha256Hash
+                                        listContentsParameters.Blake3Hash
+                                        correlationId
+                                    with
                                 | Some directoryVersion ->
                                     let directoryActorProxy = DirectoryVersion.CreateActorProxy directoryVersion.DirectoryVersionId repositoryId correlationId
 
@@ -2475,10 +2510,11 @@ module Branch =
         (correlationId: CorrelationId)
         =
         task {
-            if not <| String.IsNullOrEmpty(parameters.Sha256Hash) then
-                return! getRootDirectoryVersionBySha256Hash repositoryId parameters.Sha256Hash correlationId
-            elif not <| String.IsNullOrEmpty(parameters.Blake3Hash) then
-                return! getRootDirectoryVersionByBlake3Hash repositoryId parameters.Blake3Hash correlationId
+            if
+                not (String.IsNullOrEmpty(parameters.Sha256Hash))
+                || not (String.IsNullOrEmpty(parameters.Blake3Hash))
+            then
+                return! tryResolveRootDirectoryVersionForHashQuery repositoryId parameters.Sha256Hash parameters.Blake3Hash correlationId
             elif
                 not
                 <| String.IsNullOrEmpty(parameters.ReferenceId)
