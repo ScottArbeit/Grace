@@ -475,7 +475,12 @@ module WatchTests =
     [<Test>]
     let ``watch cached file changes remain processable when object already exists`` () =
         withTempRepo (fun root ->
-            let filePath = Path.Combine(root, "cached-file.txt")
+            let nestedDirectory = Path.Combine(root, "dir")
+
+            Directory.CreateDirectory(nestedDirectory)
+            |> ignore
+
+            let filePath = Path.Combine(nestedDirectory, "cached-file.txt")
             File.WriteAllText(filePath, "cached file payload")
 
             match (Services.copyToObjectDirectory (FilePath filePath))
