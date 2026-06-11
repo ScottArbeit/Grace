@@ -11,45 +11,28 @@
 use crate::models;
 use serde::{Deserialize, Serialize};
 
-/// ReferenceDto : (automatically generated)
+/// DirectoryVersionHashLookupReturnValue : Grace response envelope whose ReturnValue contains a raw directory version.
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
-pub struct ReferenceDto {
-    #[serde(rename = "Class", skip_serializing_if = "Option::is_none")]
-    pub class: Option<String>,
-    #[serde(rename = "ReferenceId", skip_serializing_if = "Option::is_none")]
-    pub reference_id: Option<uuid::Uuid>,
-    #[serde(rename = "BranchId", skip_serializing_if = "Option::is_none")]
-    pub branch_id: Option<uuid::Uuid>,
-    #[serde(rename = "DirectoryId", skip_serializing_if = "Option::is_none")]
-    pub directory_id: Option<uuid::Uuid>,
-    #[serde(rename = "Sha256Hash", skip_serializing_if = "Option::is_none")]
-    pub sha256_hash: Option<String>,
-    #[serde(rename = "Blake3Hash", skip_serializing_if = "Option::is_none")]
-    pub blake3_hash: Option<String>,
-    #[serde(rename = "ReferenceType", skip_serializing_if = "Option::is_none")]
-    pub reference_type: Option<models::ReferenceType>,
-    #[serde(rename = "ReferenceText", skip_serializing_if = "Option::is_none")]
-    pub reference_text: Option<String>,
-    #[serde(rename = "CreatedBy", skip_serializing_if = "Option::is_none")]
-    pub created_by: Option<String>,
-    #[serde(rename = "CreatedAt", skip_serializing_if = "Option::is_none")]
-    pub created_at: Option<chrono::DateTime<chrono::FixedOffset>>,
+pub struct DirectoryVersionHashLookupReturnValue {
+    #[serde(rename = "ReturnValue")]
+    pub return_value: Box<models::DirectoryVersion>,
+    #[serde(rename = "EventTime")]
+    pub event_time: chrono::DateTime<chrono::FixedOffset>,
+    /// Body DTO correlation id copied into Grace command/event metadata after request parsing. This field is distinct from the X-Correlation-Id transport header, which correlates the HTTP request/response exchange.
+    #[serde(rename = "CorrelationId")]
+    pub correlation_id: String,
+    #[serde(rename = "Properties")]
+    pub properties: std::collections::HashMap<String, String>,
 }
 
-impl ReferenceDto {
-    /// (automatically generated)
-    pub fn new() -> ReferenceDto {
-        ReferenceDto {
-            class: None,
-            reference_id: None,
-            branch_id: None,
-            directory_id: None,
-            sha256_hash: None,
-            blake3_hash: None,
-            reference_type: None,
-            reference_text: None,
-            created_by: None,
-            created_at: None,
+impl DirectoryVersionHashLookupReturnValue {
+    /// Grace response envelope whose ReturnValue contains a raw directory version.
+    pub fn new(return_value: models::DirectoryVersion, event_time: chrono::DateTime<chrono::FixedOffset>, correlation_id: String, properties: std::collections::HashMap<String, String>) -> DirectoryVersionHashLookupReturnValue {
+        DirectoryVersionHashLookupReturnValue {
+            return_value: Box::new(return_value),
+            event_time,
+            correlation_id,
+            properties,
         }
     }
 }

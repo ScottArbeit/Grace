@@ -33,6 +33,15 @@ pub enum GetDirectoryVersionError {
     UnknownValue(serde_json::Value),
 }
 
+/// struct for typed errors of method [`get_directory_version_by_blake3_hash`]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum GetDirectoryVersionByBlake3HashError {
+    Status400(models::GraceError),
+    Status500(models::GraceError),
+    UnknownValue(serde_json::Value),
+}
+
 /// struct for typed errors of method [`get_directory_version_by_sha256_hash`]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -152,8 +161,49 @@ pub async fn get_directory_version(configuration: &configuration::Configuration,
     }
 }
 
+/// Gets a directory version DTO by BLAKE3 hash or unique BLAKE3 prefix.
+pub async fn get_directory_version_by_blake3_hash(configuration: &configuration::Configuration, get_by_blake3_hash_parameters: models::GetByBlake3HashParameters) -> Result<models::DirectoryVersionHashLookupReturnValue, Error<GetDirectoryVersionByBlake3HashError>> {
+    // add a prefix to parameters to efficiently prevent name collisions
+    let p_body_get_by_blake3_hash_parameters = get_by_blake3_hash_parameters;
+
+    let uri_str = format!("{}/directory/getByBlake3Hash", configuration.base_path);
+    let mut req_builder = configuration.client.request(reqwest::Method::POST, &uri_str);
+
+    if let Some(ref user_agent) = configuration.user_agent {
+        req_builder = req_builder.header(reqwest::header::USER_AGENT, user_agent.clone());
+    }
+    if let Some(ref token) = configuration.bearer_access_token {
+        req_builder = req_builder.bearer_auth(token.to_owned());
+    };
+    req_builder = req_builder.json(&p_body_get_by_blake3_hash_parameters);
+
+    let req = req_builder.build()?;
+    let resp = configuration.client.execute(req).await?;
+
+    let status = resp.status();
+    let content_type = resp
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("application/octet-stream");
+    let content_type = super::ContentType::from(content_type);
+
+    if !status.is_client_error() && !status.is_server_error() {
+        let content = resp.text().await?;
+        match content_type {
+            ContentType::Json => serde_json::from_str(&content).map_err(Error::from),
+            ContentType::Text => return Err(Error::from(serde_json::Error::custom("Received `text/plain` content type response that cannot be converted to `models::DirectoryVersionHashLookupReturnValue`"))),
+            ContentType::Unsupported(unknown_type) => return Err(Error::from(serde_json::Error::custom(format!("Received `{unknown_type}` content type response that cannot be converted to `models::DirectoryVersionHashLookupReturnValue`")))),
+        }
+    } else {
+        let content = resp.text().await?;
+        let entity: Option<GetDirectoryVersionByBlake3HashError> = serde_json::from_str(&content).ok();
+        Err(Error::ResponseError(ResponseContent { status, content, entity }))
+    }
+}
+
 /// Gets a directory version DTO by SHA-256 hash.
-pub async fn get_directory_version_by_sha256_hash(configuration: &configuration::Configuration, get_by_sha256_hash_parameters: models::GetBySha256HashParameters) -> Result<models::DirectoryVersionReturnValue, Error<GetDirectoryVersionBySha256HashError>> {
+pub async fn get_directory_version_by_sha256_hash(configuration: &configuration::Configuration, get_by_sha256_hash_parameters: models::GetBySha256HashParameters) -> Result<models::DirectoryVersionHashLookupReturnValue, Error<GetDirectoryVersionBySha256HashError>> {
     // add a prefix to parameters to efficiently prevent name collisions
     let p_body_get_by_sha256_hash_parameters = get_by_sha256_hash_parameters;
 
@@ -183,8 +233,8 @@ pub async fn get_directory_version_by_sha256_hash(configuration: &configuration:
         let content = resp.text().await?;
         match content_type {
             ContentType::Json => serde_json::from_str(&content).map_err(Error::from),
-            ContentType::Text => return Err(Error::from(serde_json::Error::custom("Received `text/plain` content type response that cannot be converted to `models::DirectoryVersionReturnValue`"))),
-            ContentType::Unsupported(unknown_type) => return Err(Error::from(serde_json::Error::custom(format!("Received `{unknown_type}` content type response that cannot be converted to `models::DirectoryVersionReturnValue`")))),
+            ContentType::Text => return Err(Error::from(serde_json::Error::custom("Received `text/plain` content type response that cannot be converted to `models::DirectoryVersionHashLookupReturnValue`"))),
+            ContentType::Unsupported(unknown_type) => return Err(Error::from(serde_json::Error::custom(format!("Received `{unknown_type}` content type response that cannot be converted to `models::DirectoryVersionHashLookupReturnValue`")))),
         }
     } else {
         let content = resp.text().await?;
