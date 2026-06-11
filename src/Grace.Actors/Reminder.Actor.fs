@@ -142,7 +142,7 @@ module Reminder =
                         // Parse the Guid from the ActorId. Example: "referenceactor/da3926330c394275813d95e390a5c374"
                         let actorId =
                             if reminderDto.ActorName = ActorName.Diff then
-                                // Diff actors have a different ActorId format: "directoryVersionId1*directoryVersionId2"
+                                // Diff actors have a different ActorId format: "directoryVersionId1:NdirectoryVersionId2:N"
                                 Guid.Empty
                             else
                                 Guid.ParseExact(reminderDto.ActorId.Split("/").[1], "N")
@@ -171,13 +171,13 @@ module Reminder =
                             let uploadSessionActorProxy = UploadSession.CreateActorProxy actorId reminderDto.RepositoryId correlationId
                             return! uploadSessionActorProxy.ReceiveReminderAsync reminderDto
                         | ActorName.Diff ->
-                            // Example reminderDto.ActorId: "diffactor/15b50c95-7306-4ecb-9850-a0a5dc7419cf*1e7b6f83-4715-42f8-ba0b-9b0262356f08"
-                            let directoryVersionIds = reminderDto.ActorId.Split("/").[1].Split("*")
+                            // Example reminderDto.ActorId: "diffactor/15b50c9573064ecb9850a0a5dc7419cf1e7b6f83471542f8ba0b9b0262356f08"
+                            let directoryVersionKey = reminderDto.ActorId.Split("/").[1]
 
                             let diffActorProxy =
                                 Diff.CreateActorProxy
-                                    (Guid.ParseExact(directoryVersionIds[0], "D")) // "D" = 32 digits separated by hyphens
-                                    (Guid.ParseExact(directoryVersionIds[1], "D"))
+                                    (Guid.ParseExact(directoryVersionKey.Substring(0, 32), "N"))
+                                    (Guid.ParseExact(directoryVersionKey.Substring(32, 32), "N"))
                                     reminderDto.OwnerId
                                     reminderDto.OrganizationId
                                     reminderDto.RepositoryId

@@ -180,6 +180,8 @@ pub mod get_content_block_download_uri_parameters;
 pub use self::get_content_block_download_uri_parameters::GetContentBlockDownloadUriParameters;
 pub mod get_content_block_upload_uri_parameters;
 pub use self::get_content_block_upload_uri_parameters::GetContentBlockUploadUriParameters;
+pub mod get_diff_by_blake3_hash_parameters;
+pub use self::get_diff_by_blake3_hash_parameters::GetDiffByBlake3HashParameters;
 pub mod get_diff_by_reference_type_parameters;
 pub use self::get_diff_by_reference_type_parameters::GetDiffByReferenceTypeParameters;
 pub mod get_diff_by_sha256_hash_parameters;
