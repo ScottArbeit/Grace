@@ -141,6 +141,41 @@ module Services =
     /// Logger instance for the Services.Actor module.
     let private log = loggerFactory.CreateLogger("Services.Actor")
 
+    type VersionHashPrefixResolution<'T> =
+        | NoMatches
+        | UniqueMatch of 'T
+        | AmbiguousMatches of 'T array
+
+    let internal maxVersionHashPrefixResolutionMatches = 2
+
+    let internal resolveVersionHashPrefixMatches<'T> (matches: seq<'T>) : VersionHashPrefixResolution<'T> =
+        let boundedMatches =
+            matches
+            |> Seq.truncate maxVersionHashPrefixResolutionMatches
+            |> Seq.toArray
+
+        match boundedMatches.Length with
+        | 0 -> NoMatches
+        | 1 -> UniqueMatch boundedMatches[0]
+        | _ -> AmbiguousMatches boundedMatches
+
+    let internal tryGetUniqueVersionHashPrefixMatch<'T> (resolution: VersionHashPrefixResolution<'T>) =
+        match resolution with
+        | UniqueMatch value -> Some value
+        | NoMatches
+        | AmbiguousMatches _ -> None
+
+    let internal resolveScopedVersionHashPrefix<'T> (hashPrefix: string) (getHash: 'T -> string) (matches: seq<'T>) : VersionHashPrefixResolution<'T> =
+        let normalizedPrefix = hashPrefix.Trim()
+
+        matches
+        |> Seq.filter (fun candidate ->
+            let candidateHash = getHash candidate
+
+            not (String.IsNullOrWhiteSpace candidateHash)
+            && candidateHash.StartsWith(normalizedPrefix, StringComparison.OrdinalIgnoreCase))
+        |> resolveVersionHashPrefixMatches
+
     let private defaultAzureCredential = lazy (DefaultAzureCredential())
 
     let private serviceBusClient =
@@ -1510,11 +1545,18 @@ module Services =
                     .ToArray()
         }
 
+    /// Resolves a reference by its SHA-256 hash.
+    let getReferenceResolutionBySha256Hash (repositoryId: RepositoryId) (branchId: BranchId) (sha256Hash: Sha256Hash) =
+        task {
+            let! references = getReferencesBySha256Hash repositoryId branchId sha256Hash maxVersionHashPrefixResolutionMatches
+            return resolveScopedVersionHashPrefix sha256Hash (fun (referenceDto: ReferenceDto) -> referenceDto.Sha256Hash) references
+        }
+
     /// Gets a reference by its SHA-256 hash.
     let getReferenceBySha256Hash (repositoryId: RepositoryId) (branchId: BranchId) (sha256Hash: Sha256Hash) =
         task {
-            let! references = getReferencesBySha256Hash repositoryId branchId sha256Hash 1
-            if references.Length > 0 then return Some references[0] else return None
+            let! resolution = getReferenceResolutionBySha256Hash repositoryId branchId sha256Hash
+            return tryGetUniqueVersionHashPrefixMatch resolution
         }
 
     /// Gets a list of references for a given branch.
@@ -2210,10 +2252,10 @@ module Services =
                     .ToArray()
         }
 
-    /// Gets a DirectoryVersion by searching using a Sha256Hash value.
-    let getDirectoryVersionBySha256Hash (repositoryId: RepositoryId) (sha256Hash: Sha256Hash) correlationId =
+    /// Resolves a DirectoryVersion by searching using a Sha256Hash value.
+    let getDirectoryVersionResolutionBySha256Hash (repositoryId: RepositoryId) (sha256Hash: Sha256Hash) correlationId =
         task {
-            let mutable directoryVersion = DirectoryVersion.Default
+            let directoryVersions = List<DirectoryVersion>()
 
             match actorStateStorageProvider with
             | Unknown -> ()
@@ -2225,7 +2267,7 @@ module Services =
                     let queryDefinition =
                         QueryDefinition(
                             """
-                            SELECT TOP 1 c.State
+                            SELECT TOP @maxCount c.State
                             FROM c
                             WHERE STARTSWITH(c.State[0].Event.created.Sha256Hash, @sha256Hash, true)
                                 AND c.GrainType = @grainType
@@ -2233,14 +2275,13 @@ module Services =
                             ORDER BY c.State[0].Event.created.CreatedAt DESC
                             """
                         )
+                            .WithParameter("@maxCount", maxVersionHashPrefixResolutionMatches)
                             .WithParameter("@sha256Hash", sha256Hash)
                             .WithParameter("@grainType", StateName.DirectoryVersion)
                             .WithParameter("@partitionKey", repositoryId)
 
                     try
                         let iterator = cosmosContainer.GetItemQueryIterator<DirectoryVersionEventValue>(queryDefinition, requestOptions = queryRequestOptions)
-
-                        let directoryVersionDtos = List<DirectoryVersionDto>()
 
                         while iterator.HasMoreResults do
                             let! results = DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> iterator.ReadNextAsync())
@@ -2263,10 +2304,7 @@ module Services =
                                             |> DirectoryVersionDto.UpdateDto directoryEvent)
                                         DirectoryVersionDto.Default
 
-                                directoryVersionDtos.Add(directoryVersionDto))
-
-                            if directoryVersionDtos.Count > 0 then
-                                directoryVersion <- directoryVersionDtos[0].DirectoryVersion
+                                directoryVersions.Add(directoryVersionDto.DirectoryVersion))
 
                         if (indexMetrics.Length >= 2)
                            && (requestCharge.Length >= 2)
@@ -2289,11 +2327,14 @@ module Services =
                     stringBuilderPool.Return(requestCharge)
             | MongoDB -> ()
 
-            if directoryVersion.DirectoryVersionId
-               <> DirectoryVersion.Default.DirectoryVersionId then
-                return Some directoryVersion
-            else
-                return None
+            return resolveScopedVersionHashPrefix sha256Hash (fun (directoryVersion: DirectoryVersion) -> directoryVersion.Sha256Hash) directoryVersions
+        }
+
+    /// Gets a DirectoryVersion by searching using a Sha256Hash value.
+    let getDirectoryVersionBySha256Hash (repositoryId: RepositoryId) (sha256Hash: Sha256Hash) correlationId =
+        task {
+            let! resolution = getDirectoryVersionResolutionBySha256Hash repositoryId sha256Hash correlationId
+            return tryGetUniqueVersionHashPrefixMatch resolution
         }
 
     /// Gets the most recent DirectoryVersion with HashesValidated = true by RelativePath.
@@ -2369,10 +2410,10 @@ module Services =
                 return None
         }
 
-    /// Gets a Root DirectoryVersion by searching using a Sha256Hash value.
-    let getRootDirectoryVersionBySha256Hash (repositoryId: RepositoryId) (sha256Hash: Sha256Hash) correlationId =
+    /// Resolves a Root DirectoryVersion by searching using a Sha256Hash value.
+    let getRootDirectoryVersionResolutionBySha256Hash (repositoryId: RepositoryId) (sha256Hash: Sha256Hash) correlationId =
         task {
-            let mutable directoryVersion = DirectoryVersion.Default
+            let directoryVersions = List<DirectoryVersion>()
 
             match actorStateStorageProvider with
             | Unknown -> ()
@@ -2384,7 +2425,7 @@ module Services =
                     let queryDefinition =
                         QueryDefinition(
                             $"""
-                            SELECT TOP 1 c.State
+                            SELECT TOP @maxCount c.State
                             FROM c
                             WHERE STARTSWITH(c.State[0].Event.created.Sha256Hash, @sha256Hash, true)
                                 AND (
@@ -2396,6 +2437,7 @@ module Services =
                             ORDER BY c.State[0].Event.created.CreatedAt DESC
                             """
                         )
+                            .WithParameter("@maxCount", maxVersionHashPrefixResolutionMatches)
                             .WithParameter("@sha256Hash", sha256Hash)
                             .WithParameter("@rootRelativePath", Constants.RootDirectoryPath)
                             .WithParameter("@slashRootRelativePath", RelativePath "/")
@@ -2404,7 +2446,6 @@ module Services =
 
                     try
                         let iterator = cosmosContainer.GetItemQueryIterator<DirectoryVersionEventValue>(queryDefinition, requestOptions = queryRequestOptions)
-                        let directoryVersionDtos = List<DirectoryVersionDto>()
 
                         while iterator.HasMoreResults do
                             let! results = iterator.ReadNextAsync()
@@ -2427,10 +2468,7 @@ module Services =
                                             |> DirectoryVersionDto.UpdateDto directoryEvent)
                                         DirectoryVersionDto.Default
 
-                                directoryVersionDtos.Add(directoryVersionDto))
-
-                        if directoryVersionDtos.Count > 0 then
-                            directoryVersion <- directoryVersionDtos[0].DirectoryVersion
+                                directoryVersions.Add(directoryVersionDto.DirectoryVersion))
 
                         if (indexMetrics.Length >= 2)
                            && (requestCharge.Length >= 2)
@@ -2458,11 +2496,14 @@ module Services =
                     stringBuilderPool.Return(requestCharge)
             | MongoDB -> ()
 
-            if directoryVersion.DirectoryVersionId
-               <> DirectoryVersion.Default.DirectoryVersionId then
-                return Some directoryVersion
-            else
-                return None
+            return resolveScopedVersionHashPrefix sha256Hash (fun (directoryVersion: DirectoryVersion) -> directoryVersion.Sha256Hash) directoryVersions
+        }
+
+    /// Gets a Root DirectoryVersion by searching using a Sha256Hash value.
+    let getRootDirectoryVersionBySha256Hash (repositoryId: RepositoryId) (sha256Hash: Sha256Hash) correlationId =
+        task {
+            let! resolution = getRootDirectoryVersionResolutionBySha256Hash repositoryId sha256Hash correlationId
+            return tryGetUniqueVersionHashPrefixMatch resolution
         }
 
     /// Gets a Root DirectoryVersion by searching using a Sha256Hash value.
