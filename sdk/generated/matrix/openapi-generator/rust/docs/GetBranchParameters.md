@@ -15,6 +15,7 @@ Name | Type | Description | Notes
 **branch_id** | Option<**uuid::Uuid**> |  | [optional]
 **branch_name** | Option<**String**> |  | [optional]
 **sha256_hash** | Option<**String**> |  | [optional]
+**blake3_hash** | Option<**String**> |  | [optional]
 **reference_id** | Option<**uuid::Uuid**> |  | [optional]
 **include_deleted** | Option<**bool**> |  | [optional]
 

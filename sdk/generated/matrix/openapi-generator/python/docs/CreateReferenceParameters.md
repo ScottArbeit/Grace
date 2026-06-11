@@ -18,6 +18,7 @@ Name | Type | Description | Notes
 **branch_name** | **str** |  | [optional] 
 **directory_version_id** | **UUID** |  | [optional] 
 **sha256_hash** | **str** |  | [optional] 
+**blake3_hash** | **str** |  | [optional] 
 **message** | **str** |  | [optional] 
 
 ## Example
