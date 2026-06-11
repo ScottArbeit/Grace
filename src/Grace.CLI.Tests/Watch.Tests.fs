@@ -539,6 +539,40 @@ module WatchTests =
             |> should equal localFileVersion.Blake3Hash)
 
     [<Test>]
+    let ``object-cache copy returns file version when object already exists`` () =
+        withTempRepo (fun root ->
+            let nestedDirectory = Path.Combine(root, "dir")
+
+            Directory.CreateDirectory(nestedDirectory)
+            |> ignore
+
+            let filePath = Path.Combine(nestedDirectory, "cached-file.txt")
+            File.WriteAllText(filePath, "already cached object payload")
+
+            let firstCopy =
+                match (Services.copyToObjectDirectory (FilePath filePath))
+                    .Result
+                    with
+                | Some fileVersion -> fileVersion
+                | None -> failwith "Expected the first object-cache copy to create the object."
+
+            let secondCopy =
+                match (Services.copyToObjectDirectory (FilePath filePath))
+                    .Result
+                    with
+                | Some fileVersion -> fileVersion
+                | None -> failwith "Expected the cache-hit copy to return the existing object version."
+
+            secondCopy.Sha256Hash
+            |> should equal firstCopy.Sha256Hash
+
+            secondCopy.Blake3Hash
+            |> should equal firstCopy.Blake3Hash
+
+            secondCopy.RelativePath
+            |> should equal firstCopy.RelativePath)
+
+    [<Test>]
     let ``watch json auth failure emits one clean error envelope`` () =
         withTempRepo (fun _ ->
             clearWatchAuthEnv (fun () ->
