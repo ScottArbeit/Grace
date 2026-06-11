@@ -337,6 +337,8 @@ components:
       $ref: 'Branch.Components.OpenAPI.yaml#/BranchParameters'
     BranchQueryParameters:
       $ref: 'Branch.Components.OpenAPI.yaml#/BranchQueryParameters'
+    BranchHashQueryParameters:
+      $ref: 'Branch.Components.OpenAPI.yaml#/BranchHashQueryParameters'
     CreateBranchParameters:
       $ref: 'Branch.Components.OpenAPI.yaml#/CreateBranchParameters'
     RebaseParameters:

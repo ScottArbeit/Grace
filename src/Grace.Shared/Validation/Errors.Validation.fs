@@ -46,6 +46,7 @@ module Errors =
         | InvalidReferenceType
         | InvalidRepositoryId
         | InvalidRepositoryName
+        | InvalidBlake3Hash
         | InvalidSha256Hash
         | PromotionIsDisabled
         | PromotionNotAvailableBecauseThereAreNoPromotableReferences
@@ -105,6 +106,7 @@ module Errors =
             | InvalidReferenceType -> getLocalizedString StringResourceName.InvalidReferenceType
             | InvalidRepositoryId -> getLocalizedString StringResourceName.InvalidRepositoryId
             | InvalidRepositoryName -> getLocalizedString StringResourceName.InvalidRepositoryName
+            | InvalidBlake3Hash -> getLocalizedString StringResourceName.InvalidBlake3Hash
             | InvalidSha256Hash -> getLocalizedString StringResourceName.InvalidSha256Hash
             | PromotionIsDisabled -> getLocalizedString StringResourceName.PromotionIsDisabled
             | PromotionNotAvailableBecauseThereAreNoPromotableReferences ->

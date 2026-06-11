@@ -240,6 +240,7 @@ Class | Method | HTTP request | Description
  - [BranchCommandReturnValue](docs/BranchCommandReturnValue.md)
  - [BranchDto](docs/BranchDto.md)
  - [BranchDtoUpdatedAt](docs/BranchDtoUpdatedAt.md)
+ - [BranchHashQueryParameters](docs/BranchHashQueryParameters.md)
  - [BranchParameters](docs/BranchParameters.md)
  - [BranchQueryParameters](docs/BranchQueryParameters.md)
  - [BranchReturnValue](docs/BranchReturnValue.md)

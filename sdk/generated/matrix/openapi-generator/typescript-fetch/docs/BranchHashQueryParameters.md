@@ -1,7 +1,7 @@
 
-# BranchQueryParameters
+# BranchHashQueryParameters
 
-Parameters for branch query endpoints that can resolve a branch or reference by SHA-256 hash or reference id.
+Parameters for branch query endpoints that support SHA-256, BLAKE3, or reference id locators.
 
 ## Properties
 
@@ -19,11 +19,12 @@ Name | Type
 `branchName` | string
 `sha256Hash` | string
 `referenceId` | string
+`blake3Hash` | string
 
 ## Example
 
 ```typescript
-import type { BranchQueryParameters } from '@grace-vcs/generated-openapi-probe'
+import type { BranchHashQueryParameters } from '@grace-vcs/generated-openapi-probe'
 
 // TODO: Update the object below with actual values
 const example = {
@@ -39,7 +40,8 @@ const example = {
   "branchName": MyBranch,
   "sha256Hash": 805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243,
   "referenceId": c8f9bac8-d489-46c7-917f-b36b7d9efa9a,
-} satisfies BranchQueryParameters
+  "blake3Hash": 9A35D91B2F631BE9025DE753139B88F7B1E71385C412BC3986FF2F38F230841D,
+} satisfies BranchHashQueryParameters
 
 console.log(example)
 
@@ -48,7 +50,7 @@ const exampleJSON: string = JSON.stringify(example)
 console.log(exampleJSON)
 
 // Parse the JSON string back to an object
-const exampleParsed = JSON.parse(exampleJSON) as BranchQueryParameters
+const exampleParsed = JSON.parse(exampleJSON) as BranchHashQueryParameters
 console.log(exampleParsed)
 ```
 

@@ -11,9 +11,9 @@
 use crate::models;
 use serde::{Deserialize, Serialize};
 
-/// CreateReferenceParameters : Parameters for /branch/promote, /branch/commit, /branch/checkpoint, /branch/save, and /branch/tag.
+/// BranchHashQueryParameters : Parameters for branch query endpoints that support SHA-256, BLAKE3, or reference id locators.
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
-pub struct CreateReferenceParameters {
+pub struct BranchHashQueryParameters {
     /// Body DTO correlation id copied into Grace command/event metadata after request parsing. This field is distinct from the X-Correlation-Id transport header.
     #[serde(rename = "CorrelationId", skip_serializing_if = "Option::is_none")]
     pub correlation_id: Option<String>,
@@ -36,20 +36,18 @@ pub struct CreateReferenceParameters {
     pub branch_id: Option<uuid::Uuid>,
     #[serde(rename = "BranchName", skip_serializing_if = "Option::is_none")]
     pub branch_name: Option<String>,
-    #[serde(rename = "DirectoryVersionId", skip_serializing_if = "Option::is_none")]
-    pub directory_version_id: Option<uuid::Uuid>,
     #[serde(rename = "Sha256Hash", skip_serializing_if = "Option::is_none")]
     pub sha256_hash: Option<String>,
+    #[serde(rename = "ReferenceId", skip_serializing_if = "Option::is_none")]
+    pub reference_id: Option<uuid::Uuid>,
     #[serde(rename = "Blake3Hash", skip_serializing_if = "Option::is_none")]
     pub blake3_hash: Option<String>,
-    #[serde(rename = "Message", skip_serializing_if = "Option::is_none")]
-    pub message: Option<String>,
 }
 
-impl CreateReferenceParameters {
-    /// Parameters for /branch/promote, /branch/commit, /branch/checkpoint, /branch/save, and /branch/tag.
-    pub fn new() -> CreateReferenceParameters {
-        CreateReferenceParameters {
+impl BranchHashQueryParameters {
+    /// Parameters for branch query endpoints that support SHA-256, BLAKE3, or reference id locators.
+    pub fn new() -> BranchHashQueryParameters {
+        BranchHashQueryParameters {
             correlation_id: None,
             principal: None,
             owner_id: None,
@@ -60,10 +58,9 @@ impl CreateReferenceParameters {
             repository_name: None,
             branch_id: None,
             branch_name: None,
-            directory_version_id: None,
             sha256_hash: None,
+            reference_id: None,
             blake3_hash: None,
-            message: None,
         }
     }
 }
