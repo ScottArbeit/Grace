@@ -152,6 +152,14 @@ module Services =
         /// Gets a DirectoryInfo instance for the parent directory of this local file.
         member this.DirectoryInfo = DirectoryInfo(this.FullName)
 
+    /// Gets the local object-cache file name. Legacy rows without BLAKE3 keep the SHA-only name; dual-hash rows
+    /// include BLAKE3 so same-path SHA-256 collisions do not overwrite or reuse the wrong local bytes.
+    let getLocalObjectCacheFileName (relativePath: RelativePath) (sha256Hash: Sha256Hash) (blake3Hash: Blake3Hash) =
+        if String.IsNullOrWhiteSpace(string blake3Hash) then
+            getObjectFileName relativePath sha256Hash
+        else
+            getObjectFileName relativePath (Sha256Hash $"{sha256Hash}_{blake3Hash}")
+
     // Extension methods for dealing with local files.
     type LocalFileVersion with
         /// Gets the full path for this file in the working directory.
@@ -166,7 +174,19 @@ module Services =
         member this.RelativeDirectory = Path.GetRelativePath(Current().RootDirectory, this.FileInfo.DirectoryName)
 
         /// Gets the full name of the object file for this LocalFileVersion.
-        member this.FullObjectPath = getNativeFilePath (Path.Combine(Current().ObjectDirectory, this.RelativePath, this.GetObjectFileName))
+        member this.FullObjectPath =
+            getNativeFilePath (
+                Path.Combine(Current().ObjectDirectory, this.RelativePath, getLocalObjectCacheFileName this.RelativePath this.Sha256Hash this.Blake3Hash)
+            )
+
+    let getLocalObjectCachePathForFileVersion (fileVersion: FileVersion) =
+        getNativeFilePath (
+            Path.Combine(
+                Current().ObjectDirectory,
+                fileVersion.RelativePath,
+                getLocalObjectCacheFileName fileVersion.RelativePath fileVersion.Sha256Hash fileVersion.Blake3Hash
+            )
+        )
 
     /// Flag to determine if we should do case-insensitive file name processing on the current platform.
     let ignoreCase = runningOnWindows
@@ -904,7 +924,7 @@ module Services =
             if not exists then
                 let allFilesExist =
                     localDirectoryVersion.Files
-                    |> Seq.forall (fun file -> File.Exists(Path.Combine(Current().ObjectDirectory, file.RelativeDirectory, file.GetObjectFileName)))
+                    |> Seq.forall (fun file -> File.Exists(file.FullObjectPath))
 
                 if allFilesExist then
                     do! upsertObjectCache [ localDirectoryVersion ]
@@ -1166,7 +1186,7 @@ module Services =
                 RepositoryName = parameters.RepositoryName
                 AuthorizedScope = fileVersion.RelativePath
                 FileVersion = fileVersion
-                LocalFilePath = Path.Combine(current.ObjectDirectory, fileVersion.RelativePath, fileVersion.GetObjectFileName)
+                LocalFilePath = getLocalObjectCachePathForFileVersion fileVersion
                 CorrelationId = parameters.CorrelationId
                 PlannerOptions = LocalPlanner.Options.Default
             }
@@ -1859,14 +1879,7 @@ module Services =
         }
 
     /// Checks if a file already exists in the object cache.
-    let isFileInObjectCache (fileVersion: LocalFileVersion) =
-        task {
-            let objectFileName = fileVersion.GetObjectFileName
-
-            let objectFilePath = Path.Combine(Current().ObjectDirectory, fileVersion.RelativeDirectory, objectFileName)
-
-            return File.Exists(objectFilePath)
-        }
+    let isFileInObjectCache (fileVersion: LocalFileVersion) = task { return File.Exists(fileVersion.FullObjectPath) }
 
     /// Updates the Grace Status index with new directory versions after getting them from the server.
     let updateGraceStatusWithNewDirectoryVersionsFromServer
@@ -2426,7 +2439,7 @@ module Services =
                     // Get the new name for this version of the file, including the SHA-256 hash.
                     let relativeDirectoryPath = getLocalRelativeDirectory filePath (Current().RootDirectory)
 
-                    let objectFileName = getObjectFileName filePath sha256Hash
+                    let objectFileName = getLocalObjectCacheFileName (RelativePath relativeFilePath) (Sha256Hash $"{sha256Hash}") blake3Hash
 
                     let objectDirectoryPath = Path.Combine(Current().ObjectDirectory, relativeDirectoryPath)
 

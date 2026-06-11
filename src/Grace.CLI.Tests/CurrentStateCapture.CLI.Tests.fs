@@ -936,6 +936,17 @@ module CurrentStateCaptureCliTests =
 
             let updatedLocalFile = updatedFile.ToLocalFileVersion DateTime.UtcNow
 
+            let previousObjectPath = previousFile.FullObjectPath
+            let updatedObjectPath = updatedLocalFile.FullObjectPath
+
+            previousObjectPath
+            |> should not' (equal updatedObjectPath)
+
+            Directory.CreateDirectory(Path.GetDirectoryName(previousObjectPath))
+            |> ignore
+
+            File.WriteAllBytes(previousObjectPath, previousBytes)
+
             Directory.CreateDirectory(Path.GetDirectoryName(updatedLocalFile.FullObjectPath))
             |> ignore
 
