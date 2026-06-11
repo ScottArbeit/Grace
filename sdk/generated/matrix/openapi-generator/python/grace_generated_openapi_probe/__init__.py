@@ -128,6 +128,7 @@ __all__ = [
     "GetBySha256HashParameters",
     "GetContentBlockDownloadUriParameters",
     "GetContentBlockUploadUriParameters",
+    "GetDiffByBlake3HashParameters",
     "GetDiffByReferenceTypeParameters",
     "GetDiffBySha256HashParameters",
     "GetDiffParameters",
@@ -371,6 +372,7 @@ from grace_generated_openapi_probe.models.get_by_directory_ids_parameters import
 from grace_generated_openapi_probe.models.get_by_sha256_hash_parameters import GetBySha256HashParameters as GetBySha256HashParameters
 from grace_generated_openapi_probe.models.get_content_block_download_uri_parameters import GetContentBlockDownloadUriParameters as GetContentBlockDownloadUriParameters
 from grace_generated_openapi_probe.models.get_content_block_upload_uri_parameters import GetContentBlockUploadUriParameters as GetContentBlockUploadUriParameters
+from grace_generated_openapi_probe.models.get_diff_by_blake3_hash_parameters import GetDiffByBlake3HashParameters as GetDiffByBlake3HashParameters
 from grace_generated_openapi_probe.models.get_diff_by_reference_type_parameters import GetDiffByReferenceTypeParameters as GetDiffByReferenceTypeParameters
 from grace_generated_openapi_probe.models.get_diff_by_sha256_hash_parameters import GetDiffBySha256HashParameters as GetDiffBySha256HashParameters
 from grace_generated_openapi_probe.models.get_diff_parameters import GetDiffParameters as GetDiffParameters

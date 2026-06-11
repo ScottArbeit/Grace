@@ -232,6 +232,18 @@ module Text =
         let ScopeKind = "--scope"
 
         [<Literal>]
+        let B1 = "--b1"
+
+        [<Literal>]
+        let B2 = "--b2"
+
+        [<Literal>]
+        let Blake3Hash1 = "--blake3-hash-1"
+
+        [<Literal>]
+        let Blake3Hash2 = "--blake3-hash-2"
+
+        [<Literal>]
         let S1 = "--s1"
 
         [<Literal>]

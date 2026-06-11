@@ -247,3 +247,83 @@ module Diff =
                         context
                         |> result500ServerError (GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (getCorrelationId context))
             }
+
+    let private diffHashError (context: HttpContext) message =
+        let graceError = GraceError.Create message (getCorrelationId context)
+        graceError.Properties.Add("Path", context.Request.Path.Value)
+        graceError
+
+    /// Retrieves a diff taken by comparing two DirectoryVersions by BLAKE3 hash or unique BLAKE3 prefix.
+    let GetDiffByBlake3Hash: HttpHandler =
+        fun (next: HttpFunc) (context: HttpContext) ->
+            task {
+                let correlationId = getCorrelationId context
+
+                try
+                    let validations (parameters: GetDiffByBlake3HashParameters) =
+                        [|
+                            String.isNotEmpty parameters.Blake3Hash1 DiffError.Blake3HashIsRequired
+                            String.isNotEmpty parameters.Blake3Hash2 DiffError.Blake3HashIsRequired
+                            String.isValidBlake3HashPrefix parameters.Blake3Hash1 DiffError.InvalidBlake3Hash
+                            String.isValidBlake3HashPrefix parameters.Blake3Hash2 DiffError.InvalidBlake3Hash
+                        |]
+
+                    let query (context: HttpContext) _ (actorProxy: IDiffActor) =
+                        task {
+                            let! diff = actorProxy.GetDiff(getCorrelationId context)
+                            return diff
+                        }
+
+                    let! parameters = context |> parse<GetDiffByBlake3HashParameters>
+                    let validationResults = validations parameters
+                    let! validationsPassed = validationResults |> allPass
+
+                    if validationsPassed then
+                        let graceIds = getGraceIds context
+                        let repositoryId = Guid.Parse(graceIds.RepositoryIdString)
+
+                        let! directoryVersionResolution1 = getDirectoryVersionResolutionByBlake3Hash repositoryId parameters.Blake3Hash1 correlationId
+
+                        let! directoryVersionResolution2 = getDirectoryVersionResolutionByBlake3Hash repositoryId parameters.Blake3Hash2 correlationId
+
+                        match directoryVersionResolution1, directoryVersionResolution2 with
+                        | UniqueMatch directoryVersion1, UniqueMatch directoryVersion2 ->
+                            parameters.DirectoryVersionId1 <- directoryVersion1.DirectoryVersionId
+                            parameters.DirectoryVersionId2 <- directoryVersion2.DirectoryVersionId
+                            return! processQuery context parameters validations query
+                        | NoMatches, _ ->
+                            return!
+                                context
+                                |> result400BadRequest (
+                                    diffHashError context $"No DirectoryVersion matched Blake3Hash1 prefix '{parameters.Blake3Hash1}' in repository scope."
+                                )
+                        | _, NoMatches ->
+                            return!
+                                context
+                                |> result400BadRequest (
+                                    diffHashError context $"No DirectoryVersion matched Blake3Hash2 prefix '{parameters.Blake3Hash2}' in repository scope."
+                                )
+                        | AmbiguousMatches _, _ ->
+                            return!
+                                context
+                                |> result400BadRequest (
+                                    diffHashError context $"Blake3Hash1 prefix '{parameters.Blake3Hash1}' is ambiguous in repository scope."
+                                )
+                        | _, AmbiguousMatches _ ->
+                            return!
+                                context
+                                |> result400BadRequest (
+                                    diffHashError context $"Blake3Hash2 prefix '{parameters.Blake3Hash2}' is ambiguous in repository scope."
+                                )
+                    else
+                        let! error = validationResults |> getFirstError
+
+                        return!
+                            context
+                            |> result400BadRequest (diffHashError context (DiffError.getErrorMessage error))
+                with
+                | ex ->
+                    return!
+                        context
+                        |> result500ServerError (GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" correlationId)
+            }
