@@ -212,16 +212,16 @@ module CommandOutputContractRegistryTests =
     [<Test>]
     let ``registry contains accepted inventory totals`` () =
         CommandOutputContract.entries.Length
-        |> should equal 203
+        |> should equal 204
 
         CommandOutputContract.routedEntries.Length
-        |> should equal 194
+        |> should equal 195
 
         CommandOutputContract.sourceOnlyEntries.Length
         |> should equal 9
 
         countBy CommonRenderOutputEnvelope
-        |> should equal 182
+        |> should equal 183
 
         countBy ImmediateJsonErrorOnly |> should equal 1
 
@@ -262,7 +262,7 @@ module CommandOutputContractRegistryTests =
 
         let deleted = 0
 
-        jsonReady |> should equal 182
+        jsonReady |> should equal 183
         intentionallyHumanOnly |> should equal 1
         deferredV2 |> should equal 11
         sourceOnly |> should equal 9
@@ -285,7 +285,7 @@ module CommandOutputContractRegistryTests =
             CommandOutputContract.routedEntries
             |> List.map (fun entry -> entry.Identity.CommandId)
 
-        discovered.Length |> should equal 194
+        discovered.Length |> should equal 195
 
         discovered.Length
         |> should equal (discovered |> List.distinct |> List.length)
@@ -403,12 +403,28 @@ module CommandOutputContractRegistryTests =
         | None -> Assert.Fail("branch annotate should have a registry entry.")
 
     [<Test>]
+    let ``diff blake3 json mode is centrally rendered instead of human-progress only`` () =
+        let identity = CommandOutputContract.commandIdentity [ "diff" ] "blake3"
+
+        match CommandOutputContract.tryFind identity with
+        | Some entry ->
+            entry.CurrentJsonBehavior
+            |> should equal CommonRenderOutputEnvelope
+
+            entry.EnvelopeContract
+            |> should equal (ExistingGraceResultEnvelope ReuseExistingApiOrSdkDto)
+
+            entry.Features.JsonMode
+            |> should equal ExistingBehavior
+        | None -> Assert.Fail("diff blake3 should have a registry entry.")
+
+    [<Test>]
     let ``current common renderer entries keep the Grace envelope model`` () =
         let commonEntries =
             CommandOutputContract.entries
             |> List.filter (fun entry -> entry.CurrentJsonBehavior = CommonRenderOutputEnvelope)
 
-        commonEntries.Length |> should equal 182
+        commonEntries.Length |> should equal 183
 
         for entry in commonEntries do
             match entry.EnvelopeContract with
@@ -425,7 +441,7 @@ module CommandOutputContractRegistryTests =
             CommandOutputContract.entries
             |> List.filter (fun entry -> entry.CurrentJsonBehavior = CommonRenderOutputEnvelope)
 
-        commonEntries.Length |> should equal 182
+        commonEntries.Length |> should equal 183
 
         let parserInvalidEntries =
             commonEntries

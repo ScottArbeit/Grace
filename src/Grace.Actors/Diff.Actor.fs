@@ -101,10 +101,8 @@ module Diff =
                 return differences
             }
 
-        /// Deconstructs an ActorId of the form "{directoryVersionId1}*{directoryVersionId2}" into a tuple of the two DirectoryId values.
-        let deconstructActorId (primaryKey: string) =
-            let directoryIds = primaryKey.Split("*")
-            (DirectoryVersionId directoryIds[0], DirectoryVersionId directoryIds[1])
+        /// Deconstructs a Diff actor primary key from the current compact format or the legacy D-format key.
+        let deconstructActorId (primaryKey: string) = ActorProxy.Diff.ParsePrimaryKey primaryKey
 
         member val private correlationId: CorrelationId = String.Empty with get, set
 

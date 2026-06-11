@@ -18,6 +18,7 @@ open Microsoft.AspNetCore.Hosting
 open Microsoft.AspNetCore.Server.Kestrel.Core
 open Microsoft.Azure.Cosmos
 open Microsoft.Extensions.Configuration
+open Microsoft.Extensions.DependencyInjection
 open Microsoft.Extensions.Hosting
 open Microsoft.Extensions.Logging
 open Microsoft.Extensions.Caching.Memory
@@ -331,15 +332,27 @@ module Program =
                                 ValueTask.FromResult(cosmosClient))),
                         typeof<GracePartitionKeyProvider>
                     )
-                    .AddAzureBlobGrainStorage(
-                        GraceDiffStorage,
-                        (fun (options: AzureBlobStorageOptions) ->
-                            options.BlobServiceClient <- Context.blobServiceClient
-                            options.ContainerName <- configuration[getConfigKey EnvironmentVariables.DiffContainerName]
-                            options.GrainStorageSerializer <- SystemTextJsonGrainStorageSerializer(Constants.JsonSerializerOptions))
-                    )
                     .AddActivityPropagation()
 
+                |> ignore
+
+                let diffContainerName =
+                    let configuredDiffContainerName = configuration[getConfigKey EnvironmentVariables.DiffContainerName]
+
+                    if String.IsNullOrWhiteSpace configuredDiffContainerName then
+                        let environmentDiffContainerName = Environment.GetEnvironmentVariable EnvironmentVariables.DiffContainerName
+
+                        if String.IsNullOrWhiteSpace environmentDiffContainerName then
+                            "diffs"
+                        else
+                            environmentDiffContainerName
+                    else
+                        configuredDiffContainerName
+
+                siloBuilder.Services.AddKeyedSingleton<IGrainStorage>(
+                    GraceDiffStorage,
+                    Func<IServiceProvider, obj, IGrainStorage>(fun _ name -> DiffBlobGrainStorage(string name, Context.blobServiceClient, diffContainerName))
+                )
                 |> ignore
 
                 siloBuilder.AddMemoryGrainStorage(GraceInMemoryStorage)

@@ -84,3 +84,31 @@
           $ref: './Responses.OpenAPI.yaml#/400'
         '500':
           $ref: './Responses.OpenAPI.yaml#/500'
+
+  /diff/getDiffByBlake3Hash:
+    post:
+      tags:
+        - Diffs
+      summary: Get a diff by BLAKE3 hash.
+      description: Retrieves a diff by comparing two directory versions identified by BLAKE3 hash or unique BLAKE3 prefix.
+      operationId: GetDiffByBlake3Hash
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: './Diff.Components.OpenAPI.yaml#/GetDiffByBlake3HashParameters'
+            examples:
+              byBlake3Hash:
+                summary: Compare two directory versions by BLAKE3 hash
+                value:
+                  <<: *diffByDirectoryVersionExample
+                  Blake3Hash1: af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adcd1e8c76d9a8885f16a39f
+                  Blake3Hash2: 9f1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adcd1e8c76d9a8885f16a30a
+      responses:
+        '200':
+          $ref: './Diff.Components.OpenAPI.yaml#/DiffResponse'
+        '400':
+          $ref: './Responses.OpenAPI.yaml#/400'
+        '500':
+          $ref: './Responses.OpenAPI.yaml#/500'

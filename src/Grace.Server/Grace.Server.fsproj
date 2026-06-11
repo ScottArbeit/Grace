@@ -110,6 +110,7 @@
                 <Compile Include="DerivedComputation.Server.fs" />
                 <Compile Include="Notification.Server.fs" />
 		<Compile Include="Startup.Server.fs" />
+		<Compile Include="DiffBlobGrainStorage.Server.fs" />
 		<Compile Include="Program.Server.fs" />
 		<None Include="Dockerfile" />
 		<None Include="properties\publishprofiles\DisableContainerBuild.pubxml" />

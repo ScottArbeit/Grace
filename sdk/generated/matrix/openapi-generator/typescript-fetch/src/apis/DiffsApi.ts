@@ -24,6 +24,11 @@ import {
     DiffReturnValueToJSON,
 } from '../models/DiffReturnValue';
 import {
+    type GetDiffByBlake3HashParameters,
+    GetDiffByBlake3HashParametersFromJSON,
+    GetDiffByBlake3HashParametersToJSON,
+} from '../models/GetDiffByBlake3HashParameters';
+import {
     type GetDiffBySha256HashParameters,
     GetDiffBySha256HashParametersFromJSON,
     GetDiffBySha256HashParametersToJSON,
@@ -46,6 +51,10 @@ import {
 
 export interface GetDiffRequest {
     getDiffParameters: GetDiffParameters;
+}
+
+export interface GetDiffByBlake3HashRequest {
+    getDiffByBlake3HashParameters: GetDiffByBlake3HashParameters;
 }
 
 export interface GetDiffBySha256HashRequest {
@@ -115,6 +124,63 @@ export class DiffsApi extends runtime.BaseAPI {
      */
     async getDiff(requestParameters: GetDiffRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<DiffReturnValue> {
         const response = await this.getDiffRaw(requestParameters, initOverrides);
+        return await response.value();
+    }
+
+    /**
+     * Creates request options for getDiffByBlake3Hash without sending the request
+     */
+    async getDiffByBlake3HashRequestOpts(requestParameters: GetDiffByBlake3HashRequest): Promise<runtime.RequestOpts> {
+        if (requestParameters['getDiffByBlake3HashParameters'] == null) {
+            throw new runtime.RequiredError(
+                'getDiffByBlake3HashParameters',
+                'Required parameter "getDiffByBlake3HashParameters" was null or undefined when calling getDiffByBlake3Hash().'
+            );
+        }
+
+        const queryParameters: any = {};
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+        headerParameters['Content-Type'] = 'application/json';
+
+        if (this.configuration && this.configuration.accessToken) {
+            const token = this.configuration.accessToken;
+            const tokenString = await token("bearerAuth", []);
+
+            if (tokenString) {
+                headerParameters["Authorization"] = `Bearer ${tokenString}`;
+            }
+        }
+
+        let urlPath = `/diff/getDiffByBlake3Hash`;
+
+        return {
+            path: urlPath,
+            method: 'POST',
+            headers: headerParameters,
+            query: queryParameters,
+            body: GetDiffByBlake3HashParametersToJSON(requestParameters['getDiffByBlake3HashParameters']),
+        };
+    }
+
+    /**
+     * Retrieves a diff by comparing two directory versions identified by BLAKE3 hash or unique BLAKE3 prefix.
+     * Get a diff by BLAKE3 hash.
+     */
+    async getDiffByBlake3HashRaw(requestParameters: GetDiffByBlake3HashRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<DiffReturnValue>> {
+        const requestOptions = await this.getDiffByBlake3HashRequestOpts(requestParameters);
+        const response = await this.request(requestOptions, initOverrides);
+
+        return new runtime.JSONApiResponse(response, (jsonValue) => DiffReturnValueFromJSON(jsonValue));
+    }
+
+    /**
+     * Retrieves a diff by comparing two directory versions identified by BLAKE3 hash or unique BLAKE3 prefix.
+     * Get a diff by BLAKE3 hash.
+     */
+    async getDiffByBlake3Hash(requestParameters: GetDiffByBlake3HashRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<DiffReturnValue> {
+        const response = await this.getDiffByBlake3HashRaw(requestParameters, initOverrides);
         return await response.value();
     }
 
