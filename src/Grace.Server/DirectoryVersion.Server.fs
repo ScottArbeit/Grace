@@ -35,6 +35,20 @@ module DirectoryVersion =
 
     let activitySource = new ActivitySource("Branch")
 
+    let private directorySaveDepth (relativePath: RelativePath) =
+        let trimmedPath = $"{relativePath}".Trim().TrimEnd('/', '\\')
+
+        if String.IsNullOrWhiteSpace trimmedPath
+           || trimmedPath = "." then
+            0
+        else
+            trimmedPath
+                .Split(
+                    [| '/'; '\\' |],
+                    StringSplitOptions.RemoveEmptyEntries
+                )
+                .Length
+
     let processCommand<'T when 'T :> DirectoryVersionParameters>
         (context: HttpContext)
         (validations: Validations<'T>)
@@ -369,16 +383,7 @@ module DirectoryVersion =
 
                         let orderedDirectoryVersions =
                             parameters.DirectoryVersions
-                            |> Seq.sortByDescending (fun directoryVersion ->
-                                $"{directoryVersion.RelativePath}".TrimEnd(
-                                    '/',
-                                    '\\'
-                                )
-                                    .Split(
-                                    [| '/'; '\\' |],
-                                    StringSplitOptions.RemoveEmptyEntries
-                                )
-                                    .Length)
+                            |> Seq.sortByDescending (fun directoryVersion -> directorySaveDepth directoryVersion.RelativePath)
                             |> Seq.toArray
 
                         for directoryVersion in orderedDirectoryVersions do
