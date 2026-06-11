@@ -573,18 +573,22 @@ module Branch =
                 let directoryVersionActorProxy = DirectoryVersion.CreateActorProxy directoryVersionId repositoryId correlationId
                 let! directoryVersionDto = directoryVersionActorProxy.Get correlationId
                 let directoryVersion = directoryVersionDto.DirectoryVersion
+                let requestedSha256Hash = string sha256Hash
 
                 if directoryVersion.DirectoryVersionId = DirectoryVersionId.Empty then
                     return None
                 elif
-                    not (String.IsNullOrEmpty(string sha256Hash))
-                    && directoryVersion.Sha256Hash <> sha256Hash
+                    not (String.IsNullOrEmpty requestedSha256Hash)
+                    && not (
+                        (string directoryVersion.Sha256Hash)
+                            .StartsWith(requestedSha256Hash, StringComparison.OrdinalIgnoreCase)
+                    )
                 then
                     return None
                 else
                     return Some directoryVersion
             elif not (String.IsNullOrEmpty(string sha256Hash)) then
-                return! getDirectoryVersionBySha256Hash repositoryId sha256Hash correlationId
+                return! getRootDirectoryVersionBySha256Hash repositoryId sha256Hash correlationId
             else
                 return None
         }
