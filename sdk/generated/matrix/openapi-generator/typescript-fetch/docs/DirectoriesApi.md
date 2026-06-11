@@ -6,6 +6,7 @@ All URIs are relative to *http://localhost:5000*
 |------------- | ------------- | -------------|
 | [**createDirectoryVersion**](DirectoriesApi.md#createdirectoryversion) | **POST** /directory/create | Create a new directory version. |
 | [**getDirectoryVersion**](DirectoriesApi.md#getdirectoryversion) | **POST** /directory/get | Get a directory version. |
+| [**getDirectoryVersionByBlake3Hash**](DirectoriesApi.md#getdirectoryversionbyblake3hash) | **POST** /directory/getByBlake3Hash | Get a directory version by BLAKE3 hash. |
 | [**getDirectoryVersionBySha256Hash**](DirectoriesApi.md#getdirectoryversionbysha256hash) | **POST** /directory/getBySha256Hash | Get a directory version by SHA-256 hash. |
 | [**listDirectoryVersionsById**](DirectoriesApi.md#listdirectoryversionsbyid) | **POST** /directory/getByDirectoryIds | List directory versions by id. |
 | [**listDirectoryVersionsRecursive**](DirectoriesApi.md#listdirectoryversionsrecursive) | **POST** /directory/getDirectoryVersionsRecursive | List a directory version and its children. |
@@ -159,9 +160,82 @@ example().catch(console.error);
 [[Back to top]](#) [[Back to API list]](../README.md#api-endpoints) [[Back to Model list]](../README.md#models) [[Back to README]](../README.md)
 
 
+## getDirectoryVersionByBlake3Hash
+
+> DirectoryVersionHashLookupReturnValue getDirectoryVersionByBlake3Hash(getByBlake3HashParameters)
+
+Get a directory version by BLAKE3 hash.
+
+Gets a directory version DTO by BLAKE3 hash or unique BLAKE3 prefix.
+
+### Example
+
+```ts
+import {
+  Configuration,
+  DirectoriesApi,
+} from '@grace-vcs/generated-openapi-probe';
+import type { GetDirectoryVersionByBlake3HashRequest } from '@grace-vcs/generated-openapi-probe';
+
+async function example() {
+  console.log("🚀 Testing @grace-vcs/generated-openapi-probe SDK...");
+  const config = new Configuration({ 
+    // Configure HTTP bearer authorization: bearerAuth
+    accessToken: "YOUR BEARER TOKEN",
+  });
+  const api = new DirectoriesApi(config);
+
+  const body = {
+    // GetByBlake3HashParameters
+    getByBlake3HashParameters: {"CorrelationId":"cli-20260604T181500Z-0001","Principal":"user:alice","OwnerId":"9dd5f81f-dc43-4839-9173-85d09394f30f","OrganizationId":"e35d64a9-b990-44f5-bf02-32ad7d15630c","RepositoryId":"ab6f35ef-6e01-440b-8f9b-c343a5272095","DirectoryVersionId":"33a4e36b-828f-4fae-9343-50b6560dc842","Blake3Hash":"9A35D91B2F631BE9025DE753139B88F7B1E71385C412BC3986FF2F38F230841D"},
+  } satisfies GetDirectoryVersionByBlake3HashRequest;
+
+  try {
+    const data = await api.getDirectoryVersionByBlake3Hash(body);
+    console.log(data);
+  } catch (error) {
+    console.error(error);
+  }
+}
+
+// Run the test
+example().catch(console.error);
+```
+
+### Parameters
+
+
+| Name | Type | Description  | Notes |
+|------------- | ------------- | ------------- | -------------|
+| **getByBlake3HashParameters** | [GetByBlake3HashParameters](GetByBlake3HashParameters.md) |  | |
+
+### Return type
+
+[**DirectoryVersionHashLookupReturnValue**](DirectoryVersionHashLookupReturnValue.md)
+
+### Authorization
+
+[bearerAuth](../README.md#bearerAuth)
+
+### HTTP request headers
+
+- **Content-Type**: `application/json`
+- **Accept**: `application/json`
+
+
+### HTTP response details
+| Status code | Description | Response headers |
+|-------------|-------------|------------------|
+| **200** | OK |  -  |
+| **400** | Bad Request |  -  |
+| **500** | Internal Server Error |  -  |
+
+[[Back to top]](#) [[Back to API list]](../README.md#api-endpoints) [[Back to Model list]](../README.md#models) [[Back to README]](../README.md)
+
+
 ## getDirectoryVersionBySha256Hash
 
-> DirectoryVersionReturnValue getDirectoryVersionBySha256Hash(getBySha256HashParameters)
+> DirectoryVersionHashLookupReturnValue getDirectoryVersionBySha256Hash(getBySha256HashParameters)
 
 Get a directory version by SHA-256 hash.
 
@@ -210,7 +284,7 @@ example().catch(console.error);
 
 ### Return type
 
-[**DirectoryVersionReturnValue**](DirectoryVersionReturnValue.md)
+[**DirectoryVersionHashLookupReturnValue**](DirectoryVersionHashLookupReturnValue.md)
 
 ### Authorization
 

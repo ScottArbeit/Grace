@@ -71,6 +71,7 @@ docs/DirectoryCommandReturnValue.md
 docs/DirectoryParameters.md
 docs/DirectoryVersion.md
 docs/DirectoryVersionApiDto.md
+docs/DirectoryVersionHashLookupReturnValue.md
 docs/DirectoryVersionListReturnValue.md
 docs/DirectoryVersionReturnValue.md
 docs/DiscoverContentBlocksParameters.md
@@ -92,6 +93,7 @@ docs/GetBranchParameters.md
 docs/GetBranchVersionParameters.md
 docs/GetBranchesByBranchIdParameters.md
 docs/GetBranchesParameters.md
+docs/GetByBlake3HashParameters.md
 docs/GetByDirectoryIdsParameters.md
 docs/GetBySha256HashParameters.md
 docs/GetContentBlockDownloadUriParameters.md
@@ -303,6 +305,7 @@ src/models/DirectoryCommandReturnValue.ts
 src/models/DirectoryParameters.ts
 src/models/DirectoryVersion.ts
 src/models/DirectoryVersionApiDto.ts
+src/models/DirectoryVersionHashLookupReturnValue.ts
 src/models/DirectoryVersionListReturnValue.ts
 src/models/DirectoryVersionReturnValue.ts
 src/models/DiscoverContentBlocksParameters.ts
@@ -324,6 +327,7 @@ src/models/GetBranchParameters.ts
 src/models/GetBranchVersionParameters.ts
 src/models/GetBranchesByBranchIdParameters.ts
 src/models/GetBranchesParameters.ts
+src/models/GetByBlake3HashParameters.ts
 src/models/GetByDirectoryIdsParameters.ts
 src/models/GetBySha256HashParameters.ts
 src/models/GetContentBlockDownloadUriParameters.ts
