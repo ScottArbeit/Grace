@@ -36,7 +36,7 @@ open Grace.Actors.Extensions
 
 module Diff =
 
-    type DiffActor([<PersistentState(StateName.Diff, Constants.GraceActorStorage)>] state: IPersistentState<DiffDto>) =
+    type DiffActor([<PersistentState(StateName.Diff, Constants.GraceDiffStorage)>] state: IPersistentState<DiffDto>) =
         inherit Grain()
 
         static let actorName = ActorName.Diff
@@ -101,8 +101,8 @@ module Diff =
                 return differences
             }
 
-        /// Deconstructs an ActorId of the form "{directoryVersionId1:N}{directoryVersionId2:N}" into a tuple of the two DirectoryId values.
-        let deconstructActorId (primaryKey: string) = (Guid.ParseExact(primaryKey.Substring(0, 32), "N"), Guid.ParseExact(primaryKey.Substring(32, 32), "N"))
+        /// Deconstructs a Diff actor primary key from the current compact format or the legacy D-format key.
+        let deconstructActorId (primaryKey: string) = ActorProxy.Diff.ParsePrimaryKey primaryKey
 
         member val private correlationId: CorrelationId = String.Empty with get, set
 
