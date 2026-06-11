@@ -567,6 +567,8 @@ components:
       $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/RelativePath'
     Sha256Hash:
       $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Sha256Hash'
+    Blake3Hash:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Blake3Hash'
     StorageAccountName:
       $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/StorageAccountName'
     StorageConnectionString:
