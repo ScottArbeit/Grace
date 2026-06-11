@@ -159,13 +159,13 @@ module Branch =
 
                     match branchEvent.Event with
                     // Don't save these reference creation events, and don't send them as events; that was done by the Reference actor when the reference was created.
-                    | Assigned (referenceDto, _, _, _)
-                    | Promoted (referenceDto, _, _, _)
-                    | Committed (referenceDto, _, _, _)
-                    | Checkpointed (referenceDto, _, _, _)
-                    | Saved (referenceDto, _, _, _)
-                    | Tagged (referenceDto, _, _, _)
-                    | ExternalCreated (referenceDto, _, _, _) -> branchEvent.Metadata.Properties[ nameof ReferenceId ] <- $"{referenceDto.ReferenceId}"
+                    | Assigned (referenceDto, _, _, _, _)
+                    | Promoted (referenceDto, _, _, _, _)
+                    | Committed (referenceDto, _, _, _, _)
+                    | Checkpointed (referenceDto, _, _, _, _)
+                    | Saved (referenceDto, _, _, _, _)
+                    | Tagged (referenceDto, _, _, _, _)
+                    | ExternalCreated (referenceDto, _, _, _, _) -> branchEvent.Metadata.Properties[ nameof ReferenceId ] <- $"{referenceDto.ReferenceId}"
                     | Rebased referenceId -> branchEvent.Metadata.Properties[ nameof ReferenceId ] <- $"{referenceId}"
                     // Save the rest of the events.
                     | _ ->
@@ -308,7 +308,7 @@ module Branch =
                                 | None -> return Error(GraceError.Create (getErrorMessage BranchError.BranchDoesNotExist) metadata.CorrelationId)
                     }
 
-                let addReference ownerId organizationId repositoryId branchId directoryId sha256Hash referenceText referenceType links =
+                let addReference ownerId organizationId repositoryId branchId directoryId sha256Hash blake3Hash referenceText referenceType links =
                     task {
                         let referenceId: ReferenceId = ReferenceId.NewGuid()
                         let referenceActor = Reference.CreateActorProxy referenceId repositoryId this.correlationId
@@ -322,6 +322,7 @@ module Branch =
                                 branchId,
                                 directoryId,
                                 sha256Hash,
+                                blake3Hash,
                                 referenceType,
                                 referenceText,
                                 links
@@ -345,7 +346,7 @@ module Branch =
                                     | Create (branchId, branchName, parentBranchId, basedOn, ownerId, organizationId, repositoryId, branchPermissions) ->
                                         // Add an initial Rebase reference to this branch that points to the BasedOn reference, unless we're creating `main`.
                                         if branchName <> InitialBranchName then
-                                            // We need to get the reference that we're rebasing on, so we can get the DirectoryId and Sha256Hash.
+                                            // We need to get the reference that we're rebasing on, so we can get the DirectoryId and root hashes.
                                             let referenceActorProxy = Reference.CreateActorProxy basedOn repositoryId this.correlationId
                                             let! promotionDto = referenceActorProxy.Get this.correlationId
 
@@ -357,6 +358,7 @@ module Branch =
                                                     branchId
                                                     promotionDto.DirectoryId
                                                     promotionDto.Sha256Hash
+                                                    promotionDto.Blake3Hash
                                                     promotionDto.ReferenceText
                                                     ReferenceType.Rebase
                                                     [
@@ -381,7 +383,7 @@ module Branch =
                                         metadata.Properties[ nameof BranchId ] <- $"{this.GetGrainId().GetGuidKey()}"
                                         metadata.Properties[ nameof BranchName ] <- $"{branchDto.BranchName}"
 
-                                        // We need to get the reference that we're rebasing on, so we can get the directoryId and sha256Hash.
+                                        // We need to get the reference that we're rebasing on, so we can get the directoryId and root hashes.
                                         let referenceActorProxy = Reference.CreateActorProxy referenceId branchDto.RepositoryId this.correlationId
                                         let! promotionDto = referenceActorProxy.Get metadata.CorrelationId
 
@@ -390,6 +392,7 @@ module Branch =
                                             addReferenceToCurrentBranch
                                                 promotionDto.DirectoryId
                                                 promotionDto.Sha256Hash
+                                                promotionDto.Blake3Hash
                                                 promotionDto.ReferenceText
                                                 ReferenceType.Rebase
                                                 [
@@ -420,33 +423,69 @@ module Branch =
                                     | EnableAutoRebase enabled -> return Ok(EnabledAutoRebase enabled)
                                     | SetPromotionMode promotionMode -> return Ok(PromotionModeSet promotionMode)
                                     | UpdateParentBranch newParentBranchId -> return Ok(ParentBranchUpdated newParentBranchId)
-                                    | BranchCommand.Assign (directoryVersionId, sha256Hash, referenceText) ->
-                                        match! addReferenceToCurrentBranch directoryVersionId sha256Hash referenceText ReferenceType.Promotion List.empty with
-                                        | Ok returnValue -> return Ok(Assigned(returnValue.ReturnValue, directoryVersionId, sha256Hash, referenceText))
+                                    | BranchCommand.Assign (directoryVersionId, sha256Hash, blake3Hash, referenceText) ->
+                                        match!
+                                            addReferenceToCurrentBranch
+                                                directoryVersionId
+                                                sha256Hash
+                                                blake3Hash
+                                                referenceText
+                                                ReferenceType.Promotion
+                                                List.empty
+                                            with
+                                        | Ok returnValue ->
+                                            return Ok(Assigned(returnValue.ReturnValue, directoryVersionId, sha256Hash, blake3Hash, referenceText))
                                         | Error error -> return Error error
-                                    | BranchCommand.Promote (directoryVersionId, sha256Hash, referenceText) ->
-                                        match! addReferenceToCurrentBranch directoryVersionId sha256Hash referenceText ReferenceType.Promotion List.empty with
-                                        | Ok returnValue -> return Ok(Promoted(returnValue.ReturnValue, directoryVersionId, sha256Hash, referenceText))
+                                    | BranchCommand.Promote (directoryVersionId, sha256Hash, blake3Hash, referenceText) ->
+                                        match!
+                                            addReferenceToCurrentBranch
+                                                directoryVersionId
+                                                sha256Hash
+                                                blake3Hash
+                                                referenceText
+                                                ReferenceType.Promotion
+                                                List.empty
+                                            with
+                                        | Ok returnValue ->
+                                            return Ok(Promoted(returnValue.ReturnValue, directoryVersionId, sha256Hash, blake3Hash, referenceText))
                                         | Error error -> return Error error
-                                    | BranchCommand.Commit (directoryVersionId, sha256Hash, referenceText) ->
-                                        match! addReferenceToCurrentBranch directoryVersionId sha256Hash referenceText ReferenceType.Commit List.empty with
-                                        | Ok returnValue -> return Ok(Committed(returnValue.ReturnValue, directoryVersionId, sha256Hash, referenceText))
+                                    | BranchCommand.Commit (directoryVersionId, sha256Hash, blake3Hash, referenceText) ->
+                                        match!
+                                            addReferenceToCurrentBranch directoryVersionId sha256Hash blake3Hash referenceText ReferenceType.Commit List.empty
+                                            with
+                                        | Ok returnValue ->
+                                            return Ok(Committed(returnValue.ReturnValue, directoryVersionId, sha256Hash, blake3Hash, referenceText))
                                         | Error error -> return Error error
-                                    | BranchCommand.Checkpoint (directoryVersionId, sha256Hash, referenceText) ->
-                                        match! addReferenceToCurrentBranch directoryVersionId sha256Hash referenceText ReferenceType.Checkpoint List.empty with
-                                        | Ok returnValue -> return Ok(Checkpointed(returnValue.ReturnValue, directoryVersionId, sha256Hash, referenceText))
+                                    | BranchCommand.Checkpoint (directoryVersionId, sha256Hash, blake3Hash, referenceText) ->
+                                        match!
+                                            addReferenceToCurrentBranch
+                                                directoryVersionId
+                                                sha256Hash
+                                                blake3Hash
+                                                referenceText
+                                                ReferenceType.Checkpoint
+                                                List.empty
+                                            with
+                                        | Ok returnValue ->
+                                            return Ok(Checkpointed(returnValue.ReturnValue, directoryVersionId, sha256Hash, blake3Hash, referenceText))
                                         | Error error -> return Error error
-                                    | BranchCommand.Save (directoryVersionId, sha256Hash, referenceText) ->
-                                        match! addReferenceToCurrentBranch directoryVersionId sha256Hash referenceText ReferenceType.Save List.empty with
-                                        | Ok returnValue -> return Ok(Saved(returnValue.ReturnValue, directoryVersionId, sha256Hash, referenceText))
+                                    | BranchCommand.Save (directoryVersionId, sha256Hash, blake3Hash, referenceText) ->
+                                        match! addReferenceToCurrentBranch directoryVersionId sha256Hash blake3Hash referenceText ReferenceType.Save List.empty
+                                            with
+                                        | Ok returnValue -> return Ok(Saved(returnValue.ReturnValue, directoryVersionId, sha256Hash, blake3Hash, referenceText))
                                         | Error error -> return Error error
-                                    | BranchCommand.Tag (directoryVersionId, sha256Hash, referenceText) ->
-                                        match! addReferenceToCurrentBranch directoryVersionId sha256Hash referenceText ReferenceType.Tag List.empty with
-                                        | Ok returnValue -> return Ok(Tagged(returnValue.ReturnValue, directoryVersionId, sha256Hash, referenceText))
+                                    | BranchCommand.Tag (directoryVersionId, sha256Hash, blake3Hash, referenceText) ->
+                                        match! addReferenceToCurrentBranch directoryVersionId sha256Hash blake3Hash referenceText ReferenceType.Tag List.empty
+                                            with
+                                        | Ok returnValue ->
+                                            return Ok(Tagged(returnValue.ReturnValue, directoryVersionId, sha256Hash, blake3Hash, referenceText))
                                         | Error error -> return Error error
-                                    | BranchCommand.CreateExternal (directoryVersionId, sha256Hash, referenceText) ->
-                                        match! addReferenceToCurrentBranch directoryVersionId sha256Hash referenceText ReferenceType.External List.empty with
-                                        | Ok returnValue -> return Ok(ExternalCreated(returnValue.ReturnValue, directoryVersionId, sha256Hash, referenceText))
+                                    | BranchCommand.CreateExternal (directoryVersionId, sha256Hash, blake3Hash, referenceText) ->
+                                        match!
+                                            addReferenceToCurrentBranch directoryVersionId sha256Hash blake3Hash referenceText ReferenceType.External List.empty
+                                            with
+                                        | Ok returnValue ->
+                                            return Ok(ExternalCreated(returnValue.ReturnValue, directoryVersionId, sha256Hash, blake3Hash, referenceText))
                                         | Error error -> return Error error
                                     | RemoveReference referenceId -> return Ok(ReferenceRemoved referenceId)
                                     | DeleteLogical (force, deleteReason, reassignChildBranches, newParentBranchId) ->
