@@ -91,6 +91,12 @@ export interface SwitchParameters {
      * @memberof SwitchParameters
      */
     referenceId?: string;
+    /**
+     * 
+     * @type {string}
+     * @memberof SwitchParameters
+     */
+    blake3Hash?: string;
 }
 
 /**
@@ -122,6 +128,7 @@ export function SwitchParametersFromJSONTyped(json: any, ignoreDiscriminator: bo
         'branchName': json['BranchName'] == null ? undefined : json['BranchName'],
         'sha256Hash': json['Sha256Hash'] == null ? undefined : json['Sha256Hash'],
         'referenceId': json['ReferenceId'] == null ? undefined : json['ReferenceId'],
+        'blake3Hash': json['Blake3Hash'] == null ? undefined : json['Blake3Hash'],
     };
 }
 
@@ -148,6 +155,7 @@ export function SwitchParametersToJSONTyped(value?: SwitchParameters | null, ign
         'BranchName': value['branchName'],
         'Sha256Hash': value['sha256Hash'],
         'ReferenceId': value['referenceId'],
+        'Blake3Hash': value['blake3Hash'],
     };
 }
 

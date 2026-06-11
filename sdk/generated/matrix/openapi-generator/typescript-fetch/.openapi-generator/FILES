@@ -28,6 +28,7 @@ docs/BranchApiDto.md
 docs/BranchCommandReturnValue.md
 docs/BranchDto.md
 docs/BranchDtoUpdatedAt.md
+docs/BranchHashQueryParameters.md
 docs/BranchParameters.md
 docs/BranchQueryParameters.md
 docs/BranchReturnValue.md
@@ -267,6 +268,7 @@ src/models/BranchApiDto.ts
 src/models/BranchCommandReturnValue.ts
 src/models/BranchDto.ts
 src/models/BranchDtoUpdatedAt.ts
+src/models/BranchHashQueryParameters.ts
 src/models/BranchParameters.ts
 src/models/BranchQueryParameters.ts
 src/models/BranchReturnValue.ts

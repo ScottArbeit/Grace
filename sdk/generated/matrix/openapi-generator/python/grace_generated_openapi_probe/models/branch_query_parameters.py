@@ -27,7 +27,7 @@ from pydantic_core import to_jsonable_python
 
 class BranchQueryParameters(BaseModel):
     """
-    Parameters for branch query endpoints that can resolve a branch or reference by hash or reference id.
+    Parameters for branch query endpoints that can resolve a branch or reference by SHA-256 hash or reference id.
     """ # noqa: E501
     correlation_id: Optional[StrictStr] = Field(default=None, description="Body DTO correlation id copied into Grace command/event metadata after request parsing. This field is distinct from the X-Correlation-Id transport header.", alias="CorrelationId")
     principal: Optional[StrictStr] = Field(default=None, description="The entity on whose behalf the action is being performed.", alias="Principal")

@@ -238,6 +238,9 @@ module Text =
         let B2 = "--b2"
 
         [<Literal>]
+        let Blake3Hash = "--blake3-hash"
+
+        [<Literal>]
         let Blake3Hash1 = "--blake3-hash-1"
 
         [<Literal>]

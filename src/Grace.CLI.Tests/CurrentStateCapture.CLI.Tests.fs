@@ -25,6 +25,7 @@ module CurrentStateCaptureCliTests =
     let private parentBranchId = Guid.NewGuid()
     let private rootDirectoryId = Guid.NewGuid()
     let private rootSha = Sha256Hash "current-root-sha"
+    let private rootBlake3 = Blake3Hash "current-root-blake3"
     let private savedReferenceId = Guid.NewGuid()
 
     let private rootDirectoryVersion directoryVersionId sha256Hash =
@@ -167,6 +168,7 @@ module CurrentStateCaptureCliTests =
                 IsStartupClaim = false
                 RootDirectoryId = rootDirectoryId
                 RootDirectorySha256Hash = rootSha
+                RootDirectoryBlake3Hash = rootBlake3
                 LastFileUploadInstant = NodaTime.Instant.MinValue
                 LastDirectoryVersionInstant = NodaTime.Instant.MinValue
                 DirectoryIds = HashSet<DirectoryVersionId>([| rootDirectoryId |])

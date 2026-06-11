@@ -14,7 +14,7 @@
 
 import { mapValues } from '../runtime';
 /**
- * Parameters for branch query endpoints that can resolve a branch or reference by hash or reference id.
+ * Parameters for branch query endpoints that can resolve a branch or reference by SHA-256 hash or reference id.
  * @export
  * @interface BranchQueryParameters
  */
