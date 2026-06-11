@@ -636,6 +636,7 @@ paths:
                   BranchId: de7bf47d-23ae-4599-af68-68a317ea390d
                   DirectoryVersionId: 33a4e36b-828f-4fae-9343-50b6560dc842
                   Sha256Hash: 805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243
+                  Blake3Hash: 9A35D91B2F631BE9025DE753139B88F7B1E71385C412BC3986FF2F38F230841D
                   Message: Capture release candidate.
       responses:
         '200':
@@ -669,6 +670,7 @@ paths:
                   BranchId: de7bf47d-23ae-4599-af68-68a317ea390d
                   DirectoryVersionId: 33a4e36b-828f-4fae-9343-50b6560dc842
                   Sha256Hash: 805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243
+                  Blake3Hash: 9A35D91B2F631BE9025DE753139B88F7B1E71385C412BC3986FF2F38F230841D
                   Message: Commit release candidate.
       responses:
         '200':
@@ -702,6 +704,7 @@ paths:
                   BranchId: de7bf47d-23ae-4599-af68-68a317ea390d
                   DirectoryVersionId: 33a4e36b-828f-4fae-9343-50b6560dc842
                   Sha256Hash: 805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243
+                  Blake3Hash: 9A35D91B2F631BE9025DE753139B88F7B1E71385C412BC3986FF2F38F230841D
                   Message: Checkpoint release candidate.
       responses:
         '200':
@@ -735,6 +738,7 @@ paths:
                   BranchId: de7bf47d-23ae-4599-af68-68a317ea390d
                   DirectoryVersionId: 33a4e36b-828f-4fae-9343-50b6560dc842
                   Sha256Hash: 805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243
+                  Blake3Hash: 9A35D91B2F631BE9025DE753139B88F7B1E71385C412BC3986FF2F38F230841D
                   Message: Save release candidate.
       responses:
         '200':
@@ -768,6 +772,7 @@ paths:
                   BranchId: de7bf47d-23ae-4599-af68-68a317ea390d
                   DirectoryVersionId: 33a4e36b-828f-4fae-9343-50b6560dc842
                   Sha256Hash: 805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243
+                  Blake3Hash: 9A35D91B2F631BE9025DE753139B88F7B1E71385C412BC3986FF2F38F230841D
                   Message: Tag release candidate.
       responses:
         '200':
@@ -3464,7 +3469,7 @@ components:
         RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
         BranchId: de7bf47d-23ae-4599-af68-68a317ea390d
     BranchQueryParameters:
-      description: Parameters for branch query endpoints that can resolve a branch or reference by hash or reference id.
+      description: Parameters for branch query endpoints that can resolve a branch or reference by SHA-256 hash or reference id.
       allOf:
         - $ref: '#/components/schemas/BranchParameters'
         - type: object
@@ -3473,6 +3478,14 @@ components:
               $ref: '#/components/schemas/Sha256Hash'
             ReferenceId:
               $ref: '#/components/schemas/ReferenceId'
+    BranchHashQueryParameters:
+      description: Parameters for branch query endpoints that support SHA-256, BLAKE3, or reference id locators.
+      allOf:
+        - $ref: '#/components/schemas/BranchQueryParameters'
+        - type: object
+          properties:
+            Blake3Hash:
+              $ref: '#/components/schemas/Blake3Hash'
     CreateBranchParameters:
       description: Parameters for the /branch/create endpoint.
       allOf:
@@ -3507,6 +3520,8 @@ components:
               example: 33a4e36b-828f-4fae-9343-50b6560dc842
             Sha256Hash:
               $ref: '#/components/schemas/Sha256Hash'
+            Blake3Hash:
+              $ref: '#/components/schemas/Blake3Hash'
             Message:
               type: string
               example: Capture release candidate.
@@ -3590,11 +3605,11 @@ components:
     SwitchParameters:
       description: Parameters for the /branch/switch endpoint.
       allOf:
-        - $ref: '#/components/schemas/BranchQueryParameters'
+        - $ref: '#/components/schemas/BranchHashQueryParameters'
     GetBranchVersionParameters:
       description: Parameters for the /branch/getVersion endpoint.
       allOf:
-        - $ref: '#/components/schemas/BranchQueryParameters'
+        - $ref: '#/components/schemas/BranchHashQueryParameters'
         - type: object
           properties:
             IncludeDeleted:

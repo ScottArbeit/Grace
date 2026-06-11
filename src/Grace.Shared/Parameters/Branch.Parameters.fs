@@ -26,6 +26,11 @@ module Branch =
         member val public Sha256Hash: Sha256Hash = String.Empty with get, set
         member val public ReferenceId = String.Empty with get, set
 
+    /// Base class for branch query endpoints that support both SHA-256 and BLAKE3 locators.
+    type BranchHashQueryParameters() =
+        inherit BranchQueryParameters()
+        member val public Blake3Hash: Blake3Hash = String.Empty with get, set
+
     /// Parameters for the /branch/create endpoint.
     type CreateBranchParameters() =
         inherit BranchParameters()
@@ -38,6 +43,7 @@ module Branch =
         inherit BranchParameters()
         member val public DirectoryVersionId: DirectoryVersionId = Guid.Empty with get, set
         member val public Sha256Hash: Sha256Hash = String.Empty with get, set
+        member val public Blake3Hash: Blake3Hash = String.Empty with get, set
         member val public Message = String.Empty with get, set
 
     /// Parameters for the /branch/rebase endpoint.
@@ -50,6 +56,7 @@ module Branch =
         inherit BranchParameters()
         member val public DirectoryVersionId: DirectoryVersionId = Guid.Empty with get, set
         member val public Sha256Hash: Sha256Hash = String.Empty with get, set
+        member val public Blake3Hash: Blake3Hash = String.Empty with get, set
         member val public Message = String.Empty with get, set
 
     /// Parameters for the /branch/setName endpoint.
@@ -151,9 +158,7 @@ module Branch =
         member val public IncludeDeleted = false with get, set
 
     type ListContentsParameters() =
-        inherit BranchQueryParameters()
-        member val public Sha256Hash: Sha256Hash = String.Empty with get, set
-        member val public ReferenceId = String.Empty with get, set
+        inherit BranchHashQueryParameters()
         member val public Pattern = String.Empty with get, set
         member val public ShowDirectories = true with get, set
         member val public ShowFiles = true with get, set
@@ -161,9 +166,9 @@ module Branch =
 
     /// Parameters for the /branch/switch endpoint.
     type SwitchParameters() =
-        inherit BranchQueryParameters()
+        inherit BranchHashQueryParameters()
 
     /// Parameters for the /branch/getVersion endpoint.
     type GetBranchVersionParameters() =
-        inherit BranchQueryParameters()
+        inherit BranchHashQueryParameters()
         member val public IncludeDeleted = false with get, set

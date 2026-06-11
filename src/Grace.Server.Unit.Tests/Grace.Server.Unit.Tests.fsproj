@@ -54,6 +54,7 @@
     <Compile Include="WebhookDispatch.Server.Tests.fs" />
     <Compile Include="Queue.Server.Tests.fs" />
     <Compile Include="OrleansFilters.Server.Tests.fs" />
+    <Compile Include="Branch.Server.Tests.fs" />
     <Compile Include="WorkItem.Server.Tests.fs" />
     <Compile Include="WorkItem.Attachments.Tests.fs" />
     <Compile Include="ApprovalRequest.Actor.Tests.fs" />

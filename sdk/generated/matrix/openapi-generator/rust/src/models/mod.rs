@@ -48,6 +48,8 @@ pub mod branch_dto;
 pub use self::branch_dto::BranchDto;
 pub mod branch_dto_updated_at;
 pub use self::branch_dto_updated_at::BranchDtoUpdatedAt;
+pub mod branch_hash_query_parameters;
+pub use self::branch_hash_query_parameters::BranchHashQueryParameters;
 pub mod branch_parameters;
 pub use self::branch_parameters::BranchParameters;
 pub mod branch_query_parameters;
