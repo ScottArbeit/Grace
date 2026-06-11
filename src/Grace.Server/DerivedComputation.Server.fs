@@ -37,6 +37,7 @@ module DerivedComputation =
                                           branchId,
                                           directoryId,
                                           sha256Hash,
+                                          blake3Hash,
                                           referenceType,
                                           referenceText,
                                           links) ->
