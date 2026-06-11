@@ -1,6 +1,7 @@
 namespace Grace.Server.Tests
 
 open Grace.Shared
+open Grace.Types.ContentBlockMetadata
 open Grace.Types.ManifestContributionWorkflow
 open Grace.Types.RepositoryContentCounter
 open Grace.Types.Common
@@ -9,6 +10,7 @@ open NUnit.Framework
 open System
 open System.Collections.Generic
 open System.Text
+open System.Threading.Tasks
 
 module DirectoryVersionActor = Grace.Actors.DirectoryVersion
 module ManifestContributionWorkflowActor = Grace.Actors.ManifestContributionWorkflow
@@ -121,6 +123,81 @@ type SaveBoundaryActorTests() =
         Assert.That(filesToValidate[0].RelativePath, Is.EqualTo(wholeFile.RelativePath))
 
     [<Test>]
+    member _.ManifestSaveBoundaryRejectsMismatchedFileBlake3WhenPresent() =
+        let manifest = finalizedManifest ()
+        let fileVersion = manifestFile manifest
+        fileVersion.Blake3Hash <- Blake3Hash "wrong-blake3"
+
+        match DirectoryVersionActor.validateManifestBackedFileForSaveBoundary "corr-manifest-blake3-mismatch" fileVersion manifest with
+        | Ok () -> Assert.Fail("Expected manifest-backed FileVersion BLAKE3 mismatch to be rejected.")
+        | Error error -> Assert.That(error.Error, Does.Contain("FileVersion.Blake3Hash"))
+
+    [<Test>]
+    member _.ManifestSaveBoundaryAllowsLegacyEmptyFileBlake3() =
+        let manifest = finalizedManifest ()
+        let fileVersion = manifestFile manifest
+        fileVersion.Blake3Hash <- Blake3Hash String.Empty
+
+        match DirectoryVersionActor.validateManifestBackedFileForSaveBoundary "corr-manifest-empty-blake3" fileVersion manifest with
+        | Ok () -> ()
+        | Error error -> Assert.Fail($"Expected legacy empty BLAKE3 to be accepted, got {error.Error}.")
+
+    [<Test>]
+    member _.ManifestSaveBoundaryRejectsAbsentContentBlockMetadataRanges() =
+        let manifest = finalizedManifest ()
+
+        let getRangePresence _ _ = Task.FromResult ContentBlockRangePresence.Absent
+
+        match (DirectoryVersionActor.validateManifestReferencesForSaveBoundaryWithResolver getRangePresence "corr-absent-block" [ manifest ])
+            .Result
+            with
+        | Ok () -> Assert.Fail("Expected manifest-backed save to reject absent ContentBlock metadata before Save.")
+        | Error error -> Assert.That(error.Error, Does.Contain("no finalized ContentBlock metadata range exists"))
+
+    [<Test>]
+    member _.ManifestSaveBoundaryAcceptsExistingReclaimableContentBlockMetadataRanges() =
+        let manifest = finalizedManifest ()
+
+        let getRangePresence _ _ = Task.FromResult ContentBlockRangePresence.Reclaimable
+
+        match (DirectoryVersionActor.validateManifestReferencesForSaveBoundaryWithResolver getRangePresence "corr-reclaimable-block" [ manifest ])
+            .Result
+            with
+        | Ok () -> ()
+        | Error error -> Assert.Fail($"Expected existing ContentBlock metadata to be accepted before Save, got {error.Error}.")
+
+    [<Test>]
+    member _.ManifestSaveBoundaryChecksEachContentBlockAtOrdinalZero() =
+        let manifest = finalizedManifestWithBlockCopies 2
+        let queries = ResizeArray<ContentBlockRangeQuery>()
+
+        let getRangePresence _ query =
+            queries.Add(query)
+            Task.FromResult ContentBlockRangePresence.Reclaimable
+
+        match (DirectoryVersionActor.validateManifestReferencesForSaveBoundaryWithResolver getRangePresence "corr-ordinal-zero" [ manifest ])
+            .Result
+            with
+        | Ok () ->
+            Assert.That(queries, Has.Count.EqualTo(2))
+
+            Assert.That(
+                queries
+                |> Seq.forall (fun query -> query.OrdinalStart = 0 && query.OrdinalCount = 1),
+                Is.True
+            )
+        | Error error -> Assert.Fail($"Expected multi-block manifest metadata checks to use content-block ordinal zero, got {error.Error}.")
+
+    [<Test>]
+    member _.ManifestSaveBoundaryUsesRepositoryDerivedContentBlockMetadataPool() =
+        let contentBlockAddress = ContentBlockAddress "block-address"
+        let expected = $"{DedupeIndex.storagePoolIdForRepositoryId repositoryId}|{contentBlockAddress}"
+
+        let actual = DirectoryVersionActor.contentBlockMetadataActorKeyForSaveBoundary repositoryId contentBlockAddress
+
+        Assert.That(actual, Is.EqualTo(expected))
+
+    [<Test>]
     member _.SaveBoundaryAcceptsFinalizedManifestAfterDurableIncrementIntent() =
         let manifest = finalizedManifest ()
         let directoryVersion = directoryWith [ manifestFile manifest ]
@@ -207,14 +284,22 @@ type SaveBoundaryActorTests() =
     member _.SaveBoundaryStartsContributionWorkflowForRepeatedManifestBlockOccurrences() =
         let manifest = finalizedManifestWithBlockCopies 2
         let directoryVersion = directoryWith [ manifestFile manifest ]
+        let expectedStoragePoolId = DedupeIndex.storagePoolIdForRepositoryId repositoryId
 
         let plan =
             ReferenceActor.planManifestSaveBoundary repositoryId referenceId directoryVersion "corr-repeated-block"
             |> expectPlan
 
-        Assert.That(plan.WorkflowRanges, Has.Length.EqualTo(2))
-        Assert.That(plan.WorkflowRanges[0].ContentBlockAddress, Is.EqualTo(plan.WorkflowRanges[1].ContentBlockAddress))
-        Assert.That(plan.WorkflowRanges[0].OrdinalStart, Is.Not.EqualTo(plan.WorkflowRanges[1].OrdinalStart))
+        Assert.That(plan.WorkflowRanges, Has.Length.EqualTo(1))
+
+        Assert.That(
+            plan.WorkflowRanges
+            |> Seq.forall (fun range ->
+                range.StoragePoolId = expectedStoragePoolId
+                && range.OrdinalStart = 0
+                && range.OrdinalCount = 1),
+            Is.True
+        )
 
         let intent = RepositoryContentCounterIntent.IncrementManifestReferenceCount(repositoryId, manifest.ManifestAddress)
 
@@ -224,7 +309,7 @@ type SaveBoundaryActorTests() =
                 ManifestContributionWorkflowActor.decideCommand [] ManifestContributionWorkflowDto.Default startCommand (metadata "corr-repeated-workflow")
 
             match workflowDecision with
-            | Ok decision -> Assert.That(ManifestContributionWorkflowActor.pendingRanges decision.Workflow, Has.Length.EqualTo(2))
+            | Ok decision -> Assert.That(ManifestContributionWorkflowActor.pendingRanges decision.Workflow, Has.Length.EqualTo(1))
             | Error error -> Assert.Fail($"Expected repeated block occurrences to start contribution workflow, got {error.Error}.")
         | None -> Assert.Fail("Expected increment intent to start manifest contribution workflow fan-out.")
 
