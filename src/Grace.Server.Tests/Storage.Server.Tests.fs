@@ -125,6 +125,61 @@ type StorageWholeFileCompatibility() =
             Assert.That(downloadUri, Does.Contain(fileVersion.GetObjectFileName))
         }
 
+    [<Test>]
+    member _.SmallWholeFileMetadataUsesBlake3SpecificBlobKeysWhenPresent() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let relativeDirectory = $"wholefile-dual-hash/{Guid.NewGuid():N}"
+            let relativePath = $"{relativeDirectory}/small.bin"
+            let sharedSha256Hash = "shared-sha256"
+
+            let firstFileVersion =
+                FileVersion.CreateWithHashes (RelativePath relativePath) (Sha256Hash sharedSha256Hash) (Blake3Hash "first-blake3") String.Empty true 128L
+
+            let secondFileVersion =
+                FileVersion.CreateWithHashes (RelativePath relativePath) (Sha256Hash sharedSha256Hash) (Blake3Hash "second-blake3") String.Empty true 128L
+
+            let! firstUploadResponse =
+                Client.PostAsync("/storage/getUploadMetadataForFiles", createJsonContent (createUploadParameters repositoryId firstFileVersion))
+
+            let! firstUploadContent = firstUploadResponse.Content.ReadAsStringAsync()
+            Assert.That(firstUploadResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), firstUploadContent)
+
+            let! secondUploadResponse =
+                Client.PostAsync("/storage/getUploadMetadataForFiles", createJsonContent (createUploadParameters repositoryId secondFileVersion))
+
+            let! secondUploadContent = secondUploadResponse.Content.ReadAsStringAsync()
+            Assert.That(secondUploadResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), secondUploadContent)
+
+            let firstMetadata = getUploadMetadataJson firstUploadContent
+            let secondMetadata = getUploadMetadataJson secondUploadContent
+
+            let firstUploadUri =
+                (requireJsonProperty "BlobUriWithSasToken" firstMetadata)
+                    .GetString()
+
+            let secondUploadUri =
+                (requireJsonProperty "BlobUriWithSasToken" secondMetadata)
+                    .GetString()
+
+            Assert.That(firstUploadUri, Does.Contain("small_shared-sha256_first-blake3.bin"))
+            Assert.That(secondUploadUri, Does.Contain("small_shared-sha256_second-blake3.bin"))
+            Assert.That(firstUploadUri, Is.Not.EqualTo(secondUploadUri))
+
+            let! firstDownloadResponse = Client.PostAsync("/storage/getDownloadUri", createJsonContent (createDownloadParameters repositoryId firstFileVersion))
+            let! firstDownloadUri = firstDownloadResponse.Content.ReadAsStringAsync()
+            Assert.That(firstDownloadResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), firstDownloadUri)
+            Assert.That(firstDownloadUri, Does.Contain("small_shared-sha256_first-blake3.bin"))
+
+            let! secondDownloadResponse =
+                Client.PostAsync("/storage/getDownloadUri", createJsonContent (createDownloadParameters repositoryId secondFileVersion))
+
+            let! secondDownloadUri = secondDownloadResponse.Content.ReadAsStringAsync()
+            Assert.That(secondDownloadResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), secondDownloadUri)
+            Assert.That(secondDownloadUri, Does.Contain("small_shared-sha256_second-blake3.bin"))
+            Assert.That(firstDownloadUri, Is.Not.EqualTo(secondDownloadUri))
+        }
+
 [<NonParallelizable>]
 type StorageContentBlockSasRoutes() =
 
