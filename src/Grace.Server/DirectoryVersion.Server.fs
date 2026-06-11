@@ -367,38 +367,57 @@ module DirectoryVersion =
                         let repositoryActorProxy = Repository.CreateActorProxy graceIds.OrganizationId graceIds.RepositoryId correlationId
                         let! repositoryDto = repositoryActorProxy.Get(correlationId)
 
-                        do!
-                            Parallel.ForEachAsync(
-                                parameters.DirectoryVersions,
-                                Constants.ParallelOptions,
-                                (fun directoryVersion ct ->
-                                    ValueTask(
-                                        task {
-                                            try
-                                                // Check if the directory version exists. If it doesn't, create it.
-                                                let directoryVersionActor =
-                                                    DirectoryVersion.CreateActorProxy directoryVersion.DirectoryVersionId repositoryId correlationId
+                        let routeHashError =
+                            parameters.DirectoryVersions
+                            |> Seq.tryPick (fun directoryVersion ->
+                                if String.IsNullOrWhiteSpace $"{directoryVersion.Blake3Hash}" then
+                                    Some(
+                                        GraceError.Create
+                                            $"DirectoryVersion '{directoryVersion.RelativePath}' must include DirectoryVersion.Blake3Hash before Save."
+                                            correlationId
+                                    )
+                                else
+                                    None)
 
-                                                let! exists = directoryVersionActor.Exists parameters.CorrelationId
-                                                //logToConsole $"In SaveDirectoryVersions: {dv.DirectoryId} exists: {exists}"
-                                                if not <| exists then
-                                                    let! createResult =
-                                                        directoryVersionActor.Handle
-                                                            (DirectoryVersionCommand.Create(directoryVersion, repositoryDto))
-                                                            (createMetadata context)
+                        let orderedDirectoryVersions =
+                            parameters.DirectoryVersions
+                            |> Seq.sortByDescending (fun directoryVersion ->
+                                $"{directoryVersion.RelativePath}".TrimEnd(
+                                    '/',
+                                    '\\'
+                                )
+                                    .Split(
+                                    [| '/'; '\\' |],
+                                    StringSplitOptions.RemoveEmptyEntries
+                                )
+                                    .Length)
+                            |> Seq.toArray
 
-                                                    results.Enqueue(createResult)
-                                            with
-                                            | ex ->
-                                                let exceptionResponse = Utilities.ExceptionResponse.Create ex
+                        match routeHashError with
+                        | Some graceError -> results.Enqueue(Error graceError)
+                        | None ->
+                            for directoryVersion in orderedDirectoryVersions do
+                                try
+                                    // Check if the directory version exists. If it doesn't, create it.
+                                    let directoryVersionActor = DirectoryVersion.CreateActorProxy directoryVersion.DirectoryVersionId repositoryId correlationId
 
-                                                logToConsole
-                                                    $"****Error in SaveDirectoryVersions: directoryVersion.Directories.Count: {directoryVersion.Directories.Count}; directoryVersion.Files.Count: {directoryVersion.Files.Count}."
+                                    let! exists = directoryVersionActor.Exists parameters.CorrelationId
+                                    //logToConsole $"In SaveDirectoryVersions: {dv.DirectoryId} exists: {exists}"
+                                    if not <| exists then
+                                        let! createResult =
+                                            directoryVersionActor.Handle
+                                                (DirectoryVersionCommand.Create(directoryVersion, repositoryDto))
+                                                (createMetadata context)
 
-                                                logToConsole $"{exceptionResponse}"
-                                        }
-                                    ))
-                            )
+                                        results.Enqueue(createResult)
+                                with
+                                | ex ->
+                                    let exceptionResponse = Utilities.ExceptionResponse.Create ex
+
+                                    logToConsole
+                                        $"****Error in SaveDirectoryVersions: directoryVersion.Directories.Count: {directoryVersion.Directories.Count}; directoryVersion.Files.Count: {directoryVersion.Files.Count}."
+
+                                    logToConsole $"{exceptionResponse}"
 
                         let firstError =
                             results
