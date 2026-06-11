@@ -403,6 +403,11 @@ module Connect =
                 | None -> return Error(GraceError.Create "No downloadable version found for this branch." graceIds.CorrelationId)
         }
 
+    let internal existingFileMatchesRemoteVersion localSha256Hash localBlake3Hash (fileVersion: FileVersion) =
+        localSha256Hash = fileVersion.Sha256Hash
+        && (String.IsNullOrWhiteSpace(string fileVersion.Blake3Hash)
+            || localBlake3Hash = fileVersion.Blake3Hash)
+
     let private collectFileConflicts (fileVersions: FileVersion array) (force: bool) =
         let conflicts = ResizeArray<string>()
         let filesToSkip = HashSet<RelativePath>()
@@ -421,7 +426,20 @@ module Connect =
 
                             let! localHash = Grace.Shared.Services.computeSha256ForFile stream fileVersion.RelativePath
 
-                            if localHash = fileVersion.Sha256Hash then
+                            let! localBlake3Hash =
+                                task {
+                                    if
+                                        localHash = fileVersion.Sha256Hash
+                                        && not (String.IsNullOrWhiteSpace(string fileVersion.Blake3Hash))
+                                    then
+                                        stream.Position <- 0L
+                                        let! localFileContentHash = Grace.Shared.Services.computeBlake3ForFile stream
+                                        return Blake3Hash $"{localFileContentHash}"
+                                    else
+                                        return Blake3Hash String.Empty
+                                }
+
+                            if existingFileMatchesRemoteVersion localHash localBlake3Hash fileVersion then
                                 filesToSkip.Add(fileVersion.RelativePath)
                                 |> ignore
                             elif not force then

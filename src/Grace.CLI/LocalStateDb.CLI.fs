@@ -1491,6 +1491,12 @@ module LocalStateDb =
 
                                 if not (columnExists connection "status_files" "blake3_hash") then
                                     "status_files.blake3_hash"
+
+                                if not (columnExists connection "object_cache_directories" "blake3_hash") then
+                                    "object_cache_directories.blake3_hash"
+
+                                if not (columnExists connection "object_cache_directory_files" "blake3_hash") then
+                                    "object_cache_directory_files.blake3_hash"
                             |]
 
                         if schemaVersion <> Some SchemaVersion then
