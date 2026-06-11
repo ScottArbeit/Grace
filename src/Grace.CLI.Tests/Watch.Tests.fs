@@ -5,6 +5,7 @@ open Grace.CLI
 open Grace.CLI.Command
 open Grace.Shared
 open Grace.Shared.Client.Configuration
+open Grace.Shared.Parameters.Storage
 open Grace.Shared.Utilities
 open Grace.Types.Common
 open NodaTime
@@ -470,6 +471,72 @@ module WatchTests =
 
                 readFileIfExists ipcFileName
                 |> should equal originalContents))
+
+    [<Test>]
+    let ``watch cached file changes upload cached object for save enrichment`` () =
+        let filePath = FilePath @"C:\repo\dir\cached-file.txt"
+
+        let cachedFileVersion =
+            FileVersion.Create "dir/cached-file.txt" (Sha256Hash "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa") String.Empty true 12L
+
+        let mutable uploadedFileVersions = Array.empty<FileVersion>
+
+        let copyFileToObjectCache _ = Task.FromResult<FileVersion option> None
+
+        let getCachedFileVersion _ = Task.FromResult(Some cachedFileVersion)
+
+        let uploadFileVersions (parameters: GetUploadMetadataForFilesParameters) =
+            uploadedFileVersions <- parameters.FileVersions
+            Task.FromResult(Ok(GraceReturnValue.Create parameters.FileVersions parameters.CorrelationId))
+
+        let parameters =
+            GetUploadMetadataForFilesParameters(
+                OwnerId = $"{OwnerId.Empty}",
+                OrganizationId = $"{OrganizationId.Empty}",
+                RepositoryId = $"{RepositoryId.Empty}",
+                CorrelationId = "watch-cache-hit-test"
+            )
+
+        (Watch.copyFileToObjectDirectoryAndUploadToStorageWithClients copyFileToObjectCache getCachedFileVersion uploadFileVersions parameters filePath)
+            .GetAwaiter()
+            .GetResult()
+
+        uploadedFileVersions
+        |> should equal [| cachedFileVersion |]
+
+        parameters.FileVersions
+        |> should equal [| cachedFileVersion |]
+
+    [<Test>]
+    let ``object-cache copies preserve scanner Blake3 identity`` () =
+        withTempRepo (fun root ->
+            let nestedDirectory = Path.Combine(root, "dir")
+
+            Directory.CreateDirectory(nestedDirectory)
+            |> ignore
+
+            let filePath = Path.Combine(nestedDirectory, "whole-file.txt")
+            File.WriteAllText(filePath, "whole-file watch upload payload")
+
+            let localFileVersion =
+                match (Services.createLocalFileVersion (FileInfo filePath))
+                    .Result
+                    with
+                | Some fileVersion -> fileVersion
+                | None -> failwith "Expected scanner file version."
+
+            let copiedFileVersion =
+                match (Services.copyToObjectDirectory (FilePath filePath))
+                    .Result
+                    with
+                | Some fileVersion -> fileVersion
+                | None -> failwith "Expected object-cache copy to create the object."
+
+            String.IsNullOrWhiteSpace(string copiedFileVersion.Blake3Hash)
+            |> should equal false
+
+            copiedFileVersion.Blake3Hash
+            |> should equal localFileVersion.Blake3Hash)
 
     [<Test>]
     let ``watch json auth failure emits one clean error envelope`` () =

@@ -622,6 +622,7 @@ module Reference =
                                         //let mutable rootDirectoryId = DirectoryId.Empty
                                         //let mutable rootDirectorySha256Hash = Sha256Hash String.Empty
                                         let rootDirectoryVersion = ref (DirectoryVersionId.Empty, Sha256Hash String.Empty)
+                                        let mutable applyLocalStatusAfterReferenceSave = fun () -> Task.FromResult(())
 
                                         match! getGraceWatchStatus () with
                                         | Some graceWatchStatus ->
@@ -678,6 +679,7 @@ module Reference =
                                             //     newDirectoryVersions.First(fun dv -> dv.Files.Exists(fun file -> file.RelativePath = relativePath)).Files.First(fun file -> file.RelativePath = relativePath))
 
                                             let mutable lastFileUploadInstant = newGraceStatus.LastSuccessfulFileUpload
+                                            let mutable uploadedFileVersions = Array.empty<FileVersion>
 
                                             if newFileVersions.Count() > 0 then
                                                 let getUploadMetadataForFilesParameters =
@@ -696,8 +698,8 @@ module Reference =
                                                     )
 
                                                 match! uploadFilesToObjectStorage getUploadMetadataForFilesParameters with
-                                                | Ok returnValue -> () //logToAnsiConsole Colors.Verbose $"Uploaded all files to object storage."
-                                                | Error error -> logToAnsiConsole Colors.Error $"Error uploading files to object storage: {error.Error}"
+                                                | Ok returnValue -> uploadedFileVersions <- returnValue.ReturnValue
+                                                | Error error -> raise (InvalidOperationException($"Error uploading files to object storage: {error.Error}"))
 
                                                 lastFileUploadInstant <- getCurrentInstant ()
 
@@ -718,12 +720,24 @@ module Reference =
                                                 saveParameters.CorrelationId <- graceIds.CorrelationId
                                                 saveParameters.DirectoryVersionId <- $"{newGraceStatus.RootDirectoryId}"
 
-                                                saveParameters.DirectoryVersions <-
-                                                    newDirectoryVersions
-                                                        .Select(fun dv -> dv.ToDirectoryVersion)
-                                                        .ToList()
+                                                let! savedDirectoryVersionsResult =
+                                                    getSavedDirectoryVersionsForRootDirectory previousGraceStatus.RootDirectoryId graceIds.CorrelationId
 
-                                                let! uploadDirectoryVersions = DirectoryVersion.SaveDirectoryVersions saveParameters
+                                                let savedDirectoryVersions =
+                                                    match savedDirectoryVersionsResult with
+                                                    | Ok returnValue -> returnValue
+                                                    | Error error ->
+                                                        raise (InvalidOperationException($"Error retrieving saved directory versions: {error.Error}"))
+
+                                                saveParameters.DirectoryVersions <-
+                                                    applyUploadedFileVersionsToDirectoryVersionsWithSavedDirectoryVersions
+                                                        uploadedFileVersions
+                                                        savedDirectoryVersions
+                                                        newDirectoryVersions
+
+                                                match! DirectoryVersion.SaveDirectoryVersions saveParameters with
+                                                | Ok _ -> ()
+                                                | Error error -> raise (InvalidOperationException($"Error uploading directory versions: {error.Error}"))
 
                                                 lastDirectoryVersionUpload <- getCurrentInstant ()
 
@@ -735,7 +749,8 @@ module Reference =
                                                     LastSuccessfulDirectoryVersionUpload = lastDirectoryVersionUpload
                                                 }
 
-                                            do! applyGraceStatusIncremental newGraceStatus newDirectoryVersions differences
+                                            applyLocalStatusAfterReferenceSave <-
+                                                fun () -> applyGraceStatusIncremental newGraceStatus newDirectoryVersions differences
 
                                         t5.StartTask() // Create new reference.
 
@@ -758,6 +773,11 @@ module Reference =
                                             )
 
                                         let! result = command sdkParameters
+
+                                        match result with
+                                        | Ok _ -> do! applyLocalStatusAfterReferenceSave ()
+                                        | Error _ -> ()
+
                                         t5.Value <- 100.0
 
                                         return result
@@ -806,6 +826,12 @@ module Reference =
                             )
 
                         let! uploadResult = uploadFilesToObjectStorage getUploadMetadataForFilesParameters
+
+                        let uploadedFileVersions =
+                            match uploadResult with
+                            | Ok returnValue -> returnValue.ReturnValue
+                            | Error error -> raise (InvalidOperationException($"Error uploading files to object storage: {error.Error}"))
+
                         let saveParameters = SaveDirectoryVersionsParameters()
                         saveParameters.OwnerId <- graceIds.OwnerIdString
                         saveParameters.OwnerName <- graceIds.OwnerName
@@ -815,12 +841,23 @@ module Reference =
                         saveParameters.RepositoryName <- graceIds.RepositoryName
                         saveParameters.CorrelationId <- graceIds.CorrelationId
 
-                        saveParameters.DirectoryVersions <-
-                            newDirectoryVersions
-                                .Select(fun dv -> dv.ToDirectoryVersion)
-                                .ToList()
+                        let! savedDirectoryVersionsResult = getSavedDirectoryVersionsForRootDirectory previousGraceStatus.RootDirectoryId graceIds.CorrelationId
 
-                        let! uploadDirectoryVersions = DirectoryVersion.SaveDirectoryVersions saveParameters
+                        let savedDirectoryVersions =
+                            match savedDirectoryVersionsResult with
+                            | Ok returnValue -> returnValue
+                            | Error error -> raise (InvalidOperationException($"Error retrieving saved directory versions: {error.Error}"))
+
+                        saveParameters.DirectoryVersions <-
+                            applyUploadedFileVersionsToDirectoryVersionsWithSavedDirectoryVersions
+                                uploadedFileVersions
+                                savedDirectoryVersions
+                                newDirectoryVersions
+
+                        match! DirectoryVersion.SaveDirectoryVersions saveParameters with
+                        | Ok _ -> ()
+                        | Error error -> raise (InvalidOperationException($"Error uploading directory versions: {error.Error}"))
+
                         let rootDirectoryVersion = getRootDirectoryVersion previousGraceStatus
 
                         let sdkParameters =
