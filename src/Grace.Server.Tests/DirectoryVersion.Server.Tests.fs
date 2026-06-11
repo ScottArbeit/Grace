@@ -17,6 +17,12 @@ open System.Net.Http
 module DirectoryVersionServerTestHelpers =
     type DirectoryVersionModel = Grace.Types.Common.DirectoryVersion
 
+    let normalizedDirectorySizeForHash (directoryVersion: DirectoryVersionModel) =
+        if directoryVersion.Size = Constants.InitialDirectorySize then
+            0L
+        else
+            directoryVersion.Size
+
     let createDirectoryVersion
         (directoryVersionId: DirectoryVersionId)
         (repositoryId: string)
@@ -35,7 +41,7 @@ module DirectoryVersionServerTestHelpers =
             |> Seq.map (fun directoryVersion ->
                 DirectoryVersionPreimageEntry.Directory
                     directoryVersion.RelativePath
-                    directoryVersion.Size
+                    (normalizedDirectorySizeForHash directoryVersion)
                     directoryVersion.Blake3Hash
                     directoryVersion.Sha256Hash)
             |> Seq.toArray
@@ -244,4 +250,34 @@ type DirectoryVersionServer() =
                 DirectoryVersionServerTestHelpers.assertBadRequestGraceError
                     (DirectoryVersionError.getErrorMessage DirectoryVersionError.DirectoryDoesNotExist)
                     missingResponse
+        }
+
+    [<Test>]
+    member _.SaveDirectoryVersionsOrdersDotRootAfterDirectChildrenWhenInputIsRootFirst() =
+        task {
+            let repositoryId = repositoryIds[2]
+            let childId = Guid.NewGuid()
+            let rootId = Guid.NewGuid()
+
+            let child = DirectoryVersionServerTestHelpers.createDirectoryVersion childId repositoryId "src" []
+
+            let root = DirectoryVersionServerTestHelpers.createDirectoryVersion rootId repositoryId "." [ child ]
+
+            let! saveResponse =
+                Client.PostAsync(
+                    "/directory/saveDirectoryVersions",
+                    createJsonContent (DirectoryVersionServerTestHelpers.saveParameters repositoryId [ root; child ])
+                )
+
+            do! DirectoryVersionServerTestHelpers.assertOk saveResponse
+            let! saveReturnValue = deserializeContent<GraceReturnValue<string>> saveResponse
+            Assert.That(saveReturnValue.ReturnValue, Is.EqualTo("Uploaded new directory versions."))
+
+            let! fetchedRoot = DirectoryVersionServerTestHelpers.getDirectoryVersionAsync repositoryId rootId
+            DirectoryVersionServerTestHelpers.assertDirectoryVersionDto root fetchedRoot
+            Assert.That(fetchedRoot.DirectoryVersion.Directories, Has.Count.EqualTo(1))
+            Assert.That(fetchedRoot.DirectoryVersion.Directories, Does.Contain(childId))
+
+            let! fetchedChild = DirectoryVersionServerTestHelpers.getDirectoryVersionAsync repositoryId childId
+            DirectoryVersionServerTestHelpers.assertDirectoryVersionDto child fetchedChild
         }

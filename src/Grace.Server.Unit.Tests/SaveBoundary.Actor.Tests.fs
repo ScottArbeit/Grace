@@ -172,15 +172,40 @@ type SaveBoundaryActorTests() =
         | Error error -> Assert.Fail($"Expected legacy empty BLAKE3 to be accepted, got {error.Error}.")
 
     [<Test>]
-    member _.DirectoryVersionHashValidationAllowsLegacyManifestBackedFileBlake3Gap() =
+    member _.DirectoryVersionHashValidationRejectsNewManifestBackedFileBlake3Gap() =
         let manifest = finalizedManifest ()
         let fileVersion = manifestFile manifest
         fileVersion.Blake3Hash <- Blake3Hash String.Empty
         let directoryVersion = hashedDirectory directoryVersionId (RelativePath "/") [] [ fileVersion ]
 
         match DirectoryVersionActor.validateDirectoryVersionHashesWithChildren "corr-legacy-manifest-file-blake3" directoryVersion [] with
+        | Ok () -> Assert.Fail("Expected new manifest-backed FileVersion without BLAKE3 to reject before Save.")
+        | Error error ->
+            Assert.That(
+                error.Error,
+                Does
+                    .Contain("child file")
+                    .And.Contain("Blake3Hash")
+            )
+
+    [<Test>]
+    member _.DirectoryVersionHashValidationAllowsUnchangedLegacyManifestBackedFileBlake3Gap() =
+        let manifest = finalizedManifest ()
+        let fileVersion = manifestFile manifest
+        fileVersion.Blake3Hash <- Blake3Hash String.Empty
+        let previousFileVersion = manifestFile manifest
+        previousFileVersion.Blake3Hash <- Blake3Hash String.Empty
+        let directoryVersion = hashedDirectory directoryVersionId (RelativePath "/") [] [ fileVersion ]
+
+        match
+            DirectoryVersionActor.validateDirectoryVersionHashesWithChildrenAndPreviousFiles
+                "corr-legacy-manifest-file-blake3"
+                directoryVersion
+                []
+                [ previousFileVersion ]
+            with
         | Ok () -> ()
-        | Error error -> Assert.Fail($"Expected legacy manifest-backed FileVersion without BLAKE3 to validate, got {error.Error}.")
+        | Error error -> Assert.Fail($"Expected unchanged legacy manifest-backed FileVersion without BLAKE3 to validate, got {error.Error}.")
 
     [<Test>]
     member _.DirectoryVersionHashValidationRequiresDirectoryBlake3BeforeSave() =
