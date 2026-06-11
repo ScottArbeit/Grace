@@ -17,7 +17,6 @@ Name | Type | Description | Notes
 **branch_id** | **UUID** |  | [optional] 
 **branch_name** | **str** |  | [optional] 
 **sha256_hash** | **str** |  | [optional] 
-**blake3_hash** | **str** |  | [optional] 
 **reference_id** | **UUID** |  | [optional] 
 **include_deleted** | **bool** |  | [optional] 
 

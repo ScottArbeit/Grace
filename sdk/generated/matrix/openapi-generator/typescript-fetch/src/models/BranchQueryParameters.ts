@@ -14,7 +14,7 @@
 
 import { mapValues } from '../runtime';
 /**
- * Parameters for branch query endpoints that can resolve a branch or reference by hash or reference id.
+ * Parameters for branch query endpoints that can resolve a branch or reference by SHA-256 hash or reference id.
  * @export
  * @interface BranchQueryParameters
  */
@@ -90,12 +90,6 @@ export interface BranchQueryParameters {
      * @type {string}
      * @memberof BranchQueryParameters
      */
-    blake3Hash?: string;
-    /**
-     * 
-     * @type {string}
-     * @memberof BranchQueryParameters
-     */
     referenceId?: string;
 }
 
@@ -127,7 +121,6 @@ export function BranchQueryParametersFromJSONTyped(json: any, ignoreDiscriminato
         'branchId': json['BranchId'] == null ? undefined : json['BranchId'],
         'branchName': json['BranchName'] == null ? undefined : json['BranchName'],
         'sha256Hash': json['Sha256Hash'] == null ? undefined : json['Sha256Hash'],
-        'blake3Hash': json['Blake3Hash'] == null ? undefined : json['Blake3Hash'],
         'referenceId': json['ReferenceId'] == null ? undefined : json['ReferenceId'],
     };
 }
@@ -154,7 +147,6 @@ export function BranchQueryParametersToJSONTyped(value?: BranchQueryParameters |
         'BranchId': value['branchId'],
         'BranchName': value['branchName'],
         'Sha256Hash': value['sha256Hash'],
-        'Blake3Hash': value['blake3Hash'],
         'ReferenceId': value['referenceId'],
     };
 }

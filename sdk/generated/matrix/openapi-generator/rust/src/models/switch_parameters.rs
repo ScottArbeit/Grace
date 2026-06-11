@@ -38,10 +38,10 @@ pub struct SwitchParameters {
     pub branch_name: Option<String>,
     #[serde(rename = "Sha256Hash", skip_serializing_if = "Option::is_none")]
     pub sha256_hash: Option<String>,
-    #[serde(rename = "Blake3Hash", skip_serializing_if = "Option::is_none")]
-    pub blake3_hash: Option<String>,
     #[serde(rename = "ReferenceId", skip_serializing_if = "Option::is_none")]
     pub reference_id: Option<uuid::Uuid>,
+    #[serde(rename = "Blake3Hash", skip_serializing_if = "Option::is_none")]
+    pub blake3_hash: Option<String>,
 }
 
 impl SwitchParameters {
@@ -59,8 +59,8 @@ impl SwitchParameters {
             branch_id: None,
             branch_name: None,
             sha256_hash: None,
-            blake3_hash: None,
             reference_id: None,
+            blake3_hash: None,
         }
     }
 }
