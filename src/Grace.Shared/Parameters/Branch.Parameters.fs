@@ -24,6 +24,7 @@ module Branch =
     type BranchQueryParameters() =
         inherit BranchParameters()
         member val public Sha256Hash: Sha256Hash = String.Empty with get, set
+        member val public Blake3Hash: Blake3Hash = String.Empty with get, set
         member val public ReferenceId = String.Empty with get, set
 
     /// Parameters for the /branch/create endpoint.
@@ -38,6 +39,7 @@ module Branch =
         inherit BranchParameters()
         member val public DirectoryVersionId: DirectoryVersionId = Guid.Empty with get, set
         member val public Sha256Hash: Sha256Hash = String.Empty with get, set
+        member val public Blake3Hash: Blake3Hash = String.Empty with get, set
         member val public Message = String.Empty with get, set
 
     /// Parameters for the /branch/rebase endpoint.
@@ -50,6 +52,7 @@ module Branch =
         inherit BranchParameters()
         member val public DirectoryVersionId: DirectoryVersionId = Guid.Empty with get, set
         member val public Sha256Hash: Sha256Hash = String.Empty with get, set
+        member val public Blake3Hash: Blake3Hash = String.Empty with get, set
         member val public Message = String.Empty with get, set
 
     /// Parameters for the /branch/setName endpoint.
@@ -153,6 +156,7 @@ module Branch =
     type ListContentsParameters() =
         inherit BranchQueryParameters()
         member val public Sha256Hash: Sha256Hash = String.Empty with get, set
+        member val public Blake3Hash: Blake3Hash = String.Empty with get, set
         member val public ReferenceId = String.Empty with get, set
         member val public Pattern = String.Empty with get, set
         member val public ShowDirectories = true with get, set

@@ -16,6 +16,7 @@ Name | Type | Description | Notes
 **branch_name** | Option<**String**> |  | [optional]
 **directory_version_id** | Option<**uuid::Uuid**> |  | [optional]
 **sha256_hash** | Option<**String**> |  | [optional]
+**blake3_hash** | Option<**String**> |  | [optional]
 **message** | Option<**String**> |  | [optional]
 
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)

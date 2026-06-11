@@ -90,6 +90,12 @@ export interface GetReferenceParameters {
      * @type {string}
      * @memberof GetReferenceParameters
      */
+    blake3Hash?: string;
+    /**
+     * 
+     * @type {string}
+     * @memberof GetReferenceParameters
+     */
     referenceId?: string;
 }
 
@@ -121,6 +127,7 @@ export function GetReferenceParametersFromJSONTyped(json: any, ignoreDiscriminat
         'branchId': json['BranchId'] == null ? undefined : json['BranchId'],
         'branchName': json['BranchName'] == null ? undefined : json['BranchName'],
         'sha256Hash': json['Sha256Hash'] == null ? undefined : json['Sha256Hash'],
+        'blake3Hash': json['Blake3Hash'] == null ? undefined : json['Blake3Hash'],
         'referenceId': json['ReferenceId'] == null ? undefined : json['ReferenceId'],
     };
 }
@@ -147,6 +154,7 @@ export function GetReferenceParametersToJSONTyped(value?: GetReferenceParameters
         'BranchId': value['branchId'],
         'BranchName': value['branchName'],
         'Sha256Hash': value['sha256Hash'],
+        'Blake3Hash': value['blake3Hash'],
         'ReferenceId': value['referenceId'],
     };
 }
