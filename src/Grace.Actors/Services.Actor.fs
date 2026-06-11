@@ -2441,8 +2441,7 @@ module Services =
                 return None
         }
 
-    /// Resolves a Root DirectoryVersion by searching using a Sha256Hash value.
-    let getRootDirectoryVersionResolutionBySha256Hash (repositoryId: RepositoryId) (sha256Hash: Sha256Hash) correlationId =
+    let private getRootDirectoryVersionResolutionByHashPrefix hashFieldName repositoryId hashPrefix getHash correlationId =
         task {
             let directoryVersions = List<DirectoryVersion>()
 
@@ -2458,7 +2457,7 @@ module Services =
                             $"""
                             SELECT TOP @maxCount c.State
                             FROM c
-                            WHERE STARTSWITH(c.State[0].Event.created.Sha256Hash, @sha256Hash, true)
+                            WHERE STARTSWITH(c.State[0].Event.created.{hashFieldName}, @hashPrefix, true)
                                 AND (
                                     STRINGEQUALS(c.State[0].Event.created.RelativePath, @rootRelativePath, true)
                                     OR STRINGEQUALS(c.State[0].Event.created.RelativePath, @slashRootRelativePath, true)
@@ -2469,7 +2468,7 @@ module Services =
                             """
                         )
                             .WithParameter("@maxCount", maxVersionHashPrefixResolutionMatches)
-                            .WithParameter("@sha256Hash", sha256Hash)
+                            .WithParameter("@hashPrefix", hashPrefix)
                             .WithParameter("@rootRelativePath", Constants.RootDirectoryPath)
                             .WithParameter("@slashRootRelativePath", RelativePath "/")
                             .WithParameter("@grainType", StateName.DirectoryVersion)
@@ -2517,8 +2516,9 @@ module Services =
 
                         log.LogError(
                             ex,
-                            "{CurrentInstant}: Exception in Services.getRootDirectoryBySha256Hash(). QueryText: {queryText}. Parameters: {parameters}",
+                            "{CurrentInstant}: Exception in Services.getRootDirectoryVersionResolutionByHashPrefix(). HashFieldName: {hashFieldName}; QueryText: {queryText}. Parameters: {parameters}",
                             getCurrentInstantExtended (),
+                            hashFieldName,
                             (queryDefinition.QueryText),
                             parameters.ToString()
                         )
@@ -2527,13 +2527,38 @@ module Services =
                     stringBuilderPool.Return(requestCharge)
             | MongoDB -> ()
 
-            return resolveScopedVersionHashPrefix sha256Hash (fun (directoryVersion: DirectoryVersion) -> directoryVersion.Sha256Hash) directoryVersions
+            return resolveScopedVersionHashPrefix hashPrefix getHash directoryVersions
         }
+
+    /// Resolves a Root DirectoryVersion by searching using a Sha256Hash value.
+    let getRootDirectoryVersionResolutionBySha256Hash (repositoryId: RepositoryId) (sha256Hash: Sha256Hash) correlationId =
+        getRootDirectoryVersionResolutionByHashPrefix
+            (nameof DirectoryVersion.Default.Sha256Hash)
+            repositoryId
+            sha256Hash
+            (fun (directoryVersion: DirectoryVersion) -> directoryVersion.Sha256Hash)
+            correlationId
 
     /// Gets a Root DirectoryVersion by searching using a Sha256Hash value.
     let getRootDirectoryVersionBySha256Hash (repositoryId: RepositoryId) (sha256Hash: Sha256Hash) correlationId =
         task {
             let! resolution = getRootDirectoryVersionResolutionBySha256Hash repositoryId sha256Hash correlationId
+            return tryGetUniqueVersionHashPrefixMatch resolution
+        }
+
+    /// Resolves a Root DirectoryVersion by searching using a Blake3Hash value.
+    let getRootDirectoryVersionResolutionByBlake3Hash (repositoryId: RepositoryId) (blake3Hash: Blake3Hash) correlationId =
+        getRootDirectoryVersionResolutionByHashPrefix
+            (nameof DirectoryVersion.Default.Blake3Hash)
+            repositoryId
+            blake3Hash
+            (fun (directoryVersion: DirectoryVersion) -> directoryVersion.Blake3Hash)
+            correlationId
+
+    /// Gets a Root DirectoryVersion by searching using a Blake3Hash value.
+    let getRootDirectoryVersionByBlake3Hash (repositoryId: RepositoryId) (blake3Hash: Blake3Hash) correlationId =
+        task {
+            let! resolution = getRootDirectoryVersionResolutionByBlake3Hash repositoryId blake3Hash correlationId
             return tryGetUniqueVersionHashPrefixMatch resolution
         }
 
