@@ -24,7 +24,17 @@ type DirectoryVersion() =
 
     /// Retrieves a DirectoryVersion instance.
     static member public GetBySha256Hash(parameters: GetBySha256HashParameters) =
-        postServer<GetBySha256HashParameters, string> (parameters |> ensureCorrelationIdIsSet, $"directory/{nameof (DirectoryVersion.GetBySha256Hash)}")
+        postServer<GetBySha256HashParameters, DirectoryVersion> (
+            parameters |> ensureCorrelationIdIsSet,
+            $"directory/{nameof (DirectoryVersion.GetBySha256Hash)}"
+        )
+
+    /// Retrieves a DirectoryVersion instance by its BLAKE3 hash or unique BLAKE3 prefix.
+    static member public GetByBlake3Hash(parameters: GetByBlake3HashParameters) =
+        postServer<GetByBlake3HashParameters, DirectoryVersion> (
+            parameters |> ensureCorrelationIdIsSet,
+            $"directory/{nameof (DirectoryVersion.GetByBlake3Hash)}"
+        )
 
     /// Retrieves the Uri to download the .zip file for a specific DirectoryVersion.
     static member public GetZipFile(parameters: GetZipFileParameters) =
