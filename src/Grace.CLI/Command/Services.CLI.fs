@@ -499,6 +499,14 @@ module Services =
             LocalDirectoryVersion.Default
         )
 
+    let syncGraceStatusRootDirectoryHash (graceStatus: GraceStatus) =
+        let rootDirectoryVersion = getRootDirectoryVersion graceStatus
+
+        if rootDirectoryVersion.DirectoryVersionId = DirectoryVersionId.Empty then
+            graceStatus
+        else
+            { graceStatus with RootDirectoryId = rootDirectoryVersion.DirectoryVersionId; RootDirectorySha256Hash = rootDirectoryVersion.Sha256Hash }
+
     let localWriteTimes = ConcurrentDictionary<FileSystemEntryType * RelativePath, DateTime>()
 
     /// Gets a dictionary of local paths and their last write times.
@@ -1310,10 +1318,25 @@ module Services =
                 directoryVersions[directoryVersion.DirectoryVersionId] <- directoryVersion
                 directoryVersion
 
-        localDirectoryVersions
-        |> Seq.map buildDirectoryVersion
-        |> Seq.toList
-        |> List<DirectoryVersion>
+        let uploadedDirectoryVersions =
+            localDirectoryVersions
+            |> Seq.map buildDirectoryVersion
+            |> Seq.toList
+
+        for uploadedDirectoryVersion in uploadedDirectoryVersions do
+            let mutable localDirectoryVersion = Unchecked.defaultof<LocalDirectoryVersion>
+
+            if localDirectoryVersionsById.TryGetValue(uploadedDirectoryVersion.DirectoryVersionId, &localDirectoryVersion) then
+                let lastWriteTimeUtc = localDirectoryVersion.LastWriteTimeUtc
+                let uploadedLocalDirectoryVersion = uploadedDirectoryVersion.ToLocalDirectoryVersion lastWriteTimeUtc
+
+                localDirectoryVersion.Sha256Hash <- uploadedLocalDirectoryVersion.Sha256Hash
+                localDirectoryVersion.Blake3Hash <- uploadedLocalDirectoryVersion.Blake3Hash
+                localDirectoryVersion.Directories <- uploadedLocalDirectoryVersion.Directories
+                localDirectoryVersion.Files <- uploadedLocalDirectoryVersion.Files
+                localDirectoryVersion.Size <- uploadedLocalDirectoryVersion.Size
+
+        List<DirectoryVersion>(uploadedDirectoryVersions)
 
     let applyUploadedFileVersionsToDirectoryVersions
         (uploadedFileVersions: IEnumerable<FileVersion>)

@@ -391,6 +391,8 @@ module Diff =
                                         t5.StartTask()
 
                                         if newDirectoryVersions.Count > 0 then
+                                            let updatedGraceStatus = syncGraceStatusRootDirectoryHash updatedGraceStatus
+
                                             (task {
                                                 match!
                                                     createSaveReference
@@ -712,6 +714,8 @@ module Diff =
                                             t5.StartTask()
 
                                             if newDirectoryVersions.Count > 0 then
+                                                let updatedGraceStatus = syncGraceStatusRootDirectoryHash updatedGraceStatus
+
                                                 (task {
                                                     match!
                                                         createSaveReference

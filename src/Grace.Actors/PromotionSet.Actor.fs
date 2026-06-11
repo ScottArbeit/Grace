@@ -635,9 +635,9 @@ module PromotionSet =
                 try
                     let payloadBytes = Encoding.UTF8.GetBytes(textContent)
                     use hashStream = new MemoryStream(payloadBytes)
-                    let! sha256Hash = computeSha256ForFile hashStream filePath
+                    let! sha256Hash, blake3Hash = computeHashesForFile hashStream filePath
 
-                    let fileVersion = FileVersion.Create filePath sha256Hash String.Empty false (int64 payloadBytes.Length)
+                    let fileVersion = FileVersion.CreateWithHashes filePath sha256Hash blake3Hash String.Empty false (int64 payloadBytes.Length)
 
                     let! writeUri = getUriWithWriteSharedAccessSignatureForFileVersion repositoryDto fileVersion metadata.CorrelationId
                     let blobClient = BlobClient(writeUri)
