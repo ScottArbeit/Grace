@@ -802,7 +802,8 @@ module Diff =
                 | Ok _ ->
                     let graceIds = getNormalizedIdsAndNames parseResult
 
-                    if parseResult |> hasOutput then
+                    if (parseResult |> hasOutput)
+                       || (parseResult |> json) then
                         let blake3Hash1 = parseResult.GetValue(Options.blake3Hash1)
                         let blake3Hash2 = parseResult.GetValue(Options.blake3Hash2)
 
@@ -821,20 +822,25 @@ module Diff =
 
                         match! Diff.GetDiffByBlake3Hash(getDiffByBlake3HashParameters) with
                         | Ok returnValue ->
-                            let diffDto = returnValue.ReturnValue
-                            printDiffResults diffDto
+                            if parseResult |> json then
+                                return Ok returnValue |> renderOutput parseResult
+                            else
+                                let diffDto = returnValue.ReturnValue
+                                printDiffResults diffDto
 
-                            for markup in markupList do
-                                writeMarkup markup
+                                for markup in markupList do
+                                    writeMarkup markup
 
-                            return 0
+                                return 0
                         | Error error ->
-                            logToAnsiConsole Colors.Error $"Failed to get diff by BLAKE3 hash. {Markup.Escape(error.Error)}"
+                            if parseResult |> json then
+                                return Error error |> renderOutput parseResult
+                            else
+                                logToAnsiConsole Colors.Error $"Failed to get diff by BLAKE3 hash. {Markup.Escape(error.Error)}"
 
-                            if parseResult |> json || parseResult |> verbose then
-                                logToAnsiConsole Colors.Verbose (serialize error)
+                                if parseResult |> verbose then logToAnsiConsole Colors.Verbose (serialize error)
 
-                            return 1
+                                return 1
                     else
                         return 0
                 | Error error -> return (Error error) |> renderOutput parseResult

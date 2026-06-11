@@ -130,9 +130,9 @@ Rejected selectors return a JSON error envelope. They do not produce partial out
 The final registry-backed inventory covers every CLI leaf command with exactly one disposition:
 
 - Total leaf commands: `204`
-- JSON-ready routed commands: `182`
+- JSON-ready routed commands: `183`
 - Intentionally human-only commands: `1`
-- Deferred routed commands with explicit V2 scope: `12`
+- Deferred routed commands with explicit V2 scope: `11`
 - Source-only/unrouted commands: `9`
 - Deleted commands: `0`
 
@@ -158,7 +158,6 @@ metadata and V2 scope because their success paths still need migration before Gr
 - `branch.rebase`
 - `branch.status`
 - `branch.switch`
-- `diff.blake3`
 - `diff.checkpoint`
 - `diff.commit`
 - `diff.directoryid`
