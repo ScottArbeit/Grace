@@ -1203,6 +1203,9 @@ module Application =
                                route "/getBySha256Hash" DirectoryVersion.GetBySha256Hash
                                |> addMetadata typeof<DirectoryVersion.GetBySha256HashParameters>
 
+                               route "/getByBlake3Hash" DirectoryVersion.GetByBlake3Hash
+                               |> addMetadata typeof<DirectoryVersion.GetByBlake3HashParameters>
+
                                route "/getDirectoryVersionsRecursive" DirectoryVersion.GetDirectoryVersionsRecursive
                                |> addMetadata typeof<DirectoryVersion.GetParameters>
 

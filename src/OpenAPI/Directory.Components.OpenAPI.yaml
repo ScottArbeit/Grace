@@ -59,6 +59,14 @@
           properties:
             Sha256Hash:
               $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Sha256Hash'
+    GetByBlake3HashParameters:
+      description: Parameters for the /directory/getByBlake3Hash endpoint.
+      allOf:
+        - $ref: '#/DirectoryParameters'
+        - type: object
+          properties:
+            Blake3Hash:
+              $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Blake3Hash'
     SaveDirectoryVersionsParameters:
       description: Parameters for the /directory/saveDirectoryVersions endpoint.
       allOf:

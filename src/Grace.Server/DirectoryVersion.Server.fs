@@ -307,6 +307,83 @@ module DirectoryVersion =
                 return! processQuery context parameters validations 1 query
             }
 
+    let private addGraceIds (context: HttpContext) (graceReturnValue: GraceReturnValue<'T>) =
+        let graceIds = getGraceIds context
+        graceReturnValue.Properties[ nameof OwnerId ] <- graceIds.OwnerId
+        graceReturnValue.Properties[ nameof OrganizationId ] <- graceIds.OrganizationId
+        graceReturnValue.Properties[ nameof RepositoryId ] <- graceIds.RepositoryId
+        graceReturnValue.Properties[ nameof BranchId ] <- graceIds.BranchId
+        graceReturnValue
+
+    let private directoryVersionHashError (context: HttpContext) message =
+        let graceError = GraceError.Create message (getCorrelationId context)
+        graceError.Properties.Add("Path", context.Request.Path.Value)
+        graceError
+
+    /// Get a directory version by its BLAKE3 hash or unique BLAKE3 prefix.
+    let GetByBlake3Hash: HttpHandler =
+        fun (next: HttpFunc) (context: HttpContext) ->
+            task {
+                let graceIds = getGraceIds context
+                let correlationId = getCorrelationId context
+
+                try
+                    let! parameters = context |> parse<GetByBlake3HashParameters>
+
+                    let validations =
+                        [|
+                            Guid.isValidAndNotEmptyGuid $"{parameters.RepositoryId}" DirectoryVersionError.InvalidRepositoryId
+                            String.isNotEmpty parameters.Blake3Hash DirectoryVersionError.Blake3HashIsRequired
+                            String.isValidBlake3HashPrefix parameters.Blake3Hash DirectoryVersionError.InvalidBlake3Hash
+                            Repository.repositoryIdExists
+                                graceIds.OrganizationId
+                                $"{parameters.RepositoryId}"
+                                parameters.CorrelationId
+                                DirectoryVersionError.RepositoryDoesNotExist
+                        |]
+
+                    let! validationsPassed = validations |> allPass
+
+                    if validationsPassed then
+                        let! resolution =
+                            getDirectoryVersionResolutionByBlake3Hash (Guid.Parse(parameters.RepositoryId)) (Blake3Hash parameters.Blake3Hash) correlationId
+
+                        match resolution with
+                        | NoMatches ->
+                            return!
+                                context
+                                |> result400BadRequest (
+                                    directoryVersionHashError
+                                        context
+                                        $"No DirectoryVersion matched the supplied BLAKE3 hash prefix '{parameters.Blake3Hash}' in repository scope."
+                                )
+                        | UniqueMatch directoryVersion ->
+                            let graceReturnValue =
+                                GraceReturnValue.Create directoryVersion correlationId
+                                |> addGraceIds context
+
+                            return! context |> result200Ok graceReturnValue
+                        | AmbiguousMatches _ ->
+                            return!
+                                context
+                                |> result400BadRequest (
+                                    directoryVersionHashError
+                                        context
+                                        $"The supplied BLAKE3 hash prefix '{parameters.Blake3Hash}' is ambiguous in repository scope."
+                                )
+                    else
+                        let! error = validations |> getFirstError
+
+                        return!
+                            context
+                            |> result400BadRequest (directoryVersionHashError context (DirectoryVersionError.getErrorMessage error))
+                with
+                | ex ->
+                    return!
+                        context
+                        |> result500ServerError (GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" correlationId)
+            }
+
     /// Get the Uri of the zip file for a directory version.
     let GetZipFile: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
