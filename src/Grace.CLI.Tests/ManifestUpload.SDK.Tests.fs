@@ -132,6 +132,61 @@ type ManifestUploadSdkTests() =
         Assert.That(Storage.isExistingContentBlockUploadConflict forbidden, Is.False)
 
     [<Test>]
+    member _.WholeFileLocalObjectCacheNameIncludesBlake3() =
+        let fileVersion =
+            FileVersion.CreateWithHashes
+                (RelativePath "src/cache/whole-file.txt")
+                (Sha256Hash "sha256-value")
+                (Blake3Hash "blake3-value")
+                String.Empty
+                false
+                10L
+
+        Assert.That(fileVersion.GetObjectFileName, Is.EqualTo("whole-file_sha256-value.txt"))
+        Assert.That(Storage.getLocalObjectCacheFileName fileVersion, Is.EqualTo("whole-file_sha256-value_blake3-value.txt"))
+
+    [<Test>]
+    member _.WholeFileLocalObjectCacheNameIncludesBlake3ForExtensionlessFiles() =
+        let fileVersion =
+            FileVersion.CreateWithHashes (RelativePath "Dockerfile") (Sha256Hash "sha256-value") (Blake3Hash "blake3-value") String.Empty false 10L
+
+        Assert.That(fileVersion.GetObjectFileName, Is.EqualTo("Dockerfile_sha256-value"))
+        Assert.That(Storage.getLocalObjectCacheFileName fileVersion, Is.EqualTo("Dockerfile_sha256-value_blake3-value"))
+
+    [<Test>]
+    member _.WholeFileLocalObjectCacheNameKeepsLegacyShaOnlyNameWithoutBlake3() =
+        let fileVersion = FileVersion.Create (RelativePath "src/cache/legacy-file.txt") (Sha256Hash "sha256-value") String.Empty false 10L
+
+        Assert.That(Storage.getLocalObjectCacheFileName fileVersion, Is.EqualTo(fileVersion.GetObjectFileName))
+
+    [<Test>]
+    member _.UploadMetadataMatchingIncludesBlake3WhenPathAndShaCollide() =
+        let firstFileVersion =
+            FileVersion.CreateWithHashes (RelativePath "src/cache/collision.txt") (Sha256Hash "same-sha256") (Blake3Hash "first-blake3") String.Empty false 10L
+
+        let secondFileVersion =
+            FileVersion.CreateWithHashes (RelativePath "src/cache/collision.txt") (Sha256Hash "same-sha256") (Blake3Hash "second-blake3") String.Empty false 10L
+
+        let uploadMetadata: Parameters.Storage.UploadMetadata =
+            {
+                RelativePath = secondFileVersion.RelativePath
+                BlobUriWithSasToken = Uri("https://example.test/upload")
+                Sha256Hash = secondFileVersion.Sha256Hash
+                Blake3Hash = secondFileVersion.Blake3Hash
+                ContentReference = FileContentReference.WholeFileContent
+            }
+
+        let matchedFileVersion =
+            Services.findFileVersionForUploadMetadata
+                [|
+                    firstFileVersion
+                    secondFileVersion
+                |]
+                uploadMetadata
+
+        Assert.That(matchedFileVersion, Is.EqualTo(secondFileVersion))
+
+    [<Test>]
     member _.ManifestUploadFlowStartsUploadsConfirmsAndFinalizesNewBlocksOnly() =
         task {
             let payload = ManifestUploadSdkTests.PseudoRandomBytes 220000
