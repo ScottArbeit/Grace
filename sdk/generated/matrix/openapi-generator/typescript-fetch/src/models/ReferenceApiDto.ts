@@ -77,6 +77,12 @@ export interface ReferenceApiDto {
     sha256Hash?: string;
     /**
      * 
+     * @type {string}
+     * @memberof ReferenceApiDto
+     */
+    blake3Hash?: string;
+    /**
+     * 
      * @type {ReferenceType}
      * @memberof ReferenceApiDto
      */
@@ -146,6 +152,7 @@ export function ReferenceApiDtoFromJSONTyped(json: any, ignoreDiscriminator: boo
         'branchId': json['BranchId'] == null ? undefined : json['BranchId'],
         'directoryId': json['DirectoryId'] == null ? undefined : json['DirectoryId'],
         'sha256Hash': json['Sha256Hash'] == null ? undefined : json['Sha256Hash'],
+        'blake3Hash': json['Blake3Hash'] == null ? undefined : json['Blake3Hash'],
         'referenceType': json['ReferenceType'] == null ? undefined : ReferenceTypeFromJSON(json['ReferenceType']),
         'referenceText': json['ReferenceText'] == null ? undefined : json['ReferenceText'],
         'links': json['Links'] == null ? undefined : json['Links'],
@@ -175,6 +182,7 @@ export function ReferenceApiDtoToJSONTyped(value?: ReferenceApiDto | null, ignor
         'BranchId': value['branchId'],
         'DirectoryId': value['directoryId'],
         'Sha256Hash': value['sha256Hash'],
+        'Blake3Hash': value['blake3Hash'],
         'ReferenceType': ReferenceTypeToJSON(value['referenceType']),
         'ReferenceText': value['referenceText'],
         'Links': value['links'],

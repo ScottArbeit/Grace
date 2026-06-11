@@ -1550,7 +1550,7 @@ paths:
                   Sha256Hash: 805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243
       responses:
         '200':
-          $ref: '#/components/responses/DirectoryVersionResponse'
+          $ref: '#/components/responses/DirectoryVersionHashLookupResponse'
         '400':
           $ref: '#/components/responses/400'
         '500':
@@ -1581,7 +1581,7 @@ paths:
                   Blake3Hash: 9A35D91B2F631BE9025DE753139B88F7B1E71385C412BC3986FF2F38F230841D
       responses:
         '200':
-          $ref: '#/components/responses/DirectoryVersionResponse'
+          $ref: '#/components/responses/DirectoryVersionHashLookupResponse'
         '400':
           $ref: '#/components/responses/400'
         '500':
@@ -5753,6 +5753,25 @@ components:
         - EventTime
         - CorrelationId
         - Properties
+    DirectoryVersionHashLookupReturnValue:
+      description: Grace response envelope whose ReturnValue contains a raw directory version.
+      type: object
+      properties:
+        ReturnValue:
+          $ref: '#/components/schemas/DirectoryVersion'
+        EventTime:
+          $ref: '#/components/schemas/Instant'
+        CorrelationId:
+          $ref: '#/components/schemas/CorrelationId'
+        Properties:
+          type: object
+          additionalProperties:
+            type: string
+      required:
+        - ReturnValue
+        - EventTime
+        - CorrelationId
+        - Properties
     OrganizationCommandReturnValue:
       description: Grace response envelope returned by organization command endpoints.
       type: object
@@ -6995,6 +7014,12 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/DirectoryVersionListReturnValue'
+    DirectoryVersionHashLookupResponse:
+      description: OK
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/DirectoryVersionHashLookupReturnValue'
     OrganizationCommandResponse:
       description: OK
       content:
