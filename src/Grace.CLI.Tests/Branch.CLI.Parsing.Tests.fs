@@ -2,6 +2,7 @@ namespace Grace.CLI.Tests
 
 open FsUnit
 open Grace.CLI
+open Grace.CLI.Command
 open NUnit.Framework
 open System
 
@@ -12,6 +13,7 @@ module BranchCommandParsingTests =
     let private repositoryId = Guid.NewGuid()
     let private branchId = Guid.NewGuid()
     let private referenceId = Guid.NewGuid()
+    let private sha256Hash = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     let private blake3Hash = "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adcd1e8c76d9a8885f16a39f"
 
     let private withIds (args: string array) =
@@ -113,6 +115,33 @@ module BranchCommandParsingTests =
                         "--blake3-hash"
                         blake3Hash |]
         |> ignore
+
+    [<Test>]
+    let ``branch switch preserves SHA-256 and BLAKE3 locator evidence`` () =
+        let parseResult =
+            assertParses [| "branch"
+                            "switch"
+                            "--sha256-hash"
+                            sha256Hash
+                            "--blake3-hash"
+                            blake3Hash |]
+
+        parseResult.GetValue<string>("--sha256-hash")
+        |> should equal sha256Hash
+
+        parseResult.GetValue<string>("--blake3-hash")
+        |> should equal blake3Hash
+
+        Branch.switchHashLocatorEvidence sha256Hash blake3Hash
+        |> should equal (sha256Hash, blake3Hash)
+
+    [<Test>]
+    let ``branch switch hash locator evidence supports single-hash forms`` () =
+        Branch.switchHashLocatorEvidence sha256Hash String.Empty
+        |> should equal (sha256Hash, String.Empty)
+
+        Branch.switchHashLocatorEvidence String.Empty blake3Hash
+        |> should equal (String.Empty, blake3Hash)
 
     [<Test>]
     let ``forbidden branch annotate V1 options are unavailable`` () =
