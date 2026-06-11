@@ -11,64 +11,47 @@
 use crate::models;
 use serde::{Deserialize, Serialize};
 
-/// ReferenceApiDto : Public reference DTO returned through branch reference endpoints.
+/// GetByBlake3HashParameters : Parameters for the /directory/getByBlake3Hash endpoint.
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
-pub struct ReferenceApiDto {
-    #[serde(rename = "Class", skip_serializing_if = "Option::is_none")]
-    pub class: Option<String>,
-    #[serde(rename = "ReferenceId", skip_serializing_if = "Option::is_none")]
-    pub reference_id: Option<uuid::Uuid>,
+pub struct GetByBlake3HashParameters {
+    /// Body DTO correlation id copied into Grace command/event metadata after request parsing. This field is distinct from the X-Correlation-Id transport header.
+    #[serde(rename = "CorrelationId", skip_serializing_if = "Option::is_none")]
+    pub correlation_id: Option<String>,
+    /// The entity on whose behalf the action is being performed.
+    #[serde(rename = "Principal", skip_serializing_if = "Option::is_none")]
+    pub principal: Option<String>,
     #[serde(rename = "OwnerId", skip_serializing_if = "Option::is_none")]
     pub owner_id: Option<uuid::Uuid>,
+    #[serde(rename = "OwnerName", skip_serializing_if = "Option::is_none")]
+    pub owner_name: Option<String>,
     #[serde(rename = "OrganizationId", skip_serializing_if = "Option::is_none")]
     pub organization_id: Option<uuid::Uuid>,
+    #[serde(rename = "OrganizationName", skip_serializing_if = "Option::is_none")]
+    pub organization_name: Option<String>,
     #[serde(rename = "RepositoryId", skip_serializing_if = "Option::is_none")]
     pub repository_id: Option<uuid::Uuid>,
-    #[serde(rename = "BranchId", skip_serializing_if = "Option::is_none")]
-    pub branch_id: Option<uuid::Uuid>,
-    /// DirectoryVersionId represented by the current server DTO field name.
-    #[serde(rename = "DirectoryId", skip_serializing_if = "Option::is_none")]
-    pub directory_id: Option<uuid::Uuid>,
-    #[serde(rename = "Sha256Hash", skip_serializing_if = "Option::is_none")]
-    pub sha256_hash: Option<String>,
+    #[serde(rename = "RepositoryName", skip_serializing_if = "Option::is_none")]
+    pub repository_name: Option<String>,
+    #[serde(rename = "DirectoryVersionId", skip_serializing_if = "Option::is_none")]
+    pub directory_version_id: Option<uuid::Uuid>,
     #[serde(rename = "Blake3Hash", skip_serializing_if = "Option::is_none")]
     pub blake3_hash: Option<String>,
-    #[serde(rename = "ReferenceType", skip_serializing_if = "Option::is_none")]
-    pub reference_type: Option<models::ReferenceType>,
-    #[serde(rename = "ReferenceText", skip_serializing_if = "Option::is_none")]
-    pub reference_text: Option<String>,
-    #[serde(rename = "Links", skip_serializing_if = "Option::is_none")]
-    pub links: Option<Vec<String>>,
-    #[serde(rename = "CreatedAt", skip_serializing_if = "Option::is_none")]
-    pub created_at: Option<chrono::DateTime<chrono::FixedOffset>>,
-    #[serde(rename = "UpdatedAt", skip_serializing_if = "Option::is_none")]
-    pub updated_at: Option<chrono::DateTime<chrono::FixedOffset>>,
-    #[serde(rename = "DeletedAt", skip_serializing_if = "Option::is_none")]
-    pub deleted_at: Option<chrono::DateTime<chrono::FixedOffset>>,
-    #[serde(rename = "DeleteReason", skip_serializing_if = "Option::is_none")]
-    pub delete_reason: Option<String>,
 }
 
-impl ReferenceApiDto {
-    /// Public reference DTO returned through branch reference endpoints.
-    pub fn new() -> ReferenceApiDto {
-        ReferenceApiDto {
-            class: None,
-            reference_id: None,
+impl GetByBlake3HashParameters {
+    /// Parameters for the /directory/getByBlake3Hash endpoint.
+    pub fn new() -> GetByBlake3HashParameters {
+        GetByBlake3HashParameters {
+            correlation_id: None,
+            principal: None,
             owner_id: None,
+            owner_name: None,
             organization_id: None,
+            organization_name: None,
             repository_id: None,
-            branch_id: None,
-            directory_id: None,
-            sha256_hash: None,
+            repository_name: None,
+            directory_version_id: None,
             blake3_hash: None,
-            reference_type: None,
-            reference_text: None,
-            links: None,
-            created_at: None,
-            updated_at: None,
-            deleted_at: None,
-            delete_reason: None,
         }
     }
 }
