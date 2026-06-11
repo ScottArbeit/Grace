@@ -165,7 +165,8 @@ module DirectoryVersion =
 
         match contentReference.ReferenceType, contentReference.Manifest with
         | FileContentReferenceType.FileManifest, Some manifest ->
-            not (String.IsNullOrWhiteSpace manifest.FileContentHash)
+            hasMissingHash fileVersion.Blake3Hash
+            && not (String.IsNullOrWhiteSpace manifest.FileContentHash)
             && ContentAddress.isValidAddress manifest.FileContentHash
             && fileVersion.Size = manifest.Size
         | _ -> false
@@ -190,6 +191,13 @@ module DirectoryVersion =
         && previouslyValidatedFiles
            |> Seq.exists (fun previousFile ->
                hasLegacyWholeFileBlake3Gap previousFile
+               && fileIdentity previousFile = fileIdentity fileVersion)
+
+    let private hasUnchangedLegacyManifestBackedFileBlake3Gap (previouslyValidatedFiles: FileVersion seq) (fileVersion: FileVersion) =
+        hasLegacyManifestBackedFileBlake3Gap fileVersion
+        && previouslyValidatedFiles
+           |> Seq.exists (fun previousFile ->
+               hasLegacyManifestBackedFileBlake3Gap previousFile
                && fileIdentity previousFile = fileIdentity fileVersion)
 
     let normalizeDirectoryVersionForSaveBoundary (directoryVersion: DirectoryVersion) =
@@ -287,7 +295,7 @@ module DirectoryVersion =
                     error <- Some(directoryVersionHashError correlationId directoryVersion $"has child file '{fileVersion.RelativePath}' without Sha256Hash.")
                 elif
                     hasMissingHash fileVersion.Blake3Hash
-                    && not (hasLegacyManifestBackedFileBlake3Gap fileVersion)
+                    && not (hasUnchangedLegacyManifestBackedFileBlake3Gap previouslyValidatedFiles fileVersion)
                     && not (hasUnchangedLegacyWholeFileBlake3Gap previouslyValidatedFiles fileVersion)
                 then
                     error <- Some(directoryVersionHashError correlationId directoryVersion $"has child file '{fileVersion.RelativePath}' without Blake3Hash.")
@@ -336,7 +344,7 @@ module DirectoryVersion =
                     error <- Some(directoryVersionHashError correlationId directoryVersion $"references missing child DirectoryVersionId '{childDirectoryId}'.")
                 else
                     let! childDirectoryDto = childDirectoryActor.Get correlationId
-                    let childDirectoryVersion = childDirectoryDto.DirectoryVersion
+                    let childDirectoryVersion = normalizeDirectoryVersionForSaveBoundary childDirectoryDto.DirectoryVersion
 
                     if
                         hasMissingHash childDirectoryVersion.Blake3Hash
