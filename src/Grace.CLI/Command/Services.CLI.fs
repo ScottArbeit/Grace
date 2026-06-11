@@ -2189,6 +2189,48 @@ module Services =
             CreatedSaveMessage = createdSaveMessage
         }
 
+    let private syncGraceStatusWithUploadedDirectoryVersions
+        (updatedGraceStatus: GraceStatus)
+        (newDirectoryVersions: List<LocalDirectoryVersion>)
+        (uploadedDirectoryVersions: List<DirectoryVersion>)
+        =
+        let localDirectoryVersionsById = Dictionary<DirectoryVersionId, LocalDirectoryVersion>()
+
+        for localDirectoryVersion in newDirectoryVersions do
+            localDirectoryVersionsById[localDirectoryVersion.DirectoryVersionId] <- localDirectoryVersion
+
+        let syncedDirectoryVersions =
+            uploadedDirectoryVersions
+            |> Seq.map (fun uploadedDirectoryVersion ->
+                let mutable localDirectoryVersion = Unchecked.defaultof<LocalDirectoryVersion>
+
+                let lastWriteTimeUtc =
+                    if localDirectoryVersionsById.TryGetValue(uploadedDirectoryVersion.DirectoryVersionId, &localDirectoryVersion) then
+                        localDirectoryVersion.LastWriteTimeUtc
+                    else
+                        DateTime.UtcNow
+
+                uploadedDirectoryVersion.ToLocalDirectoryVersion lastWriteTimeUtc)
+            |> Seq.toList
+
+        let syncedIndex = GraceIndex()
+
+        for kvp in updatedGraceStatus.Index do
+            syncedIndex.TryAdd(kvp.Key, kvp.Value) |> ignore
+
+        for localDirectoryVersion in syncedDirectoryVersions do
+            syncedIndex[localDirectoryVersion.DirectoryVersionId] <- localDirectoryVersion
+
+        let mutable syncedRootDirectoryVersion = Unchecked.defaultof<LocalDirectoryVersion>
+
+        let rootDirectorySha256Hash =
+            if syncedIndex.TryGetValue(updatedGraceStatus.RootDirectoryId, &syncedRootDirectoryVersion) then
+                syncedRootDirectoryVersion.Sha256Hash
+            else
+                updatedGraceStatus.RootDirectorySha256Hash
+
+        { updatedGraceStatus with Index = syncedIndex; RootDirectorySha256Hash = rootDirectorySha256Hash }, List<LocalDirectoryVersion>(syncedDirectoryVersions)
+
     let private createSaveForCurrentRoot operations branchDto saveMessage correlationId rootDirectoryVersion =
         task {
             if not branchDto.SaveEnabled then
@@ -2287,6 +2329,9 @@ module Services =
                                     match! operations.UploadDirectoryVersions uploadedDirectoryVersions with
                                     | Error error -> return Error error
                                     | Ok () ->
+                                        let updatedGraceStatus, newDirectoryVersions =
+                                            syncGraceStatusWithUploadedDirectoryVersions updatedGraceStatus newDirectoryVersions uploadedDirectoryVersions
+
                                         let updatedGraceStatus =
                                             { updatedGraceStatus with
                                                 LastSuccessfulFileUpload = getCurrentInstant ()
