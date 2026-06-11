@@ -52,6 +52,16 @@
               $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Sha256Hash'
             Sha256Hash2:
               $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Sha256Hash'
+    GetDiffByBlake3HashParameters:
+      description: Parameters for retrieving a diff by BLAKE3 hash or unique BLAKE3 prefix.
+      allOf:
+        - $ref: './Diff.Components.OpenAPI.yaml#/DiffParameters'
+        - type: object
+          properties:
+            Blake3Hash1:
+              $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Blake3Hash'
+            Blake3Hash2:
+              $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Blake3Hash'
     DiffApiDto:
       description: Public diff DTO returned through diff endpoints.
       type: object

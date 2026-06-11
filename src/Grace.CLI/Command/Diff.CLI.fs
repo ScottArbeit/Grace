@@ -146,6 +146,24 @@ module Diff =
                 Arity = ArgumentArity.ExactlyOne
             )
 
+        let blake3Hash1 =
+            new Option<Blake3Hash>(
+                OptionName.Blake3Hash1,
+                [| OptionName.B1 |],
+                Required = true,
+                Description = "The first partial or full BLAKE3 hash to compare in the diff.",
+                Arity = ArgumentArity.ExactlyOne
+            )
+
+        let blake3Hash2 =
+            new Option<Blake3Hash>(
+                OptionName.Blake3Hash2,
+                [| OptionName.B2 |],
+                Required = true,
+                Description = "The second partial or full BLAKE3 hash to compare in the diff.",
+                Arity = ArgumentArity.ExactlyOne
+            )
+
         let tag =
             new Option<string>(OptionName.Tag, Required = true, Description = "The tag to compare the current version to.", Arity = ArgumentArity.ExactlyOne)
 
@@ -771,6 +789,63 @@ module Diff =
                 | Error error -> return (Error error) |> renderOutput parseResult
             }
 
+    type Blake3Handler() =
+        inherit AsynchronousCommandLineAction()
+
+        override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Task<int> =
+            task {
+                if parseResult |> verbose then printParseResult parseResult
+
+                let validateIncomingParameters = parseResult |> Validations.CommonValidations
+
+                match validateIncomingParameters with
+                | Ok _ ->
+                    let graceIds = getNormalizedIdsAndNames parseResult
+
+                    if (parseResult |> hasOutput)
+                       || (parseResult |> json) then
+                        let blake3Hash1 = parseResult.GetValue(Options.blake3Hash1)
+                        let blake3Hash2 = parseResult.GetValue(Options.blake3Hash2)
+
+                        let getDiffByBlake3HashParameters =
+                            GetDiffByBlake3HashParameters(
+                                OwnerId = graceIds.OwnerIdString,
+                                OwnerName = graceIds.OwnerName,
+                                OrganizationId = graceIds.OrganizationIdString,
+                                OrganizationName = graceIds.OrganizationName,
+                                RepositoryId = graceIds.RepositoryIdString,
+                                RepositoryName = graceIds.RepositoryName,
+                                Blake3Hash1 = blake3Hash1,
+                                Blake3Hash2 = blake3Hash2,
+                                CorrelationId = graceIds.CorrelationId
+                            )
+
+                        match! Diff.GetDiffByBlake3Hash(getDiffByBlake3HashParameters) with
+                        | Ok returnValue ->
+                            if parseResult |> json then
+                                return Ok returnValue |> renderOutput parseResult
+                            else
+                                let diffDto = returnValue.ReturnValue
+                                printDiffResults diffDto
+
+                                for markup in markupList do
+                                    writeMarkup markup
+
+                                return 0
+                        | Error error ->
+                            if parseResult |> json then
+                                return Error error |> renderOutput parseResult
+                            else
+                                logToAnsiConsole Colors.Error $"Failed to get diff by BLAKE3 hash. {Markup.Escape(error.Error)}"
+
+                                if parseResult |> verbose then logToAnsiConsole Colors.Verbose (serialize error)
+
+                                return 1
+                    else
+                        return 0
+                | Error error -> return (Error error) |> renderOutput parseResult
+            }
+
     let Build =
         let addCommonOptions (command: Command) =
             command
@@ -854,5 +929,14 @@ module Diff =
 
         shaCommand.Action <- ShaHandler()
         diffCommand.Subcommands.Add(shaCommand)
+
+        let blake3Command =
+            new Command("blake3", Description = "Displays the difference between two versions, specified by partial or full BLAKE3 hash.")
+            |> addCommonOptions
+            |> addOption Options.blake3Hash1
+            |> addOption Options.blake3Hash2
+
+        blake3Command.Action <- Blake3Handler()
+        diffCommand.Subcommands.Add(blake3Command)
 
         diffCommand
