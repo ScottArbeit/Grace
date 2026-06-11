@@ -15,10 +15,10 @@
 
 import unittest
 
-from grace_generated_openapi_probe.models.switch_parameters import SwitchParameters
+from grace_generated_openapi_probe.models.branch_hash_query_parameters import BranchHashQueryParameters
 
-class TestSwitchParameters(unittest.TestCase):
-    """SwitchParameters unit test stubs"""
+class TestBranchHashQueryParameters(unittest.TestCase):
+    """BranchHashQueryParameters unit test stubs"""
 
     def setUp(self):
         pass
@@ -26,16 +26,16 @@ class TestSwitchParameters(unittest.TestCase):
     def tearDown(self):
         pass
 
-    def make_instance(self, include_optional) -> SwitchParameters:
-        """Test SwitchParameters
+    def make_instance(self, include_optional) -> BranchHashQueryParameters:
+        """Test BranchHashQueryParameters
             include_optional is a boolean, when False only required
             params are included, when True both required and
             optional params are included """
-        # uncomment below to create an instance of `SwitchParameters`
+        # uncomment below to create an instance of `BranchHashQueryParameters`
         """
-        model = SwitchParameters()
+        model = BranchHashQueryParameters()
         if include_optional:
-            return SwitchParameters(
+            return BranchHashQueryParameters(
                 correlation_id = '',
                 principal = '',
                 owner_id = '9dd5f81f-dc43-4839-9173-85d09394f30f',
@@ -51,12 +51,12 @@ class TestSwitchParameters(unittest.TestCase):
                 blake3_hash = '9A35D91B2F631BE9025DE753139B88F7B1E71385C412BC3986FF2F38F230841D'
             )
         else:
-            return SwitchParameters(
+            return BranchHashQueryParameters(
         )
         """
 
-    def testSwitchParameters(self):
-        """Test SwitchParameters"""
+    def testBranchHashQueryParameters(self):
+        """Test BranchHashQueryParameters"""
         # inst_req_only = self.make_instance(include_optional=False)
         # inst_req_and_optional = self.make_instance(include_optional=True)
 
