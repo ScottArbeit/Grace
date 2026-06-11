@@ -52,3 +52,13 @@ type DiffActorTests() =
         Assert.That(candidates[0], Does.EndWith(".json"))
         Assert.That(candidates[0], Does.Not.Contain("/"))
         Assert.That(candidates[1], Is.EqualTo($"Diff-diffactor/{first:N}{second:N}.json"))
+
+    [<Test>]
+    member _.DiffBlobStorageKeepsHashedReadEtagOnlyForHashedWrites() =
+        let grainId = GrainId.Parse($"diffactor/{first:N}{second:N}")
+        let hashedName = DiffBlobGrainStorage.safeBlobName "Diff" grainId
+        let legacyName = DiffBlobGrainStorage.legacyBlobName "Diff" grainId
+
+        Assert.That(DiffBlobGrainStorage.etagForWriteTarget hashedName hashedName "\"hashed-etag\"", Is.EqualTo("\"hashed-etag\""))
+
+        Assert.That(DiffBlobGrainStorage.etagForWriteTarget legacyName hashedName "\"legacy-etag\"", Is.Null)
