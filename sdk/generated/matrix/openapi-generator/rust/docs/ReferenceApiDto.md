@@ -12,6 +12,7 @@ Name | Type | Description | Notes
 **branch_id** | Option<**uuid::Uuid**> |  | [optional]
 **directory_id** | Option<**uuid::Uuid**> | DirectoryVersionId represented by the current server DTO field name. | [optional]
 **sha256_hash** | Option<**String**> |  | [optional]
+**blake3_hash** | Option<**String**> |  | [optional]
 **reference_type** | Option<[**models::ReferenceType**](ReferenceType.md)> |  | [optional]
 **reference_text** | Option<**String**> |  | [optional]
 **links** | Option<**Vec<String>**> |  | [optional]

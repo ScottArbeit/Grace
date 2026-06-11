@@ -108,6 +108,7 @@ All URIs are relative to *http://localhost:5000*
 *DiffsApi* | [**populateDiff**](docs/DiffsApi.md#populatediff) | **POST** /diff/populate | Populate a diff actor.
 *DirectoriesApi* | [**createDirectoryVersion**](docs/DirectoriesApi.md#createdirectoryversion) | **POST** /directory/create | Create a new directory version.
 *DirectoriesApi* | [**getDirectoryVersion**](docs/DirectoriesApi.md#getdirectoryversion) | **POST** /directory/get | Get a directory version.
+*DirectoriesApi* | [**getDirectoryVersionByBlake3Hash**](docs/DirectoriesApi.md#getdirectoryversionbyblake3hash) | **POST** /directory/getByBlake3Hash | Get a directory version by BLAKE3 hash.
 *DirectoriesApi* | [**getDirectoryVersionBySha256Hash**](docs/DirectoriesApi.md#getdirectoryversionbysha256hash) | **POST** /directory/getBySha256Hash | Get a directory version by SHA-256 hash.
 *DirectoriesApi* | [**listDirectoryVersionsById**](docs/DirectoriesApi.md#listdirectoryversionsbyid) | **POST** /directory/getByDirectoryIds | List directory versions by id.
 *DirectoriesApi* | [**listDirectoryVersionsRecursive**](docs/DirectoriesApi.md#listdirectoryversionsrecursive) | **POST** /directory/getDirectoryVersionsRecursive | List a directory version and its children.
@@ -225,6 +226,7 @@ All URIs are relative to *http://localhost:5000*
 - [DirectoryParameters](docs/DirectoryParameters.md)
 - [DirectoryVersion](docs/DirectoryVersion.md)
 - [DirectoryVersionApiDto](docs/DirectoryVersionApiDto.md)
+- [DirectoryVersionHashLookupReturnValue](docs/DirectoryVersionHashLookupReturnValue.md)
 - [DirectoryVersionListReturnValue](docs/DirectoryVersionListReturnValue.md)
 - [DirectoryVersionReturnValue](docs/DirectoryVersionReturnValue.md)
 - [DiscoverContentBlocksParameters](docs/DiscoverContentBlocksParameters.md)
@@ -246,6 +248,7 @@ All URIs are relative to *http://localhost:5000*
 - [GetBranchVersionParameters](docs/GetBranchVersionParameters.md)
 - [GetBranchesByBranchIdParameters](docs/GetBranchesByBranchIdParameters.md)
 - [GetBranchesParameters](docs/GetBranchesParameters.md)
+- [GetByBlake3HashParameters](docs/GetByBlake3HashParameters.md)
 - [GetByDirectoryIdsParameters](docs/GetByDirectoryIdsParameters.md)
 - [GetBySha256HashParameters](docs/GetBySha256HashParameters.md)
 - [GetContentBlockDownloadUriParameters](docs/GetContentBlockDownloadUriParameters.md)
