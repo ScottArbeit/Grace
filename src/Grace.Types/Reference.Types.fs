@@ -120,6 +120,37 @@ module Reference =
                 DeleteReason = String.Empty
             }
 
+        static member TryGetLegacyRootDirectoryHashRepair directoryId sha256Hash blake3Hash (directoryVersion: DirectoryVersion) =
+            let rootRelativePath = directoryVersion.RelativePath
+
+            let isRootDirectoryRelativePath =
+                rootRelativePath = Constants.RootDirectoryPath
+                || rootRelativePath = RelativePath "/"
+
+            let referenceSha256Hash = string sha256Hash
+            let rootSha256Hash = string directoryVersion.Sha256Hash
+
+            let referenceSha256MatchesRoot =
+                not (String.IsNullOrWhiteSpace referenceSha256Hash)
+                && rootSha256Hash.StartsWith(referenceSha256Hash, StringComparison.OrdinalIgnoreCase)
+
+            if
+                String.IsNullOrWhiteSpace(string blake3Hash)
+                && directoryVersion.DirectoryVersionId = directoryId
+                && isRootDirectoryRelativePath
+                && referenceSha256MatchesRoot
+                && not (String.IsNullOrWhiteSpace(string directoryVersion.Blake3Hash))
+            then
+                Some(directoryVersion.Sha256Hash, directoryVersion.Blake3Hash)
+            else
+                None
+
+        static member HydrateLegacyRootDirectoryHash directoryVersion referenceDto =
+            match ReferenceDto.TryGetLegacyRootDirectoryHashRepair referenceDto.DirectoryId referenceDto.Sha256Hash referenceDto.Blake3Hash directoryVersion
+                with
+            | Some (fullSha256Hash, blake3Hash) -> { referenceDto with Sha256Hash = fullSha256Hash; Blake3Hash = blake3Hash }, true
+            | None -> referenceDto, false
+
         /// Updates the ReferenceDto based on the ReferenceEvent.
         static member UpdateDto referenceEvent currentReferenceDto =
             let newReferenceDto =
