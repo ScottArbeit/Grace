@@ -58,6 +58,35 @@ module ActorProxy =
             grain
 
     module Diff =
+        let private tryParseGuidExact (format: string) (value: string) =
+            try
+                Some(Guid.ParseExact(value, format))
+            with
+            | :? FormatException -> None
+            | :? ArgumentException -> None
+
+        let TryParsePrimaryKey (primaryKey: string) =
+            if String.IsNullOrWhiteSpace primaryKey then
+                None
+            elif primaryKey.Length = 64 then
+                match tryParseGuidExact "N" primaryKey[0..31], tryParseGuidExact "N" primaryKey[32..63] with
+                | Some directoryVersionId1, Some directoryVersionId2 -> Some(directoryVersionId1, directoryVersionId2)
+                | _ -> None
+            elif primaryKey.Contains("*", StringComparison.Ordinal) then
+                match primaryKey.Split("*", StringSplitOptions.None) with
+                | [| directoryVersionId1; directoryVersionId2 |] ->
+                    match tryParseGuidExact "D" directoryVersionId1, tryParseGuidExact "D" directoryVersionId2 with
+                    | Some directoryVersionId1, Some directoryVersionId2 -> Some(directoryVersionId1, directoryVersionId2)
+                    | _ -> None
+                | _ -> None
+            else
+                None
+
+        let ParsePrimaryKey (primaryKey: string) =
+            match TryParsePrimaryKey primaryKey with
+            | Some directoryVersionIds -> directoryVersionIds
+            | None -> invalidArg (nameof primaryKey) $"Diff actor primary key is not a supported format: {primaryKey}"
+
         /// Gets an ActorId for a Diff actor.
         let GetPrimaryKey (directoryVersionId1: DirectoryVersionId) (directoryVersionId2: DirectoryVersionId) =
             let directoryVersionId1Text = directoryVersionId1.ToString("N")
@@ -67,6 +96,16 @@ module ActorProxy =
                 $"{directoryVersionId1Text}{directoryVersionId2Text}"
             else
                 $"{directoryVersionId2Text}{directoryVersionId1Text}"
+
+        let CreateActorProxyForPrimaryKey (primaryKey: string) (ownerId: OwnerId) (organizationId: OrganizationId) (repositoryId: RepositoryId) correlationId =
+            let grain = orleansClient.CreateActorProxyWithCorrelationId<IDiffActor>(primaryKey, correlationId)
+            let orleansContext = Dictionary<string, obj>()
+            orleansContext.Add(Constants.ActorNameProperty, ActorName.Diff)
+            orleansContext.Add(nameof OwnerId, ownerId)
+            orleansContext.Add(nameof OrganizationId, organizationId)
+            orleansContext.Add(nameof RepositoryId, repositoryId)
+            memoryCache.CreateOrleansContextEntry(grain.GetGrainId(), orleansContext)
+            grain
 
         /// Creates an ActorProxy for a Diff actor, and adds the correlationId to the server's MemoryCache so
         ///   it's available in the OnActivateAsync() method.
@@ -78,14 +117,7 @@ module ActorProxy =
             (repositoryId: RepositoryId)
             correlationId
             =
-            let grain = orleansClient.CreateActorProxyWithCorrelationId<IDiffActor>((GetPrimaryKey directoryVersionId1 directoryVersionId2), correlationId)
-            let orleansContext = Dictionary<string, obj>()
-            orleansContext.Add(Constants.ActorNameProperty, ActorName.Diff)
-            orleansContext.Add(nameof OwnerId, ownerId)
-            orleansContext.Add(nameof OrganizationId, organizationId)
-            orleansContext.Add(nameof RepositoryId, repositoryId)
-            memoryCache.CreateOrleansContextEntry(grain.GetGrainId(), orleansContext)
-            grain
+            CreateActorProxyForPrimaryKey (GetPrimaryKey directoryVersionId1 directoryVersionId2) ownerId organizationId repositoryId correlationId
 
     module DirectoryVersion =
         /// Creates an ActorProxy for a DirectoryVersion actor, and adds the correlationId to the server's MemoryCache so
