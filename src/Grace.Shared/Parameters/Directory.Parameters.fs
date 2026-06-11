@@ -32,6 +32,10 @@ module DirectoryVersion =
         inherit DirectoryVersionParameters()
         member val public Sha256Hash = String.Empty with get, set
 
+    type GetByBlake3HashParameters() =
+        inherit DirectoryVersionParameters()
+        member val public Blake3Hash = String.Empty with get, set
+
     type GetZipFileParameters() =
         inherit DirectoryVersionParameters()
         member val public Sha256Hash = String.Empty with get, set
