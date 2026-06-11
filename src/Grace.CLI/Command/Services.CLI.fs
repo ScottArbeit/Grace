@@ -76,6 +76,7 @@ module Services =
             IsStartupClaim: bool
             RootDirectoryId: DirectoryVersionId
             RootDirectorySha256Hash: Sha256Hash
+            RootDirectoryBlake3Hash: Blake3Hash
             LastFileUploadInstant: Instant
             LastDirectoryVersionInstant: Instant
             DirectoryIds: HashSet<DirectoryVersionId>
@@ -87,6 +88,7 @@ module Services =
                 IsStartupClaim = false
                 RootDirectoryId = Guid.Empty
                 RootDirectorySha256Hash = Sha256Hash String.Empty
+                RootDirectoryBlake3Hash = Blake3Hash String.Empty
                 LastFileUploadInstant = Instant.MinValue
                 LastDirectoryVersionInstant = Instant.MinValue
                 DirectoryIds = HashSet<DirectoryVersionId>()
@@ -1759,11 +1761,20 @@ module Services =
             | Some ids -> HashSet<DirectoryVersionId>(ids)
             | None -> HashSet<DirectoryVersionId>(graceStatus.Index.Keys)
 
+        let mutable rootDirectoryVersion = LocalDirectoryVersion.Default
+
+        let rootDirectoryBlake3Hash =
+            if graceStatus.Index.TryGetValue(graceStatus.RootDirectoryId, &rootDirectoryVersion) then
+                rootDirectoryVersion.Blake3Hash
+            else
+                Blake3Hash String.Empty
+
         {
             UpdatedAt = getCurrentInstant ()
             IsStartupClaim = false
             RootDirectoryId = graceStatus.RootDirectoryId
             RootDirectorySha256Hash = graceStatus.RootDirectorySha256Hash
+            RootDirectoryBlake3Hash = rootDirectoryBlake3Hash
             LastFileUploadInstant = graceStatus.LastSuccessfulFileUpload
             LastDirectoryVersionInstant = graceStatus.LastSuccessfulDirectoryVersionUpload
             DirectoryIds = directoryIds
@@ -1780,6 +1791,7 @@ module Services =
         && not graceWatchStatus.IsStartupClaim
         && graceWatchStatus.RootDirectoryId <> Guid.Empty
         && not (String.IsNullOrWhiteSpace($"{graceWatchStatus.RootDirectorySha256Hash}"))
+        && not (String.IsNullOrWhiteSpace($"{graceWatchStatus.RootDirectoryBlake3Hash}"))
         && not (isNull graceWatchStatus.DirectoryIds)
         && graceWatchStatus.DirectoryIds.Count > 0
 
