@@ -306,7 +306,33 @@ module Services =
 
     let getAzureBlobClientForFileVersion (repositoryDto: RepositoryDto) (fileVersion: FileVersion) (correlationId: CorrelationId) =
         task {
-            let blobName = $"{fileVersion.RelativePath}/{fileVersion.GetObjectFileName}"
+            let blobName = StorageKeys.wholeFileContentObjectKey fileVersion
+            return! getAzureBlobClient repositoryDto blobName correlationId
+        }
+
+    let private getReadableWholeFileContentObjectKey (repositoryDto: RepositoryDto) (fileVersion: FileVersion) (correlationId: CorrelationId) =
+        task {
+            let currentBlobName = StorageKeys.wholeFileContentObjectKey fileVersion
+            let! currentBlobClient = getAzureBlobClient repositoryDto currentBlobName correlationId
+
+            if StorageKeys.hasBlake3SpecificWholeFileContentObjectKey fileVersion then
+                let! currentExists = currentBlobClient.ExistsAsync()
+
+                if currentExists.Value then
+                    return currentBlobName
+                else
+                    let legacyBlobName = StorageKeys.legacyWholeFileContentObjectKey fileVersion
+                    let! legacyBlobClient = getAzureBlobClient repositoryDto legacyBlobName correlationId
+                    let! legacyExists = legacyBlobClient.ExistsAsync()
+
+                    if legacyExists.Value then return legacyBlobName else return currentBlobName
+            else
+                return currentBlobName
+        }
+
+    let getReadableAzureBlobClientForFileVersion (repositoryDto: RepositoryDto) (fileVersion: FileVersion) (correlationId: CorrelationId) =
+        task {
+            let! blobName = getReadableWholeFileContentObjectKey repositoryDto fileVersion correlationId
             return! getAzureBlobClient repositoryDto blobName correlationId
         }
 
@@ -398,7 +424,7 @@ module Services =
     /// Gets a full Uri, including shared access signature, for reading from the object storage provider.
     let getUriWithReadSharedAccessSignatureForFileVersion (repositoryDto: RepositoryDto) (fileVersion: FileVersion) (correlationId: CorrelationId) =
         task {
-            let blobName = $"{fileVersion.RelativePath}/{fileVersion.GetObjectFileName}"
+            let! blobName = getReadableWholeFileContentObjectKey repositoryDto fileVersion correlationId
             return! getUriWithReadSharedAccessSignature repositoryDto blobName correlationId
         }
 
@@ -440,7 +466,7 @@ module Services =
     /// Gets a full Uri, including shared access signature, for writing from the object storage provider.
     let getUriWithWriteSharedAccessSignatureForFileVersion (repositoryDto: RepositoryDto) (fileVersion: FileVersion) (correlationId: CorrelationId) =
         task {
-            let blobName = $"{fileVersion.RelativePath}/{fileVersion.GetObjectFileName}"
+            let blobName = StorageKeys.wholeFileContentObjectKey fileVersion
             return! getUriWithWriteSharedAccessSignature repositoryDto blobName correlationId
         }
 

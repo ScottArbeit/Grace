@@ -81,6 +81,30 @@ type StorageWholeFileCompatibility() =
         parameters.CorrelationId <- generateCorrelationId ()
         parameters
 
+    let uploadLegacyWholeFileBlob repositoryId (fileVersion: FileVersion) (payload: byte array) =
+        task {
+            let legacyFileVersion = FileVersion.Create fileVersion.RelativePath fileVersion.Sha256Hash String.Empty fileVersion.IsBinary fileVersion.Size
+
+            let! uploadResponse =
+                Client.PostAsync("/storage/getUploadMetadataForFiles", createJsonContent (createUploadParameters repositoryId legacyFileVersion))
+
+            let! uploadContent = uploadResponse.Content.ReadAsStringAsync()
+            Assert.That(uploadResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), uploadContent)
+
+            let metadata = getUploadMetadataJson uploadContent
+
+            let blobUri =
+                Uri(
+                    (requireJsonProperty "BlobUriWithSasToken" metadata)
+                        .GetString()
+                )
+
+            let blobClient = BlockBlobClient(blobUri)
+            use payloadStream = new MemoryStream(payload, writable = false)
+            let! _ = blobClient.UploadAsync(payloadStream)
+            return StorageKeys.legacyWholeFileContentObjectKey fileVersion
+        }
+
     [<Test>]
     member _.SmallWholeFileContentPopulatesContentReferenceWithoutChangingEndpointMetadata() =
         task {
@@ -109,6 +133,12 @@ type StorageWholeFileCompatibility() =
                 Is.EqualTo(sha256Hash)
             )
 
+            Assert.That(
+                (requireJsonProperty "Blake3Hash" metadata)
+                    .GetString(),
+                Is.EqualTo(String.Empty)
+            )
+
             assertWholeFileContentReference metadata
 
             let blobUri =
@@ -123,6 +153,107 @@ type StorageWholeFileCompatibility() =
             let! downloadUri = downloadResponse.Content.ReadAsStringAsync()
             Assert.That(downloadResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), downloadUri)
             Assert.That(downloadUri, Does.Contain(fileVersion.GetObjectFileName))
+        }
+
+    [<Test>]
+    member _.SmallWholeFileMetadataUsesBlake3SpecificBlobKeysWhenPresent() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let relativeDirectory = $"wholefile-dual-hash/{Guid.NewGuid():N}"
+            let relativePath = $"{relativeDirectory}/small.bin"
+            let sharedSha256Hash = "shared-sha256"
+
+            let firstFileVersion =
+                FileVersion.CreateWithHashes (RelativePath relativePath) (Sha256Hash sharedSha256Hash) (Blake3Hash "first-blake3") String.Empty true 128L
+
+            let secondFileVersion =
+                FileVersion.CreateWithHashes (RelativePath relativePath) (Sha256Hash sharedSha256Hash) (Blake3Hash "second-blake3") String.Empty true 128L
+
+            let! firstUploadResponse =
+                Client.PostAsync("/storage/getUploadMetadataForFiles", createJsonContent (createUploadParameters repositoryId firstFileVersion))
+
+            let! firstUploadContent = firstUploadResponse.Content.ReadAsStringAsync()
+            Assert.That(firstUploadResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), firstUploadContent)
+
+            let! secondUploadResponse =
+                Client.PostAsync("/storage/getUploadMetadataForFiles", createJsonContent (createUploadParameters repositoryId secondFileVersion))
+
+            let! secondUploadContent = secondUploadResponse.Content.ReadAsStringAsync()
+            Assert.That(secondUploadResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), secondUploadContent)
+
+            let firstMetadata = getUploadMetadataJson firstUploadContent
+            let secondMetadata = getUploadMetadataJson secondUploadContent
+
+            let firstUploadUri =
+                (requireJsonProperty "BlobUriWithSasToken" firstMetadata)
+                    .GetString()
+
+            let secondUploadUri =
+                (requireJsonProperty "BlobUriWithSasToken" secondMetadata)
+                    .GetString()
+
+            Assert.That(firstUploadUri, Does.Contain("small_shared-sha256_first-blake3.bin"))
+            Assert.That(secondUploadUri, Does.Contain("small_shared-sha256_second-blake3.bin"))
+            Assert.That(firstUploadUri, Is.Not.EqualTo(secondUploadUri))
+
+            Assert.That(
+                (requireJsonProperty "Blake3Hash" firstMetadata)
+                    .GetString(),
+                Is.EqualTo(firstFileVersion.Blake3Hash)
+            )
+
+            Assert.That(
+                (requireJsonProperty "Blake3Hash" secondMetadata)
+                    .GetString(),
+                Is.EqualTo(secondFileVersion.Blake3Hash)
+            )
+
+            let! firstDownloadResponse = Client.PostAsync("/storage/getDownloadUri", createJsonContent (createDownloadParameters repositoryId firstFileVersion))
+            let! firstDownloadUri = firstDownloadResponse.Content.ReadAsStringAsync()
+            Assert.That(firstDownloadResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), firstDownloadUri)
+            Assert.That(firstDownloadUri, Does.Contain("small_shared-sha256_first-blake3.bin"))
+
+            let! secondDownloadResponse =
+                Client.PostAsync("/storage/getDownloadUri", createJsonContent (createDownloadParameters repositoryId secondFileVersion))
+
+            let! secondDownloadUri = secondDownloadResponse.Content.ReadAsStringAsync()
+            Assert.That(secondDownloadResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), secondDownloadUri)
+            Assert.That(secondDownloadUri, Does.Contain("small_shared-sha256_second-blake3.bin"))
+            Assert.That(firstDownloadUri, Is.Not.EqualTo(secondDownloadUri))
+        }
+
+    [<Test>]
+    member _.SmallWholeFileDownloadFallsBackToLegacyShaOnlyBlobWhenCurrentBlake3KeyIsMissing() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let relativeDirectory = $"wholefile-legacy-fallback/{Guid.NewGuid():N}"
+            let relativePath = $"{relativeDirectory}/small.txt"
+            let payload = Encoding.UTF8.GetBytes($"Grace legacy whole-file fallback {Guid.NewGuid():N}")
+            let sha256Hash = computeSha256Hash payload
+
+            let fileVersion =
+                FileVersion.CreateWithHashes
+                    (RelativePath relativePath)
+                    (Sha256Hash sha256Hash)
+                    (Blake3Hash "existing-history-blake3")
+                    String.Empty
+                    false
+                    (int64 payload.Length)
+
+            let! legacyBlobName = uploadLegacyWholeFileBlob repositoryId fileVersion payload
+            let currentBlobName = StorageKeys.wholeFileContentObjectKey fileVersion
+
+            Assert.That(currentBlobName, Is.Not.EqualTo(legacyBlobName))
+
+            let! downloadResponse = Client.PostAsync("/storage/getDownloadUri", createJsonContent (createDownloadParameters repositoryId fileVersion))
+            let! downloadUriText = downloadResponse.Content.ReadAsStringAsync()
+            Assert.That(downloadResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), downloadUriText)
+            Assert.That(downloadUriText, Does.Contain(legacyBlobName))
+            Assert.That(downloadUriText, Does.Not.Contain(currentBlobName))
+
+            let downloadClient = BlobClient(Uri(downloadUriText))
+            let! downloaded = downloadClient.DownloadContentAsync()
+            Assert.That(downloaded.Value.Content.ToArray(), Is.EquivalentTo(payload))
         }
 
 [<NonParallelizable>]

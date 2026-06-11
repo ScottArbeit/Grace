@@ -152,6 +152,14 @@ module Services =
         /// Gets a DirectoryInfo instance for the parent directory of this local file.
         member this.DirectoryInfo = DirectoryInfo(this.FullName)
 
+    /// Gets the local object-cache file name. Legacy rows without BLAKE3 keep the SHA-only name; dual-hash rows
+    /// include BLAKE3 so same-path SHA-256 collisions do not overwrite or reuse the wrong local bytes.
+    let getLocalObjectCacheFileName (relativePath: RelativePath) (sha256Hash: Sha256Hash) (blake3Hash: Blake3Hash) =
+        if String.IsNullOrWhiteSpace(string blake3Hash) then
+            getObjectFileName relativePath sha256Hash
+        else
+            getObjectFileName relativePath (Sha256Hash $"{sha256Hash}_{blake3Hash}")
+
     // Extension methods for dealing with local files.
     type LocalFileVersion with
         /// Gets the full path for this file in the working directory.
@@ -166,7 +174,19 @@ module Services =
         member this.RelativeDirectory = Path.GetRelativePath(Current().RootDirectory, this.FileInfo.DirectoryName)
 
         /// Gets the full name of the object file for this LocalFileVersion.
-        member this.FullObjectPath = getNativeFilePath (Path.Combine(Current().ObjectDirectory, this.RelativePath, this.GetObjectFileName))
+        member this.FullObjectPath =
+            getNativeFilePath (
+                Path.Combine(Current().ObjectDirectory, this.RelativePath, getLocalObjectCacheFileName this.RelativePath this.Sha256Hash this.Blake3Hash)
+            )
+
+    let getLocalObjectCachePathForFileVersion (fileVersion: FileVersion) =
+        getNativeFilePath (
+            Path.Combine(
+                Current().ObjectDirectory,
+                fileVersion.RelativePath,
+                getLocalObjectCacheFileName fileVersion.RelativePath fileVersion.Sha256Hash fileVersion.Blake3Hash
+            )
+        )
 
     /// Flag to determine if we should do case-insensitive file name processing on the current platform.
     let ignoreCase = runningOnWindows
@@ -904,7 +924,7 @@ module Services =
             if not exists then
                 let allFilesExist =
                     localDirectoryVersion.Files
-                    |> Seq.forall (fun file -> File.Exists(Path.Combine(Current().ObjectDirectory, file.RelativeDirectory, file.GetObjectFileName)))
+                    |> Seq.forall (fun file -> File.Exists(file.FullObjectPath))
 
                 if allFilesExist then
                     do! upsertObjectCache [ localDirectoryVersion ]
@@ -1077,6 +1097,12 @@ module Services =
             downloadFiles
             correlationId
 
+    let internal findFileVersionForUploadMetadata (fileVersions: IEnumerable<FileVersion>) (uploadMetadata: UploadMetadata) =
+        fileVersions.First (fun fileVersion ->
+            fileVersion.RelativePath = uploadMetadata.RelativePath
+            && fileVersion.Sha256Hash = uploadMetadata.Sha256Hash
+            && fileVersion.Blake3Hash = uploadMetadata.Blake3Hash)
+
     let private uploadWholeFilesToObjectStorage (parameters: GetUploadMetadataForFilesParameters) =
         task {
             match Current().ObjectStorageProvider with
@@ -1097,10 +1123,7 @@ module Services =
                                 (fun uploadMetadata ct ->
                                     ValueTask(
                                         task {
-                                            let fileVersion =
-                                                parameters.FileVersions.First (fun fileVersion ->
-                                                    fileVersion.RelativePath = uploadMetadata.RelativePath
-                                                    && fileVersion.Sha256Hash = uploadMetadata.Sha256Hash)
+                                            let fileVersion = findFileVersionForUploadMetadata parameters.FileVersions uploadMetadata
                                             //logToAnsiConsole Colors.Verbose $"In Services.uploadFilesToObjectStorage(): Uploading {fileVersion.GetObjectFileName} to object storage."
                                             match!
                                                 Storage.SaveFileToObjectStorage
@@ -1166,7 +1189,7 @@ module Services =
                 RepositoryName = parameters.RepositoryName
                 AuthorizedScope = fileVersion.RelativePath
                 FileVersion = fileVersion
-                LocalFilePath = Path.Combine(current.ObjectDirectory, fileVersion.RelativePath, fileVersion.GetObjectFileName)
+                LocalFilePath = getLocalObjectCachePathForFileVersion fileVersion
                 CorrelationId = parameters.CorrelationId
                 PlannerOptions = LocalPlanner.Options.Default
             }
@@ -1859,14 +1882,7 @@ module Services =
         }
 
     /// Checks if a file already exists in the object cache.
-    let isFileInObjectCache (fileVersion: LocalFileVersion) =
-        task {
-            let objectFileName = fileVersion.GetObjectFileName
-
-            let objectFilePath = Path.Combine(Current().ObjectDirectory, fileVersion.RelativeDirectory, objectFileName)
-
-            return File.Exists(objectFilePath)
-        }
+    let isFileInObjectCache (fileVersion: LocalFileVersion) = task { return File.Exists(fileVersion.FullObjectPath) }
 
     /// Updates the Grace Status index with new directory versions after getting them from the server.
     let updateGraceStatusWithNewDirectoryVersionsFromServer
@@ -2039,11 +2055,16 @@ module Services =
 
                         if findFileVersionFromPreviousGraceStatus.Count() > 0 then
                             let fileVersionFromPreviousGraceStatus = findFileVersionFromPreviousGraceStatus.First()
-                            // If the length is different, or the Sha256Hash is changing in the new version, we'll delete the
+                            // If the length or content identity changes in the new version, we'll delete the
                             //   file in the working directory, and copy the version from the object cache to replace it.
                             if existingFileOnDisk.Length <> fileVersion.Size
                                || fileVersionFromPreviousGraceStatus.Sha256Hash
-                                  <> fileVersion.Sha256Hash then
+                                  <> fileVersion.Sha256Hash
+                               || (fileVersionFromPreviousGraceStatus.Blake3Hash
+                                   <> Blake3Hash String.Empty
+                                   && fileVersion.Blake3Hash <> Blake3Hash String.Empty
+                                   && fileVersionFromPreviousGraceStatus.Blake3Hash
+                                      <> fileVersion.Blake3Hash) then
                                 //logToAnsiConsole
                                 //    Colors.Verbose
                                 //    $"Replacing {fileVersion.FullName}; previous length: {fileVersionFromPreviousGraceStatus.Size}; new length: {fileVersion.Size}."
@@ -2421,12 +2442,21 @@ module Services =
                     // Get the new name for this version of the file, including the SHA-256 hash.
                     let relativeDirectoryPath = getLocalRelativeDirectory filePath (Current().RootDirectory)
 
-                    let objectFileName = getObjectFileName filePath sha256Hash
+                    let objectFileName = getLocalObjectCacheFileName (RelativePath relativeFilePath) (Sha256Hash $"{sha256Hash}") blake3Hash
 
                     let objectDirectoryPath = Path.Combine(Current().ObjectDirectory, relativeDirectoryPath)
 
                     let objectFilePath = Path.Combine(objectDirectoryPath, objectFileName)
                     //logToConsole $"relativeDirectoryPath: {relativeDirectoryPath}; objectFileName: {objectFileName}; objectFilePath: {objectFilePath}"
+
+                    let createFileVersion (objectFilePathInfo: FileInfo) =
+                        FileVersion.CreateWithHashes
+                            (RelativePath relativeFilePath)
+                            (Sha256Hash $"{sha256Hash}")
+                            blake3Hash
+                            String.Empty
+                            isBinary
+                            objectFilePathInfo.Length
 
                     // If we don't already have this file, with this exact SHA256, make sure the directory exists,
                     //   and rename the temp file to the proper SHA256-enhanced name of the file.
@@ -2440,23 +2470,23 @@ module Services =
                         let objectFilePathInfo = FileInfo(objectFilePath)
                         //logToConsole $"After creating FileInfo; Exists: {objectFilePathInfo.Exists}; FullName = {objectFilePathInfo.FullName}..."
                         //logToConsole $"Finished copyToObjectDirectory for {filePath}; isBinary: {isBinary}; moved temp file to object directory."
-                        let relativePath = Path.GetRelativePath(Current().RootDirectory, filePath)
-
-                        return
-                            Some(
-                                FileVersion.CreateWithHashes
-                                    (RelativePath relativePath)
-                                    (Sha256Hash $"{sha256Hash}")
-                                    blake3Hash
-                                    String.Empty
-                                    isBinary
-                                    objectFilePathInfo.Length
-                            )
+                        return Some(createFileVersion objectFilePathInfo)
                     else
-                        // If we do already have this exact version of the file, just delete the temp file.
-                        File.Delete(tempFilePath)
-                        //logToConsole $"Finished copyToObjectDirectory for {filePath}; object file already exists; deleted temp file."
-                        return None
+                        use objectFileStream = File.Open(objectFilePath, fileStreamOptionsRead)
+                        let! existingFileContentHash = computeBlake3ForFile objectFileStream
+                        let existingBlake3Hash = Blake3Hash $"{existingFileContentHash}"
+                        do! objectFileStream.DisposeAsync()
+
+                        if existingBlake3Hash <> blake3Hash then
+                            File.Move(tempFilePath, objectFilePath, true)
+                            let objectFilePathInfo = FileInfo(objectFilePath)
+                            return Some(createFileVersion objectFilePathInfo)
+                        else
+                            // The object already exists with matching SHA-256 and BLAKE3. Keep returning a version so
+                            // cache-hit changed files remain available to manifest upload/overlay callers.
+                            File.Delete(tempFilePath)
+                            let objectFilePathInfo = FileInfo(objectFilePath)
+                            return Some(createFileVersion objectFilePathInfo)
                 //return result
                 else
                     logToAnsiConsole Colors.Error $"File {filePath} does not exist."
