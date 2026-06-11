@@ -2084,7 +2084,7 @@ module Services =
         ]
         |> Seq.tryFind (referenceHasRootOnBranch branchDto.BranchId rootDirectoryId rootDirectorySha256Hash)
 
-    let private getChangedFileVersionsReferencedByUpdatedDirectories
+    let internal getChangedFileVersionsReferencedByUpdatedDirectories
         (differences: List<FileSystemDifference>)
         (directoryVersions: List<LocalDirectoryVersion>)
         =

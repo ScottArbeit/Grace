@@ -284,14 +284,22 @@ type SaveBoundaryActorTests() =
     member _.SaveBoundaryStartsContributionWorkflowForRepeatedManifestBlockOccurrences() =
         let manifest = finalizedManifestWithBlockCopies 2
         let directoryVersion = directoryWith [ manifestFile manifest ]
+        let expectedStoragePoolId = DedupeIndex.storagePoolIdForRepositoryId repositoryId
 
         let plan =
             ReferenceActor.planManifestSaveBoundary repositoryId referenceId directoryVersion "corr-repeated-block"
             |> expectPlan
 
-        Assert.That(plan.WorkflowRanges, Has.Length.EqualTo(2))
-        Assert.That(plan.WorkflowRanges[0].ContentBlockAddress, Is.EqualTo(plan.WorkflowRanges[1].ContentBlockAddress))
-        Assert.That(plan.WorkflowRanges[0].OrdinalStart, Is.Not.EqualTo(plan.WorkflowRanges[1].OrdinalStart))
+        Assert.That(plan.WorkflowRanges, Has.Length.EqualTo(1))
+
+        Assert.That(
+            plan.WorkflowRanges
+            |> Seq.forall (fun range ->
+                range.StoragePoolId = expectedStoragePoolId
+                && range.OrdinalStart = 0
+                && range.OrdinalCount = 1),
+            Is.True
+        )
 
         let intent = RepositoryContentCounterIntent.IncrementManifestReferenceCount(repositoryId, manifest.ManifestAddress)
 
@@ -301,7 +309,7 @@ type SaveBoundaryActorTests() =
                 ManifestContributionWorkflowActor.decideCommand [] ManifestContributionWorkflowDto.Default startCommand (metadata "corr-repeated-workflow")
 
             match workflowDecision with
-            | Ok decision -> Assert.That(ManifestContributionWorkflowActor.pendingRanges decision.Workflow, Has.Length.EqualTo(2))
+            | Ok decision -> Assert.That(ManifestContributionWorkflowActor.pendingRanges decision.Workflow, Has.Length.EqualTo(1))
             | Error error -> Assert.Fail($"Expected repeated block occurrences to start contribution workflow, got {error.Error}.")
         | None -> Assert.Fail("Expected increment intent to start manifest contribution workflow fan-out.")
 
