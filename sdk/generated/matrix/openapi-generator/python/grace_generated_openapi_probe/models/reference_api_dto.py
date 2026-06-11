@@ -39,6 +39,7 @@ class ReferenceApiDto(BaseModel):
     branch_id: Optional[UUID] = Field(default=None, alias="BranchId")
     directory_id: Optional[UUID] = Field(default=None, description="DirectoryVersionId represented by the current server DTO field name.", alias="DirectoryId")
     sha256_hash: Optional[StrictStr] = Field(default=None, alias="Sha256Hash")
+    blake3_hash: Optional[StrictStr] = Field(default=None, alias="Blake3Hash")
     reference_type: Optional[ReferenceType] = Field(default=None, alias="ReferenceType")
     reference_text: Optional[StrictStr] = Field(default=None, alias="ReferenceText")
     links: Optional[List[StrictStr]] = Field(default=None, alias="Links")
@@ -46,7 +47,7 @@ class ReferenceApiDto(BaseModel):
     updated_at: Optional[datetime] = Field(default=None, alias="UpdatedAt")
     deleted_at: Optional[datetime] = Field(default=None, alias="DeletedAt")
     delete_reason: Optional[StrictStr] = Field(default=None, alias="DeleteReason")
-    __properties: ClassVar[List[str]] = ["Class", "ReferenceId", "OwnerId", "OrganizationId", "RepositoryId", "BranchId", "DirectoryId", "Sha256Hash", "ReferenceType", "ReferenceText", "Links", "CreatedAt", "UpdatedAt", "DeletedAt", "DeleteReason"]
+    __properties: ClassVar[List[str]] = ["Class", "ReferenceId", "OwnerId", "OrganizationId", "RepositoryId", "BranchId", "DirectoryId", "Sha256Hash", "Blake3Hash", "ReferenceType", "ReferenceText", "Links", "CreatedAt", "UpdatedAt", "DeletedAt", "DeleteReason"]
 
     model_config = ConfigDict(
         validate_by_name=True,
@@ -107,6 +108,7 @@ class ReferenceApiDto(BaseModel):
             "BranchId": obj.get("BranchId"),
             "DirectoryId": obj.get("DirectoryId"),
             "Sha256Hash": obj.get("Sha256Hash"),
+            "Blake3Hash": obj.get("Blake3Hash"),
             "ReferenceType": obj.get("ReferenceType"),
             "ReferenceText": obj.get("ReferenceText"),
             "Links": obj.get("Links"),

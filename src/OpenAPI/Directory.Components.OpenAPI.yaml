@@ -59,6 +59,14 @@
           properties:
             Sha256Hash:
               $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Sha256Hash'
+    GetByBlake3HashParameters:
+      description: Parameters for the /directory/getByBlake3Hash endpoint.
+      allOf:
+        - $ref: '#/DirectoryParameters'
+        - type: object
+          properties:
+            Blake3Hash:
+              $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Blake3Hash'
     SaveDirectoryVersionsParameters:
       description: Parameters for the /directory/saveDirectoryVersions endpoint.
       allOf:
@@ -126,6 +134,21 @@
           additionalProperties:
             type: string
       required: [ReturnValue, EventTime, CorrelationId, Properties]
+    DirectoryVersionHashLookupReturnValue:
+      description: Grace response envelope whose ReturnValue contains a raw directory version.
+      type: object
+      properties:
+        ReturnValue:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/DirectoryVersion'
+        EventTime:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant'
+        CorrelationId:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/CorrelationId'
+        Properties:
+          type: object
+          additionalProperties:
+            type: string
+      required: [ReturnValue, EventTime, CorrelationId, Properties]
     DirectoryVersionListReturnValue:
       description: Grace response envelope whose ReturnValue contains directory version DTOs.
       type: object
@@ -159,6 +182,12 @@
         application/json:
           schema:
             $ref: '#/DirectoryVersionReturnValue'
+    DirectoryVersionHashLookupResponse:
+      description: OK
+      content:
+        application/json:
+          schema:
+            $ref: '#/DirectoryVersionHashLookupReturnValue'
     DirectoryVersionListResponse:
       description: OK
       content:

@@ -14,6 +14,7 @@ Name | Type | Description | Notes
 **branch_id** | **UUID** |  | [optional] 
 **directory_id** | **UUID** | DirectoryVersionId represented by the current server DTO field name. | [optional] 
 **sha256_hash** | **str** |  | [optional] 
+**blake3_hash** | **str** |  | [optional] 
 **reference_type** | [**ReferenceType**](ReferenceType.md) |  | [optional] 
 **reference_text** | **str** |  | [optional] 
 **links** | **List[str]** |  | [optional] 
