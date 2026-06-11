@@ -641,6 +641,24 @@ type BranchServer() =
         }
 
     [<Test>]
+    member _.SaveWithChildDirectoryVersionIdAndShaPrefixDoesNotCreateRootReference() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let branchId = repositoryDefaultBranchIds[0]
+            let! parentBranch = BranchServerTestHelpers.getBranchAsync repositoryId branchId
+            let! branch = BranchServerTestHelpers.createBranchAsync repositoryId parentBranch $"ChildIdPrefix{Guid.NewGuid():N}"
+            let child, root = BranchServerTestHelpers.createDotRootWithChildDirectoryVersions repositoryId $"child-id-prefix/{Guid.NewGuid():N}"
+
+            do! BranchServerTestHelpers.saveDirectoryVersionsAsync repositoryId [ child; root ]
+
+            let childShaPrefix = (string child.Sha256Hash).Substring(0, 8)
+            let! response = BranchServerTestHelpers.saveReferenceResponseAsync repositoryId branch child.DirectoryVersionId (Sha256Hash childShaPrefix)
+            let! responseBody = response.Content.ReadAsStringAsync()
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), responseBody)
+            Assert.That(responseBody, Does.Contain("Reference root DirectoryVersion must use the repository root path."))
+        }
+
+    [<Test>]
     member _.AnnotateRouteAndSdkReturnEnvelopeForServerKnownReference() =
         task {
             let repositoryId = repositoryIds[0]
