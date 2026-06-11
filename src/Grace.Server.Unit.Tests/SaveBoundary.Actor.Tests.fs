@@ -247,7 +247,7 @@ type SaveBoundaryActorTests() =
         | Error error -> Assert.Fail($"Expected validated legacy child DirectoryVersion without BLAKE3 to validate, got {error.Error}.")
 
     [<Test>]
-    member _.DirectoryVersionHashValidationRejectsMissingChildFileBlake3() =
+    member _.DirectoryVersionHashValidationAllowsLegacyWholeFileBlake3Gap() =
         let fileVersion =
             fileWithHashes
                 "/a.txt"
@@ -255,8 +255,26 @@ type SaveBoundaryActorTests() =
                 "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
                 1L
 
-        let directoryVersion = hashedDirectory directoryVersionId (RelativePath "/") [] [ fileVersion ]
         fileVersion.Blake3Hash <- Blake3Hash String.Empty
+        let directoryVersion = hashedDirectory directoryVersionId (RelativePath "/") [] [ fileVersion ]
+
+        match DirectoryVersionActor.validateDirectoryVersionHashesWithChildren "corr-legacy-whole-file-blake3" directoryVersion [] with
+        | Ok () -> ()
+        | Error error -> Assert.Fail($"Expected legacy whole-file FileVersion without BLAKE3 to validate, got {error.Error}.")
+
+    [<Test>]
+    member _.DirectoryVersionHashValidationRejectsMissingManifestChildFileBlake3() =
+        let fileVersion =
+            fileWithHashes
+                "/a.txt"
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                1L
+
+        fileVersion.ContentReference <- { Class = "FileContentReference"; ReferenceType = FileContentReferenceType.FileManifest; Manifest = None }
+
+        fileVersion.Blake3Hash <- Blake3Hash String.Empty
+        let directoryVersion = hashedDirectory directoryVersionId (RelativePath "/") [] [ fileVersion ]
 
         match DirectoryVersionActor.validateDirectoryVersionHashesWithChildren "corr-missing-child-file-blake3" directoryVersion [] with
         | Ok () -> Assert.Fail("Expected missing child file Blake3Hash to reject before Save.")
