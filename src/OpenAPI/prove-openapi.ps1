@@ -1037,7 +1037,8 @@ function Test-OpenApiOwnerOrganizationRepositoryDirectoryDetails {
         [pscustomobject]@{ File = 'Directory.Paths.OpenAPI.yaml'; OperationId = 'GetDirectoryVersion'; Tag = 'Directories'; Response = 'DirectoryVersionResponse' },
         [pscustomobject]@{ File = 'Directory.Paths.OpenAPI.yaml'; OperationId = 'ListDirectoryVersionsRecursive'; Tag = 'Directories'; Response = 'DirectoryVersionListResponse' },
         [pscustomobject]@{ File = 'Directory.Paths.OpenAPI.yaml'; OperationId = 'ListDirectoryVersionsById'; Tag = 'Directories'; Response = 'DirectoryVersionListResponse' },
-        [pscustomobject]@{ File = 'Directory.Paths.OpenAPI.yaml'; OperationId = 'GetDirectoryVersionBySha256Hash'; Tag = 'Directories'; Response = 'DirectoryVersionResponse' },
+        [pscustomobject]@{ File = 'Directory.Paths.OpenAPI.yaml'; OperationId = 'GetDirectoryVersionBySha256Hash'; Tag = 'Directories'; Response = 'DirectoryVersionHashLookupResponse' },
+        [pscustomobject]@{ File = 'Directory.Paths.OpenAPI.yaml'; OperationId = 'GetDirectoryVersionByBlake3Hash'; Tag = 'Directories'; Response = 'DirectoryVersionHashLookupResponse' },
         [pscustomobject]@{ File = 'Directory.Paths.OpenAPI.yaml'; OperationId = 'SaveDirectoryVersions'; Tag = 'Directories'; Response = 'DirectoryCommandResponse' }
     )
 
@@ -1132,6 +1133,7 @@ function Test-OpenApiOwnerOrganizationRepositoryDirectoryDetails {
             'DirectoryVersionId:',
             'DirectoryVersionApiDto:',
             'DirectoryVersionReturnValue:',
+            'DirectoryVersionHashLookupReturnValue:',
             'DirectoryVersionListReturnValue:'
         )) {
         Assert-TextContains $directoryComponentsText $requiredDirectoryContract "Directory OpenAPI components are missing '$requiredDirectoryContract'."
@@ -1183,8 +1185,14 @@ function Test-OpenApiOwnerOrganizationRepositoryDirectoryDetails {
     Assert-OperationSha256ExamplesAreValid $getBySha256HashOperation @('Sha256Hash')
     Assert-OperationTextMatches `
         $getBySha256HashOperation `
-        "(?s)responses:\s*.*?'200':\s*.*?\`$ref:\s*'\./Directory\.Components\.OpenAPI\.yaml#/DirectoryVersionResponse'" `
-        'GetDirectoryVersionBySha256Hash must use the server-returned directory-version DTO envelope.'
+        "(?s)responses:\s*.*?'200':\s*.*?\`$ref:\s*'\./Directory\.Components\.OpenAPI\.yaml#/DirectoryVersionHashLookupResponse'" `
+        'GetDirectoryVersionBySha256Hash must use the server-returned raw directory-version envelope.'
+
+    $getByBlake3HashOperation = Get-RequiredOpenApiOperation $Operations 'Directory.Paths.OpenAPI.yaml' 'GetDirectoryVersionByBlake3Hash'
+    Assert-OperationTextMatches `
+        $getByBlake3HashOperation `
+        "(?s)responses:\s*.*?'200':\s*.*?\`$ref:\s*'\./Directory\.Components\.OpenAPI\.yaml#/DirectoryVersionHashLookupResponse'" `
+        'GetDirectoryVersionByBlake3Hash must use the server-returned raw directory-version envelope.'
 }
 
 function Test-OpenApiSharedContractDetails {
