@@ -441,27 +441,48 @@ module Watch =
             | _ -> return None
         }
 
-    /// Copies a file from the working directory to the object directory, with its SHA-256 hash, and then uploads it to storage.
-    let copyFileToObjectDirectoryAndUploadToStorage (getUploadMetadataForFilesParameters: GetUploadMetadataForFilesParameters) fullPath =
+    let internal uploadFileVersionToStorage
+        (uploadFileVersions: GetUploadMetadataForFilesParameters -> Task<GraceResult<FileVersion array>>)
+        (getUploadMetadataForFilesParameters: GetUploadMetadataForFilesParameters)
+        (fileVersion: FileVersion)
+        =
+        task {
+            getUploadMetadataForFilesParameters.FileVersions <- [| fileVersion |]
+
+            match! uploadFileVersions getUploadMetadataForFilesParameters with
+            | Ok returnValue ->
+                for uploadedFileVersion in returnValue.ReturnValue do
+                    uploadedFileVersions[uploadedFileVersionIdentity uploadedFileVersion] <- uploadedFileVersion
+
+                logToAnsiConsole Colors.Verbose $"File {fileVersion.GetObjectFileName} has been uploaded to storage."
+            | Error error -> raise (InvalidOperationException($"Failed to upload {fileVersion.GetObjectFileName} to storage: {error.Error}"))
+        }
+
+    let internal copyFileToObjectDirectoryAndUploadToStorageWithClients
+        (copyFileToObjectCache: FilePath -> Task<FileVersion option>)
+        (getCachedFileVersion: FilePath -> Task<FileVersion option>)
+        (uploadFileVersions: GetUploadMetadataForFilesParameters -> Task<GraceResult<FileVersion array>>)
+        (getUploadMetadataForFilesParameters: GetUploadMetadataForFilesParameters)
+        fullPath
+        =
         task {
             //logToConsole $"*In fileChanged for {fullPath}."
-            match! copyToObjectDirectory fullPath with
-            | Some fileVersion ->
-                getUploadMetadataForFilesParameters.FileVersions <- [| fileVersion |]
-
-                match! uploadFilesToObjectStorage getUploadMetadataForFilesParameters with
-                | Ok returnValue ->
-                    for uploadedFileVersion in returnValue.ReturnValue do
-                        uploadedFileVersions[uploadedFileVersionIdentity uploadedFileVersion] <- uploadedFileVersion
-
-                    logToAnsiConsole Colors.Verbose $"File {fileVersion.GetObjectFileName} has been uploaded to storage."
-                | Error error -> raise (InvalidOperationException($"Failed to upload {fileVersion.GetObjectFileName} to storage: {error.Error}"))
+            match! copyFileToObjectCache fullPath with
+            | Some fileVersion -> do! uploadFileVersionToStorage uploadFileVersions getUploadMetadataForFilesParameters fileVersion
             | None ->
-                match! getCachedFileVersionForUploadSkip fullPath with
-                | Some fileVersion ->
-                    logToAnsiConsole Colors.Verbose $"File {fileVersion.GetObjectFileName} already exists in the object cache; skipping upload."
+                match! getCachedFileVersion fullPath with
+                | Some fileVersion -> do! uploadFileVersionToStorage uploadFileVersions getUploadMetadataForFilesParameters fileVersion
                 | None -> raise (InvalidOperationException($"Failed to copy {fullPath} to the object cache before upload."))
         }
+
+    /// Copies a file from the working directory to the object directory, with its SHA-256 hash, and then uploads it to storage.
+    let copyFileToObjectDirectoryAndUploadToStorage (getUploadMetadataForFilesParameters: GetUploadMetadataForFilesParameters) fullPath =
+        copyFileToObjectDirectoryAndUploadToStorageWithClients
+            copyToObjectDirectory
+            getCachedFileVersionForUploadSkip
+            uploadFilesToObjectStorage
+            getUploadMetadataForFilesParameters
+            fullPath
 
     /// Decompresses the GraceStatus information from the memory stream.
     let retrieveGraceStatusFromMemoryStream () =
