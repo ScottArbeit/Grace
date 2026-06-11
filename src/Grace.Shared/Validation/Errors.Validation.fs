@@ -220,11 +220,13 @@ module Errors =
         | InvalidOwnerName
         | InvalidRepositoryId
         | InvalidRepositoryName
+        | InvalidBlake3Hash
         | InvalidSha256Hash
         | InvalidSize
         | ObjectCacheFileNotFound
         | RelativePathMustNotBeEmpty
         | RepositoryDoesNotExist
+        | Blake3HashIsRequired
         | Sha256HashIsRequired
         | Sha256HashDoesNotMatch
 
@@ -246,11 +248,13 @@ module Errors =
             | InvalidOwnerName -> getLocalizedString StringResourceName.InvalidOwnerName
             | InvalidRepositoryId -> getLocalizedString StringResourceName.InvalidRepositoryId
             | InvalidRepositoryName -> getLocalizedString StringResourceName.InvalidRepositoryName
+            | InvalidBlake3Hash -> getLocalizedString StringResourceName.InvalidBlake3Hash
             | InvalidSha256Hash -> getLocalizedString StringResourceName.InvalidSha256Hash
             | InvalidSize -> getLocalizedString StringResourceName.InvalidSize
             | ObjectCacheFileNotFound -> getLocalizedString StringResourceName.ObjectCacheFileNotFound
             | RelativePathMustNotBeEmpty -> getLocalizedString StringResourceName.RelativePathMustNotBeEmpty
             | RepositoryDoesNotExist -> getLocalizedString StringResourceName.RepositoryDoesNotExist
+            | Blake3HashIsRequired -> getLocalizedString StringResourceName.Blake3HashIsRequired
             | Sha256HashIsRequired -> getLocalizedString StringResourceName.Sha256HashIsRequired
             | Sha256HashDoesNotMatch -> getLocalizedString StringResourceName.Sha256HashDoesNotMatch
 
