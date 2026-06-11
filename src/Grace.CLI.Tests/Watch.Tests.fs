@@ -505,6 +505,37 @@ module WatchTests =
             ))
 
     [<Test>]
+    let ``object-cache copies preserve scanner Blake3 identity`` () =
+        withTempRepo (fun root ->
+            let nestedDirectory = Path.Combine(root, "dir")
+
+            Directory.CreateDirectory(nestedDirectory)
+            |> ignore
+
+            let filePath = Path.Combine(nestedDirectory, "whole-file.txt")
+            File.WriteAllText(filePath, "whole-file watch upload payload")
+
+            let localFileVersion =
+                match (Services.createLocalFileVersion (FileInfo filePath))
+                    .Result
+                    with
+                | Some fileVersion -> fileVersion
+                | None -> failwith "Expected scanner file version."
+
+            let copiedFileVersion =
+                match (Services.copyToObjectDirectory (FilePath filePath))
+                    .Result
+                    with
+                | Some fileVersion -> fileVersion
+                | None -> failwith "Expected object-cache copy to create the object."
+
+            String.IsNullOrWhiteSpace(string copiedFileVersion.Blake3Hash)
+            |> should equal false
+
+            copiedFileVersion.Blake3Hash
+            |> should equal localFileVersion.Blake3Hash)
+
+    [<Test>]
     let ``watch json auth failure emits one clean error envelope`` () =
         withTempRepo (fun _ ->
             clearWatchAuthEnv (fun () ->
