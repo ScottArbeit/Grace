@@ -1097,6 +1097,12 @@ module Services =
             downloadFiles
             correlationId
 
+    let internal findFileVersionForUploadMetadata (fileVersions: IEnumerable<FileVersion>) (uploadMetadata: UploadMetadata) =
+        fileVersions.First (fun fileVersion ->
+            fileVersion.RelativePath = uploadMetadata.RelativePath
+            && fileVersion.Sha256Hash = uploadMetadata.Sha256Hash
+            && fileVersion.Blake3Hash = uploadMetadata.Blake3Hash)
+
     let private uploadWholeFilesToObjectStorage (parameters: GetUploadMetadataForFilesParameters) =
         task {
             match Current().ObjectStorageProvider with
@@ -1117,10 +1123,7 @@ module Services =
                                 (fun uploadMetadata ct ->
                                     ValueTask(
                                         task {
-                                            let fileVersion =
-                                                parameters.FileVersions.First (fun fileVersion ->
-                                                    fileVersion.RelativePath = uploadMetadata.RelativePath
-                                                    && fileVersion.Sha256Hash = uploadMetadata.Sha256Hash)
+                                            let fileVersion = findFileVersionForUploadMetadata parameters.FileVersions uploadMetadata
                                             //logToAnsiConsole Colors.Verbose $"In Services.uploadFilesToObjectStorage(): Uploading {fileVersion.GetObjectFileName} to object storage."
                                             match!
                                                 Storage.SaveFileToObjectStorage
