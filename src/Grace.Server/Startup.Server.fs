@@ -1185,6 +1185,9 @@ module Application =
                                route "/getDiffBySha256Hash" Diff.GetDiffBySha256Hash
                                |> addMetadata typeof<Diff.GetDiffBySha256HashParameters>
 
+                               route "/getDiffByBlake3Hash" Diff.GetDiffByBlake3Hash
+                               |> addMetadata typeof<Diff.GetDiffByBlake3HashParameters>
+
                                route "/populate" Diff.Populate
                                |> addMetadata typeof<Diff.PopulateParameters> ]
                     ]

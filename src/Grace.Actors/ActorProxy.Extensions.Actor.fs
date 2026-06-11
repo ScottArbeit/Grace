@@ -60,10 +60,13 @@ module ActorProxy =
     module Diff =
         /// Gets an ActorId for a Diff actor.
         let GetPrimaryKey (directoryVersionId1: DirectoryVersionId) (directoryVersionId2: DirectoryVersionId) =
+            let directoryVersionId1Text = directoryVersionId1.ToString("N")
+            let directoryVersionId2Text = directoryVersionId2.ToString("N")
+
             if directoryVersionId1 < directoryVersionId2 then
-                $"{directoryVersionId1}*{directoryVersionId2}"
+                $"{directoryVersionId1Text}{directoryVersionId2Text}"
             else
-                $"{directoryVersionId2}*{directoryVersionId1}"
+                $"{directoryVersionId2Text}{directoryVersionId1Text}"
 
         /// Creates an ActorProxy for a Diff actor, and adds the correlationId to the server's MemoryCache so
         ///   it's available in the OnActivateAsync() method.

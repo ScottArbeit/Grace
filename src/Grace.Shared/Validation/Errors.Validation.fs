@@ -182,6 +182,8 @@ module Errors =
         | InvalidOwnerName
         | InvalidRepositoryId
         | InvalidRepositoryName
+        | Blake3HashIsRequired
+        | InvalidBlake3Hash
         | InvalidSha256Hash
         | Sha256HashIsRequired
 
@@ -197,6 +199,8 @@ module Errors =
             | InvalidOwnerName -> getLocalizedString StringResourceName.InvalidOwnerName
             | InvalidRepositoryId -> getLocalizedString StringResourceName.InvalidRepositoryId
             | InvalidRepositoryName -> getLocalizedString StringResourceName.InvalidRepositoryName
+            | Blake3HashIsRequired -> getLocalizedString StringResourceName.Blake3HashIsRequired
+            | InvalidBlake3Hash -> getLocalizedString StringResourceName.InvalidBlake3Hash
             | InvalidSha256Hash -> getLocalizedString StringResourceName.InvalidSha256Hash
             | Sha256HashIsRequired -> getLocalizedString StringResourceName.Sha256HashIsRequired
 
