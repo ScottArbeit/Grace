@@ -132,7 +132,7 @@ type ManifestUploadSdkTests() =
         Assert.That(Storage.isExistingContentBlockUploadConflict forbidden, Is.False)
 
     [<Test>]
-    member _.WholeFileLocalObjectCacheNameIncludesBlake3WithoutChangingRemoteObjectName() =
+    member _.WholeFileLocalObjectCacheNameIncludesBlake3() =
         let fileVersion =
             FileVersion.CreateWithHashes
                 (RelativePath "src/cache/whole-file.txt")
@@ -144,6 +144,14 @@ type ManifestUploadSdkTests() =
 
         Assert.That(fileVersion.GetObjectFileName, Is.EqualTo("whole-file_sha256-value.txt"))
         Assert.That(Storage.getLocalObjectCacheFileName fileVersion, Is.EqualTo("whole-file_sha256-value_blake3-value.txt"))
+
+    [<Test>]
+    member _.WholeFileLocalObjectCacheNameIncludesBlake3ForExtensionlessFiles() =
+        let fileVersion =
+            FileVersion.CreateWithHashes (RelativePath "Dockerfile") (Sha256Hash "sha256-value") (Blake3Hash "blake3-value") String.Empty false 10L
+
+        Assert.That(fileVersion.GetObjectFileName, Is.EqualTo("Dockerfile_sha256-value"))
+        Assert.That(Storage.getLocalObjectCacheFileName fileVersion, Is.EqualTo("Dockerfile_sha256-value_blake3-value"))
 
     [<Test>]
     member _.WholeFileLocalObjectCacheNameKeepsLegacyShaOnlyNameWithoutBlake3() =

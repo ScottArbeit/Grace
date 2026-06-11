@@ -47,7 +47,11 @@ module Storage =
             fileVersion.GetObjectFileName
         else
             let file = FileInfo($"{fileVersion.RelativePath}")
-            $"{file.Name.Replace(file.Extension, String.Empty)}_{fileVersion.Sha256Hash}_{fileVersion.Blake3Hash}{file.Extension}"
+
+            if file.Extension = String.Empty then
+                $"{file.Name}_{fileVersion.Sha256Hash}_{fileVersion.Blake3Hash}"
+            else
+                $"{file.Name.Replace(file.Extension, String.Empty)}_{fileVersion.Sha256Hash}_{fileVersion.Blake3Hash}{file.Extension}"
 
     let internal readStringResponseWithLifecycle (response: HttpResponseMessage) correlationId errorPrefix =
         task {
