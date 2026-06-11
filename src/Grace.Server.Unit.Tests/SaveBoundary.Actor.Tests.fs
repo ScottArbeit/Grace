@@ -172,6 +172,17 @@ type SaveBoundaryActorTests() =
         | Error error -> Assert.Fail($"Expected legacy empty BLAKE3 to be accepted, got {error.Error}.")
 
     [<Test>]
+    member _.DirectoryVersionHashValidationAllowsLegacyManifestBackedFileBlake3Gap() =
+        let manifest = finalizedManifest ()
+        let fileVersion = manifestFile manifest
+        fileVersion.Blake3Hash <- Blake3Hash String.Empty
+        let directoryVersion = hashedDirectory directoryVersionId (RelativePath "/") [] [ fileVersion ]
+
+        match DirectoryVersionActor.validateDirectoryVersionHashesWithChildren "corr-legacy-manifest-file-blake3" directoryVersion [] with
+        | Ok () -> ()
+        | Error error -> Assert.Fail($"Expected legacy manifest-backed FileVersion without BLAKE3 to validate, got {error.Error}.")
+
+    [<Test>]
     member _.DirectoryVersionHashValidationRequiresDirectoryBlake3BeforeSave() =
         let directoryVersion = hashedDirectory directoryVersionId (RelativePath "/") [] []
         directoryVersion.Blake3Hash <- Blake3Hash String.Empty
@@ -223,6 +234,17 @@ type SaveBoundaryActorTests() =
                     .Contain("child directory")
                     .And.Contain("Blake3Hash")
             )
+
+    [<Test>]
+    member _.DirectoryVersionHashValidationAllowsValidatedLegacyChildDirectoryBlake3Gap() =
+        let child = hashedDirectory (Guid.NewGuid()) (RelativePath "/src/") [] []
+        child.HashesValidated <- true
+        child.Blake3Hash <- Blake3Hash String.Empty
+        let parent = hashedDirectory directoryVersionId (RelativePath "/") [ child ] []
+
+        match DirectoryVersionActor.validateDirectoryVersionHashesWithChildren "corr-legacy-child-directory-blake3" parent [ child ] with
+        | Ok () -> ()
+        | Error error -> Assert.Fail($"Expected validated legacy child DirectoryVersion without BLAKE3 to validate, got {error.Error}.")
 
     [<Test>]
     member _.DirectoryVersionHashValidationRejectsMissingChildFileBlake3() =
