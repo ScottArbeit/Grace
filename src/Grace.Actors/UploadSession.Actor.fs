@@ -839,6 +839,7 @@ module UploadSession =
 
                             let mutable metadataIndex = 0
                             let mutable metadataError = None
+                            let mergedMetadata = ResizeArray<ContentBlockMetadata>()
 
                             while metadataIndex < metadataCommands.Length
                                   && metadataError.IsNone do
@@ -852,7 +853,7 @@ module UploadSession =
                                     let! metadataResult = metadataActor.MergePhysicalRanges merge metadata
 
                                     match metadataResult with
-                                    | Ok _ -> ()
+                                    | Ok returnValue -> mergedMetadata.Add(returnValue.ReturnValue.Metadata)
                                     | Error error -> metadataError <- Some error
                                 | _ -> ()
 
@@ -873,6 +874,9 @@ module UploadSession =
                                         }
                                         metadata.CorrelationId
                                     :> Task
+
+                                for authoritativeMetadata in mergedMetadata do
+                                    do! dedupeIndexActor.WriteAfterAuthoritativeMetadata authoritativeMetadata metadata.CorrelationId :> Task
                         | UploadSessionCommand.DeletePhysicalState _ ->
                             do! this.CompactPhysicalStateEvents()
                             this.DeactivateOnIdle()
