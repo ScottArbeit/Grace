@@ -1,6 +1,6 @@
-# GetReferenceParameters
+# BranchHashQueryParameters
 
-Parameters for the /branch/getReference endpoint.
+Parameters for branch query endpoints that support SHA-256, BLAKE3, or reference id locators.
 
 ## Properties
 
@@ -18,23 +18,24 @@ Name | Type | Description | Notes
 **branch_name** | **str** |  | [optional] 
 **sha256_hash** | **str** |  | [optional] 
 **reference_id** | **UUID** |  | [optional] 
+**blake3_hash** | **str** |  | [optional] 
 
 ## Example
 
 ```python
-from grace_generated_openapi_probe.models.get_reference_parameters import GetReferenceParameters
+from grace_generated_openapi_probe.models.branch_hash_query_parameters import BranchHashQueryParameters
 
 # TODO update the JSON string below
 json = "{}"
-# create an instance of GetReferenceParameters from a JSON string
-get_reference_parameters_instance = GetReferenceParameters.from_json(json)
+# create an instance of BranchHashQueryParameters from a JSON string
+branch_hash_query_parameters_instance = BranchHashQueryParameters.from_json(json)
 # print the JSON string representation of the object
-print(GetReferenceParameters.to_json())
+print(BranchHashQueryParameters.to_json())
 
 # convert the object into a dict
-get_reference_parameters_dict = get_reference_parameters_instance.to_dict()
-# create an instance of GetReferenceParameters from a dict
-get_reference_parameters_from_dict = GetReferenceParameters.from_dict(get_reference_parameters_dict)
+branch_hash_query_parameters_dict = branch_hash_query_parameters_instance.to_dict()
+# create an instance of BranchHashQueryParameters from a dict
+branch_hash_query_parameters_from_dict = BranchHashQueryParameters.from_dict(branch_hash_query_parameters_dict)
 ```
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
 

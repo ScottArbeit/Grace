@@ -11,9 +11,9 @@
 use crate::models;
 use serde::{Deserialize, Serialize};
 
-/// GetBranchParameters : Parameters for the /branch/get endpoint.
+/// BranchHashQueryParameters : Parameters for branch query endpoints that support SHA-256, BLAKE3, or reference id locators.
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
-pub struct GetBranchParameters {
+pub struct BranchHashQueryParameters {
     /// Body DTO correlation id copied into Grace command/event metadata after request parsing. This field is distinct from the X-Correlation-Id transport header.
     #[serde(rename = "CorrelationId", skip_serializing_if = "Option::is_none")]
     pub correlation_id: Option<String>,
@@ -40,14 +40,14 @@ pub struct GetBranchParameters {
     pub sha256_hash: Option<String>,
     #[serde(rename = "ReferenceId", skip_serializing_if = "Option::is_none")]
     pub reference_id: Option<uuid::Uuid>,
-    #[serde(rename = "IncludeDeleted", skip_serializing_if = "Option::is_none")]
-    pub include_deleted: Option<bool>,
+    #[serde(rename = "Blake3Hash", skip_serializing_if = "Option::is_none")]
+    pub blake3_hash: Option<String>,
 }
 
-impl GetBranchParameters {
-    /// Parameters for the /branch/get endpoint.
-    pub fn new() -> GetBranchParameters {
-        GetBranchParameters {
+impl BranchHashQueryParameters {
+    /// Parameters for branch query endpoints that support SHA-256, BLAKE3, or reference id locators.
+    pub fn new() -> BranchHashQueryParameters {
+        BranchHashQueryParameters {
             correlation_id: None,
             principal: None,
             owner_id: None,
@@ -60,7 +60,7 @@ impl GetBranchParameters {
             branch_name: None,
             sha256_hash: None,
             reference_id: None,
-            include_deleted: None,
+            blake3_hash: None,
         }
     }
 }
