@@ -5,6 +5,7 @@ open Grace.CLI
 open Grace.CLI.Command
 open Grace.Shared
 open Grace.Shared.Client.Configuration
+open Grace.Shared.Parameters.Storage
 open Grace.Shared.Utilities
 open Grace.Types.Common
 open NodaTime
@@ -470,6 +471,33 @@ module WatchTests =
 
                 readFileIfExists ipcFileName
                 |> should equal originalContents))
+
+    [<Test>]
+    let ``watch cached file changes remain processable when object already exists`` () =
+        withTempRepo (fun root ->
+            let filePath = Path.Combine(root, "cached-file.txt")
+            File.WriteAllText(filePath, "cached file payload")
+
+            match (Services.copyToObjectDirectory (FilePath filePath))
+                .Result
+                with
+            | Some _ -> ()
+            | None -> Assert.Fail("Expected first object-cache copy to create the object.")
+
+            let parameters =
+                GetUploadMetadataForFilesParameters(
+                    OwnerId = $"{OwnerId.Empty}",
+                    OrganizationId = $"{OrganizationId.Empty}",
+                    RepositoryId = $"{RepositoryId.Empty}",
+                    CorrelationId = "watch-cache-hit-test"
+                )
+
+            Assert.DoesNotThrow(
+                Action (fun () ->
+                    (Watch.copyFileToObjectDirectoryAndUploadToStorage parameters (FilePath filePath))
+                        .GetAwaiter()
+                        .GetResult())
+            ))
 
     [<Test>]
     let ``watch json auth failure emits one clean error envelope`` () =
