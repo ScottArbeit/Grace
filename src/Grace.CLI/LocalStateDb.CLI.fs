@@ -501,6 +501,18 @@ module LocalStateDb =
         && columnExists connection "object_cache_directories" "blake3_hash"
         && columnExists connection "object_cache_directory_files" "blake3_hash"
 
+    let private hasEmptyWritableStatusBlake3Rows (connection: SqliteConnection) =
+        if columnExists connection "status_directories" "blake3_hash"
+           && columnExists connection "status_files" "blake3_hash" then
+            use command = connection.CreateCommand()
+
+            command.CommandText <-
+                "SELECT EXISTS(SELECT 1 FROM status_directories WHERE TRIM(blake3_hash) = '' LIMIT 1) OR EXISTS(SELECT 1 FROM status_files WHERE TRIM(blake3_hash) = '' LIMIT 1);"
+
+            Convert.ToInt32(command.ExecuteScalar()) <> 0
+        else
+            false
+
     let private recreateDatabase (dbPath: string) =
         try
             SqliteConnection.ClearAllPools()
@@ -586,6 +598,10 @@ module LocalStateDb =
                                                     not recreate
                                                     && not (hasRequiredWritableSchema connection)
                                                 then
+                                                    recreate <- true
+
+                                                if not recreate
+                                                   && hasEmptyWritableStatusBlake3Rows connection then
                                                     recreate <- true
 
                                                 if not recreate then
@@ -702,7 +718,12 @@ module LocalStateDb =
                 incomingRootDirectoryBlake3Hash
             else
                 match readStatusMetaInternal connection with
-                | Some meta when not (String.IsNullOrWhiteSpace(string meta.RootDirectoryBlake3Hash)) -> meta.RootDirectoryBlake3Hash
+                | Some meta when
+                    meta.RootDirectoryId = graceStatus.RootDirectoryId
+                    && meta.RootDirectorySha256Hash = graceStatus.RootDirectorySha256Hash
+                    && not (String.IsNullOrWhiteSpace(string meta.RootDirectoryBlake3Hash))
+                    ->
+                    meta.RootDirectoryBlake3Hash
                 | _ -> incomingRootDirectoryBlake3Hash
 
         executeNonQueryWithParams
