@@ -224,12 +224,12 @@ module CommandOutputContractRegistryTests =
         |> should equal 9
 
         countBy CommonRenderOutputEnvelope
-        |> should equal 184
+        |> should equal 185
 
         countBy ImmediateJsonErrorOnly |> should equal 1
 
         countBy HumanProgressOnlySuccess
-        |> should equal 11
+        |> should equal 10
 
         countBy PartialManualSuccess |> should equal 0
         countBy ManualJsonUnenveloped |> should equal 0
@@ -265,9 +265,9 @@ module CommandOutputContractRegistryTests =
 
         let deleted = 0
 
-        jsonReady |> should equal 184
+        jsonReady |> should equal 185
         intentionallyHumanOnly |> should equal 1
-        deferredV2 |> should equal 12
+        deferredV2 |> should equal 11
         sourceOnly |> should equal 9
         deleted |> should equal 0
 
@@ -406,12 +406,28 @@ module CommandOutputContractRegistryTests =
         | None -> Assert.Fail("branch annotate should have a registry entry.")
 
     [<Test>]
+    let ``diff blake3 json mode is centrally rendered instead of human-progress only`` () =
+        let identity = CommandOutputContract.commandIdentity [ "diff" ] "blake3"
+
+        match CommandOutputContract.tryFind identity with
+        | Some entry ->
+            entry.CurrentJsonBehavior
+            |> should equal CommonRenderOutputEnvelope
+
+            entry.EnvelopeContract
+            |> should equal (ExistingGraceResultEnvelope ReuseExistingApiOrSdkDto)
+
+            entry.Features.JsonMode
+            |> should equal ExistingBehavior
+        | None -> Assert.Fail("diff blake3 should have a registry entry.")
+
+    [<Test>]
     let ``current common renderer entries keep the Grace envelope model`` () =
         let commonEntries =
             CommandOutputContract.entries
             |> List.filter (fun entry -> entry.CurrentJsonBehavior = CommonRenderOutputEnvelope)
 
-        commonEntries.Length |> should equal 184
+        commonEntries.Length |> should equal 185
 
         for entry in commonEntries do
             match entry.EnvelopeContract with
@@ -428,7 +444,7 @@ module CommandOutputContractRegistryTests =
             CommandOutputContract.entries
             |> List.filter (fun entry -> entry.CurrentJsonBehavior = CommonRenderOutputEnvelope)
 
-        commonEntries.Length |> should equal 184
+        commonEntries.Length |> should equal 185
 
         let parserInvalidEntries =
             commonEntries
