@@ -143,6 +143,7 @@ module WatchTests =
                 IsStartupClaim = false
                 RootDirectoryId = rootDirectoryId
                 RootDirectorySha256Hash = Sha256Hash "live-watch-root"
+                RootDirectoryBlake3Hash = Blake3Hash "live-watch-root-blake3"
                 LastFileUploadInstant = Instant.MinValue
                 LastDirectoryVersionInstant = Instant.MinValue
                 DirectoryIds = HashSet<DirectoryVersionId>([| rootDirectoryId |])
@@ -322,6 +323,50 @@ module WatchTests =
 
             let status = Services.getGraceWatchStatus().Result
             status |> should equal None)
+
+    [<Test>]
+    let ``watch status preserves root Blake3 from GraceStatus index`` () =
+        withTempRepo (fun _ ->
+            let rootDirectoryId = Guid.NewGuid()
+            let rootSha256Hash = Sha256Hash "watch-root-sha"
+            let rootBlake3Hash = Blake3Hash "watch-root-blake3"
+
+            let rootDirectory =
+                LocalDirectoryVersion.CreateWithHashes
+                    rootDirectoryId
+                    OwnerId.Empty
+                    OrganizationId.Empty
+                    RepositoryId.Empty
+                    Constants.RootDirectoryPath
+                    rootSha256Hash
+                    rootBlake3Hash
+                    (List<DirectoryVersionId>())
+                    (List<LocalFileVersion>())
+                    0L
+                    DateTime.UtcNow
+
+            let index = GraceIndex()
+
+            index.TryAdd(rootDirectoryId, rootDirectory)
+            |> ignore
+
+            let graceStatus = { GraceStatus.Default with Index = index; RootDirectoryId = rootDirectoryId; RootDirectorySha256Hash = rootSha256Hash }
+
+            (Services.updateGraceWatchInterprocessFile graceStatus None)
+                .GetAwaiter()
+                .GetResult()
+
+            match Services.getGraceWatchStatus().Result with
+            | Some status ->
+                status.RootDirectoryId
+                |> should equal rootDirectoryId
+
+                status.RootDirectorySha256Hash
+                |> should equal rootSha256Hash
+
+                status.RootDirectoryBlake3Hash
+                |> should equal rootBlake3Hash
+            | None -> Assert.Fail("Expected usable watch status with root BLAKE3."))
 
     [<Test>]
     let ``watch check exits zero when live watcher status exists`` () =
