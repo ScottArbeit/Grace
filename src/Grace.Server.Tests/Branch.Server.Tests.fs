@@ -5,6 +5,7 @@ open Azure.Storage.Blobs.Specialized
 open Grace.Server.Tests.Services
 open Grace.Shared
 open Grace.Shared.Client.Configuration
+open Grace.Shared.Services
 open Grace.Shared.Utilities
 open Grace.Shared.Validation
 open Grace.Shared.Validation.Errors
@@ -182,6 +183,29 @@ module BranchServerTestHelpers =
         SHA256.HashData(bytes)
         |> fun hash -> byteArrayToString (hash.AsSpan())
 
+    let private blake3Hex (bytes: byte array) = ContentAddress.computeBlake3Hex bytes
+
+    let private createRootDirectoryVersion (repositoryId: string) (fileVersion: FileVersion) =
+        let entries =
+            [|
+                DirectoryVersionPreimageEntry.File fileVersion.RelativePath fileVersion.Size fileVersion.Blake3Hash fileVersion.Sha256Hash
+            |]
+
+        let sha256Hash = computeSha256ForDirectoryEntries (RelativePath "/") entries
+        let blake3Hash = computeBlake3ForDirectory (RelativePath "/") entries
+
+        Grace.Types.Common.DirectoryVersion.CreateWithHashes
+            (Guid.NewGuid())
+            (Guid.Parse ownerId)
+            (Guid.Parse organizationId)
+            (Guid.Parse repositoryId)
+            "/"
+            sha256Hash
+            blake3Hash
+            (List<DirectoryVersionId>())
+            (List<FileVersion>([ fileVersion ]))
+            fileVersion.Size
+
     let private gzipBytes (bytes: byte array) =
         use compressed = new MemoryStream()
         use gzipStream = new GZipStream(compressed, CompressionLevel.SmallestSize, leaveOpen = true)
@@ -248,7 +272,10 @@ module BranchServerTestHelpers =
             let relativePath = $"annotate/{Guid.NewGuid():N}/sample.fs"
             let content = $"let value = 42{Environment.NewLine}let other = value + 1{Environment.NewLine}"
             let contentBytes = Encoding.UTF8.GetBytes(content)
-            let fileVersion = FileVersion.Create relativePath (sha256Hex contentBytes) String.Empty false (int64 contentBytes.Length)
+
+            let fileVersion =
+                FileVersion.CreateWithHashes relativePath (sha256Hex contentBytes) (blake3Hex contentBytes) String.Empty false (int64 contentBytes.Length)
+
             let tempRoot = Path.Combine(Path.GetTempPath(), "grace-annotate-tests", Guid.NewGuid().ToString("N"))
             let filePath = Path.Combine(tempRoot, relativePath.Replace('/', Path.DirectorySeparatorChar))
 
@@ -260,17 +287,7 @@ module BranchServerTestHelpers =
             try
                 do! uploadFileToObjectStorageAsync repositoryId contentBytes fileVersion
 
-                let directoryVersion =
-                    Grace.Types.Common.DirectoryVersion.Create
-                        (Guid.NewGuid())
-                        (Guid.Parse ownerId)
-                        (Guid.Parse organizationId)
-                        (Guid.Parse repositoryId)
-                        "/"
-                        (sha256Hex (Encoding.UTF8.GetBytes($"directory-{Guid.NewGuid():N}")))
-                        (List<DirectoryVersionId>())
-                        (List<FileVersion>([ fileVersion ]))
-                        (int64 contentBytes.Length)
+                let directoryVersion = createRootDirectoryVersion repositoryId fileVersion
 
                 do! saveDirectoryVersionAsync repositoryId directoryVersion
                 do! saveBranchReferenceAsync repositoryId branch directoryVersion
@@ -284,21 +301,13 @@ module BranchServerTestHelpers =
     let createAnnotatableReferenceWithContentAsync repositoryId (branch: Branch.BranchDto) relativePath (content: string) =
         task {
             let contentBytes = Encoding.UTF8.GetBytes(content)
-            let fileVersion = FileVersion.Create relativePath (sha256Hex contentBytes) String.Empty false (int64 contentBytes.Length)
+
+            let fileVersion =
+                FileVersion.CreateWithHashes relativePath (sha256Hex contentBytes) (blake3Hex contentBytes) String.Empty false (int64 contentBytes.Length)
 
             do! uploadFileToObjectStorageAsync repositoryId contentBytes fileVersion
 
-            let directoryVersion =
-                Grace.Types.Common.DirectoryVersion.Create
-                    (Guid.NewGuid())
-                    (Guid.Parse ownerId)
-                    (Guid.Parse organizationId)
-                    (Guid.Parse repositoryId)
-                    "/"
-                    (sha256Hex (Encoding.UTF8.GetBytes($"directory-{Guid.NewGuid():N}")))
-                    (List<DirectoryVersionId>())
-                    (List<FileVersion>([ fileVersion ]))
-                    (int64 contentBytes.Length)
+            let directoryVersion = createRootDirectoryVersion repositoryId fileVersion
 
             do! saveDirectoryVersionAsync repositoryId directoryVersion
             do! saveBranchReferenceAsync repositoryId branch directoryVersion
