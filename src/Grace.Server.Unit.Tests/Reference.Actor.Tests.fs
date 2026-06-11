@@ -34,6 +34,19 @@ type ReferenceActorHashValidationTests() =
             (List<FileVersion>())
             0L
 
+    let childDirectoryVersionWithHashes sha blake3 =
+        DirectoryVersion.CreateWithHashes
+            directoryVersionId
+            ownerId
+            organizationId
+            repositoryId
+            (RelativePath $"child/{Guid.NewGuid():N}")
+            sha
+            blake3
+            (List<DirectoryVersionId>())
+            (List<FileVersion>())
+            0L
+
     [<Test>]
     member _.MissingRootBlake3FailsBeforeReferenceCreation() =
         let directoryVersion = directoryVersionWithHashes sha256Hash (Blake3Hash String.Empty)
@@ -56,6 +69,27 @@ type ReferenceActorHashValidationTests() =
         match result with
         | Ok _ -> Assert.Fail("Expected empty command Blake3Hash to fail.")
         | Error error -> Assert.That(error.Error, Does.Contain("command must include"))
+
+    [<Test>]
+    member _.LegacyRootDirectoryVersionWithEmptyBlake3AllowsEmptyCommandBlake3() =
+        let directoryVersion = directoryVersionWithHashes sha256Hash (Blake3Hash String.Empty)
+
+        let result =
+            validateReferenceRootDirectoryVersionHashes correlationId repositoryId directoryVersionId sha256Hash (Blake3Hash String.Empty) directoryVersion
+
+        match result with
+        | Ok _ -> ()
+        | Error error -> Assert.Fail($"Expected legacy empty Blake3Hash root to be tolerated, but got {error.Error}.")
+
+    [<Test>]
+    member _.NonRootDirectoryVersionFailsBeforeReferenceCreation() =
+        let directoryVersion = childDirectoryVersionWithHashes sha256Hash blake3Hash
+
+        let result = validateReferenceRootDirectoryVersionHashes correlationId repositoryId directoryVersionId sha256Hash blake3Hash directoryVersion
+
+        match result with
+        | Ok _ -> Assert.Fail("Expected non-root DirectoryVersion to fail.")
+        | Error error -> Assert.That(error.Error, Does.Contain("repository root path"))
 
     [<Test>]
     member _.MismatchedRootHashesFailBeforeReferenceCreation() =
