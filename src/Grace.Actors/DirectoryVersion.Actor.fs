@@ -66,7 +66,7 @@ module DirectoryVersion =
             let stopwatch = Stopwatch.StartNew()
 
             try
-                let! blobClient = getAzureBlobClientForFileVersion repositoryDto fileVersion correlationId
+                let! blobClient = getReadableAzureBlobClientForFileVersion repositoryDto fileVersion correlationId
                 let! existsResponse = blobClient.ExistsAsync()
 
                 if not existsResponse.Value then
@@ -1433,7 +1433,7 @@ module DirectoryVersion =
                             // Step 4: Process the files in the current directory.
                             for fileVersion in fileVersions do
 
-                                let! fileBlobClient = getAzureBlobClientForFileVersion repositoryDto fileVersion correlationId
+                                let! fileBlobClient = getReadableAzureBlobClientForFileVersion repositoryDto fileVersion correlationId
                                 let! existsResult = fileBlobClient.ExistsAsync()
 
                                 if existsResult.Value = true then
