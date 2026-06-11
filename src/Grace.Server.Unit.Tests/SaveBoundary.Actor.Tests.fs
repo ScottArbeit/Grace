@@ -1,6 +1,7 @@
 namespace Grace.Server.Tests
 
 open Grace.Shared
+open Grace.Types.ContentBlockMetadata
 open Grace.Types.ManifestContributionWorkflow
 open Grace.Types.RepositoryContentCounter
 open Grace.Types.Common
@@ -9,6 +10,7 @@ open NUnit.Framework
 open System
 open System.Collections.Generic
 open System.Text
+open System.Threading.Tasks
 
 module DirectoryVersionActor = Grace.Actors.DirectoryVersion
 module ManifestContributionWorkflowActor = Grace.Actors.ManifestContributionWorkflow
@@ -139,6 +141,30 @@ type SaveBoundaryActorTests() =
         match DirectoryVersionActor.validateManifestBackedFileForSaveBoundary "corr-manifest-empty-blake3" fileVersion manifest with
         | Ok () -> ()
         | Error error -> Assert.Fail($"Expected legacy empty BLAKE3 to be accepted, got {error.Error}.")
+
+    [<Test>]
+    member _.ManifestSaveBoundaryRejectsAbsentContentBlockMetadataRanges() =
+        let manifest = finalizedManifest ()
+
+        let getRangePresence _ _ = Task.FromResult ContentBlockRangePresence.Absent
+
+        match (DirectoryVersionActor.validateManifestReferencesForSaveBoundaryWithResolver getRangePresence "corr-absent-block" [ manifest ])
+            .Result
+            with
+        | Ok () -> Assert.Fail("Expected manifest-backed save to reject absent ContentBlock metadata before Save.")
+        | Error error -> Assert.That(error.Error, Does.Contain("no finalized ContentBlock metadata range exists"))
+
+    [<Test>]
+    member _.ManifestSaveBoundaryAcceptsExistingReclaimableContentBlockMetadataRanges() =
+        let manifest = finalizedManifest ()
+
+        let getRangePresence _ _ = Task.FromResult ContentBlockRangePresence.Reclaimable
+
+        match (DirectoryVersionActor.validateManifestReferencesForSaveBoundaryWithResolver getRangePresence "corr-reclaimable-block" [ manifest ])
+            .Result
+            with
+        | Ok () -> ()
+        | Error error -> Assert.Fail($"Expected existing ContentBlock metadata to be accepted before Save, got {error.Error}.")
 
     [<Test>]
     member _.SaveBoundaryAcceptsFinalizedManifestAfterDurableIncrementIntent() =
