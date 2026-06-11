@@ -1192,9 +1192,13 @@ module Services =
 
     let private uploadedFileVersionIdentity (fileVersion: FileVersion) = (fileVersion.RelativePath, fileVersion.Sha256Hash, fileVersion.Blake3Hash)
 
+    let private legacyUploadedFileVersionIdentity (fileVersion: FileVersion) = (fileVersion.RelativePath, fileVersion.Sha256Hash)
+
     let private isManifestBackedFileVersion (fileVersion: FileVersion) =
         not (isNull (box fileVersion.ContentReference))
         && fileVersion.ContentReference.ReferenceType = FileContentReferenceType.FileManifest
+
+    let private hasMissingBlake3Hash (fileVersion: FileVersion) = String.IsNullOrWhiteSpace(string fileVersion.Blake3Hash)
 
     let applyUploadedFileVersionsToDirectoryVersionsWithSavedDirectoryVersions
         (uploadedFileVersions: IEnumerable<FileVersion>)
@@ -1207,11 +1211,14 @@ module Services =
             uploadedByIdentity[uploadedFileVersionIdentity uploadedFileVersion] <- uploadedFileVersion
 
         let savedManifestBackedByIdentity = Dictionary<RelativePath * Sha256Hash * Blake3Hash, FileVersion>()
+        let savedManifestBackedByLegacyIdentity = Dictionary<RelativePath * Sha256Hash, FileVersion>()
 
         for savedDirectoryVersion in savedDirectoryVersions do
             for savedFileVersion in savedDirectoryVersion.Files do
                 if isManifestBackedFileVersion savedFileVersion then
                     savedManifestBackedByIdentity[uploadedFileVersionIdentity savedFileVersion] <- savedFileVersion
+
+                    savedManifestBackedByLegacyIdentity[legacyUploadedFileVersionIdentity savedFileVersion] <- savedFileVersion
 
         let directoryVersions = List<DirectoryVersion>()
 
@@ -1228,6 +1235,12 @@ module Services =
                     let mutable savedManifestBackedFileVersion = Unchecked.defaultof<FileVersion>
 
                     if savedManifestBackedByIdentity.TryGetValue(uploadedFileVersionIdentity fileVersion, &savedManifestBackedFileVersion) then
+                        directoryVersion.Files[ index ] <- savedManifestBackedFileVersion
+                    elif
+                        savedManifestBackedByLegacyIdentity.TryGetValue(legacyUploadedFileVersionIdentity fileVersion, &savedManifestBackedFileVersion)
+                        && (hasMissingBlake3Hash fileVersion
+                            || hasMissingBlake3Hash savedManifestBackedFileVersion)
+                    then
                         directoryVersion.Files[ index ] <- savedManifestBackedFileVersion
 
             directoryVersions.Add directoryVersion
