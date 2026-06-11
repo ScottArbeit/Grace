@@ -404,6 +404,34 @@ module BranchServerTestHelpers =
             return! Client.PostAsync("/branch/assign", createJsonContent parameters)
         }
 
+    let listContentsByShaAndBlake3HashResponseAsync repositoryId (branch: Branch.BranchDto) sha256Hash blake3Hash =
+        task {
+            let parameters = Parameters.Branch.ListContentsParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.BranchId <- $"{branch.BranchId}"
+            parameters.Sha256Hash <- sha256Hash
+            parameters.Blake3Hash <- blake3Hash
+            parameters.CorrelationId <- generateCorrelationId ()
+
+            return! Client.PostAsync("/branch/listContents", createJsonContent parameters)
+        }
+
+    let getVersionByShaAndBlake3HashResponseAsync repositoryId (branch: Branch.BranchDto) sha256Hash blake3Hash =
+        task {
+            let parameters = Parameters.Branch.GetBranchVersionParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.BranchId <- $"{branch.BranchId}"
+            parameters.Sha256Hash <- sha256Hash
+            parameters.Blake3Hash <- blake3Hash
+            parameters.CorrelationId <- generateCorrelationId ()
+
+            return! Client.PostAsync("/branch/getVersion", createJsonContent parameters)
+        }
+
     let getRecursiveSizeBySha256HashResponseAsync repositoryId (branch: Branch.BranchDto) sha256Hash =
         task {
             let parameters = Parameters.Branch.ListContentsParameters()
@@ -424,6 +452,20 @@ module BranchServerTestHelpers =
             parameters.OrganizationId <- organizationId
             parameters.RepositoryId <- repositoryId
             parameters.BranchId <- $"{branch.BranchId}"
+            parameters.Blake3Hash <- blake3Hash
+            parameters.CorrelationId <- generateCorrelationId ()
+
+            return! Client.PostAsync("/branch/getRecursiveSize", createJsonContent parameters)
+        }
+
+    let getRecursiveSizeByShaAndBlake3HashResponseAsync repositoryId (branch: Branch.BranchDto) sha256Hash blake3Hash =
+        task {
+            let parameters = Parameters.Branch.ListContentsParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.BranchId <- $"{branch.BranchId}"
+            parameters.Sha256Hash <- sha256Hash
             parameters.Blake3Hash <- blake3Hash
             parameters.CorrelationId <- generateCorrelationId ()
 
@@ -1049,6 +1091,29 @@ type BranchServer() =
         }
 
     [<Test>]
+    member _.AssignWithMalformedShaLocatorReturnsValidationErrorBeforeLookupAndMutation() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let branchId = repositoryDefaultBranchIds[0]
+            let! parentBranch = BranchServerTestHelpers.getBranchAsync repositoryId branchId
+            let! branch = BranchServerTestHelpers.createBranchAsync repositoryId parentBranch $"AssignMalformedSha{Guid.NewGuid():N}"
+            let child, root = BranchServerTestHelpers.createDotRootWithChildDirectoryVersions repositoryId $"assign-malformed-sha/{Guid.NewGuid():N}"
+
+            do! BranchServerTestHelpers.saveDirectoryVersionsAsync repositoryId [ child; root ]
+            do! BranchServerTestHelpers.enableAssignAsync repositoryId branch
+
+            let! response = BranchServerTestHelpers.assignReferenceResponseAsync repositoryId branch root.DirectoryVersionId (Sha256Hash "not-a-sha")
+
+            let! responseBody = response.Content.ReadAsStringAsync()
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), responseBody)
+            Assert.That((deserialize<GraceError> responseBody).Error, Is.EqualTo(BranchError.getErrorMessage BranchError.InvalidSha256Hash))
+
+            let! afterBranch = BranchServerTestHelpers.getBranchAsync repositoryId $"{branch.BranchId}"
+            Assert.That(afterBranch.LatestPromotion.ReferenceId, Is.EqualTo(branch.LatestPromotion.ReferenceId))
+            Assert.That(afterBranch.LatestPromotion.DirectoryId, Is.EqualTo(branch.LatestPromotion.DirectoryId))
+        }
+
+    [<Test>]
     member _.SaveWithMalformedZeroAndAmbiguousBlake3LocatorsFailsBeforeMutation() =
         task {
             let repositoryId = repositoryIds[0]
@@ -1193,6 +1258,63 @@ type BranchServer() =
             Assert.That(shaSize, Is.EqualTo(fileVersion.Size))
             Assert.That(blake3Size, Is.EqualTo(shaSize))
             Assert.That(blake3Size, Is.Not.EqualTo(Constants.InitialDirectorySize))
+        }
+
+    [<Test>]
+    member _.HashReadQueriesRejectInconsistentShaAndBlake3RootEvidence() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let branchId = repositoryDefaultBranchIds[0]
+            let! parentBranch = BranchServerTestHelpers.getBranchAsync repositoryId branchId
+
+            let firstChild, firstRoot, secondChild, secondRoot, _sharedPrefix =
+                BranchServerTestHelpers.createSameBlake3PrefixRootPair repositoryId $"read-mixed-hash-mismatch/{Guid.NewGuid():N}"
+
+            do!
+                BranchServerTestHelpers.saveDirectoryVersionsAsync
+                    repositoryId
+                    [
+                        firstChild
+                        firstRoot
+                        secondChild
+                        secondRoot
+                    ]
+
+            let! listContentsResponse =
+                BranchServerTestHelpers.listContentsByShaAndBlake3HashResponseAsync repositoryId parentBranch firstRoot.Sha256Hash secondRoot.Blake3Hash
+
+            let! listContentsBody = listContentsResponse.Content.ReadAsStringAsync()
+            Assert.That(listContentsResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), listContentsBody)
+
+            let listContents =
+                (deserialize<GraceReturnValue<DirectoryVersion.DirectoryVersionDto array>> listContentsBody)
+                    .ReturnValue
+
+            Assert.That(listContents, Is.Empty)
+
+            let! recursiveSizeResponse =
+                BranchServerTestHelpers.getRecursiveSizeByShaAndBlake3HashResponseAsync repositoryId parentBranch firstRoot.Sha256Hash secondRoot.Blake3Hash
+
+            let! recursiveSizeBody = recursiveSizeResponse.Content.ReadAsStringAsync()
+            Assert.That(recursiveSizeResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), recursiveSizeBody)
+
+            let recursiveSize =
+                (deserialize<GraceReturnValue<int64>> recursiveSizeBody)
+                    .ReturnValue
+
+            Assert.That(recursiveSize, Is.EqualTo(Constants.InitialDirectorySize))
+
+            let! getVersionResponse =
+                BranchServerTestHelpers.getVersionByShaAndBlake3HashResponseAsync repositoryId parentBranch firstRoot.Sha256Hash secondRoot.Blake3Hash
+
+            let! getVersionBody = getVersionResponse.Content.ReadAsStringAsync()
+            Assert.That(getVersionResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), getVersionBody)
+
+            let directoryIds =
+                (deserialize<GraceReturnValue<Guid array>> getVersionBody)
+                    .ReturnValue
+
+            Assert.That(directoryIds, Is.Empty)
         }
 
     [<Test>]
