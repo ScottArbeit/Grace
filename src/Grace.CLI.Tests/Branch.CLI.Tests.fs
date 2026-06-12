@@ -130,40 +130,46 @@ module BranchCommandTests =
 
     let private directorySha256Hash = Sha256Hash "111122223333444455556666777788889999aaaabbbbccccddddeeeeffff0000"
 
+    let private directoryBlake3Hash = Blake3Hash "9999888877776666555544443333222211110000ffffeeeeddddccccbbbbaaaa"
+
     let private fileSha256Hash = Sha256Hash "aaaabbbbccccddddeeeeffff0000111122223333444455556666777788889999"
 
+    let private fileBlake3Hash = Blake3Hash "bbbbccccddddeeeeffff0000111122223333444455556666777788889999aaaa"
+
     let private branchDirectoryWithFile () =
-        let file = FileVersion.Create "src/App.fs" fileSha256Hash String.Empty false 123L
+        let file = FileVersion.CreateWithHashes "src/App.fs" fileSha256Hash fileBlake3Hash String.Empty false 123L
 
         let files = List<FileVersion>()
         files.Add(file)
 
-        DirectoryVersion.Create
+        DirectoryVersion.CreateWithHashes
             (Guid.NewGuid())
             ownerId
             organizationId
             repositoryId
             Constants.RootDirectoryPath
             directorySha256Hash
+            directoryBlake3Hash
             (List<DirectoryVersionId>())
             files
             123L
 
     [<Test>]
-    let ``list contents formatter uses short hashes by default`` () =
+    let ``list contents formatter uses short BLAKE3 hashes by default`` () =
         let parseResult = parse [| "branch"; "list-contents" |]
         let displayMode = Common.HashOptions.bindVersionHashDisplayMode parseResult
 
-        Branch.formatListContentsSha256Hash displayMode directorySha256Hash
-        |> should equal "11112222"
+        Branch.formatListContentsVersionHash displayMode directoryBlake3Hash directorySha256Hash
+        |> should equal "99998888"
 
         let _, output =
             captureOutput (fun () ->
                 Branch.printContents parseResult [| branchDirectoryWithFile () |]
                 0)
 
-        output |> should contain "11112222"
-        output |> should contain "aaaabbbb"
+        output |> should contain "BLAKE3 version hash"
+        output |> should contain "99998888"
+        output |> should contain "bbbbcccc"
 
         output
         |> should not' (contain $"{directorySha256Hash}")
@@ -180,16 +186,28 @@ module BranchCommandTests =
 
         let displayMode = Common.HashOptions.bindVersionHashDisplayMode parseResult
 
-        Branch.formatListContentsSha256Hash displayMode directorySha256Hash
-        |> should equal $"{directorySha256Hash}"
+        Branch.formatListContentsVersionHash displayMode directoryBlake3Hash directorySha256Hash
+        |> should equal $"{directoryBlake3Hash}"
 
         let _, output =
             captureOutput (fun () ->
                 Branch.printContents parseResult [| branchDirectoryWithFile () |]
                 0)
 
-        output |> should contain $"{directorySha256Hash}"
-        output |> should contain $"{fileSha256Hash}"
+        output |> should contain $"{directoryBlake3Hash}"
+        output |> should contain $"{fileBlake3Hash}"
+
+    [<Test>]
+    let ``list contents formatter adds SHA-256 when requested`` () =
+        let parseResult =
+            parse [| "branch"
+                     "list-contents"
+                     "--show-sha256" |]
+
+        let displayMode = Common.HashOptions.bindVersionHashDisplayMode parseResult
+
+        Branch.formatListContentsVersionHash displayMode directoryBlake3Hash directorySha256Hash
+        |> should equal "99998888 (SHA-256 11112222)"
 
     [<Test>]
     let ``list contents formatter honors deprecated full sha display option`` () =
@@ -200,8 +218,16 @@ module BranchCommandTests =
 
         let displayMode = Common.HashOptions.bindVersionHashDisplayMode parseResult
 
-        Branch.formatListContentsSha256Hash displayMode directorySha256Hash
-        |> should equal $"{directorySha256Hash}"
+        Branch.formatListContentsVersionHash displayMode directoryBlake3Hash directorySha256Hash
+        |> should equal $"{directoryBlake3Hash} (SHA-256 {directorySha256Hash})"
+
+    [<Test>]
+    let ``list contents formatter shows unavailable for missing legacy BLAKE3`` () =
+        let parseResult = parse [| "branch"; "list-contents" |]
+        let displayMode = Common.HashOptions.bindVersionHashDisplayMode parseResult
+
+        Branch.formatListContentsVersionHash displayMode (Blake3Hash String.Empty) directorySha256Hash
+        |> should equal Common.HashOptions.MissingVersionHashText
 
     [<Test>]
     let ``annotate handler maps options to parameters`` () =
