@@ -9,9 +9,10 @@ consulted:
 
 # Use BLAKE3 and SHA-256 version hashes
 
-Grace identifies `FileVersion`, `DirectoryVersion`, and `Reference` version objects with version hashes that carry both
-BLAKE3 and SHA-256 values. BLAKE3 is the default version-hash algorithm for new version objects, while SHA-256 remains
-retained for verification, comparison, lookup parity, and non-version uses that intentionally stay SHA-256.
+Grace carries BLAKE3 and SHA-256 values on `FileVersion`, `DirectoryVersion`, and `Reference` version objects for
+lookup, display, and verification. BLAKE3 is the default version-hash algorithm for new version lookup surfaces, while
+SHA-256 remains retained for verification, comparison, lookup parity, and non-version uses that intentionally stay
+SHA-256.
 
 This ADR records the accepted model implemented by epic #343. Grace is not in production, so the SHA-256 retention in
 this ADR is a current contract and verification choice, not a promise to migrate or preserve old production data.
@@ -30,9 +31,10 @@ Grace now also has content-addressed storage vocabulary:
 - `ContentBlockAddress` identifies a `ContentBlock`.
 - `ManifestAddress` identifies a `FileManifest`.
 
-Those CAS identities are path-independent content identities. They are not the same thing as version graph hashes for
-`FileVersion`, `DirectoryVersion`, and `Reference` objects. Version graph hashes identify Grace version objects in the
-repository graph, where a directory version is path-sensitive through its own relative path and ordered child entries.
+Those CAS identities are path-independent content identities. They are not the same thing as version hashes used for
+version lookup and display. Current file version hashes are byte-only, directory version hashes identify the formal
+directory preimage, and reference hashes are the referenced root DirectoryVersion hashes validated by reference
+commands.
 
 The hash transition has to keep these concepts separate:
 
@@ -52,7 +54,8 @@ After epic #343:
   or non-version SHA-256 uses such as security and payload integrity.
 - A file's current SHA-256 value is computed from the file byte stream only.
 - Directory version hashes use the formal `grace.directory-version.v1` preimage. The preimage includes the directory
-  relative path, child entry kind, child relative path, file size for files, and same-algorithm child hashes.
+  relative path, child entry kind, child relative path, child size for every entry, and same-algorithm child hashes.
+  Entries are sorted by normalized child path first, then by child kind as the tiebreaker.
 - File content CAS identities remain path-independent and byte/content based.
 
 Epic #343 introduced explicit fields for multiple version-hash algorithms. It did not require a global rename of
@@ -75,7 +78,8 @@ Documentation and contracts should use these terms consistently:
 
 - Use `FileContentHash` for the path-independent hash of complete file bytes.
 - Use `ChunkAddress`, `ContentBlockAddress`, and `ManifestAddress` for CAS addresses.
-- Use version hash wording for `FileVersion`, `DirectoryVersion`, and `Reference` graph identity.
+- Use version hash wording for lookup and display without describing byte-only file hashes or referenced root
+  DirectoryVersion hashes as unique object identities.
 - Explain that directory version hashes are path-sensitive without implying that file byte hashes include the path.
 
 After the epic, documentation should describe BLAKE3 plus SHA-256 as the current version-hash contract and should keep
