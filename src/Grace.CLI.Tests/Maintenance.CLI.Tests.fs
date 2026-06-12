@@ -192,8 +192,9 @@ module MaintenanceCliTests =
 
     [<Test>]
     let ``maintenance scan json emits scan envelope with clean stdout`` () =
-        withTempRepo (fun _ ->
+        withTempRepo (fun root ->
             createIndex ()
+            File.WriteAllText(Path.Combine(root, "changed.txt"), "changed content")
 
             let exitCode, standardOut, standardError = runJsonMaintenance [| "scan" |]
 
@@ -225,7 +226,30 @@ module MaintenanceCliTests =
                     "NewDirectoryVersions"
                 )
                 .ValueKind
-            |> should equal JsonValueKind.Array)
+            |> should equal JsonValueKind.Array
+
+            let newDirectoryVersions = returnValue.GetProperty("NewDirectoryVersions")
+
+            newDirectoryVersions.GetArrayLength()
+            |> should greaterThan 0
+
+            let newDirectoryVersion = newDirectoryVersions[0]
+
+            newDirectoryVersion
+                .GetProperty(
+                    "Sha256Hash"
+                )
+                .GetString()
+                .Length
+            |> should equal 64
+
+            newDirectoryVersion
+                .GetProperty(
+                    "Blake3Hash"
+                )
+                .GetString()
+                .Length
+            |> should equal 64)
 
     [<Test>]
     let ``maintenance stats json emits stats envelope with clean stdout`` () =
@@ -277,4 +301,30 @@ module MaintenanceCliTests =
             |> should equal JsonValueKind.Number
 
             returnValue.GetProperty("Directories").ValueKind
-            |> should equal JsonValueKind.Array)
+            |> should equal JsonValueKind.Array
+
+            let directories = returnValue.GetProperty("Directories")
+
+            directories.GetArrayLength()
+            |> should greaterThan 0
+
+            let directory = directories[0]
+
+            directory.GetProperty("Sha256Hash").GetString()
+                .Length
+            |> should equal 64
+
+            directory.GetProperty("Blake3Hash").GetString()
+                .Length
+            |> should equal 64
+
+            let files = directory.GetProperty("Files")
+            files.GetArrayLength() |> should greaterThan 0
+
+            let file = files[0]
+
+            file.GetProperty("Sha256Hash").GetString().Length
+            |> should equal 64
+
+            file.GetProperty("Blake3Hash").GetString().Length
+            |> should equal 64)
