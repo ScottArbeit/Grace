@@ -481,7 +481,6 @@ module GraceCommand =
                 CommandNames =
                     [
                         "branch"
-                        "reference"
                         "diff"
                         "directory-version"
                         "watch"
@@ -833,7 +832,6 @@ module GraceCommand =
         rootCommand.Subcommands.Add(Connect.Build)
         rootCommand.Subcommands.Add(Watch.Build)
         rootCommand.Subcommands.Add(Branch.Build)
-        rootCommand.Subcommands.Add(Reference.Build)
         rootCommand.Subcommands.Add(DirectoryVersion.Build)
         rootCommand.Subcommands.Add(Diff.Build)
         rootCommand.Subcommands.Add(Repository.Build)
