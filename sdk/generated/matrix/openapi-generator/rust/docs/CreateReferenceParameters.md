@@ -15,8 +15,8 @@ Name | Type | Description | Notes
 **branch_id** | Option<**uuid::Uuid**> |  | [optional]
 **branch_name** | Option<**String**> |  | [optional]
 **directory_version_id** | Option<**uuid::Uuid**> |  | [optional]
-**sha256_hash** | Option<**String**> | Lowercase or uppercase 64-character SHA-256 version hash retained for compatibility. | [optional]
-**blake3_hash** | Option<**String**> | Lowercase or uppercase 64-character BLAKE3 version hash used for new version graph lookups. | [optional]
+**sha256_hash** | Option<**String**> | Empty value or lowercase or uppercase 2- to 64-character SHA-256 version hash prefix. | [optional]
+**blake3_hash** | Option<**String**> | Empty value or lowercase or uppercase 2- to 64-character BLAKE3 version hash prefix. | [optional]
 **message** | Option<**String**> |  | [optional]
 
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)

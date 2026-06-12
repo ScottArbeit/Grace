@@ -3477,7 +3477,7 @@ components:
         - type: object
           properties:
             Sha256Hash:
-              $ref: '#/components/schemas/Sha256Hash'
+              $ref: '#/components/schemas/Sha256HashOptionalPrefix'
             ReferenceId:
               $ref: '#/components/schemas/ReferenceId'
     BranchHashQueryParameters:
@@ -3487,7 +3487,7 @@ components:
         - type: object
           properties:
             Blake3Hash:
-              $ref: '#/components/schemas/Blake3Hash'
+              $ref: '#/components/schemas/Blake3HashOptionalPrefix'
     CreateBranchParameters:
       description: Parameters for the /branch/create endpoint.
       allOf:
@@ -3521,9 +3521,9 @@ components:
               format: uuid
               example: 33a4e36b-828f-4fae-9343-50b6560dc842
             Sha256Hash:
-              $ref: '#/components/schemas/Sha256Hash'
+              $ref: '#/components/schemas/Sha256HashOptionalPrefix'
             Blake3Hash:
-              $ref: '#/components/schemas/Blake3Hash'
+              $ref: '#/components/schemas/Blake3HashOptionalPrefix'
             Message:
               type: string
               example: Capture release candidate.
@@ -3678,9 +3678,9 @@ components:
         - type: object
           properties:
             Blake3Hash1:
-              $ref: '#/components/schemas/Blake3Hash'
+              $ref: '#/components/schemas/Blake3HashPrefix'
             Blake3Hash2:
-              $ref: '#/components/schemas/Blake3Hash'
+              $ref: '#/components/schemas/Blake3HashPrefix'
     DirectoryParameters:
       description: Parameters shared by public endpoints in the /directory route family.
       type: object
@@ -3745,7 +3745,7 @@ components:
         - type: object
           properties:
             Blake3Hash:
-              $ref: '#/components/schemas/Blake3Hash'
+              $ref: '#/components/schemas/Blake3HashPrefix'
     SaveDirectoryVersionsParameters:
       description: Parameters for the /directory/saveDirectoryVersions endpoint.
       allOf:
@@ -4793,7 +4793,9 @@ components:
         CreatedAt: '2026-06-04T18:15:00Z'
         BlobUri: ''
         ContentReference:
-          Kind: WholeFileContent
+          Class: FileContentReference
+          ReferenceType: WholeFileContent
+          Manifest: null
     DirectoryVersion:
       type: object
       properties:
@@ -5173,6 +5175,16 @@ components:
         CorrelationId: cli-20260604T181500Z-0001
         Properties:
           Path: /branch/create
+    Sha256HashOptionalPrefix:
+      type: string
+      description: Empty value or lowercase or uppercase 2- to 64-character SHA-256 version hash prefix.
+      pattern: ^$|^[A-Fa-f0-9]{2,64}$
+      example: 805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243
+    Blake3HashOptionalPrefix:
+      type: string
+      description: Empty value or lowercase or uppercase 2- to 64-character BLAKE3 version hash prefix.
+      pattern: ^$|^[A-Fa-f0-9]{2,64}$
+      example: 9A35D91B2F631BE9025DE753139B88F7B1E71385C412BC3986FF2F38F230841D
     AnnotateParameters:
       description: Parameters for the /branch/annotate endpoint.
       allOf:
@@ -5762,6 +5774,11 @@ components:
         Properties:
           DirectoryVersionId1: 33a4e36b-828f-4fae-9343-50b6560dc842
           DirectoryVersionId2: 66b7b8c2-8d2f-4f04-951c-6b3486c4e5d1
+    Blake3HashPrefix:
+      type: string
+      description: Lowercase or uppercase 2- to 64-character BLAKE3 version hash prefix used for version graph lookups.
+      pattern: ^[A-Fa-f0-9]{2,64}$
+      example: 9A35D91B2F631BE9025DE753139B88F7B1E71385C412BC3986FF2F38F230841D
     DirectoryVersionId:
       type: string
       format: uuid
@@ -5780,8 +5797,9 @@ components:
             - WholeFileContent
             - FileManifest
         Manifest:
-          nullable: true
-          $ref: '#/components/schemas/FileManifest'
+          anyOf:
+            - $ref: '#/components/schemas/FileManifest'
+            - type: 'null'
       required:
         - Class
         - ReferenceType
