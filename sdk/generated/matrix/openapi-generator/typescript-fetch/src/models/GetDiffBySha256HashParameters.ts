@@ -14,7 +14,7 @@
 
 import { mapValues } from '../runtime';
 /**
- * Parameters for retrieving a diff by SHA-256 hash.
+ * Parameters for retrieving a diff by SHA-256 hash or unique SHA-256 prefix.
  * @export
  * @interface GetDiffBySha256HashParameters
  */
@@ -80,13 +80,13 @@ export interface GetDiffBySha256HashParameters {
      */
     directoryVersionId2?: string;
     /**
-     * Lowercase or uppercase 64-character SHA-256 version hash retained for compatibility.
+     * Lowercase or uppercase 2- to 64-character SHA-256 version hash prefix.
      * @type {string}
      * @memberof GetDiffBySha256HashParameters
      */
     sha256Hash1?: string;
     /**
-     * Lowercase or uppercase 64-character SHA-256 version hash retained for compatibility.
+     * Lowercase or uppercase 2- to 64-character SHA-256 version hash prefix.
      * @type {string}
      * @memberof GetDiffBySha256HashParameters
      */
