@@ -171,6 +171,7 @@ module Maintenance =
                                     LocalOutputDto.MaintenanceListContentsFileDto.RelativePath = string file.RelativePath
                                     FileName = file.FileInfo.Name
                                     Sha256Hash = string file.Sha256Hash
+                                    Blake3Hash = string file.Blake3Hash
                                     Size = int64 file.Size
                                     LastWriteTimeUtc = file.LastWriteTimeUtc
                                 }: LocalOutputDto.MaintenanceListContentsFileDto)
@@ -182,6 +183,7 @@ module Maintenance =
                          LocalOutputDto.MaintenanceListContentsDirectoryDto.RelativePath = string directoryVersion.RelativePath
                          DirectoryVersionId = directoryVersion.DirectoryVersionId
                          Sha256Hash = string directoryVersion.Sha256Hash
+                         Blake3Hash = string directoryVersion.Blake3Hash
                          Size = int64 directoryVersion.Size
                          LastWriteTimeUtc = directoryVersion.LastWriteTimeUtc
                          Files = files
@@ -212,6 +214,7 @@ module Maintenance =
                          LocalOutputDto.MaintenanceScanDirectoryVersionDto.DirectoryVersionId = directoryVersion.DirectoryVersionId
                          RelativePath = string directoryVersion.RelativePath
                          Sha256Hash = string directoryVersion.Sha256Hash
+                         Blake3Hash = string directoryVersion.Blake3Hash
                      }: LocalOutputDto.MaintenanceScanDirectoryVersionDto))
                 |> Seq.toArray
         }
