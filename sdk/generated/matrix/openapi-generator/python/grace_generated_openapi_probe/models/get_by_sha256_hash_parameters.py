@@ -39,7 +39,7 @@ class GetBySha256HashParameters(BaseModel):
     repository_id: Optional[UUID] = Field(default=None, alias="RepositoryId")
     repository_name: Optional[StrictStr] = Field(default=None, alias="RepositoryName")
     directory_version_id: Optional[UUID] = Field(default=None, alias="DirectoryVersionId")
-    sha256_hash: Optional[Annotated[str, Field(strict=True)]] = Field(default=None, description="Lowercase or uppercase 64-character SHA-256 version hash retained for compatibility.", alias="Sha256Hash")
+    sha256_hash: Optional[Annotated[str, Field(strict=True)]] = Field(default=None, description="Lowercase or uppercase 2- to 64-character SHA-256 version hash prefix.", alias="Sha256Hash")
     __properties: ClassVar[List[str]] = ["CorrelationId", "Principal", "OwnerId", "OwnerName", "OrganizationId", "OrganizationName", "RepositoryId", "RepositoryName", "DirectoryVersionId", "Sha256Hash"]
 
     @field_validator('sha256_hash')
@@ -51,8 +51,8 @@ class GetBySha256HashParameters(BaseModel):
         if not isinstance(value, str):
             value = str(value)
 
-        if not re.match(r"^[A-Fa-f0-9]{64}$", value):
-            raise ValueError(r"must validate the regular expression /^[A-Fa-f0-9]{64}$/")
+        if not re.match(r"^[A-Fa-f0-9]{2,64}$", value):
+            raise ValueError(r"must validate the regular expression /^[A-Fa-f0-9]{2,64}$/")
         return value
 
     model_config = ConfigDict(

@@ -58,7 +58,7 @@
         - type: object
           properties:
             Sha256Hash:
-              $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Sha256Hash'
+              $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Sha256HashPrefix'
     GetByBlake3HashParameters:
       description: Parameters for the /directory/getByBlake3Hash endpoint.
       allOf:

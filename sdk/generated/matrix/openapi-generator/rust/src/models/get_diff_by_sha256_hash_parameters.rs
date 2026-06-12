@@ -11,7 +11,7 @@
 use crate::models;
 use serde::{Deserialize, Serialize};
 
-/// GetDiffBySha256HashParameters : Parameters for retrieving a diff by SHA-256 hash.
+/// GetDiffBySha256HashParameters : Parameters for retrieving a diff by SHA-256 hash or unique SHA-256 prefix.
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
 pub struct GetDiffBySha256HashParameters {
     /// Body DTO correlation id copied into Grace command/event metadata after request parsing. This field is distinct from the X-Correlation-Id transport header.
@@ -36,16 +36,16 @@ pub struct GetDiffBySha256HashParameters {
     pub directory_version_id1: Option<uuid::Uuid>,
     #[serde(rename = "DirectoryVersionId2", skip_serializing_if = "Option::is_none")]
     pub directory_version_id2: Option<uuid::Uuid>,
-    /// Lowercase or uppercase 64-character SHA-256 version hash retained for compatibility.
+    /// Lowercase or uppercase 2- to 64-character SHA-256 version hash prefix.
     #[serde(rename = "Sha256Hash1", skip_serializing_if = "Option::is_none")]
     pub sha256_hash1: Option<String>,
-    /// Lowercase or uppercase 64-character SHA-256 version hash retained for compatibility.
+    /// Lowercase or uppercase 2- to 64-character SHA-256 version hash prefix.
     #[serde(rename = "Sha256Hash2", skip_serializing_if = "Option::is_none")]
     pub sha256_hash2: Option<String>,
 }
 
 impl GetDiffBySha256HashParameters {
-    /// Parameters for retrieving a diff by SHA-256 hash.
+    /// Parameters for retrieving a diff by SHA-256 hash or unique SHA-256 prefix.
     pub fn new() -> GetDiffBySha256HashParameters {
         GetDiffBySha256HashParameters {
             correlation_id: None,

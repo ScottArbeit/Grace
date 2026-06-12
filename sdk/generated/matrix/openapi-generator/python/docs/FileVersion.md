@@ -7,8 +7,8 @@ Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
 **var_class** | **str** |  | [optional] 
 **relative_path** | **str** |  | [optional] 
-**sha256_hash** | **str** | Lowercase or uppercase 64-character SHA-256 version hash retained for compatibility. | [optional] 
-**blake3_hash** | **str** | Empty or 64-character BLAKE3 version hash for legacy version DTOs. | [optional] 
+**sha256_hash** | **str** | Lowercase 64-character SHA-256 version hash persisted on version DTOs. | [optional] 
+**blake3_hash** | **str** | Empty value, null, or lowercase 64-character BLAKE3 version hash for legacy version DTOs. | [optional] 
 **is_binary** | **bool** |  | [optional] 
 **size** | **int** |  | [optional] 
 **created_at** | **datetime** |  | [optional] 

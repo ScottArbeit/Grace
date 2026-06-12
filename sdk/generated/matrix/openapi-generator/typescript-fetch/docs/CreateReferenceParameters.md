@@ -40,8 +40,8 @@ const example = {
   "branchId": de7bf47d-23ae-4599-af68-68a317ea390d,
   "branchName": MyBranch,
   "directoryVersionId": 33a4e36b-828f-4fae-9343-50b6560dc842,
-  "sha256Hash": 805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243,
-  "blake3Hash": 9A35D91B2F631BE9025DE753139B88F7B1E71385C412BC3986FF2F38F230841D,
+  "sha256Hash": 805331a98813,
+  "blake3Hash": 9a35d91b2f63,
   "message": Capture release candidate.,
 } satisfies CreateReferenceParameters
 
