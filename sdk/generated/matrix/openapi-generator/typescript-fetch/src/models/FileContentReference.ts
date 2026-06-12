@@ -44,7 +44,7 @@ export interface FileContentReference {
      * @type {FileManifest}
      * @memberof FileContentReference
      */
-    manifest: FileManifest;
+    manifest: FileManifest | null;
 }
 
 
