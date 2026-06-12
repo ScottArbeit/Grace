@@ -6,11 +6,19 @@
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
 **var_class** | **str** |  | [optional] 
-**directories** | **List[object]** |  | [optional] 
-**files** | **List[object]** |  | [optional] 
+**directory_version_id** | **UUID** |  | [optional] 
+**owner_id** | **UUID** |  | [optional] 
+**organization_id** | **UUID** |  | [optional] 
+**repository_id** | **UUID** |  | [optional] 
+**relative_path** | **str** |  | [optional] 
+**sha256_hash** | **str** | Lowercase or uppercase 64-character SHA-256 version hash retained for compatibility. | [optional] 
+**blake3_hash** | **str** | Lowercase or uppercase 64-character BLAKE3 version hash used for new version graph lookups. | [optional] 
+**directories** | **List[UUID]** |  | [optional] 
+**files** | [**List[FileVersion]**](FileVersion.md) |  | [optional] 
 **size** | **int** |  | [optional] 
 **recursive_size** | **int** |  | [optional] 
 **created_at** | **datetime** |  | [optional] 
+**hashes_validated** | **bool** |  | [optional] 
 
 ## Example
 

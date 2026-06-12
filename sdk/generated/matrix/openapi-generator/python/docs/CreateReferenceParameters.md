@@ -17,8 +17,8 @@ Name | Type | Description | Notes
 **branch_id** | **UUID** |  | [optional] 
 **branch_name** | **str** |  | [optional] 
 **directory_version_id** | **UUID** |  | [optional] 
-**sha256_hash** | **str** |  | [optional] 
-**blake3_hash** | **str** |  | [optional] 
+**sha256_hash** | **str** | Lowercase or uppercase 64-character SHA-256 version hash retained for compatibility. | [optional] 
+**blake3_hash** | **str** | Lowercase or uppercase 64-character BLAKE3 version hash used for new version graph lookups. | [optional] 
 **message** | **str** |  | [optional] 
 
 ## Example

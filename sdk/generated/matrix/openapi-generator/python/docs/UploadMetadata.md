@@ -8,7 +8,7 @@ Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
 **relative_path** | **str** |  | 
 **blob_uri_with_sas_token** | **str** |  | 
-**sha256_hash** | **str** |  | 
+**sha256_hash** | **str** | Lowercase or uppercase 64-character SHA-256 version hash retained for compatibility. | 
 **content_reference** | [**FileContentReference**](FileContentReference.md) |  | 
 
 ## Example

@@ -80,13 +80,13 @@ export interface GetDiffBySha256HashParameters {
      */
     directoryVersionId2?: string;
     /**
-     * 
+     * Lowercase or uppercase 64-character SHA-256 version hash retained for compatibility.
      * @type {string}
      * @memberof GetDiffBySha256HashParameters
      */
     sha256Hash1?: string;
     /**
-     * 
+     * Lowercase or uppercase 64-character SHA-256 version hash retained for compatibility.
      * @type {string}
      * @memberof GetDiffBySha256HashParameters
      */
