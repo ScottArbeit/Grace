@@ -22,8 +22,10 @@ pub struct ReferenceDto {
     pub branch_id: Option<uuid::Uuid>,
     #[serde(rename = "DirectoryId", skip_serializing_if = "Option::is_none")]
     pub directory_id: Option<uuid::Uuid>,
+    /// Empty value or lowercase 64-character SHA-256 hash for legacy or default reference DTOs.
     #[serde(rename = "Sha256Hash", skip_serializing_if = "Option::is_none")]
     pub sha256_hash: Option<String>,
+    /// Empty value or lowercase 64-character BLAKE3 hash for legacy reference DTOs.
     #[serde(rename = "Blake3Hash", skip_serializing_if = "Option::is_none")]
     pub blake3_hash: Option<String>,
     #[serde(rename = "ReferenceType", skip_serializing_if = "Option::is_none")]

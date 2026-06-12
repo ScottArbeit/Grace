@@ -13,7 +13,7 @@ Name | Type | Description | Notes
 **repository_id** | Option<**uuid::Uuid**> |  | [optional]
 **repository_name** | Option<**String**> |  | [optional]
 **directory_version_id** | Option<**uuid::Uuid**> |  | [optional]
-**blake3_hash** | Option<**String**> |  | [optional]
+**blake3_hash** | Option<**String**> | Lowercase or uppercase 2- to 64-character BLAKE3 version hash prefix used for version graph lookups. | [optional]
 
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
 

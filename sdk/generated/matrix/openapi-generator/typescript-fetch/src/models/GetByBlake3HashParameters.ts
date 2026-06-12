@@ -74,7 +74,7 @@ export interface GetByBlake3HashParameters {
      */
     directoryVersionId?: string;
     /**
-     * 
+     * Lowercase or uppercase 2- to 64-character BLAKE3 version hash prefix used for version graph lookups.
      * @type {string}
      * @memberof GetByBlake3HashParameters
      */

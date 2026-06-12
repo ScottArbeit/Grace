@@ -13,6 +13,14 @@
  */
 
 import { mapValues } from '../runtime';
+import type { FileContentReference } from './FileContentReference';
+import {
+    FileContentReferenceFromJSON,
+    FileContentReferenceFromJSONTyped,
+    FileContentReferenceToJSON,
+    FileContentReferenceToJSONTyped,
+} from './FileContentReference';
+
 /**
  * 
  * @export
@@ -25,6 +33,24 @@ export interface FileVersion {
      * @memberof FileVersion
      */
     _class?: string;
+    /**
+     * 
+     * @type {string}
+     * @memberof FileVersion
+     */
+    relativePath?: string;
+    /**
+     * Lowercase 64-character SHA-256 version hash persisted on version DTOs.
+     * @type {string}
+     * @memberof FileVersion
+     */
+    sha256Hash?: string;
+    /**
+     * Empty value, null, or lowercase 64-character BLAKE3 version hash for legacy version DTOs.
+     * @type {string}
+     * @memberof FileVersion
+     */
+    blake3Hash?: string;
     /**
      * 
      * @type {boolean}
@@ -49,6 +75,12 @@ export interface FileVersion {
      * @memberof FileVersion
      */
     blobUri?: string;
+    /**
+     * 
+     * @type {FileContentReference}
+     * @memberof FileVersion
+     */
+    contentReference?: FileContentReference;
 }
 
 /**
@@ -69,10 +101,14 @@ export function FileVersionFromJSONTyped(json: any, ignoreDiscriminator: boolean
     return {
         
         '_class': json['Class'] == null ? undefined : json['Class'],
+        'relativePath': json['RelativePath'] == null ? undefined : json['RelativePath'],
+        'sha256Hash': json['Sha256Hash'] == null ? undefined : json['Sha256Hash'],
+        'blake3Hash': json['Blake3Hash'] == null ? undefined : json['Blake3Hash'],
         'isBinary': json['IsBinary'] == null ? undefined : json['IsBinary'],
         'size': json['Size'] == null ? undefined : json['Size'],
         'createdAt': json['CreatedAt'] == null ? undefined : (new Date(json['CreatedAt'])),
         'blobUri': json['BlobUri'] == null ? undefined : json['BlobUri'],
+        'contentReference': json['ContentReference'] == null ? undefined : FileContentReferenceFromJSON(json['ContentReference']),
     };
 }
 
@@ -88,10 +124,14 @@ export function FileVersionToJSONTyped(value?: FileVersion | null, ignoreDiscrim
     return {
         
         'Class': value['_class'],
+        'RelativePath': value['relativePath'],
+        'Sha256Hash': value['sha256Hash'],
+        'Blake3Hash': value['blake3Hash'],
         'IsBinary': value['isBinary'],
         'Size': value['size'],
         'CreatedAt': value['createdAt'] == null ? value['createdAt'] : value['createdAt'].toISOString(),
         'BlobUri': value['blobUri'],
+        'ContentReference': FileContentReferenceToJSON(value['contentReference']),
     };
 }
 

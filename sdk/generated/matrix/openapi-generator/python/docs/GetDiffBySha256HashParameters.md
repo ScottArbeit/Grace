@@ -1,6 +1,6 @@
 # GetDiffBySha256HashParameters
 
-Parameters for retrieving a diff by SHA-256 hash.
+Parameters for retrieving a diff by SHA-256 hash or unique SHA-256 prefix.
 
 ## Properties
 
@@ -16,8 +16,8 @@ Name | Type | Description | Notes
 **repository_name** | **str** |  | [optional] 
 **directory_version_id1** | **UUID** |  | [optional] 
 **directory_version_id2** | **UUID** |  | [optional] 
-**sha256_hash1** | **str** |  | [optional] 
-**sha256_hash2** | **str** |  | [optional] 
+**sha256_hash1** | **str** | Lowercase or uppercase 2- to 64-character SHA-256 version hash prefix. | [optional] 
+**sha256_hash2** | **str** | Lowercase or uppercase 2- to 64-character SHA-256 version hash prefix. | [optional] 
 
 ## Example
 

@@ -18,17 +18,17 @@ pub struct FileContentReference {
     pub class: Class,
     #[serde(rename = "ReferenceType")]
     pub reference_type: ReferenceType,
-    #[serde(rename = "Manifest")]
-    pub manifest: Box<models::FileManifest>,
+    #[serde(rename = "Manifest", deserialize_with = "Option::deserialize")]
+    pub manifest: Option<Box<models::FileManifest>>,
 }
 
 impl FileContentReference {
     /// Identifies whether a FileVersion refers to whole-file bytes or a FileManifest.
-    pub fn new(class: Class, reference_type: ReferenceType, manifest: models::FileManifest) -> FileContentReference {
+    pub fn new(class: Class, reference_type: ReferenceType, manifest: Option<models::FileManifest>) -> FileContentReference {
         FileContentReference {
             class,
             reference_type,
-            manifest: Box::new(manifest),
+            manifest: if let Some(x) = manifest {Some(Box::new(x))} else {None},
         }
     }
 }

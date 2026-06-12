@@ -34,6 +34,7 @@ pub struct GetBySha256HashParameters {
     pub repository_name: Option<String>,
     #[serde(rename = "DirectoryVersionId", skip_serializing_if = "Option::is_none")]
     pub directory_version_id: Option<uuid::Uuid>,
+    /// Lowercase or uppercase 2- to 64-character SHA-256 version hash prefix.
     #[serde(rename = "Sha256Hash", skip_serializing_if = "Option::is_none")]
     pub sha256_hash: Option<String>,
 }
