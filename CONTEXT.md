@@ -15,11 +15,12 @@ hexadecimal string. A FileContentHash identifies the whole logical file, while C
 _Avoid_: FileVersion hash, path hash, directory hash
 
 **Version Hash**:
-In ADR 0006's target model, the graph identity hash for a FileVersion, DirectoryVersion, or Reference version object.
-Version hashes identify Grace version graph objects; they are separate from path-independent CAS identities such as
-FileContentHash, ChunkAddress, ContentBlockAddress, and ManifestAddress. Current SHA-256 values are transition data:
-current file SHA-256 values hash file bytes only, and current references store the root directory hash instead of a
-separate Reference-object hash.
+The BLAKE3 or SHA-256 hash value used for version lookup and display. File version hashes are byte-only file content
+hashes, DirectoryVersion hashes identify the formal directory preimage, and Reference hashes are the referenced root
+DirectoryVersion hashes validated by reference commands. Version hashes stay separate from path-independent CAS
+identities such as FileContentHash, ChunkAddress, ContentBlockAddress, and ManifestAddress. BLAKE3 is the default
+version-hash algorithm for new version lookup surfaces, and SHA-256 is retained for verification, comparison, lookup
+parity, and non-version SHA-256 uses that intentionally stay SHA-256.
 _Avoid_: FileContentHash, ChunkAddress, ContentBlockAddress, ManifestAddress
 
 **FileManifest**:
@@ -312,10 +313,11 @@ Grace uses FileVersion for path-aware repository meaning, and Content-Addressabl
 identity. Do not describe chunks as belonging to a path; chunks belong to content-addressed storage.
 
 **Version graph hash vs. CAS address**:
-ADR 0006's target behavior uses version hashes for FileVersion, DirectoryVersion, and Reference graph identity during
-the future transition. Grace uses FileContentHash, ChunkAddress, ContentBlockAddress, and ManifestAddress for
-content-addressed storage identity. Do not use a CAS address as a version hash, and do not use a version hash as a
-chunk, block, manifest, or file-content address.
+ADR 0006 uses version hashes for version lookup and display while preserving the current hash inputs for each object
+kind: file byte streams for FileVersion, the formal directory preimage for DirectoryVersion, and the referenced root
+DirectoryVersion hashes for Reference. Grace uses FileContentHash, ChunkAddress, ContentBlockAddress, and
+ManifestAddress for content-addressed storage identity. Do not use a CAS address as a version hash, and do not use a
+version hash as a chunk, block, manifest, or file-content address.
 
 **File content vs. chunk identity**:
 Grace uses FileContentHash for the complete file bytes and ChunkAddress for one ContentChunk inside manifest-backed
