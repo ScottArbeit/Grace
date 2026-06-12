@@ -68,6 +68,7 @@ module BranchCommandTests =
             TargetReferenceId = targetReferenceId
             RootDirectoryId = Guid.NewGuid()
             RootDirectorySha256Hash = Sha256Hash "root-sha"
+            RootDirectoryBlake3Hash = Blake3Hash "root-blake3"
             Source = ExplicitReference
             CreatedSaveMessage = None
         }
@@ -222,7 +223,7 @@ module BranchCommandTests =
         |> should equal $"{directoryBlake3Hash} (SHA-256 {directorySha256Hash})"
 
     [<Test>]
-    let ``list contents formatter shows unavailable for missing legacy BLAKE3`` () =
+    let ``list contents formatter shows unavailable for missing BLAKE3`` () =
         let parseResult = parse [| "branch"; "list-contents" |]
         let displayMode = Common.HashOptions.bindVersionHashDisplayMode parseResult
 
