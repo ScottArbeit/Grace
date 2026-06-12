@@ -2,18 +2,16 @@
 
 ## Introduction
 
-Grace currently uses SHA-256 values in file, directory, reference, diff, and lookup workflows. These values sit in the
-version graph, but their current meaning depends on the object type. Current file SHA-256 values are byte hashes; they
-do not by themselves identify stored `FileVersion` objects because a `FileVersion` also carries `RelativePath`.
-Directory SHA-256 values are computed from the directory's own path plus child version hashes. References store the
-referenced root directory hash; Grace does not compute a separate SHA-256 preimage over the `Reference` object itself.
-These values are separate from content-addressed storage identities such as `FileContentHash`, `ChunkAddress`,
-`ContentBlockAddress`, and `ManifestAddress`.
+Grace uses SHA-256 values beside BLAKE3 in file, directory, reference, diff, and lookup workflows. These values sit in
+the version graph, but their current meaning depends on the object type. File SHA-256 values are byte hashes; they do
+not by themselves identify stored `FileVersion` objects because a `FileVersion` also carries `RelativePath`.
+Directory SHA-256 values use the same formal directory-version preimage shape as BLAKE3, with SHA-256 child hashes.
+References store the referenced root directory hashes. These values are separate from content-addressed storage
+identities such as `FileContentHash`, `ChunkAddress`, `ContentBlockAddress`, and `ManifestAddress`.
 
-ADR [0006](adr/0006-blake3-and-sha256-version-hashes.md) accepts a future model where BLAKE3 is the default version-hash
-algorithm for new version objects and SHA-256 remains retained for compatibility, verification, and transition tooling.
-That dual-hash behavior is the target for epic #343; this page still documents the current SHA-256 behavior where it is
-useful for understanding today's code and stale data.
+ADR [0006](adr/0006-blake3-and-sha256-version-hashes.md) makes BLAKE3 the default version-hash algorithm for new version
+objects and retains SHA-256 for verification, comparison, lookup parity, and non-version SHA-256 uses. Grace is not in
+production, so this page describes the current desired contract rather than a migration promise for old production data.
 
 Hash values in Grace provide cryptographic evidence that the file, directory, and reference versions stored for a
 reference match what was originally uploaded. When a user downloads a specific branch version, Grace should be able to
@@ -38,8 +36,8 @@ CLI and Grace Server. Implementations in other languages need to reproduce the s
 
 ### Files
 
-The current file SHA-256 value is computed from the file byte stream only. The file relative path and file length are not
-appended to the file SHA-256 input.
+The file SHA-256 value is computed from the file byte stream only. The file relative path and file length are not
+appended to the file SHA-256 input. BLAKE3 file version hashes are computed from the same byte-only file stream.
 
 When computing the SHA-256 value for a file, Grace reads from a stream and uses `IncrementalHash` so memory use stays
 constant no matter how large the file is.
@@ -56,36 +54,32 @@ For example, `byte[] { 0x43, 0x2a, 0x01, 0xfa }` is represented as `432a01fa`.
 
 The file relative path still matters to Grace's domain model because a `FileVersion` says a specific relative path
 contains specific file content in a repository version. Two files with the same bytes at different relative paths have
-the same current file SHA-256 value, but they are different `FileVersion` records because their `RelativePath` values
-differ. The current file SHA-256 calculation itself is byte-only.
+the same file byte hashes, but they are different `FileVersion` records because their `RelativePath` values differ. The
+file SHA-256 calculation itself is byte-only.
 
 ### Directories
 
-The current directory SHA-256 value is path-sensitive. A `DirectoryVersion` represents a relative path and the sorted set
-of child directory and file versions at that path.
+The directory SHA-256 value is path-sensitive. A `DirectoryVersion` represents a relative path and the sorted set of
+child directory and file versions at that path.
 
 The directory SHA-256 value is computed with this algorithm:
 
-1. Convert the directory's repository-relative path to bytes using UTF-8 and append those bytes to the hash input.
-1. Sort child directories by name with invariant culture.
-1. Append each child directory SHA-256 value, in sorted order, as UTF-8 bytes.
-1. Sort child files by name with invariant culture.
-1. Append each child file SHA-256 value, in sorted order, as UTF-8 bytes.
+1. Create the `grace.directory-version.v1` UTF-8 preimage.
+1. Include the directory's repository-relative path.
+1. Include each child entry kind, child repository-relative path, and same-algorithm child hash.
+1. Include file size for file entries.
+1. Sort entries deterministically by kind and path before finalizing the preimage.
 1. Finalize the SHA-256 hash and convert it to lowercase hexadecimal text.
 
-The current implementation uses child names for sorting, but it does not append those child names to the hash input. A
-current directory SHA-256 preimage is the directory's own relative path followed by each child SHA-256 value. The future
-`grace.directory-version.v1` preimage from ADR 0006 is planned to be child-name-aware; this page does not describe that
-future behavior as shipped.
-
-This keeps the current directory SHA-256 value sensitive to the directory path and ordered child hash sequence without
-making the file byte hash include path data.
+BLAKE3 directory version hashes use the same `grace.directory-version.v1` preimage shape with BLAKE3 child hashes. This
+keeps directory version hashes sensitive to the directory path, child names, child kind, file size, and same-algorithm
+child hashes without making the file byte hash include path data.
 
 ### Version Hash Transition
 
-After ADR 0006 is implemented, new `FileVersion`, `DirectoryVersion`, and `Reference` version objects use BLAKE3 as the
-default version-hash algorithm. SHA-256 remains retained where Grace needs compatibility with existing data, transition
-checks, or verification flows.
+New `FileVersion`, `DirectoryVersion`, and `Reference` version objects use BLAKE3 as the default version-hash algorithm.
+SHA-256 remains retained for verification, comparison, lookup parity, and non-version SHA-256 uses that intentionally
+remain unchanged.
 
 That transition does not change the meaning of CAS identities:
 
@@ -99,5 +93,5 @@ manifest-backed or StoragePool-wide deduped.
 
 ### Validation
 
-Grace has planned and in-progress verification workflows that recompute stored version hashes and compare them with
-values stored in Grace's database. Documentation should describe only shipped commands and options as shipped behavior.
+Grace has verification workflows that recompute stored version hashes and compare them with values stored in Grace's
+database. Documentation should describe only shipped commands and options as shipped behavior.
