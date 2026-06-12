@@ -6,8 +6,8 @@ Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
 **class** | Option<**String**> |  | [optional]
 **relative_path** | Option<**String**> |  | [optional]
-**sha256_hash** | Option<**String**> | Lowercase or uppercase 64-character SHA-256 version hash retained for compatibility. | [optional]
-**blake3_hash** | Option<**String**> | Empty or 64-character BLAKE3 version hash for legacy version DTOs. | [optional]
+**sha256_hash** | Option<**String**> | Lowercase 64-character SHA-256 version hash persisted on version DTOs. | [optional]
+**blake3_hash** | Option<**String**> | Empty value, null, or lowercase 64-character BLAKE3 version hash for legacy version DTOs. | [optional]
 **is_binary** | Option<**bool**> |  | [optional]
 **size** | Option<**i64**> |  | [optional]
 **created_at** | Option<**chrono::DateTime<chrono::FixedOffset>**> |  | [optional]

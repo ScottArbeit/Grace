@@ -32,7 +32,7 @@ class UploadMetadata(BaseModel):
     """ # noqa: E501
     relative_path: StrictStr = Field(alias="RelativePath")
     blob_uri_with_sas_token: StrictStr = Field(alias="BlobUriWithSasToken")
-    sha256_hash: Annotated[str, Field(strict=True)] = Field(description="Lowercase or uppercase 64-character SHA-256 version hash retained for compatibility.", alias="Sha256Hash")
+    sha256_hash: Annotated[str, Field(strict=True)] = Field(description="Lowercase 64-character SHA-256 version hash persisted on version DTOs.", alias="Sha256Hash")
     content_reference: FileContentReference = Field(alias="ContentReference")
     __properties: ClassVar[List[str]] = ["RelativePath", "BlobUriWithSasToken", "Sha256Hash", "ContentReference"]
 
@@ -42,8 +42,8 @@ class UploadMetadata(BaseModel):
         if not isinstance(value, str):
             value = str(value)
 
-        if not re.match(r"^[A-Fa-f0-9]{64}$", value):
-            raise ValueError(r"must validate the regular expression /^[A-Fa-f0-9]{64}$/")
+        if not re.match(r"^[a-f0-9]{64}$", value):
+            raise ValueError(r"must validate the regular expression /^[a-f0-9]{64}$/")
         return value
 
     model_config = ConfigDict(
