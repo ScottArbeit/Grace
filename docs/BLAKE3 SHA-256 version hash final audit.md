@@ -21,20 +21,98 @@ not add migration, import, preservation, or grandfathering work for imaginary ol
 
 ## Acceptance Matrix
 
-| Epic acceptance criterion | Evidence on this branch | Status |
-| --- | --- | --- |
-| FileVersion, LocalFileVersion, DirectoryVersion, LocalDirectoryVersion, GraceStatus, ReferenceDto, branch/reference commands, and branch/reference events carry explicit `Blake3Hash` and `Sha256Hash` where version lookup or display requires them. | Type, actor, CLI, local-state, SDK, and most OpenAPI files in the `origin/main...HEAD` diff include dual-hash fields and command propagation. Recheck found `GetBranchParameters` and `GetReferenceParameters` still inherit the SHA-only `BranchQueryParameters` schema, so the OpenAPI branch/reference lookup contract is not fully complete. | Deferred follow-up |
-| File BLAKE3 and SHA-256 are byte-only. | `Services.Shared.fs`, file hash helper tests, current-state capture tests, and this doc refresh keep file hashes byte-only. | Satisfied |
-| DirectoryVersion BLAKE3 and SHA-256 use the formal `grace.directory-version.v1` preimage with an algorithm discriminator, base64-encoded directory and child paths, `child-count`, indexed child rows, child kind, child size for every entry, same-algorithm child hashes, and newline delimiters, sorted by normalized child path and then child kind. | `DirectoryVersionPreimage.Shared.Tests.fs`, `Services.Shared.fs`, actor/server-unit promotion tests, and updated docs describe and prove the formal preimage. | Satisfied |
-| BLAKE3 lookup exists wherever SHA-256 version lookup exists. | Diff and directory lookup routes have BLAKE3 peers, and branch/reference runtime surfaces include BLAKE3 lookup support. Static OpenAPI still models `/branch/get`, `/branch/getByName`, and `/branch/getReference` through SHA-only query parameters, so lookup parity is not fully represented in the published API contract. | Deferred follow-up |
-| `--blake3-hash` resolves repository version graph objects only, not arbitrary CAS objects. | Server/unit and CLI lookup tests cover version-hash prefix resolution; CAS docs keep `FileContentHash`, `ChunkAddress`, `ContentBlockAddress`, and `ManifestAddress` separate from version hashes. | Satisfied |
-| Prefix lookup distinguishes zero, one, and multiple matches for both algorithms. | `Services.VersionHashPrefixResolution.Tests.fs`, lookup route tests, and CLI parsing tests cover zero/one/multiple prefix outcomes. | Satisfied |
-| Human CLI output shows BLAKE3 prefixes by default, shows SHA-256 only with `--show-sha256`, and shows full values with `--full-hashes`. | Most branch/reference CLI text output follows the new default and opt-in behavior. Recheck found `grace repository init` still prints `Root SHA-256 hash`, and maintenance root summaries still print root SHA-256 by default. | Deferred follow-up |
-| JSON output includes full explicit `Blake3Hash` and `Sha256Hash` values. | Most JSON output contracts expose full dual-hash values. Recheck found `LocalOutputDto.RepositoryInitDto` still exposes only `RootSha256Hash`, while the repository init command returns no root BLAKE3 JSON property. | Deferred follow-up |
-| `--full-sha` is deprecated immediately, with tested behavior. | CLI option parsing and command tests cover the deprecated alias behavior. | Satisfied |
-| Local SQLite state stores BLAKE3 and SHA-256 or clearly resets incompatible old state. | Local-state DB code and tests persist dual hashes; docs emphasize no production-data migration promise. | Satisfied |
-| OpenAPI, SDK, docs, ADR, tests, and final audit are updated. | Generated SDK matrix artifacts, ADR 0006, hash docs, data-type docs, and this final audit are updated. Static and bundled OpenAPI still need the branch/reference BLAKE3 query follow-up described below. | Deferred follow-up |
-| Non-version SHA-256 uses are unchanged unless explicitly owned by a future issue. | Authorization, webhook/payload, dedupe, and non-version SHA-256 regression tests remain intentionally SHA-256; no follow-up is needed from this audit. | Satisfied |
+### Dual-hash DTO and command propagation
+
+- Criterion: `FileVersion`, `LocalFileVersion`, `DirectoryVersion`, `LocalDirectoryVersion`, `GraceStatus`,
+  `ReferenceDto`, branch/reference commands, and branch/reference events carry explicit `Blake3Hash` and `Sha256Hash`
+  where version lookup or display requires them.
+- Evidence: Type, actor, CLI, local-state, SDK, and most OpenAPI files in the `origin/main...HEAD` diff include
+  dual-hash fields and command propagation. Recheck found `GetBranchParameters` and `GetReferenceParameters` still
+  inherit the SHA-only `BranchQueryParameters` schema, so the OpenAPI branch/reference lookup contract is not fully
+  complete.
+- Status: Deferred follow-up #395.
+
+### File version hashes
+
+- Criterion: File BLAKE3 and SHA-256 are byte-only.
+- Evidence: `Services.Shared.fs`, file hash helper tests, current-state capture tests, and this doc refresh keep file
+  hashes byte-only.
+- Status: Satisfied.
+
+### Directory version hashes
+
+- Criterion: `DirectoryVersion` BLAKE3 and SHA-256 use the formal `grace.directory-version.v1` preimage with an
+  algorithm discriminator, base64-encoded directory and child paths, `child-count`, indexed child rows, child kind,
+  child size for every entry, same-algorithm child hashes, and newline delimiters. Entries are sorted by normalized
+  child path and then child kind.
+- Evidence: `DirectoryVersionPreimage.Shared.Tests.fs`, `Services.Shared.fs`, actor/server-unit promotion tests, and
+  updated docs describe and prove the formal preimage.
+- Status: Satisfied.
+
+### Lookup parity
+
+- Criterion: BLAKE3 lookup exists wherever SHA-256 version lookup exists.
+- Evidence: Diff and directory lookup routes have BLAKE3 peers, and branch/reference runtime surfaces include BLAKE3
+  lookup support. Static OpenAPI still models `/branch/get` and `/branch/getReference` through SHA-only query
+  parameters, so lookup parity is not fully represented in the published API contract.
+- Status: Deferred follow-up #395.
+
+### CAS separation
+
+- Criterion: `--blake3-hash` resolves repository version graph objects only, not arbitrary CAS objects.
+- Evidence: Server/unit and CLI lookup tests cover version-hash prefix resolution. CAS docs keep `FileContentHash`,
+  `ChunkAddress`, `ContentBlockAddress`, and `ManifestAddress` separate from version hashes.
+- Status: Satisfied.
+
+### Prefix lookup outcomes
+
+- Criterion: Prefix lookup distinguishes zero, one, and multiple matches for both algorithms.
+- Evidence: `Services.VersionHashPrefixResolution.Tests.fs`, lookup route tests, and CLI parsing tests cover
+  zero/one/multiple prefix outcomes.
+- Status: Satisfied.
+
+### Human CLI output
+
+- Criterion: Human CLI output shows BLAKE3 prefixes by default, shows SHA-256 only with `--show-sha256`, and shows full
+  values with `--full-hashes`.
+- Evidence: Most branch/reference CLI text output follows the new default and opt-in behavior. Recheck found
+  `grace repository init` still prints `Root SHA-256 hash`, and maintenance root summaries still print root SHA-256 by
+  default.
+- Status: Deferred follow-up #394.
+
+### JSON output
+
+- Criterion: JSON output includes full explicit `Blake3Hash` and `Sha256Hash` values.
+- Evidence: Most JSON output contracts expose full dual-hash values. Recheck found
+  `LocalOutputDto.RepositoryInitDto` still exposes only `RootSha256Hash`, while the repository init command returns no
+  root BLAKE3 JSON property.
+- Status: Deferred follow-up #394.
+
+### Deprecated SHA option
+
+- Criterion: `--full-sha` is deprecated immediately, with tested behavior.
+- Evidence: CLI option parsing and command tests cover the deprecated alias behavior.
+- Status: Satisfied.
+
+### Local state
+
+- Criterion: Local SQLite state stores BLAKE3 and SHA-256 or clearly resets incompatible old state.
+- Evidence: Local-state DB code and tests persist dual hashes. Docs emphasize no production-data migration promise.
+- Status: Satisfied.
+
+### Documentation and contract artifacts
+
+- Criterion: OpenAPI, SDK, docs, ADR, tests, and final audit are updated.
+- Evidence: Generated SDK matrix artifacts, ADR 0006, hash docs, data-type docs, and this final audit are updated.
+  Static and bundled OpenAPI still need the branch/reference BLAKE3 query follow-up described below.
+- Status: Deferred follow-up #395.
+
+### Non-version SHA-256 uses
+
+- Criterion: Non-version SHA-256 uses are unchanged unless explicitly owned by a future issue.
+- Evidence: Authorization, webhook/payload, dedupe, and non-version SHA-256 regression tests remain intentionally
+  SHA-256. No follow-up is needed from this audit.
+- Status: Satisfied.
 
 ## Documentation Refresh
 
@@ -47,8 +125,8 @@ This audit refreshed docs that still sounded like pre-implementation planning:
   FileVersion.
 - `docs/How Grace computes the SHA-256 value.md` now describes the current dual-hash behavior and formal directory
   preimage.
-- `docs/adr/0006-blake3-and-sha256-version-hashes.md` now records epic #343 as implemented and avoids production-data
-  migration language.
+- `docs/adr/0006-blake3-and-sha256-version-hashes.md` now records the accepted target model, calls out deferred
+  follow-ups #394 and #395, and avoids production-data migration language.
 
 SDK/OpenAPI architecture docs and generated SDK docs already reflected the generated dual-hash contract closely enough
 for this audit. This slice did not hand-edit generated artifacts.
