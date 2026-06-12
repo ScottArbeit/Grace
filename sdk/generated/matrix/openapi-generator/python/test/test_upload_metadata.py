@@ -38,7 +38,7 @@ class TestUploadMetadata(unittest.TestCase):
             return UploadMetadata(
                 relative_path = '',
                 blob_uri_with_sas_token = '',
-                sha256_hash = '805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243',
+                sha256_hash = '805331a98813206270e35564769e8bb59eea02aeb7b27c7d6c63e625e1857243',
                 content_reference = grace_generated_openapi_probe.models.file_content_reference.FileContentReference(
                     class = 'FileContentReference', 
                     reference_type = 'WholeFileContent', 
@@ -48,7 +48,7 @@ class TestUploadMetadata(unittest.TestCase):
             return UploadMetadata(
                 relative_path = '',
                 blob_uri_with_sas_token = '',
-                sha256_hash = '805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243',
+                sha256_hash = '805331a98813206270e35564769e8bb59eea02aeb7b27c7d6c63e625e1857243',
                 content_reference = grace_generated_openapi_probe.models.file_content_reference.FileContentReference(
                     class = 'FileContentReference', 
                     reference_type = 'WholeFileContent', 

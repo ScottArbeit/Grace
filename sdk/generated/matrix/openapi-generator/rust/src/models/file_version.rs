@@ -17,10 +17,10 @@ pub struct FileVersion {
     pub class: Option<String>,
     #[serde(rename = "RelativePath", skip_serializing_if = "Option::is_none")]
     pub relative_path: Option<String>,
-    /// Lowercase or uppercase 64-character SHA-256 version hash retained for compatibility.
+    /// Lowercase 64-character SHA-256 version hash persisted on version DTOs.
     #[serde(rename = "Sha256Hash", skip_serializing_if = "Option::is_none")]
     pub sha256_hash: Option<String>,
-    /// Empty or 64-character BLAKE3 version hash for legacy version DTOs.
+    /// Empty value, null, or lowercase 64-character BLAKE3 version hash for legacy version DTOs.
     #[serde(rename = "Blake3Hash", skip_serializing_if = "Option::is_none")]
     pub blake3_hash: Option<String>,
     #[serde(rename = "IsBinary", skip_serializing_if = "Option::is_none")]
