@@ -40,7 +40,7 @@ export interface UploadMetadata {
      */
     blobUriWithSasToken: string;
     /**
-     * Lowercase or uppercase 64-character SHA-256 version hash retained for compatibility.
+     * Lowercase 64-character SHA-256 version hash persisted on version DTOs.
      * @type {string}
      * @memberof UploadMetadata
      */

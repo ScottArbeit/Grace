@@ -21,7 +21,7 @@ import type { UploadMetadata } from '@grace-vcs/generated-openapi-probe'
 const example = {
   "relativePath": null,
   "blobUriWithSasToken": null,
-  "sha256Hash": 805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243,
+  "sha256Hash": 805331a98813206270e35564769e8bb59eea02aeb7b27c7d6c63e625e1857243,
   "contentReference": null,
 } satisfies UploadMetadata
 
