@@ -160,8 +160,11 @@ module Reference =
             (new Option<String>(OptionName.ReferenceType, Required = false, Description = "The type of reference.", Arity = ArgumentArity.ExactlyOne))
                 .AcceptOnlyFromAmong(listCases<ReferenceType> ())
 
-        let fullSha =
-            new Option<bool>(OptionName.FullSha, Required = false, Description = "Show the full SHA-256 value in output.", Arity = ArgumentArity.ZeroOrOne)
+        let fullSha = HashOptions.deprecatedFullSha
+
+        let fullHashes = HashOptions.fullHashes
+
+        let showSha256 = HashOptions.showSha256
 
         let maxCount =
             new Option<int>(
@@ -175,23 +178,9 @@ module Reference =
         let referenceId =
             new Option<ReferenceId>(OptionName.ReferenceId, [||], Required = false, Description = "The reference ID <Guid>.", Arity = ArgumentArity.ExactlyOne)
 
-        let sha256Hash =
-            new Option<String>(
-                OptionName.Sha256Hash,
-                [||],
-                Required = false,
-                Description = "The full or partial SHA-256 hash value of the version.",
-                Arity = ArgumentArity.ExactlyOne
-            )
+        let sha256Hash = HashOptions.sha256HashOption "The full or partial SHA-256 compatibility hash value of the version."
 
-        let blake3Hash =
-            new Option<String>(
-                OptionName.Blake3Hash,
-                [||],
-                Required = false,
-                Description = "The full or partial BLAKE3 hash value of the version.",
-                Arity = ArgumentArity.ExactlyOne
-            )
+        let blake3Hash = HashOptions.blake3HashOption "The full or partial BLAKE3 hash value of the version."
 
         let enabled =
             new Option<bool>(
@@ -218,12 +207,7 @@ module Reference =
 
     let private valueOrEmpty (value: string) = if String.IsNullOrWhiteSpace(value) then String.Empty else value
 
-    let private getOptionalBlake3Hash (parseResult: ParseResult) =
-        if isNull (parseResult.GetResult(Options.blake3Hash)) then
-            String.Empty
-        else
-            parseResult.GetValue(Options.blake3Hash)
-            |> valueOrEmpty
+    let private getOptionalBlake3Hash (parseResult: ParseResult) = HashOptions.getBlake3HashPrefix parseResult
 
     let private ReferenceValidations (parseResult: ParseResult) = Ok parseResult
 
@@ -297,7 +281,7 @@ module Reference =
                             else
                                 String.Empty
 
-                        let sha256Hash = parseResult.GetValue(Options.sha256Hash)
+                        let sha256Hash = HashOptions.getSha256CompatibilityHashPrefix parseResult
 
                         let sdkParameters =
                             Parameters.Branch.ListContentsParameters(
@@ -373,7 +357,7 @@ module Reference =
                             else
                                 String.Empty
 
-                        let sha256Hash = parseResult.GetValue(Options.sha256Hash)
+                        let sha256Hash = HashOptions.getSha256CompatibilityHashPrefix parseResult
 
                         let sdkParameters =
                             Parameters.Branch.ListContentsParameters(
@@ -461,9 +445,7 @@ module Reference =
             else
                 Guid.Empty
 
-        let sha256Hash =
-            parseResult.GetValue(Options.sha256Hash)
-            |> valueOrEmpty
+        let sha256Hash = HashOptions.getSha256CompatibilityHashPrefix parseResult
 
         let message =
             parseResult.GetValue(Options.message)
