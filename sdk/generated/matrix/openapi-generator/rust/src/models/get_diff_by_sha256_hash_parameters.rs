@@ -36,8 +36,10 @@ pub struct GetDiffBySha256HashParameters {
     pub directory_version_id1: Option<uuid::Uuid>,
     #[serde(rename = "DirectoryVersionId2", skip_serializing_if = "Option::is_none")]
     pub directory_version_id2: Option<uuid::Uuid>,
+    /// Lowercase or uppercase 64-character SHA-256 version hash retained for compatibility.
     #[serde(rename = "Sha256Hash1", skip_serializing_if = "Option::is_none")]
     pub sha256_hash1: Option<String>,
+    /// Lowercase or uppercase 64-character SHA-256 version hash retained for compatibility.
     #[serde(rename = "Sha256Hash2", skip_serializing_if = "Option::is_none")]
     pub sha256_hash2: Option<String>,
 }
