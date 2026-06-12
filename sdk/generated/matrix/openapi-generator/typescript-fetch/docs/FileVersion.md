@@ -25,8 +25,8 @@ import type { FileVersion } from '@grace-vcs/generated-openapi-probe'
 const example = {
   "_class": null,
   "relativePath": null,
-  "sha256Hash": 805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243,
-  "blake3Hash": 9A35D91B2F631BE9025DE753139B88F7B1E71385C412BC3986FF2F38F230841D,
+  "sha256Hash": 805331a98813206270e35564769e8bb59eea02aeb7b27c7d6c63e625e1857243,
+  "blake3Hash": 9a35d91b2f631be9025de753139b88f7b1e71385c412bc3986ff2f38f230841d,
   "isBinary": null,
   "size": null,
   "createdAt": null,

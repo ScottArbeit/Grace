@@ -45,7 +45,7 @@ class TestGetByBlake3HashParameters(unittest.TestCase):
                 repository_id = 'ab6f35ef-6e01-440b-8f9b-c343a5272095',
                 repository_name = '',
                 directory_version_id = '33a4e36b-828f-4fae-9343-50b6560dc842',
-                blake3_hash = '9A35D91B2F631BE9025DE753139B88F7B1E71385C412BC3986FF2F38F230841D'
+                blake3_hash = '9a35d91b2f63'
             )
         else:
             return GetByBlake3HashParameters(

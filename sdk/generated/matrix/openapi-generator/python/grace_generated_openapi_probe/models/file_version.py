@@ -33,8 +33,8 @@ class FileVersion(BaseModel):
     """ # noqa: E501
     var_class: Optional[StrictStr] = Field(default=None, alias="Class")
     relative_path: Optional[StrictStr] = Field(default=None, alias="RelativePath")
-    sha256_hash: Optional[Annotated[str, Field(strict=True)]] = Field(default=None, description="Lowercase or uppercase 64-character SHA-256 version hash retained for compatibility.", alias="Sha256Hash")
-    blake3_hash: Optional[Annotated[str, Field(strict=True)]] = Field(default=None, description="Empty or 64-character BLAKE3 version hash for legacy version DTOs.", alias="Blake3Hash")
+    sha256_hash: Optional[Annotated[str, Field(strict=True)]] = Field(default=None, description="Lowercase 64-character SHA-256 version hash persisted on version DTOs.", alias="Sha256Hash")
+    blake3_hash: Optional[Annotated[str, Field(strict=True)]] = Field(default=None, description="Empty value, null, or lowercase 64-character BLAKE3 version hash for legacy version DTOs.", alias="Blake3Hash")
     is_binary: Optional[StrictBool] = Field(default=None, alias="IsBinary")
     size: Optional[StrictInt] = Field(default=None, alias="Size")
     created_at: Optional[datetime] = Field(default=None, alias="CreatedAt")
@@ -51,8 +51,8 @@ class FileVersion(BaseModel):
         if not isinstance(value, str):
             value = str(value)
 
-        if not re.match(r"^[A-Fa-f0-9]{64}$", value):
-            raise ValueError(r"must validate the regular expression /^[A-Fa-f0-9]{64}$/")
+        if not re.match(r"^[a-f0-9]{64}$", value):
+            raise ValueError(r"must validate the regular expression /^[a-f0-9]{64}$/")
         return value
 
     @field_validator('blake3_hash')
@@ -64,8 +64,8 @@ class FileVersion(BaseModel):
         if not isinstance(value, str):
             value = str(value)
 
-        if not re.match(r"^$|^[A-Fa-f0-9]{64}$", value):
-            raise ValueError(r"must validate the regular expression /^$|^[A-Fa-f0-9]{64}$/")
+        if not re.match(r"^$|^[a-f0-9]{64}$", value):
+            raise ValueError(r"must validate the regular expression /^$|^[a-f0-9]{64}$/")
         return value
 
     model_config = ConfigDict(

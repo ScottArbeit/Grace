@@ -18,7 +18,7 @@ pub struct UploadMetadata {
     pub relative_path: String,
     #[serde(rename = "BlobUriWithSasToken")]
     pub blob_uri_with_sas_token: String,
-    /// Lowercase or uppercase 64-character SHA-256 version hash retained for compatibility.
+    /// Lowercase 64-character SHA-256 version hash persisted on version DTOs.
     #[serde(rename = "Sha256Hash")]
     pub sha256_hash: String,
     #[serde(rename = "ContentReference")]
