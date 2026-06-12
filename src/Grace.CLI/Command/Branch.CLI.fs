@@ -186,14 +186,11 @@ module Branch =
                 Arity = ArgumentArity.ZeroOrOne
             )
 
-        let fullSha =
-            new Option<bool>(
-                OptionName.FullSha,
-                Required = false,
-                Description = "Show the full SHA-256 value in output.",
-                Arity = ArgumentArity.ZeroOrOne,
-                DefaultValueFactory = (fun _ -> false)
-            )
+        let fullSha = HashOptions.deprecatedFullSha
+
+        let fullHashes = HashOptions.fullHashes
+
+        let showSha256 = HashOptions.showSha256
 
         let maxCount =
             new Option<int>(
@@ -270,23 +267,9 @@ module Branch =
                 DefaultValueFactory = (fun _ -> DefaultMaxReferences)
             )
 
-        let sha256Hash =
-            new Option<String>(
-                OptionName.Sha256Hash,
-                [||],
-                Required = false,
-                Description = "The full or partial SHA-256 hash value of the version.",
-                Arity = ArgumentArity.ExactlyOne
-            )
+        let sha256Hash = HashOptions.sha256HashOption "The full or partial SHA-256 compatibility hash value of the version."
 
-        let blake3Hash =
-            new Option<String>(
-                OptionName.Blake3Hash,
-                [||],
-                Required = false,
-                Description = "The full or partial BLAKE3 hash value of the version.",
-                Arity = ArgumentArity.ExactlyOne
-            )
+        let blake3Hash = HashOptions.blake3HashOption "The full or partial BLAKE3 hash value of the version."
 
         let enabled =
             new Option<bool>(
@@ -539,6 +522,10 @@ module Branch =
         elif not <| String.IsNullOrEmpty(blake3Hash) then String.Empty, blake3Hash
         else String.Empty, String.Empty
 
+    let private getSha256HashPrefix (parseResult: ParseResult) = HashOptions.getSha256CompatibilityHashPrefix parseResult
+
+    let private getBlake3HashPrefix (parseResult: ParseResult) = HashOptions.getBlake3HashPrefix parseResult
+
     // Create subcommand.
     type Create() =
         inherit AsynchronousCommandLineAction()
@@ -714,17 +701,9 @@ module Branch =
                         .GetValue(Options.referenceId)
                         .ToString()
 
-            let sha256Hash =
-                if isNull (parseResult.GetResult(Options.sha256Hash)) then
-                    String.Empty
-                else
-                    parseResult.GetValue(Options.sha256Hash)
+            let sha256Hash = getSha256HashPrefix parseResult
 
-            let blake3Hash =
-                if isNull (parseResult.GetResult(Options.blake3Hash)) then
-                    String.Empty
-                else
-                    parseResult.GetValue(Options.blake3Hash)
+            let blake3Hash = getBlake3HashPrefix parseResult
 
             let sdkParameters =
                 Parameters.Branch.ListContentsParameters(
@@ -859,17 +838,9 @@ module Branch =
                     (parseResult.GetValue Options.referenceId)
                         .ToString()
 
-            let sha256Hash =
-                if isNull (parseResult.GetResult Options.sha256Hash) then
-                    String.Empty
-                else
-                    parseResult.GetValue Options.sha256Hash
+            let sha256Hash = getSha256HashPrefix parseResult
 
-            let blake3Hash =
-                if isNull (parseResult.GetResult Options.blake3Hash) then
-                    String.Empty
-                else
-                    parseResult.GetValue Options.blake3Hash
+            let blake3Hash = getBlake3HashPrefix parseResult
 
             let forceRecompute = parseResult.GetValue Options.forceRecompute
 
@@ -1036,17 +1007,9 @@ module Branch =
                 else
                     parseResult.GetValue(Options.directoryVersionId)
 
-            let sha256Hash =
-                if isNull (parseResult.GetResult(Options.sha256Hash)) then
-                    String.Empty
-                else
-                    parseResult.GetValue(Options.sha256Hash)
+            let sha256Hash = getSha256HashPrefix parseResult
 
-            let blake3Hash =
-                if isNull (parseResult.GetResult(Options.blake3Hash)) then
-                    String.Empty
-                else
-                    parseResult.GetValue(Options.blake3Hash)
+            let blake3Hash = getBlake3HashPrefix parseResult
 
             let parameters =
                 Parameters.Branch.AssignParameters(
@@ -2557,8 +2520,10 @@ module Branch =
 
         for row in sortedResults do
             //logToAnsiConsole Colors.Verbose $"{serialize row}"
+            let hashDisplayMode = HashOptions.bindVersionHashDisplayMode parseResult
+
             let sha256Hash =
-                if parseResult.GetValue(Options.fullSha) then
+                if hashDisplayMode.FullHashes then
                     $"{row.Sha256Hash}"
                 else
                     $"{getShortSha256Hash row.Sha256Hash}"
@@ -3549,10 +3514,10 @@ module Branch =
                     if referenceId <> Guid.Empty then
                         switchParameters.ReferenceId <- $"{referenceId}"
 
-                    let sha256Hash = parseResult.GetValue(Options.sha256Hash)
+                    let sha256Hash = getSha256HashPrefix parseResult
                     switchParameters.Sha256Hash <- sha256Hash
 
-                    let blake3Hash = parseResult.GetValue(Options.blake3Hash)
+                    let blake3Hash = getBlake3HashPrefix parseResult
                     switchParameters.Blake3Hash <- blake3Hash
 
                     let! result = switchHandler parseResult switchParameters
@@ -4478,6 +4443,9 @@ module Branch =
             |> addOption Options.toBranchName
             |> addOption Options.sha256Hash
             |> addOption Options.blake3Hash
+            |> addOption Options.fullHashes
+            |> addOption Options.showSha256
+            |> addOption Options.fullSha
             |> addOption Options.referenceId
             |> addCommonOptions
 
@@ -4553,6 +4521,9 @@ module Branch =
             |> addOption Options.referenceId
             |> addOption Options.sha256Hash
             |> addOption Options.blake3Hash
+            |> addOption Options.fullHashes
+            |> addOption Options.showSha256
+            |> addOption Options.fullSha
             |> addOption Options.forceRecompute
             |> addCommonOptions
 
@@ -4564,6 +4535,9 @@ module Branch =
             |> addOption Options.referenceId
             |> addOption Options.sha256Hash
             |> addOption Options.blake3Hash
+            |> addOption Options.fullHashes
+            |> addOption Options.showSha256
+            |> addOption Options.fullSha
             |> addCommonOptions
 
         getRecursiveSizeCommand.Action <- new GetRecursiveSize()
@@ -4681,6 +4655,8 @@ module Branch =
             new Command("get-references", Description = "Retrieves a list of the most recent references from the branch.")
             |> addCommonOptions
             |> addOption Options.maxCount
+            |> addOption Options.fullHashes
+            |> addOption Options.showSha256
             |> addOption Options.fullSha
 
         getReferencesCommand.Action <- new GetReferences()
@@ -4690,6 +4666,8 @@ module Branch =
             new Command("get-promotions", Description = "Retrieves a list of the most recent promotions from the branch.")
             |> addCommonOptions
             |> addOption Options.maxCount
+            |> addOption Options.fullHashes
+            |> addOption Options.showSha256
             |> addOption Options.fullSha
 
         getPromotionsCommand.Action <- new GetPromotions()
@@ -4699,6 +4677,8 @@ module Branch =
             new Command("get-commits", Description = "Retrieves a list of the most recent commits from the branch.")
             |> addCommonOptions
             |> addOption Options.maxCount
+            |> addOption Options.fullHashes
+            |> addOption Options.showSha256
             |> addOption Options.fullSha
 
         getCommitsCommand.Action <- new GetCommits()
@@ -4708,6 +4688,8 @@ module Branch =
             new Command("get-checkpoints", Description = "Retrieves a list of the most recent checkpoints from the branch.")
             |> addCommonOptions
             |> addOption Options.maxCount
+            |> addOption Options.fullHashes
+            |> addOption Options.showSha256
             |> addOption Options.fullSha
 
         getCheckpointsCommand.Action <- new GetCheckpoints()
@@ -4717,6 +4699,8 @@ module Branch =
             new Command("get-saves", Description = "Retrieves a list of the most recent saves from the branch.")
             |> addCommonOptions
             |> addOption Options.maxCount
+            |> addOption Options.fullHashes
+            |> addOption Options.showSha256
             |> addOption Options.fullSha
 
         getSavesCommand.Action <- new GetSaves()
@@ -4726,6 +4710,8 @@ module Branch =
             new Command("get-tags", Description = "Retrieves a list of the most recent tags from the branch.")
             |> addCommonOptions
             |> addOption Options.maxCount
+            |> addOption Options.fullHashes
+            |> addOption Options.showSha256
             |> addOption Options.fullSha
 
         getTagsCommand.Action <- new GetTags()
@@ -4735,6 +4721,8 @@ module Branch =
             new Command("get-externals", Description = "Retrieves a list of the most recent external references from the branch.")
             |> addCommonOptions
             |> addOption Options.maxCount
+            |> addOption Options.fullHashes
+            |> addOption Options.showSha256
             |> addOption Options.fullSha
 
         getExternalsCommand.Action <- new GetExternals()
