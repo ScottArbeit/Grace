@@ -39,7 +39,7 @@ class GetByBlake3HashParameters(BaseModel):
     repository_id: Optional[UUID] = Field(default=None, alias="RepositoryId")
     repository_name: Optional[StrictStr] = Field(default=None, alias="RepositoryName")
     directory_version_id: Optional[UUID] = Field(default=None, alias="DirectoryVersionId")
-    blake3_hash: Optional[Annotated[str, Field(strict=True)]] = Field(default=None, description="Lowercase or uppercase 64-character BLAKE3 version hash used for new version graph lookups.", alias="Blake3Hash")
+    blake3_hash: Optional[Annotated[str, Field(strict=True)]] = Field(default=None, description="Lowercase or uppercase 2- to 64-character BLAKE3 version hash prefix used for version graph lookups.", alias="Blake3Hash")
     __properties: ClassVar[List[str]] = ["CorrelationId", "Principal", "OwnerId", "OwnerName", "OrganizationId", "OrganizationName", "RepositoryId", "RepositoryName", "DirectoryVersionId", "Blake3Hash"]
 
     @field_validator('blake3_hash')
@@ -51,8 +51,8 @@ class GetByBlake3HashParameters(BaseModel):
         if not isinstance(value, str):
             value = str(value)
 
-        if not re.match(r"^[A-Fa-f0-9]{64}$", value):
-            raise ValueError(r"must validate the regular expression /^[A-Fa-f0-9]{64}$/")
+        if not re.match(r"^[A-Fa-f0-9]{2,64}$", value):
+            raise ValueError(r"must validate the regular expression /^[A-Fa-f0-9]{2,64}$/")
         return value
 
     model_config = ConfigDict(

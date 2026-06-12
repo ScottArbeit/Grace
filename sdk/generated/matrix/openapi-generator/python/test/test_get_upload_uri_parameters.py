@@ -45,7 +45,7 @@ class TestGetUploadUriParameters(unittest.TestCase):
                 repository_id = '',
                 repository_name = '',
                 file_versions = [
-                    {Class=FileVersion, RelativePath=src/App.fs, Sha256Hash=805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243, Blake3Hash=9A35D91B2F631BE9025DE753139B88F7B1E71385C412BC3986FF2F38F230841D, IsBinary=false, Size=128, CreatedAt=2026-06-04T18:15:00Z, BlobUri=, ContentReference={Kind=WholeFileContent}}
+                    {Class=FileVersion, RelativePath=src/App.fs, Sha256Hash=805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243, Blake3Hash=9A35D91B2F631BE9025DE753139B88F7B1E71385C412BC3986FF2F38F230841D, IsBinary=false, Size=128, CreatedAt=2026-06-04T18:15:00Z, BlobUri=, ContentReference={Class=FileContentReference, ReferenceType=WholeFileContent}}
                     ]
             )
         else:
