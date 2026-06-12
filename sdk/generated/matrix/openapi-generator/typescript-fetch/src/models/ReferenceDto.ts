@@ -52,13 +52,13 @@ export interface ReferenceDto {
      */
     directoryId?: string;
     /**
-     * Lowercase 64-character SHA-256 version hash persisted on version DTOs.
+     * Empty value or lowercase 64-character SHA-256 hash for legacy or default reference DTOs.
      * @type {string}
      * @memberof ReferenceDto
      */
     sha256Hash?: string;
     /**
-     * Lowercase 64-character BLAKE3 version hash persisted on new version graph DTOs.
+     * Empty value or lowercase 64-character BLAKE3 hash for legacy reference DTOs.
      * @type {string}
      * @memberof ReferenceDto
      */
