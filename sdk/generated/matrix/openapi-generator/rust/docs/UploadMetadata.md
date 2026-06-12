@@ -6,7 +6,7 @@ Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
 **relative_path** | **String** |  | 
 **blob_uri_with_sas_token** | **String** |  | 
-**sha256_hash** | **String** |  | 
+**sha256_hash** | **String** | Lowercase or uppercase 64-character SHA-256 version hash retained for compatibility. | 
 **content_reference** | [**models::FileContentReference**](FileContentReference.md) |  | 
 
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)

@@ -80,7 +80,7 @@ export interface BranchHashQueryParameters {
      */
     branchName?: string;
     /**
-     * 
+     * Lowercase or uppercase 64-character SHA-256 version hash retained for compatibility.
      * @type {string}
      * @memberof BranchHashQueryParameters
      */
@@ -92,7 +92,7 @@ export interface BranchHashQueryParameters {
      */
     referenceId?: string;
     /**
-     * 
+     * Lowercase or uppercase 64-character BLAKE3 version hash used for new version graph lookups.
      * @type {string}
      * @memberof BranchHashQueryParameters
      */
