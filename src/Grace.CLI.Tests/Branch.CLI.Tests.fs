@@ -13,6 +13,7 @@ open Grace.Types.Reference
 open NUnit.Framework
 open Spectre.Console
 open System
+open System.Collections.Generic
 open System.IO
 open System.Text.Json
 open System.Threading.Tasks
@@ -126,6 +127,81 @@ module BranchCommandTests =
                 }
             |]
         )
+
+    let private directorySha256Hash = Sha256Hash "111122223333444455556666777788889999aaaabbbbccccddddeeeeffff0000"
+
+    let private fileSha256Hash = Sha256Hash "aaaabbbbccccddddeeeeffff0000111122223333444455556666777788889999"
+
+    let private branchDirectoryWithFile () =
+        let file = FileVersion.Create "src/App.fs" fileSha256Hash String.Empty false 123L
+
+        let files = List<FileVersion>()
+        files.Add(file)
+
+        DirectoryVersion.Create
+            (Guid.NewGuid())
+            ownerId
+            organizationId
+            repositoryId
+            Constants.RootDirectoryPath
+            directorySha256Hash
+            (List<DirectoryVersionId>())
+            files
+            123L
+
+    [<Test>]
+    let ``list contents formatter uses short hashes by default`` () =
+        let parseResult = parse [| "branch"; "list-contents" |]
+        let displayMode = Common.HashOptions.bindVersionHashDisplayMode parseResult
+
+        Branch.formatListContentsSha256Hash displayMode directorySha256Hash
+        |> should equal "11112222"
+
+        let _, output =
+            captureOutput (fun () ->
+                Branch.printContents parseResult [| branchDirectoryWithFile () |]
+                0)
+
+        output |> should contain "11112222"
+        output |> should contain "aaaabbbb"
+
+        output
+        |> should not' (contain $"{directorySha256Hash}")
+
+        output
+        |> should not' (contain $"{fileSha256Hash}")
+
+    [<Test>]
+    let ``list contents formatter honors full hash display options`` () =
+        let parseResult =
+            parse [| "branch"
+                     "list-contents"
+                     "--full-hashes" |]
+
+        let displayMode = Common.HashOptions.bindVersionHashDisplayMode parseResult
+
+        Branch.formatListContentsSha256Hash displayMode directorySha256Hash
+        |> should equal $"{directorySha256Hash}"
+
+        let _, output =
+            captureOutput (fun () ->
+                Branch.printContents parseResult [| branchDirectoryWithFile () |]
+                0)
+
+        output |> should contain $"{directorySha256Hash}"
+        output |> should contain $"{fileSha256Hash}"
+
+    [<Test>]
+    let ``list contents formatter honors deprecated full sha display option`` () =
+        let parseResult =
+            parse [| "branch"
+                     "list-contents"
+                     "--full-sha" |]
+
+        let displayMode = Common.HashOptions.bindVersionHashDisplayMode parseResult
+
+        Branch.formatListContentsSha256Hash displayMode directorySha256Hash
+        |> should equal $"{directorySha256Hash}"
 
     [<Test>]
     let ``annotate handler maps options to parameters`` () =
