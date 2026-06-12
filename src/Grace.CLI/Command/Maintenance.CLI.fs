@@ -125,6 +125,21 @@ module Maintenance =
         rootHashFromIndex
         |> Option.orElse rootHashFromStatusMeta
 
+    let private tryGetRootBlake3Hash (graceStatus: GraceStatus) =
+        let rootHashFromIndex =
+            graceStatus.Index.Values
+            |> Seq.tryFind (fun directoryVersion -> directoryVersion.RelativePath = Constants.RootDirectoryPath)
+            |> Option.map (fun directoryVersion -> directoryVersion.Blake3Hash)
+
+        let rootHashFromStatusMeta =
+            if String.IsNullOrWhiteSpace(string graceStatus.RootDirectoryBlake3Hash) then
+                None
+            else
+                Some graceStatus.RootDirectoryBlake3Hash
+
+        rootHashFromIndex
+        |> Option.orElse rootHashFromStatusMeta
+
     let private getShortHash (sha256Hash: Sha256Hash) =
         if String.IsNullOrWhiteSpace(sha256Hash) then String.Empty
         elif sha256Hash.Length <= 8 then sha256Hash
@@ -153,6 +168,9 @@ module Maintenance =
             TotalFileSize = totalFileSize
             RootSha256Hash =
                 tryGetRootSha256Hash graceStatus
+                |> Option.map string
+            RootBlake3Hash =
+                tryGetRootBlake3Hash graceStatus
                 |> Option.map string
         }
 
