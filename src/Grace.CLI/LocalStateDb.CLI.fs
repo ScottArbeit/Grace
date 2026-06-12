@@ -700,6 +700,8 @@ module LocalStateDb =
             && graceStatus.Index.TryGetValue(graceStatus.RootDirectoryId, &rootDirectory)
         then
             rootDirectory.Blake3Hash
+        elif not (String.IsNullOrWhiteSpace(string graceStatus.RootDirectoryBlake3Hash)) then
+            graceStatus.RootDirectoryBlake3Hash
         else
             Blake3Hash String.Empty
 
@@ -1445,6 +1447,7 @@ module LocalStateDb =
                         Index = index
                         RootDirectoryId = meta.RootDirectoryId
                         RootDirectorySha256Hash = meta.RootDirectorySha256Hash
+                        RootDirectoryBlake3Hash = meta.RootDirectoryBlake3Hash
                         LastSuccessfulFileUpload = meta.LastSuccessfulFileUpload
                         LastSuccessfulDirectoryVersionUpload = meta.LastSuccessfulDirectoryVersionUpload
                     }
@@ -1657,6 +1660,7 @@ module LocalStateDb =
                                                 Index = index
                                                 RootDirectoryId = meta.RootDirectoryId
                                                 RootDirectorySha256Hash = meta.RootDirectorySha256Hash
+                                                RootDirectoryBlake3Hash = meta.RootDirectoryBlake3Hash
                                                 LastSuccessfulFileUpload = meta.LastSuccessfulFileUpload
                                                 LastSuccessfulDirectoryVersionUpload = meta.LastSuccessfulDirectoryVersionUpload
                                             }
