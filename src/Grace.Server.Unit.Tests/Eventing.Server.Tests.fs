@@ -48,6 +48,7 @@ type AutomationEventingTests() =
                         branchId,
                         Guid.NewGuid(),
                         Sha256Hash String.Empty,
+                        Blake3Hash String.Empty,
                         ReferenceType.Promotion,
                         "promotion",
                         [
@@ -104,6 +105,7 @@ type AutomationEventingTests() =
                         Guid.NewGuid(),
                         Guid.NewGuid(),
                         Sha256Hash String.Empty,
+                        Blake3Hash String.Empty,
                         ReferenceType.Promotion,
                         "promotion",
                         [

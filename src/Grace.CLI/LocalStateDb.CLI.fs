@@ -17,7 +17,7 @@ open SQLitePCL
 
 module LocalStateDb =
     [<Literal>]
-    let private SchemaVersion = "2"
+    let private SchemaVersion = "4"
 
     [<Literal>]
     let private BusyTimeoutMs = 30000
@@ -147,19 +147,19 @@ module LocalStateDb =
     let private schemaStatements =
         [|
             "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);"
-            "CREATE TABLE IF NOT EXISTS status_meta (id INTEGER PRIMARY KEY CHECK (id = 1), root_directory_version_id TEXT NOT NULL, root_directory_sha256_hash TEXT NOT NULL, last_successful_file_upload_unix_ticks INTEGER NOT NULL, last_successful_directory_version_upload_unix_ticks INTEGER NOT NULL);"
-            "CREATE TABLE IF NOT EXISTS status_directories (relative_path TEXT PRIMARY KEY, parent_path TEXT NOT NULL, directory_version_id TEXT NOT NULL, sha256_hash TEXT NOT NULL, size_bytes INTEGER NOT NULL, created_at_unix_ticks INTEGER NOT NULL, last_write_time_utc_ticks INTEGER NOT NULL);"
+            "CREATE TABLE IF NOT EXISTS status_meta (id INTEGER PRIMARY KEY CHECK (id = 1), root_directory_version_id TEXT NOT NULL, root_directory_sha256_hash TEXT NOT NULL, root_directory_blake3_hash TEXT NOT NULL, last_successful_file_upload_unix_ticks INTEGER NOT NULL, last_successful_directory_version_upload_unix_ticks INTEGER NOT NULL);"
+            "CREATE TABLE IF NOT EXISTS status_directories (relative_path TEXT PRIMARY KEY, parent_path TEXT NOT NULL, directory_version_id TEXT NOT NULL, sha256_hash TEXT NOT NULL, blake3_hash TEXT NOT NULL, size_bytes INTEGER NOT NULL, created_at_unix_ticks INTEGER NOT NULL, last_write_time_utc_ticks INTEGER NOT NULL);"
             "CREATE INDEX IF NOT EXISTS ix_status_directories_parent ON status_directories(parent_path);"
             "CREATE UNIQUE INDEX IF NOT EXISTS ix_status_directories_directory_version_id ON status_directories(directory_version_id);"
-            "CREATE TABLE IF NOT EXISTS status_files (relative_path TEXT PRIMARY KEY, directory_path TEXT NOT NULL, directory_version_id TEXT NOT NULL, sha256_hash TEXT NOT NULL, is_binary INTEGER NOT NULL, size_bytes INTEGER NOT NULL, created_at_unix_ticks INTEGER NOT NULL, uploaded_to_object_storage INTEGER NOT NULL, last_write_time_utc_ticks INTEGER NOT NULL, FOREIGN KEY (directory_version_id) REFERENCES status_directories(directory_version_id) ON DELETE CASCADE);"
+            "CREATE TABLE IF NOT EXISTS status_files (relative_path TEXT PRIMARY KEY, directory_path TEXT NOT NULL, directory_version_id TEXT NOT NULL, sha256_hash TEXT NOT NULL, blake3_hash TEXT NOT NULL, is_binary INTEGER NOT NULL, size_bytes INTEGER NOT NULL, created_at_unix_ticks INTEGER NOT NULL, uploaded_to_object_storage INTEGER NOT NULL, last_write_time_utc_ticks INTEGER NOT NULL, FOREIGN KEY (directory_version_id) REFERENCES status_directories(directory_version_id) ON DELETE CASCADE);"
             "CREATE INDEX IF NOT EXISTS ix_status_files_directory_path ON status_files(directory_path);"
             "CREATE INDEX IF NOT EXISTS ix_status_files_directory_version_id ON status_files(directory_version_id);"
             "CREATE INDEX IF NOT EXISTS ix_status_files_sha256 ON status_files(sha256_hash);"
-            "CREATE TABLE IF NOT EXISTS object_cache_directories (directory_version_id TEXT PRIMARY KEY, relative_path TEXT NOT NULL, sha256_hash TEXT NOT NULL, size_bytes INTEGER NOT NULL, created_at_unix_ticks INTEGER NOT NULL, last_write_time_utc_ticks INTEGER NOT NULL);"
+            "CREATE TABLE IF NOT EXISTS object_cache_directories (directory_version_id TEXT PRIMARY KEY, relative_path TEXT NOT NULL, sha256_hash TEXT NOT NULL, blake3_hash TEXT NOT NULL, size_bytes INTEGER NOT NULL, created_at_unix_ticks INTEGER NOT NULL, last_write_time_utc_ticks INTEGER NOT NULL);"
             "CREATE INDEX IF NOT EXISTS ix_object_cache_directories_relative_path ON object_cache_directories(relative_path);"
             "CREATE TABLE IF NOT EXISTS object_cache_directory_children (parent_directory_version_id TEXT NOT NULL, child_directory_version_id TEXT NOT NULL, ordinal INTEGER NOT NULL, PRIMARY KEY (parent_directory_version_id, child_directory_version_id), FOREIGN KEY (parent_directory_version_id) REFERENCES object_cache_directories(directory_version_id) ON DELETE CASCADE, FOREIGN KEY (child_directory_version_id) REFERENCES object_cache_directories(directory_version_id) ON DELETE RESTRICT);"
             "CREATE INDEX IF NOT EXISTS ix_object_cache_children_parent ON object_cache_directory_children(parent_directory_version_id);"
-            "CREATE TABLE IF NOT EXISTS object_cache_directory_files (directory_version_id TEXT NOT NULL, relative_path TEXT NOT NULL, sha256_hash TEXT NOT NULL, is_binary INTEGER NOT NULL, size_bytes INTEGER NOT NULL, created_at_unix_ticks INTEGER NOT NULL, uploaded_to_object_storage INTEGER NOT NULL, last_write_time_utc_ticks INTEGER NOT NULL, PRIMARY KEY (directory_version_id, relative_path), FOREIGN KEY (directory_version_id) REFERENCES object_cache_directories(directory_version_id) ON DELETE CASCADE);"
+            "CREATE TABLE IF NOT EXISTS object_cache_directory_files (directory_version_id TEXT NOT NULL, relative_path TEXT NOT NULL, sha256_hash TEXT NOT NULL, blake3_hash TEXT NOT NULL, is_binary INTEGER NOT NULL, size_bytes INTEGER NOT NULL, created_at_unix_ticks INTEGER NOT NULL, uploaded_to_object_storage INTEGER NOT NULL, last_write_time_utc_ticks INTEGER NOT NULL, PRIMARY KEY (directory_version_id, relative_path), FOREIGN KEY (directory_version_id) REFERENCES object_cache_directories(directory_version_id) ON DELETE CASCADE);"
             "CREATE INDEX IF NOT EXISTS ix_object_cache_files_path_hash ON object_cache_directory_files(relative_path, sha256_hash);"
         |]
 
@@ -350,6 +350,18 @@ module LocalStateDb =
 
         violations |> Seq.toArray
 
+    let private columnExists (connection: SqliteConnection) tableName columnName =
+        use command = connection.CreateCommand()
+        command.CommandText <- $"PRAGMA table_info({tableName});"
+        use reader = command.ExecuteReader()
+        let mutable found = false
+
+        while reader.Read() do
+            if StringComparer.OrdinalIgnoreCase.Equals(reader.GetString(1), columnName) then
+                found <- true
+
+        found
+
     let private inspectObjectCacheReadOnly (connection: SqliteConnection) =
         try
             for tableName in
@@ -465,12 +477,15 @@ module LocalStateDb =
 
         executeNonQueryWithParams
             connection
-            "INSERT OR IGNORE INTO status_meta (id, root_directory_version_id, root_directory_sha256_hash, last_successful_file_upload_unix_ticks, last_successful_directory_version_upload_unix_ticks) VALUES (1, $root_id, $root_hash, $last_file, $last_dir);"
+            "INSERT OR IGNORE INTO status_meta (id, root_directory_version_id, root_directory_sha256_hash, root_directory_blake3_hash, last_successful_file_upload_unix_ticks, last_successful_directory_version_upload_unix_ticks) VALUES (1, $root_id, $root_sha256_hash, $root_blake3_hash, $last_file, $last_dir);"
             (fun parameters ->
                 parameters.AddWithValue("$root_id", defaultStatus.RootDirectoryId.ToString())
                 |> ignore
 
-                parameters.AddWithValue("$root_hash", defaultStatus.RootDirectorySha256Hash)
+                parameters.AddWithValue("$root_sha256_hash", defaultStatus.RootDirectorySha256Hash)
+                |> ignore
+
+                parameters.AddWithValue("$root_blake3_hash", Blake3Hash String.Empty)
                 |> ignore
 
                 parameters.AddWithValue("$last_file", defaultStatus.LastSuccessfulFileUpload.ToUnixTimeTicks())
@@ -478,6 +493,25 @@ module LocalStateDb =
 
                 parameters.AddWithValue("$last_dir", defaultStatus.LastSuccessfulDirectoryVersionUpload.ToUnixTimeTicks())
                 |> ignore)
+
+    let private hasRequiredWritableSchema (connection: SqliteConnection) =
+        columnExists connection "status_meta" "root_directory_blake3_hash"
+        && columnExists connection "status_directories" "blake3_hash"
+        && columnExists connection "status_files" "blake3_hash"
+        && columnExists connection "object_cache_directories" "blake3_hash"
+        && columnExists connection "object_cache_directory_files" "blake3_hash"
+
+    let private hasEmptyWritableStatusBlake3Rows (connection: SqliteConnection) =
+        if columnExists connection "status_directories" "blake3_hash"
+           && columnExists connection "status_files" "blake3_hash" then
+            use command = connection.CreateCommand()
+
+            command.CommandText <-
+                "SELECT EXISTS(SELECT 1 FROM status_directories WHERE TRIM(blake3_hash) = '' LIMIT 1) OR EXISTS(SELECT 1 FROM status_files WHERE TRIM(blake3_hash) = '' LIMIT 1);"
+
+            Convert.ToInt32(command.ExecuteScalar()) <> 0
+        else
+            false
 
     let private recreateDatabase (dbPath: string) =
         try
@@ -560,6 +594,16 @@ module LocalStateDb =
                                                     setMetaValue connection "schema_version" SchemaVersion
                                                     setMetaValue connection "created_at_unix_ticks" $"{createdAtTicks}"
 
+                                                if
+                                                    not recreate
+                                                    && not (hasRequiredWritableSchema connection)
+                                                then
+                                                    recreate <- true
+
+                                                if not recreate
+                                                   && hasEmptyWritableStatusBlake3Rows connection then
+                                                    recreate <- true
+
                                                 if not recreate then
                                                     logTrace "status_meta ensuring default row"
                                                     insertStatusMetaIfMissing connection
@@ -594,6 +638,7 @@ module LocalStateDb =
         {
             RootDirectoryId: DirectoryVersionId
             RootDirectorySha256Hash: Sha256Hash
+            RootDirectoryBlake3Hash: Blake3Hash
             LastSuccessfulFileUpload: Instant
             LastSuccessfulDirectoryVersionUpload: Instant
         }
@@ -602,19 +647,21 @@ module LocalStateDb =
         use cmd = connection.CreateCommand()
 
         cmd.CommandText <-
-            "SELECT root_directory_version_id, root_directory_sha256_hash, last_successful_file_upload_unix_ticks, last_successful_directory_version_upload_unix_ticks FROM status_meta WHERE id = 1;"
+            "SELECT root_directory_version_id, root_directory_sha256_hash, root_directory_blake3_hash, last_successful_file_upload_unix_ticks, last_successful_directory_version_upload_unix_ticks FROM status_meta WHERE id = 1;"
 
         use reader = cmd.ExecuteReader()
 
         if reader.Read() then
             let rootId = Guid.Parse(reader.GetString(0))
-            let rootHash = reader.GetString(1)
-            let lastFile = Instant.FromUnixTimeTicks(reader.GetInt64(2))
-            let lastDir = Instant.FromUnixTimeTicks(reader.GetInt64(3))
+            let rootSha256Hash = reader.GetString(1)
+            let rootBlake3Hash = reader.GetString(2)
+            let lastFile = Instant.FromUnixTimeTicks(reader.GetInt64(3))
+            let lastDir = Instant.FromUnixTimeTicks(reader.GetInt64(4))
 
             {
                 RootDirectoryId = rootId
-                RootDirectorySha256Hash = rootHash
+                RootDirectorySha256Hash = rootSha256Hash
+                RootDirectoryBlake3Hash = rootBlake3Hash
                 LastSuccessfulFileUpload = lastFile
                 LastSuccessfulDirectoryVersionUpload = lastDir
             }
@@ -637,6 +684,7 @@ module LocalStateDb =
                         {
                             RootDirectoryId = defaultStatus.RootDirectoryId
                             RootDirectorySha256Hash = defaultStatus.RootDirectorySha256Hash
+                            RootDirectoryBlake3Hash = Blake3Hash String.Empty
                             LastSuccessfulFileUpload = defaultStatus.LastSuccessfulFileUpload
                             LastSuccessfulDirectoryVersionUpload = defaultStatus.LastSuccessfulDirectoryVersionUpload
                         }
@@ -644,15 +692,53 @@ module LocalStateDb =
                 connection.Dispose()
         }
 
+    let private getRootDirectoryBlake3Hash (graceStatus: GraceStatus) =
+        let mutable rootDirectory = Unchecked.defaultof<LocalDirectoryVersion>
+
+        if
+            not (isNull graceStatus.Index)
+            && graceStatus.Index.TryGetValue(graceStatus.RootDirectoryId, &rootDirectory)
+        then
+            rootDirectory.Blake3Hash
+        elif not (String.IsNullOrWhiteSpace(string graceStatus.RootDirectoryBlake3Hash)) then
+            graceStatus.RootDirectoryBlake3Hash
+        else
+            Blake3Hash String.Empty
+
     let private setStatusMeta (connection: SqliteConnection) (graceStatus: GraceStatus) =
+        let incomingRootDirectoryBlake3Hash = getRootDirectoryBlake3Hash graceStatus
+
+        let statusHasRootIdentity =
+            graceStatus.RootDirectoryId
+            <> DirectoryVersionId.Empty
+            || not (String.IsNullOrWhiteSpace(string graceStatus.RootDirectorySha256Hash))
+
+        let rootDirectoryBlake3Hash =
+            if not (String.IsNullOrWhiteSpace(string incomingRootDirectoryBlake3Hash)) then
+                incomingRootDirectoryBlake3Hash
+            elif not statusHasRootIdentity then
+                incomingRootDirectoryBlake3Hash
+            else
+                match readStatusMetaInternal connection with
+                | Some meta when
+                    meta.RootDirectoryId = graceStatus.RootDirectoryId
+                    && meta.RootDirectorySha256Hash = graceStatus.RootDirectorySha256Hash
+                    && not (String.IsNullOrWhiteSpace(string meta.RootDirectoryBlake3Hash))
+                    ->
+                    meta.RootDirectoryBlake3Hash
+                | _ -> incomingRootDirectoryBlake3Hash
+
         executeNonQueryWithParams
             connection
-            "INSERT OR REPLACE INTO status_meta (id, root_directory_version_id, root_directory_sha256_hash, last_successful_file_upload_unix_ticks, last_successful_directory_version_upload_unix_ticks) VALUES (1, $root_id, $root_hash, $last_file, $last_dir);"
+            "INSERT OR REPLACE INTO status_meta (id, root_directory_version_id, root_directory_sha256_hash, root_directory_blake3_hash, last_successful_file_upload_unix_ticks, last_successful_directory_version_upload_unix_ticks) VALUES (1, $root_id, $root_sha256_hash, $root_blake3_hash, $last_file, $last_dir);"
             (fun parameters ->
                 parameters.AddWithValue("$root_id", graceStatus.RootDirectoryId.ToString())
                 |> ignore
 
-                parameters.AddWithValue("$root_hash", graceStatus.RootDirectorySha256Hash)
+                parameters.AddWithValue("$root_sha256_hash", graceStatus.RootDirectorySha256Hash)
+                |> ignore
+
+                parameters.AddWithValue("$root_blake3_hash", rootDirectoryBlake3Hash)
                 |> ignore
 
                 parameters.AddWithValue("$last_file", graceStatus.LastSuccessfulFileUpload.ToUnixTimeTicks())
@@ -681,7 +767,7 @@ module LocalStateDb =
                                 use directoryCommand = connection.CreateCommand()
 
                                 directoryCommand.CommandText <-
-                                    "INSERT OR REPLACE INTO status_directories (relative_path, parent_path, directory_version_id, sha256_hash, size_bytes, created_at_unix_ticks, last_write_time_utc_ticks) VALUES ($relative_path, $parent_path, $directory_version_id, $sha256_hash, $size_bytes, $created_at, $last_write);"
+                                    "INSERT OR REPLACE INTO status_directories (relative_path, parent_path, directory_version_id, sha256_hash, blake3_hash, size_bytes, created_at_unix_ticks, last_write_time_utc_ticks) VALUES ($relative_path, $parent_path, $directory_version_id, $sha256_hash, $blake3_hash, $size_bytes, $created_at, $last_write);"
 
                                 directoryCommand.Parameters.Add("$relative_path", SqliteType.Text)
                                 |> ignore
@@ -693,6 +779,9 @@ module LocalStateDb =
                                 |> ignore
 
                                 directoryCommand.Parameters.Add("$sha256_hash", SqliteType.Text)
+                                |> ignore
+
+                                directoryCommand.Parameters.Add("$blake3_hash", SqliteType.Text)
                                 |> ignore
 
                                 directoryCommand.Parameters.Add("$size_bytes", SqliteType.Integer)
@@ -707,7 +796,7 @@ module LocalStateDb =
                                 use fileCommand = connection.CreateCommand()
 
                                 fileCommand.CommandText <-
-                                    "INSERT OR REPLACE INTO status_files (relative_path, directory_path, directory_version_id, sha256_hash, is_binary, size_bytes, created_at_unix_ticks, uploaded_to_object_storage, last_write_time_utc_ticks) VALUES ($relative_path, $directory_path, $directory_version_id, $sha256_hash, $is_binary, $size_bytes, $created_at, $uploaded, $last_write);"
+                                    "INSERT OR REPLACE INTO status_files (relative_path, directory_path, directory_version_id, sha256_hash, blake3_hash, is_binary, size_bytes, created_at_unix_ticks, uploaded_to_object_storage, last_write_time_utc_ticks) VALUES ($relative_path, $directory_path, $directory_version_id, $sha256_hash, $blake3_hash, $is_binary, $size_bytes, $created_at, $uploaded, $last_write);"
 
                                 fileCommand.Parameters.Add("$relative_path", SqliteType.Text)
                                 |> ignore
@@ -719,6 +808,9 @@ module LocalStateDb =
                                 |> ignore
 
                                 fileCommand.Parameters.Add("$sha256_hash", SqliteType.Text)
+                                |> ignore
+
+                                fileCommand.Parameters.Add("$blake3_hash", SqliteType.Text)
                                 |> ignore
 
                                 fileCommand.Parameters.Add("$is_binary", SqliteType.Integer)
@@ -747,6 +839,7 @@ module LocalStateDb =
                                     directoryCommand.Parameters["$parent_path"].Value <- parentPath
                                     directoryCommand.Parameters["$directory_version_id"].Value <- directory.DirectoryVersionId.ToString()
                                     directoryCommand.Parameters["$sha256_hash"].Value <- directory.Sha256Hash
+                                    directoryCommand.Parameters["$blake3_hash"].Value <- directory.Blake3Hash
                                     directoryCommand.Parameters["$size_bytes"].Value <- directory.Size
                                     directoryCommand.Parameters["$created_at"].Value <- directory.CreatedAt.ToUnixTimeTicks()
                                     directoryCommand.Parameters["$last_write"].Value <- directory.LastWriteTimeUtc.Ticks
@@ -758,6 +851,7 @@ module LocalStateDb =
                                         fileCommand.Parameters["$directory_path"].Value <- directory.RelativePath
                                         fileCommand.Parameters["$directory_version_id"].Value <- directory.DirectoryVersionId.ToString()
                                         fileCommand.Parameters["$sha256_hash"].Value <- file.Sha256Hash
+                                        fileCommand.Parameters["$blake3_hash"].Value <- file.Blake3Hash
                                         fileCommand.Parameters["$is_binary"].Value <- if file.IsBinary then 1 else 0
                                         fileCommand.Parameters["$size_bytes"].Value <- file.Size
                                         fileCommand.Parameters["$created_at"].Value <- file.CreatedAt.ToUnixTimeTicks()
@@ -803,7 +897,7 @@ module LocalStateDb =
                                 use directoryCommand = connection.CreateCommand()
 
                                 directoryCommand.CommandText <-
-                                    "INSERT INTO object_cache_directories (directory_version_id, relative_path, sha256_hash, size_bytes, created_at_unix_ticks, last_write_time_utc_ticks) VALUES ($directory_version_id, $relative_path, $sha256_hash, $size_bytes, $created_at, $last_write) ON CONFLICT(directory_version_id) DO UPDATE SET relative_path = excluded.relative_path, sha256_hash = excluded.sha256_hash, size_bytes = excluded.size_bytes, created_at_unix_ticks = excluded.created_at_unix_ticks, last_write_time_utc_ticks = excluded.last_write_time_utc_ticks;"
+                                    "INSERT INTO object_cache_directories (directory_version_id, relative_path, sha256_hash, blake3_hash, size_bytes, created_at_unix_ticks, last_write_time_utc_ticks) VALUES ($directory_version_id, $relative_path, $sha256_hash, $blake3_hash, $size_bytes, $created_at, $last_write) ON CONFLICT(directory_version_id) DO UPDATE SET relative_path = excluded.relative_path, sha256_hash = excluded.sha256_hash, blake3_hash = excluded.blake3_hash, size_bytes = excluded.size_bytes, created_at_unix_ticks = excluded.created_at_unix_ticks, last_write_time_utc_ticks = excluded.last_write_time_utc_ticks;"
 
                                 directoryCommand.Parameters.Add("$directory_version_id", SqliteType.Text)
                                 |> ignore
@@ -812,6 +906,9 @@ module LocalStateDb =
                                 |> ignore
 
                                 directoryCommand.Parameters.Add("$sha256_hash", SqliteType.Text)
+                                |> ignore
+
+                                directoryCommand.Parameters.Add("$blake3_hash", SqliteType.Text)
                                 |> ignore
 
                                 directoryCommand.Parameters.Add("$size_bytes", SqliteType.Integer)
@@ -854,7 +951,7 @@ module LocalStateDb =
                                 use insertFileCommand = connection.CreateCommand()
 
                                 insertFileCommand.CommandText <-
-                                    "INSERT INTO object_cache_directory_files (directory_version_id, relative_path, sha256_hash, is_binary, size_bytes, created_at_unix_ticks, uploaded_to_object_storage, last_write_time_utc_ticks) VALUES ($directory_version_id, $relative_path, $sha256_hash, $is_binary, $size_bytes, $created_at, $uploaded, $last_write) ON CONFLICT(directory_version_id, relative_path) DO UPDATE SET sha256_hash = excluded.sha256_hash, is_binary = excluded.is_binary, size_bytes = excluded.size_bytes, created_at_unix_ticks = excluded.created_at_unix_ticks, uploaded_to_object_storage = excluded.uploaded_to_object_storage, last_write_time_utc_ticks = excluded.last_write_time_utc_ticks;"
+                                    "INSERT INTO object_cache_directory_files (directory_version_id, relative_path, sha256_hash, blake3_hash, is_binary, size_bytes, created_at_unix_ticks, uploaded_to_object_storage, last_write_time_utc_ticks) VALUES ($directory_version_id, $relative_path, $sha256_hash, $blake3_hash, $is_binary, $size_bytes, $created_at, $uploaded, $last_write) ON CONFLICT(directory_version_id, relative_path) DO UPDATE SET sha256_hash = excluded.sha256_hash, blake3_hash = excluded.blake3_hash, is_binary = excluded.is_binary, size_bytes = excluded.size_bytes, created_at_unix_ticks = excluded.created_at_unix_ticks, uploaded_to_object_storage = excluded.uploaded_to_object_storage, last_write_time_utc_ticks = excluded.last_write_time_utc_ticks;"
 
                                 insertFileCommand.Parameters.Add("$directory_version_id", SqliteType.Text)
                                 |> ignore
@@ -863,6 +960,9 @@ module LocalStateDb =
                                 |> ignore
 
                                 insertFileCommand.Parameters.Add("$sha256_hash", SqliteType.Text)
+                                |> ignore
+
+                                insertFileCommand.Parameters.Add("$blake3_hash", SqliteType.Text)
                                 |> ignore
 
                                 insertFileCommand.Parameters.Add("$is_binary", SqliteType.Integer)
@@ -887,6 +987,7 @@ module LocalStateDb =
                                     directoryCommand.Parameters["$directory_version_id"].Value <- directoryVersionId
                                     directoryCommand.Parameters["$relative_path"].Value <- directory.RelativePath
                                     directoryCommand.Parameters["$sha256_hash"].Value <- directory.Sha256Hash
+                                    directoryCommand.Parameters["$blake3_hash"].Value <- directory.Blake3Hash
                                     directoryCommand.Parameters["$size_bytes"].Value <- directory.Size
                                     directoryCommand.Parameters["$created_at"].Value <- directory.CreatedAt.ToUnixTimeTicks()
                                     directoryCommand.Parameters["$last_write"].Value <- directory.LastWriteTimeUtc.Ticks
@@ -922,6 +1023,7 @@ module LocalStateDb =
                                         insertFileCommand.Parameters["$directory_version_id"].Value <- directory.DirectoryVersionId.ToString()
                                         insertFileCommand.Parameters["$relative_path"].Value <- file.RelativePath
                                         insertFileCommand.Parameters["$sha256_hash"].Value <- file.Sha256Hash
+                                        insertFileCommand.Parameters["$blake3_hash"].Value <- file.Blake3Hash
                                         insertFileCommand.Parameters["$is_binary"].Value <- if file.IsBinary then 1 else 0
                                         insertFileCommand.Parameters["$size_bytes"].Value <- file.Size
                                         insertFileCommand.Parameters["$created_at"].Value <- file.CreatedAt.ToUnixTimeTicks()
@@ -1031,7 +1133,7 @@ module LocalStateDb =
                                 use directoryCommand = connection.CreateCommand()
 
                                 directoryCommand.CommandText <-
-                                    "INSERT OR REPLACE INTO status_directories (relative_path, parent_path, directory_version_id, sha256_hash, size_bytes, created_at_unix_ticks, last_write_time_utc_ticks) VALUES ($relative_path, $parent_path, $directory_version_id, $sha256_hash, $size_bytes, $created_at, $last_write);"
+                                    "INSERT OR REPLACE INTO status_directories (relative_path, parent_path, directory_version_id, sha256_hash, blake3_hash, size_bytes, created_at_unix_ticks, last_write_time_utc_ticks) VALUES ($relative_path, $parent_path, $directory_version_id, $sha256_hash, $blake3_hash, $size_bytes, $created_at, $last_write);"
 
                                 directoryCommand.Parameters.Add("$relative_path", SqliteType.Text)
                                 |> ignore
@@ -1043,6 +1145,9 @@ module LocalStateDb =
                                 |> ignore
 
                                 directoryCommand.Parameters.Add("$sha256_hash", SqliteType.Text)
+                                |> ignore
+
+                                directoryCommand.Parameters.Add("$blake3_hash", SqliteType.Text)
                                 |> ignore
 
                                 directoryCommand.Parameters.Add("$size_bytes", SqliteType.Integer)
@@ -1065,6 +1170,7 @@ module LocalStateDb =
                                     directoryCommand.Parameters["$parent_path"].Value <- parentPath
                                     directoryCommand.Parameters["$directory_version_id"].Value <- directory.DirectoryVersionId.ToString()
                                     directoryCommand.Parameters["$sha256_hash"].Value <- directory.Sha256Hash
+                                    directoryCommand.Parameters["$blake3_hash"].Value <- directory.Blake3Hash
                                     directoryCommand.Parameters["$size_bytes"].Value <- directory.Size
                                     directoryCommand.Parameters["$created_at"].Value <- directory.CreatedAt.ToUnixTimeTicks()
                                     directoryCommand.Parameters["$last_write"].Value <- directory.LastWriteTimeUtc.Ticks
@@ -1073,7 +1179,7 @@ module LocalStateDb =
                                 use fileUpsertCommand = connection.CreateCommand()
 
                                 fileUpsertCommand.CommandText <-
-                                    "INSERT OR REPLACE INTO status_files (relative_path, directory_path, directory_version_id, sha256_hash, is_binary, size_bytes, created_at_unix_ticks, uploaded_to_object_storage, last_write_time_utc_ticks) VALUES ($relative_path, $directory_path, $directory_version_id, $sha256_hash, $is_binary, $size_bytes, $created_at, $uploaded, $last_write);"
+                                    "INSERT OR REPLACE INTO status_files (relative_path, directory_path, directory_version_id, sha256_hash, blake3_hash, is_binary, size_bytes, created_at_unix_ticks, uploaded_to_object_storage, last_write_time_utc_ticks) VALUES ($relative_path, $directory_path, $directory_version_id, $sha256_hash, $blake3_hash, $is_binary, $size_bytes, $created_at, $uploaded, $last_write);"
 
                                 fileUpsertCommand.Parameters.Add("$relative_path", SqliteType.Text)
                                 |> ignore
@@ -1085,6 +1191,9 @@ module LocalStateDb =
                                 |> ignore
 
                                 fileUpsertCommand.Parameters.Add("$sha256_hash", SqliteType.Text)
+                                |> ignore
+
+                                fileUpsertCommand.Parameters.Add("$blake3_hash", SqliteType.Text)
                                 |> ignore
 
                                 fileUpsertCommand.Parameters.Add("$is_binary", SqliteType.Integer)
@@ -1125,6 +1234,7 @@ module LocalStateDb =
                                     fileUpsertCommand.Parameters["$directory_path"].Value <- directory.RelativePath
                                     fileUpsertCommand.Parameters["$directory_version_id"].Value <- directory.DirectoryVersionId.ToString()
                                     fileUpsertCommand.Parameters["$sha256_hash"].Value <- file.Sha256Hash
+                                    fileUpsertCommand.Parameters["$blake3_hash"].Value <- file.Blake3Hash
                                     fileUpsertCommand.Parameters["$is_binary"].Value <- if file.IsBinary then 1 else 0
                                     fileUpsertCommand.Parameters["$size_bytes"].Value <- file.Size
                                     fileUpsertCommand.Parameters["$created_at"].Value <- file.CreatedAt.ToUnixTimeTicks()
@@ -1158,6 +1268,7 @@ module LocalStateDb =
             ParentPath: string
             DirectoryVersionId: DirectoryVersionId
             Sha256Hash: Sha256Hash
+            Blake3Hash: Blake3Hash
             SizeBytes: int64
             CreatedAt: Instant
             LastWriteTimeUtc: DateTime
@@ -1168,6 +1279,7 @@ module LocalStateDb =
             RelativePath: string
             DirectoryVersionId: DirectoryVersionId
             Sha256Hash: Sha256Hash
+            Blake3Hash: Blake3Hash
             IsBinary: bool
             SizeBytes: int64
             CreatedAt: Instant
@@ -1190,6 +1302,7 @@ module LocalStateDb =
                         {
                             RootDirectoryId = defaultStatus.RootDirectoryId
                             RootDirectorySha256Hash = defaultStatus.RootDirectorySha256Hash
+                            RootDirectoryBlake3Hash = Blake3Hash String.Empty
                             LastSuccessfulFileUpload = defaultStatus.LastSuccessfulFileUpload
                             LastSuccessfulDirectoryVersionUpload = defaultStatus.LastSuccessfulDirectoryVersionUpload
                         }
@@ -1200,7 +1313,7 @@ module LocalStateDb =
                 use directoryCommand = connection.CreateCommand()
 
                 directoryCommand.CommandText <-
-                    "SELECT relative_path, parent_path, directory_version_id, sha256_hash, size_bytes, created_at_unix_ticks, last_write_time_utc_ticks FROM status_directories;"
+                    "SELECT relative_path, parent_path, directory_version_id, sha256_hash, blake3_hash, size_bytes, created_at_unix_ticks, last_write_time_utc_ticks FROM status_directories;"
 
                 use directoryReader = directoryCommand.ExecuteReader()
 
@@ -1209,9 +1322,10 @@ module LocalStateDb =
                     let parentPath = directoryReader.GetString(1)
                     let directoryVersionId = Guid.Parse(directoryReader.GetString(2))
                     let sha256Hash = directoryReader.GetString(3)
-                    let sizeBytes = directoryReader.GetInt64(4)
-                    let createdAt = Instant.FromUnixTimeTicks(directoryReader.GetInt64(5))
-                    let lastWriteTimeUtc = DateTime(directoryReader.GetInt64(6), DateTimeKind.Utc)
+                    let blake3Hash = directoryReader.GetString(4)
+                    let sizeBytes = directoryReader.GetInt64(5)
+                    let createdAt = Instant.FromUnixTimeTicks(directoryReader.GetInt64(6))
+                    let lastWriteTimeUtc = DateTime(directoryReader.GetInt64(7), DateTimeKind.Utc)
 
                     directories.Add(
                         {
@@ -1219,6 +1333,7 @@ module LocalStateDb =
                             ParentPath = parentPath
                             DirectoryVersionId = directoryVersionId
                             Sha256Hash = sha256Hash
+                            Blake3Hash = blake3Hash
                             SizeBytes = sizeBytes
                             CreatedAt = createdAt
                             LastWriteTimeUtc = lastWriteTimeUtc
@@ -1228,7 +1343,7 @@ module LocalStateDb =
                 use fileCommand = connection.CreateCommand()
 
                 fileCommand.CommandText <-
-                    "SELECT relative_path, directory_version_id, sha256_hash, is_binary, size_bytes, created_at_unix_ticks, uploaded_to_object_storage, last_write_time_utc_ticks FROM status_files;"
+                    "SELECT relative_path, directory_version_id, sha256_hash, blake3_hash, is_binary, size_bytes, created_at_unix_ticks, uploaded_to_object_storage, last_write_time_utc_ticks FROM status_files;"
 
                 use fileReader = fileCommand.ExecuteReader()
 
@@ -1236,17 +1351,19 @@ module LocalStateDb =
                     let relativePath = fileReader.GetString(0)
                     let directoryVersionId = Guid.Parse(fileReader.GetString(1))
                     let sha256Hash = fileReader.GetString(2)
-                    let isBinary = fileReader.GetInt64(3) = 1L
-                    let sizeBytes = fileReader.GetInt64(4)
-                    let createdAt = Instant.FromUnixTimeTicks(fileReader.GetInt64(5))
-                    let uploaded = fileReader.GetInt64(6) = 1L
-                    let lastWriteTimeUtc = DateTime(fileReader.GetInt64(7), DateTimeKind.Utc)
+                    let blake3Hash = fileReader.GetString(3)
+                    let isBinary = fileReader.GetInt64(4) = 1L
+                    let sizeBytes = fileReader.GetInt64(5)
+                    let createdAt = Instant.FromUnixTimeTicks(fileReader.GetInt64(6))
+                    let uploaded = fileReader.GetInt64(7) = 1L
+                    let lastWriteTimeUtc = DateTime(fileReader.GetInt64(8), DateTimeKind.Utc)
 
                     files.Add(
                         {
                             RelativePath = relativePath
                             DirectoryVersionId = directoryVersionId
                             Sha256Hash = sha256Hash
+                            Blake3Hash = blake3Hash
                             IsBinary = isBinary
                             SizeBytes = sizeBytes
                             CreatedAt = createdAt
@@ -1271,9 +1388,10 @@ module LocalStateDb =
                 files
                 |> Seq.iter (fun file ->
                     let localFile =
-                        LocalFileVersion.Create
+                        LocalFileVersion.CreateWithHashes
                             file.RelativePath
                             file.Sha256Hash
+                            file.Blake3Hash
                             file.IsBinary
                             file.SizeBytes
                             file.CreatedAt
@@ -1308,13 +1426,14 @@ module LocalStateDb =
                             List<LocalFileVersion>()
 
                     let localDirectory =
-                        LocalDirectoryVersion.Create
+                        LocalDirectoryVersion.CreateWithHashes
                             directory.DirectoryVersionId
                             (Current().OwnerId)
                             (Current().OrganizationId)
                             (Current().RepositoryId)
                             directory.RelativePath
                             directory.Sha256Hash
+                            directory.Blake3Hash
                             directoriesForPath
                             filesForPath
                             directory.SizeBytes
@@ -1328,6 +1447,7 @@ module LocalStateDb =
                         Index = index
                         RootDirectoryId = meta.RootDirectoryId
                         RootDirectorySha256Hash = meta.RootDirectorySha256Hash
+                        RootDirectoryBlake3Hash = meta.RootDirectoryBlake3Hash
                         LastSuccessfulFileUpload = meta.LastSuccessfulFileUpload
                         LastSuccessfulDirectoryVersionUpload = meta.LastSuccessfulDirectoryVersionUpload
                     }
@@ -1362,130 +1482,188 @@ module LocalStateDb =
                     try
                         let immutableSnapshot = shouldUseImmutableReadOnlySnapshot normalizedPath
                         use connection = openReadOnlyConnection normalizedPath immutableSnapshot
+                        let schemaVersion = readSchemaVersionReadOnly connection
 
-                        match readStatusMetaInternal connection with
-                        | None -> return Error "Local state status_meta row is missing or unreadable."
-                        | Some meta ->
-                            let directories = List<StatusDirectoryRow>()
-                            let files = List<StatusFileRow>()
+                        let missingBlake3Columns =
+                            [|
+                                if not (columnExists connection "status_meta" "root_directory_blake3_hash") then
+                                    "status_meta.root_directory_blake3_hash"
 
-                            use directoryCommand = connection.CreateCommand()
+                                if not (columnExists connection "status_directories" "blake3_hash") then
+                                    "status_directories.blake3_hash"
 
-                            directoryCommand.CommandText <-
-                                "SELECT relative_path, parent_path, directory_version_id, sha256_hash, size_bytes, created_at_unix_ticks, last_write_time_utc_ticks FROM status_directories;"
+                                if not (columnExists connection "status_files" "blake3_hash") then
+                                    "status_files.blake3_hash"
 
-                            use directoryReader = directoryCommand.ExecuteReader()
+                                if not (columnExists connection "object_cache_directories" "blake3_hash") then
+                                    "object_cache_directories.blake3_hash"
 
-                            while directoryReader.Read() do
-                                directories.Add(
-                                    {
-                                        RelativePath = directoryReader.GetString(0)
-                                        ParentPath = directoryReader.GetString(1)
-                                        DirectoryVersionId = Guid.Parse(directoryReader.GetString(2))
-                                        Sha256Hash = directoryReader.GetString(3)
-                                        SizeBytes = directoryReader.GetInt64(4)
-                                        CreatedAt = Instant.FromUnixTimeTicks(directoryReader.GetInt64(5))
-                                        LastWriteTimeUtc = DateTime(directoryReader.GetInt64(6), DateTimeKind.Utc)
-                                    }
-                                )
+                                if not (columnExists connection "object_cache_directory_files" "blake3_hash") then
+                                    "object_cache_directory_files.blake3_hash"
+                            |]
 
-                            use fileCommand = connection.CreateCommand()
-
-                            fileCommand.CommandText <-
-                                "SELECT relative_path, directory_version_id, sha256_hash, is_binary, size_bytes, created_at_unix_ticks, uploaded_to_object_storage, last_write_time_utc_ticks FROM status_files;"
-
-                            use fileReader = fileCommand.ExecuteReader()
-
-                            while fileReader.Read() do
-                                files.Add(
-                                    {
-                                        RelativePath = fileReader.GetString(0)
-                                        DirectoryVersionId = Guid.Parse(fileReader.GetString(1))
-                                        Sha256Hash = fileReader.GetString(2)
-                                        IsBinary = fileReader.GetInt64(3) = 1L
-                                        SizeBytes = fileReader.GetInt64(4)
-                                        CreatedAt = Instant.FromUnixTimeTicks(fileReader.GetInt64(5))
-                                        UploadedToObjectStorage = fileReader.GetInt64(6) = 1L
-                                        LastWriteTimeUtc = DateTime(fileReader.GetInt64(7), DateTimeKind.Utc)
-                                    }
-                                )
-
-                            let directoriesByParent = Dictionary<string, List<DirectoryVersionId>>()
-                            let filesByDirectory = Dictionary<DirectoryVersionId, List<LocalFileVersion>>()
-
-                            directories
-                            |> Seq.iter (fun directory ->
-                                let mutable existing = Unchecked.defaultof<List<DirectoryVersionId>>
-
-                                if directoriesByParent.TryGetValue(directory.ParentPath, &existing) then
-                                    existing.Add(directory.DirectoryVersionId)
-                                else
-                                    directoriesByParent.Add(directory.ParentPath, List<DirectoryVersionId>([ directory.DirectoryVersionId ])))
-
-                            files
-                            |> Seq.iter (fun file ->
-                                let localFile =
-                                    LocalFileVersion.Create
-                                        file.RelativePath
-                                        file.Sha256Hash
-                                        file.IsBinary
-                                        file.SizeBytes
-                                        file.CreatedAt
-                                        file.UploadedToObjectStorage
-                                        file.LastWriteTimeUtc
-
-                                let mutable existing = Unchecked.defaultof<List<LocalFileVersion>>
-
-                                if filesByDirectory.TryGetValue(file.DirectoryVersionId, &existing) then
-                                    existing.Add(localFile)
-                                else
-                                    filesByDirectory.Add(file.DirectoryVersionId, List<LocalFileVersion>([ localFile ])))
-
-                            let index = GraceIndex()
-
-                            directories
-                            |> Seq.iter (fun directory ->
-                                let directoriesForPath =
-                                    let mutable list = Unchecked.defaultof<List<DirectoryVersionId>>
-
-                                    if directoriesByParent.TryGetValue(directory.RelativePath, &list) then
-                                        list
-                                    else
-                                        List<DirectoryVersionId>()
-
-                                let filesForPath =
-                                    let mutable list = Unchecked.defaultof<List<LocalFileVersion>>
-
-                                    if filesByDirectory.TryGetValue(directory.DirectoryVersionId, &list) then
-                                        list
-                                    else
-                                        List<LocalFileVersion>()
-
-                                let localDirectory =
-                                    LocalDirectoryVersion.Create
-                                        directory.DirectoryVersionId
-                                        ownerId
-                                        organizationId
-                                        repositoryId
-                                        directory.RelativePath
-                                        directory.Sha256Hash
-                                        directoriesForPath
-                                        filesForPath
-                                        directory.SizeBytes
-                                        directory.LastWriteTimeUtc
-
-                                index.TryAdd(directory.DirectoryVersionId, localDirectory)
-                                |> ignore)
+                        if schemaVersion <> Some SchemaVersion then
+                            let foundSchemaVersion = defaultArg schemaVersion "<missing>"
 
                             return
-                                Ok
-                                    {
-                                        Index = index
-                                        RootDirectoryId = meta.RootDirectoryId
-                                        RootDirectorySha256Hash = meta.RootDirectorySha256Hash
-                                        LastSuccessfulFileUpload = meta.LastSuccessfulFileUpload
-                                        LastSuccessfulDirectoryVersionUpload = meta.LastSuccessfulDirectoryVersionUpload
+                                Error
+                                    $"Local state database schema version is incompatible with this Grace CLI. Expected {SchemaVersion}, found {foundSchemaVersion}. Run a normal Grace command to reset the local state database, or move the local state database aside and retry."
+                        elif missingBlake3Columns.Length > 0 then
+                            let missingColumns = String.concat ", " missingBlake3Columns
+
+                            return
+                                Error
+                                    $"Local state database is missing required BLAKE3 columns: {missingColumns}. Run a normal Grace command to reset the local state database, or move the local state database aside and retry."
+                        else
+                            match readStatusMetaInternal connection with
+                            | None -> return Error "Local state status_meta row is missing or unreadable."
+                            | Some meta ->
+                                let directories = List<StatusDirectoryRow>()
+                                let files = List<StatusFileRow>()
+
+                                use directoryCommand = connection.CreateCommand()
+
+                                directoryCommand.CommandText <-
+                                    "SELECT relative_path, parent_path, directory_version_id, sha256_hash, blake3_hash, size_bytes, created_at_unix_ticks, last_write_time_utc_ticks FROM status_directories;"
+
+                                use directoryReader = directoryCommand.ExecuteReader()
+
+                                while directoryReader.Read() do
+                                    directories.Add(
+                                        {
+                                            RelativePath = directoryReader.GetString(0)
+                                            ParentPath = directoryReader.GetString(1)
+                                            DirectoryVersionId = Guid.Parse(directoryReader.GetString(2))
+                                            Sha256Hash = directoryReader.GetString(3)
+                                            Blake3Hash = directoryReader.GetString(4)
+                                            SizeBytes = directoryReader.GetInt64(5)
+                                            CreatedAt = Instant.FromUnixTimeTicks(directoryReader.GetInt64(6))
+                                            LastWriteTimeUtc = DateTime(directoryReader.GetInt64(7), DateTimeKind.Utc)
+                                        }
+                                    )
+
+                                use fileCommand = connection.CreateCommand()
+
+                                fileCommand.CommandText <-
+                                    "SELECT relative_path, directory_version_id, sha256_hash, blake3_hash, is_binary, size_bytes, created_at_unix_ticks, uploaded_to_object_storage, last_write_time_utc_ticks FROM status_files;"
+
+                                use fileReader = fileCommand.ExecuteReader()
+
+                                while fileReader.Read() do
+                                    files.Add(
+                                        {
+                                            RelativePath = fileReader.GetString(0)
+                                            DirectoryVersionId = Guid.Parse(fileReader.GetString(1))
+                                            Sha256Hash = fileReader.GetString(2)
+                                            Blake3Hash = fileReader.GetString(3)
+                                            IsBinary = fileReader.GetInt64(4) = 1L
+                                            SizeBytes = fileReader.GetInt64(5)
+                                            CreatedAt = Instant.FromUnixTimeTicks(fileReader.GetInt64(6))
+                                            UploadedToObjectStorage = fileReader.GetInt64(7) = 1L
+                                            LastWriteTimeUtc = DateTime(fileReader.GetInt64(8), DateTimeKind.Utc)
+                                        }
+                                    )
+
+                                let emptyBlake3Rows =
+                                    seq {
+                                        yield!
+                                            directories
+                                            |> Seq.filter (fun directory -> String.IsNullOrWhiteSpace(string directory.Blake3Hash))
+                                            |> Seq.map (fun directory -> $"directory:{directory.RelativePath}")
+
+                                        yield!
+                                            files
+                                            |> Seq.filter (fun file -> String.IsNullOrWhiteSpace(string file.Blake3Hash))
+                                            |> Seq.map (fun file -> $"file:{file.RelativePath}")
                                     }
+                                    |> Seq.toArray
+
+                                if emptyBlake3Rows.Length > 0 then
+                                    let rows = String.concat ", " emptyBlake3Rows
+
+                                    return
+                                        Error
+                                            $"Local state database contains empty BLAKE3 values in status rows: {rows}. Run a normal Grace command to reset the local state database, or move the local state database aside and retry."
+                                else
+                                    let directoriesByParent = Dictionary<string, List<DirectoryVersionId>>()
+                                    let filesByDirectory = Dictionary<DirectoryVersionId, List<LocalFileVersion>>()
+
+                                    directories
+                                    |> Seq.iter (fun directory ->
+                                        let mutable existing = Unchecked.defaultof<List<DirectoryVersionId>>
+
+                                        if directoriesByParent.TryGetValue(directory.ParentPath, &existing) then
+                                            existing.Add(directory.DirectoryVersionId)
+                                        else
+                                            directoriesByParent.Add(directory.ParentPath, List<DirectoryVersionId>([ directory.DirectoryVersionId ])))
+
+                                    files
+                                    |> Seq.iter (fun file ->
+                                        let localFile =
+                                            LocalFileVersion.CreateWithHashes
+                                                file.RelativePath
+                                                file.Sha256Hash
+                                                file.Blake3Hash
+                                                file.IsBinary
+                                                file.SizeBytes
+                                                file.CreatedAt
+                                                file.UploadedToObjectStorage
+                                                file.LastWriteTimeUtc
+
+                                        let mutable existing = Unchecked.defaultof<List<LocalFileVersion>>
+
+                                        if filesByDirectory.TryGetValue(file.DirectoryVersionId, &existing) then
+                                            existing.Add(localFile)
+                                        else
+                                            filesByDirectory.Add(file.DirectoryVersionId, List<LocalFileVersion>([ localFile ])))
+
+                                    let index = GraceIndex()
+
+                                    directories
+                                    |> Seq.iter (fun directory ->
+                                        let directoriesForPath =
+                                            let mutable list = Unchecked.defaultof<List<DirectoryVersionId>>
+
+                                            if directoriesByParent.TryGetValue(directory.RelativePath, &list) then
+                                                list
+                                            else
+                                                List<DirectoryVersionId>()
+
+                                        let filesForPath =
+                                            let mutable list = Unchecked.defaultof<List<LocalFileVersion>>
+
+                                            if filesByDirectory.TryGetValue(directory.DirectoryVersionId, &list) then
+                                                list
+                                            else
+                                                List<LocalFileVersion>()
+
+                                        let localDirectory =
+                                            LocalDirectoryVersion.CreateWithHashes
+                                                directory.DirectoryVersionId
+                                                ownerId
+                                                organizationId
+                                                repositoryId
+                                                directory.RelativePath
+                                                directory.Sha256Hash
+                                                directory.Blake3Hash
+                                                directoriesForPath
+                                                filesForPath
+                                                directory.SizeBytes
+                                                directory.LastWriteTimeUtc
+
+                                        index.TryAdd(directory.DirectoryVersionId, localDirectory)
+                                        |> ignore)
+
+                                    return
+                                        Ok
+                                            {
+                                                Index = index
+                                                RootDirectoryId = meta.RootDirectoryId
+                                                RootDirectorySha256Hash = meta.RootDirectorySha256Hash
+                                                RootDirectoryBlake3Hash = meta.RootDirectoryBlake3Hash
+                                                LastSuccessfulFileUpload = meta.LastSuccessfulFileUpload
+                                                LastSuccessfulDirectoryVersionUpload = meta.LastSuccessfulDirectoryVersionUpload
+                                            }
                     with
                     | ex -> return Error ex.Message
         }

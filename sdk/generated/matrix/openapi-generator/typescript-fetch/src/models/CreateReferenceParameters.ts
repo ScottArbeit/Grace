@@ -86,11 +86,17 @@ export interface CreateReferenceParameters {
      */
     directoryVersionId?: string;
     /**
-     * 
+     * Empty value or lowercase or uppercase 2- to 64-character SHA-256 version hash prefix.
      * @type {string}
      * @memberof CreateReferenceParameters
      */
     sha256Hash?: string;
+    /**
+     * Empty value or lowercase or uppercase 2- to 64-character BLAKE3 version hash prefix.
+     * @type {string}
+     * @memberof CreateReferenceParameters
+     */
+    blake3Hash?: string;
     /**
      * 
      * @type {string}
@@ -128,6 +134,7 @@ export function CreateReferenceParametersFromJSONTyped(json: any, ignoreDiscrimi
         'branchName': json['BranchName'] == null ? undefined : json['BranchName'],
         'directoryVersionId': json['DirectoryVersionId'] == null ? undefined : json['DirectoryVersionId'],
         'sha256Hash': json['Sha256Hash'] == null ? undefined : json['Sha256Hash'],
+        'blake3Hash': json['Blake3Hash'] == null ? undefined : json['Blake3Hash'],
         'message': json['Message'] == null ? undefined : json['Message'],
     };
 }
@@ -155,6 +162,7 @@ export function CreateReferenceParametersToJSONTyped(value?: CreateReferencePara
         'BranchName': value['branchName'],
         'DirectoryVersionId': value['directoryVersionId'],
         'Sha256Hash': value['sha256Hash'],
+        'Blake3Hash': value['blake3Hash'],
         'Message': value['message'],
     };
 }

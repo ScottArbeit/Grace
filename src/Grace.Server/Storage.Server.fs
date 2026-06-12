@@ -56,6 +56,9 @@ module Storage =
 
         StorageKeys.wholeFileContentObjectKey fileVersion
 
+    let private getReadableWholeFileContentObjectKey (repositoryDto: RepositoryDto) (fileVersion: FileVersion) correlationId =
+        task { return getWholeFileContentObjectKey fileVersion }
+
     let private getContentBlockObjectKey (contentBlockAddress: ContentBlockAddress) = StorageKeys.contentBlockObjectKey contentBlockAddress
 
     let private resolveStorageIds (graceIds: GraceIds) (parameters: StorageParameters) =
@@ -377,7 +380,7 @@ module Storage =
         task {
             match repositoryDto.ObjectStorageProvider with
             | AzureBlobStorage ->
-                let blobName = getWholeFileContentObjectKey fileVersion
+                let! blobName = getReadableWholeFileContentObjectKey repositoryDto fileVersion (getCorrelationId context)
                 let! blobClient = getAzureBlobClient repositoryDto blobName (getCorrelationId context)
                 let! azureResponse = blobClient.GetPropertiesAsync()
                 let blobProperties = azureResponse.Value
@@ -405,7 +408,7 @@ module Storage =
                     let repositoryActor = Repository.CreateActorProxy organizationId repositoryId correlationId
                     let! repositoryDto = repositoryActor.Get correlationId
 
-                    let blobName = getWholeFileContentObjectKey parameters.FileVersion
+                    let! blobName = getReadableWholeFileContentObjectKey repositoryDto parameters.FileVersion correlationId
                     let! downloadUri = getUriWithReadSharedAccessSignature repositoryDto blobName correlationId
                     context.SetStatusCode StatusCodes.Status200OK
                     //log.LogTrace("fileVersion: {fileVersion.RelativePath}; downloadUri: {downloadUri}", [| parameters.FileVersion.RelativePath, downloadUri |])
@@ -861,52 +864,70 @@ module Storage =
                     |> ignore
 
                     if parameters.FileVersions.Length > 0 then
-                        let organizationId, repositoryId = resolveStorageIds graceIds parameters
-                        let repositoryActor = Repository.CreateActorProxy organizationId repositoryId correlationId
-                        let! repositoryDto = repositoryActor.Get correlationId
+                        let fileVersionWithMissingBlake3Hash =
+                            parameters.FileVersions
+                            |> Array.tryFind (fun fileVersion -> String.IsNullOrEmpty $"{fileVersion.Blake3Hash}")
 
-                        let uploadMetadata = ConcurrentQueue<StorageParameterContracts.UploadMetadata>()
+                        let fileVersionWithInvalidBlake3Hash =
+                            parameters.FileVersions
+                            |> Array.tryFind (fun fileVersion -> not (Constants.Blake3FullHashRegex.IsMatch $"{fileVersion.Blake3Hash}"))
 
-                        do!
-                            Parallel.ForEachAsync(
-                                parameters.FileVersions,
-                                Constants.ParallelOptions,
-                                (fun fileVersion ct ->
-                                    ValueTask(
-                                        task {
-                                            //let! fileExists = fileExists repositoryDto fileVersion context
+                        if fileVersionWithMissingBlake3Hash.IsSome then
+                            return!
+                                context
+                                |> result400BadRequest (GraceError.Create (getErrorMessage VersionHashError.Blake3HashIsRequired) correlationId)
+                        elif fileVersionWithInvalidBlake3Hash.IsSome then
+                            return!
+                                context
+                                |> result400BadRequest (GraceError.Create (getErrorMessage VersionHashError.InvalidBlake3Hash) correlationId)
+                        else
+                            let organizationId, repositoryId = resolveStorageIds graceIds parameters
+                            let repositoryActor = Repository.CreateActorProxy organizationId repositoryId correlationId
+                            let! repositoryDto = repositoryActor.Get correlationId
 
-                                            //if not <| fileExists then
-                                            let contentReference = normalizeWholeFileContentReference fileVersion
-                                            let blobName = getWholeFileContentObjectKey fileVersion
+                            let uploadMetadata = ConcurrentQueue<StorageParameterContracts.UploadMetadata>()
 
-                                            let! blobUriWithSasToken = getUriWithWriteSharedAccessSignature repositoryDto blobName correlationId
+                            do!
+                                Parallel.ForEachAsync(
+                                    parameters.FileVersions,
+                                    Constants.ParallelOptions,
+                                    (fun fileVersion ct ->
+                                        ValueTask(
+                                            task {
+                                                //let! fileExists = fileExists repositoryDto fileVersion context
 
-                                            let metadata: StorageParameterContracts.UploadMetadata =
-                                                {
-                                                    RelativePath = fileVersion.RelativePath
-                                                    BlobUriWithSasToken = blobUriWithSasToken
-                                                    Sha256Hash = fileVersion.Sha256Hash
-                                                    ContentReference = contentReference
-                                                }
+                                                //if not <| fileExists then
+                                                let contentReference = normalizeWholeFileContentReference fileVersion
+                                                let blobName = getWholeFileContentObjectKey fileVersion
 
-                                            uploadMetadata.Enqueue(metadata)
-                                        }
-                                    ))
-                            )
+                                                let! blobUriWithSasToken = getUriWithWriteSharedAccessSignature repositoryDto blobName correlationId
 
-                        Activity.Current.SetTag("uploadMetadata.Count", $"{uploadMetadata.Count}")
-                        |> ignore
+                                                let metadata: StorageParameterContracts.UploadMetadata =
+                                                    {
+                                                        RelativePath = fileVersion.RelativePath
+                                                        BlobUriWithSasToken = blobUriWithSasToken
+                                                        Sha256Hash = fileVersion.Sha256Hash
+                                                        Blake3Hash = fileVersion.Blake3Hash
+                                                        ContentReference = contentReference
+                                                    }
 
-                        context
-                            .GetLogger()
-                            .LogInformation(
-                                $"{getCurrentInstantExtended ()} Received {parameters.FileVersions.Length} FileVersions; Returning {uploadMetadata.Count} uploadMetadata records."
-                            )
+                                                uploadMetadata.Enqueue(metadata)
+                                            }
+                                        ))
+                                )
 
-                        return!
+                            Activity.Current.SetTag("uploadMetadata.Count", $"{uploadMetadata.Count}")
+                            |> ignore
+
                             context
-                            |> result200Ok (GraceReturnValue.Create (uploadMetadata.ToArray()) correlationId)
+                                .GetLogger()
+                                .LogInformation(
+                                    $"{getCurrentInstantExtended ()} Received {parameters.FileVersions.Length} FileVersions; Returning {uploadMetadata.Count} uploadMetadata records."
+                                )
+
+                            return!
+                                context
+                                |> result200Ok (GraceReturnValue.Create (uploadMetadata.ToArray()) correlationId)
                     else
                         return!
                             context

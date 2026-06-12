@@ -1,89 +1,113 @@
-# Computing the SHA-256 value for files and directories
+# Computing SHA-256 values for files and directories
 
 ## Introduction
 
-Grace uses the [SHA-256](https://en.wikipedia.org/wiki/SHA-2) algorithm to compute cryptographically verifiable hash values for files and directories stored in Grace. The use of SHA-256 hashes for this purpose is inspired by Git's use of SHA-1, and their ongoing work to migrate to SHA-256.
+Grace uses SHA-256 values beside BLAKE3 in file, directory, reference, diff, and lookup workflows. These values sit in
+the version graph, but their current meaning depends on the object type. File SHA-256 values are byte hashes; they do
+not by themselves identify stored `FileVersion` objects because a `FileVersion` also carries `RelativePath`.
+Directory SHA-256 values use the same formal directory-version preimage shape as BLAKE3, with SHA-256 child hashes.
+References store the referenced root directory hashes. These values are separate from content-addressed storage
+identities such as `FileContentHash`, `ChunkAddress`, `ContentBlockAddress`, and `ManifestAddress`.
 
-The SHA-256 hash values are used throughout Grace to identify unique versions of files and directories, primarily to minimize the size of change captured by each reference (i.e. each save, checkpoint, commit, and tag).
+ADR [0006](adr/0006-blake3-and-sha256-version-hashes.md) makes BLAKE3 the default version-hash algorithm for new version
+objects and retains SHA-256 for verification, comparison, lookup parity, and non-version SHA-256 uses. Grace is not in
+production, so this page describes the current desired contract rather than a migration promise for old production data.
 
-Hash values in Grace are meant to provide cryptographic proof that the directory and file versions stored for each reference match what was originally uploaded. To be more precise, when a user downloads a specific version of a branch, the files and directory versions should provably be the same versions that were originally stored in Grace. Grace Server, as part of maintenance routines, should also be able to verify file and directory versions at any time.
+Hash values in Grace provide cryptographic evidence that the file, directory, and reference versions stored for a
+reference match what was originally uploaded. When a user downloads a specific branch version, Grace should be able to
+prove that the files and directory versions match the stored version graph. Grace Server maintenance routines should
+also be able to verify stored versions.
 
-Unlike Git, the SHA-256 values provide no linkage between references. Each SHA-256 value is specific to that version of the repository, with no connection to previous or subsequent versions. This enables Grace to be able to delete references and versions, such as saves that are no longer necessary, without the manipulation of history required in Git.
-
-The choice of SHA-256, as opposed to SHA-384 or other stronger algorithms, comes from a desire to provide excellent runtime performance with strong cryptographic hashing. SHA-256 has been studied extensively [for over 20 years](https://en.wikipedia.org/wiki/SHA-2), and [seems to be collision-resistant to quantum algorithms](https://crypto.stackexchange.com/questions/59375/are-hash-functions-strong-against-quantum-cryptanalysis-and-or-independent-enoug). Because Grace, like Git, uses it here solely for hashing, and not for encryption, any potential long-term issues with SHA-256 leave only a small opportunity for misuse.
-
-> This information is valid as of April, 2022. The implementation may change as Grace matures.
+Unlike Git commit history, Grace version hashes do not create a linkage chain between references. Each version hash is
+specific to a stored version object, with no required connection to earlier or later references. This lets Grace delete
+references and versions, such as saves that are no longer necessary, without rewriting history.
 
 ## Implementation
 
-In ordinary usage, SHA-256 values are computed by Grace CLI, and those values are used when uploading versions of files and directories, and when creating references on the server.
+In ordinary usage, SHA-256 values are computed by Grace CLI and reused by Grace Server when uploading file and directory
+versions and creating references.
 
-Specifically, Grace relies on the .NET implementation of [SHA-256](https://docs.microsoft.com/en-us/dotnet/api/system.security.cryptography.sha256), found in the [System.Security.Cryptography](https://docs.microsoft.com/en-us/dotnet/api/system.security.cryptography) namespace.
+Grace relies on the .NET implementation of
+[SHA-256](https://learn.microsoft.com/en-us/dotnet/api/system.security.cryptography.sha256) in
+`System.Security.Cryptography`.
 
-.NET implementations of Grace clients are welcome to use the hashing implementation in Grace.Shared, which is used by both Grace CLI and Grace Server. Implementations in other languages will need to implement this algorithm separately.
-
-Grace Server rechecks each SHA-256 hash as versions arrive at the server. In the event of a discrepancy, which could indicate malicious behavior, the invalid versions will be deleted, and Grace administrators and repository owners will be notified.
+.NET implementations of Grace clients can use the hashing implementation in Grace.Shared, which is used by both Grace
+CLI and Grace Server. Implementations in other languages need to reproduce the same inputs and encoding.
 
 ### Files
-When computing the SHA-256 value for a file, Grace uses a stream - FileStream when reading a local file, and Stream when reading a file from object storage - and the [IncrementalHash](https://docs.microsoft.com/en-us/dotnet/api/system.security.cryptography.incrementalhash) class, to keep memory use constant, no matter the size of the file.
 
-The SHA-256 value for a file is computed with the following algorithm.
+The file SHA-256 value is computed from the file byte stream only. The file relative path and file length are not
+appended to the file SHA-256 input. BLAKE3 file version hashes are computed from the same byte-only file stream.
 
-1. An instance of the [IncrementalHash](https://docs.microsoft.com/en-us/dotnet/api/system.security.cryptography.incrementalhash) class is created using the SHA-256 hash algorithm.
-2. Bytes from the file are read from the stream into a 64KB buffer, and appended to the IncrementalHash's input data, until the stream is consumed.
-3. The relative path of the file (based on the repository root), represented as a string, is converted to bytes using UTF-8 encoding, and appended to the IncrementalHash's input data.
+When computing the SHA-256 value for a file, Grace reads from a stream and uses `IncrementalHash` so memory use stays
+constant no matter how large the file is.
 
-    > For consistency between Windows and Unix-y OS's, Grace converts backslashes `\` in the relative path into forward slashes `/` before converting to bytes.
+The file SHA-256 value is computed with this algorithm:
 
-    - For example: a file is being uploaded on Windows with full path name `C:\Source\MyRepo\SomeDir\myfile.md`. The root of the repository is in `C:\Source\MyRepo`. Therefore, the relative path of the file is `.\SomeDir\myfile.md`. This string will be converted to `./SomeDir/myfile.md` before being converted to a byte array and appended to the IncrementalHash's input.
-4. The length of the file, represented as an `Int64` value, is converted to bytes and appended to the IncrementalHash's input data.
-5. The SHA-256 hash is computed as a `byte[]`.
-6. The SHA-256 hash is converted to a string by converting each byte to a two-character hexadecimal value.
-    - For example, `byte[]{0x43, 0x2a, 0x01, 0xfa}` would be converted to a string `"432a01fa"`.
+1. Create an `IncrementalHash` instance using the SHA-256 hash algorithm.
+1. Read bytes from the file stream into a 64 KiB buffer.
+1. Append each populated buffer span to the hash input until the stream is consumed.
+1. Finalize the SHA-256 hash as a byte array.
+1. Convert each byte to a two-character lowercase hexadecimal value.
 
-The code for this can be found in the Grace.Shared project, in Utilities.Shared.fs.
+For example, `byte[] { 0x43, 0x2a, 0x01, 0xfa }` is represented as `432a01fa`.
 
-``` fsharp
-let computeSha256ForFile (stream: Stream) (relativeFilePath: String) =
-    task {
-        let bufferLength = 64 * 1024
-        let buffer = ArrayPool<byte>.Shared.Rent(bufferLength)
-
-        try
-            // 1. Create an IncrementalHash instance.
-            use hasher = IncrementalHash.CreateHash(HashAlgorithmName.SHA256)
-            // 2. Read bytes from the stream and feed them into the hasher.
-            let mutable loop = true
-            while loop do
-                let! bytesRead = stream.ReadAsync(buffer.AsMemory(0, bufferLength))
-                if bytesRead > 0 then
-                    hasher.AppendData(buffer.AsSpan(0, bytesRead))
-                else
-                    loop <- false
-            // 3. Convert the relative path of the file to a byte array, and add it to the hasher.
-            hasher.AppendData(Encoding.UTF8.GetBytes(relativeFilePath))
-            // 4. Convert the Int64 file length into a byte array, and add it to the hasher.
-            hasher.AppendData(BitConverter.GetBytes(stream.Length))
-            // 5. Get the SHA-256 hash as a `byte[]`.
-            let sha256Bytes = hasher.GetHashAndReset()
-            // 6. Convert the SHA-256 value from a byte[] to a string, and return it.
-            //    Example: byte[]{0x43, 0x2a, 0x01, 0xfa} -> "432a01fa"
-            return byteArrayAsString(sha256Bytes)
-        finally
-            ArrayPool<byte>.Shared.Return(buffer, clearArray = true)
-    }
-```
+The file relative path still matters to Grace's domain model because a `FileVersion` says a specific relative path
+contains specific file content in a repository version. Two files with the same bytes at different relative paths have
+the same file byte hashes, but they are different `FileVersion` records because their `RelativePath` values differ. The
+file SHA-256 calculation itself is byte-only.
 
 ### Directories
-The SHA-256 hash of a directory is computed using the following algorithm.
 
-1. The relative path of the directory (based on the repository root), represented as a string, is converted to bytes and stored in a `List<byte>`.
-    - For example: a directory version is being uploaded with full path name `C:\Source\MyRepo\SomeDir\SomeSubDir`. The root of the repository is in `C:\Source\MyRepo`. Therefore, the relative path of the directory is `.\SomeDir\SomeSubDir`. This string will be converted to `./SomeDir/SomeSubDir` before being converted to a byte array and used to create the `List<byte>`.
-2. The list of _subdirectories_ is sorted by name, using [CultureInfo.InvariantCulture](https://docs.microsoft.com/en-us/dotnet/api/system.globalization.cultureinfo.invariantculture). The SHA-256 value for each subdirectory is converted to a `byte[]` using UTF-8 encoding, and appended, in order, to the `List<byte>`. The sorted list of subdirectories does not include the `/.` and `/..` directories.
-3. The list of _files_ in the directory is sorted by name, using [CultureInfo.InvariantCulture](https://docs.microsoft.com/en-us/dotnet/api/system.globalization.cultureinfo.invariantculture). The SHA-256 value for each file is converted to a `byte[]` using UTF-8 encoding, and appended, in order, to the `List<byte>`.
-4. The entire `List<byte>` is used as input to compute the SHA-256 value. The SHA-256 value is represented as a `byte[]`.
-5. The SHA-256 hash is converted to a string by converting each byte to a two-character hexadecimal value.
-    - For example, `byte[]{0x43, 0x2a, 0x01, 0xfa}` would be converted to a string `"432a01fa"`.
+The directory SHA-256 value is path-sensitive. A `DirectoryVersion` represents a relative path and the sorted set of
+child directory and file versions at that path.
+
+The directory SHA-256 value is computed with this algorithm:
+
+1. Normalize the directory's repository-relative path and every child repository-relative path with Grace's file-path
+   normalization, then UTF-8 encode each normalized path and base64-encode those bytes.
+1. Sort child entries deterministically by normalized child path first, then by child kind only when two entries have the
+   same normalized path. Child kind sorts by the serialized text, `directory` or `file`.
+1. Create this exact UTF-8 preimage text, with one `\n` delimiter between every line and one trailing `\n` after the
+   last line:
+
+   ```text
+   grace.directory-version.v1
+   algorithm:sha256
+   path:<base64-normalized-directory-path>
+   child-count:<sorted-child-count>
+   child:<zero-based-index>:<directory|file>:<base64-normalized-child-path>:<size>:<child-sha256>
+   ```
+
+   Add one `child:` line for each sorted entry. The zero-based index is the entry's position in the sorted sequence. The
+   size field is serialized for every child entry, including directory entries.
+
+1. Finalize the SHA-256 hash over the UTF-8 bytes of that complete preimage and convert it to lowercase hexadecimal
+   text.
+
+BLAKE3 directory version hashes use the same `grace.directory-version.v1` preimage shape with BLAKE3 child hashes. This
+means the `algorithm:` line is `algorithm:blake3`, the child hash field contains the child BLAKE3 value, and the final
+hash is computed with BLAKE3 over the same UTF-8 preimage bytes. The algorithm discriminator, base64-encoded paths,
+`child-count`, child indexes, serialized child kind, child size, same-algorithm child hashes, and newline delimiters all
+participate in the final directory hash.
+
+### Version Hash Transition
+
+New `FileVersion`, `DirectoryVersion`, and `Reference` version objects use BLAKE3 as the default version-hash algorithm.
+SHA-256 remains retained for verification, comparison, lookup parity, and non-version SHA-256 uses that intentionally
+remain unchanged.
+
+That transition does not change the meaning of CAS identities:
+
+- `FileContentHash` identifies the complete unencoded bytes of a logical file.
+- `ChunkAddress` identifies one `ContentChunk`.
+- `ContentBlockAddress` identifies one `ContentBlock`.
+- `ManifestAddress` identifies one `FileManifest`.
+
+Small and regular `FileVersion` objects can continue to use `WholeFileContent`; this documentation does not make them
+manifest-backed or StoragePool-wide deduped.
 
 ### Validation
-Grace will provide a command - `grace branch verify` - that will compute the SHA-256 values for on-disk versions of files and directories, and compare them to the SHA-256 values stored in Grace's database.
+
+Grace has verification workflows that recompute stored version hashes and compare them with values stored in Grace's
+database. Documentation should describe only shipped commands and options as shipped behavior.

@@ -143,10 +143,12 @@ Class | Method | HTTP request | Description
 *BranchesApi* | [**save_branch**](docs/BranchesApi.md#save_branch) | **POST** /branch/save | Save the current branch content.
 *BranchesApi* | [**tag_branch**](docs/BranchesApi.md#tag_branch) | **POST** /branch/tag | Tag the current branch content.
 *DiffsApi* | [**get_diff**](docs/DiffsApi.md#get_diff) | **POST** /diff/getDiff | Get a diff.
+*DiffsApi* | [**get_diff_by_blake3_hash**](docs/DiffsApi.md#get_diff_by_blake3_hash) | **POST** /diff/getDiffByBlake3Hash | Get a diff by BLAKE3 hash.
 *DiffsApi* | [**get_diff_by_sha256_hash**](docs/DiffsApi.md#get_diff_by_sha256_hash) | **POST** /diff/getDiffBySha256Hash | Get a diff by SHA-256 hash.
 *DiffsApi* | [**populate_diff**](docs/DiffsApi.md#populate_diff) | **POST** /diff/populate | Populate a diff actor.
 *DirectoriesApi* | [**create_directory_version**](docs/DirectoriesApi.md#create_directory_version) | **POST** /directory/create | Create a new directory version.
 *DirectoriesApi* | [**get_directory_version**](docs/DirectoriesApi.md#get_directory_version) | **POST** /directory/get | Get a directory version.
+*DirectoriesApi* | [**get_directory_version_by_blake3_hash**](docs/DirectoriesApi.md#get_directory_version_by_blake3_hash) | **POST** /directory/getByBlake3Hash | Get a directory version by BLAKE3 hash.
 *DirectoriesApi* | [**get_directory_version_by_sha256_hash**](docs/DirectoriesApi.md#get_directory_version_by_sha256_hash) | **POST** /directory/getBySha256Hash | Get a directory version by SHA-256 hash.
 *DirectoriesApi* | [**list_directory_versions_by_id**](docs/DirectoriesApi.md#list_directory_versions_by_id) | **POST** /directory/getByDirectoryIds | List directory versions by id.
 *DirectoriesApi* | [**list_directory_versions_recursive**](docs/DirectoriesApi.md#list_directory_versions_recursive) | **POST** /directory/getDirectoryVersionsRecursive | List a directory version and its children.
@@ -238,6 +240,7 @@ Class | Method | HTTP request | Description
  - [BranchCommandReturnValue](docs/BranchCommandReturnValue.md)
  - [BranchDto](docs/BranchDto.md)
  - [BranchDtoUpdatedAt](docs/BranchDtoUpdatedAt.md)
+ - [BranchHashQueryParameters](docs/BranchHashQueryParameters.md)
  - [BranchParameters](docs/BranchParameters.md)
  - [BranchQueryParameters](docs/BranchQueryParameters.md)
  - [BranchReturnValue](docs/BranchReturnValue.md)
@@ -277,8 +280,11 @@ Class | Method | HTTP request | Description
  - [DirectoryParameters](docs/DirectoryParameters.md)
  - [DirectoryVersion](docs/DirectoryVersion.md)
  - [DirectoryVersionApiDto](docs/DirectoryVersionApiDto.md)
+ - [DirectoryVersionHashLookupResult](docs/DirectoryVersionHashLookupResult.md)
+ - [DirectoryVersionHashLookupReturnValue](docs/DirectoryVersionHashLookupReturnValue.md)
  - [DirectoryVersionListReturnValue](docs/DirectoryVersionListReturnValue.md)
  - [DirectoryVersionReturnValue](docs/DirectoryVersionReturnValue.md)
+ - [DirectoryVersionSha256HashLookupReturnValue](docs/DirectoryVersionSha256HashLookupReturnValue.md)
  - [DiscoverContentBlocksParameters](docs/DiscoverContentBlocksParameters.md)
  - [DiscoverContentBlocksResult](docs/DiscoverContentBlocksResult.md)
  - [DiscoverContentBlocksReturnValue](docs/DiscoverContentBlocksReturnValue.md)
@@ -298,10 +304,12 @@ Class | Method | HTTP request | Description
  - [GetBranchVersionParameters](docs/GetBranchVersionParameters.md)
  - [GetBranchesByBranchIdParameters](docs/GetBranchesByBranchIdParameters.md)
  - [GetBranchesParameters](docs/GetBranchesParameters.md)
+ - [GetByBlake3HashParameters](docs/GetByBlake3HashParameters.md)
  - [GetByDirectoryIdsParameters](docs/GetByDirectoryIdsParameters.md)
  - [GetBySha256HashParameters](docs/GetBySha256HashParameters.md)
  - [GetContentBlockDownloadUriParameters](docs/GetContentBlockDownloadUriParameters.md)
  - [GetContentBlockUploadUriParameters](docs/GetContentBlockUploadUriParameters.md)
+ - [GetDiffByBlake3HashParameters](docs/GetDiffByBlake3HashParameters.md)
  - [GetDiffByReferenceTypeParameters](docs/GetDiffByReferenceTypeParameters.md)
  - [GetDiffBySha256HashParameters](docs/GetDiffBySha256HashParameters.md)
  - [GetDiffParameters](docs/GetDiffParameters.md)

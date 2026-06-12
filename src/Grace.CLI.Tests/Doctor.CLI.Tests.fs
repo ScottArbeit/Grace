@@ -177,12 +177,22 @@ module DoctorCliTests =
         |> Convert.ToHexString
         |> fun value -> value.ToLowerInvariant()
 
-    let private createSnapshotFile relativePath content lastWriteTime =
-        LocalFileVersion.Create
+    let private createSnapshotFile (relativePath: RelativePath) (content: string) (lastWriteTime: DateTime) =
+        let bytes = Encoding.UTF8.GetBytes(content)
+        use stream = new MemoryStream(bytes)
+
+        let blake3Hash =
+            Services
+                .computeBlake3ForFile(stream)
+                .GetAwaiter()
+                .GetResult()
+
+        LocalFileVersion.CreateWithHashes
             relativePath
             (sha256Hex content)
+            (Blake3Hash $"{blake3Hash}")
             false
-            (int64 (Encoding.UTF8.GetByteCount(content)))
+            (int64 bytes.Length)
             (Grace.Shared.Utilities.getCurrentInstant ())
             true
             lastWriteTime
@@ -224,13 +234,14 @@ module DoctorCliTests =
             files.Add(createSnapshotFile Constants.GraceIgnoreFileName (File.ReadAllText(graceIgnorePath)) (File.GetLastWriteTimeUtc(graceIgnorePath)))
 
         let homeDirectory =
-            LocalDirectoryVersion.Create
+            LocalDirectoryVersion.CreateWithHashes
                 homeDirectoryId
                 ownerId
                 organizationId
                 repositoryId
                 "home"
                 "home-snapshot-hash"
+                (Blake3Hash "home-snapshot-blake3")
                 (System.Collections.Generic.List<DirectoryVersionId>())
                 (System.Collections.Generic.List<LocalFileVersion>())
                 0L
@@ -245,13 +256,14 @@ module DoctorCliTests =
         let rootFiles = files |> Seq.toArray
 
         let rootDirectory =
-            LocalDirectoryVersion.Create
+            LocalDirectoryVersion.CreateWithHashes
                 rootDirectoryId
                 ownerId
                 organizationId
                 repositoryId
                 Constants.RootDirectoryPath
                 "root-snapshot-hash"
+                (Blake3Hash "root-snapshot-blake3")
                 rootChildDirectories
                 (System.Collections.Generic.List<LocalFileVersion>(rootFiles))
                 (rootFiles |> Array.sumBy (fun file -> file.Size))
@@ -2432,7 +2444,7 @@ module DoctorCliTests =
                 (findCheckById checks "state.db.schema-version")
                     .GetProperty("Summary")
                     .GetString()
-                |> should contain "schema_version is 2"
+                |> should contain "schema_version is 4"
 
                 (findCheckById checks "object-cache.index-readable")
                     .GetProperty("Summary")
@@ -2563,7 +2575,7 @@ module DoctorCliTests =
                         |> should equal "Ok"
 
                         checks[ 0 ].GetProperty("Summary").GetString()
-                        |> should contain "schema_version is 2"
+                        |> should contain "schema_version is 4"
 
                         let trace = readTrace tracePath
                         trace |> should contain repoDbPath

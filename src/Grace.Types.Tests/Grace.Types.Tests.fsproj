@@ -15,14 +15,17 @@
     <Compile Include="EventMetadata.Types.Tests.fs" />
     <Compile Include="Automation.Types.Tests.fs" />
     <Compile Include="Reference.Types.Tests.fs" />
+    <Compile Include="Branch.Types.Tests.fs" />
     <Compile Include="Annotation.Types.Tests.fs" />
     <Compile Include="PromotionSet.ConflictModel.Types.Tests.fs" />
     <Compile Include="PromotionSet.Types.Tests.fs" />
     <Compile Include="Webhooks.Types.Tests.fs" />
     <Compile Include="Validation.Types.Tests.fs" />
     <Compile Include="Common.Types.Tests.fs" />
+    <Compile Include="ContentBlockMetadata.Types.Tests.fs" />
     <Compile Include="StorageKeys.Shared.Tests.fs" />
     <Compile Include="ContentAddress.Types.Tests.fs" />
+    <Compile Include="DirectoryVersionPreimage.Shared.Tests.fs" />
     <Compile Include="ContentBlockFormat.Shared.Tests.fs" />
     <Compile Include="ManifestValidation.Shared.Tests.fs" />
     <Compile Include="ProtocolVectors.Tests.fs" />

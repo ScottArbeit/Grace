@@ -1,6 +1,6 @@
 # BranchQueryParameters
 
-Parameters for branch query endpoints that can resolve a branch or reference by hash or reference id.
+Parameters for branch query endpoints that can resolve a branch or reference by SHA-256 hash or reference id.
 
 ## Properties
 
@@ -16,7 +16,7 @@ Name | Type | Description | Notes
 **repository_name** | **str** |  | [optional] 
 **branch_id** | **UUID** |  | [optional] 
 **branch_name** | **str** |  | [optional] 
-**sha256_hash** | **str** |  | [optional] 
+**sha256_hash** | **str** | Empty value or lowercase or uppercase 2- to 64-character SHA-256 version hash prefix. | [optional] 
 **reference_id** | **UUID** |  | [optional] 
 
 ## Example

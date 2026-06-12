@@ -1144,6 +1144,9 @@ module Application =
                                route "/getDiffBySha256Hash" Diff.GetDiffBySha256Hash
                                |> addMetadata typeof<Diff.GetDiffBySha256HashParameters>
 
+                               route "/getDiffByBlake3Hash" Diff.GetDiffByBlake3Hash
+                               |> addMetadata typeof<Diff.GetDiffByBlake3HashParameters>
+
                                route "/populate" Diff.Populate
                                |> addMetadata typeof<Diff.PopulateParameters> ]
                     ]
@@ -1161,6 +1164,9 @@ module Application =
 
                                route "/getBySha256Hash" DirectoryVersion.GetBySha256Hash
                                |> addMetadata typeof<DirectoryVersion.GetBySha256HashParameters>
+
+                               route "/getByBlake3Hash" DirectoryVersion.GetByBlake3Hash
+                               |> addMetadata typeof<DirectoryVersion.GetByBlake3HashParameters>
 
                                route "/getDirectoryVersionsRecursive" DirectoryVersion.GetDirectoryVersionsRecursive
                                |> addMetadata typeof<DirectoryVersion.GetParameters>

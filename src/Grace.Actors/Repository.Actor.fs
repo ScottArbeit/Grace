@@ -120,19 +120,22 @@ module Repository =
                                     // Create an empty directory version, and use that for the initial promotion
                                     let emptyDirectoryId = DirectoryVersionId.NewGuid()
 
-                                    let emptySha256Hash = computeSha256ForDirectory RootDirectoryPath (List<LocalDirectoryVersion>()) (List<LocalFileVersion>())
+                                    let emptyDirectoryEntries = Array.Empty<DirectoryVersionPreimageEntry>()
+                                    let emptySha256Hash = computeSha256ForDirectoryEntries RootDirectoryPath emptyDirectoryEntries
+                                    let emptyBlake3Hash = computeBlake3ForDirectory RootDirectoryPath emptyDirectoryEntries
 
                                     let directoryVersionActorProxy =
                                         DirectoryVersion.CreateActorProxy emptyDirectoryId repositoryDto.RepositoryId this.correlationId
 
                                     let emptyDirectoryVersion =
-                                        DirectoryVersion.Create
+                                        DirectoryVersion.CreateWithHashes
                                             emptyDirectoryId
                                             repositoryDto.OwnerId
                                             repositoryDto.OrganizationId
                                             repositoryDto.RepositoryId
                                             RootDirectoryPath
                                             emptySha256Hash
+                                            emptyBlake3Hash
                                             (List<DirectoryVersionId>())
                                             (List<FileVersion>())
                                             0L
@@ -149,6 +152,7 @@ module Repository =
                                             (BranchCommand.Promote(
                                                 emptyDirectoryId,
                                                 emptySha256Hash,
+                                                emptyBlake3Hash,
                                                 (getLocalizedString StringResourceName.InitialPromotionMessage)
                                             ))
                                             repositoryEvent.Metadata

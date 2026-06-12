@@ -34,11 +34,15 @@
     <Compile Include="Eventing.Server.Tests.fs" />
     <Compile Include="Notification.Server.Tests.fs" />
     <Compile Include="PromotionSet.CommandValidation.Tests.fs" />
+    <Compile Include="PromotionSet.DirectoryHash.Tests.fs" />
+    <Compile Include="Diff.Actor.Tests.fs" />
     <Compile Include="UploadSession.Actor.Tests.fs" />
     <Compile Include="ContentBlockMetadata.Actor.Tests.fs" />
     <Compile Include="RepositoryContentCounter.Actor.Tests.fs" />
     <Compile Include="ManifestContributionWorkflow.Actor.Tests.fs" />
+    <Compile Include="Reference.Actor.Tests.fs" />
     <Compile Include="SaveBoundary.Actor.Tests.fs" />
+    <Compile Include="Services.VersionHashPrefixResolution.Tests.fs" />
     <Compile Include="Services.EffectivePromotion.Tests.fs" />
     <Compile Include="Validation.Artifact.Contract.Tests.fs" />
     <Compile Include="Policy.Determinism.Tests.fs" />
@@ -50,6 +54,7 @@
     <Compile Include="WebhookDispatch.Server.Tests.fs" />
     <Compile Include="Queue.Server.Tests.fs" />
     <Compile Include="OrleansFilters.Server.Tests.fs" />
+    <Compile Include="Branch.Server.Tests.fs" />
     <Compile Include="WorkItem.Server.Tests.fs" />
     <Compile Include="WorkItem.Attachments.Tests.fs" />
     <Compile Include="ApprovalRequest.Actor.Tests.fs" />

@@ -129,11 +129,13 @@ module EndpointAuthorizationManifest =
             endpoint "GET" "/artifact/%O/download-uri" (Authorized(RepoRead, Repository))
             endpoint "POST" "/diff/getDiff" Authenticated
             endpoint "POST" "/diff/getDiffBySha256Hash" Authenticated
+            endpoint "POST" "/diff/getDiffByBlake3Hash" Authenticated
             endpoint "POST" "/diff/populate" Authenticated
             endpoint "POST" "/directory/create" Authenticated
             endpoint "POST" "/directory/get" Authenticated
             endpoint "POST" "/directory/getByDirectoryIds" Authenticated
             endpoint "POST" "/directory/getBySha256Hash" Authenticated
+            endpoint "POST" "/directory/getByBlake3Hash" Authenticated
             endpoint "POST" "/directory/getDirectoryVersionsRecursive" Authenticated
             endpoint "POST" "/directory/getZipFile" Authenticated
             endpoint "POST" "/directory/saveDirectoryVersions" Authenticated

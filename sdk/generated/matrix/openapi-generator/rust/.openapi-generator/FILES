@@ -29,6 +29,7 @@ docs/BranchApiDto.md
 docs/BranchCommandReturnValue.md
 docs/BranchDto.md
 docs/BranchDtoUpdatedAt.md
+docs/BranchHashQueryParameters.md
 docs/BranchParameters.md
 docs/BranchQueryParameters.md
 docs/BranchReturnValue.md
@@ -72,8 +73,11 @@ docs/DirectoryCommandReturnValue.md
 docs/DirectoryParameters.md
 docs/DirectoryVersion.md
 docs/DirectoryVersionApiDto.md
+docs/DirectoryVersionHashLookupResult.md
+docs/DirectoryVersionHashLookupReturnValue.md
 docs/DirectoryVersionListReturnValue.md
 docs/DirectoryVersionReturnValue.md
+docs/DirectoryVersionSha256HashLookupReturnValue.md
 docs/DiscoverContentBlocksParameters.md
 docs/DiscoverContentBlocksResult.md
 docs/DiscoverContentBlocksReturnValue.md
@@ -93,10 +97,12 @@ docs/GetBranchParameters.md
 docs/GetBranchVersionParameters.md
 docs/GetBranchesByBranchIdParameters.md
 docs/GetBranchesParameters.md
+docs/GetByBlake3HashParameters.md
 docs/GetByDirectoryIdsParameters.md
 docs/GetBySha256HashParameters.md
 docs/GetContentBlockDownloadUriParameters.md
 docs/GetContentBlockUploadUriParameters.md
+docs/GetDiffByBlake3HashParameters.md
 docs/GetDiffByReferenceTypeParameters.md
 docs/GetDiffBySha256HashParameters.md
 docs/GetDiffParameters.md
@@ -266,6 +272,7 @@ src/models/branch_api_dto.rs
 src/models/branch_command_return_value.rs
 src/models/branch_dto.rs
 src/models/branch_dto_updated_at.rs
+src/models/branch_hash_query_parameters.rs
 src/models/branch_parameters.rs
 src/models/branch_query_parameters.rs
 src/models/branch_return_value.rs
@@ -305,8 +312,11 @@ src/models/directory_command_return_value.rs
 src/models/directory_parameters.rs
 src/models/directory_version.rs
 src/models/directory_version_api_dto.rs
+src/models/directory_version_hash_lookup_result.rs
+src/models/directory_version_hash_lookup_return_value.rs
 src/models/directory_version_list_return_value.rs
 src/models/directory_version_return_value.rs
+src/models/directory_version_sha256_hash_lookup_return_value.rs
 src/models/discover_content_blocks_parameters.rs
 src/models/discover_content_blocks_result.rs
 src/models/discover_content_blocks_return_value.rs
@@ -326,10 +336,12 @@ src/models/get_branch_parameters.rs
 src/models/get_branch_version_parameters.rs
 src/models/get_branches_by_branch_id_parameters.rs
 src/models/get_branches_parameters.rs
+src/models/get_by_blake3_hash_parameters.rs
 src/models/get_by_directory_ids_parameters.rs
 src/models/get_by_sha256_hash_parameters.rs
 src/models/get_content_block_download_uri_parameters.rs
 src/models/get_content_block_upload_uri_parameters.rs
+src/models/get_diff_by_blake3_hash_parameters.rs
 src/models/get_diff_by_reference_type_parameters.rs
 src/models/get_diff_by_sha256_hash_parameters.rs
 src/models/get_diff_parameters.rs

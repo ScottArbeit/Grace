@@ -14,17 +14,37 @@ module ContentBlockMetadata =
     [<CLIMutable; GenerateSerializer>]
     type ContentBlockStoragePlacement =
         {
+            [<Id(0u)>]
             ObjectKey: string
+            [<Id(1u)>]
             ETag: string option
         }
 
         static member Empty = { ObjectKey = String.Empty; ETag = None }
 
     [<CLIMutable; GenerateSerializer>]
-    type ContentBlockMetadataRange = { OrdinalStart: int; OrdinalCount: int; ActiveManifestCount: int; PhysicalOffset: int64; PhysicalLength: int64 }
+    type ContentBlockMetadataRange =
+        {
+            [<Id(0u)>]
+            OrdinalStart: int
+            [<Id(1u)>]
+            OrdinalCount: int
+            [<Id(2u)>]
+            ActiveManifestCount: int
+            [<Id(3u)>]
+            PhysicalOffset: int64
+            [<Id(4u)>]
+            PhysicalLength: int64
+        }
 
     [<CLIMutable; GenerateSerializer>]
-    type ContentBlockRangeQuery = { OrdinalStart: int; OrdinalCount: int }
+    type ContentBlockRangeQuery =
+        {
+            [<Id(0u)>]
+            OrdinalStart: int
+            [<Id(1u)>]
+            OrdinalCount: int
+        }
 
     [<KnownType("GetKnownTypes"); GenerateSerializer>]
     type ContentBlockRangePresence =
@@ -45,7 +65,15 @@ module ContentBlockMetadata =
         static member GetKnownTypes() = GetKnownTypes<ContentBlockRangeGcSafety>()
 
     [<CLIMutable; GenerateSerializer>]
-    type ContentBlockRangeGcSafetyContext = { Presence: ContentBlockRangePresence; HasPendingContributionWorkflow: bool; HasActiveReuseClaim: bool }
+    type ContentBlockRangeGcSafetyContext =
+        {
+            [<Id(0u)>]
+            Presence: ContentBlockRangePresence
+            [<Id(1u)>]
+            HasPendingContributionWorkflow: bool
+            [<Id(2u)>]
+            HasActiveReuseClaim: bool
+        }
 
     [<KnownType("GetKnownTypes"); GenerateSerializer>]
     type ContentBlockCompactionSelection =
@@ -60,20 +88,30 @@ module ContentBlockMetadata =
     [<CLIMutable; GenerateSerializer>]
     type ContentBlockCompactionCandidateContext =
         {
+            [<Id(0u)>]
             Now: Instant
+            [<Id(1u)>]
             ExpectedMetadataVersion: MetadataVersion
+            [<Id(2u)>]
             HasActiveUpload: bool
+            [<Id(3u)>]
             HasActiveFinalization: bool
+            [<Id(4u)>]
             HasActiveRangeClaim: bool
+            [<Id(5u)>]
             HasActiveCompaction: bool
         }
 
     [<CLIMutable; GenerateSerializer>]
     type ContentBlockCompactionChurnState =
         {
+            [<Id(0u)>]
             HasActiveUpload: bool
+            [<Id(1u)>]
             HasActiveFinalization: bool
+            [<Id(2u)>]
             HasActiveRangeClaim: bool
+            [<Id(3u)>]
             HasActiveCompaction: bool
         }
 
@@ -82,15 +120,25 @@ module ContentBlockMetadata =
     [<CLIMutable; GenerateSerializer>]
     type ContentBlockMetadata =
         {
+            [<Id(0u)>]
             Class: string
+            [<Id(1u)>]
             StoragePoolId: StoragePoolId
+            [<Id(2u)>]
             ContentBlockAddress: ContentBlockAddress
+            [<Id(3u)>]
             BlockFormatVersion: int16
+            [<Id(4u)>]
             StoragePlacement: ContentBlockStoragePlacement
+            [<Id(5u)>]
             Ranges: ContentBlockMetadataRange array
+            [<Id(6u)>]
             TotalPhysicalBytes: int64
+            [<Id(7u)>]
             ActivePhysicalBytes: int64
+            [<Id(8u)>]
             MetadataVersion: MetadataVersion
+            [<Id(9u)>]
             UpdatedAt: Instant
         }
 
@@ -109,38 +157,63 @@ module ContentBlockMetadata =
             }
 
     [<GenerateSerializer>]
-    type ReplaceContentBlockMetadata = { OperationId: string; ExpectedMetadataVersion: MetadataVersion option; Metadata: ContentBlockMetadata }
+    type ReplaceContentBlockMetadata =
+        {
+            [<Id(0u)>]
+            OperationId: string
+            [<Id(1u)>]
+            ExpectedMetadataVersion: MetadataVersion option
+            [<Id(2u)>]
+            Metadata: ContentBlockMetadata
+        }
 
     [<GenerateSerializer>]
     type MergeContentBlockPhysicalRanges =
         {
+            [<Id(0u)>]
             OperationId: string
+            [<Id(1u)>]
             StoragePoolId: StoragePoolId
+            [<Id(2u)>]
             ContentBlockAddress: ContentBlockAddress
+            [<Id(3u)>]
             BlockFormatVersion: int16
+            [<Id(4u)>]
             StoragePlacement: ContentBlockStoragePlacement
+            [<Id(5u)>]
             Ranges: ContentBlockMetadataRange array
         }
 
     [<GenerateSerializer>]
     type CompactContentBlockPhysicalRanges =
         {
+            [<Id(0u)>]
             OperationId: string
+            [<Id(1u)>]
             ExpectedMetadataVersion: MetadataVersion
+            [<Id(2u)>]
             StoragePlacement: ContentBlockStoragePlacement
+            [<Id(3u)>]
             Ranges: ContentBlockMetadataRange array
+            [<Id(4u)>]
             CandidateContext: ContentBlockCompactionCandidateContext
         }
 
     [<GenerateSerializer>]
-    type SetContentBlockCompactionChurnState = { OperationId: string; ChurnState: ContentBlockCompactionChurnState }
+    type SetContentBlockCompactionChurnState =
+        {
+            [<Id(0u)>]
+            OperationId: string
+            [<Id(1u)>]
+            ChurnState: ContentBlockCompactionChurnState
+        }
 
     [<KnownType("GetKnownTypes"); GenerateSerializer>]
     type ContentBlockMetadataCommand =
-        | ReplaceWholeRecord of replace: ReplaceContentBlockMetadata
-        | MergePhysicalRanges of merge: MergeContentBlockPhysicalRanges
-        | CompactPhysicalRanges of compact: CompactContentBlockPhysicalRanges
-        | SetCompactionChurnState of setChurnState: SetContentBlockCompactionChurnState
+        | [<Id(0u)>] ReplaceWholeRecord of replace: ReplaceContentBlockMetadata
+        | [<Id(1u)>] MergePhysicalRanges of merge: MergeContentBlockPhysicalRanges
+        | [<Id(2u)>] CompactPhysicalRanges of compact: CompactContentBlockPhysicalRanges
+        | [<Id(3u)>] SetCompactionChurnState of setChurnState: SetContentBlockCompactionChurnState
 
         static member GetKnownTypes() = GetKnownTypes<ContentBlockMetadataCommand>()
 

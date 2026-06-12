@@ -38,7 +38,7 @@ const example = {
   "repositoryName": null,
   "branchId": de7bf47d-23ae-4599-af68-68a317ea390d,
   "branchName": MyBranch,
-  "sha256Hash": 805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243,
+  "sha256Hash": 805331a98813,
   "referenceId": c8f9bac8-d489-46c7-917f-b36b7d9efa9a,
   "includeDeleted": false,
 } satisfies GetBranchParameters

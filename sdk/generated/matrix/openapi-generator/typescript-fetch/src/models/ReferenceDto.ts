@@ -52,11 +52,17 @@ export interface ReferenceDto {
      */
     directoryId?: string;
     /**
-     * 
+     * Empty value or lowercase 64-character SHA-256 hash for legacy or default reference DTOs.
      * @type {string}
      * @memberof ReferenceDto
      */
     sha256Hash?: string;
+    /**
+     * Empty value or lowercase 64-character BLAKE3 hash for legacy reference DTOs.
+     * @type {string}
+     * @memberof ReferenceDto
+     */
+    blake3Hash?: string;
     /**
      * 
      * @type {ReferenceType}
@@ -107,6 +113,7 @@ export function ReferenceDtoFromJSONTyped(json: any, ignoreDiscriminator: boolea
         'branchId': json['BranchId'] == null ? undefined : json['BranchId'],
         'directoryId': json['DirectoryId'] == null ? undefined : json['DirectoryId'],
         'sha256Hash': json['Sha256Hash'] == null ? undefined : json['Sha256Hash'],
+        'blake3Hash': json['Blake3Hash'] == null ? undefined : json['Blake3Hash'],
         'referenceType': json['ReferenceType'] == null ? undefined : ReferenceTypeFromJSON(json['ReferenceType']),
         'referenceText': json['ReferenceText'] == null ? undefined : json['ReferenceText'],
         'createdBy': json['CreatedBy'] == null ? undefined : json['CreatedBy'],
@@ -130,6 +137,7 @@ export function ReferenceDtoToJSONTyped(value?: ReferenceDto | null, ignoreDiscr
         'BranchId': value['branchId'],
         'DirectoryId': value['directoryId'],
         'Sha256Hash': value['sha256Hash'],
+        'Blake3Hash': value['blake3Hash'],
         'ReferenceType': ReferenceTypeToJSON(value['referenceType']),
         'ReferenceText': value['referenceText'],
         'CreatedBy': value['createdBy'],

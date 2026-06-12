@@ -221,15 +221,18 @@ module CommandOutputContract =
                 "FileCount", scalarSchema "integer"
                 "TotalFileSize", scalarSchema "integer"
                 "RootSha256Hash", nullableStringSchema "Root directory SHA-256 hash when the local index contains or records it."
+                "RootBlake3Hash", nullableStringSchema "Root directory BLAKE3 hash when the local index contains it."
             ]
             [|
                 "DirectoryCount"
                 "FileCount"
                 "TotalFileSize"
                 "RootSha256Hash"
+                "RootBlake3Hash"
             |]
 
-    let private maintenanceStatsExample = box {| DirectoryCount = 1; FileCount = 2; TotalFileSize = 42L; RootSha256Hash = "0123456789abcdef" |}
+    let private maintenanceStatsExample =
+        box {| DirectoryCount = 1; FileCount = 2; TotalFileSize = 42L; RootSha256Hash = "0123456789abcdef"; RootBlake3Hash = "af1349b9f5f9a1a6" |}
 
     let private maintenanceListContentsFileSchema =
         schemaObject
@@ -238,6 +241,7 @@ module CommandOutputContract =
                 "RelativePath", scalarSchema "string"
                 "FileName", scalarSchema "string"
                 "Sha256Hash", scalarSchema "string"
+                "Blake3Hash", scalarSchema "string"
                 "Size", scalarSchema "integer"
                 "LastWriteTimeUtc", stringDateTimeSchema
             ]
@@ -245,6 +249,7 @@ module CommandOutputContract =
                 "RelativePath"
                 "FileName"
                 "Sha256Hash"
+                "Blake3Hash"
                 "Size"
                 "LastWriteTimeUtc"
             |]
@@ -256,6 +261,7 @@ module CommandOutputContract =
                 "RelativePath", scalarSchema "string"
                 "DirectoryVersionId", scalarSchema "string"
                 "Sha256Hash", scalarSchema "string"
+                "Blake3Hash", scalarSchema "string"
                 "Size", scalarSchema "integer"
                 "LastWriteTimeUtc", stringDateTimeSchema
                 "Files", arraySchema maintenanceListContentsFileSchema "Files in the indexed directory when file listing is enabled."
@@ -264,6 +270,7 @@ module CommandOutputContract =
                 "RelativePath"
                 "DirectoryVersionId"
                 "Sha256Hash"
+                "Blake3Hash"
                 "Size"
                 "LastWriteTimeUtc"
                 "Files"
@@ -281,13 +288,14 @@ module CommandOutputContract =
     let private maintenanceListContentsExample =
         box
             {|
-                Summary = {| DirectoryCount = 1; FileCount = 1; TotalFileSize = 12L; RootSha256Hash = "0123456789abcdef" |}
+                Summary = {| DirectoryCount = 1; FileCount = 1; TotalFileSize = 12L; RootSha256Hash = "0123456789abcdef"; RootBlake3Hash = "af1349b9f5f9a1a6" |}
                 Directories =
                     [|
                         {|
                             RelativePath = "."
                             DirectoryVersionId = "11111111-1111-1111-1111-111111111111"
                             Sha256Hash = "0123456789abcdef"
+                            Blake3Hash = "af1349b9f5f9a1a6"
                             Size = 12L
                             LastWriteTimeUtc = "2026-06-05T00:00:00Z"
                             Files =
@@ -296,6 +304,7 @@ module CommandOutputContract =
                                         RelativePath = "README.md"
                                         FileName = "README.md"
                                         Sha256Hash = "abcdef0123456789"
+                                        Blake3Hash = "b9f5f9a1a6af1349"
                                         Size = 12L
                                         LastWriteTimeUtc = "2026-06-05T00:00:00Z"
                                     |}
@@ -336,11 +345,13 @@ module CommandOutputContract =
                 "DirectoryVersionId", scalarSchema "string"
                 "RelativePath", scalarSchema "string"
                 "Sha256Hash", scalarSchema "string"
+                "Blake3Hash", scalarSchema "string"
             ]
             [|
                 "DirectoryVersionId"
                 "RelativePath"
                 "Sha256Hash"
+                "Blake3Hash"
             |]
 
     let private maintenanceScanSchema =
@@ -370,7 +381,12 @@ module CommandOutputContract =
                 NewDirectoryVersionCount = 1
                 NewDirectoryVersions =
                     [|
-                        {| DirectoryVersionId = "11111111-1111-1111-1111-111111111111"; RelativePath = "."; Sha256Hash = "0123456789abcdef" |}
+                        {|
+                            DirectoryVersionId = "11111111-1111-1111-1111-111111111111"
+                            RelativePath = "."
+                            Sha256Hash = "0123456789abcdef"
+                            Blake3Hash = "af1349b9f5f9a1a6"
+                        |}
                     |]
             |}
 
@@ -973,6 +989,7 @@ module CommandOutputContract =
             row [ "candidate" ] "retry" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
             row [ "config" ] "write" true false common_renderOutput_envelope read_or_mutating_verify local_client ReuseExistingApiOrSdkDto
             row [] "connect" true true common_renderOutput_envelope progress_local_workflow composite_local_server RequiresCliDto
+            row [ "diff" ] "blake3" true true common_renderOutput_envelope progress_local_workflow composite_local_server ReuseExistingApiOrSdkDto
             row [ "diff" ] "checkpoint" true true human_progress_only_success progress_local_workflow composite_local_server RequiresCliDto
             row [ "diff" ] "commit" true true human_progress_only_success progress_local_workflow composite_local_server RequiresCliDto
             row [ "diff" ] "directoryid" true true human_progress_only_success progress_local_workflow composite_local_server RequiresCliDto

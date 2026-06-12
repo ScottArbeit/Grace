@@ -80,7 +80,7 @@ export interface GetBranchVersionParameters {
      */
     branchName?: string;
     /**
-     * 
+     * Empty value or lowercase or uppercase 2- to 64-character SHA-256 version hash prefix.
      * @type {string}
      * @memberof GetBranchVersionParameters
      */
@@ -91,6 +91,12 @@ export interface GetBranchVersionParameters {
      * @memberof GetBranchVersionParameters
      */
     referenceId?: string;
+    /**
+     * Empty value or lowercase or uppercase 2- to 64-character BLAKE3 version hash prefix.
+     * @type {string}
+     * @memberof GetBranchVersionParameters
+     */
+    blake3Hash?: string;
     /**
      * 
      * @type {boolean}
@@ -128,6 +134,7 @@ export function GetBranchVersionParametersFromJSONTyped(json: any, ignoreDiscrim
         'branchName': json['BranchName'] == null ? undefined : json['BranchName'],
         'sha256Hash': json['Sha256Hash'] == null ? undefined : json['Sha256Hash'],
         'referenceId': json['ReferenceId'] == null ? undefined : json['ReferenceId'],
+        'blake3Hash': json['Blake3Hash'] == null ? undefined : json['Blake3Hash'],
         'includeDeleted': json['IncludeDeleted'] == null ? undefined : json['IncludeDeleted'],
     };
 }
@@ -155,6 +162,7 @@ export function GetBranchVersionParametersToJSONTyped(value?: GetBranchVersionPa
         'BranchName': value['branchName'],
         'Sha256Hash': value['sha256Hash'],
         'ReferenceId': value['referenceId'],
+        'Blake3Hash': value['blake3Hash'],
         'IncludeDeleted': value['includeDeleted'],
     };
 }

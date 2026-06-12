@@ -18,8 +18,9 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, Field, StrictStr
+from pydantic import BaseModel, ConfigDict, Field, StrictStr, field_validator
 from typing import Any, ClassVar, Dict, List, Optional
+from typing_extensions import Annotated
 from uuid import UUID
 from typing import Optional, Set
 from typing_extensions import Self
@@ -39,9 +40,36 @@ class SwitchParameters(BaseModel):
     repository_name: Optional[StrictStr] = Field(default=None, alias="RepositoryName")
     branch_id: Optional[UUID] = Field(default=None, alias="BranchId")
     branch_name: Optional[StrictStr] = Field(default=None, alias="BranchName")
-    sha256_hash: Optional[StrictStr] = Field(default=None, alias="Sha256Hash")
+    sha256_hash: Optional[Annotated[str, Field(strict=True)]] = Field(default=None, description="Empty value or lowercase or uppercase 2- to 64-character SHA-256 version hash prefix.", alias="Sha256Hash")
     reference_id: Optional[UUID] = Field(default=None, alias="ReferenceId")
-    __properties: ClassVar[List[str]] = ["CorrelationId", "Principal", "OwnerId", "OwnerName", "OrganizationId", "OrganizationName", "RepositoryId", "RepositoryName", "BranchId", "BranchName", "Sha256Hash", "ReferenceId"]
+    blake3_hash: Optional[Annotated[str, Field(strict=True)]] = Field(default=None, description="Empty value or lowercase or uppercase 2- to 64-character BLAKE3 version hash prefix.", alias="Blake3Hash")
+    __properties: ClassVar[List[str]] = ["CorrelationId", "Principal", "OwnerId", "OwnerName", "OrganizationId", "OrganizationName", "RepositoryId", "RepositoryName", "BranchId", "BranchName", "Sha256Hash", "ReferenceId", "Blake3Hash"]
+
+    @field_validator('sha256_hash')
+    def sha256_hash_validate_regular_expression(cls, value):
+        """Validates the regular expression"""
+        if value is None:
+            return value
+
+        if not isinstance(value, str):
+            value = str(value)
+
+        if not re.match(r"^$|^[A-Fa-f0-9]{2,64}$", value):
+            raise ValueError(r"must validate the regular expression /^$|^[A-Fa-f0-9]{2,64}$/")
+        return value
+
+    @field_validator('blake3_hash')
+    def blake3_hash_validate_regular_expression(cls, value):
+        """Validates the regular expression"""
+        if value is None:
+            return value
+
+        if not isinstance(value, str):
+            value = str(value)
+
+        if not re.match(r"^$|^[A-Fa-f0-9]{2,64}$", value):
+            raise ValueError(r"must validate the regular expression /^$|^[A-Fa-f0-9]{2,64}$/")
+        return value
 
     model_config = ConfigDict(
         validate_by_name=True,
@@ -105,7 +133,8 @@ class SwitchParameters(BaseModel):
             "BranchId": obj.get("BranchId"),
             "BranchName": obj.get("BranchName"),
             "Sha256Hash": obj.get("Sha256Hash"),
-            "ReferenceId": obj.get("ReferenceId")
+            "ReferenceId": obj.get("ReferenceId"),
+            "Blake3Hash": obj.get("Blake3Hash")
         })
         return _obj
 

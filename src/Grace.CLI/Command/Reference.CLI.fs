@@ -160,8 +160,11 @@ module Reference =
             (new Option<String>(OptionName.ReferenceType, Required = false, Description = "The type of reference.", Arity = ArgumentArity.ExactlyOne))
                 .AcceptOnlyFromAmong(listCases<ReferenceType> ())
 
-        let fullSha =
-            new Option<bool>(OptionName.FullSha, Required = false, Description = "Show the full SHA-256 value in output.", Arity = ArgumentArity.ZeroOrOne)
+        let fullSha = HashOptions.deprecatedFullSha
+
+        let fullHashes = HashOptions.fullHashes
+
+        let showSha256 = HashOptions.showSha256
 
         let maxCount =
             new Option<int>(
@@ -175,14 +178,9 @@ module Reference =
         let referenceId =
             new Option<ReferenceId>(OptionName.ReferenceId, [||], Required = false, Description = "The reference ID <Guid>.", Arity = ArgumentArity.ExactlyOne)
 
-        let sha256Hash =
-            new Option<String>(
-                OptionName.Sha256Hash,
-                [||],
-                Required = false,
-                Description = "The full or partial SHA-256 hash value of the version.",
-                Arity = ArgumentArity.ExactlyOne
-            )
+        let sha256Hash = HashOptions.sha256HashOption "The full or partial SHA-256 compatibility hash value of the version."
+
+        let blake3Hash = HashOptions.blake3HashOption "The full or partial BLAKE3 hash value of the version."
 
         let enabled =
             new Option<bool>(
@@ -209,9 +207,13 @@ module Reference =
 
     let private valueOrEmpty (value: string) = if String.IsNullOrWhiteSpace(value) then String.Empty else value
 
+    let private getOptionalBlake3Hash (parseResult: ParseResult) = HashOptions.getBlake3HashPrefix parseResult
+
     let private ReferenceValidations (parseResult: ParseResult) = Ok parseResult
 
     let printContents (parseResult: ParseResult) (directoryVersions: IEnumerable<DirectoryVersion>) =
+        let hashDisplayMode = HashOptions.bindVersionHashDisplayMode parseResult
+
         let longestRelativePath =
             getLongestRelativePath (
                 directoryVersions
@@ -228,7 +230,7 @@ module Reference =
 
             if i = 0 then
                 AnsiConsole.MarkupLine(
-                    $"[{Colors.Important}]Created At                   SHA-256            Size  Path{additionalSpaces}[/][{Colors.Deemphasized}] (DirectoryVersionId)[/]"
+                    $"[{Colors.Important}]Created At                   BLAKE3 version hash  Size  Path{additionalSpaces}[/][{Colors.Deemphasized}] (DirectoryVersionId)[/]"
                 )
 
                 AnsiConsole.MarkupLine(
@@ -243,14 +245,14 @@ module Reference =
                 + $"({directoryVersion.DirectoryVersionId})"
 
             AnsiConsole.MarkupLine(
-                $"[{Colors.Highlighted}]{formatInstantAligned directoryVersion.CreatedAt}   {getShortSha256Hash directoryVersion.Sha256Hash}  {directoryVersion.Size, 13:N0}  /{directoryVersion.RelativePath}[/] [{Colors.Deemphasized}] {rightAlignedDirectoryVersionId}[/]"
+                $"[{Colors.Highlighted}]{formatInstantAligned directoryVersion.CreatedAt}   {HashOptions.formatVersionHashPair hashDisplayMode directoryVersion.Blake3Hash directoryVersion.Sha256Hash}  {directoryVersion.Size, 13:N0}  /{directoryVersion.RelativePath}[/] [{Colors.Deemphasized}] {rightAlignedDirectoryVersionId}[/]"
             )
             //if parseResult.CommandResult.Command.Options.Contains(Options.listFiles) then
             let sortedFiles = directoryVersion.Files.OrderBy(fun f -> f.RelativePath)
 
             for file in sortedFiles do
                 AnsiConsole.MarkupLine(
-                    $"[{Colors.Verbose}]{formatInstantAligned file.CreatedAt}   {getShortSha256Hash file.Sha256Hash}  {file.Size, 13:N0}  |- {file.RelativePath.Split('/').LastOrDefault()}[/]"
+                    $"[{Colors.Verbose}]{formatInstantAligned file.CreatedAt}   {HashOptions.formatVersionHashPair hashDisplayMode file.Blake3Hash file.Sha256Hash}  {file.Size, 13:N0}  |- {file.RelativePath.Split('/').LastOrDefault()}[/]"
                 ))
 
     type GetRecursiveSize() =
@@ -281,7 +283,7 @@ module Reference =
                             else
                                 String.Empty
 
-                        let sha256Hash = parseResult.GetValue(Options.sha256Hash)
+                        let sha256Hash = HashOptions.getSha256CompatibilityHashPrefix parseResult
 
                         let sdkParameters =
                             Parameters.Branch.ListContentsParameters(
@@ -357,7 +359,7 @@ module Reference =
                             else
                                 String.Empty
 
-                        let sha256Hash = parseResult.GetValue(Options.sha256Hash)
+                        let sha256Hash = HashOptions.getSha256CompatibilityHashPrefix parseResult
 
                         let sdkParameters =
                             Parameters.Branch.ListContentsParameters(
@@ -417,7 +419,11 @@ module Reference =
                             AnsiConsole.MarkupLine($"[{Colors.Important}]All values taken from the selected version of this branch from the server.[/]")
                             AnsiConsole.MarkupLine($"[{Colors.Highlighted}]Number of directories: {directoryCount}.[/]")
                             AnsiConsole.MarkupLine($"[{Colors.Highlighted}]Number of files: {fileCount}; total file size: {totalFileSize:N0}.[/]")
-                            AnsiConsole.MarkupLine($"[{Colors.Highlighted}]Root SHA-256 hash: {rootDirectoryVersion.Sha256Hash.Substring(0, 8)}[/]")
+                            let hashDisplayMode = HashOptions.bindVersionHashDisplayMode parseResult
+
+                            AnsiConsole.MarkupLine(
+                                $"[{Colors.Highlighted}]Root BLAKE3 version hash: {HashOptions.formatVersionHashPair hashDisplayMode rootDirectoryVersion.Blake3Hash rootDirectoryVersion.Sha256Hash}[/]"
+                            )
 
                             printContents parseResult directoryVersions
                             return result |> renderOutput parseResult
@@ -433,57 +439,66 @@ module Reference =
                     return renderOutput parseResult (GraceResult.Error graceError)
             }
 
-    type Assign() =
-        inherit AsynchronousCommandLineAction()
+    let buildAssignParameters (parseResult: ParseResult) : Parameters.Branch.AssignParameters =
+        let graceIds = parseResult |> getNormalizedIdsAndNames
 
-        override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
-            task {
-                try
-                    if parseResult |> verbose then printParseResult parseResult
+        let directoryVersionId =
+            if
+                not
+                <| isNull (parseResult.GetResult(Options.directoryVersionId))
+            then
+                parseResult.GetValue(Options.directoryVersionId)
+            else
+                Guid.Empty
 
-                    let graceIds = parseResult |> getNormalizedIdsAndNames
-                    let validateIncomingParameters = parseResult |> ReferenceValidations
+        let sha256Hash = HashOptions.getSha256CompatibilityHashPrefix parseResult
 
-                    let directoryVersionId =
-                        if
-                            not
-                            <| isNull (parseResult.GetResult(Options.directoryVersionId))
-                        then
-                            parseResult.GetValue(Options.directoryVersionId)
-                        else
-                            Guid.Empty
+        let message =
+            parseResult.GetValue(Options.message)
+            |> valueOrEmpty
 
-                    let sha256Hash = parseResult.GetValue(Options.sha256Hash)
+        let blake3Hash = parseResult |> getOptionalBlake3Hash
 
-                    match validateIncomingParameters with
-                    | Ok _ ->
-                        match (directoryVersionId, sha256Hash) with
-                        | (directoryVersionId, sha256Hash) when
-                            directoryVersionId = Guid.Empty
-                            && sha256Hash = String.Empty
-                            ->
-                            let error =
-                                GraceError.Create
-                                    (getErrorMessage ReferenceError.EitherDirectoryVersionIdOrSha256HashRequired)
-                                    (parseResult |> getCorrelationId)
+        Parameters.Branch.AssignParameters(
+            OwnerId = graceIds.OwnerIdString,
+            OwnerName = graceIds.OwnerName,
+            OrganizationId = graceIds.OrganizationIdString,
+            OrganizationName = graceIds.OrganizationName,
+            RepositoryId = graceIds.RepositoryIdString,
+            RepositoryName = graceIds.RepositoryName,
+            BranchId = graceIds.BranchIdString,
+            BranchName = graceIds.BranchName,
+            DirectoryVersionId = directoryVersionId,
+            Sha256Hash = sha256Hash,
+            Blake3Hash = blake3Hash,
+            Message = message,
+            CorrelationId = getCorrelationId parseResult
+        )
 
-                            return Error error |> renderOutput parseResult
-                        | _ ->
-                            let assignParameters =
-                                Parameters.Branch.AssignParameters(
-                                    OwnerId = graceIds.OwnerIdString,
-                                    OwnerName = graceIds.OwnerName,
-                                    OrganizationId = graceIds.OrganizationIdString,
-                                    OrganizationName = graceIds.OrganizationName,
-                                    RepositoryId = graceIds.RepositoryIdString,
-                                    RepositoryName = graceIds.RepositoryName,
-                                    BranchId = graceIds.BranchIdString,
-                                    BranchName = graceIds.BranchName,
-                                    DirectoryVersionId = directoryVersionId,
-                                    Sha256Hash = sha256Hash,
-                                    CorrelationId = getCorrelationId parseResult
-                                )
+    let private assignImpl (parseResult: ParseResult) : Tasks.Task<int> =
+        try
+            if parseResult |> verbose then printParseResult parseResult
 
+            let validateIncomingParameters = parseResult |> ReferenceValidations
+
+            match validateIncomingParameters with
+            | Error graceError -> Task.FromResult(Error graceError |> renderOutput parseResult)
+            | Ok _ ->
+                let assignParameters = buildAssignParameters parseResult
+
+                match (assignParameters.DirectoryVersionId, assignParameters.Sha256Hash, assignParameters.Blake3Hash) with
+                | (directoryVersionId, sha256Hash, blake3Hash) when
+                    directoryVersionId = Guid.Empty
+                    && sha256Hash = String.Empty
+                    && blake3Hash = String.Empty
+                    ->
+                    let error =
+                        GraceError.Create (getErrorMessage ReferenceError.EitherDirectoryVersionIdOrSha256HashRequired) (parseResult |> getCorrelationId)
+
+                    Task.FromResult(Error error |> renderOutput parseResult)
+                | _ ->
+                    task {
+                        try
                             let! result =
                                 if parseResult |> hasOutput then
                                     progress
@@ -500,13 +515,22 @@ module Reference =
                                     Grace.SDK.Branch.Assign(assignParameters)
 
                             return result |> renderOutput parseResult
-                    | Error graceError -> return Error graceError |> renderOutput parseResult
-                with
-                | ex ->
-                    let error = GraceError.Create $"{ExceptionResponse.Create ex}" (parseResult |> getCorrelationId)
+                        with
+                        | ex ->
+                            let error = GraceError.Create $"{ExceptionResponse.Create ex}" (parseResult |> getCorrelationId)
 
-                    return Error error |> renderOutput parseResult
-            }
+                            return Error error |> renderOutput parseResult
+                    }
+        with
+        | ex ->
+            let error = GraceError.Create $"{ExceptionResponse.Create ex}" (parseResult |> getCorrelationId)
+
+            Task.FromResult(Error error |> renderOutput parseResult)
+
+    type Assign() =
+        inherit AsynchronousCommandLineAction()
+
+        override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> = assignImpl parseResult
 
     type CreateReferenceCommand = CreateReferenceParameters -> Task<GraceResult<string>>
 
@@ -621,7 +645,8 @@ module Reference =
 
                                         //let mutable rootDirectoryId = DirectoryId.Empty
                                         //let mutable rootDirectorySha256Hash = Sha256Hash String.Empty
-                                        let rootDirectoryVersion = ref (DirectoryVersionId.Empty, Sha256Hash String.Empty)
+                                        let rootDirectoryVersion = ref (DirectoryVersionId.Empty, Sha256Hash String.Empty, Blake3Hash String.Empty)
+                                        let mutable applyLocalStatusAfterReferenceSave = fun () -> Task.FromResult(())
 
                                         match! getGraceWatchStatus () with
                                         | Some graceWatchStatus ->
@@ -631,7 +656,10 @@ module Reference =
                                             t3.Value <- 100.0
                                             t4.Value <- 100.0
 
-                                            rootDirectoryVersion.Value <- (graceWatchStatus.RootDirectoryId, graceWatchStatus.RootDirectorySha256Hash)
+                                            rootDirectoryVersion.Value <-
+                                                (graceWatchStatus.RootDirectoryId,
+                                                 graceWatchStatus.RootDirectorySha256Hash,
+                                                 graceWatchStatus.RootDirectoryBlake3Hash)
                                         | None ->
                                             t0.StartTask() // Read Grace status file.
                                             let! previousGraceStatus = readGraceStatusFile ()
@@ -652,7 +680,11 @@ module Reference =
 
                                             newGraceStatus <- updatedGraceStatus
 
-                                            rootDirectoryVersion.Value <- (newGraceStatus.RootDirectoryId, newGraceStatus.RootDirectorySha256Hash)
+                                            rootDirectoryVersion.Value <-
+                                                (newGraceStatus.RootDirectoryId,
+                                                 newGraceStatus.RootDirectorySha256Hash,
+                                                 (getRootDirectoryVersion newGraceStatus)
+                                                     .Blake3Hash)
 
                                             t2.Value <- 100.0
 
@@ -678,6 +710,7 @@ module Reference =
                                             //     newDirectoryVersions.First(fun dv -> dv.Files.Exists(fun file -> file.RelativePath = relativePath)).Files.First(fun file -> file.RelativePath = relativePath))
 
                                             let mutable lastFileUploadInstant = newGraceStatus.LastSuccessfulFileUpload
+                                            let mutable uploadedFileVersions = Array.empty<FileVersion>
 
                                             if newFileVersions.Count() > 0 then
                                                 let getUploadMetadataForFilesParameters =
@@ -696,8 +729,8 @@ module Reference =
                                                     )
 
                                                 match! uploadFilesToObjectStorage getUploadMetadataForFilesParameters with
-                                                | Ok returnValue -> () //logToAnsiConsole Colors.Verbose $"Uploaded all files to object storage."
-                                                | Error error -> logToAnsiConsole Colors.Error $"Error uploading files to object storage: {error.Error}"
+                                                | Ok returnValue -> uploadedFileVersions <- returnValue.ReturnValue
+                                                | Error error -> raise (InvalidOperationException($"Error uploading files to object storage: {error.Error}"))
 
                                                 lastFileUploadInstant <- getCurrentInstant ()
 
@@ -718,12 +751,32 @@ module Reference =
                                                 saveParameters.CorrelationId <- graceIds.CorrelationId
                                                 saveParameters.DirectoryVersionId <- $"{newGraceStatus.RootDirectoryId}"
 
-                                                saveParameters.DirectoryVersions <-
-                                                    newDirectoryVersions
-                                                        .Select(fun dv -> dv.ToDirectoryVersion)
-                                                        .ToList()
+                                                let! savedDirectoryVersionsResult =
+                                                    getSavedDirectoryVersionsForRootDirectory previousGraceStatus.RootDirectoryId graceIds.CorrelationId
 
-                                                let! uploadDirectoryVersions = DirectoryVersion.SaveDirectoryVersions saveParameters
+                                                let savedDirectoryVersions =
+                                                    match savedDirectoryVersionsResult with
+                                                    | Ok returnValue -> returnValue
+                                                    | Error error ->
+                                                        raise (InvalidOperationException($"Error retrieving saved directory versions: {error.Error}"))
+
+                                                saveParameters.DirectoryVersions <-
+                                                    applyUploadedFileVersionsToDirectoryVersionsWithSavedDirectoryVersions
+                                                        uploadedFileVersions
+                                                        savedDirectoryVersions
+                                                        newDirectoryVersions
+
+                                                match! DirectoryVersion.SaveDirectoryVersions saveParameters with
+                                                | Ok _ -> ()
+                                                | Error error -> raise (InvalidOperationException($"Error uploading directory versions: {error.Error}"))
+
+                                                newGraceStatus <- syncGraceStatusRootDirectoryHash newGraceStatus
+
+                                                rootDirectoryVersion.Value <-
+                                                    (newGraceStatus.RootDirectoryId,
+                                                     newGraceStatus.RootDirectorySha256Hash,
+                                                     (getRootDirectoryVersion newGraceStatus)
+                                                         .Blake3Hash)
 
                                                 lastDirectoryVersionUpload <- getCurrentInstant ()
 
@@ -735,11 +788,12 @@ module Reference =
                                                     LastSuccessfulDirectoryVersionUpload = lastDirectoryVersionUpload
                                                 }
 
-                                            do! applyGraceStatusIncremental newGraceStatus newDirectoryVersions differences
+                                            applyLocalStatusAfterReferenceSave <-
+                                                fun () -> applyGraceStatusIncremental newGraceStatus newDirectoryVersions differences
 
                                         t5.StartTask() // Create new reference.
 
-                                        let (rootDirectoryId, rootDirectorySha256Hash) = rootDirectoryVersion.Value
+                                        let (rootDirectoryId, rootDirectorySha256Hash, rootDirectoryBlake3Hash) = rootDirectoryVersion.Value
 
                                         let sdkParameters =
                                             Parameters.Branch.CreateReferenceParameters(
@@ -753,11 +807,17 @@ module Reference =
                                                 RepositoryName = graceIds.RepositoryName,
                                                 DirectoryVersionId = rootDirectoryId,
                                                 Sha256Hash = rootDirectorySha256Hash,
+                                                Blake3Hash = rootDirectoryBlake3Hash,
                                                 Message = message,
                                                 CorrelationId = graceIds.CorrelationId
                                             )
 
                                         let! result = command sdkParameters
+
+                                        match result with
+                                        | Ok _ -> do! applyLocalStatusAfterReferenceSave ()
+                                        | Error _ -> ()
+
                                         t5.Value <- 100.0
 
                                         return result
@@ -806,6 +866,12 @@ module Reference =
                             )
 
                         let! uploadResult = uploadFilesToObjectStorage getUploadMetadataForFilesParameters
+
+                        let uploadedFileVersions =
+                            match uploadResult with
+                            | Ok returnValue -> returnValue.ReturnValue
+                            | Error error -> raise (InvalidOperationException($"Error uploading files to object storage: {error.Error}"))
+
                         let saveParameters = SaveDirectoryVersionsParameters()
                         saveParameters.OwnerId <- graceIds.OwnerIdString
                         saveParameters.OwnerName <- graceIds.OwnerName
@@ -815,13 +881,25 @@ module Reference =
                         saveParameters.RepositoryName <- graceIds.RepositoryName
                         saveParameters.CorrelationId <- graceIds.CorrelationId
 
-                        saveParameters.DirectoryVersions <-
-                            newDirectoryVersions
-                                .Select(fun dv -> dv.ToDirectoryVersion)
-                                .ToList()
+                        let! savedDirectoryVersionsResult = getSavedDirectoryVersionsForRootDirectory previousGraceStatus.RootDirectoryId graceIds.CorrelationId
 
-                        let! uploadDirectoryVersions = DirectoryVersion.SaveDirectoryVersions saveParameters
-                        let rootDirectoryVersion = getRootDirectoryVersion previousGraceStatus
+                        let savedDirectoryVersions =
+                            match savedDirectoryVersionsResult with
+                            | Ok returnValue -> returnValue
+                            | Error error -> raise (InvalidOperationException($"Error retrieving saved directory versions: {error.Error}"))
+
+                        saveParameters.DirectoryVersions <-
+                            applyUploadedFileVersionsToDirectoryVersionsWithSavedDirectoryVersions
+                                uploadedFileVersions
+                                savedDirectoryVersions
+                                newDirectoryVersions
+
+                        match! DirectoryVersion.SaveDirectoryVersions saveParameters with
+                        | Ok _ -> ()
+                        | Error error -> raise (InvalidOperationException($"Error uploading directory versions: {error.Error}"))
+
+                        let newGraceIndex = syncGraceStatusRootDirectoryHash newGraceIndex
+                        let rootDirectoryVersion = getRootDirectoryVersion newGraceIndex
 
                         let sdkParameters =
                             Parameters.Branch.CreateReferenceParameters(
@@ -835,6 +913,7 @@ module Reference =
                                 RepositoryName = graceIds.RepositoryName,
                                 DirectoryVersionId = rootDirectoryVersion.DirectoryVersionId,
                                 Sha256Hash = rootDirectoryVersion.Sha256Hash,
+                                Blake3Hash = rootDirectoryVersion.Blake3Hash,
                                 Message = message,
                                 CorrelationId = graceIds.CorrelationId
                             )
@@ -1376,17 +1455,11 @@ module Reference =
         getCommand.Action <- new Get()
         referenceCommand.Subcommands.Add(getCommand)
 
-        let deleteCommand =
-            new Command("delete", Description = "Delete the branch.")
-            |> addCommonOptions
-
-        deleteCommand.Action <- new Delete()
-        referenceCommand.Subcommands.Add(deleteCommand)
-
         let assignCommand =
             new Command("assign", Description = "Assign a promotion to this branch.")
             |> addOption Options.directoryVersionId
             |> addOption Options.sha256Hash
+            |> addOption Options.blake3Hash
             |> addOption Options.message
             |> addCommonOptions
 

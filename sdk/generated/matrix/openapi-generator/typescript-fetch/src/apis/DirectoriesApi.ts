@@ -24,6 +24,11 @@ import {
     DirectoryCommandReturnValueToJSON,
 } from '../models/DirectoryCommandReturnValue';
 import {
+    type DirectoryVersionHashLookupReturnValue,
+    DirectoryVersionHashLookupReturnValueFromJSON,
+    DirectoryVersionHashLookupReturnValueToJSON,
+} from '../models/DirectoryVersionHashLookupReturnValue';
+import {
     type DirectoryVersionListReturnValue,
     DirectoryVersionListReturnValueFromJSON,
     DirectoryVersionListReturnValueToJSON,
@@ -33,6 +38,16 @@ import {
     DirectoryVersionReturnValueFromJSON,
     DirectoryVersionReturnValueToJSON,
 } from '../models/DirectoryVersionReturnValue';
+import {
+    type DirectoryVersionSha256HashLookupReturnValue,
+    DirectoryVersionSha256HashLookupReturnValueFromJSON,
+    DirectoryVersionSha256HashLookupReturnValueToJSON,
+} from '../models/DirectoryVersionSha256HashLookupReturnValue';
+import {
+    type GetByBlake3HashParameters,
+    GetByBlake3HashParametersFromJSON,
+    GetByBlake3HashParametersToJSON,
+} from '../models/GetByBlake3HashParameters';
 import {
     type GetByDirectoryIdsParameters,
     GetByDirectoryIdsParametersFromJSON,
@@ -65,6 +80,10 @@ export interface CreateDirectoryVersionRequest {
 
 export interface GetDirectoryVersionRequest {
     getParameters: GetParameters;
+}
+
+export interface GetDirectoryVersionByBlake3HashRequest {
+    getByBlake3HashParameters: GetByBlake3HashParameters;
 }
 
 export interface GetDirectoryVersionBySha256HashRequest {
@@ -203,6 +222,63 @@ export class DirectoriesApi extends runtime.BaseAPI {
     }
 
     /**
+     * Creates request options for getDirectoryVersionByBlake3Hash without sending the request
+     */
+    async getDirectoryVersionByBlake3HashRequestOpts(requestParameters: GetDirectoryVersionByBlake3HashRequest): Promise<runtime.RequestOpts> {
+        if (requestParameters['getByBlake3HashParameters'] == null) {
+            throw new runtime.RequiredError(
+                'getByBlake3HashParameters',
+                'Required parameter "getByBlake3HashParameters" was null or undefined when calling getDirectoryVersionByBlake3Hash().'
+            );
+        }
+
+        const queryParameters: any = {};
+
+        const headerParameters: runtime.HTTPHeaders = {};
+
+        headerParameters['Content-Type'] = 'application/json';
+
+        if (this.configuration && this.configuration.accessToken) {
+            const token = this.configuration.accessToken;
+            const tokenString = await token("bearerAuth", []);
+
+            if (tokenString) {
+                headerParameters["Authorization"] = `Bearer ${tokenString}`;
+            }
+        }
+
+        let urlPath = `/directory/getByBlake3Hash`;
+
+        return {
+            path: urlPath,
+            method: 'POST',
+            headers: headerParameters,
+            query: queryParameters,
+            body: GetByBlake3HashParametersToJSON(requestParameters['getByBlake3HashParameters']),
+        };
+    }
+
+    /**
+     * Gets a directory version DTO by BLAKE3 hash or unique BLAKE3 prefix.
+     * Get a directory version by BLAKE3 hash.
+     */
+    async getDirectoryVersionByBlake3HashRaw(requestParameters: GetDirectoryVersionByBlake3HashRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<DirectoryVersionHashLookupReturnValue>> {
+        const requestOptions = await this.getDirectoryVersionByBlake3HashRequestOpts(requestParameters);
+        const response = await this.request(requestOptions, initOverrides);
+
+        return new runtime.JSONApiResponse(response, (jsonValue) => DirectoryVersionHashLookupReturnValueFromJSON(jsonValue));
+    }
+
+    /**
+     * Gets a directory version DTO by BLAKE3 hash or unique BLAKE3 prefix.
+     * Get a directory version by BLAKE3 hash.
+     */
+    async getDirectoryVersionByBlake3Hash(requestParameters: GetDirectoryVersionByBlake3HashRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<DirectoryVersionHashLookupReturnValue> {
+        const response = await this.getDirectoryVersionByBlake3HashRaw(requestParameters, initOverrides);
+        return await response.value();
+    }
+
+    /**
      * Creates request options for getDirectoryVersionBySha256Hash without sending the request
      */
     async getDirectoryVersionBySha256HashRequestOpts(requestParameters: GetDirectoryVersionBySha256HashRequest): Promise<runtime.RequestOpts> {
@@ -243,18 +319,18 @@ export class DirectoriesApi extends runtime.BaseAPI {
      * Gets a directory version DTO by SHA-256 hash.
      * Get a directory version by SHA-256 hash.
      */
-    async getDirectoryVersionBySha256HashRaw(requestParameters: GetDirectoryVersionBySha256HashRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<DirectoryVersionReturnValue>> {
+    async getDirectoryVersionBySha256HashRaw(requestParameters: GetDirectoryVersionBySha256HashRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<DirectoryVersionSha256HashLookupReturnValue>> {
         const requestOptions = await this.getDirectoryVersionBySha256HashRequestOpts(requestParameters);
         const response = await this.request(requestOptions, initOverrides);
 
-        return new runtime.JSONApiResponse(response, (jsonValue) => DirectoryVersionReturnValueFromJSON(jsonValue));
+        return new runtime.JSONApiResponse(response, (jsonValue) => DirectoryVersionSha256HashLookupReturnValueFromJSON(jsonValue));
     }
 
     /**
      * Gets a directory version DTO by SHA-256 hash.
      * Get a directory version by SHA-256 hash.
      */
-    async getDirectoryVersionBySha256Hash(requestParameters: GetDirectoryVersionBySha256HashRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<DirectoryVersionReturnValue> {
+    async getDirectoryVersionBySha256Hash(requestParameters: GetDirectoryVersionBySha256HashRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<DirectoryVersionSha256HashLookupReturnValue> {
         const response = await this.getDirectoryVersionBySha256HashRaw(requestParameters, initOverrides);
         return await response.value();
     }

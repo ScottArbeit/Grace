@@ -76,6 +76,9 @@ module Text =
         let Full = "--full"
 
         [<Literal>]
+        let FullHashes = "--full-hashes"
+
+        [<Literal>]
         let FullSha = "--full-sha"
 
         [<Literal>]
@@ -232,6 +235,21 @@ module Text =
         let ScopeKind = "--scope"
 
         [<Literal>]
+        let B1 = "--b1"
+
+        [<Literal>]
+        let B2 = "--b2"
+
+        [<Literal>]
+        let Blake3Hash = "--blake3-hash"
+
+        [<Literal>]
+        let Blake3Hash1 = "--blake3-hash-1"
+
+        [<Literal>]
+        let Blake3Hash2 = "--blake3-hash-2"
+
+        [<Literal>]
         let S1 = "--s1"
 
         [<Literal>]
@@ -248,6 +266,9 @@ module Text =
 
         [<Literal>]
         let ShowEvents = "--show-events"
+
+        [<Literal>]
+        let ShowSha256 = "--show-sha256"
 
         [<Literal>]
         let Source = "--source"

@@ -5,6 +5,7 @@ open Grace.CLI
 open Grace.CLI.Command
 open Grace.Shared
 open Grace.Shared.Client.Configuration
+open Grace.Shared.Parameters.Storage
 open Grace.Shared.Utilities
 open Grace.Types.Common
 open NodaTime
@@ -142,6 +143,7 @@ module WatchTests =
                 IsStartupClaim = false
                 RootDirectoryId = rootDirectoryId
                 RootDirectorySha256Hash = Sha256Hash "live-watch-root"
+                RootDirectoryBlake3Hash = Blake3Hash "live-watch-root-blake3"
                 LastFileUploadInstant = Instant.MinValue
                 LastDirectoryVersionInstant = Instant.MinValue
                 DirectoryIds = HashSet<DirectoryVersionId>([| rootDirectoryId |])
@@ -323,6 +325,50 @@ module WatchTests =
             status |> should equal None)
 
     [<Test>]
+    let ``watch status preserves root Blake3 from GraceStatus index`` () =
+        withTempRepo (fun _ ->
+            let rootDirectoryId = Guid.NewGuid()
+            let rootSha256Hash = Sha256Hash "watch-root-sha"
+            let rootBlake3Hash = Blake3Hash "watch-root-blake3"
+
+            let rootDirectory =
+                LocalDirectoryVersion.CreateWithHashes
+                    rootDirectoryId
+                    OwnerId.Empty
+                    OrganizationId.Empty
+                    RepositoryId.Empty
+                    Constants.RootDirectoryPath
+                    rootSha256Hash
+                    rootBlake3Hash
+                    (List<DirectoryVersionId>())
+                    (List<LocalFileVersion>())
+                    0L
+                    DateTime.UtcNow
+
+            let index = GraceIndex()
+
+            index.TryAdd(rootDirectoryId, rootDirectory)
+            |> ignore
+
+            let graceStatus = { GraceStatus.Default with Index = index; RootDirectoryId = rootDirectoryId; RootDirectorySha256Hash = rootSha256Hash }
+
+            (Services.updateGraceWatchInterprocessFile graceStatus None)
+                .GetAwaiter()
+                .GetResult()
+
+            match Services.getGraceWatchStatus().Result with
+            | Some status ->
+                status.RootDirectoryId
+                |> should equal rootDirectoryId
+
+                status.RootDirectorySha256Hash
+                |> should equal rootSha256Hash
+
+                status.RootDirectoryBlake3Hash
+                |> should equal rootBlake3Hash
+            | None -> Assert.Fail("Expected usable watch status with root BLAKE3."))
+
+    [<Test>]
     let ``watch check exits zero when live watcher status exists`` () =
         withTempRepo (fun _ ->
             let ipcFileName = writeLiveWatchStatusFile ()
@@ -470,6 +516,106 @@ module WatchTests =
 
                 readFileIfExists ipcFileName
                 |> should equal originalContents))
+
+    [<Test>]
+    let ``watch cached file changes upload cached object for save enrichment`` () =
+        let filePath = FilePath @"C:\repo\dir\cached-file.txt"
+
+        let cachedFileVersion =
+            FileVersion.Create "dir/cached-file.txt" (Sha256Hash "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa") String.Empty true 12L
+
+        let mutable uploadedFileVersions = Array.empty<FileVersion>
+
+        let copyFileToObjectCache _ = Task.FromResult<FileVersion option> None
+
+        let getCachedFileVersion _ = Task.FromResult(Some cachedFileVersion)
+
+        let uploadFileVersions (parameters: GetUploadMetadataForFilesParameters) =
+            uploadedFileVersions <- parameters.FileVersions
+            Task.FromResult(Ok(GraceReturnValue.Create parameters.FileVersions parameters.CorrelationId))
+
+        let parameters =
+            GetUploadMetadataForFilesParameters(
+                OwnerId = $"{OwnerId.Empty}",
+                OrganizationId = $"{OrganizationId.Empty}",
+                RepositoryId = $"{RepositoryId.Empty}",
+                CorrelationId = "watch-cache-hit-test"
+            )
+
+        (Watch.copyFileToObjectDirectoryAndUploadToStorageWithClients copyFileToObjectCache getCachedFileVersion uploadFileVersions parameters filePath)
+            .GetAwaiter()
+            .GetResult()
+
+        uploadedFileVersions
+        |> should equal [| cachedFileVersion |]
+
+        parameters.FileVersions
+        |> should equal [| cachedFileVersion |]
+
+    [<Test>]
+    let ``object-cache copies preserve scanner Blake3 identity`` () =
+        withTempRepo (fun root ->
+            let nestedDirectory = Path.Combine(root, "dir")
+
+            Directory.CreateDirectory(nestedDirectory)
+            |> ignore
+
+            let filePath = Path.Combine(nestedDirectory, "whole-file.txt")
+            File.WriteAllText(filePath, "whole-file watch upload payload")
+
+            let localFileVersion =
+                match (Services.createLocalFileVersion (FileInfo filePath))
+                    .Result
+                    with
+                | Some fileVersion -> fileVersion
+                | None -> failwith "Expected scanner file version."
+
+            let copiedFileVersion =
+                match (Services.copyToObjectDirectory (FilePath filePath))
+                    .Result
+                    with
+                | Some fileVersion -> fileVersion
+                | None -> failwith "Expected object-cache copy to create the object."
+
+            String.IsNullOrWhiteSpace(string copiedFileVersion.Blake3Hash)
+            |> should equal false
+
+            copiedFileVersion.Blake3Hash
+            |> should equal localFileVersion.Blake3Hash)
+
+    [<Test>]
+    let ``object-cache copy returns file version when object already exists`` () =
+        withTempRepo (fun root ->
+            let nestedDirectory = Path.Combine(root, "dir")
+
+            Directory.CreateDirectory(nestedDirectory)
+            |> ignore
+
+            let filePath = Path.Combine(nestedDirectory, "cached-file.txt")
+            File.WriteAllText(filePath, "already cached object payload")
+
+            let firstCopy =
+                match (Services.copyToObjectDirectory (FilePath filePath))
+                    .Result
+                    with
+                | Some fileVersion -> fileVersion
+                | None -> failwith "Expected the first object-cache copy to create the object."
+
+            let secondCopy =
+                match (Services.copyToObjectDirectory (FilePath filePath))
+                    .Result
+                    with
+                | Some fileVersion -> fileVersion
+                | None -> failwith "Expected the cache-hit copy to return the existing object version."
+
+            secondCopy.Sha256Hash
+            |> should equal firstCopy.Sha256Hash
+
+            secondCopy.Blake3Hash
+            |> should equal firstCopy.Blake3Hash
+
+            secondCopy.RelativePath
+            |> should equal firstCopy.RelativePath)
 
     [<Test>]
     let ``watch json auth failure emits one clean error envelope`` () =

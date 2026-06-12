@@ -42,6 +42,17 @@ module Storage =
 
     let private contentBlockPlacement contentBlockAddress etag = { ObjectKey = StorageKeys.contentBlockObjectKey contentBlockAddress; ETag = etag }
 
+    let internal getLocalObjectCacheFileName (fileVersion: FileVersion) =
+        if String.IsNullOrWhiteSpace(string fileVersion.Blake3Hash) then
+            fileVersion.GetObjectFileName
+        else
+            let file = FileInfo($"{fileVersion.RelativePath}")
+
+            if file.Extension = String.Empty then
+                $"{file.Name}_{fileVersion.Sha256Hash}_{fileVersion.Blake3Hash}"
+            else
+                $"{file.Name.Replace(file.Extension, String.Empty)}_{fileVersion.Sha256Hash}_{fileVersion.Blake3Hash}{file.Extension}"
+
     let internal readStringResponseWithLifecycle (response: HttpResponseMessage) correlationId errorPrefix =
         task {
             let! responseText = response.Content.ReadAsStringAsync()
@@ -82,9 +93,11 @@ module Storage =
                             else
                                 getNativeFilePath fileVersion.RelativeDirectory
 
-                        let tempFilePath = Path.Combine(Path.GetTempPath(), relativeDirectory, fileVersion.GetObjectFileName)
+                        let localObjectCacheFileName = getLocalObjectCacheFileName fileVersion
 
-                        let objectFilePath = Path.Combine(Current().ObjectDirectory, fileVersion.RelativePath, fileVersion.GetObjectFileName)
+                        let tempFilePath = Path.Combine(Path.GetTempPath(), relativeDirectory, localObjectCacheFileName)
+
+                        let objectFilePath = Path.Combine(Current().ObjectDirectory, fileVersion.RelativePath, localObjectCacheFileName)
 
                         let tempFileInfo = FileInfo(tempFilePath)
                         let objectFileInfo = FileInfo(objectFilePath)
@@ -211,6 +224,7 @@ module Storage =
                 metadata[nameof RepositoryName] <- $"{Current().RepositoryName}"
                 metadata[nameof RepositoryId] <- $"{Current().RepositoryId}"
                 metadata[nameof Sha256Hash] <- fileVersion.Sha256Hash
+                metadata[nameof Blake3Hash] <- fileVersion.Blake3Hash
                 metadata["UncompressedSize"] <- $"{fileInfo.Length}"
 
                 match Current().ObjectStorageProvider with
@@ -242,8 +256,7 @@ module Storage =
                                     $"""attachment; creation-date="{fileVersion.CreatedAt.ToString(InstantPattern.General.PatternText, CultureInfo.InvariantCulture)}" """
                             )
 
-                        let objectFilePath =
-                            $"{Current().ObjectDirectory}{Path.DirectorySeparatorChar}{fileVersion.RelativePath}{Path.DirectorySeparatorChar}{fileVersion.GetObjectFileName}"
+                        let objectFilePath = Path.Combine(Current().ObjectDirectory, string fileVersion.RelativePath, getLocalObjectCacheFileName fileVersion)
 
                         let normalizedObjectFilePath = Path.GetFullPath(objectFilePath)
 
@@ -300,6 +313,7 @@ module Storage =
                             let returnValue = GraceReturnValue.Create "File successfully saved to object storage." correlationId
 
                             returnValue.Properties.Add(nameof Sha256Hash, fileVersion.Sha256Hash)
+                            returnValue.Properties.Add(nameof Blake3Hash, fileVersion.Blake3Hash)
                             returnValue.Properties.Add(nameof RelativePath, fileVersion.RelativePath)
                             returnValue.Properties.Add(nameof RepositoryId, repositoryId)
                             return Ok returnValue
@@ -308,6 +322,7 @@ module Storage =
                             let returnValue = GraceReturnValue.Create "File already exists in object storage." correlationId
 
                             returnValue.Properties.Add(nameof Sha256Hash, fileVersion.Sha256Hash)
+                            returnValue.Properties.Add(nameof Blake3Hash, fileVersion.Blake3Hash)
                             returnValue.Properties.Add(nameof RelativePath, fileVersion.RelativePath)
                             returnValue.Properties.Add(nameof RepositoryId, repositoryId)
                             return Ok returnValue
@@ -320,6 +335,7 @@ module Storage =
                             // If the file already exists in Blob Storage, we don't need to do anything.
                             let returnValue = GraceReturnValue.Create "File already exists in object storage." correlationId
                             returnValue.Properties.Add(nameof Sha256Hash, fileVersion.Sha256Hash)
+                            returnValue.Properties.Add(nameof Blake3Hash, fileVersion.Blake3Hash)
                             returnValue.Properties.Add(nameof RelativePath, fileVersion.RelativePath)
                             returnValue.Properties.Add(nameof RepositoryId, repositoryId)
                             return Ok returnValue
