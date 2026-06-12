@@ -93,6 +93,11 @@ components:
       description: Empty value or lowercase 64-character SHA-256 hash for legacy or default reference DTOs.
       pattern: '^$|^[a-f0-9]{64}$'
       example: 805331a98813206270e35564769e8bb59eea02aeb7b27c7d6c63e625e1857243
+    Sha256HashLookupSentinelCompatibility:
+      type: string
+      description: Empty value only for the DirectoryVersion.Default no-match sentinel, or lowercase 64-character SHA-256 hash.
+      pattern: '^$|^[a-f0-9]{64}$'
+      example: 805331a98813206270e35564769e8bb59eea02aeb7b27c7d6c63e625e1857243
     Sha256HashPrefix:
       type: string
       description: Lowercase or uppercase 2- to 64-character SHA-256 version hash prefix.

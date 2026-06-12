@@ -257,7 +257,7 @@ Name | Type | Description  | Notes
 [[Back to top]](#) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to Model list]](../README.md#documentation-for-models) [[Back to README]](../README.md)
 
 # **get_directory_version_by_sha256_hash**
-> DirectoryVersionHashLookupReturnValue get_directory_version_by_sha256_hash(get_by_sha256_hash_parameters)
+> DirectoryVersionSha256HashLookupReturnValue get_directory_version_by_sha256_hash(get_by_sha256_hash_parameters)
 
 Get a directory version by SHA-256 hash.
 
@@ -269,7 +269,7 @@ Gets a directory version DTO by SHA-256 hash.
 
 ```python
 import grace_generated_openapi_probe
-from grace_generated_openapi_probe.models.directory_version_hash_lookup_return_value import DirectoryVersionHashLookupReturnValue
+from grace_generated_openapi_probe.models.directory_version_sha256_hash_lookup_return_value import DirectoryVersionSha256HashLookupReturnValue
 from grace_generated_openapi_probe.models.get_by_sha256_hash_parameters import GetBySha256HashParameters
 from grace_generated_openapi_probe.rest import ApiException
 from pprint import pprint
@@ -316,7 +316,7 @@ Name | Type | Description  | Notes
 
 ### Return type
 
-[**DirectoryVersionHashLookupReturnValue**](DirectoryVersionHashLookupReturnValue.md)
+[**DirectoryVersionSha256HashLookupReturnValue**](DirectoryVersionSha256HashLookupReturnValue.md)
 
 ### Authorization
 
