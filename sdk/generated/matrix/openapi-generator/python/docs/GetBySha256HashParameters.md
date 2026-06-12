@@ -15,7 +15,7 @@ Name | Type | Description | Notes
 **repository_id** | **UUID** |  | [optional] 
 **repository_name** | **str** |  | [optional] 
 **directory_version_id** | **UUID** |  | [optional] 
-**sha256_hash** | **str** | Lowercase or uppercase 64-character SHA-256 version hash retained for compatibility. | [optional] 
+**sha256_hash** | **str** | Lowercase or uppercase 2- to 64-character SHA-256 version hash prefix. | [optional] 
 
 ## Example
 

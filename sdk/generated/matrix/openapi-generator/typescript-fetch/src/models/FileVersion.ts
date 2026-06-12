@@ -40,13 +40,13 @@ export interface FileVersion {
      */
     relativePath?: string;
     /**
-     * Lowercase or uppercase 64-character SHA-256 version hash retained for compatibility.
+     * Lowercase 64-character SHA-256 version hash persisted on version DTOs.
      * @type {string}
      * @memberof FileVersion
      */
     sha256Hash?: string;
     /**
-     * Empty or 64-character BLAKE3 version hash for legacy version DTOs.
+     * Empty value, null, or lowercase 64-character BLAKE3 version hash for legacy version DTOs.
      * @type {string}
      * @memberof FileVersion
      */
