@@ -144,6 +144,33 @@ module BranchCommandParsingTests =
         |> should equal (String.Empty, blake3Hash)
 
     [<Test>]
+    let ``reference assign parses BLAKE3 hash option`` () =
+        let parseResult =
+            assertParses [| "reference"
+                            "assign"
+                            "--blake3-hash"
+                            blake3Hash |]
+
+        parseResult.GetValue<string>("--blake3-hash")
+        |> should equal blake3Hash
+
+    [<Test>]
+    let ``reference assign preserves SHA-256 and BLAKE3 locator evidence`` () =
+        let parseResult =
+            assertParses [| "reference"
+                            "assign"
+                            "--sha256-hash"
+                            sha256Hash
+                            "--blake3-hash"
+                            blake3Hash |]
+
+        parseResult.GetValue<string>("--sha256-hash")
+        |> should equal sha256Hash
+
+        parseResult.GetValue<string>("--blake3-hash")
+        |> should equal blake3Hash
+
+    [<Test>]
     let ``forbidden branch annotate V1 options are unavailable`` () =
         for forbiddenOption in
             [|
