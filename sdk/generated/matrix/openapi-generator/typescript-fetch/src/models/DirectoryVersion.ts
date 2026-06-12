@@ -13,6 +13,14 @@
  */
 
 import { mapValues } from '../runtime';
+import type { FileVersion } from './FileVersion';
+import {
+    FileVersionFromJSON,
+    FileVersionFromJSONTyped,
+    FileVersionToJSON,
+    FileVersionToJSONTyped,
+} from './FileVersion';
+
 /**
  * 
  * @export
@@ -27,16 +35,58 @@ export interface DirectoryVersion {
     _class?: string;
     /**
      * 
-     * @type {Array<any>}
+     * @type {string}
      * @memberof DirectoryVersion
      */
-    directories?: Array<any>;
+    directoryVersionId?: string;
     /**
      * 
-     * @type {Array<any>}
+     * @type {string}
      * @memberof DirectoryVersion
      */
-    files?: Array<any>;
+    ownerId?: string;
+    /**
+     * 
+     * @type {string}
+     * @memberof DirectoryVersion
+     */
+    organizationId?: string;
+    /**
+     * 
+     * @type {string}
+     * @memberof DirectoryVersion
+     */
+    repositoryId?: string;
+    /**
+     * 
+     * @type {string}
+     * @memberof DirectoryVersion
+     */
+    relativePath?: string;
+    /**
+     * Lowercase or uppercase 64-character SHA-256 version hash retained for compatibility.
+     * @type {string}
+     * @memberof DirectoryVersion
+     */
+    sha256Hash?: string;
+    /**
+     * Lowercase or uppercase 64-character BLAKE3 version hash used for new version graph lookups.
+     * @type {string}
+     * @memberof DirectoryVersion
+     */
+    blake3Hash?: string;
+    /**
+     * 
+     * @type {Array<string>}
+     * @memberof DirectoryVersion
+     */
+    directories?: Array<string>;
+    /**
+     * 
+     * @type {Array<FileVersion>}
+     * @memberof DirectoryVersion
+     */
+    files?: Array<FileVersion>;
     /**
      * 
      * @type {number}
@@ -55,6 +105,12 @@ export interface DirectoryVersion {
      * @memberof DirectoryVersion
      */
     createdAt?: Date;
+    /**
+     * 
+     * @type {boolean}
+     * @memberof DirectoryVersion
+     */
+    hashesValidated?: boolean;
 }
 
 /**
@@ -75,11 +131,19 @@ export function DirectoryVersionFromJSONTyped(json: any, ignoreDiscriminator: bo
     return {
         
         '_class': json['Class'] == null ? undefined : json['Class'],
+        'directoryVersionId': json['DirectoryVersionId'] == null ? undefined : json['DirectoryVersionId'],
+        'ownerId': json['OwnerId'] == null ? undefined : json['OwnerId'],
+        'organizationId': json['OrganizationId'] == null ? undefined : json['OrganizationId'],
+        'repositoryId': json['RepositoryId'] == null ? undefined : json['RepositoryId'],
+        'relativePath': json['RelativePath'] == null ? undefined : json['RelativePath'],
+        'sha256Hash': json['Sha256Hash'] == null ? undefined : json['Sha256Hash'],
+        'blake3Hash': json['Blake3Hash'] == null ? undefined : json['Blake3Hash'],
         'directories': json['Directories'] == null ? undefined : json['Directories'],
-        'files': json['Files'] == null ? undefined : json['Files'],
+        'files': json['Files'] == null ? undefined : ((json['Files'] as Array<any>).map(FileVersionFromJSON)),
         'size': json['Size'] == null ? undefined : json['Size'],
         'recursiveSize': json['RecursiveSize'] == null ? undefined : json['RecursiveSize'],
         'createdAt': json['CreatedAt'] == null ? undefined : (new Date(json['CreatedAt'])),
+        'hashesValidated': json['HashesValidated'] == null ? undefined : json['HashesValidated'],
     };
 }
 
@@ -95,11 +159,19 @@ export function DirectoryVersionToJSONTyped(value?: DirectoryVersion | null, ign
     return {
         
         'Class': value['_class'],
+        'DirectoryVersionId': value['directoryVersionId'],
+        'OwnerId': value['ownerId'],
+        'OrganizationId': value['organizationId'],
+        'RepositoryId': value['repositoryId'],
+        'RelativePath': value['relativePath'],
+        'Sha256Hash': value['sha256Hash'],
+        'Blake3Hash': value['blake3Hash'],
         'Directories': value['directories'],
-        'Files': value['files'],
+        'Files': value['files'] == null ? undefined : ((value['files'] as Array<any>).map(FileVersionToJSON)),
         'Size': value['size'],
         'RecursiveSize': value['recursiveSize'],
         'CreatedAt': value['createdAt'] == null ? value['createdAt'] : value['createdAt'].toISOString(),
+        'HashesValidated': value['hashesValidated'],
     };
 }
 

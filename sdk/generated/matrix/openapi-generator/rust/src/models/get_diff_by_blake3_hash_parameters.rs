@@ -36,8 +36,10 @@ pub struct GetDiffByBlake3HashParameters {
     pub directory_version_id1: Option<uuid::Uuid>,
     #[serde(rename = "DirectoryVersionId2", skip_serializing_if = "Option::is_none")]
     pub directory_version_id2: Option<uuid::Uuid>,
+    /// Lowercase or uppercase 64-character BLAKE3 version hash used for new version graph lookups.
     #[serde(rename = "Blake3Hash1", skip_serializing_if = "Option::is_none")]
     pub blake3_hash1: Option<String>,
+    /// Lowercase or uppercase 64-character BLAKE3 version hash used for new version graph lookups.
     #[serde(rename = "Blake3Hash2", skip_serializing_if = "Option::is_none")]
     pub blake3_hash2: Option<String>,
 }

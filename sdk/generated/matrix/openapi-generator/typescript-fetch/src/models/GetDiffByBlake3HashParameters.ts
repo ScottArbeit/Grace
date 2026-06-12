@@ -80,13 +80,13 @@ export interface GetDiffByBlake3HashParameters {
      */
     directoryVersionId2?: string;
     /**
-     * 
+     * Lowercase or uppercase 64-character BLAKE3 version hash used for new version graph lookups.
      * @type {string}
      * @memberof GetDiffByBlake3HashParameters
      */
     blake3Hash1?: string;
     /**
-     * 
+     * Lowercase or uppercase 64-character BLAKE3 version hash used for new version graph lookups.
      * @type {string}
      * @memberof GetDiffByBlake3HashParameters
      */
