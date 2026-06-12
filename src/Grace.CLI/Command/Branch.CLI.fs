@@ -767,12 +767,16 @@ module Branch =
         elif sha256Hash.Length <= 8 then sha256Hash
         else sha256Hash.Substring(0, 8)
 
+    let internal formatListContentsSha256Hash (hashDisplayMode: HashOptions.VersionHashDisplayMode) (sha256Hash: Sha256Hash) =
+        if hashDisplayMode.FullHashes then $"{sha256Hash}" else getShortHash sha256Hash
+
     let private tryGetRootSha256Hash (directoryVersions: IEnumerable<DirectoryVersion>) =
         directoryVersions
         |> Seq.tryFind (fun directoryVersion -> directoryVersion.RelativePath = Constants.RootDirectoryPath)
         |> Option.map (fun directoryVersion -> directoryVersion.Sha256Hash)
 
     let printContents (parseResult: ParseResult) (directoryVersions: IEnumerable<DirectoryVersion>) =
+        let hashDisplayMode = HashOptions.bindVersionHashDisplayMode parseResult
         let directoryVersionArray = directoryVersions |> Seq.toArray
 
         if directoryVersionArray.Length > 0 then
@@ -807,14 +811,14 @@ module Branch =
                     + $"({directoryVersion.DirectoryVersionId})"
 
                 AnsiConsole.MarkupLine(
-                    $"[{Colors.Highlighted}]{formatInstantAligned directoryVersion.CreatedAt}   {getShortSha256Hash directoryVersion.Sha256Hash}  {directoryVersion.Size, 13:N0}  /{directoryVersion.RelativePath}[/] [{Colors.Deemphasized}] {rightAlignedDirectoryVersionId}[/]"
+                    $"[{Colors.Highlighted}]{formatInstantAligned directoryVersion.CreatedAt}   {formatListContentsSha256Hash hashDisplayMode directoryVersion.Sha256Hash}  {directoryVersion.Size, 13:N0}  /{directoryVersion.RelativePath}[/] [{Colors.Deemphasized}] {rightAlignedDirectoryVersionId}[/]"
                 )
                 //if parseResult.CommandResult.Command.Options.Contains(Options.listFiles) then
                 let sortedFiles = directoryVersion.Files.OrderBy(fun f -> f.RelativePath)
 
                 for file in sortedFiles do
                     AnsiConsole.MarkupLine(
-                        $"[{Colors.Verbose}]{formatInstantAligned file.CreatedAt}   {getShortSha256Hash file.Sha256Hash}  {file.Size, 13:N0}  |- {file.RelativePath.Split('/').LastOrDefault()}[/]"
+                        $"[{Colors.Verbose}]{formatInstantAligned file.CreatedAt}   {formatListContentsSha256Hash hashDisplayMode file.Sha256Hash}  {file.Size, 13:N0}  |- {file.RelativePath.Split('/').LastOrDefault()}[/]"
                     ))
 
     let private listContentsImpl (parseResult: ParseResult) : Tasks.Task<int> =
@@ -900,7 +904,10 @@ module Branch =
                     AnsiConsole.MarkupLine($"[{Colors.Highlighted}]Number of files: {fileCount}; total file size: {totalFileSize:N0}.[/]")
 
                     match tryGetRootSha256Hash directoryVersions with
-                    | Some rootSha256Hash -> AnsiConsole.MarkupLine($"[{Colors.Highlighted}]Root SHA-256 hash: {getShortHash rootSha256Hash}[/]")
+                    | Some rootSha256Hash ->
+                        let hashDisplayMode = HashOptions.bindVersionHashDisplayMode parseResult
+
+                        AnsiConsole.MarkupLine($"[{Colors.Highlighted}]Root SHA-256 hash: {formatListContentsSha256Hash hashDisplayMode rootSha256Hash}[/]")
                     | None -> AnsiConsole.MarkupLine($"[{Colors.Error}]Root SHA-256 hash: unavailable (root directory entry missing from server response).[/]")
 
                     if directoryCount > 0 then
