@@ -41,7 +41,7 @@ module DiffServerTestHelpers =
         parameters.CorrelationId <- generateCorrelationId ()
         parameters
 
-    let private prefix (length: int) (hash: Blake3Hash) = (string hash).Substring(0, length)
+    let private prefix (length: int) (hash: string) = hash.Substring(0, length)
 
     let createSameBlake3PrefixDirectoryPair repositoryId pathPrefix =
         let candidates =
@@ -52,12 +52,28 @@ module DiffServerTestHelpers =
 
         let pair =
             candidates
-            |> Array.groupBy (fun directoryVersion -> prefix 2 directoryVersion.Blake3Hash)
+            |> Array.groupBy (fun directoryVersion -> prefix 2 (string directoryVersion.Blake3Hash))
             |> Array.tryPick (fun (sharedPrefix, matches) -> if matches.Length >= 2 then Some(matches[0], matches[1], sharedPrefix) else None)
 
         match pair with
         | Some pair -> pair
         | None -> failwith "Could not generate same-prefix BLAKE3 directory versions for diff route tests."
+
+    let createSameSha256PrefixDirectoryPair repositoryId pathPrefix =
+        let candidates =
+            [|
+                for index in 0..512 ->
+                    DirectoryVersionServerTestHelpers.createDirectoryVersion (Guid.NewGuid()) repositoryId (RelativePath $"/{pathPrefix}/{index}/") []
+            |]
+
+        let pair =
+            candidates
+            |> Array.groupBy (fun directoryVersion -> prefix 2 (string directoryVersion.Sha256Hash))
+            |> Array.tryPick (fun (sharedPrefix, matches) -> if matches.Length >= 2 then Some(matches[0], matches[1], sharedPrefix) else None)
+
+        match pair with
+        | Some pair -> pair
+        | None -> failwith "Could not generate same-prefix SHA-256 directory versions for diff route tests."
 
 [<NonParallelizable>]
 type DiffServer() =
@@ -122,6 +138,44 @@ type DiffServer() =
             Assert.That(blake3Diff.ReturnValue.Differences.Count, Is.EqualTo(shaDiff.ReturnValue.Differences.Count))
             Assert.That(blake3Diff.ReturnValue.DirectoryVersionId1, Is.EqualTo(shaDiff.ReturnValue.DirectoryVersionId1))
             Assert.That(blake3Diff.ReturnValue.DirectoryVersionId2, Is.EqualTo(shaDiff.ReturnValue.DirectoryVersionId2))
+        }
+
+    [<Test>]
+    member _.GetDiffBySha256HashRejectsNoMatchAndAmbiguousPrefixesBeforeUsingDirectoryIds() =
+        task {
+            let repositoryId = repositoryIds[1]
+            let fallbackRoot = DirectoryVersionServerTestHelpers.createDirectoryVersion (Guid.NewGuid()) repositoryId $"/fallback-{Guid.NewGuid():N}/" []
+            let fallbackOther = DirectoryVersionServerTestHelpers.createDirectoryVersion (Guid.NewGuid()) repositoryId $"/fallback-other-{Guid.NewGuid():N}/" []
+            let first, second, sharedPrefix = DiffServerTestHelpers.createSameSha256PrefixDirectoryPair repositoryId $"ambiguous-sha-diff-{Guid.NewGuid():N}"
+
+            do! DirectoryVersionServerTestHelpers.createDirectoryVersionAsync fallbackRoot
+            do! DirectoryVersionServerTestHelpers.createDirectoryVersionAsync fallbackOther
+            do! DirectoryVersionServerTestHelpers.createDirectoryVersionAsync first
+            do! DirectoryVersionServerTestHelpers.createDirectoryVersionAsync second
+
+            let noMatch =
+                DiffServerTestHelpers.getDiffBySha256HashParameters
+                    repositoryId
+                    (Sha256Hash "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff")
+                    first.Sha256Hash
+
+            noMatch.DirectoryVersionId1 <- fallbackRoot.DirectoryVersionId
+            noMatch.DirectoryVersionId2 <- fallbackOther.DirectoryVersionId
+
+            let! noMatchResponse = Client.PostAsync("/diff/getDiffBySha256Hash", createJsonContent noMatch)
+            let! noMatchBody = noMatchResponse.Content.ReadAsStringAsync()
+            Assert.That(noMatchResponse.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), noMatchBody)
+            Assert.That((deserialize<GraceError> noMatchBody).Error, Does.Contain("No DirectoryVersion matched Sha256Hash1 prefix"))
+
+            let ambiguous = DiffServerTestHelpers.getDiffBySha256HashParameters repositoryId (Sha256Hash sharedPrefix) first.Sha256Hash
+            ambiguous.DirectoryVersionId1 <- fallbackRoot.DirectoryVersionId
+            ambiguous.DirectoryVersionId2 <- fallbackOther.DirectoryVersionId
+
+            let! ambiguousResponse = Client.PostAsync("/diff/getDiffBySha256Hash", createJsonContent ambiguous)
+            let! ambiguousBody = ambiguousResponse.Content.ReadAsStringAsync()
+            Assert.That(ambiguousResponse.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), ambiguousBody)
+            Assert.That((deserialize<GraceError> ambiguousBody).Error, Does.Contain("Sha256Hash1 prefix"))
+            Assert.That((deserialize<GraceError> ambiguousBody).Error, Does.Contain("ambiguous"))
         }
 
     [<Test>]

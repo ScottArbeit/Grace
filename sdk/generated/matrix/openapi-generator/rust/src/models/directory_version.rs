@@ -15,27 +15,53 @@ use serde::{Deserialize, Serialize};
 pub struct DirectoryVersion {
     #[serde(rename = "Class", skip_serializing_if = "Option::is_none")]
     pub class: Option<String>,
+    #[serde(rename = "DirectoryVersionId", skip_serializing_if = "Option::is_none")]
+    pub directory_version_id: Option<uuid::Uuid>,
+    #[serde(rename = "OwnerId", skip_serializing_if = "Option::is_none")]
+    pub owner_id: Option<uuid::Uuid>,
+    #[serde(rename = "OrganizationId", skip_serializing_if = "Option::is_none")]
+    pub organization_id: Option<uuid::Uuid>,
+    #[serde(rename = "RepositoryId", skip_serializing_if = "Option::is_none")]
+    pub repository_id: Option<uuid::Uuid>,
+    #[serde(rename = "RelativePath", skip_serializing_if = "Option::is_none")]
+    pub relative_path: Option<String>,
+    /// Lowercase 64-character SHA-256 version hash persisted on version DTOs.
+    #[serde(rename = "Sha256Hash", skip_serializing_if = "Option::is_none")]
+    pub sha256_hash: Option<String>,
+    /// Empty value, null, or lowercase 64-character BLAKE3 version hash for legacy version DTOs.
+    #[serde(rename = "Blake3Hash", skip_serializing_if = "Option::is_none")]
+    pub blake3_hash: Option<String>,
     #[serde(rename = "Directories", skip_serializing_if = "Option::is_none")]
-    pub directories: Option<Vec<serde_json::Value>>,
+    pub directories: Option<Vec<uuid::Uuid>>,
     #[serde(rename = "Files", skip_serializing_if = "Option::is_none")]
-    pub files: Option<Vec<serde_json::Value>>,
+    pub files: Option<Vec<models::FileVersion>>,
     #[serde(rename = "Size", skip_serializing_if = "Option::is_none")]
     pub size: Option<i64>,
     #[serde(rename = "RecursiveSize", skip_serializing_if = "Option::is_none")]
     pub recursive_size: Option<i64>,
     #[serde(rename = "CreatedAt", skip_serializing_if = "Option::is_none")]
     pub created_at: Option<chrono::DateTime<chrono::FixedOffset>>,
+    #[serde(rename = "HashesValidated", skip_serializing_if = "Option::is_none")]
+    pub hashes_validated: Option<bool>,
 }
 
 impl DirectoryVersion {
     pub fn new() -> DirectoryVersion {
         DirectoryVersion {
             class: None,
+            directory_version_id: None,
+            owner_id: None,
+            organization_id: None,
+            repository_id: None,
+            relative_path: None,
+            sha256_hash: None,
+            blake3_hash: None,
             directories: None,
             files: None,
             size: None,
             recursive_size: None,
             created_at: None,
+            hashes_validated: None,
         }
     }
 }

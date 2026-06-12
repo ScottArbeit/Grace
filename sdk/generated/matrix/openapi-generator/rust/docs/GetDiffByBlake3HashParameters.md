@@ -14,8 +14,8 @@ Name | Type | Description | Notes
 **repository_name** | Option<**String**> |  | [optional]
 **directory_version_id1** | Option<**uuid::Uuid**> |  | [optional]
 **directory_version_id2** | Option<**uuid::Uuid**> |  | [optional]
-**blake3_hash1** | Option<**String**> |  | [optional]
-**blake3_hash2** | Option<**String**> |  | [optional]
+**blake3_hash1** | Option<**String**> | Lowercase or uppercase 2- to 64-character BLAKE3 version hash prefix used for version graph lookups. | [optional]
+**blake3_hash2** | Option<**String**> | Lowercase or uppercase 2- to 64-character BLAKE3 version hash prefix used for version graph lookups. | [optional]
 
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
 

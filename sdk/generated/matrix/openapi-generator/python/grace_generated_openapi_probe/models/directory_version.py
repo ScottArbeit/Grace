@@ -19,8 +19,11 @@ import re  # noqa: F401
 import json
 
 from datetime import datetime
-from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, StrictStr, field_validator
 from typing import Any, ClassVar, Dict, List, Optional
+from typing_extensions import Annotated
+from uuid import UUID
+from grace_generated_openapi_probe.models.file_version import FileVersion
 from typing import Optional, Set
 from typing_extensions import Self
 from pydantic_core import to_jsonable_python
@@ -30,12 +33,46 @@ class DirectoryVersion(BaseModel):
     DirectoryVersion
     """ # noqa: E501
     var_class: Optional[StrictStr] = Field(default=None, alias="Class")
-    directories: Optional[List[Any]] = Field(default=None, alias="Directories")
-    files: Optional[List[Any]] = Field(default=None, alias="Files")
+    directory_version_id: Optional[UUID] = Field(default=None, alias="DirectoryVersionId")
+    owner_id: Optional[UUID] = Field(default=None, alias="OwnerId")
+    organization_id: Optional[UUID] = Field(default=None, alias="OrganizationId")
+    repository_id: Optional[UUID] = Field(default=None, alias="RepositoryId")
+    relative_path: Optional[StrictStr] = Field(default=None, alias="RelativePath")
+    sha256_hash: Optional[Annotated[str, Field(strict=True)]] = Field(default=None, description="Lowercase 64-character SHA-256 version hash persisted on version DTOs.", alias="Sha256Hash")
+    blake3_hash: Optional[Annotated[str, Field(strict=True)]] = Field(default=None, description="Empty value, null, or lowercase 64-character BLAKE3 version hash for legacy version DTOs.", alias="Blake3Hash")
+    directories: Optional[List[UUID]] = Field(default=None, alias="Directories")
+    files: Optional[List[FileVersion]] = Field(default=None, alias="Files")
     size: Optional[StrictInt] = Field(default=None, alias="Size")
     recursive_size: Optional[StrictInt] = Field(default=None, alias="RecursiveSize")
     created_at: Optional[datetime] = Field(default=None, alias="CreatedAt")
-    __properties: ClassVar[List[str]] = ["Class", "Directories", "Files", "Size", "RecursiveSize", "CreatedAt"]
+    hashes_validated: Optional[StrictBool] = Field(default=None, alias="HashesValidated")
+    __properties: ClassVar[List[str]] = ["Class", "DirectoryVersionId", "OwnerId", "OrganizationId", "RepositoryId", "RelativePath", "Sha256Hash", "Blake3Hash", "Directories", "Files", "Size", "RecursiveSize", "CreatedAt", "HashesValidated"]
+
+    @field_validator('sha256_hash')
+    def sha256_hash_validate_regular_expression(cls, value):
+        """Validates the regular expression"""
+        if value is None:
+            return value
+
+        if not isinstance(value, str):
+            value = str(value)
+
+        if not re.match(r"^[a-f0-9]{64}$", value):
+            raise ValueError(r"must validate the regular expression /^[a-f0-9]{64}$/")
+        return value
+
+    @field_validator('blake3_hash')
+    def blake3_hash_validate_regular_expression(cls, value):
+        """Validates the regular expression"""
+        if value is None:
+            return value
+
+        if not isinstance(value, str):
+            value = str(value)
+
+        if not re.match(r"^$|^[a-f0-9]{64}$", value):
+            raise ValueError(r"must validate the regular expression /^$|^[a-f0-9]{64}$/")
+        return value
 
     model_config = ConfigDict(
         validate_by_name=True,
@@ -76,6 +113,13 @@ class DirectoryVersion(BaseModel):
             exclude=excluded_fields,
             exclude_none=True,
         )
+        # override the default output from pydantic by calling `to_dict()` of each item in files (list)
+        _items = []
+        if self.files:
+            for _item_files in self.files:
+                if _item_files:
+                    _items.append(_item_files.to_dict())
+            _dict['Files'] = _items
         return _dict
 
     @classmethod
@@ -89,11 +133,19 @@ class DirectoryVersion(BaseModel):
 
         _obj = cls.model_validate({
             "Class": obj.get("Class"),
+            "DirectoryVersionId": obj.get("DirectoryVersionId"),
+            "OwnerId": obj.get("OwnerId"),
+            "OrganizationId": obj.get("OrganizationId"),
+            "RepositoryId": obj.get("RepositoryId"),
+            "RelativePath": obj.get("RelativePath"),
+            "Sha256Hash": obj.get("Sha256Hash"),
+            "Blake3Hash": obj.get("Blake3Hash"),
             "Directories": obj.get("Directories"),
-            "Files": obj.get("Files"),
+            "Files": [FileVersion.from_dict(_item) for _item in obj["Files"]] if obj.get("Files") is not None else None,
             "Size": obj.get("Size"),
             "RecursiveSize": obj.get("RecursiveSize"),
-            "CreatedAt": obj.get("CreatedAt")
+            "CreatedAt": obj.get("CreatedAt"),
+            "HashesValidated": obj.get("HashesValidated")
         })
         return _obj
 

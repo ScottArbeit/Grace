@@ -19,8 +19,10 @@ import re  # noqa: F401
 import json
 
 from datetime import datetime
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, StrictStr
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, StrictStr, field_validator
 from typing import Any, ClassVar, Dict, List, Optional
+from typing_extensions import Annotated
+from grace_generated_openapi_probe.models.file_content_reference import FileContentReference
 from typing import Optional, Set
 from typing_extensions import Self
 from pydantic_core import to_jsonable_python
@@ -30,11 +32,41 @@ class FileVersion(BaseModel):
     FileVersion
     """ # noqa: E501
     var_class: Optional[StrictStr] = Field(default=None, alias="Class")
+    relative_path: Optional[StrictStr] = Field(default=None, alias="RelativePath")
+    sha256_hash: Optional[Annotated[str, Field(strict=True)]] = Field(default=None, description="Lowercase 64-character SHA-256 version hash persisted on version DTOs.", alias="Sha256Hash")
+    blake3_hash: Optional[Annotated[str, Field(strict=True)]] = Field(default=None, description="Empty value, null, or lowercase 64-character BLAKE3 version hash for legacy version DTOs.", alias="Blake3Hash")
     is_binary: Optional[StrictBool] = Field(default=None, alias="IsBinary")
     size: Optional[StrictInt] = Field(default=None, alias="Size")
     created_at: Optional[datetime] = Field(default=None, alias="CreatedAt")
     blob_uri: Optional[StrictStr] = Field(default=None, alias="BlobUri")
-    __properties: ClassVar[List[str]] = ["Class", "IsBinary", "Size", "CreatedAt", "BlobUri"]
+    content_reference: Optional[FileContentReference] = Field(default=None, alias="ContentReference")
+    __properties: ClassVar[List[str]] = ["Class", "RelativePath", "Sha256Hash", "Blake3Hash", "IsBinary", "Size", "CreatedAt", "BlobUri", "ContentReference"]
+
+    @field_validator('sha256_hash')
+    def sha256_hash_validate_regular_expression(cls, value):
+        """Validates the regular expression"""
+        if value is None:
+            return value
+
+        if not isinstance(value, str):
+            value = str(value)
+
+        if not re.match(r"^[a-f0-9]{64}$", value):
+            raise ValueError(r"must validate the regular expression /^[a-f0-9]{64}$/")
+        return value
+
+    @field_validator('blake3_hash')
+    def blake3_hash_validate_regular_expression(cls, value):
+        """Validates the regular expression"""
+        if value is None:
+            return value
+
+        if not isinstance(value, str):
+            value = str(value)
+
+        if not re.match(r"^$|^[a-f0-9]{64}$", value):
+            raise ValueError(r"must validate the regular expression /^$|^[a-f0-9]{64}$/")
+        return value
 
     model_config = ConfigDict(
         validate_by_name=True,
@@ -75,6 +107,9 @@ class FileVersion(BaseModel):
             exclude=excluded_fields,
             exclude_none=True,
         )
+        # override the default output from pydantic by calling `to_dict()` of content_reference
+        if self.content_reference:
+            _dict['ContentReference'] = self.content_reference.to_dict()
         return _dict
 
     @classmethod
@@ -88,10 +123,14 @@ class FileVersion(BaseModel):
 
         _obj = cls.model_validate({
             "Class": obj.get("Class"),
+            "RelativePath": obj.get("RelativePath"),
+            "Sha256Hash": obj.get("Sha256Hash"),
+            "Blake3Hash": obj.get("Blake3Hash"),
             "IsBinary": obj.get("IsBinary"),
             "Size": obj.get("Size"),
             "CreatedAt": obj.get("CreatedAt"),
-            "BlobUri": obj.get("BlobUri")
+            "BlobUri": obj.get("BlobUri"),
+            "ContentReference": FileContentReference.from_dict(obj["ContentReference"]) if obj.get("ContentReference") is not None else None
         })
         return _obj
 

@@ -45,7 +45,7 @@ class TestGetBySha256HashParameters(unittest.TestCase):
                 repository_id = 'ab6f35ef-6e01-440b-8f9b-c343a5272095',
                 repository_name = '',
                 directory_version_id = '33a4e36b-828f-4fae-9343-50b6560dc842',
-                sha256_hash = '805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243'
+                sha256_hash = '805331a98813'
             )
         else:
             return GetBySha256HashParameters(

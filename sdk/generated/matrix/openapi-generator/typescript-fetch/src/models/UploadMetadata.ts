@@ -40,11 +40,17 @@ export interface UploadMetadata {
      */
     blobUriWithSasToken: string;
     /**
-     * 
+     * Lowercase 64-character SHA-256 version hash persisted on version DTOs.
      * @type {string}
      * @memberof UploadMetadata
      */
     sha256Hash: string;
+    /**
+     * Lowercase 64-character BLAKE3 version hash persisted on new version graph DTOs.
+     * @type {string}
+     * @memberof UploadMetadata
+     */
+    blake3Hash: string;
     /**
      * 
      * @type {FileContentReference}
@@ -60,6 +66,7 @@ export function instanceOfUploadMetadata(value: object): value is UploadMetadata
     if (!('relativePath' in value) || value['relativePath'] === undefined) return false;
     if (!('blobUriWithSasToken' in value) || value['blobUriWithSasToken'] === undefined) return false;
     if (!('sha256Hash' in value) || value['sha256Hash'] === undefined) return false;
+    if (!('blake3Hash' in value) || value['blake3Hash'] === undefined) return false;
     if (!('contentReference' in value) || value['contentReference'] === undefined) return false;
     return true;
 }
@@ -77,6 +84,7 @@ export function UploadMetadataFromJSONTyped(json: any, ignoreDiscriminator: bool
         'relativePath': json['RelativePath'],
         'blobUriWithSasToken': json['BlobUriWithSasToken'],
         'sha256Hash': json['Sha256Hash'],
+        'blake3Hash': json['Blake3Hash'],
         'contentReference': FileContentReferenceFromJSON(json['ContentReference']),
     };
 }
@@ -95,6 +103,7 @@ export function UploadMetadataToJSONTyped(value?: UploadMetadata | null, ignoreD
         'RelativePath': value['relativePath'],
         'BlobUriWithSasToken': value['blobUriWithSasToken'],
         'Sha256Hash': value['sha256Hash'],
+        'Blake3Hash': value['blake3Hash'],
         'ContentReference': FileContentReferenceToJSON(value['contentReference']),
     };
 }

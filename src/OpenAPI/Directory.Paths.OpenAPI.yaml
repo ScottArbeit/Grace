@@ -28,7 +28,8 @@
                     OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
                     RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
                     RelativePath: src
-                    Sha256Hash: 805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243
+                    Sha256Hash: 805331a98813206270e35564769e8bb59eea02aeb7b27c7d6c63e625e1857243
+                    Blake3Hash: 9a35d91b2f631be9025de753139b88f7b1e71385c412bc3986ff2f38f230841d
                     Directories: []
                     Files: []
                     Size: 0
@@ -144,10 +145,10 @@
                 summary: Get a directory version by SHA-256
                 value:
                   <<: *directoryBaseExample
-                  Sha256Hash: 805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243
+                  Sha256Hash: 805331a98813
       responses:
         '200':
-          $ref: './Directory.Components.OpenAPI.yaml#/DirectoryVersionHashLookupResponse'
+          $ref: './Directory.Components.OpenAPI.yaml#/DirectoryVersionSha256HashLookupResponse'
         '400':
           $ref: './Responses.OpenAPI.yaml#/400'
         '500':
@@ -171,7 +172,7 @@
                 summary: Get a directory version by BLAKE3
                 value:
                   <<: *directoryBaseExample
-                  Blake3Hash: 9A35D91B2F631BE9025DE753139B88F7B1E71385C412BC3986FF2F38F230841D
+                  Blake3Hash: 9a35d91b2f63
       responses:
         '200':
           $ref: './Directory.Components.OpenAPI.yaml#/DirectoryVersionHashLookupResponse'
@@ -205,7 +206,8 @@
                       OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
                       RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
                       RelativePath: src
-                      Sha256Hash: 805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243
+                      Sha256Hash: 805331a98813206270e35564769e8bb59eea02aeb7b27c7d6c63e625e1857243
+                      Blake3Hash: 9a35d91b2f631be9025de753139b88f7b1e71385c412bc3986ff2f38f230841d
                       Directories: []
                       Files: []
                       Size: 0
