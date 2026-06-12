@@ -10,6 +10,7 @@ Name | Type
 `relativePath` | string
 `blobUriWithSasToken` | string
 `sha256Hash` | string
+`blake3Hash` | string
 `contentReference` | [FileContentReference](FileContentReference.md)
 
 ## Example
@@ -22,6 +23,7 @@ const example = {
   "relativePath": null,
   "blobUriWithSasToken": null,
   "sha256Hash": 805331a98813206270e35564769e8bb59eea02aeb7b27c7d6c63e625e1857243,
+  "blake3Hash": 9a35d91b2f631be9025de753139b88f7b1e71385c412bc3986ff2f38f230841d,
   "contentReference": null,
 } satisfies UploadMetadata
 
