@@ -14,8 +14,10 @@ lookup, display, and verification. BLAKE3 is the default version-hash algorithm 
 SHA-256 remains retained for verification, comparison, lookup parity, and non-version uses that intentionally stay
 SHA-256.
 
-This ADR records the accepted model implemented by epic #343. Grace is not in production, so the SHA-256 retention in
-this ADR is a current contract and verification choice, not a promise to migrate or preserve old production data.
+This ADR records the accepted model targeted by epic #343 and partially implemented on the epic branch. Follow-ups #394
+and #395 track the remaining release-contract gaps for BLAKE3 display and lookup parity before the final mainline
+release. Grace is not in production, so the SHA-256 retention in this ADR is a current contract and verification choice,
+not a promise to migrate or preserve old production data.
 
 ## Context
 
