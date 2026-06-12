@@ -56,31 +56,8 @@ module Storage =
 
         StorageKeys.wholeFileContentObjectKey fileVersion
 
-    let private getLegacyWholeFileContentObjectKey (fileVersion: FileVersion) =
-        normalizeWholeFileContentReference fileVersion
-        |> ignore
-
-        StorageKeys.legacyWholeFileContentObjectKey fileVersion
-
     let private getReadableWholeFileContentObjectKey (repositoryDto: RepositoryDto) (fileVersion: FileVersion) correlationId =
-        task {
-            let currentBlobName = getWholeFileContentObjectKey fileVersion
-
-            if StorageKeys.hasBlake3SpecificWholeFileContentObjectKey fileVersion then
-                let! currentBlobClient = getAzureBlobClient repositoryDto currentBlobName correlationId
-                let! currentExists = currentBlobClient.ExistsAsync()
-
-                if currentExists.Value then
-                    return currentBlobName
-                else
-                    let legacyBlobName = getLegacyWholeFileContentObjectKey fileVersion
-                    let! legacyBlobClient = getAzureBlobClient repositoryDto legacyBlobName correlationId
-                    let! legacyExists = legacyBlobClient.ExistsAsync()
-
-                    if legacyExists.Value then return legacyBlobName else return currentBlobName
-            else
-                return currentBlobName
-        }
+        task { return getWholeFileContentObjectKey fileVersion }
 
     let private getContentBlockObjectKey (contentBlockAddress: ContentBlockAddress) = StorageKeys.contentBlockObjectKey contentBlockAddress
 
