@@ -506,6 +506,54 @@ module BranchCommandTests =
         |> should equal "src/App.fs"
 
     [<Test>]
+    let ``list contents json includes full dual hashes regardless of human display flags`` () =
+        let assertJsonContainsFullDualHashes (parseResult: System.CommandLine.ParseResult) =
+            parseResult.Errors.Count |> should equal 0
+
+            let exitCode, output =
+                captureOutput (fun () ->
+                    let result = Ok(GraceReturnValue.Create [| branchDirectoryWithFile () |] correlationId)
+                    Common.renderOutput parseResult result)
+
+            exitCode |> should equal 0
+
+            use document = JsonDocument.Parse(output)
+            let directory = document.RootElement.GetProperty("ReturnValue")[0]
+
+            directory.GetProperty("Sha256Hash").GetString()
+            |> should equal $"{directorySha256Hash}"
+
+            directory.GetProperty("Blake3Hash").GetString()
+            |> should equal $"{directoryBlake3Hash}"
+
+            let file = directory.GetProperty("Files")[0]
+
+            file.GetProperty("Sha256Hash").GetString()
+            |> should equal $"{fileSha256Hash}"
+
+            file.GetProperty("Blake3Hash").GetString()
+            |> should equal $"{fileBlake3Hash}"
+
+        let fullHashesParseResult =
+            parse [| "--output"
+                     "Json"
+                     "branch"
+                     "list-contents"
+                     "--full-hashes"
+                     "--show-sha256" |]
+
+        assertJsonContainsFullDualHashes fullHashesParseResult
+
+        let deprecatedFullShaParseResult =
+            parse [| "--output"
+                     "Json"
+                     "branch"
+                     "list-contents"
+                     "--full-sha" |]
+
+        assertJsonContainsFullDualHashes deprecatedFullShaParseResult
+
+    [<Test>]
     let ``select output remains one machine readable document and skips human spans`` () =
         let parseResult =
             parse [| "branch"
