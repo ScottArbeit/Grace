@@ -21,6 +21,7 @@ from grace_generated_openapi_probe.models.directory_command_return_value import 
 from grace_generated_openapi_probe.models.directory_version_hash_lookup_return_value import DirectoryVersionHashLookupReturnValue
 from grace_generated_openapi_probe.models.directory_version_list_return_value import DirectoryVersionListReturnValue
 from grace_generated_openapi_probe.models.directory_version_return_value import DirectoryVersionReturnValue
+from grace_generated_openapi_probe.models.directory_version_sha256_hash_lookup_return_value import DirectoryVersionSha256HashLookupReturnValue
 from grace_generated_openapi_probe.models.get_by_blake3_hash_parameters import GetByBlake3HashParameters
 from grace_generated_openapi_probe.models.get_by_directory_ids_parameters import GetByDirectoryIdsParameters
 from grace_generated_openapi_probe.models.get_by_sha256_hash_parameters import GetBySha256HashParameters
@@ -901,7 +902,7 @@ class DirectoriesApi:
         _content_type: Optional[StrictStr] = None,
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
-    ) -> DirectoryVersionHashLookupReturnValue:
+    ) -> DirectoryVersionSha256HashLookupReturnValue:
         """Get a directory version by SHA-256 hash.
 
         Gets a directory version DTO by SHA-256 hash.
@@ -939,7 +940,7 @@ class DirectoriesApi:
         )
 
         _response_types_map: Dict[str, Optional[str]] = {
-            '200': "DirectoryVersionHashLookupReturnValue",
+            '200': "DirectoryVersionSha256HashLookupReturnValue",
             '400': "GraceError",
             '500': "GraceError",
         }
@@ -970,7 +971,7 @@ class DirectoriesApi:
         _content_type: Optional[StrictStr] = None,
         _headers: Optional[Dict[StrictStr, Any]] = None,
         _host_index: Annotated[StrictInt, Field(ge=0, le=0)] = 0,
-    ) -> ApiResponse[DirectoryVersionHashLookupReturnValue]:
+    ) -> ApiResponse[DirectoryVersionSha256HashLookupReturnValue]:
         """Get a directory version by SHA-256 hash.
 
         Gets a directory version DTO by SHA-256 hash.
@@ -1008,7 +1009,7 @@ class DirectoriesApi:
         )
 
         _response_types_map: Dict[str, Optional[str]] = {
-            '200': "DirectoryVersionHashLookupReturnValue",
+            '200': "DirectoryVersionSha256HashLookupReturnValue",
             '400': "GraceError",
             '500': "GraceError",
         }
@@ -1077,7 +1078,7 @@ class DirectoriesApi:
         )
 
         _response_types_map: Dict[str, Optional[str]] = {
-            '200': "DirectoryVersionHashLookupReturnValue",
+            '200': "DirectoryVersionSha256HashLookupReturnValue",
             '400': "GraceError",
             '500': "GraceError",
         }

@@ -5,7 +5,7 @@
   "generatorPinned": true,
   "generatedClientBoundary": "internal-behind-facades",
   "sourceProjection": "src/OpenAPI/Grace.OpenAPI.3.1.2.yaml",
-  "sourceProjectionSha256": "0b262fc3e219b5db9ebfc96619d94c2cba8b545f3f5b62f4c50fad0248ca79db",
+  "sourceProjectionSha256": "faa7fd4c86831359648bc82b1dfa7699db7725b28fa72d566164b890bee2a50b",
   "openApiVersion": "3.1.2",
   "apiContractVersion": "2023-10-01",
   "pathCount": 105,

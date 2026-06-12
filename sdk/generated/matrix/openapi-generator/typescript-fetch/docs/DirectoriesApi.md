@@ -235,7 +235,7 @@ example().catch(console.error);
 
 ## getDirectoryVersionBySha256Hash
 
-> DirectoryVersionHashLookupReturnValue getDirectoryVersionBySha256Hash(getBySha256HashParameters)
+> DirectoryVersionSha256HashLookupReturnValue getDirectoryVersionBySha256Hash(getBySha256HashParameters)
 
 Get a directory version by SHA-256 hash.
 
@@ -284,7 +284,7 @@ example().catch(console.error);
 
 ### Return type
 
-[**DirectoryVersionHashLookupReturnValue**](DirectoryVersionHashLookupReturnValue.md)
+[**DirectoryVersionSha256HashLookupReturnValue**](DirectoryVersionSha256HashLookupReturnValue.md)
 
 ### Authorization
 
