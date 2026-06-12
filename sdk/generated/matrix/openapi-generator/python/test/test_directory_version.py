@@ -37,15 +37,23 @@ class TestDirectoryVersion(unittest.TestCase):
         if include_optional:
             return DirectoryVersion(
                 var_class = '',
+                directory_version_id = '33a4e36b-828f-4fae-9343-50b6560dc842',
+                owner_id = '9dd5f81f-dc43-4839-9173-85d09394f30f',
+                organization_id = 'e35d64a9-b990-44f5-bf02-32ad7d15630c',
+                repository_id = 'ab6f35ef-6e01-440b-8f9b-c343a5272095',
+                relative_path = '',
+                sha256_hash = '805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243',
+                blake3_hash = '9A35D91B2F631BE9025DE753139B88F7B1E71385C412BC3986FF2F38F230841D',
                 directories = [
-                    null
+                    '33a4e36b-828f-4fae-9343-50b6560dc842'
                     ],
                 files = [
-                    null
+                    {Class=FileVersion, RelativePath=src/App.fs, Sha256Hash=805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243, Blake3Hash=9A35D91B2F631BE9025DE753139B88F7B1E71385C412BC3986FF2F38F230841D, IsBinary=false, Size=128, CreatedAt=2026-06-04T18:15:00Z, BlobUri=, ContentReference={Kind=WholeFileContent}}
                     ],
                 size = 56,
                 recursive_size = 56,
-                created_at = datetime.datetime.strptime('2013-10-20 19:20:30.00', '%Y-%m-%d %H:%M:%S.%f')
+                created_at = datetime.datetime.strptime('2013-10-20 19:20:30.00', '%Y-%m-%d %H:%M:%S.%f'),
+                hashes_validated = True
             )
         else:
             return DirectoryVersion(

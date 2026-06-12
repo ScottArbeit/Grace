@@ -18,8 +18,9 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, Field, StrictStr
+from pydantic import BaseModel, ConfigDict, Field, StrictStr, field_validator
 from typing import Any, ClassVar, Dict, List, Optional
+from typing_extensions import Annotated
 from uuid import UUID
 from typing import Optional, Set
 from typing_extensions import Self
@@ -38,8 +39,21 @@ class GetByBlake3HashParameters(BaseModel):
     repository_id: Optional[UUID] = Field(default=None, alias="RepositoryId")
     repository_name: Optional[StrictStr] = Field(default=None, alias="RepositoryName")
     directory_version_id: Optional[UUID] = Field(default=None, alias="DirectoryVersionId")
-    blake3_hash: Optional[StrictStr] = Field(default=None, alias="Blake3Hash")
+    blake3_hash: Optional[Annotated[str, Field(strict=True)]] = Field(default=None, description="Lowercase or uppercase 64-character BLAKE3 version hash used for new version graph lookups.", alias="Blake3Hash")
     __properties: ClassVar[List[str]] = ["CorrelationId", "Principal", "OwnerId", "OwnerName", "OrganizationId", "OrganizationName", "RepositoryId", "RepositoryName", "DirectoryVersionId", "Blake3Hash"]
+
+    @field_validator('blake3_hash')
+    def blake3_hash_validate_regular_expression(cls, value):
+        """Validates the regular expression"""
+        if value is None:
+            return value
+
+        if not isinstance(value, str):
+            value = str(value)
+
+        if not re.match(r"^[A-Fa-f0-9]{64}$", value):
+            raise ValueError(r"must validate the regular expression /^[A-Fa-f0-9]{64}$/")
+        return value
 
     model_config = ConfigDict(
         validate_by_name=True,

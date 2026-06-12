@@ -52,13 +52,13 @@ export interface ReferenceDto {
      */
     directoryId?: string;
     /**
-     * 
+     * Lowercase or uppercase 64-character SHA-256 version hash retained for compatibility.
      * @type {string}
      * @memberof ReferenceDto
      */
     sha256Hash?: string;
     /**
-     * 
+     * Lowercase or uppercase 64-character BLAKE3 version hash used for new version graph lookups.
      * @type {string}
      * @memberof ReferenceDto
      */
