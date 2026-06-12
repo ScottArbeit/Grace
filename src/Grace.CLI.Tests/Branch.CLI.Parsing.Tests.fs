@@ -5,6 +5,7 @@ open Grace.CLI
 open Grace.CLI.Command
 open NUnit.Framework
 open System
+open System.CommandLine
 
 [<Parallelizable(ParallelScope.All)>]
 module BranchCommandParsingTests =
@@ -30,6 +31,17 @@ module BranchCommandParsingTests =
                 branchId.ToString()
             |]
 
+    let private referenceSourceRoot =
+        let rootCommand = RootCommand("Reference source-only parser")
+        rootCommand.Options.Add(Common.Options.correlationId)
+        rootCommand.Options.Add(Common.Options.source)
+        rootCommand.Options.Add(Common.Options.output)
+        rootCommand.Options.Add(Common.Options.schema)
+        rootCommand.Options.Add(Common.Options.examples)
+        rootCommand.Options.Add(Common.Options.select)
+        rootCommand.Subcommands.Add(Reference.Build)
+        rootCommand
+
     let private assertParses args =
         let parseResult = GraceCommand.rootCommand.Parse(withIds args)
         parseResult.Errors.Count |> should equal 0
@@ -38,6 +50,11 @@ module BranchCommandParsingTests =
     let private assertDoesNotParse args =
         let parseResult = GraceCommand.rootCommand.Parse(withIds args)
         Assert.That(parseResult.Errors.Count, Is.GreaterThan(0))
+        parseResult
+
+    let private assertReferenceSourceParses args =
+        let parseResult = referenceSourceRoot.Parse(withIds args)
+        parseResult.Errors.Count |> should equal 0
         parseResult
 
     [<Test>]
@@ -142,6 +159,72 @@ module BranchCommandParsingTests =
 
         Branch.switchHashLocatorEvidence String.Empty blake3Hash
         |> should equal (String.Empty, blake3Hash)
+
+    [<Test>]
+    let ``reference assign parses BLAKE3 hash option`` () =
+        let parseResult =
+            assertReferenceSourceParses [| "reference"
+                                           "assign"
+                                           "--blake3-hash"
+                                           blake3Hash |]
+
+        parseResult.GetValue<string>("--blake3-hash")
+        |> should equal blake3Hash
+
+    [<Test>]
+    let ``reference assign preserves SHA-256 and BLAKE3 locator evidence`` () =
+        let parseResult =
+            assertReferenceSourceParses [| "reference"
+                                           "assign"
+                                           "--sha256-hash"
+                                           sha256Hash
+                                           "--blake3-hash"
+                                           blake3Hash |]
+
+        parseResult.GetValue<string>("--sha256-hash")
+        |> should equal sha256Hash
+
+        parseResult.GetValue<string>("--blake3-hash")
+        |> should equal blake3Hash
+
+    [<Test>]
+    let ``reference assign preserves message in assign parameters`` () =
+        let message = "Promote CLI candidate"
+
+        let parseResult =
+            assertReferenceSourceParses [| "reference"
+                                           "assign"
+                                           "--sha256-hash"
+                                           sha256Hash
+                                           "--message"
+                                           message |]
+
+        let parameters = Reference.buildAssignParameters parseResult
+
+        parameters.Sha256Hash |> should equal sha256Hash
+        parameters.Message |> should equal message
+
+    [<Test>]
+    let ``source-only reference commands are not exposed from root command`` () =
+        for commandName in
+            [|
+                "assign"
+                "checkpoint"
+                "commit"
+                "create-external"
+                "delete"
+                "get"
+                "promote"
+                "save"
+                "tag"
+            |] do
+            let parseResult =
+                assertDoesNotParse [| "reference"
+                                      commandName |]
+
+            parseResult.Errors
+            |> Seq.exists (fun error -> error.Message.Contains("Unrecognized command or argument 'reference'", StringComparison.OrdinalIgnoreCase))
+            |> should equal true
 
     [<Test>]
     let ``forbidden branch annotate V1 options are unavailable`` () =
