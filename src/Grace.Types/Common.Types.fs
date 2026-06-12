@@ -1206,6 +1206,8 @@ module Common =
             LastSuccessfulFileUpload: Instant
             [<Key(4)>]
             LastSuccessfulDirectoryVersionUpload: Instant
+            [<Key(5)>]
+            RootDirectoryBlake3Hash: Blake3Hash
         }
 
         static member Default =
@@ -1215,6 +1217,7 @@ module Common =
                 RootDirectorySha256Hash = Sha256Hash String.Empty
                 LastSuccessfulFileUpload = getCurrentInstant ()
                 LastSuccessfulDirectoryVersionUpload = getCurrentInstant ()
+                RootDirectoryBlake3Hash = Blake3Hash String.Empty
             }
 
     /// GraceObjectCache is a snapshot of the contents of the local object cache.
