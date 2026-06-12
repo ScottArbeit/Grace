@@ -88,15 +88,24 @@ module Common =
 
         type ReviewReportExportDto = { CandidateId: string; Format: string; OutputFile: string; BytesWritten: int64 }
 
-        type MaintenanceStatsDto = { DirectoryCount: int; FileCount: int; TotalFileSize: int64; RootSha256Hash: string option }
+        type MaintenanceStatsDto = { DirectoryCount: int; FileCount: int; TotalFileSize: int64; RootSha256Hash: string option; RootBlake3Hash: string option }
 
-        type MaintenanceListContentsFileDto = { RelativePath: string; FileName: string; Sha256Hash: string; Size: int64; LastWriteTimeUtc: DateTime }
+        type MaintenanceListContentsFileDto =
+            {
+                RelativePath: string
+                FileName: string
+                Sha256Hash: string
+                Blake3Hash: string
+                Size: int64
+                LastWriteTimeUtc: DateTime
+            }
 
         type MaintenanceListContentsDirectoryDto =
             {
                 RelativePath: string
                 DirectoryVersionId: Guid
                 Sha256Hash: string
+                Blake3Hash: string
                 Size: int64
                 LastWriteTimeUtc: DateTime
                 Files: MaintenanceListContentsFileDto array
@@ -108,7 +117,7 @@ module Common =
 
         type MaintenanceScanDifferenceDto = { DifferenceType: string; FileSystemEntryType: string; RelativePath: string }
 
-        type MaintenanceScanDirectoryVersionDto = { DirectoryVersionId: Guid; RelativePath: string; Sha256Hash: string }
+        type MaintenanceScanDirectoryVersionDto = { DirectoryVersionId: Guid; RelativePath: string; Sha256Hash: string; Blake3Hash: string }
 
         type MaintenanceScanDto =
             {

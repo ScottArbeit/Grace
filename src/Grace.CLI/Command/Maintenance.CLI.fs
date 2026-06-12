@@ -125,6 +125,21 @@ module Maintenance =
         rootHashFromIndex
         |> Option.orElse rootHashFromStatusMeta
 
+    let private tryGetRootBlake3Hash (graceStatus: GraceStatus) =
+        let rootHashFromIndex =
+            graceStatus.Index.Values
+            |> Seq.tryFind (fun directoryVersion -> directoryVersion.RelativePath = Constants.RootDirectoryPath)
+            |> Option.map (fun directoryVersion -> directoryVersion.Blake3Hash)
+
+        let rootHashFromStatusMeta =
+            if String.IsNullOrWhiteSpace(string graceStatus.RootDirectoryBlake3Hash) then
+                None
+            else
+                Some graceStatus.RootDirectoryBlake3Hash
+
+        rootHashFromIndex
+        |> Option.orElse rootHashFromStatusMeta
+
     let private getShortHash (sha256Hash: Sha256Hash) =
         if String.IsNullOrWhiteSpace(sha256Hash) then String.Empty
         elif sha256Hash.Length <= 8 then sha256Hash
@@ -154,6 +169,9 @@ module Maintenance =
             RootSha256Hash =
                 tryGetRootSha256Hash graceStatus
                 |> Option.map string
+            RootBlake3Hash =
+                tryGetRootBlake3Hash graceStatus
+                |> Option.map string
         }
 
     let private toListContentsDto listDirectories listFiles (graceStatus: GraceStatus) : LocalOutputDto.MaintenanceListContentsDto =
@@ -171,6 +189,7 @@ module Maintenance =
                                     LocalOutputDto.MaintenanceListContentsFileDto.RelativePath = string file.RelativePath
                                     FileName = file.FileInfo.Name
                                     Sha256Hash = string file.Sha256Hash
+                                    Blake3Hash = string file.Blake3Hash
                                     Size = int64 file.Size
                                     LastWriteTimeUtc = file.LastWriteTimeUtc
                                 }: LocalOutputDto.MaintenanceListContentsFileDto)
@@ -182,6 +201,7 @@ module Maintenance =
                          LocalOutputDto.MaintenanceListContentsDirectoryDto.RelativePath = string directoryVersion.RelativePath
                          DirectoryVersionId = directoryVersion.DirectoryVersionId
                          Sha256Hash = string directoryVersion.Sha256Hash
+                         Blake3Hash = string directoryVersion.Blake3Hash
                          Size = int64 directoryVersion.Size
                          LastWriteTimeUtc = directoryVersion.LastWriteTimeUtc
                          Files = files
@@ -212,6 +232,7 @@ module Maintenance =
                          LocalOutputDto.MaintenanceScanDirectoryVersionDto.DirectoryVersionId = directoryVersion.DirectoryVersionId
                          RelativePath = string directoryVersion.RelativePath
                          Sha256Hash = string directoryVersion.Sha256Hash
+                         Blake3Hash = string directoryVersion.Blake3Hash
                      }: LocalOutputDto.MaintenanceScanDirectoryVersionDto))
                 |> Seq.toArray
         }
