@@ -476,6 +476,16 @@ open System.Net.Http
 open System.Net.Http.Json
 open System.Threading.Tasks
 
+module AccessStorageTestData =
+    let createFileVersion (relativePath: string) =
+        FileVersion.CreateWithHashes
+            (RelativePath relativePath)
+            (Sha256Hash "805331a98813206270e35564769e8bb59eea02aeb7b27c7d6c63e625e1857243")
+            (Blake3Hash "9a35d91b2f631be9025de753139b88f7b1e71385c412bc3986ff2f38f230841d")
+            String.Empty
+            false
+            1L
+
 [<Parallelizable(ParallelScope.All)>]
 type AccessControl() =
 
@@ -801,7 +811,7 @@ type AccessControl() =
                 createClientWithClaims [ "engineering"
                                          "writers" ]
 
-            let fileVersion = FileVersion.Create "images/foo.png" "hash" "" false 1L
+            let fileVersion = AccessStorageTestData.createFileVersion "images/foo.png"
 
             let uploadParameters = Parameters.Storage.GetUploadMetadataForFilesParameters()
             uploadParameters.OwnerId <- ownerId
@@ -1302,7 +1312,7 @@ type EndpointAuthorizationTests() =
         parameters.OwnerId <- ownerId
         parameters.OrganizationId <- organizationId
         parameters.RepositoryId <- repositoryId
-        parameters.FileVersion <- FileVersion.Create "images/test.txt" "hash" "" false 1L
+        parameters.FileVersion <- AccessStorageTestData.createFileVersion "images/test.txt"
         parameters.CorrelationId <- generateCorrelationId ()
         parameters
 
@@ -1314,7 +1324,7 @@ type EndpointAuthorizationTests() =
 
         parameters.FileVersions <-
             [|
-                FileVersion.Create "images/test.txt" "hash" "" false 1L
+                AccessStorageTestData.createFileVersion "images/test.txt"
             |]
 
         parameters.CorrelationId <- generateCorrelationId ()
