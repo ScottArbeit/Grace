@@ -34,7 +34,7 @@
         - type: object
           properties:
             Sha256Hash:
-              $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Sha256Hash'
+              $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Sha256HashOptionalPrefix'
             ReferenceId:
               $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/ReferenceId'
     BranchHashQueryParameters:
@@ -44,7 +44,7 @@
         - type: object
           properties:
             Blake3Hash:
-              $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Blake3Hash'
+              $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Blake3HashOptionalPrefix'
     CreateBranchParameters:
       description: Parameters for the /branch/create endpoint.
       allOf:
@@ -78,9 +78,9 @@
               format: uuid
               example: 33a4e36b-828f-4fae-9343-50b6560dc842
             Sha256Hash:
-              $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Sha256Hash'
+              $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Sha256HashOptionalPrefix'
             Blake3Hash:
-              $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Blake3Hash'
+              $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Blake3HashOptionalPrefix'
             Message:
               type: string
               example: Capture release candidate.
