@@ -15,6 +15,14 @@ use serde::{Deserialize, Serialize};
 pub struct FileVersion {
     #[serde(rename = "Class", skip_serializing_if = "Option::is_none")]
     pub class: Option<String>,
+    #[serde(rename = "RelativePath", skip_serializing_if = "Option::is_none")]
+    pub relative_path: Option<String>,
+    /// Lowercase or uppercase 64-character SHA-256 version hash retained for compatibility.
+    #[serde(rename = "Sha256Hash", skip_serializing_if = "Option::is_none")]
+    pub sha256_hash: Option<String>,
+    /// Lowercase or uppercase 64-character BLAKE3 version hash used for new version graph lookups.
+    #[serde(rename = "Blake3Hash", skip_serializing_if = "Option::is_none")]
+    pub blake3_hash: Option<String>,
     #[serde(rename = "IsBinary", skip_serializing_if = "Option::is_none")]
     pub is_binary: Option<bool>,
     #[serde(rename = "Size", skip_serializing_if = "Option::is_none")]
@@ -23,16 +31,22 @@ pub struct FileVersion {
     pub created_at: Option<chrono::DateTime<chrono::FixedOffset>>,
     #[serde(rename = "BlobUri", skip_serializing_if = "Option::is_none")]
     pub blob_uri: Option<String>,
+    #[serde(rename = "ContentReference", skip_serializing_if = "Option::is_none")]
+    pub content_reference: Option<Box<models::FileContentReference>>,
 }
 
 impl FileVersion {
     pub fn new() -> FileVersion {
         FileVersion {
             class: None,
+            relative_path: None,
+            sha256_hash: None,
+            blake3_hash: None,
             is_binary: None,
             size: None,
             created_at: None,
             blob_uri: None,
+            content_reference: None,
         }
     }
 }

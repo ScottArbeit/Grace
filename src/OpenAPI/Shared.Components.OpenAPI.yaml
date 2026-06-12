@@ -47,6 +47,10 @@ components:
       type: string
       format: uuid
       example: 33a4e36b-828f-4fae-9343-50b6560dc842
+    DirectoryVersionId:
+      type: string
+      format: uuid
+      example: 33a4e36b-828f-4fae-9343-50b6560dc842
     FilePath:
       type: string
     GraceIgnoreEntry:
@@ -81,9 +85,13 @@ components:
       type: string
     Sha256Hash:
       type: string
+      description: Lowercase or uppercase 64-character SHA-256 version hash retained for compatibility.
+      pattern: '^[A-Fa-f0-9]{64}$'
       example: 805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243
     Blake3Hash:
       type: string
+      description: Lowercase or uppercase 64-character BLAKE3 version hash used for new version graph lookups.
+      pattern: '^[A-Fa-f0-9]{64}$'
       example: 9A35D91B2F631BE9025DE753139B88F7B1E71385C412BC3986FF2F38F230841D
     StorageAccountName:
       type: string
@@ -136,12 +144,12 @@ components:
       properties:
         Class:
           type: string
-        RepositoryId:
-          - $ref: '#/components/schemas/RepositoryId'
         RelativePath:
-          - $ref: '#/components/schemas/RelativePath'
+          $ref: '#/components/schemas/RelativePath'
         Sha256Hash:
-          - $ref: '#/components/schemas/Sha256Hash'
+          $ref: '#/components/schemas/Sha256Hash'
+        Blake3Hash:
+          $ref: '#/components/schemas/Blake3Hash'
         IsBinary:
           type: boolean
         Size:
@@ -152,28 +160,47 @@ components:
           format: date-time
         BlobUri:
           type: string
+        ContentReference:
+          $ref: 'Storage.Components.OpenAPI.yaml#/FileContentReference'
+      example:
+        Class: FileVersion
+        RelativePath: src/App.fs
+        Sha256Hash: 805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243
+        Blake3Hash: 9A35D91B2F631BE9025DE753139B88F7B1E71385C412BC3986FF2F38F230841D
+        IsBinary: false
+        Size: 128
+        CreatedAt: '2026-06-04T18:15:00Z'
+        BlobUri: ''
+        ContentReference:
+          Kind: WholeFileContent
 
     DirectoryVersion:
       type: object
       properties:
         Class:
           type: string
-        DirectoryId:
-          - $ref: '#/components/schemas/DirectoryId'
+        DirectoryVersionId:
+          $ref: '#/components/schemas/DirectoryVersionId'
+        OwnerId:
+          $ref: '#/components/schemas/OwnerId'
+        OrganizationId:
+          $ref: '#/components/schemas/OrganizationId'
         RepositoryId:
-          - $ref: '#/components/schemas/RepositoryId'
+          $ref: '#/components/schemas/RepositoryId'
         RelativePath:
-          - $ref: '#/components/schemas/RelativePath'
+          $ref: '#/components/schemas/RelativePath'
         Sha256Hash:
-          - $ref: '#/components/schemas/Sha256Hash'
+          $ref: '#/components/schemas/Sha256Hash'
+        Blake3Hash:
+          $ref: '#/components/schemas/Blake3Hash'
         Directories:
           type: array
           items:
-            - $ref: '#/components/schemas/DirectoryId'
+            $ref: '#/components/schemas/DirectoryVersionId'
         Files:
           type: array
           items:
-            - $ref: '#/components/schemas/FileVersion'
+            $ref: '#/components/schemas/FileVersion'
         Size:
           type: integer
           format: int64
@@ -183,6 +210,22 @@ components:
         CreatedAt:
           type: string
           format: date-time
+        HashesValidated:
+          type: boolean
+      example:
+        Class: DirectoryVersion
+        DirectoryVersionId: 33a4e36b-828f-4fae-9343-50b6560dc842
+        OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+        OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+        RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+        RelativePath: src
+        Sha256Hash: 805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243
+        Blake3Hash: 9A35D91B2F631BE9025DE753139B88F7B1E71385C412BC3986FF2F38F230841D
+        Directories: []
+        Files: []
+        Size: 0
+        CreatedAt: '2026-06-04T18:15:00Z'
+        HashesValidated: true
 
     EventMetadata:
       description: 

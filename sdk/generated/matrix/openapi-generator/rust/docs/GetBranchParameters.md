@@ -14,7 +14,7 @@ Name | Type | Description | Notes
 **repository_name** | Option<**String**> |  | [optional]
 **branch_id** | Option<**uuid::Uuid**> |  | [optional]
 **branch_name** | Option<**String**> |  | [optional]
-**sha256_hash** | Option<**String**> |  | [optional]
+**sha256_hash** | Option<**String**> | Lowercase or uppercase 64-character SHA-256 version hash retained for compatibility. | [optional]
 **reference_id** | Option<**uuid::Uuid**> |  | [optional]
 **include_deleted** | Option<**bool**> |  | [optional]
 

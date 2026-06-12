@@ -74,7 +74,7 @@ export interface GetBySha256HashParameters {
      */
     directoryVersionId?: string;
     /**
-     * 
+     * Lowercase or uppercase 64-character SHA-256 version hash retained for compatibility.
      * @type {string}
      * @memberof GetBySha256HashParameters
      */

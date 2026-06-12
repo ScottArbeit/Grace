@@ -18,8 +18,9 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, Field, StrictStr
+from pydantic import BaseModel, ConfigDict, Field, StrictStr, field_validator
 from typing import Any, ClassVar, Dict, List
+from typing_extensions import Annotated
 from grace_generated_openapi_probe.models.file_content_reference import FileContentReference
 from typing import Optional, Set
 from typing_extensions import Self
@@ -31,9 +32,19 @@ class UploadMetadata(BaseModel):
     """ # noqa: E501
     relative_path: StrictStr = Field(alias="RelativePath")
     blob_uri_with_sas_token: StrictStr = Field(alias="BlobUriWithSasToken")
-    sha256_hash: StrictStr = Field(alias="Sha256Hash")
+    sha256_hash: Annotated[str, Field(strict=True)] = Field(description="Lowercase or uppercase 64-character SHA-256 version hash retained for compatibility.", alias="Sha256Hash")
     content_reference: FileContentReference = Field(alias="ContentReference")
     __properties: ClassVar[List[str]] = ["RelativePath", "BlobUriWithSasToken", "Sha256Hash", "ContentReference"]
+
+    @field_validator('sha256_hash')
+    def sha256_hash_validate_regular_expression(cls, value):
+        """Validates the regular expression"""
+        if not isinstance(value, str):
+            value = str(value)
+
+        if not re.match(r"^[A-Fa-f0-9]{64}$", value):
+            raise ValueError(r"must validate the regular expression /^[A-Fa-f0-9]{64}$/")
+        return value
 
     model_config = ConfigDict(
         validate_by_name=True,

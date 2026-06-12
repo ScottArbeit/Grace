@@ -578,6 +578,20 @@ function Assert-OpenApiNamedBlockDoesNotContain {
     }
 }
 
+function Assert-OpenApiSchemaHasProperty {
+    param(
+        [string] $Text,
+        [string] $SchemaName,
+        [string] $PropertyName,
+        [string] $Message
+    )
+
+    $propertyBlock = Get-OpenApiSchemaPropertyBlock $Text $SchemaName $PropertyName
+    if ($null -eq $propertyBlock) {
+        Add-Failure $Message
+    }
+}
+
 function Get-YamlIndentLength {
     param([string] $Line)
 
@@ -1234,6 +1248,21 @@ function Test-OpenApiSharedContractDetails {
     }
 
     $sharedText = Get-Content -LiteralPath (Join-Path $OpenApiRoot 'Shared.Components.OpenAPI.yaml') -Raw
+    foreach ($requiredHashContract in @(
+            [pscustomobject]@{ Schema = 'FileVersion'; Property = 'Sha256Hash' },
+            [pscustomobject]@{ Schema = 'FileVersion'; Property = 'Blake3Hash' },
+            [pscustomobject]@{ Schema = 'DirectoryVersion'; Property = 'DirectoryVersionId' },
+            [pscustomobject]@{ Schema = 'DirectoryVersion'; Property = 'Sha256Hash' },
+            [pscustomobject]@{ Schema = 'DirectoryVersion'; Property = 'Blake3Hash' },
+            [pscustomobject]@{ Schema = 'DirectoryVersion'; Property = 'HashesValidated' }
+        )) {
+        Assert-OpenApiSchemaHasProperty `
+            $sharedText `
+            $requiredHashContract.Schema `
+            $requiredHashContract.Property `
+            "$($requiredHashContract.Schema) must expose $($requiredHashContract.Property) in the public OpenAPI schema."
+    }
+
     foreach ($requiredGraceErrorPart in @(
             'Grace domain error envelope',
             'Authentication challenges and framework authorization',
@@ -1245,6 +1274,10 @@ function Test-OpenApiSharedContractDetails {
         )) {
         Assert-TextContains $sharedText $requiredGraceErrorPart "GraceError contract is missing '$requiredGraceErrorPart'."
     }
+
+    $directoryPathsText = Get-Content -LiteralPath (Join-Path $OpenApiRoot 'Directory.Paths.OpenAPI.yaml') -Raw
+    Assert-TextContains $directoryPathsText 'Blake3Hash: 9A35D91B2F631BE9025DE753139B88F7B1E71385C412BC3986FF2F38F230841D' `
+        'Directory create/save examples must show BLAKE3 alongside SHA-256.'
 
     Assert-TextContains $sharedText 'distinct from the X-Correlation-Id transport header' 'Body CorrelationId must be documented as distinct from the transport header.'
 
