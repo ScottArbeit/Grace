@@ -66,9 +66,10 @@ The directory SHA-256 value is computed with this algorithm:
 
 1. Create the `grace.directory-version.v1` UTF-8 preimage.
 1. Include the directory's repository-relative path.
-1. Include each child entry kind, child repository-relative path, and same-algorithm child hash.
-1. Include file size for file entries.
-1. Sort entries deterministically by kind and path before finalizing the preimage.
+1. Include each child entry kind, child repository-relative path, child size, and same-algorithm child hash. The size
+   field is serialized for every child entry, including directory entries.
+1. Sort entries deterministically by normalized child path first, then by child kind only when two entries have the same
+   normalized path, before finalizing the preimage.
 1. Finalize the SHA-256 hash and convert it to lowercase hexadecimal text.
 
 BLAKE3 directory version hashes use the same `grace.directory-version.v1` preimage shape with BLAKE3 child hashes. This
