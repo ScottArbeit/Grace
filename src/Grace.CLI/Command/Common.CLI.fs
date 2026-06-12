@@ -223,7 +223,7 @@ module Common =
 
     module HashOptions =
         [<Literal>]
-        let MinimumVersionHashPrefixLength = 8
+        let MinimumVersionHashPrefixLength = 2
 
         [<Literal>]
         let FullVersionHashLength = 64
