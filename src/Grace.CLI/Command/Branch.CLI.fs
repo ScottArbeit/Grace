@@ -762,18 +762,13 @@ module Branch =
                     return renderOutput parseResult (GraceResult.Error graceError)
             }
 
-    let private getShortHash (sha256Hash: Sha256Hash) =
-        if String.IsNullOrWhiteSpace(sha256Hash) then String.Empty
-        elif sha256Hash.Length <= 8 then sha256Hash
-        else sha256Hash.Substring(0, 8)
+    let internal formatListContentsVersionHash (hashDisplayMode: HashOptions.VersionHashDisplayMode) (blake3Hash: Blake3Hash) (sha256Hash: Sha256Hash) =
+        HashOptions.formatVersionHashPair hashDisplayMode blake3Hash sha256Hash
 
-    let internal formatListContentsSha256Hash (hashDisplayMode: HashOptions.VersionHashDisplayMode) (sha256Hash: Sha256Hash) =
-        if hashDisplayMode.FullHashes then $"{sha256Hash}" else getShortHash sha256Hash
-
-    let private tryGetRootSha256Hash (directoryVersions: IEnumerable<DirectoryVersion>) =
+    let private tryGetRootVersionHashes (directoryVersions: IEnumerable<DirectoryVersion>) =
         directoryVersions
         |> Seq.tryFind (fun directoryVersion -> directoryVersion.RelativePath = Constants.RootDirectoryPath)
-        |> Option.map (fun directoryVersion -> directoryVersion.Sha256Hash)
+        |> Option.map (fun directoryVersion -> directoryVersion.Blake3Hash, directoryVersion.Sha256Hash)
 
     let printContents (parseResult: ParseResult) (directoryVersions: IEnumerable<DirectoryVersion>) =
         let hashDisplayMode = HashOptions.bindVersionHashDisplayMode parseResult
@@ -796,7 +791,7 @@ module Branch =
 
                 if i = 0 then
                     AnsiConsole.MarkupLine(
-                        $"[{Colors.Important}]Created At                   SHA-256            Size  Path{additionalSpaces}[/][{Colors.Deemphasized}] (DirectoryVersionId)[/]"
+                        $"[{Colors.Important}]Created At                   BLAKE3 version hash  Size  Path{additionalSpaces}[/][{Colors.Deemphasized}] (DirectoryVersionId)[/]"
                     )
 
                     AnsiConsole.MarkupLine(
@@ -811,14 +806,14 @@ module Branch =
                     + $"({directoryVersion.DirectoryVersionId})"
 
                 AnsiConsole.MarkupLine(
-                    $"[{Colors.Highlighted}]{formatInstantAligned directoryVersion.CreatedAt}   {formatListContentsSha256Hash hashDisplayMode directoryVersion.Sha256Hash}  {directoryVersion.Size, 13:N0}  /{directoryVersion.RelativePath}[/] [{Colors.Deemphasized}] {rightAlignedDirectoryVersionId}[/]"
+                    $"[{Colors.Highlighted}]{formatInstantAligned directoryVersion.CreatedAt}   {formatListContentsVersionHash hashDisplayMode directoryVersion.Blake3Hash directoryVersion.Sha256Hash}  {directoryVersion.Size, 13:N0}  /{directoryVersion.RelativePath}[/] [{Colors.Deemphasized}] {rightAlignedDirectoryVersionId}[/]"
                 )
                 //if parseResult.CommandResult.Command.Options.Contains(Options.listFiles) then
                 let sortedFiles = directoryVersion.Files.OrderBy(fun f -> f.RelativePath)
 
                 for file in sortedFiles do
                     AnsiConsole.MarkupLine(
-                        $"[{Colors.Verbose}]{formatInstantAligned file.CreatedAt}   {formatListContentsSha256Hash hashDisplayMode file.Sha256Hash}  {file.Size, 13:N0}  |- {file.RelativePath.Split('/').LastOrDefault()}[/]"
+                        $"[{Colors.Verbose}]{formatInstantAligned file.CreatedAt}   {formatListContentsVersionHash hashDisplayMode file.Blake3Hash file.Sha256Hash}  {file.Size, 13:N0}  |- {file.RelativePath.Split('/').LastOrDefault()}[/]"
                     ))
 
     let private listContentsImpl (parseResult: ParseResult) : Tasks.Task<int> =
@@ -903,12 +898,15 @@ module Branch =
                     AnsiConsole.MarkupLine($"[{Colors.Highlighted}]Number of directories: {directoryCount}.[/]")
                     AnsiConsole.MarkupLine($"[{Colors.Highlighted}]Number of files: {fileCount}; total file size: {totalFileSize:N0}.[/]")
 
-                    match tryGetRootSha256Hash directoryVersions with
-                    | Some rootSha256Hash ->
+                    match tryGetRootVersionHashes directoryVersions with
+                    | Some (rootBlake3Hash, rootSha256Hash) ->
                         let hashDisplayMode = HashOptions.bindVersionHashDisplayMode parseResult
 
-                        AnsiConsole.MarkupLine($"[{Colors.Highlighted}]Root SHA-256 hash: {formatListContentsSha256Hash hashDisplayMode rootSha256Hash}[/]")
-                    | None -> AnsiConsole.MarkupLine($"[{Colors.Error}]Root SHA-256 hash: unavailable (root directory entry missing from server response).[/]")
+                        AnsiConsole.MarkupLine(
+                            $"[{Colors.Highlighted}]Root BLAKE3 version hash: {formatListContentsVersionHash hashDisplayMode rootBlake3Hash rootSha256Hash}[/]"
+                        )
+                    | None ->
+                        AnsiConsole.MarkupLine($"[{Colors.Error}]Root BLAKE3 version hash: unavailable (root directory entry missing from server response).[/]")
 
                     if directoryCount > 0 then
                         printContents parseResult directoryVersions
@@ -2504,7 +2502,7 @@ module Branch =
             [|
                 TableColumn($"[{Colors.Important}]Type[/]")
                 TableColumn($"[{Colors.Important}]Message[/]")
-                TableColumn($"[{Colors.Important}]SHA-256[/]")
+                TableColumn($"[{Colors.Important}]BLAKE3 version hash[/]")
                 TableColumn($"[{Colors.Important}]When[/]", Alignment = Justify.Right)
                 TableColumn($"[{Colors.Important}][/]")
             |]
@@ -2529,11 +2527,7 @@ module Branch =
             //logToAnsiConsole Colors.Verbose $"{serialize row}"
             let hashDisplayMode = HashOptions.bindVersionHashDisplayMode parseResult
 
-            let sha256Hash =
-                if hashDisplayMode.FullHashes then
-                    $"{row.Sha256Hash}"
-                else
-                    $"{getShortSha256Hash row.Sha256Hash}"
+            let versionHash = HashOptions.formatVersionHashPair hashDisplayMode row.Blake3Hash row.Sha256Hash
 
             let localCreatedAtTime = row.CreatedAt.ToDateTimeUtc().ToLocalTime()
 
@@ -2544,7 +2538,7 @@ module Branch =
                     [|
                         $"{getDiscriminatedUnionCaseName (row.ReferenceType)}"
                         $"{row.ReferenceText}"
-                        sha256Hash
+                        versionHash
                         ago row.CreatedAt
                         $"[{Colors.Deemphasized}]{referenceTime}[/]"
                         $"[{Colors.Deemphasized}]{row.ReferenceId}[/]"
@@ -2556,7 +2550,7 @@ module Branch =
                     [|
                         $"{getDiscriminatedUnionCaseName (row.ReferenceType)}"
                         $"{row.ReferenceText}"
-                        sha256Hash
+                        versionHash
                         ago row.CreatedAt
                         $"[{Colors.Deemphasized}]{referenceTime}[/]"
                     |]
