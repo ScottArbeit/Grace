@@ -18,15 +18,13 @@ I'm sure the types will evolve a bit as we move towards a 1.0 release, but the o
 ## Pre-Production Data Compatibility
 
 Grace is not in production yet. The data contracts in this document should describe the current desired Grace model, not
-a permanent migration promise for old production records.
+a migration promise for old production records.
 
-When a type gains a new invariant, such as a required hash value or a stricter validator, Grace does not need to keep
-accepting hypothetical production data that was written before the invariant existed. Old local, development, generated,
-or test state may be reset, recomputed, regenerated, or rejected with a clear error instead.
+There is no production data to import, migrate, preserve, classify, or grandfather. When a type gains a new invariant,
+such as a required hash value or a stricter validator, do not add compatibility paths for hypothetical old data.
 
-There is one important distinction: some endpoints may deliberately return a default or sentinel value today. If they do,
-the contract should either model that current sentinel behavior narrowly or the implementation should stop returning the
-sentinel. Do not treat that as a broad legacy-data compatibility requirement.
+If an endpoint deliberately returns a default or sentinel value today, treat that only as current API behavior. Do not
+describe it as data migration or old-data compatibility.
 
 After those descriptions, at the bottom of this document, you'll find a [detailed entity relationship diagram](#detailed-entity-relationship-diagram). This ERD is incomplete, and there are, of course, many other data types in Grace. It's meant to illustrate the most interesting parts, to help you understand the structure of a repository and its contents. Please refer to it as you read the explanations of each type.
 
