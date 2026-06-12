@@ -96,6 +96,47 @@
         HashesValidated:
           type: boolean
           example: true
+    DirectoryVersionHashLookupResult:
+      description: >-
+        Raw directory version returned by hash lookup endpoints. Sha256Hash may be empty only when
+        /directory/getBySha256Hash deliberately returns DirectoryVersion.Default as its no-match sentinel.
+      type: object
+      properties:
+        Class:
+          type: string
+        DirectoryVersionId:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/DirectoryVersionId'
+        OwnerId:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/OwnerId'
+        OrganizationId:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/OrganizationId'
+        RepositoryId:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/RepositoryId'
+        RelativePath:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/RelativePath'
+        Sha256Hash:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Sha256HashLookupSentinelCompatibility'
+        Blake3Hash:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Blake3HashCompatibility'
+        Directories:
+          type: array
+          items:
+            $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/DirectoryVersionId'
+        Files:
+          type: array
+          items:
+            $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/FileVersion'
+        Size:
+          type: integer
+          format: int64
+        RecursiveSize:
+          type: integer
+          format: int64
+        CreatedAt:
+          type: string
+          format: date-time
+        HashesValidated:
+          type: boolean
     DirectoryCommandReturnValue:
       description: Grace response envelope returned by directory command endpoints.
       type: object
@@ -149,6 +190,21 @@
           additionalProperties:
             type: string
       required: [ReturnValue, EventTime, CorrelationId, Properties]
+    DirectoryVersionSha256HashLookupReturnValue:
+      description: Grace response envelope whose ReturnValue contains a SHA-256 lookup result or no-match sentinel.
+      type: object
+      properties:
+        ReturnValue:
+          $ref: '#/DirectoryVersionHashLookupResult'
+        EventTime:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant'
+        CorrelationId:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/CorrelationId'
+        Properties:
+          type: object
+          additionalProperties:
+            type: string
+      required: [ReturnValue, EventTime, CorrelationId, Properties]
     DirectoryVersionListReturnValue:
       description: Grace response envelope whose ReturnValue contains directory version DTOs.
       type: object
@@ -188,6 +244,12 @@
         application/json:
           schema:
             $ref: '#/DirectoryVersionHashLookupReturnValue'
+    DirectoryVersionSha256HashLookupResponse:
+      description: OK
+      content:
+        application/json:
+          schema:
+            $ref: '#/DirectoryVersionSha256HashLookupReturnValue'
     DirectoryVersionListResponse:
       description: OK
       content:

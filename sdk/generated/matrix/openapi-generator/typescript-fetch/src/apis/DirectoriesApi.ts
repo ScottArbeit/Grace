@@ -39,6 +39,11 @@ import {
     DirectoryVersionReturnValueToJSON,
 } from '../models/DirectoryVersionReturnValue';
 import {
+    type DirectoryVersionSha256HashLookupReturnValue,
+    DirectoryVersionSha256HashLookupReturnValueFromJSON,
+    DirectoryVersionSha256HashLookupReturnValueToJSON,
+} from '../models/DirectoryVersionSha256HashLookupReturnValue';
+import {
     type GetByBlake3HashParameters,
     GetByBlake3HashParametersFromJSON,
     GetByBlake3HashParametersToJSON,
@@ -314,18 +319,18 @@ export class DirectoriesApi extends runtime.BaseAPI {
      * Gets a directory version DTO by SHA-256 hash.
      * Get a directory version by SHA-256 hash.
      */
-    async getDirectoryVersionBySha256HashRaw(requestParameters: GetDirectoryVersionBySha256HashRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<DirectoryVersionHashLookupReturnValue>> {
+    async getDirectoryVersionBySha256HashRaw(requestParameters: GetDirectoryVersionBySha256HashRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<DirectoryVersionSha256HashLookupReturnValue>> {
         const requestOptions = await this.getDirectoryVersionBySha256HashRequestOpts(requestParameters);
         const response = await this.request(requestOptions, initOverrides);
 
-        return new runtime.JSONApiResponse(response, (jsonValue) => DirectoryVersionHashLookupReturnValueFromJSON(jsonValue));
+        return new runtime.JSONApiResponse(response, (jsonValue) => DirectoryVersionSha256HashLookupReturnValueFromJSON(jsonValue));
     }
 
     /**
      * Gets a directory version DTO by SHA-256 hash.
      * Get a directory version by SHA-256 hash.
      */
-    async getDirectoryVersionBySha256Hash(requestParameters: GetDirectoryVersionBySha256HashRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<DirectoryVersionHashLookupReturnValue> {
+    async getDirectoryVersionBySha256Hash(requestParameters: GetDirectoryVersionBySha256HashRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<DirectoryVersionSha256HashLookupReturnValue> {
         const response = await this.getDirectoryVersionBySha256HashRaw(requestParameters, initOverrides);
         return await response.value();
     }
