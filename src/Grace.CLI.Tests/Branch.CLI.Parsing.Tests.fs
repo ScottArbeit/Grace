@@ -171,6 +171,33 @@ module BranchCommandParsingTests =
         |> should equal blake3Hash
 
     [<Test>]
+    let ``reference assign preserves message in assign parameters`` () =
+        let message = "Promote CLI candidate"
+
+        let parseResult =
+            assertParses [| "reference"
+                            "assign"
+                            "--sha256-hash"
+                            sha256Hash
+                            "--message"
+                            message |]
+
+        let parameters = Reference.buildAssignParameters parseResult
+
+        parameters.Sha256Hash |> should equal sha256Hash
+        parameters.Message |> should equal message
+
+    [<Test>]
+    let ``reference delete is not exposed from root command`` () =
+        let parseResult =
+            assertDoesNotParse [| "reference"
+                                  "delete" |]
+
+        parseResult.Errors
+        |> Seq.exists (fun error -> error.Message.Contains("Unrecognized command or argument 'delete'", StringComparison.OrdinalIgnoreCase))
+        |> should equal true
+
+    [<Test>]
     let ``forbidden branch annotate V1 options are unavailable`` () =
         for forbiddenOption in
             [|
