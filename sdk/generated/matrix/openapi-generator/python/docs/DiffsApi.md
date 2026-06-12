@@ -210,7 +210,7 @@ configuration = grace_generated_openapi_probe.Configuration(
 with grace_generated_openapi_probe.ApiClient(configuration) as api_client:
     # Create an instance of the API class
     api_instance = grace_generated_openapi_probe.DiffsApi(api_client)
-    get_diff_by_sha256_hash_parameters = {"CorrelationId":"cli-20260604T181500Z-0001","Principal":"user:alice","OwnerId":"9dd5f81f-dc43-4839-9173-85d09394f30f","OrganizationId":"e35d64a9-b990-44f5-bf02-32ad7d15630c","RepositoryId":"ab6f35ef-6e01-440b-8f9b-c343a5272095","DirectoryVersionId1":"33a4e36b-828f-4fae-9343-50b6560dc842","DirectoryVersionId2":"66b7b8c2-8d2f-4f04-951c-6b3486c4e5d1","Sha256Hash1":"805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243","Sha256Hash2":"A05331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857240"} # GetDiffBySha256HashParameters | 
+    get_diff_by_sha256_hash_parameters = {"CorrelationId":"cli-20260604T181500Z-0001","Principal":"user:alice","OwnerId":"9dd5f81f-dc43-4839-9173-85d09394f30f","OrganizationId":"e35d64a9-b990-44f5-bf02-32ad7d15630c","RepositoryId":"ab6f35ef-6e01-440b-8f9b-c343a5272095","DirectoryVersionId1":"33a4e36b-828f-4fae-9343-50b6560dc842","DirectoryVersionId2":"66b7b8c2-8d2f-4f04-951c-6b3486c4e5d1","Sha256Hash1":"805331a98813","Sha256Hash2":"a05331a98813"} # GetDiffBySha256HashParameters | 
 
     try:
         # Get a diff by SHA-256 hash.

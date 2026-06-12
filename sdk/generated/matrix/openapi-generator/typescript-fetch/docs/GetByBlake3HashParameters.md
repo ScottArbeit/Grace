@@ -34,7 +34,7 @@ const example = {
   "repositoryId": ab6f35ef-6e01-440b-8f9b-c343a5272095,
   "repositoryName": null,
   "directoryVersionId": 33a4e36b-828f-4fae-9343-50b6560dc842,
-  "blake3Hash": 9A35D91B2F631BE9025DE753139B88F7B1E71385C412BC3986FF2F38F230841D,
+  "blake3Hash": 9a35d91b2f63,
 } satisfies GetByBlake3HashParameters
 
 console.log(example)
