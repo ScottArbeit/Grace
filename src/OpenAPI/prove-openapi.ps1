@@ -761,11 +761,20 @@ function Assert-OperationHasJsonRequestExample {
 function Assert-OperationSha256ExamplesAreValid {
     param(
         [object] $Operation,
-        [string[]] $RequiredFields
+        [string[]] $RequiredFields,
+        [string] $Pattern = '^[A-Fa-f0-9]{64}$',
+        [string] $ValidationLabel = 'valid 64-character SHA-256 hex value'
     )
 
     if ($null -eq $Operation) {
         return
+    }
+
+    $usesDefaultValidation = -not $PSBoundParameters.ContainsKey('Pattern')
+    $isSha256PrefixLookup = $Operation.OperationId -in @('GetDiffBySha256Hash', 'GetDirectoryVersionBySha256Hash')
+    if ($usesDefaultValidation -and $isSha256PrefixLookup) {
+        $Pattern = '^[A-Fa-f0-9]{2,64}$'
+        $ValidationLabel = 'valid 2- to 64-character SHA-256 prefix'
     }
 
     $location = "$($Operation.File):$($Operation.LineNumber) $($Operation.Method.ToUpperInvariant()) $($Operation.Path)"
@@ -780,8 +789,8 @@ function Assert-OperationSha256ExamplesAreValid {
         $fieldValue = $match.Groups['value'].Value.Trim("'`"")
         [void] $fieldsSeen.Add($fieldName)
 
-        if ($fieldValue -notmatch '^[A-Fa-f0-9]{64}$') {
-            Add-Failure "OpenAPI example field '$fieldName' must be a valid 64-character SHA-256 hex value: $location has '$fieldValue'."
+        if ($fieldValue -notmatch $Pattern) {
+            Add-Failure ("OpenAPI example field '{0}' must be a {1}: {2} has '{3}'." -f $fieldName, $ValidationLabel, $location, $fieldValue)
         }
     }
 
@@ -1276,7 +1285,7 @@ function Test-OpenApiSharedContractDetails {
     }
 
     $directoryPathsText = Get-Content -LiteralPath (Join-Path $OpenApiRoot 'Directory.Paths.OpenAPI.yaml') -Raw
-    Assert-TextContains $directoryPathsText 'Blake3Hash: 9A35D91B2F631BE9025DE753139B88F7B1E71385C412BC3986FF2F38F230841D' `
+    Assert-TextContains $directoryPathsText 'Blake3Hash: 9a35d91b2f631be9025de753139b88f7b1e71385c412bc3986ff2f38f230841d' `
         'Directory create/save examples must show BLAKE3 alongside SHA-256.'
 
     Assert-TextContains $sharedText 'distinct from the X-Correlation-Id transport header' 'Body CorrelationId must be documented as distinct from the transport header.'

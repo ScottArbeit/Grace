@@ -46,8 +46,8 @@ class TestGetDiffByBlake3HashParameters(unittest.TestCase):
                 repository_name = '',
                 directory_version_id1 = '33a4e36b-828f-4fae-9343-50b6560dc842',
                 directory_version_id2 = '66b7b8c2-8d2f-4f04-951c-6b3486c4e5d1',
-                blake3_hash1 = '9A35D91B2F631BE9025DE753139B88F7B1E71385C412BC3986FF2F38F230841D',
-                blake3_hash2 = '9A35D91B2F631BE9025DE753139B88F7B1E71385C412BC3986FF2F38F230841D'
+                blake3_hash1 = '9a35d91b2f63',
+                blake3_hash2 = '9a35d91b2f63'
             )
         else:
             return GetDiffByBlake3HashParameters(
