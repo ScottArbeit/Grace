@@ -384,12 +384,15 @@ UploadMetadata:
       format: uri
     Sha256Hash:
       $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Sha256Hash'
+    Blake3Hash:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Blake3Hash'
     ContentReference:
       $ref: '#/FileContentReference'
   required:
     - RelativePath
     - BlobUriWithSasToken
     - Sha256Hash
+    - Blake3Hash
     - ContentReference
 
 FileContentReference:
