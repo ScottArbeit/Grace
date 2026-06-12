@@ -19,7 +19,7 @@ import re  # noqa: F401
 import json
 
 from pydantic import BaseModel, ConfigDict, Field, StrictStr, field_validator
-from typing import Any, ClassVar, Dict, List
+from typing import Any, ClassVar, Dict, List, Optional
 from grace_generated_openapi_probe.models.file_manifest import FileManifest
 from typing import Optional, Set
 from typing_extensions import Self
@@ -31,7 +31,7 @@ class FileContentReference(BaseModel):
     """ # noqa: E501
     var_class: StrictStr = Field(alias="Class")
     reference_type: StrictStr = Field(alias="ReferenceType")
-    manifest: FileManifest = Field(alias="Manifest")
+    manifest: Optional[FileManifest] = Field(alias="Manifest")
     __properties: ClassVar[List[str]] = ["Class", "ReferenceType", "Manifest"]
 
     @field_validator('var_class')
@@ -90,6 +90,11 @@ class FileContentReference(BaseModel):
         # override the default output from pydantic by calling `to_dict()` of manifest
         if self.manifest:
             _dict['Manifest'] = self.manifest.to_dict()
+        # set to None if manifest (nullable) is None
+        # and model_fields_set contains the field
+        if self.manifest is None and "manifest" in self.model_fields_set:
+            _dict['Manifest'] = None
+
         return _dict
 
     @classmethod
