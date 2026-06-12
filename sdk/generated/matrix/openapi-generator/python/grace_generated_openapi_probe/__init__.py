@@ -102,9 +102,11 @@ __all__ = [
     "DirectoryParameters",
     "DirectoryVersion",
     "DirectoryVersionApiDto",
+    "DirectoryVersionHashLookupResult",
     "DirectoryVersionHashLookupReturnValue",
     "DirectoryVersionListReturnValue",
     "DirectoryVersionReturnValue",
+    "DirectoryVersionSha256HashLookupReturnValue",
     "DiscoverContentBlocksParameters",
     "DiscoverContentBlocksResult",
     "DiscoverContentBlocksReturnValue",
@@ -347,9 +349,11 @@ from grace_generated_openapi_probe.models.directory_command_return_value import 
 from grace_generated_openapi_probe.models.directory_parameters import DirectoryParameters as DirectoryParameters
 from grace_generated_openapi_probe.models.directory_version import DirectoryVersion as DirectoryVersion
 from grace_generated_openapi_probe.models.directory_version_api_dto import DirectoryVersionApiDto as DirectoryVersionApiDto
+from grace_generated_openapi_probe.models.directory_version_hash_lookup_result import DirectoryVersionHashLookupResult as DirectoryVersionHashLookupResult
 from grace_generated_openapi_probe.models.directory_version_hash_lookup_return_value import DirectoryVersionHashLookupReturnValue as DirectoryVersionHashLookupReturnValue
 from grace_generated_openapi_probe.models.directory_version_list_return_value import DirectoryVersionListReturnValue as DirectoryVersionListReturnValue
 from grace_generated_openapi_probe.models.directory_version_return_value import DirectoryVersionReturnValue as DirectoryVersionReturnValue
+from grace_generated_openapi_probe.models.directory_version_sha256_hash_lookup_return_value import DirectoryVersionSha256HashLookupReturnValue as DirectoryVersionSha256HashLookupReturnValue
 from grace_generated_openapi_probe.models.discover_content_blocks_parameters import DiscoverContentBlocksParameters as DiscoverContentBlocksParameters
 from grace_generated_openapi_probe.models.discover_content_blocks_result import DiscoverContentBlocksResult as DiscoverContentBlocksResult
 from grace_generated_openapi_probe.models.discover_content_blocks_return_value import DiscoverContentBlocksReturnValue as DiscoverContentBlocksReturnValue

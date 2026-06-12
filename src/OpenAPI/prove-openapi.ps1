@@ -1063,7 +1063,7 @@ function Test-OpenApiOwnerOrganizationRepositoryDirectoryDetails {
         [pscustomobject]@{ File = 'Directory.Paths.OpenAPI.yaml'; OperationId = 'GetDirectoryVersion'; Tag = 'Directories'; Response = 'DirectoryVersionResponse' },
         [pscustomobject]@{ File = 'Directory.Paths.OpenAPI.yaml'; OperationId = 'ListDirectoryVersionsRecursive'; Tag = 'Directories'; Response = 'DirectoryVersionListResponse' },
         [pscustomobject]@{ File = 'Directory.Paths.OpenAPI.yaml'; OperationId = 'ListDirectoryVersionsById'; Tag = 'Directories'; Response = 'DirectoryVersionListResponse' },
-        [pscustomobject]@{ File = 'Directory.Paths.OpenAPI.yaml'; OperationId = 'GetDirectoryVersionBySha256Hash'; Tag = 'Directories'; Response = 'DirectoryVersionHashLookupResponse' },
+        [pscustomobject]@{ File = 'Directory.Paths.OpenAPI.yaml'; OperationId = 'GetDirectoryVersionBySha256Hash'; Tag = 'Directories'; Response = 'DirectoryVersionSha256HashLookupResponse' },
         [pscustomobject]@{ File = 'Directory.Paths.OpenAPI.yaml'; OperationId = 'GetDirectoryVersionByBlake3Hash'; Tag = 'Directories'; Response = 'DirectoryVersionHashLookupResponse' },
         [pscustomobject]@{ File = 'Directory.Paths.OpenAPI.yaml'; OperationId = 'SaveDirectoryVersions'; Tag = 'Directories'; Response = 'DirectoryCommandResponse' }
     )
@@ -1211,14 +1211,14 @@ function Test-OpenApiOwnerOrganizationRepositoryDirectoryDetails {
     Assert-OperationSha256ExamplesAreValid $getBySha256HashOperation @('Sha256Hash')
     Assert-OperationTextMatches `
         $getBySha256HashOperation `
-        "(?s)responses:\s*.*?'200':\s*.*?\`$ref:\s*'\./Directory\.Components\.OpenAPI\.yaml#/DirectoryVersionHashLookupResponse'" `
-        'GetDirectoryVersionBySha256Hash must use the server-returned raw directory-version envelope.'
+        "(?s)responses:\s*.*?'200':\s*.*?\`$ref:\s*'\./Directory\.Components\.OpenAPI\.yaml#/DirectoryVersionSha256HashLookupResponse'" `
+        'GetDirectoryVersionBySha256Hash must use the SHA lookup envelope that narrowly models the no-match sentinel.'
 
     $getByBlake3HashOperation = Get-RequiredOpenApiOperation $Operations 'Directory.Paths.OpenAPI.yaml' 'GetDirectoryVersionByBlake3Hash'
     Assert-OperationTextMatches `
         $getByBlake3HashOperation `
         "(?s)responses:\s*.*?'200':\s*.*?\`$ref:\s*'\./Directory\.Components\.OpenAPI\.yaml#/DirectoryVersionHashLookupResponse'" `
-        'GetDirectoryVersionByBlake3Hash must use the server-returned raw directory-version envelope.'
+        'GetDirectoryVersionByBlake3Hash must use the strict raw directory-version envelope.'
 }
 
 function Test-OpenApiSharedContractDetails {
@@ -1271,6 +1271,27 @@ function Test-OpenApiSharedContractDetails {
             $requiredHashContract.Property `
             "$($requiredHashContract.Schema) must expose $($requiredHashContract.Property) in the public OpenAPI schema."
     }
+
+    Assert-OperationTextMatches `
+        ([pscustomobject]@{ OperationText = $sharedText }) `
+        "(?s)DirectoryVersion:\s*.*?Sha256Hash:\s*.*?\`$ref:\s*'#/components/schemas/Sha256Hash'" `
+        'Persisted DirectoryVersion.Sha256Hash must stay a strict full SHA-256 hash.'
+
+    $directoryComponentsText = Get-Content -LiteralPath (Join-Path $OpenApiRoot 'Directory.Components.OpenAPI.yaml') -Raw
+    Assert-OperationTextMatches `
+        ([pscustomobject]@{ OperationText = $directoryComponentsText }) `
+        "(?s)DirectoryVersionHashLookupResult:\s*.*?Sha256Hash:\s*.*?\`$ref:\s*'Shared\.Components\.OpenAPI\.yaml#/components/schemas/Sha256HashLookupSentinelCompatibility'" `
+        'Only the directory hash lookup response may model the DirectoryVersion.Default empty SHA-256 sentinel.'
+
+    Assert-OperationTextMatches `
+        ([pscustomobject]@{ OperationText = $directoryComponentsText }) `
+        "(?s)DirectoryVersionSha256HashLookupReturnValue:\s*.*?ReturnValue:\s*.*?\`$ref:\s*'#/DirectoryVersionHashLookupResult'" `
+        'Only SHA directory hash lookup responses may use the sentinel-aware result schema rather than weakening persisted DirectoryVersion.'
+
+    Assert-OperationTextMatches `
+        ([pscustomobject]@{ OperationText = $directoryComponentsText }) `
+        "(?s)DirectoryVersionHashLookupReturnValue:\s*.*?ReturnValue:\s*.*?\`$ref:\s*'Shared\.Components\.OpenAPI\.yaml#/components/schemas/DirectoryVersion'" `
+        'BLAKE3 directory hash lookup responses must keep the strict persisted DirectoryVersion schema.'
 
     foreach ($requiredGraceErrorPart in @(
             'Grace domain error envelope',

@@ -1589,7 +1589,7 @@ paths:
                   Sha256Hash: 805331a98813
       responses:
         '200':
-          $ref: '#/components/responses/DirectoryVersionHashLookupResponse'
+          $ref: '#/components/responses/DirectoryVersionSha256HashLookupResponse'
         '400':
           $ref: '#/components/responses/400'
         '500':
@@ -5911,6 +5911,69 @@ components:
         - EventTime
         - CorrelationId
         - Properties
+    Sha256HashLookupSentinelCompatibility:
+      type: string
+      description: Empty value only for the DirectoryVersion.Default no-match sentinel, or lowercase 64-character SHA-256 hash.
+      pattern: ^$|^[a-f0-9]{64}$
+      example: 805331a98813206270e35564769e8bb59eea02aeb7b27c7d6c63e625e1857243
+    DirectoryVersionHashLookupResult:
+      description: Raw directory version returned by hash lookup endpoints. Sha256Hash may be empty only when /directory/getBySha256Hash deliberately returns DirectoryVersion.Default as its no-match sentinel.
+      type: object
+      properties:
+        Class:
+          type: string
+        DirectoryVersionId:
+          $ref: '#/components/schemas/DirectoryVersionId'
+        OwnerId:
+          $ref: '#/components/schemas/OwnerId'
+        OrganizationId:
+          $ref: '#/components/schemas/OrganizationId'
+        RepositoryId:
+          $ref: '#/components/schemas/RepositoryId'
+        RelativePath:
+          $ref: '#/components/schemas/RelativePath'
+        Sha256Hash:
+          $ref: '#/components/schemas/Sha256HashLookupSentinelCompatibility'
+        Blake3Hash:
+          $ref: '#/components/schemas/Blake3HashCompatibility'
+        Directories:
+          type: array
+          items:
+            $ref: '#/components/schemas/DirectoryVersionId'
+        Files:
+          type: array
+          items:
+            $ref: '#/components/schemas/FileVersion'
+        Size:
+          type: integer
+          format: int64
+        RecursiveSize:
+          type: integer
+          format: int64
+        CreatedAt:
+          type: string
+          format: date-time
+        HashesValidated:
+          type: boolean
+    DirectoryVersionSha256HashLookupReturnValue:
+      description: Grace response envelope whose ReturnValue contains a SHA-256 lookup result or no-match sentinel.
+      type: object
+      properties:
+        ReturnValue:
+          $ref: '#/components/schemas/DirectoryVersionHashLookupResult'
+        EventTime:
+          $ref: '#/components/schemas/Instant'
+        CorrelationId:
+          $ref: '#/components/schemas/CorrelationId'
+        Properties:
+          type: object
+          additionalProperties:
+            type: string
+      required:
+        - ReturnValue
+        - EventTime
+        - CorrelationId
+        - Properties
     DirectoryVersionHashLookupReturnValue:
       description: Grace response envelope whose ReturnValue contains a raw directory version.
       type: object
@@ -7155,6 +7218,12 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/DirectoryVersionListReturnValue'
+    DirectoryVersionSha256HashLookupResponse:
+      description: OK
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/DirectoryVersionSha256HashLookupReturnValue'
     DirectoryVersionHashLookupResponse:
       description: OK
       content:
