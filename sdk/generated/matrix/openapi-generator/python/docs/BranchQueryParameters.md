@@ -16,7 +16,7 @@ Name | Type | Description | Notes
 **repository_name** | **str** |  | [optional] 
 **branch_id** | **UUID** |  | [optional] 
 **branch_name** | **str** |  | [optional] 
-**sha256_hash** | **str** |  | [optional] 
+**sha256_hash** | **str** | Lowercase or uppercase 64-character SHA-256 version hash retained for compatibility. | [optional] 
 **reference_id** | **UUID** |  | [optional] 
 
 ## Example
