@@ -327,9 +327,9 @@ Grace is evolving quickly. Strap in....
 
 ### Multi-hash semantics
 
-- Add abstractions to support multiple hashing algorithms at once
+- Keep hardening the BLAKE3 plus SHA-256 version-hash model across CLI, SDK, OpenAPI, and verification flows
 - Ensure that Grace is not locked into just one hashing algorithm
-- Add BLAKE3 hashing for better performance and to support content-addressable storage
+- Preserve the boundary between BLAKE3 content-addressable storage identities and version graph hashes
 
 ### `grace cache` for CI/CD and in-office scenarios
 
