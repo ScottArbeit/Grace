@@ -59,9 +59,9 @@
         - type: object
           properties:
             Blake3Hash1:
-              $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Blake3Hash'
+              $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Blake3HashPrefix'
             Blake3Hash2:
-              $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Blake3Hash'
+              $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Blake3HashPrefix'
     DiffApiDto:
       description: Public diff DTO returned through diff endpoints.
       type: object

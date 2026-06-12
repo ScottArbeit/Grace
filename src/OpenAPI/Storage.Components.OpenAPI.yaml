@@ -406,8 +406,9 @@ FileContentReference:
         - WholeFileContent
         - FileManifest
     Manifest:
-      nullable: true
-      $ref: '#/FileManifest'
+      anyOf:
+        - $ref: '#/FileManifest'
+        - type: 'null'
   required:
     - Class
     - ReferenceType

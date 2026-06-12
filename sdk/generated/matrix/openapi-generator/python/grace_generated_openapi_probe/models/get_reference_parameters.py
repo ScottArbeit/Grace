@@ -40,7 +40,7 @@ class GetReferenceParameters(BaseModel):
     repository_name: Optional[StrictStr] = Field(default=None, alias="RepositoryName")
     branch_id: Optional[UUID] = Field(default=None, alias="BranchId")
     branch_name: Optional[StrictStr] = Field(default=None, alias="BranchName")
-    sha256_hash: Optional[Annotated[str, Field(strict=True)]] = Field(default=None, description="Lowercase or uppercase 64-character SHA-256 version hash retained for compatibility.", alias="Sha256Hash")
+    sha256_hash: Optional[Annotated[str, Field(strict=True)]] = Field(default=None, description="Empty value or lowercase or uppercase 2- to 64-character SHA-256 version hash prefix.", alias="Sha256Hash")
     reference_id: Optional[UUID] = Field(default=None, alias="ReferenceId")
     __properties: ClassVar[List[str]] = ["CorrelationId", "Principal", "OwnerId", "OwnerName", "OrganizationId", "OrganizationName", "RepositoryId", "RepositoryName", "BranchId", "BranchName", "Sha256Hash", "ReferenceId"]
 
@@ -53,8 +53,8 @@ class GetReferenceParameters(BaseModel):
         if not isinstance(value, str):
             value = str(value)
 
-        if not re.match(r"^[A-Fa-f0-9]{64}$", value):
-            raise ValueError(r"must validate the regular expression /^[A-Fa-f0-9]{64}$/")
+        if not re.match(r"^$|^[A-Fa-f0-9]{2,64}$", value):
+            raise ValueError(r"must validate the regular expression /^$|^[A-Fa-f0-9]{2,64}$/")
         return value
 
     model_config = ConfigDict(

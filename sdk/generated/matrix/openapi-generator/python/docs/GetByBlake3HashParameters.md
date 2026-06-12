@@ -15,7 +15,7 @@ Name | Type | Description | Notes
 **repository_id** | **UUID** |  | [optional] 
 **repository_name** | **str** |  | [optional] 
 **directory_version_id** | **UUID** |  | [optional] 
-**blake3_hash** | **str** | Lowercase or uppercase 64-character BLAKE3 version hash used for new version graph lookups. | [optional] 
+**blake3_hash** | **str** | Lowercase or uppercase 2- to 64-character BLAKE3 version hash prefix used for version graph lookups. | [optional] 
 
 ## Example
 
