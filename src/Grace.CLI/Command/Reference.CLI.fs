@@ -212,6 +212,8 @@ module Reference =
     let private ReferenceValidations (parseResult: ParseResult) = Ok parseResult
 
     let printContents (parseResult: ParseResult) (directoryVersions: IEnumerable<DirectoryVersion>) =
+        let hashDisplayMode = HashOptions.bindVersionHashDisplayMode parseResult
+
         let longestRelativePath =
             getLongestRelativePath (
                 directoryVersions
@@ -228,7 +230,7 @@ module Reference =
 
             if i = 0 then
                 AnsiConsole.MarkupLine(
-                    $"[{Colors.Important}]Created At                   SHA-256            Size  Path{additionalSpaces}[/][{Colors.Deemphasized}] (DirectoryVersionId)[/]"
+                    $"[{Colors.Important}]Created At                   BLAKE3 version hash  Size  Path{additionalSpaces}[/][{Colors.Deemphasized}] (DirectoryVersionId)[/]"
                 )
 
                 AnsiConsole.MarkupLine(
@@ -243,14 +245,14 @@ module Reference =
                 + $"({directoryVersion.DirectoryVersionId})"
 
             AnsiConsole.MarkupLine(
-                $"[{Colors.Highlighted}]{formatInstantAligned directoryVersion.CreatedAt}   {getShortSha256Hash directoryVersion.Sha256Hash}  {directoryVersion.Size, 13:N0}  /{directoryVersion.RelativePath}[/] [{Colors.Deemphasized}] {rightAlignedDirectoryVersionId}[/]"
+                $"[{Colors.Highlighted}]{formatInstantAligned directoryVersion.CreatedAt}   {HashOptions.formatVersionHashPair hashDisplayMode directoryVersion.Blake3Hash directoryVersion.Sha256Hash}  {directoryVersion.Size, 13:N0}  /{directoryVersion.RelativePath}[/] [{Colors.Deemphasized}] {rightAlignedDirectoryVersionId}[/]"
             )
             //if parseResult.CommandResult.Command.Options.Contains(Options.listFiles) then
             let sortedFiles = directoryVersion.Files.OrderBy(fun f -> f.RelativePath)
 
             for file in sortedFiles do
                 AnsiConsole.MarkupLine(
-                    $"[{Colors.Verbose}]{formatInstantAligned file.CreatedAt}   {getShortSha256Hash file.Sha256Hash}  {file.Size, 13:N0}  |- {file.RelativePath.Split('/').LastOrDefault()}[/]"
+                    $"[{Colors.Verbose}]{formatInstantAligned file.CreatedAt}   {HashOptions.formatVersionHashPair hashDisplayMode file.Blake3Hash file.Sha256Hash}  {file.Size, 13:N0}  |- {file.RelativePath.Split('/').LastOrDefault()}[/]"
                 ))
 
     type GetRecursiveSize() =
@@ -417,7 +419,11 @@ module Reference =
                             AnsiConsole.MarkupLine($"[{Colors.Important}]All values taken from the selected version of this branch from the server.[/]")
                             AnsiConsole.MarkupLine($"[{Colors.Highlighted}]Number of directories: {directoryCount}.[/]")
                             AnsiConsole.MarkupLine($"[{Colors.Highlighted}]Number of files: {fileCount}; total file size: {totalFileSize:N0}.[/]")
-                            AnsiConsole.MarkupLine($"[{Colors.Highlighted}]Root SHA-256 hash: {rootDirectoryVersion.Sha256Hash.Substring(0, 8)}[/]")
+                            let hashDisplayMode = HashOptions.bindVersionHashDisplayMode parseResult
+
+                            AnsiConsole.MarkupLine(
+                                $"[{Colors.Highlighted}]Root BLAKE3 version hash: {HashOptions.formatVersionHashPair hashDisplayMode rootDirectoryVersion.Blake3Hash rootDirectoryVersion.Sha256Hash}[/]"
+                            )
 
                             printContents parseResult directoryVersions
                             return result |> renderOutput parseResult
