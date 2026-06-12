@@ -449,32 +449,56 @@ module Reference =
                     return renderOutput parseResult (GraceResult.Error graceError)
             }
 
+    let buildAssignParameters (parseResult: ParseResult) : Parameters.Branch.AssignParameters =
+        let graceIds = parseResult |> getNormalizedIdsAndNames
+
+        let directoryVersionId =
+            if
+                not
+                <| isNull (parseResult.GetResult(Options.directoryVersionId))
+            then
+                parseResult.GetValue(Options.directoryVersionId)
+            else
+                Guid.Empty
+
+        let sha256Hash =
+            parseResult.GetValue(Options.sha256Hash)
+            |> valueOrEmpty
+
+        let message =
+            parseResult.GetValue(Options.message)
+            |> valueOrEmpty
+
+        let blake3Hash = parseResult |> getOptionalBlake3Hash
+
+        Parameters.Branch.AssignParameters(
+            OwnerId = graceIds.OwnerIdString,
+            OwnerName = graceIds.OwnerName,
+            OrganizationId = graceIds.OrganizationIdString,
+            OrganizationName = graceIds.OrganizationName,
+            RepositoryId = graceIds.RepositoryIdString,
+            RepositoryName = graceIds.RepositoryName,
+            BranchId = graceIds.BranchIdString,
+            BranchName = graceIds.BranchName,
+            DirectoryVersionId = directoryVersionId,
+            Sha256Hash = sha256Hash,
+            Blake3Hash = blake3Hash,
+            Message = message,
+            CorrelationId = getCorrelationId parseResult
+        )
+
     let private assignImpl (parseResult: ParseResult) : Tasks.Task<int> =
         try
             if parseResult |> verbose then printParseResult parseResult
 
-            let graceIds = parseResult |> getNormalizedIdsAndNames
             let validateIncomingParameters = parseResult |> ReferenceValidations
-
-            let directoryVersionId =
-                if
-                    not
-                    <| isNull (parseResult.GetResult(Options.directoryVersionId))
-                then
-                    parseResult.GetValue(Options.directoryVersionId)
-                else
-                    Guid.Empty
-
-            let sha256Hash =
-                parseResult.GetValue(Options.sha256Hash)
-                |> valueOrEmpty
-
-            let blake3Hash = parseResult |> getOptionalBlake3Hash
 
             match validateIncomingParameters with
             | Error graceError -> Task.FromResult(Error graceError |> renderOutput parseResult)
             | Ok _ ->
-                match (directoryVersionId, sha256Hash, blake3Hash) with
+                let assignParameters = buildAssignParameters parseResult
+
+                match (assignParameters.DirectoryVersionId, assignParameters.Sha256Hash, assignParameters.Blake3Hash) with
                 | (directoryVersionId, sha256Hash, blake3Hash) when
                     directoryVersionId = Guid.Empty
                     && sha256Hash = String.Empty
@@ -485,22 +509,6 @@ module Reference =
 
                     Task.FromResult(Error error |> renderOutput parseResult)
                 | _ ->
-                    let assignParameters =
-                        Parameters.Branch.AssignParameters(
-                            OwnerId = graceIds.OwnerIdString,
-                            OwnerName = graceIds.OwnerName,
-                            OrganizationId = graceIds.OrganizationIdString,
-                            OrganizationName = graceIds.OrganizationName,
-                            RepositoryId = graceIds.RepositoryIdString,
-                            RepositoryName = graceIds.RepositoryName,
-                            BranchId = graceIds.BranchIdString,
-                            BranchName = graceIds.BranchName,
-                            DirectoryVersionId = directoryVersionId,
-                            Sha256Hash = sha256Hash,
-                            Blake3Hash = blake3Hash,
-                            CorrelationId = getCorrelationId parseResult
-                        )
-
                     task {
                         try
                             let! result =
@@ -1458,13 +1466,6 @@ module Reference =
 
         getCommand.Action <- new Get()
         referenceCommand.Subcommands.Add(getCommand)
-
-        let deleteCommand =
-            new Command("delete", Description = "Delete the branch.")
-            |> addCommonOptions
-
-        deleteCommand.Action <- new Delete()
-        referenceCommand.Subcommands.Add(deleteCommand)
 
         let assignCommand =
             new Command("assign", Description = "Assign a promotion to this branch.")
