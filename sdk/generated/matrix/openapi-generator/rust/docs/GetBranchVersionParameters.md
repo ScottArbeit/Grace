@@ -14,9 +14,9 @@ Name | Type | Description | Notes
 **repository_name** | Option<**String**> |  | [optional]
 **branch_id** | Option<**uuid::Uuid**> |  | [optional]
 **branch_name** | Option<**String**> |  | [optional]
-**sha256_hash** | Option<**String**> | Lowercase or uppercase 64-character SHA-256 version hash retained for compatibility. | [optional]
+**sha256_hash** | Option<**String**> | Empty value or lowercase or uppercase 2- to 64-character SHA-256 version hash prefix. | [optional]
 **reference_id** | Option<**uuid::Uuid**> |  | [optional]
-**blake3_hash** | Option<**String**> | Lowercase or uppercase 64-character BLAKE3 version hash used for new version graph lookups. | [optional]
+**blake3_hash** | Option<**String**> | Empty value or lowercase or uppercase 2- to 64-character BLAKE3 version hash prefix. | [optional]
 **include_deleted** | Option<**bool**> |  | [optional]
 
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)

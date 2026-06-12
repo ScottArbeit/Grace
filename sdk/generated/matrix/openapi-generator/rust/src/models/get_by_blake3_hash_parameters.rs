@@ -34,7 +34,7 @@ pub struct GetByBlake3HashParameters {
     pub repository_name: Option<String>,
     #[serde(rename = "DirectoryVersionId", skip_serializing_if = "Option::is_none")]
     pub directory_version_id: Option<uuid::Uuid>,
-    /// Lowercase or uppercase 64-character BLAKE3 version hash used for new version graph lookups.
+    /// Lowercase or uppercase 2- to 64-character BLAKE3 version hash prefix used for version graph lookups.
     #[serde(rename = "Blake3Hash", skip_serializing_if = "Option::is_none")]
     pub blake3_hash: Option<String>,
 }
