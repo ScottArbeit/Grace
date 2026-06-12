@@ -36,6 +36,7 @@ pub struct BranchQueryParameters {
     pub branch_id: Option<uuid::Uuid>,
     #[serde(rename = "BranchName", skip_serializing_if = "Option::is_none")]
     pub branch_name: Option<String>,
+    /// Lowercase or uppercase 64-character SHA-256 version hash retained for compatibility.
     #[serde(rename = "Sha256Hash", skip_serializing_if = "Option::is_none")]
     pub sha256_hash: Option<String>,
     #[serde(rename = "ReferenceId", skip_serializing_if = "Option::is_none")]

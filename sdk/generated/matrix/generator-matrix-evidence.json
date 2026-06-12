@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "issue": 221,
   "sourceProjection": "src/OpenAPI/Grace.OpenAPI.3.1.2.yaml",
-  "sourceProjectionSha256": "f6e18c60c2750cf9113909b97d3743ee163ae40c0fadeedfa3464ac2a4f4b5e2",
+  "sourceProjectionSha256": "08dd25ba954e3bc477f09622e052fa22b9a1b0d67d74c95590145d785a1b8970",
   "generatedAtPolicy": "not recorded; report is deterministic across machines except tool output directories",
   "toolVersions": {
     "pwsh": "PowerShell 7.6.2",
@@ -27,17 +27,7 @@
       "outcome": "Rejected",
       "conclusion": "Full projection fails before generation on malformed schema references/null schema properties.",
       "outputPath": "",
-      "evidence": [
-        "OpenAPI error: #/paths/~1approval~1policy~1create/~1approval~1request~1approve/~1webhook~1rule~1create/~1webhook~1rule~1test/~1branch~1create/~1branch~1rebase/~1branch~1promote/~1branch~1commit/~1branch~1checkpoint/~1branch~1save/~1branch~1tag/~1branch~1enablePromotion/~1branch~1enableCommit/~1branch~1enableCheckpoint/~1branch~1enableSave/~1branch~1enableTag/~1branch~1delete/~1branch~1annotate/~1branch~1get/~1branch~1getParentBranch/~1branch~1getReference/~1branch~1getReferences/~1branch~1getPromotions/~1branch~1getCommits/~1branch~1getCheckpoints/~1branch~1getSaves/~1branch~1getTags/~1diff~1populate/~1diff~1getDiff/~1diff~1getDiffBySha256Hash/~1diff~1getDiffByBlake3Hash/~1directory~1create/~1directory~1get/~1directory~1getDirectoryVersionsRecursive/~1directory~1getByDirectoryIds/~1directory~1getBySha256Hash/~1directory~1getByBlake3Hash/~1directory~1saveDirectoryVersions/~1organization~1create/~1organization~1setName/~1organization~1setType/~1organization~1setSearchVisibility/~1organization~1setDescription/~1organization~1listRepositories/~1organization~1delete/~1organization~1undelete/~1organization~1get/~1owner~1create/~1owner~1setName/~1owner~1setType/~1owner~1setSearchVisibility/~1owner~1setDescription/~1owner~1listOrganizations/~1owner~1delete/~1owner~1undelete/~1owner~1get/~1repository~1create/~1repository~1setVisibility/~1repository~1setName/~1repository~1setSaveDays/~1repository~1setCheckpointDays/~1repository~1setStatus/~1repository~1setDefaultServerApiVersion/~1repository~1setRecordSaves/~1repository~1setDescription/~1repository~1delete/~1repository~1undelete/~1repository~1exists/~1repository~1isEmpty/~1repository~1get/~1repository~1getBranches/~1repository~1getReferencesByReferenceId/~1repository~1getBranchesByBranchId/~1storage~1getDownloadUri/~1storage~1getContentBlockUploadUri/components/schemas/DirectoryVersion/properties/Directories/items - schema must be a map/object",
-        "OpenAPI error: #/paths/~1approval~1policy~1create/~1approval~1request~1approve/~1webhook~1rule~1create/~1webhook~1rule~1test/~1branch~1create/~1branch~1rebase/~1branch~1promote/~1branch~1commit/~1branch~1checkpoint/~1branch~1save/~1branch~1tag/~1branch~1enablePromotion/~1branch~1enableCommit/~1branch~1enableCheckpoint/~1branch~1enableSave/~1branch~1enableTag/~1branch~1delete/~1branch~1annotate/~1branch~1get/~1branch~1getParentBranch/~1branch~1getReference/~1branch~1getReferences/~1branch~1getPromotions/~1branch~1getCommits/~1branch~1getCheckpoints/~1branch~1getSaves/~1branch~1getTags/~1diff~1populate/~1diff~1getDiff/~1diff~1getDiffBySha256Hash/~1diff~1getDiffByBlake3Hash/~1directory~1create/~1directory~1get/~1directory~1getDirectoryVersionsRecursive/~1directory~1getByDirectoryIds/~1directory~1getBySha256Hash/~1directory~1getByBlake3Hash/~1directory~1saveDirectoryVersions/~1organization~1create/~1organization~1setName/~1organization~1setType/~1organization~1setSearchVisibility/~1organization~1setDescription/~1organization~1listRepositories/~1organization~1delete/~1organization~1undelete/~1organization~1get/~1owner~1create/~1owner~1setName/~1owner~1setType/~1owner~1setSearchVisibility/~1owner~1setDescription/~1owner~1listOrganizations/~1owner~1delete/~1owner~1undelete/~1owner~1get/~1repository~1create/~1repository~1setVisibility/~1repository~1setName/~1repository~1setSaveDays/~1repository~1setCheckpointDays/~1repository~1setStatus/~1repository~1setDefaultServerApiVersion/~1repository~1setRecordSaves/~1repository~1setDescription/~1repository~1delete/~1repository~1undelete/~1repository~1exists/~1repository~1isEmpty/~1repository~1get/~1repository~1getBranches/~1repository~1getReferencesByReferenceId/~1repository~1getBranchesByBranchId/~1storage~1getDownloadUri/~1storage~1getContentBlockUploadUri/components/schemas/DirectoryVersion/properties/Files/items - schema must be a map/object",
-        "OpenAPI error: #/components/schemas/FileVersion/RepositoryId - Schema  property RepositoryId is null.",
-        "OpenAPI error: #/components/schemas/FileVersion/RelativePath - Schema  property RelativePath is null.",
-        "OpenAPI error: #/components/schemas/FileVersion/Sha256Hash - Schema  property Sha256Hash is null.",
-        "OpenAPI error: #/components/schemas/DirectoryVersion/DirectoryId - Schema  property DirectoryId is null.",
-        "OpenAPI error: #/components/schemas/DirectoryVersion/RepositoryId - Schema  property RepositoryId is null.",
-        "OpenAPI error: #/components/schemas/DirectoryVersion/RelativePath - Schema  property RelativePath is null.",
-        "OpenAPI error: #/components/schemas/DirectoryVersion/Sha256Hash - Schema  property Sha256Hash is null."
-      ],
+      "evidence": [],
       "transportPolicySupport": "RequestAdapter pipeline can carry auth, API version, correlation, and client identity once generation succeeds.",
       "facadeFit": "Good facade candidate after contract cleanup; generated client remains hidden behind handwritten facade."
     },
@@ -49,10 +39,7 @@
       "outcome": "Rejected",
       "conclusion": "Generation still fails on non-object DirectoryVersion collection items after validation rules are disabled.",
       "outputPath": "",
-      "evidence": [
-        "OpenAPI error: #/paths/~1approval~1policy~1create/~1approval~1request~1approve/~1webhook~1rule~1create/~1webhook~1rule~1test/~1branch~1create/~1branch~1rebase/~1branch~1promote/~1branch~1commit/~1branch~1checkpoint/~1branch~1save/~1branch~1tag/~1branch~1enablePromotion/~1branch~1enableCommit/~1branch~1enableCheckpoint/~1branch~1enableSave/~1branch~1enableTag/~1branch~1delete/~1branch~1annotate/~1branch~1get/~1branch~1getParentBranch/~1branch~1getReference/~1branch~1getReferences/~1branch~1getPromotions/~1branch~1getCommits/~1branch~1getCheckpoints/~1branch~1getSaves/~1branch~1getTags/~1diff~1populate/~1diff~1getDiff/~1diff~1getDiffBySha256Hash/~1diff~1getDiffByBlake3Hash/~1directory~1create/~1directory~1get/~1directory~1getDirectoryVersionsRecursive/~1directory~1getByDirectoryIds/~1directory~1getBySha256Hash/~1directory~1getByBlake3Hash/~1directory~1saveDirectoryVersions/~1organization~1create/~1organization~1setName/~1organization~1setType/~1organization~1setSearchVisibility/~1organization~1setDescription/~1organization~1listRepositories/~1organization~1delete/~1organization~1undelete/~1organization~1get/~1owner~1create/~1owner~1setName/~1owner~1setType/~1owner~1setSearchVisibility/~1owner~1setDescription/~1owner~1listOrganizations/~1owner~1delete/~1owner~1undelete/~1owner~1get/~1repository~1create/~1repository~1setVisibility/~1repository~1setName/~1repository~1setSaveDays/~1repository~1setCheckpointDays/~1repository~1setStatus/~1repository~1setDefaultServerApiVersion/~1repository~1setRecordSaves/~1repository~1setDescription/~1repository~1delete/~1repository~1undelete/~1repository~1exists/~1repository~1isEmpty/~1repository~1get/~1repository~1getBranches/~1repository~1getReferencesByReferenceId/~1repository~1getBranchesByBranchId/~1storage~1getDownloadUri/~1storage~1getContentBlockUploadUri/components/schemas/DirectoryVersion/properties/Directories/items - schema must be a map/object",
-        "OpenAPI error: #/paths/~1approval~1policy~1create/~1approval~1request~1approve/~1webhook~1rule~1create/~1webhook~1rule~1test/~1branch~1create/~1branch~1rebase/~1branch~1promote/~1branch~1commit/~1branch~1checkpoint/~1branch~1save/~1branch~1tag/~1branch~1enablePromotion/~1branch~1enableCommit/~1branch~1enableCheckpoint/~1branch~1enableSave/~1branch~1enableTag/~1branch~1delete/~1branch~1annotate/~1branch~1get/~1branch~1getParentBranch/~1branch~1getReference/~1branch~1getReferences/~1branch~1getPromotions/~1branch~1getCommits/~1branch~1getCheckpoints/~1branch~1getSaves/~1branch~1getTags/~1diff~1populate/~1diff~1getDiff/~1diff~1getDiffBySha256Hash/~1diff~1getDiffByBlake3Hash/~1directory~1create/~1directory~1get/~1directory~1getDirectoryVersionsRecursive/~1directory~1getByDirectoryIds/~1directory~1getBySha256Hash/~1directory~1getByBlake3Hash/~1directory~1saveDirectoryVersions/~1organization~1create/~1organization~1setName/~1organization~1setType/~1organization~1setSearchVisibility/~1organization~1setDescription/~1organization~1listRepositories/~1organization~1delete/~1organization~1undelete/~1organization~1get/~1owner~1create/~1owner~1setName/~1owner~1setType/~1owner~1setSearchVisibility/~1owner~1setDescription/~1owner~1listOrganizations/~1owner~1delete/~1owner~1undelete/~1owner~1get/~1repository~1create/~1repository~1setVisibility/~1repository~1setName/~1repository~1setSaveDays/~1repository~1setCheckpointDays/~1repository~1setStatus/~1repository~1setDefaultServerApiVersion/~1repository~1setRecordSaves/~1repository~1setDescription/~1repository~1delete/~1repository~1undelete/~1repository~1exists/~1repository~1isEmpty/~1repository~1get/~1repository~1getBranches/~1repository~1getReferencesByReferenceId/~1repository~1getBranchesByBranchId/~1storage~1getDownloadUri/~1storage~1getContentBlockUploadUri/components/schemas/DirectoryVersion/properties/Files/items - schema must be a map/object"
-      ],
+      "evidence": [],
       "transportPolicySupport": "RequestAdapter middleware model is promising, but no generated output was available to compile.",
       "facadeFit": "Facade fit cannot be accepted until generation and import compile."
     },
@@ -65,7 +52,7 @@
       "conclusion": "NSwag/NJsonSchema cannot parse array-valued schema properties such as FileVersion.RepositoryId.",
       "outputPath": "",
       "evidence": [
-        "Newtonsoft.Json.JsonSerializationException: Cannot populate JSON array onto type 'NJsonSchema.JsonSchemaProperty'. Path 'components.schemas.FileVersion.properties.RepositoryId', line 1, position 139491."
+        "Newtonsoft.Json.JsonSerializationException: Cannot populate JSON array onto type 'NJsonSchema.JsonSchema'. Path 'components.schemas.GraceResult.oneOf[0]', line 1, position 143617."
       ],
       "transportPolicySupport": "HttpClient partial-class customization would support transport policies if generation succeeded.",
       "facadeFit": "Facade fit is acceptable in principle, but parsing fails before a .NET compile probe."
@@ -80,15 +67,9 @@
       "outputPath": "sdk\\generated\\matrix\\openapi-generator\\typescript-fetch",
       "evidence": [
         "Errors:",
-        "-attribute .components.schemas.DirectoryVersion.items is not of type `object` (#/components/schemas/DirectoryVersion)",
         "-attribute components.schemas.DiffPiece.$ref is not of type `string`",
-        "-attribute .components.schemas.FileVersion. is not of type `object` (#/components/schemas/FileVersion)",
-        "-attribute .components.schemas.DirectoryVersion. is not of type `object` (#/components/schemas/DirectoryVersion)",
-        "-attribute components.schemas.FileVersion. is not of type `object`",
         "-attribute components.schemas.FileDiff.$ref is not of type `string`",
         "-attribute components.schemas.FileSystemDifference.$ref is not of type `string`",
-        "-attribute components.schemas.DirectoryVersion. is not of type `object`",
-        "-attribute components.schemas.DirectoryVersion.items is not of type `object`",
         "-attribute components.schemas.GraceResult. is not of type `object`",
         "Warnings:",
         "[main] WARN  o.o.codegen.DefaultCodegen - OpenAPI 3.1 support is still in beta. To report an issue related to 3.1 spec, please kindly open an issue in the Github repo: https://github.com/openAPITools/openapi-generator.",
@@ -109,15 +90,9 @@
       "outputPath": "sdk\\generated\\matrix\\openapi-generator\\python",
       "evidence": [
         "Errors:",
-        "-attribute .components.schemas.DirectoryVersion.items is not of type `object` (#/components/schemas/DirectoryVersion)",
         "-attribute components.schemas.DiffPiece.$ref is not of type `string`",
-        "-attribute .components.schemas.FileVersion. is not of type `object` (#/components/schemas/FileVersion)",
-        "-attribute .components.schemas.DirectoryVersion. is not of type `object` (#/components/schemas/DirectoryVersion)",
-        "-attribute components.schemas.FileVersion. is not of type `object`",
         "-attribute components.schemas.FileDiff.$ref is not of type `string`",
         "-attribute components.schemas.FileSystemDifference.$ref is not of type `string`",
-        "-attribute components.schemas.DirectoryVersion. is not of type `object`",
-        "-attribute components.schemas.DirectoryVersion.items is not of type `object`",
         "-attribute components.schemas.GraceResult. is not of type `object`",
         "Warnings:",
         "[main] WARN  o.o.codegen.DefaultCodegen - OpenAPI 3.1 support is still in beta. To report an issue related to 3.1 spec, please kindly open an issue in the Github repo: https://github.com/openAPITools/openapi-generator.",
@@ -136,15 +111,9 @@
       "outputPath": "sdk\\generated\\matrix\\openapi-generator\\rust",
       "evidence": [
         "Errors:",
-        "-attribute .components.schemas.DirectoryVersion.items is not of type `object` (#/components/schemas/DirectoryVersion)",
         "-attribute components.schemas.DiffPiece.$ref is not of type `string`",
-        "-attribute .components.schemas.FileVersion. is not of type `object` (#/components/schemas/FileVersion)",
-        "-attribute .components.schemas.DirectoryVersion. is not of type `object` (#/components/schemas/DirectoryVersion)",
-        "-attribute components.schemas.FileVersion. is not of type `object`",
         "-attribute components.schemas.FileDiff.$ref is not of type `string`",
         "-attribute components.schemas.FileSystemDifference.$ref is not of type `string`",
-        "-attribute components.schemas.DirectoryVersion. is not of type `object`",
-        "-attribute components.schemas.DirectoryVersion.items is not of type `object`",
         "-attribute components.schemas.GraceResult. is not of type `object`",
         "Warnings:",
         "[main] WARN  o.o.codegen.DefaultCodegen - OpenAPI 3.1 support is still in beta. To report an issue related to 3.1 spec, please kindly open an issue in the Github repo: https://github.com/openAPITools/openapi-generator.",
@@ -184,15 +153,15 @@
   "deterministicRegeneration": [
     {
       "path": "sdk/generated/matrix/openapi-generator/typescript-fetch",
-      "manifestSha256": "48d020b551200299c468cde7fe8022665c44deaa17b9486c2943728ea45cc454"
+      "manifestSha256": "01ddaab1600b114eb0dd07c1e82efbe70a7db11aca3dba3e94f2e3621afaafa6"
     },
     {
       "path": "sdk/generated/matrix/openapi-generator/python",
-      "manifestSha256": "1549bf7c34532f441ecf3f60f8675d594d0e68b76e46b452fd281a972cc7f97e"
+      "manifestSha256": "9d8a41cd85275098dd726f01368b30a5f1529837c6c07f6c399ef45f2186687a"
     },
     {
       "path": "sdk/generated/matrix/openapi-generator/rust",
-      "manifestSha256": "f8d7a4aa6d3915caba340cab8998cd3b2f4a992c1757a7f8c490efa61fff49bf"
+      "manifestSha256": "0bf096cb27e748bea1ed6cfe8b0676397cb5d220c02101113e9ff789bb689e70"
     }
   ],
   "overallConclusion": "OpenAPI Generator is the only evaluated tool that produced compile/importable TS, Python, and Rust output, and only with --skip-validate-spec. Kiota and NSwag are rejected until OpenAPI schema-shape debt is fixed.",
