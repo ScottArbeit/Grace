@@ -18,8 +18,9 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, Field, StrictStr
+from pydantic import BaseModel, ConfigDict, Field, StrictStr, field_validator
 from typing import Any, ClassVar, Dict, List, Optional
+from typing_extensions import Annotated
 from uuid import UUID
 from typing import Optional, Set
 from typing_extensions import Self
@@ -27,7 +28,7 @@ from pydantic_core import to_jsonable_python
 
 class GetDiffBySha256HashParameters(BaseModel):
     """
-    Parameters for retrieving a diff by SHA-256 hash.
+    Parameters for retrieving a diff by SHA-256 hash or unique SHA-256 prefix.
     """ # noqa: E501
     correlation_id: Optional[StrictStr] = Field(default=None, description="Body DTO correlation id copied into Grace command/event metadata after request parsing. This field is distinct from the X-Correlation-Id transport header.", alias="CorrelationId")
     principal: Optional[StrictStr] = Field(default=None, description="The entity on whose behalf the action is being performed.", alias="Principal")
@@ -39,9 +40,35 @@ class GetDiffBySha256HashParameters(BaseModel):
     repository_name: Optional[StrictStr] = Field(default=None, alias="RepositoryName")
     directory_version_id1: Optional[UUID] = Field(default=None, alias="DirectoryVersionId1")
     directory_version_id2: Optional[UUID] = Field(default=None, alias="DirectoryVersionId2")
-    sha256_hash1: Optional[StrictStr] = Field(default=None, alias="Sha256Hash1")
-    sha256_hash2: Optional[StrictStr] = Field(default=None, alias="Sha256Hash2")
+    sha256_hash1: Optional[Annotated[str, Field(strict=True)]] = Field(default=None, description="Lowercase or uppercase 2- to 64-character SHA-256 version hash prefix.", alias="Sha256Hash1")
+    sha256_hash2: Optional[Annotated[str, Field(strict=True)]] = Field(default=None, description="Lowercase or uppercase 2- to 64-character SHA-256 version hash prefix.", alias="Sha256Hash2")
     __properties: ClassVar[List[str]] = ["CorrelationId", "Principal", "OwnerId", "OwnerName", "OrganizationId", "OrganizationName", "RepositoryId", "RepositoryName", "DirectoryVersionId1", "DirectoryVersionId2", "Sha256Hash1", "Sha256Hash2"]
+
+    @field_validator('sha256_hash1')
+    def sha256_hash1_validate_regular_expression(cls, value):
+        """Validates the regular expression"""
+        if value is None:
+            return value
+
+        if not isinstance(value, str):
+            value = str(value)
+
+        if not re.match(r"^[A-Fa-f0-9]{2,64}$", value):
+            raise ValueError(r"must validate the regular expression /^[A-Fa-f0-9]{2,64}$/")
+        return value
+
+    @field_validator('sha256_hash2')
+    def sha256_hash2_validate_regular_expression(cls, value):
+        """Validates the regular expression"""
+        if value is None:
+            return value
+
+        if not isinstance(value, str):
+            value = str(value)
+
+        if not re.match(r"^[A-Fa-f0-9]{2,64}$", value):
+            raise ValueError(r"must validate the regular expression /^[A-Fa-f0-9]{2,64}$/")
+        return value
 
     model_config = ConfigDict(
         validate_by_name=True,

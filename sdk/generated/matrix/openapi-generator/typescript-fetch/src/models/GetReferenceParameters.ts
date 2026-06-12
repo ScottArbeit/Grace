@@ -80,7 +80,7 @@ export interface GetReferenceParameters {
      */
     branchName?: string;
     /**
-     * 
+     * Empty value or lowercase or uppercase 2- to 64-character SHA-256 version hash prefix.
      * @type {string}
      * @memberof GetReferenceParameters
      */

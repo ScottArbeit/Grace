@@ -80,7 +80,7 @@ export interface BranchHashQueryParameters {
      */
     branchName?: string;
     /**
-     * 
+     * Empty value or lowercase or uppercase 2- to 64-character SHA-256 version hash prefix.
      * @type {string}
      * @memberof BranchHashQueryParameters
      */
@@ -92,7 +92,7 @@ export interface BranchHashQueryParameters {
      */
     referenceId?: string;
     /**
-     * 
+     * Empty value or lowercase or uppercase 2- to 64-character BLAKE3 version hash prefix.
      * @type {string}
      * @memberof BranchHashQueryParameters
      */

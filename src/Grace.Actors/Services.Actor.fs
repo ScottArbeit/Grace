@@ -346,24 +346,7 @@ module Services =
         }
 
     let private getReadableWholeFileContentObjectKey (repositoryDto: RepositoryDto) (fileVersion: FileVersion) (correlationId: CorrelationId) =
-        task {
-            let currentBlobName = StorageKeys.wholeFileContentObjectKey fileVersion
-            let! currentBlobClient = getAzureBlobClient repositoryDto currentBlobName correlationId
-
-            if StorageKeys.hasBlake3SpecificWholeFileContentObjectKey fileVersion then
-                let! currentExists = currentBlobClient.ExistsAsync()
-
-                if currentExists.Value then
-                    return currentBlobName
-                else
-                    let legacyBlobName = StorageKeys.legacyWholeFileContentObjectKey fileVersion
-                    let! legacyBlobClient = getAzureBlobClient repositoryDto legacyBlobName correlationId
-                    let! legacyExists = legacyBlobClient.ExistsAsync()
-
-                    if legacyExists.Value then return legacyBlobName else return currentBlobName
-            else
-                return currentBlobName
-        }
+        task { return StorageKeys.wholeFileContentObjectKey fileVersion }
 
     let getReadableAzureBlobClientForFileVersion (repositoryDto: RepositoryDto) (fileVersion: FileVersion) (correlationId: CorrelationId) =
         task {
@@ -463,7 +446,7 @@ module Services =
             return! getUriWithReadSharedAccessSignature repositoryDto blobName correlationId
         }
 
-    /// The permissions we need to create, write, or tag blobs. Includes read permission to allow for calls to .ExistsAsync().
+    /// The permissions we need to create, write, read, or tag blobs.
     let azureBlobWritePermissions =
         (BlobSasPermissions.Create
          ||| BlobSasPermissions.Write

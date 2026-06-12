@@ -86,13 +86,13 @@ export interface CreateReferenceParameters {
      */
     directoryVersionId?: string;
     /**
-     * 
+     * Empty value or lowercase or uppercase 2- to 64-character SHA-256 version hash prefix.
      * @type {string}
      * @memberof CreateReferenceParameters
      */
     sha256Hash?: string;
     /**
-     * 
+     * Empty value or lowercase or uppercase 2- to 64-character BLAKE3 version hash prefix.
      * @type {string}
      * @memberof CreateReferenceParameters
      */
