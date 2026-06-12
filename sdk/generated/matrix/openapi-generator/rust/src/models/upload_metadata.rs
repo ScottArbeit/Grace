@@ -21,17 +21,21 @@ pub struct UploadMetadata {
     /// Lowercase 64-character SHA-256 version hash persisted on version DTOs.
     #[serde(rename = "Sha256Hash")]
     pub sha256_hash: String,
+    /// Lowercase 64-character BLAKE3 version hash persisted on new version graph DTOs.
+    #[serde(rename = "Blake3Hash")]
+    pub blake3_hash: String,
     #[serde(rename = "ContentReference")]
     pub content_reference: Box<models::FileContentReference>,
 }
 
 impl UploadMetadata {
     /// Upload metadata returned by whole-file compatibility upload planning.
-    pub fn new(relative_path: String, blob_uri_with_sas_token: String, sha256_hash: String, content_reference: models::FileContentReference) -> UploadMetadata {
+    pub fn new(relative_path: String, blob_uri_with_sas_token: String, sha256_hash: String, blake3_hash: String, content_reference: models::FileContentReference) -> UploadMetadata {
         UploadMetadata {
             relative_path,
             blob_uri_with_sas_token,
             sha256_hash,
+            blake3_hash,
             content_reference: Box::new(content_reference),
         }
     }
