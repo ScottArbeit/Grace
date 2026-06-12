@@ -25,7 +25,7 @@ not add migration, import, preservation, or grandfathering work for imaginary ol
 | --- | --- | --- |
 | FileVersion, LocalFileVersion, DirectoryVersion, LocalDirectoryVersion, GraceStatus, ReferenceDto, branch/reference commands, and branch/reference events carry explicit `Blake3Hash` and `Sha256Hash` where version lookup or display requires them. | Type, actor, CLI, local-state, SDK, and OpenAPI files in the `origin/main...HEAD` diff include dual-hash fields and command propagation. | Satisfied |
 | File BLAKE3 and SHA-256 are byte-only. | `Services.Shared.fs`, file hash helper tests, current-state capture tests, and this doc refresh keep file hashes byte-only. | Satisfied |
-| DirectoryVersion BLAKE3 and SHA-256 use the formal `grace.directory-version.v1` preimage with directory path, child kind, child path, file size for files, and same-algorithm child hashes. | `DirectoryVersionPreimage.Shared.Tests.fs`, `Services.Shared.fs`, actor/server-unit promotion tests, and updated docs describe and prove the formal preimage. | Satisfied |
+| DirectoryVersion BLAKE3 and SHA-256 use the formal `grace.directory-version.v1` preimage with directory path, child kind, child path, child size for every entry, and same-algorithm child hashes, sorted by normalized child path and then child kind. | `DirectoryVersionPreimage.Shared.Tests.fs`, `Services.Shared.fs`, actor/server-unit promotion tests, and updated docs describe and prove the formal preimage. | Satisfied |
 | BLAKE3 lookup exists wherever SHA-256 version lookup exists. | Branch, reference, diff, and directory server/SDK/CLI/OpenAPI surfaces include BLAKE3 lookup peers for SHA-256 lookup paths. | Satisfied |
 | `--blake3-hash` resolves repository version graph objects only, not arbitrary CAS objects. | Server/unit and CLI lookup tests cover version-hash prefix resolution; CAS docs keep `FileContentHash`, `ChunkAddress`, `ContentBlockAddress`, and `ManifestAddress` separate from version hashes. | Satisfied |
 | Prefix lookup distinguishes zero, one, and multiple matches for both algorithms. | `Services.VersionHashPrefixResolution.Tests.fs`, lookup route tests, and CLI parsing tests cover zero/one/multiple prefix outcomes. | Satisfied |
@@ -41,8 +41,8 @@ not add migration, import, preservation, or grandfathering work for imaginary ol
 This audit refreshed docs that still sounded like pre-implementation planning:
 
 - `README.md` now treats multi-hash semantics as a current hardening area rather than future BLAKE3 introduction.
-- `CONTEXT.md` now describes version hashes as current BLAKE3 plus retained SHA-256 graph identity, not only an ADR
-  target model.
+- `CONTEXT.md` now describes version hashes as current BLAKE3 plus retained SHA-256 lookup and display values, not only
+  an ADR target model.
 - `docs/Data types in Grace.md` now lists both `Blake3Hash` and `Sha256Hash` for DirectoryVersion, Reference, and
   FileVersion.
 - `docs/How Grace computes the SHA-256 value.md` now describes the current dual-hash behavior and formal directory
