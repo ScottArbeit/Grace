@@ -221,6 +221,144 @@ module Common =
                 Recursive = true
             )
 
+    module HashOptions =
+        [<Literal>]
+        let MinimumVersionHashPrefixLength = 2
+
+        [<Literal>]
+        let FullVersionHashLength = 64
+
+        type VersionHashAlgorithm =
+            | Blake3
+            | Sha256Compatibility
+
+        type VersionHashLookupMode =
+            | NoVersionHashLookup
+            | Blake3VersionHashLookup of blake3HashPrefix: string
+            | Sha256CompatibilityVersionHashLookup of sha256HashPrefix: string
+            | PairedVersionHashLookup of sha256HashPrefix: string * blake3HashPrefix: string
+
+        type VersionHashDisplayMode = { FullHashes: bool; ShowSha256: bool; UsedDeprecatedFullSha: bool }
+
+        let private algorithmName algorithm =
+            match algorithm with
+            | Blake3 -> "BLAKE3"
+            | Sha256Compatibility -> "SHA-256"
+
+        let private isHex value =
+            value
+            |> Seq.forall (fun c ->
+                Char.IsDigit c
+                || (c >= 'a' && c <= 'f')
+                || (c >= 'A' && c <= 'F'))
+
+        let normalizeVersionHashPrefix algorithm optionName (value: string) =
+            let trimmed = if isNull value then String.Empty else value.Trim()
+
+            if String.IsNullOrWhiteSpace trimmed then
+                Error $"{optionName} requires a non-empty {algorithmName algorithm} version hash prefix."
+            elif trimmed.Length < MinimumVersionHashPrefixLength then
+                Error $"{optionName} must be at least {MinimumVersionHashPrefixLength} hex characters."
+            elif trimmed.Length > FullVersionHashLength then
+                Error $"{optionName} must be at most {FullVersionHashLength} hex characters."
+            elif not <| isHex trimmed then
+                Error $"{optionName} must contain only hexadecimal characters."
+            else
+                Ok(trimmed.ToLowerInvariant())
+
+        let addVersionHashValidator algorithm optionName (option: Option<string>) =
+            option.Validators.Add (fun optionResult ->
+                let value = optionResult.GetValueOrDefault<string>()
+
+                match normalizeVersionHashPrefix algorithm optionName value with
+                | Ok _ -> ()
+                | Error message -> optionResult.AddError(message))
+
+            option
+
+        let sha256HashOption description =
+            new Option<string>(OptionName.Sha256Hash, [||], Required = false, Description = description, Arity = ArgumentArity.ExactlyOne)
+            |> addVersionHashValidator Sha256Compatibility OptionName.Sha256Hash
+
+        let blake3HashOption description =
+            new Option<string>(OptionName.Blake3Hash, [||], Required = false, Description = description, Arity = ArgumentArity.ExactlyOne)
+            |> addVersionHashValidator Blake3 OptionName.Blake3Hash
+
+        let private explicitOptionValue (optionName: string) algorithm (parseResult: ParseResult) =
+            let result = parseResult.GetResult(optionName)
+
+            if isNull result then
+                None
+            else
+                match
+                    parseResult.GetValue<string>(optionName)
+                    |> normalizeVersionHashPrefix algorithm optionName
+                    with
+                | Ok normalized -> Some normalized
+                | Error _ -> None
+
+        let bindVersionHashLookupMode (parseResult: ParseResult) =
+            let sha256Hash = explicitOptionValue OptionName.Sha256Hash Sha256Compatibility parseResult
+            let blake3Hash = explicitOptionValue OptionName.Blake3Hash Blake3 parseResult
+
+            match sha256Hash, blake3Hash with
+            | Some sha256Hash, Some blake3Hash -> PairedVersionHashLookup(sha256Hash, blake3Hash)
+            | Some sha256Hash, None -> Sha256CompatibilityVersionHashLookup sha256Hash
+            | None, Some blake3Hash -> Blake3VersionHashLookup blake3Hash
+            | None, None -> NoVersionHashLookup
+
+        let getSha256CompatibilityHashPrefix (parseResult: ParseResult) =
+            explicitOptionValue OptionName.Sha256Hash Sha256Compatibility parseResult
+            |> Option.defaultValue String.Empty
+
+        let getBlake3HashPrefix (parseResult: ParseResult) =
+            explicitOptionValue OptionName.Blake3Hash Blake3 parseResult
+            |> Option.defaultValue String.Empty
+
+        let bindVersionHashDisplayMode (parseResult: ParseResult) =
+            let hasOption (optionName: string) = not <| isNull (parseResult.GetResult(optionName))
+
+            let fullHashes =
+                hasOption OptionName.FullHashes
+                && parseResult.GetValue<bool>(OptionName.FullHashes)
+
+            let showSha256 =
+                hasOption OptionName.ShowSha256
+                && parseResult.GetValue<bool>(OptionName.ShowSha256)
+
+            let deprecatedFullSha =
+                hasOption OptionName.FullSha
+                && parseResult.GetValue<bool>(OptionName.FullSha)
+
+            { FullHashes = fullHashes || deprecatedFullSha; ShowSha256 = showSha256 || deprecatedFullSha; UsedDeprecatedFullSha = deprecatedFullSha }
+
+        let fullHashes =
+            new Option<bool>(
+                OptionName.FullHashes,
+                Required = false,
+                Description = "Show full version hash values in human output.",
+                Arity = ArgumentArity.ZeroOrOne,
+                DefaultValueFactory = (fun _ -> false)
+            )
+
+        let showSha256 =
+            new Option<bool>(
+                OptionName.ShowSha256,
+                Required = false,
+                Description = "Include SHA-256 compatibility hash values in human output.",
+                Arity = ArgumentArity.ZeroOrOne,
+                DefaultValueFactory = (fun _ -> false)
+            )
+
+        let deprecatedFullSha =
+            new Option<bool>(
+                OptionName.FullSha,
+                Required = false,
+                Description = "Deprecated compatibility option. Use --full-hashes with --show-sha256 instead.",
+                Arity = ArgumentArity.ZeroOrOne,
+                DefaultValueFactory = (fun _ -> false)
+            )
+
     /// Gets the correlationId value from the command's ParseResult.
     let getCorrelationId (parseResult: ParseResult) = Services.resolveCorrelationId parseResult
 
