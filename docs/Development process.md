@@ -24,6 +24,28 @@ For small typo fixes or tiny docs corrections, keep the spirit of the process bu
 - Use the existing issue details to prevent likely Codex Code Review Bot findings before the pull request exists. This
   means sharper invariants, forbidden implementation shapes, adversarial cases, and test evidence rather than more
   issue-template ceremony.
+- Grace is not in production and has no production legacy-data migration burden. Do not weaken contracts, validators, or
+  generated clients to preserve imaginary legacy production records.
+
+## Data Compatibility Posture
+
+Grace is still pre-production. During design and implementation work, assume there is no production legacy data that
+must be migrated in place or accepted indefinitely.
+
+That premise has concrete review consequences:
+
+- Public API, CLI, OpenAPI, SDK, and storage contracts should state the desired invariant for current Grace behavior.
+  Do not broaden those contracts merely to accept missing, empty, or malformed values from hypothetical production data.
+- Old local, development, generated, or test state may be reset, recomputed, regenerated, or rejected with a clear error
+  when a new invariant requires it.
+- If current runtime code can emit a default or sentinel DTO, model that behavior narrowly as a current contract only
+  when the endpoint deliberately uses the sentinel. Otherwise, fix the source behavior or fail before publishing an
+  invalid response.
+- Review findings that cite "legacy data" need triage before implementation. If the only risk is nonexistent production
+  migration compatibility, answer or fix the premise through documentation, source-of-truth behavior, reset semantics, or
+  fail-fast validation rather than weakening the public contract.
+- Issue bodies and worker prompts should name any intentional compatibility exception explicitly. Silence means the
+  current invariant wins.
 
 ## Task Records
 
@@ -218,7 +240,9 @@ issue, but every selected or skipped row should be clear enough that a worker an
 - Proof/test work: identify the false-positive test review is likely to catch. Prove the assertion would fail on
   regression, not just execute the path.
 - DTO/contract work: check JSON shape, MessagePack or other serialization shape, OpenAPI component, aggregate OpenAPI,
-  generated-client impact, SDK/facade impact, docs impact, and compatibility posture.
+  generated-client impact, SDK/facade impact, docs impact, and compatibility posture. Remember that Grace has no
+  production legacy-data migration burden; compatibility exceptions must be current, intentional runtime contracts, not
+  assumptions about old production records.
 - CLI work: check `--output Json`, `--select`, `--schema`, `--examples`, stdout cleanliness, stderr/progress behavior,
   exit-code behavior, and whether global options accidentally skip or duplicate side effects.
 - Server/API work: specify ordering for parse, null/blank validation, domain validation, authorization,
