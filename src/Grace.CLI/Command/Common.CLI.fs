@@ -240,10 +240,32 @@ module Common =
 
         type VersionHashDisplayMode = { FullHashes: bool; ShowSha256: bool; UsedDeprecatedFullSha: bool }
 
+        [<Literal>]
+        let MissingVersionHashText = "unavailable"
+
         let private algorithmName algorithm =
             match algorithm with
             | Blake3 -> "BLAKE3"
             | Sha256Compatibility -> "SHA-256"
+
+        let private shortHash (value: string) =
+            if String.IsNullOrWhiteSpace value then MissingVersionHashText
+            elif value.Length <= 8 then value
+            else value.Substring(0, 8)
+
+        let formatVersionHash (hashDisplayMode: VersionHashDisplayMode) (value: string) =
+            if String.IsNullOrWhiteSpace value then MissingVersionHashText
+            elif hashDisplayMode.FullHashes then value
+            else shortHash value
+
+        let formatVersionHashPair (hashDisplayMode: VersionHashDisplayMode) (blake3Hash: Blake3Hash) (sha256Hash: Sha256Hash) =
+            let blake3Display = formatVersionHash hashDisplayMode $"{blake3Hash}"
+
+            if hashDisplayMode.ShowSha256 then
+                let sha256Display = formatVersionHash hashDisplayMode $"{sha256Hash}"
+                $"{blake3Display} (SHA-256 {sha256Display})"
+            else
+                blake3Display
 
         let private isHex value =
             value
