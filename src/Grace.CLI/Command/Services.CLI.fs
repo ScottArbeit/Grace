@@ -154,7 +154,7 @@ module Services =
         /// Gets a DirectoryInfo instance for the parent directory of this local file.
         member this.DirectoryInfo = DirectoryInfo(this.FullName)
 
-    /// Gets the local object-cache file name. Legacy rows without BLAKE3 keep the SHA-only name; dual-hash rows
+    /// Gets the local object-cache file name. Rows without BLAKE3 keep the SHA-only name; dual-hash rows
     /// include BLAKE3 so same-path SHA-256 collisions do not overwrite or reuse the wrong local bytes.
     let getLocalObjectCacheFileName (relativePath: RelativePath) (sha256Hash: Sha256Hash) (blake3Hash: Blake3Hash) =
         if String.IsNullOrWhiteSpace(string blake3Hash) then
@@ -589,7 +589,7 @@ module Services =
     /// Reads the full GraceStatus snapshot including the index.
     let readGraceStatusSnapshot () = LocalStateDb.readStatusSnapshot (getLocalStateDbPath ())
 
-    /// Retrieves the Grace status snapshot (compatibility wrapper).
+    /// Retrieves the Grace status snapshot.
     let readGraceStatusFile () = readGraceStatusSnapshot ()
 
     /// Writes the full Grace status snapshot to disk.
@@ -1262,13 +1262,9 @@ module Services =
 
     let private uploadedFileVersionIdentity (fileVersion: FileVersion) = (fileVersion.RelativePath, fileVersion.Sha256Hash, fileVersion.Blake3Hash)
 
-    let private legacyUploadedFileVersionIdentity (fileVersion: FileVersion) = (fileVersion.RelativePath, fileVersion.Sha256Hash)
-
     let private isManifestBackedFileVersion (fileVersion: FileVersion) =
         not (isNull (box fileVersion.ContentReference))
         && fileVersion.ContentReference.ReferenceType = FileContentReferenceType.FileManifest
-
-    let private hasMissingBlake3Hash (fileVersion: FileVersion) = String.IsNullOrWhiteSpace(string fileVersion.Blake3Hash)
 
     let applyUploadedFileVersionsToDirectoryVersionsWithSavedDirectoryVersions
         (uploadedFileVersions: IEnumerable<FileVersion>)
@@ -1281,7 +1277,6 @@ module Services =
             uploadedByIdentity[uploadedFileVersionIdentity uploadedFileVersion] <- uploadedFileVersion
 
         let savedManifestBackedByIdentity = Dictionary<RelativePath * Sha256Hash * Blake3Hash, FileVersion>()
-        let savedManifestBackedByLegacyIdentity = Dictionary<RelativePath * Sha256Hash, FileVersion>()
         let savedDirectoryVersionsById = Dictionary<DirectoryVersionId, DirectoryVersion>()
 
         for savedDirectoryVersion in savedDirectoryVersions do
@@ -1290,8 +1285,6 @@ module Services =
             for savedFileVersion in savedDirectoryVersion.Files do
                 if isManifestBackedFileVersion savedFileVersion then
                     savedManifestBackedByIdentity[uploadedFileVersionIdentity savedFileVersion] <- savedFileVersion
-
-                    savedManifestBackedByLegacyIdentity[legacyUploadedFileVersionIdentity savedFileVersion] <- savedFileVersion
 
         let directoryVersions = Dictionary<DirectoryVersionId, DirectoryVersion>()
         let localDirectoryVersionsById = Dictionary<DirectoryVersionId, LocalDirectoryVersion>()
@@ -1315,12 +1308,6 @@ module Services =
                         let mutable savedManifestBackedFileVersion = Unchecked.defaultof<FileVersion>
 
                         if savedManifestBackedByIdentity.TryGetValue(uploadedFileVersionIdentity fileVersion, &savedManifestBackedFileVersion) then
-                            directoryVersion.Files[ index ] <- savedManifestBackedFileVersion
-                        elif
-                            savedManifestBackedByLegacyIdentity.TryGetValue(legacyUploadedFileVersionIdentity fileVersion, &savedManifestBackedFileVersion)
-                            && (hasMissingBlake3Hash fileVersion
-                                || hasMissingBlake3Hash savedManifestBackedFileVersion)
-                        then
                             directoryVersion.Files[ index ] <- savedManifestBackedFileVersion
 
                 let localChildDirectories = List<LocalDirectoryVersion>()
@@ -2187,6 +2174,7 @@ module Services =
             TargetReferenceId: ReferenceId
             RootDirectoryId: DirectoryVersionId
             RootDirectorySha256Hash: Sha256Hash
+            RootDirectoryBlake3Hash: Blake3Hash
             Source: CliCurrentStateCaptureSource
             CreatedSaveMessage: string option
         }
@@ -2206,13 +2194,14 @@ module Services =
             CreateSaveReference: LocalDirectoryVersion -> string -> Task<Result<ReferenceId, GraceError>>
         }
 
-    let private referenceHasRootOnBranch branchId rootDirectoryId rootDirectorySha256Hash (referenceDto: ReferenceDto) =
+    let private referenceHasRootOnBranch branchId rootDirectoryId rootDirectorySha256Hash rootDirectoryBlake3Hash (referenceDto: ReferenceDto) =
         referenceDto.ReferenceId <> ReferenceId.Empty
         && referenceDto.BranchId = branchId
         && referenceDto.DirectoryId = rootDirectoryId
         && referenceDto.Sha256Hash = rootDirectorySha256Hash
+        && referenceDto.Blake3Hash = rootDirectoryBlake3Hash
 
-    let private tryFindReferenceForRoot rootDirectoryId rootDirectorySha256Hash (branchDto: BranchDto) =
+    let private tryFindReferenceForRoot rootDirectoryId rootDirectorySha256Hash rootDirectoryBlake3Hash (branchDto: BranchDto) =
         [
             branchDto.LatestReference
             branchDto.LatestSave
@@ -2220,7 +2209,7 @@ module Services =
             branchDto.LatestCheckpoint
             branchDto.LatestPromotion
         ]
-        |> Seq.tryFind (referenceHasRootOnBranch branchDto.BranchId rootDirectoryId rootDirectorySha256Hash)
+        |> Seq.tryFind (referenceHasRootOnBranch branchDto.BranchId rootDirectoryId rootDirectorySha256Hash rootDirectoryBlake3Hash)
 
     let internal getChangedFileVersionsReferencedByUpdatedDirectories
         (differences: List<FileSystemDifference>)
@@ -2247,11 +2236,12 @@ module Services =
     let private saveDisabledError correlationId =
         GraceError.Create "Save is disabled on this branch, and local changes require a Save before branch annotation can continue." correlationId
 
-    let private createCaptureResult source createdSaveMessage rootDirectoryId rootDirectorySha256Hash targetReferenceId =
+    let private createCaptureResult source createdSaveMessage rootDirectoryId rootDirectorySha256Hash rootDirectoryBlake3Hash targetReferenceId =
         {
             TargetReferenceId = targetReferenceId
             RootDirectoryId = rootDirectoryId
             RootDirectorySha256Hash = rootDirectorySha256Hash
+            RootDirectoryBlake3Hash = rootDirectoryBlake3Hash
             Source = source
             CreatedSaveMessage = createdSaveMessage
         }
@@ -2319,6 +2309,7 @@ module Services =
                                 (Some saveMessage)
                                 rootDirectoryVersion.DirectoryVersionId
                                 rootDirectoryVersion.Sha256Hash
+                                rootDirectoryVersion.Blake3Hash
                                 referenceId
                         )
                 | Error error -> return Error error
@@ -2328,7 +2319,7 @@ module Services =
         task {
             match explicitReferenceId with
             | Some referenceId when referenceId <> ReferenceId.Empty ->
-                return Ok(createCaptureResult ExplicitReference None DirectoryVersionId.Empty (Sha256Hash String.Empty) referenceId)
+                return Ok(createCaptureResult ExplicitReference None DirectoryVersionId.Empty (Sha256Hash String.Empty) (Blake3Hash String.Empty) referenceId)
             | _ ->
                 match! operations.GetBranch() with
                 | Error error -> return Error error
@@ -2337,7 +2328,13 @@ module Services =
 
                     match! operations.GetGraceWatchStatus() with
                     | Some graceWatchStatus ->
-                        match tryFindReferenceForRoot graceWatchStatus.RootDirectoryId graceWatchStatus.RootDirectorySha256Hash branchDto with
+                        match
+                            tryFindReferenceForRoot
+                                graceWatchStatus.RootDirectoryId
+                                graceWatchStatus.RootDirectorySha256Hash
+                                graceWatchStatus.RootDirectoryBlake3Hash
+                                branchDto
+                            with
                         | Some referenceDto ->
                             return
                                 Ok(
@@ -2346,17 +2343,19 @@ module Services =
                                         None
                                         graceWatchStatus.RootDirectoryId
                                         graceWatchStatus.RootDirectorySha256Hash
+                                        graceWatchStatus.RootDirectoryBlake3Hash
                                         referenceDto.ReferenceId
                                 )
                         | None ->
                             let rootDirectoryVersion =
-                                LocalDirectoryVersion.Create
+                                LocalDirectoryVersion.CreateWithHashes
                                     graceWatchStatus.RootDirectoryId
                                     (Current().OwnerId)
                                     (Current().OrganizationId)
                                     (Current().RepositoryId)
                                     Constants.RootDirectoryPath
                                     graceWatchStatus.RootDirectorySha256Hash
+                                    graceWatchStatus.RootDirectoryBlake3Hash
                                     (List<DirectoryVersionId>())
                                     (List<LocalFileVersion>())
                                     0L
@@ -2368,7 +2367,13 @@ module Services =
                         let! differences = operations.ScanForDifferences previousGraceStatus
 
                         if differences.Count = 0 then
-                            match tryFindReferenceForRoot previousGraceStatus.RootDirectoryId previousGraceStatus.RootDirectorySha256Hash branchDto with
+                            match
+                                tryFindReferenceForRoot
+                                    previousGraceStatus.RootDirectoryId
+                                    previousGraceStatus.RootDirectorySha256Hash
+                                    previousGraceStatus.RootDirectoryBlake3Hash
+                                    branchDto
+                                with
                             | Some referenceDto ->
                                 return
                                     Ok(
@@ -2377,6 +2382,7 @@ module Services =
                                             None
                                             previousGraceStatus.RootDirectoryId
                                             previousGraceStatus.RootDirectorySha256Hash
+                                            previousGraceStatus.RootDirectoryBlake3Hash
                                             referenceDto.ReferenceId
                                     )
                             | None ->
