@@ -70,7 +70,7 @@ export interface DirectoryVersion {
      */
     sha256Hash?: string;
     /**
-     * Lowercase or uppercase 64-character BLAKE3 version hash used for new version graph lookups.
+     * Empty or 64-character BLAKE3 version hash for legacy version DTOs.
      * @type {string}
      * @memberof DirectoryVersion
      */
