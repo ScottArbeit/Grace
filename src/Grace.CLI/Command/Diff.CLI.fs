@@ -136,6 +136,7 @@ module Diff =
                 Description = "The first partial or full SHA-256 hash to compare in the diff.",
                 Arity = ArgumentArity.ExactlyOne
             )
+            |> HashOptions.addVersionHashValidator HashOptions.Sha256Compatibility OptionName.Sha256Hash1
 
         let sha256Hash2 =
             new Option<Sha256Hash>(
@@ -145,6 +146,7 @@ module Diff =
                 Description = "The second partial or full SHA-256 hash to compare in the diff.",
                 Arity = ArgumentArity.ExactlyOne
             )
+            |> HashOptions.addVersionHashValidator HashOptions.Sha256Compatibility OptionName.Sha256Hash2
 
         let blake3Hash1 =
             new Option<Blake3Hash>(
@@ -154,6 +156,7 @@ module Diff =
                 Description = "The first partial or full BLAKE3 hash to compare in the diff.",
                 Arity = ArgumentArity.ExactlyOne
             )
+            |> HashOptions.addVersionHashValidator HashOptions.Blake3 OptionName.Blake3Hash1
 
         let blake3Hash2 =
             new Option<Blake3Hash>(
@@ -163,6 +166,7 @@ module Diff =
                 Description = "The second partial or full BLAKE3 hash to compare in the diff.",
                 Arity = ArgumentArity.ExactlyOne
             )
+            |> HashOptions.addVersionHashValidator HashOptions.Blake3 OptionName.Blake3Hash2
 
         let tag =
             new Option<string>(OptionName.Tag, Required = true, Description = "The tag to compare the current version to.", Arity = ArgumentArity.ExactlyOne)
