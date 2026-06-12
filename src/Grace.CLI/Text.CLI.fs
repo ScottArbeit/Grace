@@ -76,6 +76,9 @@ module Text =
         let Full = "--full"
 
         [<Literal>]
+        let FullHashes = "--full-hashes"
+
+        [<Literal>]
         let FullSha = "--full-sha"
 
         [<Literal>]
@@ -263,6 +266,9 @@ module Text =
 
         [<Literal>]
         let ShowEvents = "--show-events"
+
+        [<Literal>]
+        let ShowSha256 = "--show-sha256"
 
         [<Literal>]
         let Source = "--source"

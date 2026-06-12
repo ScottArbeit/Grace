@@ -112,6 +112,7 @@ module DirectoryVersion =
                 Description = "The full or partial SHA-256 hash value of the version.",
                 Arity = ArgumentArity.ExactlyOne
             )
+            |> HashOptions.addVersionHashValidator HashOptions.Sha256Compatibility OptionName.Sha256Hash
 
         let includeDeleted =
             new Option<bool>(OptionName.IncludeDeleted, [| "-d" |], Required = false, Description = "Include deleted branches in the result. [default: false]")
