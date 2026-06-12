@@ -580,6 +580,78 @@ module CommandOutputContractRegistryTests =
         |> should equal null
 
     [<Test>]
+    let ``maintenance list contents local dto serializes explicit dual hash fields`` () =
+        let parseResult =
+            GraceCommand.rootCommand.Parse(
+                [|
+                    "--output"
+                    "Json"
+                    "maintenance"
+                    "list-contents"
+                |]
+            )
+
+        parseResult.Errors.Count |> should equal 0
+
+        let dto: Common.LocalOutputDto.MaintenanceListContentsDto =
+            {
+                Summary = { DirectoryCount = 1; FileCount = 1; TotalFileSize = 12L; RootSha256Hash = Some "root-sha256" }
+                Directories =
+                    [|
+                        {
+                            RelativePath = "."
+                            DirectoryVersionId = Guid.Parse placeholderGuid
+                            Sha256Hash = "directory-sha256"
+                            Blake3Hash = "directory-blake3"
+                            Size = 12L
+                            LastWriteTimeUtc = DateTime(2026, 6, 5, 0, 0, 0, DateTimeKind.Utc)
+                            Files =
+                                [|
+                                    {
+                                        RelativePath = "README.md"
+                                        FileName = "README.md"
+                                        Sha256Hash = "file-sha256"
+                                        Blake3Hash = "file-blake3"
+                                        Size = 12L
+                                        LastWriteTimeUtc = DateTime(2026, 6, 5, 0, 0, 0, DateTimeKind.Utc)
+                                    }
+                                |]
+                        }
+                    |]
+            }
+
+        let exitCode, output =
+            captureStdout (fun () ->
+                GraceReturnValue.Create dto "corr-local-list-contents-dto"
+                |> Ok
+                |> Common.renderOutput parseResult)
+
+        exitCode |> should equal 0
+        assertOneJsonObjectStdout output
+
+        use document = parseJsonDocument output
+
+        let directory =
+            document
+                .RootElement
+                .GetProperty("ReturnValue")
+                .GetProperty("Directories")[0]
+
+        directory.GetProperty("Sha256Hash").GetString()
+        |> should equal "directory-sha256"
+
+        directory.GetProperty("Blake3Hash").GetString()
+        |> should equal "directory-blake3"
+
+        let file = directory.GetProperty("Files")[0]
+
+        file.GetProperty("Sha256Hash").GetString()
+        |> should equal "file-sha256"
+
+        file.GetProperty("Blake3Hash").GetString()
+        |> should equal "file-blake3"
+
+    [<Test>]
     let ``watch json mode is registered as immediate error only`` () =
         let identity = CommandOutputContract.commandIdentity [] "watch"
 
