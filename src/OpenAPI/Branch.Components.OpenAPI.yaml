@@ -266,9 +266,9 @@
           description: DirectoryVersionId represented by the current server DTO field name.
           example: 33a4e36b-828f-4fae-9343-50b6560dc842
         Sha256Hash:
-          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Sha256Hash'
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Sha256HashReferenceCompatibility'
         Blake3Hash:
-          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Blake3Hash'
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Blake3HashReferenceCompatibility'
         ReferenceType:
           $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/ReferenceType'
         ReferenceText:
