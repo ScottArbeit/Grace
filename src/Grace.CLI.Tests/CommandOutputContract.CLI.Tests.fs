@@ -541,7 +541,7 @@ module CommandOutputContractRegistryTests =
         parseResult.Errors.Count |> should equal 0
 
         let dto: Common.LocalOutputDto.MaintenanceStatsDto =
-            { DirectoryCount = 3; FileCount = 5; TotalFileSize = 89L; RootSha256Hash = Some "0123456789abcdef" }
+            { DirectoryCount = 3; FileCount = 5; TotalFileSize = 89L; RootSha256Hash = Some "0123456789abcdef"; RootBlake3Hash = Some "af1349b9f5f9a1a6" }
 
         let exitCode, output =
             captureStdout (fun () ->
@@ -574,6 +574,11 @@ module CommandOutputContractRegistryTests =
             .GetString()
         |> should equal "0123456789abcdef"
 
+        returnValue
+            .GetProperty("RootBlake3Hash")
+            .GetString()
+        |> should equal "af1349b9f5f9a1a6"
+
         let mutable camelCaseReturnValue = Unchecked.defaultof<JsonElement>
 
         root.TryGetProperty("returnValue", &camelCaseReturnValue)
@@ -598,7 +603,7 @@ module CommandOutputContractRegistryTests =
 
         let dto: Common.LocalOutputDto.MaintenanceListContentsDto =
             {
-                Summary = { DirectoryCount = 1; FileCount = 1; TotalFileSize = 12L; RootSha256Hash = Some "root-sha256" }
+                Summary = { DirectoryCount = 1; FileCount = 1; TotalFileSize = 12L; RootSha256Hash = Some "root-sha256"; RootBlake3Hash = Some "root-blake3" }
                 Directories =
                     [|
                         {
@@ -633,6 +638,18 @@ module CommandOutputContractRegistryTests =
         assertOneJsonObjectStdout output
 
         use document = parseJsonDocument output
+
+        let summary =
+            document
+                .RootElement
+                .GetProperty("ReturnValue")
+                .GetProperty("Summary")
+
+        summary.GetProperty("RootSha256Hash").GetString()
+        |> should equal "root-sha256"
+
+        summary.GetProperty("RootBlake3Hash").GetString()
+        |> should equal "root-blake3"
 
         let directory =
             document
