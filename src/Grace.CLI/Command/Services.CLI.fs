@@ -1262,9 +1262,37 @@ module Services =
 
     let private uploadedFileVersionIdentity (fileVersion: FileVersion) = (fileVersion.RelativePath, fileVersion.Sha256Hash, fileVersion.Blake3Hash)
 
+    let private uploadedFileVersionPathAndShaIdentity (fileVersion: FileVersion) = (fileVersion.RelativePath, fileVersion.Sha256Hash)
+
     let private isManifestBackedFileVersion (fileVersion: FileVersion) =
         not (isNull (box fileVersion.ContentReference))
         && fileVersion.ContentReference.ReferenceType = FileContentReferenceType.FileManifest
+
+    let private localUnknownOrSameBlake3MatchesTrusted savedBlake3 localBlake3 =
+        not (String.IsNullOrWhiteSpace(string savedBlake3))
+        && (String.IsNullOrWhiteSpace(string localBlake3)
+            || savedBlake3 = localBlake3)
+
+    let private tryFindSingleTrustedPathShaMatch
+        (savedManifestBackedByPathAndSha: Dictionary<RelativePath * Sha256Hash, List<FileVersion>>)
+        (localFileVersion: FileVersion)
+        =
+        let mutable savedManifestBackedFileVersions = Unchecked.defaultof<List<FileVersion>>
+
+        if savedManifestBackedByPathAndSha.TryGetValue(uploadedFileVersionPathAndShaIdentity localFileVersion, &savedManifestBackedFileVersions) then
+            let compatibleFileVersions =
+                savedManifestBackedFileVersions
+                |> Seq.filter (fun savedFileVersion -> localUnknownOrSameBlake3MatchesTrusted savedFileVersion.Blake3Hash localFileVersion.Blake3Hash)
+                |> Seq.distinctBy uploadedFileVersionIdentity
+                |> Seq.truncate 2
+                |> Seq.toArray
+
+            if compatibleFileVersions.Length = 1 then
+                Some compatibleFileVersions[0]
+            else
+                None
+        else
+            None
 
     let applyUploadedFileVersionsToDirectoryVersionsWithSavedDirectoryVersions
         (uploadedFileVersions: IEnumerable<FileVersion>)
@@ -1277,6 +1305,7 @@ module Services =
             uploadedByIdentity[uploadedFileVersionIdentity uploadedFileVersion] <- uploadedFileVersion
 
         let savedManifestBackedByIdentity = Dictionary<RelativePath * Sha256Hash * Blake3Hash, FileVersion>()
+        let savedManifestBackedByPathAndSha = Dictionary<RelativePath * Sha256Hash, List<FileVersion>>()
         let savedDirectoryVersionsById = Dictionary<DirectoryVersionId, DirectoryVersion>()
 
         for savedDirectoryVersion in savedDirectoryVersions do
@@ -1285,6 +1314,15 @@ module Services =
             for savedFileVersion in savedDirectoryVersion.Files do
                 if isManifestBackedFileVersion savedFileVersion then
                     savedManifestBackedByIdentity[uploadedFileVersionIdentity savedFileVersion] <- savedFileVersion
+
+                    let pathAndShaIdentity = uploadedFileVersionPathAndShaIdentity savedFileVersion
+                    let mutable savedFiles = Unchecked.defaultof<List<FileVersion>>
+
+                    if not (savedManifestBackedByPathAndSha.TryGetValue(pathAndShaIdentity, &savedFiles)) then
+                        savedFiles <- List<FileVersion>()
+                        savedManifestBackedByPathAndSha[pathAndShaIdentity] <- savedFiles
+
+                    savedFiles.Add(savedFileVersion)
 
         let directoryVersions = Dictionary<DirectoryVersionId, DirectoryVersion>()
         let localDirectoryVersionsById = Dictionary<DirectoryVersionId, LocalDirectoryVersion>()
@@ -1309,6 +1347,10 @@ module Services =
 
                         if savedManifestBackedByIdentity.TryGetValue(uploadedFileVersionIdentity fileVersion, &savedManifestBackedFileVersion) then
                             directoryVersion.Files[ index ] <- savedManifestBackedFileVersion
+                        else
+                            match tryFindSingleTrustedPathShaMatch savedManifestBackedByPathAndSha fileVersion with
+                            | Some savedManifestBackedFileVersion -> directoryVersion.Files[ index ] <- savedManifestBackedFileVersion
+                            | None -> ()
 
                 let localChildDirectories = List<LocalDirectoryVersion>()
 
@@ -2199,7 +2241,7 @@ module Services =
         && referenceDto.BranchId = branchId
         && referenceDto.DirectoryId = rootDirectoryId
         && referenceDto.Sha256Hash = rootDirectorySha256Hash
-        && referenceDto.Blake3Hash = rootDirectoryBlake3Hash
+        && localUnknownOrSameBlake3MatchesTrusted referenceDto.Blake3Hash rootDirectoryBlake3Hash
 
     let private tryFindReferenceForRoot rootDirectoryId rootDirectorySha256Hash rootDirectoryBlake3Hash (branchDto: BranchDto) =
         [
@@ -2245,6 +2287,12 @@ module Services =
             Source = source
             CreatedSaveMessage = createdSaveMessage
         }
+
+    let private trustedRootBlake3ForCapture localRootBlake3 (referenceDto: ReferenceDto) =
+        if String.IsNullOrWhiteSpace(string localRootBlake3) then
+            referenceDto.Blake3Hash
+        else
+            localRootBlake3
 
     let private syncGraceStatusWithUploadedDirectoryVersions
         (updatedGraceStatus: GraceStatus)
@@ -2343,7 +2391,7 @@ module Services =
                                         None
                                         graceWatchStatus.RootDirectoryId
                                         graceWatchStatus.RootDirectorySha256Hash
-                                        graceWatchStatus.RootDirectoryBlake3Hash
+                                        (trustedRootBlake3ForCapture graceWatchStatus.RootDirectoryBlake3Hash referenceDto)
                                         referenceDto.ReferenceId
                                 )
                         | None ->
@@ -2382,7 +2430,7 @@ module Services =
                                             None
                                             previousGraceStatus.RootDirectoryId
                                             previousGraceStatus.RootDirectorySha256Hash
-                                            previousGraceStatus.RootDirectoryBlake3Hash
+                                            (trustedRootBlake3ForCapture previousGraceStatus.RootDirectoryBlake3Hash referenceDto)
                                             referenceDto.ReferenceId
                                     )
                             | None ->

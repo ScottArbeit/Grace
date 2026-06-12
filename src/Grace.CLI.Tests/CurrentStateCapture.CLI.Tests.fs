@@ -44,8 +44,8 @@ module CurrentStateCaptureCliTests =
 
     let private rootDirectoryVersion directoryVersionId sha256Hash = rootDirectoryVersionWithHashes directoryVersionId sha256Hash rootBlake3
 
-    let private graceStatus directoryVersionId sha256Hash =
-        let root = rootDirectoryVersion directoryVersionId sha256Hash
+    let private graceStatusWithRootBlake3 directoryVersionId sha256Hash blake3Hash =
+        let root = rootDirectoryVersionWithHashes directoryVersionId sha256Hash blake3Hash
         let index = GraceIndex()
         index.TryAdd(directoryVersionId, root) |> ignore
 
@@ -55,6 +55,8 @@ module CurrentStateCaptureCliTests =
             RootDirectorySha256Hash = sha256Hash
             RootDirectoryBlake3Hash = root.Blake3Hash
         }
+
+    let private graceStatus directoryVersionId sha256Hash = graceStatusWithRootBlake3 directoryVersionId sha256Hash rootBlake3
 
     let private referenceDto referenceId directoryVersionId sha256Hash =
         { ReferenceDto.Default with
@@ -212,6 +214,43 @@ module CurrentStateCaptureCliTests =
             captured.Source |> should equal GraceWatch
             readStatusCalled |> should equal false
         | Error error -> Assert.Fail($"Expected GraceWatch success, got: {error.Error}")
+
+    [<Test>]
+    let ``unchanged local state reuses same root reference when local BLAKE3 is unknown`` () =
+        let latest = referenceDto savedReferenceId rootDirectoryId rootSha
+        let unknownRootBlake3 = Blake3Hash String.Empty
+        let mutable createSaveCalled = false
+
+        let operations =
+            { defaultOperations (branch false latest) with
+                ReadGraceStatus = fun () -> Task.FromResult(graceStatusWithRootBlake3 rootDirectoryId rootSha unknownRootBlake3)
+                CreateSaveReference =
+                    fun _ _ ->
+                        createSaveCalled <- true
+                        Task.FromResult(Ok(Guid.NewGuid()))
+            }
+
+        let result =
+            (resolveCliCurrentStateTargetReference operations None branchAnnotateImplicitSaveMessage correlationId)
+                .Result
+
+        match result with
+        | Ok captured ->
+            captured.TargetReferenceId
+            |> should equal savedReferenceId
+
+            captured.RootDirectoryId
+            |> should equal rootDirectoryId
+
+            captured.RootDirectorySha256Hash
+            |> should equal rootSha
+
+            captured.RootDirectoryBlake3Hash
+            |> should equal rootBlake3
+
+            captured.Source |> should equal ExistingReference
+            createSaveCalled |> should equal false
+        | Error error -> Assert.Fail($"Expected unknown local BLAKE3 to reuse existing reference, got: {error.Error}")
 
     [<Test>]
     let ``unchanged local state does not reuse same SHA-256 reference with different BLAKE3`` () =
@@ -686,6 +725,242 @@ module CurrentStateCaptureCliTests =
             unchangedSavedFile.ContentReference.ReferenceType
             |> should equal FileContentReferenceType.FileManifest
         | Error error -> Assert.Fail($"Expected auto-save success, got: {error.Error}")
+
+    [<Test>]
+    let ``local changes preserve trusted manifest reference when unchanged sibling BLAKE3 is unknown`` () =
+        let updatedRootId = Guid.NewGuid()
+        let updatedRootSha = Sha256Hash "updated-root-sha"
+        let createdSaveId = Guid.NewGuid()
+        let changedPath = RelativePath "src/changed.txt"
+        let unchangedPath = RelativePath "src/unknown-blake3-large.bin"
+        let changedPayload = Encoding.UTF8.GetBytes("changed whole-file payload")
+        let unchangedPayload = Encoding.UTF8.GetBytes("unchanged manifest-backed payload with unknown local blake3")
+
+        let changedFile =
+            LocalFileVersion.CreateWithHashes
+                changedPath
+                (sha256Hash changedPayload)
+                (Blake3Hash(ContentAddress.computeBlake3Hex changedPayload))
+                false
+                (int64 changedPayload.Length)
+                (Grace.Shared.Utilities.getCurrentInstant ())
+                true
+                DateTime.UtcNow
+
+        let unchangedLocalFile =
+            LocalFileVersion.CreateWithHashes
+                unchangedPath
+                (sha256Hash unchangedPayload)
+                (Blake3Hash String.Empty)
+                true
+                (int64 unchangedPayload.Length)
+                (Grace.Shared.Utilities.getCurrentInstant ())
+                true
+                DateTime.UtcNow
+
+        let trustedUnchangedFile =
+            LocalFileVersion.CreateWithHashes
+                unchangedPath
+                (sha256Hash unchangedPayload)
+                (Blake3Hash(ContentAddress.computeBlake3Hex unchangedPayload))
+                true
+                (int64 unchangedPayload.Length)
+                (Grace.Shared.Utilities.getCurrentInstant ())
+                true
+                DateTime.UtcNow
+
+        let uploadedChangedFile = changedFile.ToFileVersion
+        let savedManifestFile = trustedUnchangedFile.ToFileVersion
+        savedManifestFile.ContentReference <- manifestReferenceFor unchangedPayload
+
+        let savedRoot =
+            DirectoryVersion.CreateWithHashes
+                rootDirectoryId
+                OwnerId.Empty
+                OrganizationId.Empty
+                RepositoryId.Empty
+                Constants.RootDirectoryPath
+                rootSha
+                rootBlake3
+                (List<DirectoryVersionId>())
+                (List<FileVersion>([| savedManifestFile |]))
+                trustedUnchangedFile.Size
+
+        let mutable savedDirectoryFiles = List<FileVersion>()
+
+        let differences =
+            List<FileSystemDifference>(
+                [|
+                    FileSystemDifference.Create DifferenceType.Change FileSystemEntryType.File changedPath
+                |]
+            )
+
+        let updatedStatus = graceStatus updatedRootId updatedRootSha
+
+        let updatedRoot =
+            LocalDirectoryVersion.CreateWithHashes
+                updatedRootId
+                OwnerId.Empty
+                OrganizationId.Empty
+                RepositoryId.Empty
+                Constants.RootDirectoryPath
+                updatedRootSha
+                rootBlake3
+                (List<DirectoryVersionId>())
+                (List<LocalFileVersion>([| changedFile; unchangedLocalFile |]))
+                (changedFile.Size + unchangedLocalFile.Size)
+                DateTime.UtcNow
+
+        let operations =
+            { defaultOperations (branch true ReferenceDto.Default) with
+                ScanForDifferences = fun _ -> Task.FromResult(differences)
+                BuildUpdatedGraceStatus = fun _ _ -> Task.FromResult(updatedStatus, List<LocalDirectoryVersion>([| updatedRoot |]))
+                UploadFileVersions = fun _ -> Task.FromResult(Ok [| uploadedChangedFile |])
+                GetSavedDirectoryVersions = fun _ -> Task.FromResult(Ok [| savedRoot |])
+                UploadDirectoryVersions =
+                    fun directoryVersions ->
+                        savedDirectoryFiles <- directoryVersions[0].Files
+                        Task.FromResult(Ok())
+                CreateSaveReference = fun _ _ -> Task.FromResult(Ok(createdSaveId))
+            }
+
+        let result =
+            (resolveCliCurrentStateTargetReference operations None branchAnnotateImplicitSaveMessage correlationId)
+                .Result
+
+        match result with
+        | Ok captured ->
+            captured.TargetReferenceId
+            |> should equal createdSaveId
+
+            let unchangedSavedFile =
+                savedDirectoryFiles
+                |> Seq.find (fun fileVersion -> fileVersion.RelativePath = unchangedPath)
+
+            unchangedSavedFile.Blake3Hash
+            |> should equal trustedUnchangedFile.Blake3Hash
+
+            unchangedSavedFile.ContentReference.ReferenceType
+            |> should equal FileContentReferenceType.FileManifest
+        | Error error -> Assert.Fail($"Expected unknown local BLAKE3 manifest preservation success, got: {error.Error}")
+
+    [<Test>]
+    let ``local changes do not preserve trusted manifest reference when populated BLAKE3 conflicts`` () =
+        let updatedRootId = Guid.NewGuid()
+        let updatedRootSha = Sha256Hash "updated-root-sha"
+        let createdSaveId = Guid.NewGuid()
+        let changedPath = RelativePath "src/changed.txt"
+        let unchangedPath = RelativePath "src/conflicting-blake3-large.bin"
+        let changedPayload = Encoding.UTF8.GetBytes("changed whole-file payload")
+        let unchangedPayload = Encoding.UTF8.GetBytes("unchanged manifest-backed payload with conflicting local blake3")
+
+        let changedFile =
+            LocalFileVersion.CreateWithHashes
+                changedPath
+                (sha256Hash changedPayload)
+                (Blake3Hash(ContentAddress.computeBlake3Hex changedPayload))
+                false
+                (int64 changedPayload.Length)
+                (Grace.Shared.Utilities.getCurrentInstant ())
+                true
+                DateTime.UtcNow
+
+        let conflictingLocalFile =
+            LocalFileVersion.CreateWithHashes
+                unchangedPath
+                (sha256Hash unchangedPayload)
+                (Blake3Hash "conflicting-local-blake3")
+                true
+                (int64 unchangedPayload.Length)
+                (Grace.Shared.Utilities.getCurrentInstant ())
+                true
+                DateTime.UtcNow
+
+        let trustedUnchangedFile =
+            LocalFileVersion.CreateWithHashes
+                unchangedPath
+                (sha256Hash unchangedPayload)
+                (Blake3Hash(ContentAddress.computeBlake3Hex unchangedPayload))
+                true
+                (int64 unchangedPayload.Length)
+                (Grace.Shared.Utilities.getCurrentInstant ())
+                true
+                DateTime.UtcNow
+
+        let uploadedChangedFile = changedFile.ToFileVersion
+        let savedManifestFile = trustedUnchangedFile.ToFileVersion
+        savedManifestFile.ContentReference <- manifestReferenceFor unchangedPayload
+
+        let savedRoot =
+            DirectoryVersion.CreateWithHashes
+                rootDirectoryId
+                OwnerId.Empty
+                OrganizationId.Empty
+                RepositoryId.Empty
+                Constants.RootDirectoryPath
+                rootSha
+                rootBlake3
+                (List<DirectoryVersionId>())
+                (List<FileVersion>([| savedManifestFile |]))
+                trustedUnchangedFile.Size
+
+        let mutable savedDirectoryFiles = List<FileVersion>()
+
+        let differences =
+            List<FileSystemDifference>(
+                [|
+                    FileSystemDifference.Create DifferenceType.Change FileSystemEntryType.File changedPath
+                |]
+            )
+
+        let updatedStatus = graceStatus updatedRootId updatedRootSha
+
+        let updatedRoot =
+            LocalDirectoryVersion.CreateWithHashes
+                updatedRootId
+                OwnerId.Empty
+                OrganizationId.Empty
+                RepositoryId.Empty
+                Constants.RootDirectoryPath
+                updatedRootSha
+                rootBlake3
+                (List<DirectoryVersionId>())
+                (List<LocalFileVersion>([| changedFile; conflictingLocalFile |]))
+                (changedFile.Size + conflictingLocalFile.Size)
+                DateTime.UtcNow
+
+        let operations =
+            { defaultOperations (branch true ReferenceDto.Default) with
+                ScanForDifferences = fun _ -> Task.FromResult(differences)
+                BuildUpdatedGraceStatus = fun _ _ -> Task.FromResult(updatedStatus, List<LocalDirectoryVersion>([| updatedRoot |]))
+                UploadFileVersions = fun _ -> Task.FromResult(Ok [| uploadedChangedFile |])
+                GetSavedDirectoryVersions = fun _ -> Task.FromResult(Ok [| savedRoot |])
+                UploadDirectoryVersions =
+                    fun directoryVersions ->
+                        savedDirectoryFiles <- directoryVersions[0].Files
+                        Task.FromResult(Ok())
+                CreateSaveReference = fun _ _ -> Task.FromResult(Ok(createdSaveId))
+            }
+
+        let result =
+            (resolveCliCurrentStateTargetReference operations None branchAnnotateImplicitSaveMessage correlationId)
+                .Result
+
+        match result with
+        | Ok captured ->
+            captured.TargetReferenceId
+            |> should equal createdSaveId
+
+            let unchangedSavedFile =
+                savedDirectoryFiles
+                |> Seq.find (fun fileVersion -> fileVersion.RelativePath = unchangedPath)
+
+            unchangedSavedFile.Blake3Hash
+            |> should equal conflictingLocalFile.Blake3Hash
+
+            unchangedSavedFile.ContentReference.ReferenceType
+            |> should equal FileContentReferenceType.WholeFileContent
+        | Error error -> Assert.Fail($"Expected conflicting local BLAKE3 to avoid manifest preservation, got: {error.Error}")
 
     [<Test>]
     let ``local changes preserve saved manifest references and dual-hash save identity`` () =
