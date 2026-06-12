@@ -64,17 +64,32 @@ child directory and file versions at that path.
 
 The directory SHA-256 value is computed with this algorithm:
 
-1. Create the `grace.directory-version.v1` UTF-8 preimage.
-1. Include the directory's repository-relative path.
-1. Include each child entry kind, child repository-relative path, child size, and same-algorithm child hash. The size
-   field is serialized for every child entry, including directory entries.
-1. Sort entries deterministically by normalized child path first, then by child kind only when two entries have the same
-   normalized path, before finalizing the preimage.
-1. Finalize the SHA-256 hash and convert it to lowercase hexadecimal text.
+1. Normalize the directory's repository-relative path and every child repository-relative path with Grace's file-path
+   normalization, then UTF-8 encode each normalized path and base64-encode those bytes.
+1. Sort child entries deterministically by normalized child path first, then by child kind only when two entries have the
+   same normalized path. Child kind sorts by the serialized text, `directory` or `file`.
+1. Create this exact UTF-8 preimage text, with one `\n` delimiter between every line and one trailing `\n` after the
+   last line:
+
+   ```text
+   grace.directory-version.v1
+   algorithm:sha256
+   path:<base64-normalized-directory-path>
+   child-count:<sorted-child-count>
+   child:<zero-based-index>:<directory|file>:<base64-normalized-child-path>:<size>:<child-sha256>
+   ```
+
+   Add one `child:` line for each sorted entry. The zero-based index is the entry's position in the sorted sequence. The
+   size field is serialized for every child entry, including directory entries.
+
+1. Finalize the SHA-256 hash over the UTF-8 bytes of that complete preimage and convert it to lowercase hexadecimal
+   text.
 
 BLAKE3 directory version hashes use the same `grace.directory-version.v1` preimage shape with BLAKE3 child hashes. This
-keeps directory version hashes sensitive to the directory path, child names, child kind, file size, and same-algorithm
-child hashes without making the file byte hash include path data.
+means the `algorithm:` line is `algorithm:blake3`, the child hash field contains the child BLAKE3 value, and the final
+hash is computed with BLAKE3 over the same UTF-8 preimage bytes. The algorithm discriminator, base64-encoded paths,
+`child-count`, child indexes, serialized child kind, child size, same-algorithm child hashes, and newline delimiters all
+participate in the final directory hash.
 
 ### Version Hash Transition
 
