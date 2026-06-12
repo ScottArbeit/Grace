@@ -88,7 +88,7 @@ module Common =
 
         type ReviewReportExportDto = { CandidateId: string; Format: string; OutputFile: string; BytesWritten: int64 }
 
-        type MaintenanceStatsDto = { DirectoryCount: int; FileCount: int; TotalFileSize: int64; RootSha256Hash: string option }
+        type MaintenanceStatsDto = { DirectoryCount: int; FileCount: int; TotalFileSize: int64; RootSha256Hash: string option; RootBlake3Hash: string option }
 
         type MaintenanceListContentsFileDto =
             {

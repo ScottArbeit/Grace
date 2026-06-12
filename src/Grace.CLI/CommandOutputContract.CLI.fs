@@ -221,15 +221,18 @@ module CommandOutputContract =
                 "FileCount", scalarSchema "integer"
                 "TotalFileSize", scalarSchema "integer"
                 "RootSha256Hash", nullableStringSchema "Root directory SHA-256 hash when the local index contains or records it."
+                "RootBlake3Hash", nullableStringSchema "Root directory BLAKE3 hash when the local index contains it."
             ]
             [|
                 "DirectoryCount"
                 "FileCount"
                 "TotalFileSize"
                 "RootSha256Hash"
+                "RootBlake3Hash"
             |]
 
-    let private maintenanceStatsExample = box {| DirectoryCount = 1; FileCount = 2; TotalFileSize = 42L; RootSha256Hash = "0123456789abcdef" |}
+    let private maintenanceStatsExample =
+        box {| DirectoryCount = 1; FileCount = 2; TotalFileSize = 42L; RootSha256Hash = "0123456789abcdef"; RootBlake3Hash = "af1349b9f5f9a1a6" |}
 
     let private maintenanceListContentsFileSchema =
         schemaObject
@@ -285,7 +288,7 @@ module CommandOutputContract =
     let private maintenanceListContentsExample =
         box
             {|
-                Summary = {| DirectoryCount = 1; FileCount = 1; TotalFileSize = 12L; RootSha256Hash = "0123456789abcdef" |}
+                Summary = {| DirectoryCount = 1; FileCount = 1; TotalFileSize = 12L; RootSha256Hash = "0123456789abcdef"; RootBlake3Hash = "af1349b9f5f9a1a6" |}
                 Directories =
                     [|
                         {|

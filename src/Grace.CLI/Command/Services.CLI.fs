@@ -527,7 +527,11 @@ module Services =
         if rootDirectoryVersion.DirectoryVersionId = DirectoryVersionId.Empty then
             graceStatus
         else
-            { graceStatus with RootDirectoryId = rootDirectoryVersion.DirectoryVersionId; RootDirectorySha256Hash = rootDirectoryVersion.Sha256Hash }
+            { graceStatus with
+                RootDirectoryId = rootDirectoryVersion.DirectoryVersionId
+                RootDirectorySha256Hash = rootDirectoryVersion.Sha256Hash
+                RootDirectoryBlake3Hash = rootDirectoryVersion.Blake3Hash
+            }
 
     let localWriteTimes = ConcurrentDictionary<FileSystemEntryType * RelativePath, DateTime>()
 
@@ -576,6 +580,7 @@ module Services =
                 { GraceStatus.Default with
                     RootDirectoryId = meta.RootDirectoryId
                     RootDirectorySha256Hash = meta.RootDirectorySha256Hash
+                    RootDirectoryBlake3Hash = meta.RootDirectoryBlake3Hash
                     LastSuccessfulFileUpload = meta.LastSuccessfulFileUpload
                     LastSuccessfulDirectoryVersionUpload = meta.LastSuccessfulDirectoryVersionUpload
                 }
@@ -909,7 +914,11 @@ module Services =
                     logToAnsiConsole Colors.Verbose $"Finished createNewGraceStatusFile. newGraceStatus.Index.Count: {newGraceStatus.Index.Count}."
 
                 let newGraceStatus =
-                    { newGraceStatus with RootDirectoryId = rootDirectoryVersion.DirectoryVersionId; RootDirectorySha256Hash = rootDirectoryVersion.Sha256Hash }
+                    { newGraceStatus with
+                        RootDirectoryId = rootDirectoryVersion.DirectoryVersionId
+                        RootDirectorySha256Hash = rootDirectoryVersion.Sha256Hash
+                        RootDirectoryBlake3Hash = rootDirectoryVersion.Blake3Hash
+                    }
 
                 return newGraceStatus
             with
@@ -1697,6 +1706,7 @@ module Services =
                         { newGraceStatus with
                             RootDirectoryId = newRootDirectoryVersion.DirectoryVersionId
                             RootDirectorySha256Hash = newRootDirectoryVersion.Sha256Hash
+                            RootDirectoryBlake3Hash = newRootDirectoryVersion.Blake3Hash
                         }
 
                 return (newGraceStatus, newDirectoryVersions)
@@ -1982,6 +1992,7 @@ module Services =
                 Index = newGraceIndex
                 RootDirectoryId = rootDirectoryVersion.DirectoryVersionId
                 RootDirectorySha256Hash = rootDirectoryVersion.Sha256Hash
+                RootDirectoryBlake3Hash = rootDirectoryVersion.Blake3Hash
                 LastSuccessfulDirectoryVersionUpload = graceStatus.LastSuccessfulDirectoryVersionUpload
                 LastSuccessfulFileUpload = graceStatus.LastSuccessfulFileUpload
             }
@@ -2285,7 +2296,14 @@ module Services =
             else
                 updatedGraceStatus.RootDirectorySha256Hash
 
-        { updatedGraceStatus with Index = syncedIndex; RootDirectorySha256Hash = rootDirectorySha256Hash }, List<LocalDirectoryVersion>(syncedDirectoryVersions)
+        let rootDirectoryBlake3Hash =
+            if syncedIndex.TryGetValue(updatedGraceStatus.RootDirectoryId, &syncedRootDirectoryVersion) then
+                syncedRootDirectoryVersion.Blake3Hash
+            else
+                updatedGraceStatus.RootDirectoryBlake3Hash
+
+        { updatedGraceStatus with Index = syncedIndex; RootDirectorySha256Hash = rootDirectorySha256Hash; RootDirectoryBlake3Hash = rootDirectoryBlake3Hash },
+        List<LocalDirectoryVersion>(syncedDirectoryVersions)
 
     let private createSaveForCurrentRoot operations branchDto saveMessage correlationId rootDirectoryVersion =
         task {
