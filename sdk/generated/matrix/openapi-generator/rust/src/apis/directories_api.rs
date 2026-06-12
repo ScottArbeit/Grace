@@ -203,7 +203,7 @@ pub async fn get_directory_version_by_blake3_hash(configuration: &configuration:
 }
 
 /// Gets a directory version DTO by SHA-256 hash.
-pub async fn get_directory_version_by_sha256_hash(configuration: &configuration::Configuration, get_by_sha256_hash_parameters: models::GetBySha256HashParameters) -> Result<models::DirectoryVersionHashLookupReturnValue, Error<GetDirectoryVersionBySha256HashError>> {
+pub async fn get_directory_version_by_sha256_hash(configuration: &configuration::Configuration, get_by_sha256_hash_parameters: models::GetBySha256HashParameters) -> Result<models::DirectoryVersionSha256HashLookupReturnValue, Error<GetDirectoryVersionBySha256HashError>> {
     // add a prefix to parameters to efficiently prevent name collisions
     let p_body_get_by_sha256_hash_parameters = get_by_sha256_hash_parameters;
 
@@ -233,8 +233,8 @@ pub async fn get_directory_version_by_sha256_hash(configuration: &configuration:
         let content = resp.text().await?;
         match content_type {
             ContentType::Json => serde_json::from_str(&content).map_err(Error::from),
-            ContentType::Text => return Err(Error::from(serde_json::Error::custom("Received `text/plain` content type response that cannot be converted to `models::DirectoryVersionHashLookupReturnValue`"))),
-            ContentType::Unsupported(unknown_type) => return Err(Error::from(serde_json::Error::custom(format!("Received `{unknown_type}` content type response that cannot be converted to `models::DirectoryVersionHashLookupReturnValue`")))),
+            ContentType::Text => return Err(Error::from(serde_json::Error::custom("Received `text/plain` content type response that cannot be converted to `models::DirectoryVersionSha256HashLookupReturnValue`"))),
+            ContentType::Unsupported(unknown_type) => return Err(Error::from(serde_json::Error::custom(format!("Received `{unknown_type}` content type response that cannot be converted to `models::DirectoryVersionSha256HashLookupReturnValue`")))),
         }
     } else {
         let content = resp.text().await?;

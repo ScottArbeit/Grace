@@ -106,7 +106,7 @@ Name | Type | Description  | Required | Notes
 
 ## get_directory_version_by_sha256_hash
 
-> models::DirectoryVersionHashLookupReturnValue get_directory_version_by_sha256_hash(get_by_sha256_hash_parameters)
+> models::DirectoryVersionSha256HashLookupReturnValue get_directory_version_by_sha256_hash(get_by_sha256_hash_parameters)
 Get a directory version by SHA-256 hash.
 
 Gets a directory version DTO by SHA-256 hash.
@@ -120,7 +120,7 @@ Name | Type | Description  | Required | Notes
 
 ### Return type
 
-[**models::DirectoryVersionHashLookupReturnValue**](DirectoryVersionHashLookupReturnValue.md)
+[**models::DirectoryVersionSha256HashLookupReturnValue**](DirectoryVersionSha256HashLookupReturnValue.md)
 
 ### Authorization
 

@@ -230,6 +230,23 @@ type DirectoryVersionServer() =
         }
 
     [<Test>]
+    member _.GetByShaReturnsDefaultSentinelWhenNoDirectoryVersionMatches() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let missingDirectoryId = Guid.NewGuid()
+            let missingSha256Hash = Sha256Hash "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+            let getByShaParameters = DirectoryVersionServerTestHelpers.getBySha256HashParameters repositoryId missingDirectoryId missingSha256Hash
+
+            let! getByShaResponse = Client.PostAsync("/directory/getBySha256Hash", createJsonContent getByShaParameters)
+            do! DirectoryVersionServerTestHelpers.assertOk getByShaResponse
+            let! getBySha = deserializeContent<GraceReturnValue<DirectoryVersionServerTestHelpers.DirectoryVersionModel>> getByShaResponse
+
+            Assert.That(getBySha.ReturnValue.DirectoryVersionId, Is.EqualTo(DirectoryVersion.Default.DirectoryVersionId))
+            Assert.That(getBySha.ReturnValue.Sha256Hash, Is.EqualTo(DirectoryVersion.Default.Sha256Hash))
+            Assert.That(getBySha.ReturnValue.Blake3Hash, Is.EqualTo(DirectoryVersion.Default.Blake3Hash))
+        }
+
+    [<Test>]
     member _.SaveDirectoryVersionsCreatesMissingDirectoriesAndKeepsMissingGetAsGraceError() =
         task {
             let repositoryId = repositoryIds[1]
