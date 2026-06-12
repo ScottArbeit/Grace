@@ -81,20 +81,6 @@ type StorageWholeFileCompatibility() =
         parameters.CorrelationId <- generateCorrelationId ()
         parameters
 
-    let uploadLegacyWholeFileBlob (repositoryId: string) (fileVersion: FileVersion) (payload: byte array) =
-        task {
-            let storageConnectionString = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.AzureStorageConnectionString)
-            Assert.That(storageConnectionString, Is.Not.Null.And.Not.Empty)
-
-            let serviceClient = BlobServiceClient(storageConnectionString)
-            let containerClient = serviceClient.GetBlobContainerClient(repositoryId.ToLowerInvariant())
-            let legacyBlobName = StorageKeys.legacyWholeFileContentObjectKey fileVersion
-            let blobClient = containerClient.GetBlockBlobClient(legacyBlobName)
-            use payloadStream = new MemoryStream(payload, writable = false)
-            let! _ = blobClient.UploadAsync(payloadStream)
-            return legacyBlobName
-        }
-
     [<Test>]
     member _.SmallWholeFileContentRejectsMissingBlake3HashBeforePublishingUploadMetadata() =
         task {
@@ -163,7 +149,7 @@ type StorageWholeFileCompatibility() =
             let! downloadResponse = Client.PostAsync("/storage/getDownloadUri", createJsonContent (createDownloadParameters repositoryId fileVersion))
             let! downloadUri = downloadResponse.Content.ReadAsStringAsync()
             Assert.That(downloadResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), downloadUri)
-            Assert.That(downloadUri, Does.Contain(fileVersion.GetObjectFileName))
+            Assert.That(downloadUri, Does.Contain(StorageKeys.wholeFileContentObjectKey fileVersion))
         }
 
     [<Test>]
@@ -246,37 +232,32 @@ type StorageWholeFileCompatibility() =
         }
 
     [<Test>]
-    member _.SmallWholeFileDownloadFallsBackToLegacyShaOnlyBlobWhenCurrentBlake3KeyIsMissing() =
+    member _.SmallWholeFileDownloadUsesCurrentBlake3KeyWhenBlobHasNotBeenUploadedYet() =
         task {
             let repositoryId = repositoryIds[0]
-            let relativeDirectory = $"wholefile-legacy-fallback/{Guid.NewGuid():N}"
+            let relativeDirectory = $"wholefile-current-key/{Guid.NewGuid():N}"
             let relativePath = $"{relativeDirectory}/small.txt"
-            let payload = Encoding.UTF8.GetBytes($"Grace legacy whole-file fallback {Guid.NewGuid():N}")
+            let payload = Encoding.UTF8.GetBytes($"Grace current whole-file key {Guid.NewGuid():N}")
             let sha256Hash = computeSha256Hash payload
 
             let fileVersion =
                 FileVersion.CreateWithHashes
                     (RelativePath relativePath)
                     (Sha256Hash sha256Hash)
-                    (Blake3Hash "existing-history-blake3")
+                    (Blake3Hash "9a35d91b2f631be9025de753139b88f7b1e71385c412bc3986ff2f38f230841d")
                     String.Empty
                     false
                     (int64 payload.Length)
 
-            let! legacyBlobName = uploadLegacyWholeFileBlob repositoryId fileVersion payload
             let currentBlobName = StorageKeys.wholeFileContentObjectKey fileVersion
-
-            Assert.That(currentBlobName, Is.Not.EqualTo(legacyBlobName))
+            let shaOnlyBlobName = StorageKeys.legacyWholeFileContentObjectKey fileVersion
+            Assert.That(currentBlobName, Is.Not.EqualTo(shaOnlyBlobName))
 
             let! downloadResponse = Client.PostAsync("/storage/getDownloadUri", createJsonContent (createDownloadParameters repositoryId fileVersion))
             let! downloadUriText = downloadResponse.Content.ReadAsStringAsync()
             Assert.That(downloadResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), downloadUriText)
-            Assert.That(downloadUriText, Does.Contain(legacyBlobName))
-            Assert.That(downloadUriText, Does.Not.Contain(currentBlobName))
-
-            let downloadClient = BlobClient(Uri(downloadUriText))
-            let! downloaded = downloadClient.DownloadContentAsync()
-            Assert.That(downloaded.Value.Content.ToArray(), Is.EquivalentTo(payload))
+            Assert.That(downloadUriText, Does.Contain(currentBlobName))
+            Assert.That(downloadUriText, Does.Not.Contain(shaOnlyBlobName))
         }
 
 [<NonParallelizable>]
