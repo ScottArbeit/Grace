@@ -103,6 +103,12 @@ components:
       description: Lowercase or uppercase 64-character BLAKE3 version hash used for new version graph lookups.
       pattern: '^[A-Fa-f0-9]{64}$'
       example: 9A35D91B2F631BE9025DE753139B88F7B1E71385C412BC3986FF2F38F230841D
+    Blake3HashCompatibility:
+      type: string
+      nullable: true
+      description: Empty or 64-character BLAKE3 version hash for legacy version DTOs.
+      pattern: '^$|^[A-Fa-f0-9]{64}$'
+      example: 9A35D91B2F631BE9025DE753139B88F7B1E71385C412BC3986FF2F38F230841D
     Blake3HashPrefix:
       type: string
       description: Lowercase or uppercase 2- to 64-character BLAKE3 version hash prefix used for version graph lookups.
@@ -169,7 +175,7 @@ components:
         Sha256Hash:
           $ref: '#/components/schemas/Sha256Hash'
         Blake3Hash:
-          $ref: '#/components/schemas/Blake3Hash'
+          $ref: '#/components/schemas/Blake3HashCompatibility'
         IsBinary:
           type: boolean
         Size:
@@ -214,7 +220,7 @@ components:
         Sha256Hash:
           $ref: '#/components/schemas/Sha256Hash'
         Blake3Hash:
-          $ref: '#/components/schemas/Blake3Hash'
+          $ref: '#/components/schemas/Blake3HashCompatibility'
         Directories:
           type: array
           items:
