@@ -276,16 +276,20 @@ module CommandOutputContractRegistryTests =
         |> should equal CommandOutputContract.entries.Length
 
     [<Test>]
-    let ``every live routed leaf command has one registry entry`` () =
+    let ``every live leaf command has one registry entry`` () =
         let discovered =
             CommandOutputContract.discoverLeafCommands GraceCommand.rootCommand
             |> List.map commandId
 
         let registered =
-            CommandOutputContract.routedEntries
+            CommandOutputContract.entries
+            |> List.filter (fun entry -> entry.Identity.CommandId <> "reference.delete")
             |> List.map (fun entry -> entry.Identity.CommandId)
 
-        discovered.Length |> should equal 195
+        discovered.Length |> should equal 203
+
+        discovered
+        |> should not' (contain "reference.delete")
 
         discovered.Length
         |> should equal (discovered |> List.distinct |> List.length)
