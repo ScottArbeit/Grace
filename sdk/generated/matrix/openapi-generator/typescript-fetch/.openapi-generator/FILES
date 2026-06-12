@@ -72,9 +72,11 @@ docs/DirectoryCommandReturnValue.md
 docs/DirectoryParameters.md
 docs/DirectoryVersion.md
 docs/DirectoryVersionApiDto.md
+docs/DirectoryVersionHashLookupResult.md
 docs/DirectoryVersionHashLookupReturnValue.md
 docs/DirectoryVersionListReturnValue.md
 docs/DirectoryVersionReturnValue.md
+docs/DirectoryVersionSha256HashLookupReturnValue.md
 docs/DiscoverContentBlocksParameters.md
 docs/DiscoverContentBlocksResult.md
 docs/DiscoverContentBlocksReturnValue.md
@@ -308,9 +310,11 @@ src/models/DirectoryCommandReturnValue.ts
 src/models/DirectoryParameters.ts
 src/models/DirectoryVersion.ts
 src/models/DirectoryVersionApiDto.ts
+src/models/DirectoryVersionHashLookupResult.ts
 src/models/DirectoryVersionHashLookupReturnValue.ts
 src/models/DirectoryVersionListReturnValue.ts
 src/models/DirectoryVersionReturnValue.ts
+src/models/DirectoryVersionSha256HashLookupReturnValue.ts
 src/models/DiscoverContentBlocksParameters.ts
 src/models/DiscoverContentBlocksResult.ts
 src/models/DiscoverContentBlocksReturnValue.ts
