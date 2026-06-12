@@ -279,7 +279,7 @@ module CommandOutputContractRegistryTests =
         |> should equal CommandOutputContract.entries.Length
 
     [<Test>]
-    let ``every live routed leaf command has one registry entry`` () =
+    let ``every live leaf command has one registry entry`` () =
         let discovered =
             CommandOutputContract.discoverLeafCommands GraceCommand.rootCommand
             |> List.map commandId
@@ -288,7 +288,15 @@ module CommandOutputContractRegistryTests =
             CommandOutputContract.routedEntries
             |> List.map (fun entry -> entry.Identity.CommandId)
 
-        discovered.Length |> should equal 197
+        let sourceOnlyIds =
+            CommandOutputContract.sourceOnlyEntries
+            |> List.map (fun entry -> entry.Identity.CommandId)
+
+        discovered.Length
+        |> should equal CommandOutputContract.routedEntries.Length
+
+        for sourceOnlyId in sourceOnlyIds do
+            discovered |> should not' (contain sourceOnlyId)
 
         discovered.Length
         |> should equal (discovered |> List.distinct |> List.length)
