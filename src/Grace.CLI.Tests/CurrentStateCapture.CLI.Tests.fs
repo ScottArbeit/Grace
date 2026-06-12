@@ -28,25 +28,33 @@ module CurrentStateCaptureCliTests =
     let private rootBlake3 = Blake3Hash "current-root-blake3"
     let private savedReferenceId = Guid.NewGuid()
 
-    let private rootDirectoryVersion directoryVersionId sha256Hash =
-        LocalDirectoryVersion.Create
+    let private rootDirectoryVersionWithHashes directoryVersionId sha256Hash blake3Hash =
+        LocalDirectoryVersion.CreateWithHashes
             directoryVersionId
             OwnerId.Empty
             OrganizationId.Empty
             RepositoryId.Empty
             Constants.RootDirectoryPath
             sha256Hash
+            blake3Hash
             (List<DirectoryVersionId>())
             (List<LocalFileVersion>())
             0L
             DateTime.UtcNow
+
+    let private rootDirectoryVersion directoryVersionId sha256Hash = rootDirectoryVersionWithHashes directoryVersionId sha256Hash rootBlake3
 
     let private graceStatus directoryVersionId sha256Hash =
         let root = rootDirectoryVersion directoryVersionId sha256Hash
         let index = GraceIndex()
         index.TryAdd(directoryVersionId, root) |> ignore
 
-        { GraceStatus.Default with Index = index; RootDirectoryId = directoryVersionId; RootDirectorySha256Hash = sha256Hash }
+        { GraceStatus.Default with
+            Index = index
+            RootDirectoryId = directoryVersionId
+            RootDirectorySha256Hash = sha256Hash
+            RootDirectoryBlake3Hash = root.Blake3Hash
+        }
 
     let private referenceDto referenceId directoryVersionId sha256Hash =
         { ReferenceDto.Default with
@@ -55,6 +63,7 @@ module CurrentStateCaptureCliTests =
             ReferenceType = ReferenceType.Save
             DirectoryId = directoryVersionId
             Sha256Hash = sha256Hash
+            Blake3Hash = rootBlake3
         }
 
     let private branch saveEnabled latestReference =
@@ -197,9 +206,57 @@ module CurrentStateCaptureCliTests =
             captured.RootDirectoryId
             |> should equal rootDirectoryId
 
+            captured.RootDirectoryBlake3Hash
+            |> should equal rootBlake3
+
             captured.Source |> should equal GraceWatch
             readStatusCalled |> should equal false
         | Error error -> Assert.Fail($"Expected GraceWatch success, got: {error.Error}")
+
+    [<Test>]
+    let ``unchanged local state does not reuse same SHA-256 reference with different BLAKE3`` () =
+        let staleReferenceId = Guid.NewGuid()
+        let createdSaveId = Guid.NewGuid()
+        let differentBlake3 = Blake3Hash "different-root-blake3"
+        let staleReference = { referenceDto staleReferenceId rootDirectoryId rootSha with Blake3Hash = differentBlake3 }
+        let mutable createdSaveRoot = Unchecked.defaultof<LocalDirectoryVersion>
+
+        let operations =
+            { defaultOperations (branch true staleReference) with
+                CreateSaveReference =
+                    fun rootDirectoryVersion _ ->
+                        createdSaveRoot <- rootDirectoryVersion
+                        Task.FromResult(Ok(createdSaveId))
+            }
+
+        let result =
+            (resolveCliCurrentStateTargetReference operations None branchAnnotateImplicitSaveMessage correlationId)
+                .Result
+
+        match result with
+        | Ok captured ->
+            captured.TargetReferenceId
+            |> should equal createdSaveId
+
+            captured.TargetReferenceId
+            |> should not' (equal staleReferenceId)
+
+            captured.RootDirectoryId
+            |> should equal rootDirectoryId
+
+            captured.RootDirectorySha256Hash
+            |> should equal rootSha
+
+            captured.RootDirectoryBlake3Hash
+            |> should equal rootBlake3
+
+            captured.Source |> should equal CreatedSave
+
+            createdSaveRoot.Sha256Hash |> should equal rootSha
+
+            createdSaveRoot.Blake3Hash
+            |> should equal rootBlake3
+        | Error error -> Assert.Fail($"Expected mismatched BLAKE3 reference to create a new save, got: {error.Error}")
 
     [<Test>]
     let ``unchanged child branch does not use parent BasedOn reference`` () =
@@ -222,6 +279,9 @@ module CurrentStateCaptureCliTests =
 
                         rootDirectoryVersion.Sha256Hash
                         |> should equal rootSha
+
+                        rootDirectoryVersion.Blake3Hash
+                        |> should equal rootBlake3
 
                         Task.FromResult(Ok(createdSaveId))
             }
@@ -247,6 +307,7 @@ module CurrentStateCaptureCliTests =
         let mutable uploadedDirectories = false
         let mutable appliedStatus = false
         let mutable saveMessage = String.Empty
+        let mutable createdSaveRoot = Unchecked.defaultof<LocalDirectoryVersion>
 
         let differences =
             List<FileSystemDifference>(
@@ -271,7 +332,8 @@ module CurrentStateCaptureCliTests =
                         appliedStatus <- true
                         Task.FromResult(())
                 CreateSaveReference =
-                    fun _ message ->
+                    fun rootDirectoryVersion message ->
+                        createdSaveRoot <- rootDirectoryVersion
                         saveMessage <- message
                         Task.FromResult(Ok(createdSaveId))
             }
@@ -287,6 +349,12 @@ module CurrentStateCaptureCliTests =
 
             captured.RootDirectoryId
             |> should equal updatedRootId
+
+            captured.RootDirectoryBlake3Hash
+            |> should equal createdSaveRoot.Blake3Hash
+
+            createdSaveRoot.Blake3Hash
+            |> should not' (equal (Blake3Hash String.Empty))
 
             captured.Source |> should equal CreatedSave
 
@@ -336,13 +404,14 @@ module CurrentStateCaptureCliTests =
             )
 
         let updatedRoot =
-            LocalDirectoryVersion.Create
+            LocalDirectoryVersion.CreateWithHashes
                 rootDirectoryId
                 OwnerId.Empty
                 OrganizationId.Empty
                 RepositoryId.Empty
                 Constants.RootDirectoryPath
                 rootSha
+                rootBlake3
                 (List<DirectoryVersionId>())
                 (List<LocalFileVersion>([| changedFile; unchangedFile |]))
                 (changedFile.Size + unchangedFile.Size)
@@ -360,7 +429,15 @@ module CurrentStateCaptureCliTests =
         let changedPath = RelativePath "src/file.txt"
 
         let changedFile =
-            LocalFileVersion.Create changedPath (Sha256Hash "changed-file-sha") false 12L (Grace.Shared.Utilities.getCurrentInstant ()) true DateTime.UtcNow
+            LocalFileVersion.CreateWithHashes
+                changedPath
+                (Sha256Hash "changed-file-sha")
+                (Blake3Hash "changed-file-blake3")
+                false
+                12L
+                (Grace.Shared.Utilities.getCurrentInstant ())
+                true
+                DateTime.UtcNow
 
         let mutable uploadedFiles = List<LocalFileVersion>()
 
@@ -374,13 +451,14 @@ module CurrentStateCaptureCliTests =
         let updatedStatus = graceStatus updatedRootId updatedRootSha
 
         let updatedRoot =
-            LocalDirectoryVersion.Create
+            LocalDirectoryVersion.CreateWithHashes
                 updatedRootId
                 OwnerId.Empty
                 OrganizationId.Empty
                 RepositoryId.Empty
                 Constants.RootDirectoryPath
                 updatedRootSha
+                rootBlake3
                 (List<DirectoryVersionId>())
                 (List<LocalFileVersion>([| changedFile |]))
                 changedFile.Size
@@ -458,13 +536,14 @@ module CurrentStateCaptureCliTests =
         let updatedStatus = graceStatus updatedRootId updatedRootSha
 
         let updatedRoot =
-            LocalDirectoryVersion.Create
+            LocalDirectoryVersion.CreateWithHashes
                 updatedRootId
                 OwnerId.Empty
                 OrganizationId.Empty
                 RepositoryId.Empty
                 Constants.RootDirectoryPath
                 updatedRootSha
+                rootBlake3
                 (List<DirectoryVersionId>())
                 (List<LocalFileVersion>([| changedFile |]))
                 changedFile.Size
@@ -539,13 +618,14 @@ module CurrentStateCaptureCliTests =
         savedManifestFile.ContentReference <- manifestReferenceFor unchangedPayload
 
         let savedRoot =
-            DirectoryVersion.Create
+            DirectoryVersion.CreateWithHashes
                 rootDirectoryId
                 OwnerId.Empty
                 OrganizationId.Empty
                 RepositoryId.Empty
                 Constants.RootDirectoryPath
                 rootSha
+                rootBlake3
                 (List<DirectoryVersionId>())
                 (List<FileVersion>([| savedManifestFile |]))
                 unchangedFile.Size
@@ -562,13 +642,14 @@ module CurrentStateCaptureCliTests =
         let updatedStatus = graceStatus updatedRootId updatedRootSha
 
         let updatedRoot =
-            LocalDirectoryVersion.Create
+            LocalDirectoryVersion.CreateWithHashes
                 updatedRootId
                 OwnerId.Empty
                 OrganizationId.Empty
                 RepositoryId.Empty
                 Constants.RootDirectoryPath
                 updatedRootSha
+                rootBlake3
                 (List<DirectoryVersionId>())
                 (List<LocalFileVersion>([| changedFile; unchangedFile |]))
                 (changedFile.Size + unchangedFile.Size)
@@ -607,14 +688,14 @@ module CurrentStateCaptureCliTests =
         | Error error -> Assert.Fail($"Expected auto-save success, got: {error.Error}")
 
     [<Test>]
-    let ``local changes preserve saved manifest references when unchanged sibling has legacy local Blake3`` () =
+    let ``local changes preserve saved manifest references and dual-hash save identity`` () =
         let updatedRootId = Guid.NewGuid()
         let updatedRootSha = Sha256Hash "updated-root-sha"
         let createdSaveId = Guid.NewGuid()
         let changedPath = RelativePath "src/changed.txt"
-        let unchangedPath = RelativePath "src/unchanged-legacy-large.bin"
+        let unchangedPath = RelativePath "src/unchanged-large-proof.bin"
         let changedPayload = Encoding.UTF8.GetBytes("changed whole-file payload")
-        let unchangedPayload = Encoding.UTF8.GetBytes("unchanged manifest-backed payload with legacy local state")
+        let unchangedPayload = Encoding.UTF8.GetBytes("unchanged manifest-backed payload with current dual hashes")
 
         let changedFile =
             LocalFileVersion.CreateWithHashes
@@ -627,17 +708,7 @@ module CurrentStateCaptureCliTests =
                 true
                 DateTime.UtcNow
 
-        let unchangedLocalLegacyFile =
-            LocalFileVersion.Create
-                unchangedPath
-                (sha256Hash unchangedPayload)
-                true
-                (int64 unchangedPayload.Length)
-                (Grace.Shared.Utilities.getCurrentInstant ())
-                true
-                DateTime.UtcNow
-
-        let savedManifestLocalFile =
+        let unchangedFile =
             LocalFileVersion.CreateWithHashes
                 unchangedPath
                 (sha256Hash unchangedPayload)
@@ -648,20 +719,21 @@ module CurrentStateCaptureCliTests =
                 true
                 DateTime.UtcNow
 
-        let savedManifestFile = savedManifestLocalFile.ToFileVersion
+        let savedManifestFile = unchangedFile.ToFileVersion
         savedManifestFile.ContentReference <- manifestReferenceFor unchangedPayload
 
         let savedRoot =
-            DirectoryVersion.Create
+            DirectoryVersion.CreateWithHashes
                 rootDirectoryId
                 OwnerId.Empty
                 OrganizationId.Empty
                 RepositoryId.Empty
                 Constants.RootDirectoryPath
                 rootSha
+                rootBlake3
                 (List<DirectoryVersionId>())
                 (List<FileVersion>([| savedManifestFile |]))
-                unchangedLocalLegacyFile.Size
+                unchangedFile.Size
 
         let mutable savedDirectoryVersions = List<DirectoryVersion>()
         let mutable createdSaveRoot = Unchecked.defaultof<LocalDirectoryVersion>
@@ -678,21 +750,17 @@ module CurrentStateCaptureCliTests =
         let updatedStatus = graceStatus updatedRootId updatedRootSha
 
         let updatedRoot =
-            LocalDirectoryVersion.Create
+            LocalDirectoryVersion.CreateWithHashes
                 updatedRootId
                 OwnerId.Empty
                 OrganizationId.Empty
                 RepositoryId.Empty
                 Constants.RootDirectoryPath
                 updatedRootSha
+                rootBlake3
                 (List<DirectoryVersionId>())
-                (List<LocalFileVersion>(
-                    [|
-                        changedFile
-                        unchangedLocalLegacyFile
-                    |]
-                ))
-                (changedFile.Size + unchangedLocalLegacyFile.Size)
+                (List<LocalFileVersion>([| changedFile; unchangedFile |]))
+                (changedFile.Size + unchangedFile.Size)
                 DateTime.UtcNow
 
         let operations =
@@ -725,6 +793,9 @@ module CurrentStateCaptureCliTests =
             captured.TargetReferenceId
             |> should equal createdSaveId
 
+            captured.RootDirectoryId
+            |> should equal updatedRootId
+
             savedDirectoryVersions.Count |> should equal 1
 
             let savedDirectoryVersion = savedDirectoryVersions[0]
@@ -750,6 +821,9 @@ module CurrentStateCaptureCliTests =
 
             appliedStatus.RootDirectorySha256Hash
             |> should equal savedDirectoryVersion.Sha256Hash
+
+            appliedStatus.RootDirectoryBlake3Hash
+            |> should equal savedDirectoryVersion.Blake3Hash
 
             let appliedRoot =
                 appliedDirectoryVersions
@@ -823,32 +897,30 @@ module CurrentStateCaptureCliTests =
                 LocalFileVersion.CreateWithHashes
                     relativePath
                     (sha256Hash payload)
-                    (Blake3Hash "legacy-or-wrong-blake3")
+                    (Blake3Hash "stale-or-wrong-blake3")
                     false
                     fileInfo.Length
                     (Grace.Shared.Utilities.getCurrentInstant ())
                     true
                     (fileInfo.LastWriteTimeUtc.AddSeconds(-10.0))
 
-            let previousRoot =
-                LocalDirectoryVersion.Create
-                    rootDirectoryId
-                    OwnerId.Empty
-                    OrganizationId.Empty
-                    RepositoryId.Empty
-                    Constants.RootDirectoryPath
-                    rootSha
-                    (List<DirectoryVersionId>())
-                    (List<LocalFileVersion>([| priorFile |]))
-                    priorFile.Size
-                    DateTime.UtcNow
+            let previousRoot = rootDirectoryVersion rootDirectoryId rootSha
+
+            previousRoot.Files <- List<LocalFileVersion>([| priorFile |])
+            previousRoot.Size <- priorFile.Size
 
             let index = GraceIndex()
 
             index.TryAdd(rootDirectoryId, previousRoot)
             |> ignore
 
-            let previousStatus = { GraceStatus.Default with Index = index; RootDirectoryId = rootDirectoryId; RootDirectorySha256Hash = rootSha }
+            let previousStatus =
+                { GraceStatus.Default with
+                    Index = index
+                    RootDirectoryId = rootDirectoryId
+                    RootDirectorySha256Hash = rootSha
+                    RootDirectoryBlake3Hash = rootBlake3
+                }
 
             let scanInput =
                 {
@@ -963,11 +1035,11 @@ module CurrentStateCaptureCliTests =
             |> should equal updatedBytes)
 
     [<Test>]
-    let ``read-only current-state scan treats empty stored BLAKE3 as unknown when SHA-256 still matches`` () =
+    let ``read-only current-state scan treats missing stored BLAKE3 as unknown when SHA-256 still matches`` () =
         let root = Path.Combine(Path.GetTempPath(), $"grace-current-state-scan-{Guid.NewGuid():N}")
         let graceDirectory = Path.Combine(root, Constants.GraceConfigDirectory)
-        let filePath = Path.Combine(root, "legacy-empty-blake3.txt")
-        let relativePath = RelativePath "legacy-empty-blake3.txt"
+        let filePath = Path.Combine(root, "missing-blake3.txt")
+        let relativePath = RelativePath "missing-blake3.txt"
 
         try
             Directory.CreateDirectory(root) |> ignore
@@ -975,7 +1047,7 @@ module CurrentStateCaptureCliTests =
             Directory.CreateDirectory(graceDirectory)
             |> ignore
 
-            let payload = Encoding.UTF8.GetBytes("same sha, legacy empty blake3")
+            let payload = Encoding.UTF8.GetBytes("same sha, missing blake3")
             File.WriteAllBytes(filePath, payload)
 
             let fileInfo = FileInfo(filePath)
@@ -991,25 +1063,23 @@ module CurrentStateCaptureCliTests =
                     true
                     (fileInfo.LastWriteTimeUtc.AddSeconds(-10.0))
 
-            let previousRoot =
-                LocalDirectoryVersion.Create
-                    rootDirectoryId
-                    OwnerId.Empty
-                    OrganizationId.Empty
-                    RepositoryId.Empty
-                    Constants.RootDirectoryPath
-                    rootSha
-                    (List<DirectoryVersionId>())
-                    (List<LocalFileVersion>([| priorFile |]))
-                    priorFile.Size
-                    DateTime.UtcNow
+            let previousRoot = rootDirectoryVersion rootDirectoryId rootSha
+
+            previousRoot.Files <- List<LocalFileVersion>([| priorFile |])
+            previousRoot.Size <- priorFile.Size
 
             let index = GraceIndex()
 
             index.TryAdd(rootDirectoryId, previousRoot)
             |> ignore
 
-            let previousStatus = { GraceStatus.Default with Index = index; RootDirectoryId = rootDirectoryId; RootDirectorySha256Hash = rootSha }
+            let previousStatus =
+                { GraceStatus.Default with
+                    Index = index
+                    RootDirectoryId = rootDirectoryId
+                    RootDirectorySha256Hash = rootSha
+                    RootDirectoryBlake3Hash = rootBlake3
+                }
 
             let scanInput =
                 {
