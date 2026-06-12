@@ -285,14 +285,18 @@ module CommandOutputContractRegistryTests =
             |> List.map commandId
 
         let registered =
-            CommandOutputContract.entries
-            |> List.filter (fun entry -> entry.Identity.CommandId <> "reference.delete")
+            CommandOutputContract.routedEntries
             |> List.map (fun entry -> entry.Identity.CommandId)
 
-        discovered.Length |> should equal 205
+        let sourceOnlyIds =
+            CommandOutputContract.sourceOnlyEntries
+            |> List.map (fun entry -> entry.Identity.CommandId)
 
-        discovered
-        |> should not' (contain "reference.delete")
+        discovered.Length
+        |> should equal CommandOutputContract.routedEntries.Length
+
+        for sourceOnlyId in sourceOnlyIds do
+            discovered |> should not' (contain sourceOnlyId)
 
         discovered.Length
         |> should equal (discovered |> List.distinct |> List.length)
