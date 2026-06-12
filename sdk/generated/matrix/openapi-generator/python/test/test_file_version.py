@@ -37,10 +37,17 @@ class TestFileVersion(unittest.TestCase):
         if include_optional:
             return FileVersion(
                 var_class = '',
+                relative_path = '',
+                sha256_hash = '805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243',
+                blake3_hash = '9A35D91B2F631BE9025DE753139B88F7B1E71385C412BC3986FF2F38F230841D',
                 is_binary = True,
                 size = 56,
                 created_at = datetime.datetime.strptime('2013-10-20 19:20:30.00', '%Y-%m-%d %H:%M:%S.%f'),
-                blob_uri = ''
+                blob_uri = '',
+                content_reference = grace_generated_openapi_probe.models.file_content_reference.FileContentReference(
+                    class = 'FileContentReference', 
+                    reference_type = 'WholeFileContent', 
+                    manifest = null, )
             )
         else:
             return FileVersion(

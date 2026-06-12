@@ -14,8 +14,8 @@ Name | Type | Description | Notes
 **repository_name** | Option<**String**> |  | [optional]
 **directory_version_id1** | Option<**uuid::Uuid**> |  | [optional]
 **directory_version_id2** | Option<**uuid::Uuid**> |  | [optional]
-**sha256_hash1** | Option<**String**> |  | [optional]
-**sha256_hash2** | Option<**String**> |  | [optional]
+**sha256_hash1** | Option<**String**> | Lowercase or uppercase 64-character SHA-256 version hash retained for compatibility. | [optional]
+**sha256_hash2** | Option<**String**> | Lowercase or uppercase 64-character SHA-256 version hash retained for compatibility. | [optional]
 
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
 
