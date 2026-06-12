@@ -80,7 +80,7 @@ export interface SwitchParameters {
      */
     branchName?: string;
     /**
-     * Lowercase or uppercase 64-character SHA-256 version hash retained for compatibility.
+     * Empty value or lowercase or uppercase 2- to 64-character SHA-256 version hash prefix.
      * @type {string}
      * @memberof SwitchParameters
      */
@@ -92,7 +92,7 @@ export interface SwitchParameters {
      */
     referenceId?: string;
     /**
-     * Lowercase or uppercase 64-character BLAKE3 version hash used for new version graph lookups.
+     * Empty value or lowercase or uppercase 2- to 64-character BLAKE3 version hash prefix.
      * @type {string}
      * @memberof SwitchParameters
      */
