@@ -33,11 +33,22 @@ class UploadMetadata(BaseModel):
     relative_path: StrictStr = Field(alias="RelativePath")
     blob_uri_with_sas_token: StrictStr = Field(alias="BlobUriWithSasToken")
     sha256_hash: Annotated[str, Field(strict=True)] = Field(description="Lowercase 64-character SHA-256 version hash persisted on version DTOs.", alias="Sha256Hash")
+    blake3_hash: Annotated[str, Field(strict=True)] = Field(description="Lowercase 64-character BLAKE3 version hash persisted on new version graph DTOs.", alias="Blake3Hash")
     content_reference: FileContentReference = Field(alias="ContentReference")
-    __properties: ClassVar[List[str]] = ["RelativePath", "BlobUriWithSasToken", "Sha256Hash", "ContentReference"]
+    __properties: ClassVar[List[str]] = ["RelativePath", "BlobUriWithSasToken", "Sha256Hash", "Blake3Hash", "ContentReference"]
 
     @field_validator('sha256_hash')
     def sha256_hash_validate_regular_expression(cls, value):
+        """Validates the regular expression"""
+        if not isinstance(value, str):
+            value = str(value)
+
+        if not re.match(r"^[a-f0-9]{64}$", value):
+            raise ValueError(r"must validate the regular expression /^[a-f0-9]{64}$/")
+        return value
+
+    @field_validator('blake3_hash')
+    def blake3_hash_validate_regular_expression(cls, value):
         """Validates the regular expression"""
         if not isinstance(value, str):
             value = str(value)
@@ -103,6 +114,7 @@ class UploadMetadata(BaseModel):
             "RelativePath": obj.get("RelativePath"),
             "BlobUriWithSasToken": obj.get("BlobUriWithSasToken"),
             "Sha256Hash": obj.get("Sha256Hash"),
+            "Blake3Hash": obj.get("Blake3Hash"),
             "ContentReference": FileContentReference.from_dict(obj["ContentReference"]) if obj.get("ContentReference") is not None else None
         })
         return _obj
