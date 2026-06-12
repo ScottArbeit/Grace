@@ -44,6 +44,7 @@ class TestUploadMetadataArrayReturnValue(unittest.TestCase):
                         relative_path = '', 
                         blob_uri_with_sas_token = '', 
                         sha256_hash = '805331a98813206270e35564769e8bb59eea02aeb7b27c7d6c63e625e1857243', 
+                        blake3_hash = '9a35d91b2f631be9025de753139b88f7b1e71385c412bc3986ff2f38f230841d', 
                         content_reference = grace_generated_openapi_probe.models.file_content_reference.FileContentReference(
                             class = 'FileContentReference', 
                             reference_type = 'WholeFileContent', 
@@ -60,6 +61,7 @@ class TestUploadMetadataArrayReturnValue(unittest.TestCase):
                         relative_path = '', 
                         blob_uri_with_sas_token = '', 
                         sha256_hash = '805331a98813206270e35564769e8bb59eea02aeb7b27c7d6c63e625e1857243', 
+                        blake3_hash = '9a35d91b2f631be9025de753139b88f7b1e71385c412bc3986ff2f38f230841d', 
                         content_reference = grace_generated_openapi_probe.models.file_content_reference.FileContentReference(
                             class = 'FileContentReference', 
                             reference_type = 'WholeFileContent', 
