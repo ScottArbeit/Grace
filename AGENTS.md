@@ -65,11 +65,10 @@ so links stay traceable without relying on epic-branch auto-close behavior.
   tests, high-risk adversarial examples, selected risk-surface traps, and explicit N/A waivers. Keep each issue
   implementable from its body alone without hidden project context. Write the gate as review-prevention guidance that
   predicts likely Codex Code Review Bot findings without adding new issue-template ceremony.
-- Grace is not in production and has no production legacy-data migration burden. Do not weaken public contracts,
-  validators, or generated clients to preserve imaginary legacy production records. If old local, development, or test
-  state conflicts with a new invariant, prefer reset, recomputation, or explicit rejection. If current runtime code emits
-  a default/sentinel DTO with empty fields, treat that as a current contract or behavior issue and either model the
-  sentinel narrowly or fix the source behavior; do not describe it as production legacy compatibility.
+- Grace is not in production and has no production data to import, migrate, preserve, classify, or grandfather. Do not
+  weaken public contracts, validators, generated clients, runtime behavior, or tests to preserve imaginary old data. If
+  current runtime code has a deliberate API sentinel, treat it only as current API behavior, not as old-data
+  compatibility.
 - Declare owned paths, forbidden or sensitive paths, risk surfaces, validation, docs impact, and definition of done
   before editing.
 - After the issue exists, claim it with a comment, assign it to the authenticated GitHub user, and create an
