@@ -934,8 +934,18 @@ type BranchServer() =
                         parentBranch.BasedOn.Blake3Hash
                     ]
 
+            let stableRootBlake3Prefix =
+                if rootBlake3Prefix.Length < 16 then
+                    (string root.Blake3Hash).Substring(0, 16)
+                else
+                    rootBlake3Prefix
+
             let! prefixResponse =
-                BranchServerTestHelpers.saveReferenceByBlake3ResponseAsync repositoryId prefixBranch DirectoryVersionId.Empty (Blake3Hash rootBlake3Prefix)
+                BranchServerTestHelpers.saveReferenceByBlake3ResponseAsync
+                    repositoryId
+                    prefixBranch
+                    DirectoryVersionId.Empty
+                    (Blake3Hash stableRootBlake3Prefix)
 
             let! prefixBody = prefixResponse.Content.ReadAsStringAsync()
             Assert.That(prefixResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), prefixBody)
