@@ -16,7 +16,8 @@ module BranchCommandParsingTests =
     let private referenceId = Guid.NewGuid()
     let private sha256Hash = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     let private blake3Hash = "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adcd1e8c76d9a8885f16a39f"
-    let private shortestHashPrefix = "abcd1234"
+    let private shortestHashPrefix = "ab"
+    let private shortHashPrefix = "abc1234"
     let private uppercaseSha256Hash = "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855"
 
     let private withIds (args: string array) =
@@ -207,9 +208,22 @@ module BranchCommandParsingTests =
         Common.HashOptions.bindVersionHashLookupMode fullResult
         |> should equal (Common.HashOptions.Sha256CompatibilityVersionHashLookup sha256Hash)
 
-    [<TestCase("--sha256-hash", "abc", TestName = "branch version hash rejects too short SHA-256 prefix")>]
+    [<TestCase("--sha256-hash", "ab", TestName = "branch version hash accepts 2-character SHA-256 prefix")>]
+    [<TestCase("--sha256-hash", "abc", TestName = "branch version hash accepts 3-character SHA-256 prefix")>]
+    [<TestCase("--sha256-hash", "abc1234", TestName = "branch version hash accepts 7-character SHA-256 prefix")>]
+    [<TestCase("--blake3-hash", "ab", TestName = "branch version hash accepts 2-character BLAKE3 prefix")>]
+    [<TestCase("--blake3-hash", "abc", TestName = "branch version hash accepts 3-character BLAKE3 prefix")>]
+    [<TestCase("--blake3-hash", "abc1234", TestName = "branch version hash accepts 7-character BLAKE3 prefix")>]
+    let ``branch version hash lookup accepts server-valid short prefixes`` optionName value =
+        assertParses [| "branch"
+                        "switch"
+                        optionName
+                        value |]
+        |> ignore
+
+    [<TestCase("--sha256-hash", "a", TestName = "branch version hash rejects too short SHA-256 prefix")>]
     [<TestCase("--sha256-hash", "not-a-hex-hash", TestName = "branch version hash rejects malformed SHA-256 prefix")>]
-    [<TestCase("--blake3-hash", "abc", TestName = "branch version hash rejects too short BLAKE3 prefix")>]
+    [<TestCase("--blake3-hash", "a", TestName = "branch version hash rejects too short BLAKE3 prefix")>]
     [<TestCase("--blake3-hash", "xyz12345", TestName = "branch version hash rejects malformed BLAKE3 prefix")>]
     let ``branch version hash lookup rejects malformed values`` optionName value =
         assertDoesNotParse [| "branch"
@@ -361,7 +375,7 @@ module BranchCommandParsingTests =
         assertRepositoryCommandParses [| "diff"
                                          "sha"
                                          "--sha256-hash-1"
-                                         shortestHashPrefix
+                                         shortHashPrefix
                                          "--sha256-hash-2"
                                          sha256Hash |]
         |> ignore
@@ -369,7 +383,7 @@ module BranchCommandParsingTests =
         assertRepositoryCommandParses [| "diff"
                                          "blake3"
                                          "--blake3-hash-1"
-                                         shortestHashPrefix
+                                         shortHashPrefix
                                          "--blake3-hash-2"
                                          blake3Hash |]
         |> ignore
