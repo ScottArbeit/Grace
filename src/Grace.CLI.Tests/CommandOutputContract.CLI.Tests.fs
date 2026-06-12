@@ -541,7 +541,7 @@ module CommandOutputContractRegistryTests =
         parseResult.Errors.Count |> should equal 0
 
         let dto: Common.LocalOutputDto.MaintenanceStatsDto =
-            { DirectoryCount = 3; FileCount = 5; TotalFileSize = 89L; RootSha256Hash = Some "0123456789abcdef" }
+            { DirectoryCount = 3; FileCount = 5; TotalFileSize = 89L; RootSha256Hash = Some "0123456789abcdef"; RootBlake3Hash = Some "af1349b9f5f9a1a6" }
 
         let exitCode, output =
             captureStdout (fun () ->
@@ -574,6 +574,11 @@ module CommandOutputContractRegistryTests =
             .GetString()
         |> should equal "0123456789abcdef"
 
+        returnValue
+            .GetProperty("RootBlake3Hash")
+            .GetString()
+        |> should equal "af1349b9f5f9a1a6"
+
         let mutable camelCaseReturnValue = Unchecked.defaultof<JsonElement>
 
         root.TryGetProperty("returnValue", &camelCaseReturnValue)
@@ -581,6 +586,90 @@ module CommandOutputContractRegistryTests =
 
         Constants.JsonSerializerOptions.PropertyNamingPolicy
         |> should equal null
+
+    [<Test>]
+    let ``maintenance list contents local dto serializes explicit dual hash fields`` () =
+        let parseResult =
+            GraceCommand.rootCommand.Parse(
+                [|
+                    "--output"
+                    "Json"
+                    "maintenance"
+                    "list-contents"
+                |]
+            )
+
+        parseResult.Errors.Count |> should equal 0
+
+        let dto: Common.LocalOutputDto.MaintenanceListContentsDto =
+            {
+                Summary = { DirectoryCount = 1; FileCount = 1; TotalFileSize = 12L; RootSha256Hash = Some "root-sha256"; RootBlake3Hash = Some "root-blake3" }
+                Directories =
+                    [|
+                        {
+                            RelativePath = "."
+                            DirectoryVersionId = Guid.Parse placeholderGuid
+                            Sha256Hash = "directory-sha256"
+                            Blake3Hash = "directory-blake3"
+                            Size = 12L
+                            LastWriteTimeUtc = DateTime(2026, 6, 5, 0, 0, 0, DateTimeKind.Utc)
+                            Files =
+                                [|
+                                    {
+                                        RelativePath = "README.md"
+                                        FileName = "README.md"
+                                        Sha256Hash = "file-sha256"
+                                        Blake3Hash = "file-blake3"
+                                        Size = 12L
+                                        LastWriteTimeUtc = DateTime(2026, 6, 5, 0, 0, 0, DateTimeKind.Utc)
+                                    }
+                                |]
+                        }
+                    |]
+            }
+
+        let exitCode, output =
+            captureStdout (fun () ->
+                GraceReturnValue.Create dto "corr-local-list-contents-dto"
+                |> Ok
+                |> Common.renderOutput parseResult)
+
+        exitCode |> should equal 0
+        assertOneJsonObjectStdout output
+
+        use document = parseJsonDocument output
+
+        let summary =
+            document
+                .RootElement
+                .GetProperty("ReturnValue")
+                .GetProperty("Summary")
+
+        summary.GetProperty("RootSha256Hash").GetString()
+        |> should equal "root-sha256"
+
+        summary.GetProperty("RootBlake3Hash").GetString()
+        |> should equal "root-blake3"
+
+        let directory =
+            document
+                .RootElement
+                .GetProperty("ReturnValue")
+                .GetProperty("Directories")[0]
+
+        directory.GetProperty("Sha256Hash").GetString()
+        |> should equal "directory-sha256"
+
+        directory.GetProperty("Blake3Hash").GetString()
+        |> should equal "directory-blake3"
+
+        let file = directory.GetProperty("Files")[0]
+
+        file.GetProperty("Sha256Hash").GetString()
+        |> should equal "file-sha256"
+
+        file.GetProperty("Blake3Hash").GetString()
+        |> should equal "file-blake3"
 
     [<Test>]
     let ``watch json mode is registered as immediate error only`` () =
