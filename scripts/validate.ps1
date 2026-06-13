@@ -275,7 +275,7 @@ try {
         Write-Host "Skipped (temporarily disabled pending full repo formatting)."
     } elseif (-not $SkipFormat) {
         Write-Section "Format"
-        Invoke-External "dotnet tool restore" { dotnet tool restore }
+        #Invoke-External "dotnet tool restore" { dotnet tool restore }
 
         $formatTargets = Get-FormatTargets
         if (-not $formatTargets -or $formatTargets.Length -eq 0) {
