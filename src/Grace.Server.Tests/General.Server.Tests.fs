@@ -234,12 +234,17 @@ type Setup() =
             let logCleanupFailure (label: string) (detail: string) = logToTestConsole $"Cleanup {label} failed: {detail}"
 
             let cleanupEnabled =
-                match Environment.GetEnvironmentVariable("GRACE_TEST_CLEANUP") with
-                | null -> false
-                | value ->
+                let isTruthyEnvironmentValue (value: string) =
                     value.Equals("1", StringComparison.OrdinalIgnoreCase)
                     || value.Equals("true", StringComparison.OrdinalIgnoreCase)
                     || value.Equals("yes", StringComparison.OrdinalIgnoreCase)
+
+                match Environment.GetEnvironmentVariable("GRACE_TEST_SERVER_CLEANUP") with
+                | value when not (String.IsNullOrWhiteSpace value) -> isTruthyEnvironmentValue value
+                | _ ->
+                    match Environment.GetEnvironmentVariable("GRACE_TEST_CLEANUP") with
+                    | value when not (String.IsNullOrWhiteSpace value) -> isTruthyEnvironmentValue value
+                    | _ -> false
 
             let tryPost (label: string) (path: string) (content: HttpContent) =
                 task {
@@ -293,7 +298,7 @@ type Setup() =
                 with
                 | ex -> logCleanupFailure "cleanup" ex.Message
             else
-                logToTestConsole "Skipping server-side cleanup (set GRACE_TEST_CLEANUP=1 to enable)."
+                logToTestConsole "Skipping server-side cleanup (set GRACE_TEST_SERVER_CLEANUP=1 to enable)."
 
             if not (isNull Client) then Client.Dispose()
 

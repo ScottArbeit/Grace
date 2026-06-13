@@ -26,22 +26,18 @@ jobs:
         uses: actions/setup-dotnet@v5
         with:
           global-json-file: global.json
-      - name: Restore
+      - name: Restore NuGet packages
         run: dotnet restore "src/Grace.slnx"
-      - name: Build
-        run: |
-          dotnet build "src/Grace.slnx" \
-            --configuration Release \
-            --no-restore \
-            -p:GraceBuildKind="${GraceBuildKind}" \
-            -p:GraceBuildNumber="${GraceBuildNumber}" \
-            -p:GraceSourceRevisionId="${GraceSourceRevisionId}"
-      - name: Docker info
-        run: docker info
-      - name: Pre-pull Aspire images
+      - name: Pre-pull Aspire images and build the solution
         shell: bash
         run: |
-          set -euo pipefail
+          set -uo pipefail
+
+          docker info
+          docker_info_exit=$?
+          if [ "${docker_info_exit}" -ne 0 ]; then
+            exit "${docker_info_exit}"
+          fi
 
           images=(
             "redis:latest"
@@ -58,7 +54,15 @@ jobs:
             pids+=("$!")
           done
 
-          failed=0
+          build_exit=0
+          dotnet build "src/Grace.slnx" \
+            --configuration Release \
+            --no-restore \
+            -p:GraceBuildKind="${GraceBuildKind}" \
+            -p:GraceBuildNumber="${GraceBuildNumber}" \
+            -p:GraceSourceRevisionId="${GraceSourceRevisionId}" || build_exit=$?
+
+          pull_failed=0
           for index in "${!pids[@]}"; do
             image="${images[$index]}"
             pid="${pids[$index]}"
@@ -67,10 +71,17 @@ jobs:
               echo "Completed pull for ${image}"
             else
               echo "Failed pull for ${image}" >&2
-              failed=1
+              pull_failed=1
             fi
           done
 
-          exit "${failed}"
+          if [ "${build_exit}" -ne 0 ]; then
+            echo "Build failed with exit code ${build_exit}" >&2
+            exit "${build_exit}"
+          fi
+
+          exit "${pull_failed}"
       - name: Test
+        env:
+          GRACE_TEST_SERVER_CLEANUP: "0"
         run: dotnet test "src/Grace.slnx" --configuration Release --no-build --no-restore

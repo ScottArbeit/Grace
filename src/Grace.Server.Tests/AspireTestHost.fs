@@ -241,16 +241,23 @@ module AspireTestHost =
             | ex -> return { ExitCode = None; StdOut = ""; StdErr = ""; TimedOut = false; Error = Some ex.Message }
         }
 
+    let private tryGetEnvironmentValue name =
+        match Environment.GetEnvironmentVariable(name) with
+        | value when String.IsNullOrWhiteSpace value -> None
+        | value -> Some value
+
+    let private isTruthyEnvironmentValue (value: string) =
+        value.Equals("1", StringComparison.OrdinalIgnoreCase)
+        || value.Equals("true", StringComparison.OrdinalIgnoreCase)
+        || value.Equals("yes", StringComparison.OrdinalIgnoreCase)
+
     let private shouldCleanupDocker () =
-        match Environment.GetEnvironmentVariable("GRACE_TEST_CLEANUP") with
-        | null -> false
-        | value when
-            value.Equals("1", StringComparison.OrdinalIgnoreCase)
-            || value.Equals("true", StringComparison.OrdinalIgnoreCase)
-            || value.Equals("yes", StringComparison.OrdinalIgnoreCase)
-            ->
-            true
-        | _ -> false
+        match tryGetEnvironmentValue "GRACE_TEST_DOCKER_CLEANUP" with
+        | Some value -> isTruthyEnvironmentValue value
+        | None ->
+            match tryGetEnvironmentValue "GRACE_TEST_CLEANUP" with
+            | Some value -> isTruthyEnvironmentValue value
+            | None -> false
 
     let private shouldSkipServiceBus () =
         match Environment.GetEnvironmentVariable("GRACE_TEST_SKIP_SERVICEBUS") with
@@ -940,7 +947,9 @@ module AspireTestHost =
             logProgress "Aspire setup starting."
 
             Environment.SetEnvironmentVariable("GRACE_TESTING", "1")
-            Environment.SetEnvironmentVariable("GRACE_TEST_CLEANUP", "1")
+            Environment.SetEnvironmentVariable("GRACE_TEST_DOCKER_CLEANUP", "1")
+            if String.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("GRACE_TEST_SERVER_CLEANUP")) then
+                Environment.SetEnvironmentVariable("GRACE_TEST_SERVER_CLEANUP", "1")
             Environment.SetEnvironmentVariable("GRACE_TEST_RUN_ID", Guid.NewGuid().ToString("N"))
             Environment.SetEnvironmentVariable("ASPIRE_RESOURCE_MODE", "Local")
             Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.GraceAuthOidcAuthority, "https://auth.grace.test")

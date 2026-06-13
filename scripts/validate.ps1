@@ -254,10 +254,28 @@ function Invoke-SolutionTests([string]$Configuration, [bool]$IncludeFullTests) {
         Write-Host "Progress note: VSTest may buffer test-host progress output; wait for the Grace.Server.Tests summary before treating quiet output as a hang."
     }
 
-    Write-Host ("Running: dotnet test `"src/Grace.slnx`" -c {0} --no-build --filter `"{1}`"" -f $Configuration, $testFilter)
+    $previousServerCleanup = $env:GRACE_TEST_SERVER_CLEANUP
+    $setServerCleanupForRun = $IncludeFullTests -and [string]::IsNullOrWhiteSpace($env:GRACE_TEST_SERVER_CLEANUP)
 
-    Invoke-External "Grace solution tests" {
-        dotnet test "src/Grace.slnx" -c $Configuration --no-build --filter $testFilter
+    if ($setServerCleanupForRun) {
+        $env:GRACE_TEST_SERVER_CLEANUP = "0"
+        Write-Host "Server-side test cleanup: skipped for this validate.ps1 -Full run. Set GRACE_TEST_SERVER_CLEANUP=1 to enable it."
+    }
+
+    try {
+        Write-Host ("Running: dotnet test `"src/Grace.slnx`" -c {0} --no-build --filter `"{1}`"" -f $Configuration, $testFilter)
+
+        Invoke-External "Grace solution tests" {
+            dotnet test "src/Grace.slnx" -c $Configuration --no-build --filter $testFilter
+        }
+    } finally {
+        if ($setServerCleanupForRun) {
+            if ($null -eq $previousServerCleanup) {
+                Remove-Item Env:\GRACE_TEST_SERVER_CLEANUP -ErrorAction SilentlyContinue
+            } else {
+                $env:GRACE_TEST_SERVER_CLEANUP = $previousServerCleanup
+            }
+        }
     }
 }
 
@@ -271,8 +289,8 @@ try {
     }
 
     if ($formatDisabled) {
-        Write-Section "Format"
-        Write-Host "Skipped (temporarily disabled pending full repo formatting)."
+#        Write-Section "Format"
+#        Write-Host "Skipped (temporarily disabled pending full repo formatting)."
     } elseif (-not $SkipFormat) {
         Write-Section "Format"
         #Invoke-External "dotnet tool restore" { dotnet tool restore }
@@ -310,6 +328,11 @@ try {
 
     if (-not $SkipBuild) {
         Write-Section "Build"
+        Write-Host "Build properties: " -ForegroundColor Green -NoNewline
+       $graceBuildProperties | ForEach-Object {
+            Write-Host "$_ ; " -ForegroundColor DarkYellow -NoNewline
+        }
+        Write-Host ""
         Invoke-External "Grace solution build" { dotnet build "src/Grace.slnx" -c $Configuration @graceBuildProperties }
     } else {
         Write-Section "Build"
