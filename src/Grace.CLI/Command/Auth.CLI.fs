@@ -13,9 +13,11 @@ open Grace.Types.Common
 open Microsoft.Identity.Client.Extensions.Msal
 open Spectre.Console
 open NodaTime
+open NodaTime.Text
 open System
 open System.Collections.Generic
 open System.Diagnostics
+open System.Globalization
 open System.Net
 open System.Net.Http
 open System.Security.Cryptography
@@ -67,6 +69,43 @@ module Auth =
         }
 
     type TokenStore = { Helper: MsalCacheHelper; StorageProperties: StorageCreationProperties; LockFilePath: string; InProcessLock: SemaphoreSlim }
+
+    type AuthStatusGraceTokenSource = { Present: bool option; Valid: bool option; Error: string option }
+
+    type AuthStatusTokenFileSource = { Present: bool option; Supported: bool option; Error: string option }
+
+    type AuthStatusM2mSource = { Configured: bool option }
+
+    type AuthStatusInteractiveSource =
+        {
+            Configured: bool option
+            TokenPresent: bool option
+            SecureStoreAvailable: bool option
+            AccessTokenExpiresAt: string option
+            Subject: string option
+            Error: string option
+        }
+
+    type AuthStatusSources =
+        {
+            GraceToken: AuthStatusGraceTokenSource
+            GraceTokenFile: AuthStatusTokenFileSource
+            M2m: AuthStatusM2mSource
+            Interactive: AuthStatusInteractiveSource
+        }
+
+    type AuthStatusDiagnostic = { Level: string; Source: string; Message: string }
+
+    type AuthStatusOutput =
+        {
+            Authenticated: bool option
+            Status: string
+            ActiveSource: string
+            Sources: AuthStatusSources
+            AccessTokenExpiresAt: string option
+            Subject: string option
+            Diagnostics: AuthStatusDiagnostic array
+        }
 
     type AuthEnvironmentFieldStatus = { Name: string; IsSet: bool; Required: bool }
 
@@ -946,6 +985,121 @@ module Auth =
         | None -> "Never"
         | Some value -> instantToLocalTime value
 
+    let private formatInstantForJson (instant: NodaTime.Instant) = instant.ToString(InstantPattern.ExtendedIso.PatternText, CultureInfo.InvariantCulture)
+
+    let private formatInstantOptionForJson (instant: NodaTime.Instant option) = instant |> Option.map formatInstantForJson
+
+    type internal AuthStatusContext =
+        {
+            GraceTokenPresent: bool
+            GraceTokenValid: bool
+            GraceTokenError: string option
+            GraceTokenFilePresent: bool
+            GraceTokenFileError: string option
+            M2mConfigured: bool
+            InteractiveConfigured: bool
+            InteractiveTokenPresent: bool
+            InteractiveExpiresAt: NodaTime.Instant option
+            InteractiveSubject: string option
+            SecureStoreAvailable: bool
+            SecureStoreError: string option
+            ConfigError: string option
+            Now: NodaTime.Instant
+        }
+
+    let internal buildAuthStatus (context: AuthStatusContext) =
+        let interactiveTokenFresh =
+            context.InteractiveExpiresAt
+            |> Option.exists (fun expiresAt -> expiresAt > context.Now.Plus(safetyWindow))
+
+        let activeSource =
+            if context.GraceTokenValid then
+                "Environment (GRACE_TOKEN)"
+            elif context.GraceTokenError.IsSome then
+                "Environment (GRACE_TOKEN invalid)"
+            elif context.GraceTokenFilePresent then
+                "Environment (GRACE_TOKEN_FILE unsupported)"
+            elif context.M2mConfigured then
+                "M2M (client credentials)"
+            elif context.InteractiveConfigured then
+                if context.SecureStoreError.IsSome then
+                    "Interactive (secure storage unavailable)"
+                elif interactiveTokenFresh then
+                    "Interactive (cached token)"
+                elif context.InteractiveTokenPresent then
+                    "Interactive (cached token expired)"
+                else
+                    "Interactive (no cached token)"
+            else
+                "None"
+
+        let authenticated =
+            match activeSource with
+            | "Environment (GRACE_TOKEN)"
+            | "Interactive (cached token)" -> true
+            | _ -> false
+
+        let statusText = if authenticated then "Authenticated" else "Not authenticated"
+
+        let activeInteractiveExpiresAt =
+            if activeSource = "Interactive (cached token)" then
+                context.InteractiveExpiresAt
+            else
+                None
+
+        let activeInteractiveSubject =
+            if activeSource = "Interactive (cached token)" then
+                context.InteractiveSubject
+            else
+                None
+
+        let diagnostics =
+            [
+                match context.GraceTokenError with
+                | Some message -> yield { Level = "Error"; Source = Constants.EnvironmentVariables.GraceToken; Message = message }
+                | None -> ()
+
+                match context.GraceTokenFileError with
+                | Some message -> yield { Level = "Error"; Source = Constants.EnvironmentVariables.GraceTokenFile; Message = message }
+                | None -> ()
+
+                match context.SecureStoreError with
+                | Some message -> yield { Level = "Error"; Source = "Secure storage"; Message = message }
+                | None -> ()
+
+                match context.ConfigError with
+                | Some message -> yield { Level = "Error"; Source = "Auth config"; Message = message }
+                | None -> ()
+            ]
+
+        {
+            Authenticated = Some authenticated
+            Status = statusText
+            ActiveSource = activeSource
+            Sources =
+                {
+                    GraceToken = { Present = Some context.GraceTokenPresent; Valid = Some context.GraceTokenValid; Error = context.GraceTokenError }
+                    GraceTokenFile = { Present = Some context.GraceTokenFilePresent; Supported = Some false; Error = context.GraceTokenFileError }
+                    M2m = { Configured = Some context.M2mConfigured }
+                    Interactive =
+                        {
+                            Configured = Some context.InteractiveConfigured
+                            TokenPresent = Some context.InteractiveTokenPresent
+                            SecureStoreAvailable = Some context.SecureStoreAvailable
+                            AccessTokenExpiresAt =
+                                context.InteractiveExpiresAt
+                                |> formatInstantOptionForJson
+                            Subject = context.InteractiveSubject
+                            Error = context.SecureStoreError
+                        }
+                }
+            AccessTokenExpiresAt =
+                activeInteractiveExpiresAt
+                |> formatInstantOptionForJson
+            Subject = activeInteractiveSubject
+            Diagnostics = diagnostics |> List.toArray
+        }
+
     module private LoginOptions =
         let auth =
             (new Option<string>("--auth", Required = false, Description = "Authentication flow: pkce (browser) or device.", Arity = ArgumentArity.ExactlyOne))
@@ -1144,6 +1298,15 @@ module Auth =
                     | Error message -> Some message
                     | _ -> None
 
+                let graceTokenFilePresent = isEnvSet Constants.EnvironmentVariables.GraceTokenFile
+
+                let graceTokenFileError =
+                    if graceTokenFilePresent then
+                        Some
+                            $"Local token file storage is disabled. Unset {Constants.EnvironmentVariables.GraceTokenFile} and use {Constants.EnvironmentVariables.GraceToken} for a PAT."
+                    else
+                        None
+
                 let m2mConfigured = tryGetOidcM2mConfig () |> Option.isSome
 
                 let! cliConfigResult = tryGetOidcCliConfig correlationId
@@ -1173,6 +1336,7 @@ module Auth =
 
                 let interactiveConfigured = cliConfig |> Option.isSome
                 let interactiveTokenPresent = interactiveBundle |> Option.isSome
+                let secureStoreAvailable = interactiveConfigured && secureStoreError.IsNone
 
                 let interactiveExpiresAt =
                     interactiveBundle
@@ -1182,25 +1346,36 @@ module Auth =
                     interactiveBundle
                     |> Option.bind (fun bundle -> bundle.Subject)
 
-                let activeSource =
-                    if graceTokenValid then
-                        "Environment (GRACE_TOKEN)"
-                    elif graceTokenError.IsSome then
-                        "Environment (GRACE_TOKEN invalid)"
-                    elif m2mConfigured then
-                        "M2M (client credentials)"
-                    elif interactiveConfigured then
-                        if secureStoreError.IsSome then "Interactive (secure storage unavailable)"
-                        elif interactiveTokenPresent then "Interactive (cached token)"
-                        else "Interactive (no cached token)"
-                    else
-                        "None"
+                let authStatus =
+                    buildAuthStatus
+                        {
+                            GraceTokenPresent = graceTokenPresent
+                            GraceTokenValid = graceTokenValid
+                            GraceTokenError = graceTokenError
+                            GraceTokenFilePresent = graceTokenFilePresent
+                            GraceTokenFileError = graceTokenFileError
+                            M2mConfigured = m2mConfigured
+                            InteractiveConfigured = interactiveConfigured
+                            InteractiveTokenPresent = interactiveTokenPresent
+                            InteractiveExpiresAt = interactiveExpiresAt
+                            InteractiveSubject = interactiveSubject
+                            SecureStoreAvailable = secureStoreAvailable
+                            SecureStoreError = secureStoreError
+                            ConfigError = configError
+                            Now = getCurrentInstant ()
+                        }
 
                 if parseResult |> hasOutput then
+                    AnsiConsole.MarkupLine($"[{Colors.Important}]{Markup.Escape(authStatus.Status)}[/]")
+                    AnsiConsole.WriteLine()
+                    AnsiConsole.MarkupLine($"[bold {Colors.Important}]Active source:[/] {Markup.Escape(authStatus.ActiveSource)}")
                     AnsiConsole.MarkupLine($"[{Colors.Highlighted}]GRACE_TOKEN:[/] {graceTokenPresent}")
 
                     if graceTokenError.IsSome then
                         AnsiConsole.MarkupLine($"[{Colors.Important}]GRACE_TOKEN error:[/] {Markup.Escape(graceTokenError.Value)}")
+
+                    if graceTokenFileError.IsSome then
+                        AnsiConsole.MarkupLine($"[{Colors.Important}]GRACE_TOKEN_FILE:[/] {Markup.Escape(graceTokenFileError.Value)}")
 
                     AnsiConsole.MarkupLine($"[{Colors.Highlighted}]M2M configured:[/] {m2mConfigured}")
                     AnsiConsole.MarkupLine($"[{Colors.Highlighted}]Interactive configured:[/] {interactiveConfigured}")
@@ -1223,10 +1398,8 @@ module Auth =
                     | Some message -> AnsiConsole.MarkupLine($"[{Colors.Important}]Auth config:[/] {Markup.Escape(message)}")
                     | None -> ()
 
-                    AnsiConsole.MarkupLine($"[{Colors.Important}]Active source:[/] {Markup.Escape(activeSource)}")
-
                 return
-                    Ok(GraceReturnValue.Create activeSource correlationId)
+                    Ok(GraceReturnValue.Create authStatus correlationId)
                     |> renderOutput parseResult
             }
 
