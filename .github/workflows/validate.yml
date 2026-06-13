@@ -30,8 +30,7 @@ jobs:
         run: echo "Skipped (temporarily disabled pending full repo formatting)."
       - name: Restore
         run: |
-          dotnet restore "src/Grace.slnx" \
-            --configuration Release
+          dotnet restore "src/Grace.slnx"
       - name: Build
         run: |
           dotnet build "src/Grace.slnx" \
