@@ -70,17 +70,17 @@ module Auth =
 
     type TokenStore = { Helper: MsalCacheHelper; StorageProperties: StorageCreationProperties; LockFilePath: string; InProcessLock: SemaphoreSlim }
 
-    type AuthStatusGraceTokenSource = { Present: bool; Valid: bool; Error: string option }
+    type AuthStatusGraceTokenSource = { Present: bool option; Valid: bool option; Error: string option }
 
-    type AuthStatusTokenFileSource = { Present: bool; Supported: bool; Error: string option }
+    type AuthStatusTokenFileSource = { Present: bool option; Supported: bool option; Error: string option }
 
-    type AuthStatusM2mSource = { Configured: bool }
+    type AuthStatusM2mSource = { Configured: bool option }
 
     type AuthStatusInteractiveSource =
         {
-            Configured: bool
-            TokenPresent: bool
-            SecureStoreAvailable: bool
+            Configured: bool option
+            TokenPresent: bool option
+            SecureStoreAvailable: bool option
             AccessTokenExpiresAt: string option
             Subject: string option
             Error: string option
@@ -98,7 +98,7 @@ module Auth =
 
     type AuthStatusOutput =
         {
-            Authenticated: bool
+            Authenticated: bool option
             Status: string
             ActiveSource: string
             Sources: AuthStatusSources
@@ -1073,19 +1073,19 @@ module Auth =
             ]
 
         {
-            Authenticated = authenticated
+            Authenticated = Some authenticated
             Status = statusText
             ActiveSource = activeSource
             Sources =
                 {
-                    GraceToken = { Present = context.GraceTokenPresent; Valid = context.GraceTokenValid; Error = context.GraceTokenError }
-                    GraceTokenFile = { Present = context.GraceTokenFilePresent; Supported = false; Error = context.GraceTokenFileError }
-                    M2m = { Configured = context.M2mConfigured }
+                    GraceToken = { Present = Some context.GraceTokenPresent; Valid = Some context.GraceTokenValid; Error = context.GraceTokenError }
+                    GraceTokenFile = { Present = Some context.GraceTokenFilePresent; Supported = Some false; Error = context.GraceTokenFileError }
+                    M2m = { Configured = Some context.M2mConfigured }
                     Interactive =
                         {
-                            Configured = context.InteractiveConfigured
-                            TokenPresent = context.InteractiveTokenPresent
-                            SecureStoreAvailable = context.SecureStoreAvailable
+                            Configured = Some context.InteractiveConfigured
+                            TokenPresent = Some context.InteractiveTokenPresent
+                            SecureStoreAvailable = Some context.SecureStoreAvailable
                             AccessTokenExpiresAt =
                                 context.InteractiveExpiresAt
                                 |> formatInstantOptionForJson
@@ -1336,7 +1336,7 @@ module Auth =
 
                 let interactiveConfigured = cliConfig |> Option.isSome
                 let interactiveTokenPresent = interactiveBundle |> Option.isSome
-                let secureStoreAvailable = secureStoreError.IsNone
+                let secureStoreAvailable = interactiveConfigured && secureStoreError.IsNone
 
                 let interactiveExpiresAt =
                     interactiveBundle

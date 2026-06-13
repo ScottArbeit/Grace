@@ -96,6 +96,18 @@ module AuthTests =
         | false, _ -> true
         | true, property -> property.ValueKind = JsonValueKind.Null
 
+    let private assertBooleanProperty (root: JsonElement) (name: string) (expected: bool) =
+        let mutable property = Unchecked.defaultof<JsonElement>
+
+        root.TryGetProperty(name, &property)
+        |> should equal true
+
+        (property.ValueKind = JsonValueKind.True
+         || property.ValueKind = JsonValueKind.False)
+        |> should equal true
+
+        property.GetBoolean() |> should equal expected
+
     let private assertSerializedAuthStatusJson (status: Auth.AuthStatusOutput) =
         use document =
             JsonSerializer.Serialize(status, Constants.JsonSerializerOptions)
@@ -115,7 +127,7 @@ module AuthTests =
             InteractiveTokenPresent = false
             InteractiveExpiresAt = None
             InteractiveSubject = None
-            SecureStoreAvailable = true
+            SecureStoreAvailable = false
             SecureStoreError = None
             ConfigError = None
             Now = now
@@ -250,10 +262,7 @@ module AuthTests =
 
             let returnValue = assertAuthStatusJson standardOut
 
-            returnValue
-                .GetProperty("Authenticated")
-                .GetBoolean()
-            |> should equal false
+            assertBooleanProperty returnValue "Authenticated" false
 
             returnValue.GetProperty("Status").GetString()
             |> should equal "Not authenticated"
@@ -261,7 +270,22 @@ module AuthTests =
             returnValue
                 .GetProperty("ActiveSource")
                 .GetString()
-            |> should equal "None")
+            |> should equal "None"
+
+            let sources = returnValue.GetProperty("Sources")
+            let graceToken = sources.GetProperty("GraceToken")
+            let graceTokenFile = sources.GetProperty("GraceTokenFile")
+            let m2m = sources.GetProperty("M2m")
+            let interactive = sources.GetProperty("Interactive")
+
+            assertBooleanProperty graceToken "Present" false
+            assertBooleanProperty graceToken "Valid" false
+            assertBooleanProperty graceTokenFile "Present" false
+            assertBooleanProperty graceTokenFile "Supported" false
+            assertBooleanProperty m2m "Configured" false
+            assertBooleanProperty interactive "Configured" false
+            assertBooleanProperty interactive "TokenPresent" false
+            assertBooleanProperty interactive "SecureStoreAvailable" false)
 
     [<Test>]
     let ``auth status json reports invalid GRACE_TOKEN without leaking raw value`` () =
@@ -281,22 +305,20 @@ module AuthTests =
 
                 let returnValue = assertAuthStatusJson standardOut
 
-                returnValue
-                    .GetProperty("Authenticated")
-                    .GetBoolean()
-                |> should equal false
+                assertBooleanProperty returnValue "Authenticated" false
 
                 returnValue
                     .GetProperty("ActiveSource")
                     .GetString()
                 |> should equal "Environment (GRACE_TOKEN invalid)"
 
-                returnValue
-                    .GetProperty("Sources")
-                    .GetProperty("GraceToken")
-                    .GetProperty("Valid")
-                    .GetBoolean()
-                |> should equal false
+                let graceToken =
+                    returnValue
+                        .GetProperty("Sources")
+                        .GetProperty("GraceToken")
+
+                assertBooleanProperty graceToken "Present" true
+                assertBooleanProperty graceToken "Valid" false
 
                 returnValue
                     .GetProperty("Diagnostics")
@@ -363,6 +385,7 @@ module AuthTests =
                     GraceTokenValid = true
                     InteractiveConfigured = true
                     InteractiveTokenPresent = true
+                    SecureStoreAvailable = true
                     InteractiveExpiresAt = Some expiresAt
                     InteractiveSubject = Some subject
                 }
@@ -412,6 +435,7 @@ module AuthTests =
                 { defaultStatusContext (expiresAt.Plus(Duration.FromDays(30.0))) with
                     InteractiveConfigured = true
                     InteractiveTokenPresent = true
+                    SecureStoreAvailable = true
                     InteractiveExpiresAt = Some expiresAt
                     InteractiveSubject = Some "expired-user"
                 }
@@ -455,6 +479,7 @@ module AuthTests =
                 { defaultStatusContext now with
                     InteractiveConfigured = true
                     InteractiveTokenPresent = true
+                    SecureStoreAvailable = true
                     InteractiveExpiresAt = Some expiresAt
                     InteractiveSubject = Some subject
                 }
