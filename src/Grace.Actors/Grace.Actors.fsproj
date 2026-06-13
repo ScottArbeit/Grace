@@ -78,14 +78,14 @@
         <PackageReference Include="Azure.Storage.Common" Version="12.28.0" />
         <PackageReference Include="Ben.Demystifier" Version="0.4.1" />
         <PackageReference Include="FSharpPlus" Version="1.9.1" />
-        <PackageReference Include="Microsoft.AspNetCore.SignalR" Version="1.2.10" />
+        <PackageReference Include="Microsoft.AspNetCore.SignalR" Version="1.2.11" />
         <PackageReference Include="Microsoft.Azure.Cosmos" Version="3.61.0" />
-        <PackageReference Include="Microsoft.Extensions.Caching.Memory" Version="10.0.8" />
-        <PackageReference Include="Microsoft.Orleans.Core" Version="10.1.0" />
-        <PackageReference Include="Microsoft.Orleans.Runtime" Version="10.1.0" />
-        <PackageReference Include="Microsoft.Orleans.Serialization.FSharp" Version="10.1.0" />
-        <PackageReference Include="Microsoft.Orleans.Serialization.SystemTextJson" Version="10.1.0" />
-        <PackageReference Include="Microsoft.Orleans.Streaming.AzureStorage" Version="10.1.0" />
+        <PackageReference Include="Microsoft.Extensions.Caching.Memory" Version="10.0.9" />
+        <PackageReference Include="Microsoft.Orleans.Core" Version="10.2.0" />
+        <PackageReference Include="Microsoft.Orleans.Runtime" Version="10.2.0" />
+        <PackageReference Include="Microsoft.Orleans.Serialization.FSharp" Version="10.2.0" />
+        <PackageReference Include="Microsoft.Orleans.Serialization.SystemTextJson" Version="10.2.0" />
+        <PackageReference Include="Microsoft.Orleans.Streaming.AzureStorage" Version="10.2.0" />
         <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
         <PackageReference Include="Nito.AsyncEx" Version="5.1.2" />
         <PackageReference Include="NodaTime" Version="3.3.2" />
@@ -103,7 +103,7 @@
     </ItemGroup>
 
     <ItemGroup>
-        <PackageReference Update="FSharp.Core" Version="10.1.300" />
+        <PackageReference Update="FSharp.Core" Version="10.1.301" />
     </ItemGroup>
 
 </Project>
