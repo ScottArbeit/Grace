@@ -9,6 +9,10 @@ on:
     - cron: "0 3 * * *"
   workflow_dispatch:
 
+concurrency:
+  group: validate-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   full:
     runs-on: ubuntu-latest
@@ -25,7 +29,9 @@ jobs:
       - name: Format
         run: echo "Skipped (temporarily disabled pending full repo formatting)."
       - name: Restore
-        run: dotnet restore "src/Grace.slnx"
+        run: |
+          dotnet restore "src/Grace.slnx" \
+            --configuration Release
       - name: Build
         run: |
           dotnet build "src/Grace.slnx" \
