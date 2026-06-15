@@ -103,7 +103,8 @@ grace auth token create --name "local-dev" --expires-in 30d --output Verbose
 
 Authentication proves the caller identity. The first authenticated OIDC/MSA caller still needs authorization: seed a
 SystemAdmin assignment with `grace__authz__bootstrap__system_admin_users` or have an existing admin grant the needed
-role before PAT creation and other protected operations will succeed.
+role before protected operations will succeed. An authenticated caller that maps to a Grace User can create a PAT before
+RBAC grants; that PAT still authorizes protected operations only through Grace's normal authorization checks.
 
 `GRACE_TOKEN` takes precedence over M2M and interactive credentials. Clear stale or revoked PAT values before testing
 interactive OIDC/MSA login, otherwise the CLI may keep sending the stale PAT even after `grace auth login` succeeds.
@@ -115,10 +116,11 @@ Scope creation uses normal authorization in DebugLocal and production:
 - repository creation requires `OrganizationAdmin` or `OrganizationWrite` on the parent organization;
 - branch creation requires `RepositoryAdmin` or `RepositoryWrite` on the parent repository.
 
-After successful scope creation, Grace ensures the authenticated creator has the matching admin role on the new scope:
-`OwnerAdmin`, `OrganizationAdmin`, `RepositoryAdmin`, or `BranchAdmin`. Non-scope creation such as DirectoryVersion,
-directory save, reference creation, artifacts, promotion sets, reminders, validation records, and work items does not
-create admin grants.
+After successful scope creation, Grace ensures the authenticated creator has effective admin authority on the new scope.
+Grace creates a direct matching admin grant (`OwnerAdmin`, `OrganizationAdmin`, `RepositoryAdmin`, or `BranchAdmin`) only
+when inherited admin authority does not already apply. Non-scope creation such as DirectoryVersion, directory save,
+reference creation, artifacts, promotion sets, reminders, validation records, and work items does not create admin
+grants.
 
 ## DebugLocal Reliability Switches
 

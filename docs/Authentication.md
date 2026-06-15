@@ -112,6 +112,12 @@ contracts.
 | Repository | `RepositoryAdmin` | `RepositoryContributor` | `RepositoryReader` |
 | Branch | `BranchAdmin` | `BranchWriter` | `BranchReader` |
 
+Approval-specific role IDs:
+
+| Scope | Role ID | Allows |
+| ----- | ------- | ------ |
+| Repository or branch | `ApprovalResponder` | Read and respond to approval requests |
+
 ### Scope creation and creator-admin grants
 
 Scope creation is authorized against the parent scope. When creation succeeds, Grace ensures the authenticated creator
@@ -130,9 +136,9 @@ user principal that creates the scope. They are not granted to every group or cl
 request.
 
 Non-scope creation does not create admin grants. For example, DirectoryVersion creation, directory save operations,
-reference creation through branch assign/checkpoint/commit/promote/save/tag/external/rebase flows, artifacts, promotion
-sets, reminders, validation records, and work items remain normal repository or branch write/admin operations. Creating
-those objects does not make the creator a repository, branch, or system admin.
+reference creation through branch assign/checkpoint/commit/promote/save/tag/external flows, artifacts, promotion sets,
+reminders, validation records, and work items remain normal repository or branch write/admin operations. Creating those
+objects does not make the creator a repository, branch, or system admin.
 
 ---
 
@@ -236,13 +242,14 @@ grace auth whoami --output Verbose
 grace auth token create --name "local-dev" --expires-in 30d --output Verbose
 ```
 
-`grace auth whoami` proves authentication. `grace auth token create` also requires authorization: the authenticated
-principal must already have a role such as `SystemAdmin`, either from first-admin bootstrap seeding or from an existing
-admin grant.
+`grace auth whoami` proves authentication. `grace auth token create` requires an authenticated principal that maps to a
+Grace User; it does not require an RBAC role before token creation.
 
-MSA/OIDC authentication alone does not authorize first-time scope creation. For a fresh local/debug environment, seed
-the first admin through `grace__authz__bootstrap__system_admin_users` or use an existing admin to grant the needed role
-before creating owners, organizations, repositories, branches, or PATs.
+MSA/OIDC authentication alone does not authorize first-time scope creation or other protected operations. For a fresh
+local/debug environment, seed the first admin through `grace__authz__bootstrap__system_admin_users` or use an existing
+admin to grant the needed role before creating owners, organizations, repositories, or branches. A PAT created before
+RBAC grants will authenticate the principal, but it will not authorize protected operations until normal Grace
+authorization permits them.
 
 ---
 
@@ -396,7 +403,9 @@ A PAT string looks like:
 
 ### Creating a PAT
 
-You must already be authenticated (interactive Auth0 login, or an existing PAT, or M2M) to create a PAT.
+You must already be authenticated (interactive Auth0 login, or an existing PAT, or M2M) as a mapped Grace User to
+create a PAT. PAT creation itself does not require an RBAC role; the resulting PAT still authorizes protected operations
+only through Grace's normal authorization checks.
 
 #### CLI (recommended)
 
