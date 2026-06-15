@@ -107,7 +107,22 @@ module Access =
                     |]
                 )
 
-        let roleId = new Option<string>(OptionName.RoleId, Required = true, Description = "Role identifier.", Arity = ArgumentArity.ExactlyOne)
+        let private canonicalRoleIds =
+            Authorization.RoleCatalog.getAll ()
+            |> List.map (fun role -> role.RoleId)
+
+        let grantRoleId = new Option<string>(OptionName.RoleId, Required = true, Description = "Role identifier.", Arity = ArgumentArity.ExactlyOne)
+
+        grantRoleId.Validators.Add (fun optionResult ->
+            let roleId = optionResult.GetValueOrDefault<string>()
+            let allowedRoleIds = String.Join(", ", canonicalRoleIds)
+
+            if canonicalRoleIds
+               |> List.exists (fun canonicalRoleId -> canonicalRoleId.Equals(roleId, StringComparison.OrdinalIgnoreCase))
+               |> not then
+                optionResult.AddError($"{OptionName.RoleId} only accepts one of these values: {allowedRoleIds}"))
+
+        let revokeRoleId = new Option<string>(OptionName.RoleId, Required = true, Description = "Role identifier.", Arity = ArgumentArity.ExactlyOne)
 
         let source = new Option<string>(OptionName.Source, Required = false, Description = "Optional role assignment source.", Arity = ArgumentArity.ZeroOrOne)
 
@@ -342,7 +357,7 @@ module Access =
                                 PrincipalType = parseResult.GetValue(Options.principalTypeRequired),
                                 PrincipalId = parseResult.GetValue(Options.principalIdRequired),
                                 ScopeKind = parseResult.GetValue(Options.scopeKindRequired),
-                                RoleId = parseResult.GetValue(Options.roleId),
+                                RoleId = parseResult.GetValue(Options.grantRoleId),
                                 Source = parseResult.GetValue(Options.source),
                                 SourceDetail = parseResult.GetValue(Options.sourceDetail),
                                 CorrelationId = getCorrelationId parseResult
@@ -400,7 +415,7 @@ module Access =
                                 PrincipalType = parseResult.GetValue(Options.principalTypeRequired),
                                 PrincipalId = parseResult.GetValue(Options.principalIdRequired),
                                 ScopeKind = parseResult.GetValue(Options.scopeKindRequired),
-                                RoleId = parseResult.GetValue(Options.roleId),
+                                RoleId = parseResult.GetValue(Options.revokeRoleId),
                                 CorrelationId = getCorrelationId parseResult
                             )
 
@@ -803,7 +818,7 @@ module Access =
             |> addOption Options.scopeKindRequired
             |> addOption Options.principalTypeRequired
             |> addOption Options.principalIdRequired
-            |> addOption Options.roleId
+            |> addOption Options.grantRoleId
             |> addOption Options.source
             |> addOption Options.sourceDetail
 
@@ -816,7 +831,7 @@ module Access =
             |> addOption Options.scopeKindRequired
             |> addOption Options.principalTypeRequired
             |> addOption Options.principalIdRequired
-            |> addOption Options.roleId
+            |> addOption Options.revokeRoleId
 
         revokeRoleCommand.Action <- new RevokeRole()
         accessCommand.Subcommands.Add(revokeRoleCommand)
