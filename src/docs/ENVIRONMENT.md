@@ -85,6 +85,7 @@ PowerShell:
 
 ```powershell
 $env:GRACE_SERVER_URI="http://localhost:5000"
+Remove-Item Env:GRACE_TOKEN -ErrorAction SilentlyContinue
 grace auth login
 grace auth whoami --output Verbose
 grace auth token create --name "local-dev" --expires-in 30d --output Verbose
@@ -94,6 +95,7 @@ bash / zsh:
 
 ```bash
 export GRACE_SERVER_URI="http://localhost:5000"
+unset GRACE_TOKEN
 grace auth login
 grace auth whoami --output Verbose
 grace auth token create --name "local-dev" --expires-in 30d --output Verbose
@@ -101,7 +103,24 @@ grace auth token create --name "local-dev" --expires-in 30d --output Verbose
 
 Authentication proves the caller identity. The first authenticated OIDC/MSA caller still needs authorization: seed a
 SystemAdmin assignment with `grace__authz__bootstrap__system_admin_users` or have an existing admin grant the needed
-role before PAT creation and other protected operations will succeed.
+role before protected operations will succeed. An authenticated caller that maps to a Grace User can create a PAT before
+RBAC grants; that PAT still authorizes protected operations only through Grace's normal authorization checks.
+
+`GRACE_TOKEN` takes precedence over M2M and interactive credentials. Clear stale or revoked PAT values before testing
+interactive OIDC/MSA login, otherwise the CLI may keep sending the stale PAT even after `grace auth login` succeeds.
+
+Scope creation uses normal authorization in DebugLocal and production:
+
+- owner creation requires `SystemAdmin` or the support operation `SystemOperate` on the system resource;
+- organization creation requires `OwnerAdmin` or `OwnerWrite` on the parent owner;
+- repository creation requires `OrganizationAdmin` or `OrganizationWrite` on the parent organization;
+- branch creation requires `RepositoryAdmin` or `RepositoryWrite` on the parent repository.
+
+After successful scope creation, Grace ensures the authenticated creator has effective admin authority on the new scope.
+Grace creates a direct matching admin grant (`OwnerAdmin`, `OrganizationAdmin`, `RepositoryAdmin`, or `BranchAdmin`) only
+when inherited admin authority does not already apply. Non-scope creation such as DirectoryVersion, directory save,
+reference creation, artifacts, promotion sets, reminders, validation records, and work items does not create admin
+grants.
 
 ## DebugLocal Reliability Switches
 
@@ -225,8 +244,9 @@ These capture failure classification, retryability, cleanup notes, and runtime m
 ### CLI / Client
 
 - `GRACE_SERVER_URI`: Grace server base URL (include port, omit trailing slash).
-- `GRACE_TOKEN`: Grace PAT for non-interactive auth. OIDC/MSA access tokens are not valid here.
-- `GRACE_TOKEN_FILE`: override for token file path.
+- `GRACE_TOKEN`: Grace PAT for non-interactive auth. OIDC/MSA access tokens are not valid here. This value wins before
+  M2M and interactive login.
+- `GRACE_TOKEN_FILE`: not supported; local plaintext token file storage is intentionally disabled.
 
 ### Reminders
 

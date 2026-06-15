@@ -79,6 +79,69 @@ export grace__authz__bootstrap__system_admin_users="auth0|abc123"
 
 ---
 
+## Authorization roles and creation boundaries
+
+Authentication identifies the caller. Authorization decides whether that caller can act at a system, owner,
+organization, repository, branch, or path scope. Use `grace access list-roles` for the live role catalog, and use the
+full role IDs shown here when granting roles.
+
+### System support roles
+
+* `SystemAdmin`: full system administration, including system security administration. It includes `SystemAdmin`,
+  `SystemOperate`, system read, and descendant owner, organization, repository, branch, path, approval, and webhook
+  operations.
+* `SystemOperator`: support-operator role for system-level operations and descendant administration. It includes
+  `SystemOperate`, system read, and descendant admin/write/read operations. It does **not** include `SystemAdmin`.
+* `SystemReader`: support-reader role for system-wide visibility. It includes system read and descendant read
+  operations. It does **not** include `SystemOperate`, write, admin, or security administration operations.
+
+`SystemOperate` is the system-level support operation permission. Owner creation requires either `SystemAdmin` or
+`SystemOperate` on the system resource, so a support operator can create owners without also receiving system security
+administration.
+
+### Canonical role IDs
+
+Current role IDs use full scope names. Do not grant or document abbreviated `Org*` or `Repo*` names as current
+contracts.
+
+| Scope | Admin | Contributor / writer | Reader |
+| ----- | ----- | -------------------- | ------ |
+| System | `SystemAdmin` | `SystemOperator` | `SystemReader` |
+| Owner | `OwnerAdmin` | `OwnerContributor` | `OwnerReader` |
+| Organization | `OrganizationAdmin` | `OrganizationContributor` | `OrganizationReader` |
+| Repository | `RepositoryAdmin` | `RepositoryContributor` | `RepositoryReader` |
+| Branch | `BranchAdmin` | `BranchWriter` | `BranchReader` |
+
+Approval-specific role IDs:
+
+| Scope | Role ID | Allows |
+| ----- | ------- | ------ |
+| Repository or branch | `ApprovalResponder` | Read and respond to approval requests |
+
+### Scope creation and creator-admin grants
+
+Scope creation is authorized against the parent scope. When creation succeeds, Grace ensures the authenticated creator
+has the admin role on the newly created scope. If an inherited assignment already gives the creator admin authority,
+Grace does not need to persist a duplicate direct grant.
+
+| Created scope | Required authorization on parent | Creator-admin role on new scope |
+| ------------- | -------------------------------- | ------------------------------- |
+| Owner | `SystemAdmin` or `SystemOperate` on system | `OwnerAdmin` |
+| Organization | `OwnerAdmin` or `OwnerWrite` on owner | `OrganizationAdmin` |
+| Repository | `OrganizationAdmin` or `OrganizationWrite` on organization | `RepositoryAdmin` |
+| Branch | `RepositoryAdmin` or `RepositoryWrite` on repository | `BranchAdmin` |
+
+Creator-admin grants are live creation behavior, not migration or backfill behavior. They apply to the authenticated
+user principal that creates the scope. They are not granted to every group or claim that helped authorize the create
+request.
+
+Non-scope creation does not create admin grants. For example, DirectoryVersion creation, directory save operations,
+reference creation through branch assign/checkpoint/commit/promote/save/tag/external flows, artifacts, promotion sets,
+reminders, validation records, and work items remain normal repository or branch write/admin operations. Creating those
+objects does not make the creator a repository, branch, or system admin.
+
+---
+
 ## Development without Auth0 (TestAuth)
 
 For local development, you can skip Auth0 entirely by enabling the built-in TestAuth handler.
@@ -163,6 +226,7 @@ PowerShell:
 
 ```powershell
 $env:GRACE_SERVER_URI="http://localhost:5000"
+Remove-Item Env:GRACE_TOKEN -ErrorAction SilentlyContinue
 grace auth login
 grace auth whoami --output Verbose
 grace auth token create --name "local-dev" --expires-in 30d --output Verbose
@@ -172,14 +236,20 @@ bash / zsh:
 
 ```bash
 export GRACE_SERVER_URI="http://localhost:5000"
+unset GRACE_TOKEN
 grace auth login
 grace auth whoami --output Verbose
 grace auth token create --name "local-dev" --expires-in 30d --output Verbose
 ```
 
-`grace auth whoami` proves authentication. `grace auth token create` also requires authorization: the authenticated
-principal must already have a role such as `SystemAdmin`, either from first-admin bootstrap seeding or from an existing
-admin grant.
+`grace auth whoami` proves authentication. `grace auth token create` requires an authenticated principal that maps to a
+Grace User; it does not require an RBAC role before token creation.
+
+MSA/OIDC authentication alone does not authorize first-time scope creation or other protected operations. For a fresh
+local/debug environment, seed the first admin through `grace__authz__bootstrap__system_admin_users` or use an existing
+admin to grant the needed role before creating owners, organizations, repositories, or branches. A PAT created before
+RBAC grants will authenticate the principal, but it will not authorize protected operations until normal Grace
+authorization permits them.
 
 ---
 
@@ -291,6 +361,11 @@ The CLI can authenticate in multiple ways. The first matching mode “wins”:
 1. **M2M mode** if M2M env vars are set.
 1. **Interactive mode** if you have logged in previously (token stored in OS secure store).
 
+Because `GRACE_TOKEN` wins before M2M and interactive login, a stale or revoked PAT can mask a fresh interactive
+OIDC/MSA login. Unset `GRACE_TOKEN` when you want the CLI to use cached interactive credentials, and use
+`grace auth token status --output Verbose` or `grace doctor --check Authentication` when the active auth source is
+unclear.
+
 ### Primary CLI commands
 
 * `grace auth login [--auth pkce|device]`
@@ -328,7 +403,9 @@ A PAT string looks like:
 
 ### Creating a PAT
 
-You must already be authenticated (interactive Auth0 login, or an existing PAT, or M2M) to create a PAT.
+You must already be authenticated (interactive Auth0 login, or an existing PAT, or M2M) as a mapped Grace User to
+create a PAT. PAT creation itself does not require an RBAC role; the resulting PAT still authorizes protected operations
+only through Grace's normal authorization checks.
 
 #### CLI (recommended)
 
@@ -656,7 +733,8 @@ export grace__auth__oidc__m2m_scopes="read:foo write:bar"
 * `GRACE_TOKEN` (optional)
   **No default.**
   Source: output from `grace auth token create`.
-  Must be a Grace PAT (prefix `grace_pat_v1_`). If set, this overrides interactive login and M2M.
+  Must be a Grace PAT (prefix `grace_pat_v1_`). If set, this overrides interactive login and M2M. Unset stale or
+  revoked values before troubleshooting interactive OIDC/MSA login.
 
 * `GRACE_TOKEN_FILE`
   **Not supported.** Local plaintext token file storage is intentionally disabled.
@@ -815,6 +893,24 @@ export GRACE_TOKEN="grace_pat_v1_..."
 grace auth token status --output Verbose
 ```
 
+If you are trying to use interactive OIDC/MSA login, make sure a stale PAT is not taking precedence:
+
+PowerShell:
+
+```powershell
+Remove-Item Env:GRACE_TOKEN -ErrorAction SilentlyContinue
+grace auth status --output Verbose
+grace auth whoami --output Verbose
+```
+
+bash / zsh:
+
+```bash
+unset GRACE_TOKEN
+grace auth status --output Verbose
+grace auth whoami --output Verbose
+```
+
 Why logs may look empty:
 
 * `grace status` maps to `branch status`, which calls `/branch/Get` and `/branch/GetParentBranch`.
@@ -839,7 +935,8 @@ If `grace auth whoami` shows your expected `GraceUserId`, but:
 * `grace access check --operation SystemAdmin --resource system --output Json`
   returns `Denied: missing permission SystemAdmin.`,
 
-and you can also see a `SystemAdmin` assignment document in Cosmos, the most common cause is a **runtime context mismatch**.
+and you can also see a `SystemAdmin` assignment document in Cosmos, the most common cause is a **runtime context
+mismatch**.
 
 Typical mismatch causes:
 
