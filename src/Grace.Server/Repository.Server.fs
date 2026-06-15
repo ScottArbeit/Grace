@@ -7,6 +7,7 @@ open Grace.Actors.Constants
 open Grace.Actors.Extensions.ActorProxy
 open Grace.Actors.Interfaces
 open Grace.Actors.Services
+open Grace.Server.Security
 open Grace.Server.Services
 open Grace.Server.Validations
 open Grace.Shared
@@ -32,7 +33,6 @@ open System.Linq
 open System.Threading.Tasks
 open System.Text
 open System.Text.Json
-open Microsoft.AspNetCore.Http.HttpResults
 
 module Repository =
 
@@ -42,7 +42,12 @@ module Repository =
 
     let log = ApplicationContext.loggerFactory.CreateLogger("Repository.Server")
 
-    let processCommand<'T when 'T :> RepositoryParameters> (context: HttpContext) (validations: Validations<'T>) (command: 'T -> ValueTask<RepositoryCommand>) =
+    let processCommandWithPostSuccess<'T when 'T :> RepositoryParameters>
+        (context: HttpContext)
+        (validations: Validations<'T>)
+        (command: 'T -> ValueTask<RepositoryCommand>)
+        (postSuccess: unit -> Task<Result<unit, GraceError>>)
+        =
         task {
             use activity = activitySource.StartActivity("processCommand", ActivityKind.Server)
             let graceIds = getGraceIds context
@@ -74,7 +79,19 @@ module Repository =
                                 .enhance ("Path", context.Request.Path.Value)
                             |> ignore
 
-                            return! context |> result200Ok graceReturnValue
+                            match! postSuccess () with
+                            | Ok () -> return! context |> result200Ok graceReturnValue
+                            | Error graceError ->
+                                graceError
+                                    .enhance(parameterDictionary)
+                                    .enhance(nameof OwnerId, graceIds.OwnerId)
+                                    .enhance(nameof OrganizationId, graceIds.OrganizationId)
+                                    .enhance(nameof RepositoryId, graceIds.RepositoryId)
+                                    .enhance("Command", commandName)
+                                    .enhance ("Path", context.Request.Path.Value)
+                                |> ignore
+
+                                return! context |> result500ServerError graceError
                         | Error graceError ->
                             graceError
                                 .enhance(parameterDictionary)
@@ -166,6 +183,9 @@ module Repository =
 
                 return! context |> result500ServerError graceError
         }
+
+    let processCommand<'T when 'T :> RepositoryParameters> (context: HttpContext) (validations: Validations<'T>) (command: 'T -> ValueTask<RepositoryCommand>) =
+        processCommandWithPostSuccess context validations command (fun () -> Task.FromResult(Ok()))
 
     let processQuery<'T, 'U when 'T :> RepositoryParameters>
         (context: HttpContext)
@@ -266,7 +286,20 @@ module Repository =
                     }
                     |> ValueTask<RepositoryCommand>
 
-                return! processCommand context validations command
+                let ensureCreatorAdmin () =
+                    task {
+                        let graceIds = getGraceIds context
+
+                        match!
+                            CreatorScopeAdminGrant.ensureCreatorAdminForCreatedScope
+                                context
+                                (Grace.Types.Authorization.Scope.Repository(graceIds.OwnerId, graceIds.OrganizationId, graceIds.RepositoryId))
+                            with
+                        | Ok _ -> return Ok()
+                        | Error error -> return Error error
+                    }
+
+                return! processCommandWithPostSuccess context validations command ensureCreatorAdmin
             }
 
     /// Sets the search visibility of the repository.
