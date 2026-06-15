@@ -57,16 +57,20 @@ module Authorization =
     [<KnownType("GetKnownTypes")>]
     type Operation =
         | SystemAdmin
+        | SystemOperate
+        | SystemRead
         | OwnerAdmin
+        | OwnerWrite
         | OwnerRead
-        | OrgAdmin
-        | OrgRead
-        | RepoAdmin
-        | RepoRead
-        | RepoWrite
+        | OrganizationAdmin
+        | OrganizationWrite
+        | OrganizationRead
+        | RepositoryAdmin
+        | RepositoryWrite
+        | RepositoryRead
         | BranchAdmin
-        | BranchRead
         | BranchWrite
+        | BranchRead
         | PathRead
         | PathWrite
         | ApprovalPolicyManage

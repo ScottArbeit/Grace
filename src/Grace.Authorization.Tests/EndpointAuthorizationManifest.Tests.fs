@@ -235,7 +235,7 @@ type EndpointAuthorizationManifestTests() =
         [
             "POST", "/storage/discoverContentBlocks"
         ]
-        |> assertRoutesUseSecurity (Authorized(Operation.RepoRead, ResourceKind.Repository))
+        |> assertRoutesUseSecurity (Authorized(Operation.RepositoryRead, ResourceKind.Repository))
 
         [
             "POST", "/storage/claimReuseRanges"
@@ -269,7 +269,7 @@ type EndpointAuthorizationManifestTests() =
             "POST", "/work/links/remove/reference"
             "POST", "/work/update"
         ]
-        |> assertRoutesUseSecurity (Authorized(Operation.RepoWrite, ResourceKind.Repository))
+        |> assertRoutesUseSecurity (Authorized(Operation.RepositoryWrite, ResourceKind.Repository))
 
         [
             "POST", "/work/get"
@@ -278,4 +278,4 @@ type EndpointAuthorizationManifestTests() =
             "POST", "/work/attachments/show"
             "POST", "/work/attachments/download"
         ]
-        |> assertRoutesUseSecurity (Authorized(Operation.RepoRead, ResourceKind.Repository))
+        |> assertRoutesUseSecurity (Authorized(Operation.RepositoryRead, ResourceKind.Repository))

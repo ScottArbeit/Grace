@@ -27,12 +27,12 @@ module EndpointAuthorizationManifest =
             endpoint "GET" "/" AllowAnonymous
             endpoint "POST" "/access/checkPermission" Authenticated
             endpoint "POST" "/access/grantRole" (Authorized(SystemAdmin, System))
-            endpoint "POST" "/access/listPathPermissions" (Authorized(RepoAdmin, Repository))
+            endpoint "POST" "/access/listPathPermissions" (Authorized(RepositoryAdmin, Repository))
             endpoint "POST" "/access/listRoleAssignments" (Authorized(SystemAdmin, System))
             endpoint "GET" "/access/listRoles" Authenticated
-            endpoint "POST" "/access/removePathPermission" (Authorized(RepoAdmin, Repository))
+            endpoint "POST" "/access/removePathPermission" (Authorized(RepositoryAdmin, Repository))
             endpoint "POST" "/access/revokeRole" (Authorized(SystemAdmin, System))
-            endpoint "POST" "/access/upsertPathPermission" (Authorized(RepoAdmin, Repository))
+            endpoint "POST" "/access/upsertPathPermission" (Authorized(RepositoryAdmin, Repository))
             endpoint "POST" "/admin/deleteAllFromCosmosDB" (Authorized(SystemAdmin, System))
             endpoint "POST" "/admin/deleteAllRemindersFromCosmosDB" (Authorized(SystemAdmin, System))
             endpoint "POST" "/approval/policy/create" (Authorized(ApprovalPolicyManage, Repository))
@@ -67,11 +67,11 @@ module EndpointAuthorizationManifest =
             endpoint "POST" "/auth/token/create" Authenticated
             endpoint "POST" "/auth/token/list" Authenticated
             endpoint "POST" "/auth/token/revoke" Authenticated
-            endpoint "POST" "/agent/session/active" (Authorized(RepoRead, Repository))
-            endpoint "POST" "/agent/session/listActive" (Authorized(RepoRead, Repository))
-            endpoint "POST" "/agent/session/start" (Authorized(RepoWrite, Repository))
-            endpoint "POST" "/agent/session/status" (Authorized(RepoRead, Repository))
-            endpoint "POST" "/agent/session/stop" (Authorized(RepoWrite, Repository))
+            endpoint "POST" "/agent/session/active" (Authorized(RepositoryRead, Repository))
+            endpoint "POST" "/agent/session/listActive" (Authorized(RepositoryRead, Repository))
+            endpoint "POST" "/agent/session/start" (Authorized(RepositoryWrite, Repository))
+            endpoint "POST" "/agent/session/status" (Authorized(RepositoryRead, Repository))
+            endpoint "POST" "/agent/session/stop" (Authorized(RepositoryWrite, Repository))
             endpoint "POST" "/branch/assign" Authenticated
             endpoint
                 "POST"
@@ -125,8 +125,8 @@ module EndpointAuthorizationManifest =
             endpoint "POST" "/validation-set/update" Authenticated
             endpoint "POST" "/validation-set/delete" Authenticated
             endpoint "POST" "/validation-result/record" Authenticated
-            endpoint "POST" "/artifact/create" (Authorized(RepoWrite, Repository))
-            endpoint "GET" "/artifact/%O/download-uri" (Authorized(RepoRead, Repository))
+            endpoint "POST" "/artifact/create" (Authorized(RepositoryWrite, Repository))
+            endpoint "GET" "/artifact/%O/download-uri" (Authorized(RepositoryRead, Repository))
             endpoint "POST" "/diff/getDiff" Authenticated
             endpoint "POST" "/diff/getDiffBySha256Hash" Authenticated
             endpoint "POST" "/diff/populate" Authenticated
@@ -140,10 +140,10 @@ module EndpointAuthorizationManifest =
             endpoint "GET" "/healthz" AllowAnonymous
             endpoint "POST" "/organization/create" Authenticated
             endpoint "POST" "/organization/delete" Authenticated
-            endpoint "POST" "/organization/get" (Authorized(OrgRead, Organization))
+            endpoint "POST" "/organization/get" (Authorized(OrganizationRead, Organization))
             endpoint "POST" "/organization/listRepositories" Authenticated
             endpoint "POST" "/organization/setDescription" Authenticated
-            endpoint "POST" "/organization/setName" (Authorized(OrgAdmin, Organization))
+            endpoint "POST" "/organization/setName" (Authorized(OrganizationAdmin, Organization))
             endpoint "POST" "/organization/setSearchVisibility" Authenticated
             endpoint "POST" "/organization/setType" Authenticated
             endpoint "POST" "/organization/undelete" Authenticated
@@ -173,7 +173,7 @@ module EndpointAuthorizationManifest =
             endpoint "POST" "/repository/create" Authenticated
             endpoint "POST" "/repository/delete" Authenticated
             endpoint "POST" "/repository/exists" Authenticated
-            endpoint "POST" "/repository/get" (Authorized(RepoRead, Repository))
+            endpoint "POST" "/repository/get" (Authorized(RepositoryRead, Repository))
             endpoint "POST" "/repository/getBranches" Authenticated
             endpoint "POST" "/repository/getBranchesByBranchId" Authenticated
             endpoint "POST" "/repository/getReferencesByReferenceId" Authenticated
@@ -191,7 +191,7 @@ module EndpointAuthorizationManifest =
             endpoint "POST" "/repository/setRecordSaves" Authenticated
             endpoint "POST" "/repository/setSaveDays" Authenticated
             endpoint "POST" "/repository/setStatus" Authenticated
-            endpoint "POST" "/repository/setVisibility" (Authorized(RepoAdmin, Repository))
+            endpoint "POST" "/repository/setVisibility" (Authorized(RepositoryAdmin, Repository))
             endpoint "POST" "/repository/undelete" Authenticated
             endpoint "POST" "/review/checkpoint" Authenticated
             endpoint "POST" "/review/candidate/attestations" Authenticated
@@ -208,7 +208,7 @@ module EndpointAuthorizationManifest =
             endpoint "POST" "/storage/getDownloadUri" (Authorized(PathRead, Path))
             endpoint "POST" "/storage/claimReuseRanges" (Authorized(PathWrite, Path))
             endpoint "POST" "/storage/confirmContentBlockUpload" (Authorized(PathWrite, Path))
-            endpoint "POST" "/storage/discoverContentBlocks" (Authorized(RepoRead, Repository))
+            endpoint "POST" "/storage/discoverContentBlocks" (Authorized(RepositoryRead, Repository))
             endpoint "POST" "/storage/finalizeManifestUpload" (Authorized(PathWrite, Path))
             endpoint "POST" "/storage/getContentBlockDownloadUri" (Authorized(PathRead, Path))
             endpoint "POST" "/storage/getContentBlockUploadUri" (Authorized(PathWrite, Path))
@@ -217,21 +217,21 @@ module EndpointAuthorizationManifest =
             endpoint "POST" "/storage/issueDedupeDiscovery" (Authorized(PathWrite, Path))
             endpoint "POST" "/storage/registerContentBlockUpload" (Authorized(PathWrite, Path))
             endpoint "POST" "/storage/startManifestUploadSession" (Authorized(PathWrite, Path))
-            endpoint "POST" "/work/create" (Authorized(RepoWrite, Repository))
-            endpoint "POST" "/work/add-summary" (Authorized(RepoWrite, Repository))
-            endpoint "POST" "/work/get" (Authorized(RepoRead, Repository))
-            endpoint "POST" "/work/link/artifact" (Authorized(RepoWrite, Repository))
-            endpoint "POST" "/work/link/promotion-set" (Authorized(RepoWrite, Repository))
-            endpoint "POST" "/work/link/reference" (Authorized(RepoWrite, Repository))
-            endpoint "POST" "/work/links/list" (Authorized(RepoRead, Repository))
-            endpoint "POST" "/work/attachments/list" (Authorized(RepoRead, Repository))
-            endpoint "POST" "/work/attachments/show" (Authorized(RepoRead, Repository))
-            endpoint "POST" "/work/attachments/download" (Authorized(RepoRead, Repository))
-            endpoint "POST" "/work/links/remove/artifact" (Authorized(RepoWrite, Repository))
-            endpoint "POST" "/work/links/remove/artifact-type" (Authorized(RepoWrite, Repository))
-            endpoint "POST" "/work/links/remove/promotion-set" (Authorized(RepoWrite, Repository))
-            endpoint "POST" "/work/links/remove/reference" (Authorized(RepoWrite, Repository))
-            endpoint "POST" "/work/update" (Authorized(RepoWrite, Repository))
+            endpoint "POST" "/work/create" (Authorized(RepositoryWrite, Repository))
+            endpoint "POST" "/work/add-summary" (Authorized(RepositoryWrite, Repository))
+            endpoint "POST" "/work/get" (Authorized(RepositoryRead, Repository))
+            endpoint "POST" "/work/link/artifact" (Authorized(RepositoryWrite, Repository))
+            endpoint "POST" "/work/link/promotion-set" (Authorized(RepositoryWrite, Repository))
+            endpoint "POST" "/work/link/reference" (Authorized(RepositoryWrite, Repository))
+            endpoint "POST" "/work/links/list" (Authorized(RepositoryRead, Repository))
+            endpoint "POST" "/work/attachments/list" (Authorized(RepositoryRead, Repository))
+            endpoint "POST" "/work/attachments/show" (Authorized(RepositoryRead, Repository))
+            endpoint "POST" "/work/attachments/download" (Authorized(RepositoryRead, Repository))
+            endpoint "POST" "/work/links/remove/artifact" (Authorized(RepositoryWrite, Repository))
+            endpoint "POST" "/work/links/remove/artifact-type" (Authorized(RepositoryWrite, Repository))
+            endpoint "POST" "/work/links/remove/promotion-set" (Authorized(RepositoryWrite, Repository))
+            endpoint "POST" "/work/links/remove/reference" (Authorized(RepositoryWrite, Repository))
+            endpoint "POST" "/work/update" (Authorized(RepositoryWrite, Repository))
             endpoint "GET" "/metrics" (Authorized(SystemAdmin, System))
             endpoint "GET" "/notifications" Authenticated
         ]

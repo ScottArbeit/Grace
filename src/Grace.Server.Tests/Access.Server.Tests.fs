@@ -156,7 +156,7 @@ type AccessCheckPermissionTests() =
             let userId = $"{Guid.NewGuid()}"
             use client = createClient userId []
 
-            let! response = checkPermissionAsync client $"{Guid.NewGuid()}" $"{Guid.NewGuid()}" $"{Guid.NewGuid()}" "repo" "RepoRead" "" ""
+            let! response = checkPermissionAsync client $"{Guid.NewGuid()}" $"{Guid.NewGuid()}" $"{Guid.NewGuid()}" "repo" "RepositoryRead" "" ""
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK))
         }
 
@@ -166,7 +166,7 @@ type AccessCheckPermissionTests() =
             let userId = $"{Guid.NewGuid()}"
             use client = createClient userId []
 
-            let! response = checkPermissionAsync client $"{Guid.NewGuid()}" $"{Guid.NewGuid()}" $"{Guid.NewGuid()}" "repo" "RepoRead" "User" userId
+            let! response = checkPermissionAsync client $"{Guid.NewGuid()}" $"{Guid.NewGuid()}" $"{Guid.NewGuid()}" "repo" "RepositoryRead" "User" userId
 
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK))
         }
@@ -178,7 +178,7 @@ type AccessCheckPermissionTests() =
             let groupId = $"{Guid.NewGuid()}"
             use client = createClient userId [ groupId ]
 
-            let! response = checkPermissionAsync client $"{Guid.NewGuid()}" $"{Guid.NewGuid()}" $"{Guid.NewGuid()}" "repo" "RepoRead" "Group" groupId
+            let! response = checkPermissionAsync client $"{Guid.NewGuid()}" $"{Guid.NewGuid()}" $"{Guid.NewGuid()}" "repo" "RepositoryRead" "Group" groupId
 
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK))
         }
@@ -189,7 +189,8 @@ type AccessCheckPermissionTests() =
             let userId = $"{Guid.NewGuid()}"
             use client = createClient userId []
 
-            let! response = checkPermissionAsync client $"{Guid.NewGuid()}" $"{Guid.NewGuid()}" $"{Guid.NewGuid()}" "repo" "RepoRead" "User" $"{Guid.NewGuid()}"
+            let! response =
+                checkPermissionAsync client $"{Guid.NewGuid()}" $"{Guid.NewGuid()}" $"{Guid.NewGuid()}" "repo" "RepositoryRead" "User" $"{Guid.NewGuid()}"
 
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden))
         }
@@ -316,18 +317,18 @@ type AccessControlSecurityTests() =
             let orgB = $"{Guid.NewGuid()}"
             let adminUser = $"{Guid.NewGuid()}"
 
-            let! grantAdmin = grantRoleAsync Client "org" ownerId orgA "" "" adminUser "OrgAdmin"
+            let! grantAdmin = grantRoleAsync Client "org" ownerId orgA "" "" adminUser "OrganizationAdmin"
             Assert.That(grantAdmin.StatusCode, Is.EqualTo(HttpStatusCode.OK))
 
             use adminClient = createClientWithUserId adminUser
 
-            let! allowed = grantRoleAsync adminClient "org" ownerId orgA "" "" $"{Guid.NewGuid()}" "OrgReader"
+            let! allowed = grantRoleAsync adminClient "org" ownerId orgA "" "" $"{Guid.NewGuid()}" "OrganizationReader"
             Assert.That(allowed.StatusCode, Is.EqualTo(HttpStatusCode.OK))
 
-            let! forbidden = grantRoleAsync adminClient "org" ownerId orgB "" "" $"{Guid.NewGuid()}" "OrgReader"
+            let! forbidden = grantRoleAsync adminClient "org" ownerId orgB "" "" $"{Guid.NewGuid()}" "OrganizationReader"
             Assert.That(forbidden.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden))
 
-            let! revokeForbidden = revokeRoleAsync adminClient "org" ownerId orgB "" "" $"{Guid.NewGuid()}" "OrgReader"
+            let! revokeForbidden = revokeRoleAsync adminClient "org" ownerId orgB "" "" $"{Guid.NewGuid()}" "OrganizationReader"
             Assert.That(revokeForbidden.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden))
 
             let! listAllowed = listRoleAssignmentsAsync adminClient "org" ownerId orgA "" ""
@@ -346,18 +347,18 @@ type AccessControlSecurityTests() =
             let repoB = $"{Guid.NewGuid()}"
             let adminUser = $"{Guid.NewGuid()}"
 
-            let! grantAdmin = grantRoleAsync Client "repo" ownerId orgId repoA "" adminUser "RepoAdmin"
+            let! grantAdmin = grantRoleAsync Client "repo" ownerId orgId repoA "" adminUser "RepositoryAdmin"
             Assert.That(grantAdmin.StatusCode, Is.EqualTo(HttpStatusCode.OK))
 
             use adminClient = createClientWithUserId adminUser
 
-            let! allowed = grantRoleAsync adminClient "repo" ownerId orgId repoA "" $"{Guid.NewGuid()}" "RepoReader"
+            let! allowed = grantRoleAsync adminClient "repo" ownerId orgId repoA "" $"{Guid.NewGuid()}" "RepositoryReader"
             Assert.That(allowed.StatusCode, Is.EqualTo(HttpStatusCode.OK))
 
-            let! forbidden = grantRoleAsync adminClient "repo" ownerId orgId repoB "" $"{Guid.NewGuid()}" "RepoReader"
+            let! forbidden = grantRoleAsync adminClient "repo" ownerId orgId repoB "" $"{Guid.NewGuid()}" "RepositoryReader"
             Assert.That(forbidden.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden))
 
-            let! revokeForbidden = revokeRoleAsync adminClient "repo" ownerId orgId repoB "" $"{Guid.NewGuid()}" "RepoReader"
+            let! revokeForbidden = revokeRoleAsync adminClient "repo" ownerId orgId repoB "" $"{Guid.NewGuid()}" "RepositoryReader"
             Assert.That(revokeForbidden.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden))
 
             let! listAllowed = listRoleAssignmentsAsync adminClient "repo" ownerId orgId repoA ""
@@ -409,20 +410,20 @@ type AccessControlSecurityTests() =
             let orgAdminUser = $"{Guid.NewGuid()}"
             let repoWriterUser = $"{Guid.NewGuid()}"
 
-            let! grantRepoAdmin = grantRoleAsync Client "repo" ownerId orgId repoId "" repoAdminUser "RepoAdmin"
-            Assert.That(grantRepoAdmin.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+            let! grantRepositoryAdmin = grantRoleAsync Client "repo" ownerId orgId repoId "" repoAdminUser "RepositoryAdmin"
+            Assert.That(grantRepositoryAdmin.StatusCode, Is.EqualTo(HttpStatusCode.OK))
 
-            let! grantOrgAdmin = grantRoleAsync Client "org" ownerId orgId "" "" orgAdminUser "OrgAdmin"
-            Assert.That(grantOrgAdmin.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+            let! grantOrganizationAdmin = grantRoleAsync Client "org" ownerId orgId "" "" orgAdminUser "OrganizationAdmin"
+            Assert.That(grantOrganizationAdmin.StatusCode, Is.EqualTo(HttpStatusCode.OK))
 
-            let! grantRepoWrite = grantRoleAsync Client "repo" ownerId orgId repoId "" repoWriterUser "RepoContributor"
-            Assert.That(grantRepoWrite.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+            let! grantRepositoryWrite = grantRoleAsync Client "repo" ownerId orgId repoId "" repoWriterUser "RepositoryContributor"
+            Assert.That(grantRepositoryWrite.StatusCode, Is.EqualTo(HttpStatusCode.OK))
 
             use repoAdminClient = createClientWithUserId repoAdminUser
             use orgAdminClient = createClientWithUserId orgAdminUser
             use repoWriterClient = createClientWithUserId repoWriterUser
 
-            let! repoAdminCannotGrantOrg = grantRoleAsync repoAdminClient "org" ownerId orgId "" "" $"{Guid.NewGuid()}" "OrgAdmin"
+            let! repoAdminCannotGrantOrg = grantRoleAsync repoAdminClient "org" ownerId orgId "" "" $"{Guid.NewGuid()}" "OrganizationAdmin"
 
             Assert.That(repoAdminCannotGrantOrg.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden))
 
@@ -430,9 +431,9 @@ type AccessControlSecurityTests() =
 
             Assert.That(orgAdminCannotGrantOwner.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden))
 
-            let! repoWriterCannotGrantRepoAdmin = grantRoleAsync repoWriterClient "repo" ownerId orgId repoId "" $"{Guid.NewGuid()}" "RepoAdmin"
+            let! repoWriterCannotGrantRepositoryAdmin = grantRoleAsync repoWriterClient "repo" ownerId orgId repoId "" $"{Guid.NewGuid()}" "RepositoryAdmin"
 
-            Assert.That(repoWriterCannotGrantRepoAdmin.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden))
+            Assert.That(repoWriterCannotGrantRepositoryAdmin.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden))
         }
 
     [<Test>]
@@ -453,7 +454,7 @@ type AccessControlSecurityTests() =
             let ownerId = $"{Guid.NewGuid()}"
             let orgId = $"{Guid.NewGuid()}"
 
-            let! response = grantRoleAsync Client "org" ownerId orgId "" "" $"{Guid.NewGuid()}" "RepoAdmin"
+            let! response = grantRoleAsync Client "org" ownerId orgId "" "" $"{Guid.NewGuid()}" "RepositoryAdmin"
 
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
         }
@@ -638,12 +639,12 @@ type AccessControl() =
             let nonAdminUserId = $"{Guid.NewGuid()}"
             use nonAdminClient = createClientWithUserId nonAdminUserId
 
-            do! grantRoleAsync Client ownerId orgA "" "org" "OrgAdmin" nonAdminUserId
-            do! grantRoleAsync Client ownerId orgB "" "org" "OrgReader" nonAdminUserId
+            do! grantRoleAsync Client ownerId orgA "" "org" "OrganizationAdmin" nonAdminUserId
+            do! grantRoleAsync Client ownerId orgB "" "org" "OrganizationReader" nonAdminUserId
 
-            let! repoAWrite = checkPermissionAsync nonAdminClient ownerId orgA repoA "repo" "RepoWrite" ""
-            let! repoBWrite = checkPermissionAsync nonAdminClient ownerId orgB repoB "repo" "RepoWrite" ""
-            let! repoBRead = checkPermissionAsync nonAdminClient ownerId orgB repoB "repo" "RepoRead" ""
+            let! repoAWrite = checkPermissionAsync nonAdminClient ownerId orgA repoA "repo" "RepositoryWrite" ""
+            let! repoBWrite = checkPermissionAsync nonAdminClient ownerId orgB repoB "repo" "RepositoryWrite" ""
+            let! repoBRead = checkPermissionAsync nonAdminClient ownerId orgB repoB "repo" "RepositoryRead" ""
 
             match repoAWrite with
             | Allowed _ -> ()
@@ -665,8 +666,8 @@ type AccessControl() =
             let! repositoryId = createRepositoryAsync Client organizationId
             let principalId = $"{Guid.NewGuid()}"
 
-            do! grantRoleAsync Client ownerId organizationId "" "org" "OrgAdmin" testUserId
-            do! grantRoleAsync Client ownerId organizationId repositoryId "repo" "RepoReader" principalId
+            do! grantRoleAsync Client ownerId organizationId "" "org" "OrganizationAdmin" testUserId
+            do! grantRoleAsync Client ownerId organizationId repositoryId "repo" "RepositoryReader" principalId
 
             let! afterGrant = listRoleAssignmentsAsync Client ownerId organizationId repositoryId "repo"
 
@@ -674,7 +675,7 @@ type AccessControl() =
                 afterGrant
                 |> List.tryFind (fun assignment ->
                     assignment.Principal.PrincipalId = principalId
-                    && assignment.RoleId = "RepoReader"
+                    && assignment.RoleId = "RepositoryReader"
                     && assignment.Source = "test")
 
             Assert.That(granted.IsSome, Is.True)
@@ -687,13 +688,13 @@ type AccessControl() =
             | other -> Assert.Fail($"Expected repository scope, got {other}.")
 
             use principalClient = createClientWithUserId principalId
-            let! allowedPermission = checkPermissionAsync principalClient ownerId organizationId repositoryId "repo" "RepoRead" ""
+            let! allowedPermission = checkPermissionAsync principalClient ownerId organizationId repositoryId "repo" "RepositoryRead" ""
 
             match allowedPermission with
-            | Allowed reason -> Assert.That(reason, Does.Contain("RepoRead"))
+            | Allowed reason -> Assert.That(reason, Does.Contain("RepositoryRead"))
             | Denied reason -> Assert.Fail($"Expected repo read to be allowed after grant. {reason}")
 
-            do! revokeRoleAsync Client ownerId organizationId repositoryId "repo" "RepoReader" principalId
+            do! revokeRoleAsync Client ownerId organizationId repositoryId "repo" "RepositoryReader" principalId
 
             let! afterRevoke = listRoleAssignmentsAsync Client ownerId organizationId repositoryId "repo"
 
@@ -701,14 +702,14 @@ type AccessControl() =
                 afterRevoke
                 |> List.exists (fun assignment ->
                     assignment.Principal.PrincipalId = principalId
-                    && assignment.RoleId = "RepoReader")
+                    && assignment.RoleId = "RepositoryReader")
 
             Assert.That(stillPresent, Is.False)
 
-            let! deniedPermission = checkPermissionAsync principalClient ownerId organizationId repositoryId "repo" "RepoRead" ""
+            let! deniedPermission = checkPermissionAsync principalClient ownerId organizationId repositoryId "repo" "RepositoryRead" ""
 
             match deniedPermission with
-            | Denied reason -> Assert.That(reason, Does.Contain("RepoRead"))
+            | Denied reason -> Assert.That(reason, Does.Contain("RepositoryRead"))
             | Allowed reason -> Assert.Fail($"Expected repo read to be denied after revoke. {reason}")
         }
 
@@ -718,7 +719,7 @@ type AccessControl() =
             let! organizationId = createOrganizationAsync Client
             let! repositoryId = createRepositoryAsync Client organizationId
 
-            do! grantRoleAsync Client ownerId organizationId "" "org" "OrgAdmin" testUserId
+            do! grantRoleAsync Client ownerId organizationId "" "org" "OrganizationAdmin" testUserId
 
             do!
                 upsertPathPermissionAsync
@@ -770,7 +771,7 @@ type AccessControl() =
             let! deniedResponse = nonAdminClient.PostAsync("/repository/setDescription", createJsonContent parameters)
             Assert.That(deniedResponse.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden))
 
-            do! grantRoleAsync Client ownerId orgId "" "org" "OrgAdmin" nonAdminUserId
+            do! grantRoleAsync Client ownerId orgId "" "org" "OrganizationAdmin" nonAdminUserId
 
             let! allowedResponse = nonAdminClient.PostAsync("/repository/setDescription", createJsonContent parameters)
             Assert.That(allowedResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK))
@@ -782,7 +783,7 @@ type AccessControl() =
             let! orgId = createOrganizationAsync Client
             let! repoId = createRepositoryAsync Client orgId
 
-            do! grantRoleAsync Client ownerId orgId "" "org" "OrgAdmin" testUserId
+            do! grantRoleAsync Client ownerId orgId "" "org" "OrganizationAdmin" testUserId
 
             do!
                 upsertPathPermissionAsync
@@ -838,7 +839,7 @@ type AccessControl() =
                 (deserialize<GraceReturnValue<Grace.Types.Branch.BranchDto>> branchBody)
                     .ReturnValue
 
-            do! grantRoleAsync Client ownerId organizationId repositoryId "repo" "RepoReader" testUserId
+            do! grantRoleAsync Client ownerId organizationId repositoryId "repo" "RepositoryReader" testUserId
 
             do! upsertPathPermissionAsync Client ownerId organizationId repositoryId "sensitive/secret.txt" [ ("engineering", "NoAccess") ]
 
@@ -901,7 +902,7 @@ type AccessControl() =
             parameters.ScopeKind <- "owner"
             parameters.PrincipalType <- "User"
             parameters.PrincipalId <- testUserId
-            parameters.RoleId <- "RepoAdmin"
+            parameters.RoleId <- "RepositoryAdmin"
             parameters.CorrelationId <- generateCorrelationId ()
 
             let! response = Client.PostAsync("/access/grantRole", createJsonContent parameters)
@@ -956,7 +957,7 @@ type AccessControl() =
             parameters.OrganizationId <- organizationId
             parameters.RepositoryId <- repositoryIds[0]
             parameters.ResourceKind <- "repo"
-            parameters.Operation <- "RepoRead"
+            parameters.Operation <- "RepositoryRead"
             parameters.PrincipalType <- "User"
             parameters.PrincipalId <- "other-user"
             parameters.CorrelationId <- generateCorrelationId ()
@@ -976,7 +977,7 @@ type AccessControl() =
             parameters.OrganizationId <- organizationId
             parameters.RepositoryId <- repositoryIds[0]
             parameters.ResourceKind <- "repo"
-            parameters.Operation <- "RepoRead"
+            parameters.Operation <- "RepositoryRead"
             parameters.PrincipalType <- "User"
             parameters.PrincipalId <- nonAdminUserId
             parameters.CorrelationId <- generateCorrelationId ()
@@ -1287,10 +1288,10 @@ type EndpointAuthorizationTests() =
             let orgReader = $"{Guid.NewGuid()}"
             let orgAdmin = $"{Guid.NewGuid()}"
 
-            let! grantReader = grantRoleAsync Client "org" ownerId organizationId "" "" orgReader "OrgReader"
+            let! grantReader = grantRoleAsync Client "org" ownerId organizationId "" "" orgReader "OrganizationReader"
             Assert.That(grantReader.StatusCode, Is.EqualTo(HttpStatusCode.OK))
 
-            let! grantAdmin = grantRoleAsync Client "org" ownerId organizationId "" "" orgAdmin "OrgAdmin"
+            let! grantAdmin = grantRoleAsync Client "org" ownerId organizationId "" "" orgAdmin "OrganizationAdmin"
             Assert.That(grantAdmin.StatusCode, Is.EqualTo(HttpStatusCode.OK))
 
             use unauthClient = createUnauthenticatedClient ()
@@ -1327,10 +1328,10 @@ type EndpointAuthorizationTests() =
             let repoReader = $"{Guid.NewGuid()}"
             let repoAdmin = $"{Guid.NewGuid()}"
 
-            let! grantReader = grantRoleAsync Client "repo" ownerId organizationId repositoryId "" repoReader "RepoReader"
+            let! grantReader = grantRoleAsync Client "repo" ownerId organizationId repositoryId "" repoReader "RepositoryReader"
             Assert.That(grantReader.StatusCode, Is.EqualTo(HttpStatusCode.OK))
 
-            let! grantAdmin = grantRoleAsync Client "repo" ownerId organizationId repositoryId "" repoAdmin "RepoAdmin"
+            let! grantAdmin = grantRoleAsync Client "repo" ownerId organizationId repositoryId "" repoAdmin "RepositoryAdmin"
             Assert.That(grantAdmin.StatusCode, Is.EqualTo(HttpStatusCode.OK))
 
             use unauthClient = createUnauthenticatedClient ()
@@ -1361,16 +1362,16 @@ type EndpointAuthorizationTests() =
         }
 
     [<Test>]
-    member _.WorkCreateRequiresRepoWrite() =
+    member _.WorkCreateRequiresRepositoryWrite() =
         task {
             let repositoryId = repositoryIds[0]
             let repoReader = $"{Guid.NewGuid()}"
             let repoWriter = $"{Guid.NewGuid()}"
 
-            let! grantReader = grantRoleAsync Client "repo" ownerId organizationId repositoryId "" repoReader "RepoReader"
+            let! grantReader = grantRoleAsync Client "repo" ownerId organizationId repositoryId "" repoReader "RepositoryReader"
             Assert.That(grantReader.StatusCode, Is.EqualTo(HttpStatusCode.OK))
 
-            let! grantWriter = grantRoleAsync Client "repo" ownerId organizationId repositoryId "" repoWriter "RepoContributor"
+            let! grantWriter = grantRoleAsync Client "repo" ownerId organizationId repositoryId "" repoWriter "RepositoryContributor"
             Assert.That(grantWriter.StatusCode, Is.EqualTo(HttpStatusCode.OK))
 
             use unauthClient = createUnauthenticatedClient ()
@@ -1400,13 +1401,13 @@ type EndpointAuthorizationTests() =
             let branchWriter = $"{Guid.NewGuid()}"
             let branchAdmin = $"{Guid.NewGuid()}"
 
-            let! grantReader = grantRoleAsync Client "repo" ownerId organizationId repositoryId "" branchReader "RepoReader"
+            let! grantReader = grantRoleAsync Client "repo" ownerId organizationId repositoryId "" branchReader "RepositoryReader"
             Assert.That(grantReader.StatusCode, Is.EqualTo(HttpStatusCode.OK))
 
-            let! grantWriter = grantRoleAsync Client "repo" ownerId organizationId repositoryId "" branchWriter "RepoContributor"
+            let! grantWriter = grantRoleAsync Client "repo" ownerId organizationId repositoryId "" branchWriter "RepositoryContributor"
             Assert.That(grantWriter.StatusCode, Is.EqualTo(HttpStatusCode.OK))
 
-            let! grantAdmin = grantRoleAsync Client "repo" ownerId organizationId repositoryId "" branchAdmin "RepoAdmin"
+            let! grantAdmin = grantRoleAsync Client "repo" ownerId organizationId repositoryId "" branchAdmin "RepositoryAdmin"
             Assert.That(grantAdmin.StatusCode, Is.EqualTo(HttpStatusCode.OK))
 
             use unauthClient = createUnauthenticatedClient ()
@@ -1462,10 +1463,10 @@ type EndpointAuthorizationTests() =
             let pathReader = $"{Guid.NewGuid()}"
             let pathWriter = $"{Guid.NewGuid()}"
 
-            let! grantReader = grantRoleAsync Client "repo" ownerId organizationId repositoryId "" pathReader "RepoReader"
+            let! grantReader = grantRoleAsync Client "repo" ownerId organizationId repositoryId "" pathReader "RepositoryReader"
             Assert.That(grantReader.StatusCode, Is.EqualTo(HttpStatusCode.OK))
 
-            let! grantWriter = grantRoleAsync Client "repo" ownerId organizationId repositoryId "" pathWriter "RepoContributor"
+            let! grantWriter = grantRoleAsync Client "repo" ownerId organizationId repositoryId "" pathWriter "RepositoryContributor"
             Assert.That(grantWriter.StatusCode, Is.EqualTo(HttpStatusCode.OK))
 
             use unauthClient = createUnauthenticatedClient ()

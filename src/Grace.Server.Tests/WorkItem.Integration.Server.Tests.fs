@@ -935,10 +935,10 @@ type WorkItemLinksAuthorizationIntegrationTests() =
             let repoAdmin = $"{Guid.NewGuid()}"
             let crossRepoPrincipal = $"{Guid.NewGuid()}"
 
-            do! WorkItemIntegrationHelpers.grantRepoRoleAsync repositoryId repoReader "RepoReader"
-            do! WorkItemIntegrationHelpers.grantRepoRoleAsync repositoryId repoWriter "RepoContributor"
-            do! WorkItemIntegrationHelpers.grantRepoRoleAsync repositoryId repoAdmin "RepoAdmin"
-            do! WorkItemIntegrationHelpers.grantRepoRoleAsync otherRepositoryId crossRepoPrincipal "RepoAdmin"
+            do! WorkItemIntegrationHelpers.grantRepoRoleAsync repositoryId repoReader "RepositoryReader"
+            do! WorkItemIntegrationHelpers.grantRepoRoleAsync repositoryId repoWriter "RepositoryContributor"
+            do! WorkItemIntegrationHelpers.grantRepoRoleAsync repositoryId repoAdmin "RepositoryAdmin"
+            do! WorkItemIntegrationHelpers.grantRepoRoleAsync otherRepositoryId crossRepoPrincipal "RepositoryAdmin"
 
             use unauthenticatedClient = WorkItemIntegrationHelpers.createUnauthenticatedClient ()
             use noRoleClient = WorkItemIntegrationHelpers.createAuthenticatedClient $"{Guid.NewGuid()}"
@@ -1079,9 +1079,9 @@ type WorkItemLinksAuthorizationIntegrationTests() =
             let repoWriter = $"{Guid.NewGuid()}"
             let crossRepoPrincipal = $"{Guid.NewGuid()}"
 
-            do! WorkItemIntegrationHelpers.grantRepoRoleAsync repositoryId repoReader "RepoReader"
-            do! WorkItemIntegrationHelpers.grantRepoRoleAsync repositoryId repoWriter "RepoContributor"
-            do! WorkItemIntegrationHelpers.grantRepoRoleAsync otherRepositoryId crossRepoPrincipal "RepoAdmin"
+            do! WorkItemIntegrationHelpers.grantRepoRoleAsync repositoryId repoReader "RepositoryReader"
+            do! WorkItemIntegrationHelpers.grantRepoRoleAsync repositoryId repoWriter "RepositoryContributor"
+            do! WorkItemIntegrationHelpers.grantRepoRoleAsync otherRepositoryId crossRepoPrincipal "RepositoryAdmin"
 
             use unauthenticatedClient = WorkItemIntegrationHelpers.createUnauthenticatedClient ()
             use noRoleClient = WorkItemIntegrationHelpers.createAuthenticatedClient $"{Guid.NewGuid()}"
