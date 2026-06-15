@@ -111,6 +111,9 @@ so links stay traceable without relying on epic-branch auto-close behavior.
   before commit/push/handoff steps, and before the final response. Also ask the worker to send a short chat heartbeat
   roughly every five minutes while still working so the orchestrator can distinguish active progress from a stalled or
   lost worker without interrupting it.
+- Agents must never sleep or poll for more than 120 seconds in one command. This includes `Start-Sleep`, `wait_agent`,
+  long-polling commands, watch loops, and tool waits. Use repeated shorter checks instead, updating the status file
+  between checks when the wait is part of a long-running workflow.
 - Worker subagents should finish their assigned implementation or fix as soon as they have a validated result and a
   handoff. By default, do not make workers update GitHub issues, pull request bodies, review comments, conversation
   resolution, labels, checklists, or merge/cleanup state. The orchestrator owns those GitHub coordination updates and

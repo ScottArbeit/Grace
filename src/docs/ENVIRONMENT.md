@@ -65,17 +65,19 @@ Use this path when you want zero external auth for a new local environment:
 PowerShell:
 
 ```powershell
-pwsh ./scripts/start-debuglocal.ps1 -GraceServerUri "http://localhost:5000"
+pwsh ./scripts/start-debuglocal.ps1 -GraceServerUri "http://localhost:5000" -SkipAuthProbe
 ```
 
 bash / zsh:
 
 ```bash
-pwsh ./scripts/start-debuglocal.ps1 --GraceServerUri "http://localhost:5000"
+pwsh ./scripts/start-debuglocal.ps1 --GraceServerUri "http://localhost:5000" -SkipAuthProbe
 ```
 
 The script creates a PAT through explicit TestAuth headers so the first local SystemAdmin can get started without an
-OIDC tenant.
+OIDC tenant. `-SkipAuthProbe` is required for this true zero-OIDC path because the default preflight checks
+`/auth/oidc/config` before TestAuth PAT creation. Omit it when OIDC/MSA settings are configured and you want the script
+to verify `/auth/oidc/config` and `/auth/me` before creating the PAT.
 
 Use this path when the server has OIDC/MSA settings and you want normal interactive auth:
 
