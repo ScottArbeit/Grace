@@ -447,7 +447,12 @@ module Branch =
                                 | Error errors -> return Error(annotationError correlationId (String.Join(" ", errors)))
         }
 
-    let processCommand<'T when 'T :> BranchParameters> (context: HttpContext) (validations: Validations<'T>) (command: 'T -> ValueTask<BranchCommand>) =
+    let processCommandWithPostSuccess<'T when 'T :> BranchParameters>
+        (context: HttpContext)
+        (validations: Validations<'T>)
+        (command: 'T -> ValueTask<BranchCommand>)
+        (postSuccess: unit -> Task<Result<unit, GraceError>>)
+        =
         task {
             let startTime = getCurrentInstant ()
             let graceIds = getGraceIds context
@@ -485,7 +490,20 @@ module Branch =
                                 .enhance ("Path", context.Request.Path.Value)
                             |> ignore
 
-                            return! context |> result200Ok graceReturnValue
+                            match! postSuccess () with
+                            | Ok () -> return! context |> result200Ok graceReturnValue
+                            | Error graceError ->
+                                graceError
+                                    .enhance(parameterDictionary)
+                                    .enhance(nameof OwnerId, graceIds.OwnerId)
+                                    .enhance(nameof OrganizationId, graceIds.OrganizationId)
+                                    .enhance(nameof RepositoryId, graceIds.RepositoryId)
+                                    .enhance(nameof BranchId, graceIds.BranchId)
+                                    .enhance("Command", commandName)
+                                    .enhance ("Path", context.Request.Path.Value)
+                                |> ignore
+
+                                return! context |> result500ServerError graceError
                         | Error graceError ->
                             graceError
                                 .enhance(parameterDictionary)
@@ -566,6 +584,9 @@ module Branch =
 
                 return! context |> result500ServerError graceError
         }
+
+    let processCommand<'T when 'T :> BranchParameters> (context: HttpContext) (validations: Validations<'T>) (command: 'T -> ValueTask<BranchCommand>) =
+        processCommandWithPostSuccess context validations command (fun () -> Task.FromResult(Ok()))
 
     let processQuery<'T, 'U when 'T :> BranchParameters>
         (context: HttpContext)
@@ -709,8 +730,21 @@ module Branch =
                     }
                     |> ValueTask<BranchCommand>
 
+                let ensureCreatorAdmin () =
+                    task {
+                        let graceIds = getGraceIds context
+
+                        match!
+                            CreatorScopeAdminGrant.ensureCreatorAdminForCreatedScope
+                                context
+                                (Grace.Types.Authorization.Scope.Branch(graceIds.OwnerId, graceIds.OrganizationId, graceIds.RepositoryId, graceIds.BranchId))
+                            with
+                        | Ok _ -> return Ok()
+                        | Error error -> return Error error
+                    }
+
                 context.Items.Add("Command", nameof Create)
-                return! processCommand context validations command
+                return! processCommandWithPostSuccess context validations command ensureCreatorAdmin
             }
 
     /// Rebases a branch on its parent branch.

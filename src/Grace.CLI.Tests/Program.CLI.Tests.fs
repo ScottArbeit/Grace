@@ -69,6 +69,76 @@ module CommandParsingTests =
 
         parseResult.Errors.Count |> should equal 0
 
+    let private grantRoleArgs roleId =
+        [|
+            "access"
+            "grant-role"
+            "--scope"
+            "repo"
+            "--principal-type"
+            "User"
+            "--principal-id"
+            "user-1"
+            "--role"
+            roleId
+        |]
+
+    let private revokeRoleArgs roleId =
+        [|
+            "access"
+            "revoke-role"
+            "--scope"
+            "repo"
+            "--principal-type"
+            "User"
+            "--principal-id"
+            "user-1"
+            "--role"
+            roleId
+        |]
+
+    [<TestCase("SystemAdmin")>]
+    [<TestCase("SystemOperator")>]
+    [<TestCase("SystemReader")>]
+    [<TestCase("OwnerAdmin")>]
+    [<TestCase("OwnerContributor")>]
+    [<TestCase("OwnerReader")>]
+    [<TestCase("OrganizationAdmin")>]
+    [<TestCase("OrganizationContributor")>]
+    [<TestCase("OrganizationReader")>]
+    [<TestCase("RepositoryAdmin")>]
+    [<TestCase("RepositoryContributor")>]
+    [<TestCase("RepositoryReader")>]
+    [<TestCase("repositoryreader")>]
+    [<TestCase("BranchAdmin")>]
+    [<TestCase("BranchWriter")>]
+    [<TestCase("BranchReader")>]
+    [<TestCase("ApprovalResponder")>]
+    let ``access role commands accept canonical role ids`` roleId =
+        let grantParseResult = GraceCommand.rootCommand.Parse(grantRoleArgs roleId)
+        grantParseResult.Errors.Count |> should equal 0
+
+        let revokeParseResult = GraceCommand.rootCommand.Parse(revokeRoleArgs roleId)
+        revokeParseResult.Errors.Count |> should equal 0
+
+    [<TestCase("OrgAdmin")>]
+    [<TestCase("OrgContributor")>]
+    [<TestCase("OrgReader")>]
+    [<TestCase("RepoAdmin")>]
+    [<TestCase("RepoContributor")>]
+    [<TestCase("RepoReader")>]
+    [<TestCase("rEpOaDmIn")>]
+    [<TestCase("oRgReAdEr")>]
+    let ``access grant role rejects stale short role ids`` roleId =
+        let grantParseResult = GraceCommand.rootCommand.Parse(grantRoleArgs roleId)
+        grantParseResult.Errors.Count |> should equal 1
+
+    [<TestCase("OrgAdmin")>]
+    [<TestCase("RepositoryReader")>]
+    let ``access revoke role accepts raw role ids for cleanup`` roleId =
+        let revokeParseResult = GraceCommand.rootCommand.Parse(revokeRoleArgs roleId)
+        revokeParseResult.Errors.Count |> should equal 0
+
 
 namespace Grace.CLI.Tests
 

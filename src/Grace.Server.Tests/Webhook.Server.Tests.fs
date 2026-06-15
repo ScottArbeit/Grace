@@ -158,7 +158,7 @@ type WebhookApiIntegrationTests() =
             let branchId = repositoryDefaultBranchIds[0]
             let adminUser = $"{Guid.NewGuid()}"
 
-            let! grant = WebhookTestHelpers.grantRoleAsync Client "repo" ownerId organizationId repositoryId "" adminUser "RepoAdmin"
+            let! grant = WebhookTestHelpers.grantRoleAsync Client "repo" ownerId organizationId repositoryId "" adminUser "RepositoryAdmin"
             Assert.That(grant.StatusCode, Is.EqualTo(HttpStatusCode.OK))
 
             use adminClient = WebhookTestHelpers.createAuthenticatedClient adminUser
@@ -275,7 +275,7 @@ type WebhookApiIntegrationTests() =
             let branchId = repositoryDefaultBranchIds[0]
             let adminUser = $"{Guid.NewGuid()}"
 
-            let! grant = WebhookTestHelpers.grantRoleAsync Client "repo" ownerId organizationId repositoryId "" adminUser "RepoAdmin"
+            let! grant = WebhookTestHelpers.grantRoleAsync Client "repo" ownerId organizationId repositoryId "" adminUser "RepositoryAdmin"
             Assert.That(grant.StatusCode, Is.EqualTo(HttpStatusCode.OK))
 
             use adminClient = WebhookTestHelpers.createAuthenticatedClient adminUser
@@ -354,7 +354,7 @@ type WebhookApiIntegrationTests() =
             let branchId = repositoryDefaultBranchIds[0]
             let adminUser = $"{Guid.NewGuid()}"
 
-            let! grant = WebhookTestHelpers.grantRoleAsync Client "repo" ownerId organizationId repositoryId "" adminUser "RepoAdmin"
+            let! grant = WebhookTestHelpers.grantRoleAsync Client "repo" ownerId organizationId repositoryId "" adminUser "RepositoryAdmin"
             Assert.That(grant.StatusCode, Is.EqualTo(HttpStatusCode.OK))
 
             use adminClient = WebhookTestHelpers.createAuthenticatedClient adminUser
@@ -373,7 +373,7 @@ type WebhookApiIntegrationTests() =
             let otherBranchId = $"{Guid.NewGuid()}"
             let adminUser = $"{Guid.NewGuid()}"
 
-            let! grant = WebhookTestHelpers.grantRoleAsync Client "repo" ownerId organizationId repositoryId "" adminUser "RepoAdmin"
+            let! grant = WebhookTestHelpers.grantRoleAsync Client "repo" ownerId organizationId repositoryId "" adminUser "RepositoryAdmin"
             Assert.That(grant.StatusCode, Is.EqualTo(HttpStatusCode.OK))
 
             use adminClient = WebhookTestHelpers.createAuthenticatedClient adminUser
@@ -408,7 +408,7 @@ type WebhookApiIntegrationTests() =
             let adminUser = $"{Guid.NewGuid()}"
             let limitedUser = $"{Guid.NewGuid()}"
 
-            let! grantAdmin = WebhookTestHelpers.grantRoleAsync Client "repo" ownerId organizationId repositoryId "" adminUser "RepoAdmin"
+            let! grantAdmin = WebhookTestHelpers.grantRoleAsync Client "repo" ownerId organizationId repositoryId "" adminUser "RepositoryAdmin"
             Assert.That(grantAdmin.StatusCode, Is.EqualTo(HttpStatusCode.OK))
 
             use adminClient = WebhookTestHelpers.createAuthenticatedClient adminUser

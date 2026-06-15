@@ -17,35 +17,74 @@ module Authorization =
 
         let private systemAdminOperations =
             set [ SystemAdmin
+                  SystemOperate
+                  SystemRead
                   OwnerAdmin
+                  OwnerWrite
                   OwnerRead
-                  OrgAdmin
-                  OrgRead
-                  RepoAdmin
-                  RepoRead
-                  RepoWrite
+                  OrganizationAdmin
+                  OrganizationWrite
+                  OrganizationRead
+                  RepositoryAdmin
+                  RepositoryWrite
+                  RepositoryRead
                   BranchAdmin
-                  BranchRead
                   BranchWrite
+                  BranchRead
                   PathRead
                   PathWrite
                   ApprovalPolicyManage
                   ApprovalRequestRead
                   ApprovalRequestRespond
                   WebhookManage
+                  WebhookDeliveryRead ]
+
+        let private systemOperatorOperations =
+            set [ SystemOperate
+                  SystemRead
+                  OwnerAdmin
+                  OwnerWrite
+                  OwnerRead
+                  OrganizationAdmin
+                  OrganizationWrite
+                  OrganizationRead
+                  RepositoryAdmin
+                  RepositoryWrite
+                  RepositoryRead
+                  BranchAdmin
+                  BranchWrite
+                  BranchRead
+                  PathRead
+                  PathWrite
+                  ApprovalPolicyManage
+                  ApprovalRequestRead
+                  ApprovalRequestRespond
+                  WebhookManage
+                  WebhookDeliveryRead ]
+
+        let private systemReaderOperations =
+            set [ SystemRead
+                  OwnerRead
+                  OrganizationRead
+                  RepositoryRead
+                  BranchRead
+                  PathRead
+                  ApprovalRequestRead
                   WebhookDeliveryRead ]
 
         let private ownerAdminOperations =
             set [ OwnerAdmin
+                  OwnerWrite
                   OwnerRead
-                  OrgAdmin
-                  OrgRead
-                  RepoAdmin
-                  RepoRead
-                  RepoWrite
+                  OrganizationAdmin
+                  OrganizationWrite
+                  OrganizationRead
+                  RepositoryAdmin
+                  RepositoryWrite
+                  RepositoryRead
                   BranchAdmin
-                  BranchRead
                   BranchWrite
+                  BranchRead
                   PathRead
                   PathWrite
                   ApprovalPolicyManage
@@ -53,20 +92,33 @@ module Authorization =
                   ApprovalRequestRespond
                   WebhookManage
                   WebhookDeliveryRead ]
+
+        let private ownerContributorOperations =
+            set [ OwnerWrite
+                  OwnerRead
+                  OrganizationWrite
+                  OrganizationRead
+                  RepositoryWrite
+                  RepositoryRead
+                  BranchWrite
+                  BranchRead
+                  PathWrite
+                  PathRead ]
 
         let private ownerReaderOperations =
             set [ OwnerRead
-                  OrgRead
-                  RepoRead
+                  OrganizationRead
+                  RepositoryRead
                   BranchRead
                   PathRead ]
 
-        let private orgAdminOperations =
-            set [ OrgAdmin
-                  OrgRead
-                  RepoAdmin
-                  RepoWrite
-                  RepoRead
+        let private organizationAdminOperations =
+            set [ OrganizationAdmin
+                  OrganizationWrite
+                  OrganizationRead
+                  RepositoryAdmin
+                  RepositoryWrite
+                  RepositoryRead
                   PathWrite
                   PathRead
                   BranchAdmin
@@ -78,16 +130,26 @@ module Authorization =
                   WebhookManage
                   WebhookDeliveryRead ]
 
-        let private orgReaderOperations =
-            set [ OrgRead
-                  RepoRead
+        let private organizationContributorOperations =
+            set [ OrganizationWrite
+                  OrganizationRead
+                  RepositoryWrite
+                  RepositoryRead
+                  PathWrite
+                  PathRead
+                  BranchWrite
+                  BranchRead ]
+
+        let private organizationReaderOperations =
+            set [ OrganizationRead
+                  RepositoryRead
                   PathRead
                   BranchRead ]
 
-        let private repoAdminOperations =
-            set [ RepoAdmin
-                  RepoWrite
-                  RepoRead
+        let private repositoryAdminOperations =
+            set [ RepositoryAdmin
+                  RepositoryWrite
+                  RepositoryRead
                   PathWrite
                   PathRead
                   BranchAdmin
@@ -99,16 +161,16 @@ module Authorization =
                   WebhookManage
                   WebhookDeliveryRead ]
 
-        let private repoContributorOperations =
-            set [ RepoWrite
-                  RepoRead
+        let private repositoryContributorOperations =
+            set [ RepositoryWrite
+                  RepositoryRead
                   PathWrite
                   PathRead
                   BranchWrite
                   BranchRead ]
 
-        let private repoReaderOperations =
-            set [ RepoRead
+        let private repositoryReaderOperations =
+            set [ RepositoryRead
                   PathRead
                   BranchRead
                   ApprovalRequestRead ]
@@ -129,13 +191,17 @@ module Authorization =
         let private roles: RoleDefinition list =
             [
                 { RoleId = "SystemAdmin"; AllowedOperations = systemAdminOperations; AppliesTo = Set.ofList [ scopeSystem ] }
+                { RoleId = "SystemOperator"; AllowedOperations = systemOperatorOperations; AppliesTo = Set.ofList [ scopeSystem ] }
+                { RoleId = "SystemReader"; AllowedOperations = systemReaderOperations; AppliesTo = Set.ofList [ scopeSystem ] }
                 { RoleId = "OwnerAdmin"; AllowedOperations = ownerAdminOperations; AppliesTo = Set.ofList [ scopeOwner ] }
+                { RoleId = "OwnerContributor"; AllowedOperations = ownerContributorOperations; AppliesTo = Set.ofList [ scopeOwner ] }
                 { RoleId = "OwnerReader"; AllowedOperations = ownerReaderOperations; AppliesTo = Set.ofList [ scopeOwner ] }
-                { RoleId = "OrgAdmin"; AllowedOperations = orgAdminOperations; AppliesTo = Set.ofList [ scopeOrganization ] }
-                { RoleId = "OrgReader"; AllowedOperations = orgReaderOperations; AppliesTo = Set.ofList [ scopeOrganization ] }
-                { RoleId = "RepoAdmin"; AllowedOperations = repoAdminOperations; AppliesTo = Set.ofList [ scopeRepository ] }
-                { RoleId = "RepoContributor"; AllowedOperations = repoContributorOperations; AppliesTo = Set.ofList [ scopeRepository ] }
-                { RoleId = "RepoReader"; AllowedOperations = repoReaderOperations; AppliesTo = Set.ofList [ scopeRepository ] }
+                { RoleId = "OrganizationAdmin"; AllowedOperations = organizationAdminOperations; AppliesTo = Set.ofList [ scopeOrganization ] }
+                { RoleId = "OrganizationContributor"; AllowedOperations = organizationContributorOperations; AppliesTo = Set.ofList [ scopeOrganization ] }
+                { RoleId = "OrganizationReader"; AllowedOperations = organizationReaderOperations; AppliesTo = Set.ofList [ scopeOrganization ] }
+                { RoleId = "RepositoryAdmin"; AllowedOperations = repositoryAdminOperations; AppliesTo = Set.ofList [ scopeRepository ] }
+                { RoleId = "RepositoryContributor"; AllowedOperations = repositoryContributorOperations; AppliesTo = Set.ofList [ scopeRepository ] }
+                { RoleId = "RepositoryReader"; AllowedOperations = repositoryReaderOperations; AppliesTo = Set.ofList [ scopeRepository ] }
                 { RoleId = "BranchAdmin"; AllowedOperations = branchAdminOperations; AppliesTo = Set.ofList [ scopeBranch ] }
                 { RoleId = "BranchWriter"; AllowedOperations = branchWriterOperations; AppliesTo = Set.ofList [ scopeBranch ] }
                 { RoleId = "BranchReader"; AllowedOperations = branchReaderOperations; AppliesTo = Set.ofList [ scopeBranch ] }

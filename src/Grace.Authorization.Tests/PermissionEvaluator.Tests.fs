@@ -37,7 +37,7 @@ type PermissionEvaluatorTests() =
 
             let! _ =
                 (evaluator :> IGracePermissionEvaluator)
-                    .CheckAsync([ principal ], Set.empty, Operation.RepoRead, resource)
+                    .CheckAsync([ principal ], Set.empty, Operation.RepositoryRead, resource)
 
             let expected = scopesForResource resource
             Assert.That(capturedScopes, Is.EquivalentTo(expected))
@@ -48,7 +48,12 @@ type PermissionEvaluatorTests() =
         task {
             let getAssignmentsForScope (scope: Scope, _correlationId: CorrelationId) =
                 match scope with
-                | Scope.Organization _ -> Task.FromResult([ createAssignment scope "OrgAdmin" ])
+                | Scope.Organization _ ->
+                    Task.FromResult(
+                        [
+                            createAssignment scope "OrganizationAdmin"
+                        ]
+                    )
                 | _ -> Task.FromResult([])
 
             let evaluator = GracePermissionEvaluator(getAssignmentsForScope, emptyPathPermissions)
@@ -56,7 +61,7 @@ type PermissionEvaluatorTests() =
 
             let! result =
                 (evaluator :> IGracePermissionEvaluator)
-                    .CheckAsync([ principal ], Set.empty, Operation.RepoWrite, resource)
+                    .CheckAsync([ principal ], Set.empty, Operation.RepositoryWrite, resource)
 
             match result with
             | Allowed _ -> ()
@@ -78,7 +83,7 @@ type PermissionEvaluatorTests() =
 
             let! _ =
                 (evaluator :> IGracePermissionEvaluator)
-                    .CheckAsync([ principal ], Set.empty, Operation.RepoRead, repositoryResource)
+                    .CheckAsync([ principal ], Set.empty, Operation.RepositoryRead, repositoryResource)
 
             Assert.That(pathPermissionCalls, Is.EqualTo(0))
 
@@ -101,7 +106,7 @@ type PermissionEvaluatorTests() =
 
             let! result =
                 (evaluator :> IGracePermissionEvaluator)
-                    .CheckAsync([ principal ], Set.empty, Operation.RepoRead, resource)
+                    .CheckAsync([ principal ], Set.empty, Operation.RepositoryRead, resource)
 
             match result with
             | Denied _ -> ()

@@ -27,7 +27,7 @@ type AuthorizationUnit() =
         | Allowed reason -> Assert.Fail($"Expected Denied but got Allowed: {reason}")
 
     [<Test>]
-    member _.RoleInheritanceAllowsRepoWriteFromOrgAdmin() =
+    member _.RoleInheritanceAllowsRepositoryWriteFromOrganizationAdmin() =
         let ownerId = Guid.NewGuid()
         let organizationId = Guid.NewGuid()
         let repositoryId = Guid.NewGuid()
@@ -36,11 +36,18 @@ type AuthorizationUnit() =
 
         let assignments =
             [
-                createAssignment principal (Scope.Organization(ownerId, organizationId)) "OrgAdmin"
+                createAssignment principal (Scope.Organization(ownerId, organizationId)) "OrganizationAdmin"
             ]
 
         let result =
-            checkPermission roleCatalog assignments [] [ principal ] Set.empty Operation.RepoWrite (Resource.Repository(ownerId, organizationId, repositoryId))
+            checkPermission
+                roleCatalog
+                assignments
+                []
+                [ principal ]
+                Set.empty
+                Operation.RepositoryWrite
+                (Resource.Repository(ownerId, organizationId, repositoryId))
 
         assertAllowed result
 
@@ -54,7 +61,7 @@ type AuthorizationUnit() =
 
         let assignments =
             [
-                createAssignment principal (Scope.Organization(ownerId, organizationId)) "OrgAdmin"
+                createAssignment principal (Scope.Organization(ownerId, organizationId)) "OrganizationAdmin"
             ]
 
         let denyPermissions = List<ClaimPermission>()
@@ -87,7 +94,7 @@ type AuthorizationUnit() =
 
         let assignments =
             [
-                createAssignment principal (Scope.Organization(ownerId, organizationId)) "OrgReader"
+                createAssignment principal (Scope.Organization(ownerId, organizationId)) "OrganizationReader"
             ]
 
         let allowPermissions = List<ClaimPermission>()
@@ -118,7 +125,8 @@ type AuthorizationUnit() =
 
         let principal = { PrincipalType = PrincipalType.User; PrincipalId = "user-4" }
 
-        let result = checkPermission roleCatalog [] [] [ principal ] Set.empty Operation.RepoRead (Resource.Repository(ownerId, organizationId, repositoryId))
+        let result =
+            checkPermission roleCatalog [] [] [ principal ] Set.empty Operation.RepositoryRead (Resource.Repository(ownerId, organizationId, repositoryId))
 
         assertDenied result
 
@@ -133,7 +141,7 @@ type AuthorizationUnit() =
 
         let assignments =
             [
-                createAssignment groupPrincipal (Scope.Repository(ownerId, organizationId, repositoryId)) "RepoReader"
+                createAssignment groupPrincipal (Scope.Repository(ownerId, organizationId, repositoryId)) "RepositoryReader"
             ]
 
         let result =
@@ -143,15 +151,15 @@ type AuthorizationUnit() =
                 []
                 [ userPrincipal; groupPrincipal ]
                 Set.empty
-                Operation.RepoRead
+                Operation.RepositoryRead
                 (Resource.Repository(ownerId, organizationId, repositoryId))
 
         assertAllowed result
 
     [<Test>]
-    member _.RepoAdminIncludesBranchAdmin() =
+    member _.RepositoryAdminIncludesBranchAdmin() =
         let repoAdmin =
             roleCatalog
-            |> List.find (fun role -> role.RoleId.Equals("RepoAdmin", StringComparison.OrdinalIgnoreCase))
+            |> List.find (fun role -> role.RoleId.Equals("RepositoryAdmin", StringComparison.OrdinalIgnoreCase))
 
         Assert.That(repoAdmin.AllowedOperations.Contains Operation.BranchAdmin, Is.True)
