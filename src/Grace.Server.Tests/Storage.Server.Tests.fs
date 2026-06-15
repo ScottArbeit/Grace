@@ -188,7 +188,7 @@ type StorageContentBlockSasRoutes() =
             let repositoryId = repositoryIds[0]
             let pathWriter = $"{Guid.NewGuid()}"
 
-            let! grantWriter = grantRoleAsync Client "repo" ownerId organizationId repositoryId "" pathWriter "RepoContributor"
+            let! grantWriter = grantRoleAsync Client "repo" ownerId organizationId repositoryId "" pathWriter "RepositoryContributor"
             Assert.That(grantWriter.StatusCode, Is.EqualTo(HttpStatusCode.OK))
 
             use unauthClient = createUnauthenticatedClient ()
@@ -213,7 +213,7 @@ type StorageContentBlockSasRoutes() =
             let repositoryId = repositoryIds[0]
             let pathReader = $"{Guid.NewGuid()}"
 
-            let! grantReader = grantRoleAsync Client "repo" ownerId organizationId repositoryId "" pathReader "RepoReader"
+            let! grantReader = grantRoleAsync Client "repo" ownerId organizationId repositoryId "" pathReader "RepositoryReader"
             Assert.That(grantReader.StatusCode, Is.EqualTo(HttpStatusCode.OK))
 
             use unauthClient = createUnauthenticatedClient ()
@@ -318,7 +318,7 @@ type StorageContentBlockDiscoveryRoutes() =
                     $"chunk-{Guid.NewGuid():N}"
                 |]
 
-            let! grantReader = grantRoleAsync Client "repo" ownerId organizationId repositoryId "" repoReader "RepoReader"
+            let! grantReader = grantRoleAsync Client "repo" ownerId organizationId repositoryId "" repoReader "RepositoryReader"
             Assert.That(grantReader.StatusCode, Is.EqualTo(HttpStatusCode.OK))
 
             use unauthClient = createUnauthenticatedClient ()
@@ -395,7 +395,7 @@ type StorageContentBlockDiscoveryRoutes() =
             let repoReader = $"{Guid.NewGuid()}"
             let requestedChunkAddresses = Array.init (maxDiscoveryKeyChunkAddresses + 1) (fun index -> $"chunk-{index}-{Guid.NewGuid():N}")
 
-            let! grantReader = grantRoleAsync Client "repo" ownerId organizationId repositoryId "" repoReader "RepoReader"
+            let! grantReader = grantRoleAsync Client "repo" ownerId organizationId repositoryId "" repoReader "RepositoryReader"
             Assert.That(grantReader.StatusCode, Is.EqualTo(HttpStatusCode.OK))
 
             use readerClient = createClientWithUserId repoReader

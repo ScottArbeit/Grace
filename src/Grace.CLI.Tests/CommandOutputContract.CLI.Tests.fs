@@ -58,7 +58,7 @@ module CommandOutputContractRegistryTests =
         | "--fire-at" -> "2026-01-01T00:00:00Z"
         | "--format" -> "json"
         | "--gate" -> "build"
-        | "--operation" -> "RepoRead"
+        | "--operation" -> "RepositoryRead"
         | "--organization-type"
         | "--owner-type"
         | "--visibility" -> "Public"

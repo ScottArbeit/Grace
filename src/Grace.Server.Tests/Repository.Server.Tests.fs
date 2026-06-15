@@ -28,7 +28,7 @@ type Repository() =
             .Create(fun builder -> builder.AddConsole().AddDebug() |> ignore)
             .CreateLogger("RepositoryTests")
 
-    let grantRepoAdminAsync repositoryId =
+    let grantRepositoryAdminAsync repositoryId =
         task {
             let parameters = Parameters.Access.GrantRoleParameters()
             parameters.OwnerId <- ownerId
@@ -37,7 +37,7 @@ type Repository() =
             parameters.PrincipalType <- "User"
             parameters.PrincipalId <- testUserId
             parameters.ScopeKind <- "repo"
-            parameters.RoleId <- "RepoAdmin"
+            parameters.RoleId <- "RepositoryAdmin"
             parameters.Source <- "test"
             parameters.CorrelationId <- generateCorrelationId ()
 
@@ -94,7 +94,7 @@ type Repository() =
             parameters.RepositoryId <- repositoryId
             parameters.CorrelationId <- generateCorrelationId ()
 
-            do! grantRepoAdminAsync parameters.RepositoryId
+            do! grantRepositoryAdminAsync parameters.RepositoryId
 
             let! response = Client.PostAsync("/repository/setDescription", createJsonContent parameters)
             response.EnsureSuccessStatusCode() |> ignore
@@ -136,7 +136,7 @@ type Repository() =
             validParameters.Description <- baseline
             validParameters.CorrelationId <- generateCorrelationId ()
 
-            do! grantRepoAdminAsync repositoryId
+            do! grantRepositoryAdminAsync repositoryId
 
             let! validResponse = Client.PostAsync("/repository/setDescription", createJsonContent validParameters)
             validResponse.EnsureSuccessStatusCode() |> ignore
@@ -324,7 +324,7 @@ type Repository() =
             parameters.Visibility <- "Public"
             parameters.CorrelationId <- generateCorrelationId ()
 
-            do! grantRepoAdminAsync repositoryId
+            do! grantRepositoryAdminAsync repositoryId
 
             let! response = Client.PostAsync("/repository/setVisibility", createJsonContent parameters)
             response.EnsureSuccessStatusCode() |> ignore

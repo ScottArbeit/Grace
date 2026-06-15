@@ -64,18 +64,18 @@ module Access =
         match scope with
         | Scope.System -> Operation.SystemAdmin
         | Scope.Owner _ -> Operation.OwnerAdmin
-        | Scope.Organization _ -> Operation.OrgAdmin
-        | Scope.Repository _ -> Operation.RepoAdmin
+        | Scope.Organization _ -> Operation.OrganizationAdmin
+        | Scope.Repository _ -> Operation.RepositoryAdmin
         | Scope.Branch _ -> Operation.BranchAdmin
 
     let private adminOperationForResource (resource: Resource) =
         match resource with
         | Resource.System -> Operation.SystemAdmin
         | Resource.Owner _ -> Operation.OwnerAdmin
-        | Resource.Organization _ -> Operation.OrgAdmin
-        | Resource.Repository _ -> Operation.RepoAdmin
+        | Resource.Organization _ -> Operation.OrganizationAdmin
+        | Resource.Repository _ -> Operation.RepositoryAdmin
         | Resource.Branch _ -> Operation.BranchAdmin
-        | Resource.Path (ownerId, organizationId, repositoryId, _relativePath) -> Operation.RepoAdmin
+        | Resource.Path (ownerId, organizationId, repositoryId, _relativePath) -> Operation.RepositoryAdmin
 
     let private authorize (context: HttpContext) (operation: Operation) (resource: Resource) =
         task {
@@ -406,7 +406,7 @@ module Access =
                 match tryParseRepositoryResource parameters correlationId with
                 | Error error -> return! context |> result400BadRequest error
                 | Ok repositoryResource ->
-                    let! authorizationResult = authorize context Operation.RepoAdmin repositoryResource
+                    let! authorizationResult = authorize context Operation.RepositoryAdmin repositoryResource
 
                     match authorizationResult with
                     | Error reason -> return! forbiddenResult context reason
@@ -432,7 +432,7 @@ module Access =
                 match tryParseRepositoryResource parameters correlationId with
                 | Error error -> return! context |> result400BadRequest error
                 | Ok repositoryResource ->
-                    let! authorizationResult = authorize context Operation.RepoAdmin repositoryResource
+                    let! authorizationResult = authorize context Operation.RepositoryAdmin repositoryResource
 
                     match authorizationResult with
                     | Error reason -> return! forbiddenResult context reason
@@ -461,7 +461,7 @@ module Access =
                 match tryParseRepositoryResource parameters correlationId with
                 | Error error -> return! context |> result400BadRequest error
                 | Ok repositoryResource ->
-                    let! authorizationResult = authorize context Operation.RepoAdmin repositoryResource
+                    let! authorizationResult = authorize context Operation.RepositoryAdmin repositoryResource
 
                     match authorizationResult with
                     | Error reason -> return! forbiddenResult context reason
