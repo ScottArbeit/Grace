@@ -1757,35 +1757,15 @@ module Application =
                     || value.Equals("true", StringComparison.OrdinalIgnoreCase)
                     || value.Equals("yes", StringComparison.OrdinalIgnoreCase)
 
-            if isTesting then
-                services
-                    .AddAuthentication(fun options ->
-                        options.DefaultScheme <- "GraceAuth"
-                        options.DefaultChallengeScheme <- "GraceAuth")
-                    .AddPolicyScheme(
-                        "GraceAuth",
-                        "GraceAuth",
-                        fun options ->
-                            options.ForwardDefaultSelector <-
-                                fun context ->
-                                    let authorization = context.Request.Headers.Authorization.ToString()
-                                    AuthSchemeSelection.selectScheme true false authorization
-                    )
-                    .AddScheme<AuthenticationSchemeOptions, GraceTestAuthHandler>(TestAuth.SchemeName, (fun _ -> ()))
-                    .AddScheme<AuthenticationSchemeOptions, PersonalAccessTokenAuth.PersonalAccessTokenAuthHandler>(
-                        PersonalAccessTokenAuth.SchemeName,
-                        fun _ -> ()
-                    )
-                |> ignore
-            else
-                let oidcConfig = ExternalAuthConfig.tryGetOidcConfig configuration
-                let hasOidc = oidcConfig |> Option.isSome
+            let oidcConfig = ExternalAuthConfig.tryGetOidcConfig configuration
+            let hasOidc = oidcConfig |> Option.isSome
 
-                let authBuilder =
-                    services.AddAuthentication (fun options ->
-                        options.DefaultScheme <- "GraceAuth"
-                        options.DefaultChallengeScheme <- "GraceAuth")
+            let authBuilder =
+                services.AddAuthentication (fun options ->
+                    options.DefaultScheme <- "GraceAuth"
+                    options.DefaultChallengeScheme <- "GraceAuth")
 
+            let schemeBuilder =
                 authBuilder
                     .AddPolicyScheme(
                         "GraceAuth",
@@ -1794,33 +1774,45 @@ module Application =
                             options.ForwardDefaultSelector <-
                                 fun context ->
                                     let authorization = context.Request.Headers.Authorization.ToString()
-                                    AuthSchemeSelection.selectScheme false hasOidc authorization
+
+                                    let testUserId =
+                                        context
+                                            .Request
+                                            .Headers[ TestAuth.UserIdHeader ]
+                                            .ToString()
+
+                                    AuthSchemeSelection.selectScheme isTesting hasOidc authorization testUserId
                     )
                     .AddScheme<AuthenticationSchemeOptions, PersonalAccessTokenAuth.PersonalAccessTokenAuthHandler>(
                         PersonalAccessTokenAuth.SchemeName,
                         fun _ -> ()
                     )
+
+            if isTesting then
+                schemeBuilder.AddScheme<AuthenticationSchemeOptions, GraceTestAuthHandler>(TestAuth.SchemeName, (fun _ -> ()))
                 |> ignore
+            else
+                schemeBuilder |> ignore
 
-                match oidcConfig with
-                | Some config ->
-                    authBuilder.AddJwtBearer(
-                        JwtBearerDefaults.AuthenticationScheme,
-                        fun options ->
-                            options.Authority <- config.Authority
-                            options.Audience <- config.Audience
+            match oidcConfig with
+            | Some config ->
+                authBuilder.AddJwtBearer(
+                    JwtBearerDefaults.AuthenticationScheme,
+                    fun options ->
+                        options.Authority <- config.Authority
+                        options.Audience <- config.Audience
 
-                            options.TokenValidationParameters <-
-                                TokenValidationParameters(
-                                    ValidateIssuer = true,
-                                    ValidateAudience = true,
-                                    NameClaimType = "name",
-                                    RoleClaimType = "roles",
-                                    ValidAudience = config.Audience
-                                )
-                    )
-                    |> ignore
-                | None -> ()
+                        options.TokenValidationParameters <-
+                            TokenValidationParameters(
+                                ValidateIssuer = true,
+                                ValidateAudience = true,
+                                NameClaimType = "name",
+                                RoleClaimType = "roles",
+                                ValidAudience = config.Audience
+                            )
+                )
+                |> ignore
+            | None -> ()
 
             services.AddAuthorization (fun options ->
                 options.FallbackPolicy <-

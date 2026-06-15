@@ -11,6 +11,30 @@ open System.Net.Http.Headers
 open System.Net.Http.Json
 open System.Threading.Tasks
 
+module ResponseErrors =
+
+    let private statusDescription (response: HttpResponseMessage) =
+        let reason =
+            if String.IsNullOrWhiteSpace response.ReasonPhrase then
+                response.StatusCode.ToString()
+            else
+                response.ReasonPhrase
+
+        $"{int response.StatusCode} {reason}"
+
+    let fromResponse (correlationId: string) (route: string) (response: HttpResponseMessage) =
+        task {
+            let! responseBody = response.Content.ReadAsStringAsync()
+
+            if String.IsNullOrWhiteSpace responseBody then
+                return GraceError.Create $"Server returned {statusDescription response} for {route} without an error body." correlationId
+            else
+                try
+                    return deserialize<GraceError> responseBody
+                with
+                | _ -> return GraceError.Create responseBody correlationId
+        }
+
 module Auth =
 
     type TokenProvider = unit -> Task<string option>
@@ -65,7 +89,7 @@ module Auth =
                         |> enhance "ServerResponseTime" $"{(endTime - startTime).TotalMilliseconds:F3} ms"
                         |> ClientIdentity.enhanceWithLifecycleDiagnostics response
                 else
-                    let! graceError = response.Content.ReadFromJsonAsync<GraceError>(Constants.JsonSerializerOptions)
+                    let! graceError = ResponseErrors.fromResponse correlationId "auth/oidc/config" response
 
                     return
                         Error graceError

@@ -84,6 +84,16 @@ export grace__authz__bootstrap__system_admin_users="auth0|abc123"
 For local development, you can skip Auth0 entirely by enabling the built-in TestAuth handler.
 This is intended for **dev/test only**.
 
+Debug/TestAuth mode also supports normal JWT bearer authentication when OIDC is configured. Scheme selection is
+deterministic:
+
+1. Grace PAT bearer tokens use `GracePat`.
+1. Non-PAT bearer tokens use OIDC/JWT validation when server OIDC settings are present.
+1. Explicit `x-grace-user-id` requests use TestAuth in testing mode.
+1. Testing requests with no bearer token use TestAuth so local bootstrap can still challenge through the TestAuth path.
+
+TestAuth does not trust arbitrary bearer tokens, and the CLI's `GRACE_TOKEN` environment variable remains PAT-only.
+
 ### Enable TestAuth
 
 Set:
@@ -128,6 +138,44 @@ When enabled, Grace authenticates requests using headers:
 
 On first activation (with no existing assignments), Grace will seed `SystemAdmin` for `dev-scott`.
 After that, bootstrap is a no-op.
+
+The canonical zero-external-auth bootstrap helper uses this path and prints a usable PAT:
+
+PowerShell:
+
+```powershell
+pwsh ./scripts/start-debuglocal.ps1 -GraceServerUri "http://localhost:5000"
+```
+
+bash / zsh:
+
+```bash
+pwsh ./scripts/start-debuglocal.ps1 --GraceServerUri "http://localhost:5000"
+```
+
+If OIDC/MSA is configured instead, use the interactive CLI path:
+
+PowerShell:
+
+```powershell
+$env:GRACE_SERVER_URI="http://localhost:5000"
+grace auth login
+grace auth whoami --output Verbose
+grace auth token create --name "local-dev" --expires-in 30d --output Verbose
+```
+
+bash / zsh:
+
+```bash
+export GRACE_SERVER_URI="http://localhost:5000"
+grace auth login
+grace auth whoami --output Verbose
+grace auth token create --name "local-dev" --expires-in 30d --output Verbose
+```
+
+`grace auth whoami` proves authentication. `grace auth token create` also requires authorization: the authenticated
+principal must already have a role such as `SystemAdmin`, either from first-admin bootstrap seeding or from an existing
+admin grant.
 
 ---
 
