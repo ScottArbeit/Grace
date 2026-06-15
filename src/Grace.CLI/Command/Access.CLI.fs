@@ -107,7 +107,13 @@ module Access =
                     |]
                 )
 
-        let roleId = new Option<string>(OptionName.RoleId, Required = true, Description = "Role identifier.", Arity = ArgumentArity.ExactlyOne)
+        let roleId =
+            (new Option<string>(OptionName.RoleId, Required = true, Description = "Role identifier.", Arity = ArgumentArity.ExactlyOne))
+                .AcceptOnlyFromAmong(
+                    Authorization.RoleCatalog.getAll ()
+                    |> List.map (fun role -> role.RoleId)
+                    |> List.toArray
+                )
 
         let source = new Option<string>(OptionName.Source, Required = false, Description = "Optional role assignment source.", Arity = ArgumentArity.ZeroOrOne)
 

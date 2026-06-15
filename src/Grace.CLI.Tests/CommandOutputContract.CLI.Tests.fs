@@ -69,6 +69,7 @@ module CommandOutputContractRegistryTests =
         | "--promotion-mode" -> "IndividualOnly"
         | "--resource"
         | "--scope" -> "repository"
+        | "--role" -> "RepositoryReader"
         | "--search-visibility" -> "Visible"
         | "--set" -> "Active"
         | "--status" -> "Active"
