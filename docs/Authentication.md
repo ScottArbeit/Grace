@@ -144,14 +144,18 @@ The canonical zero-external-auth bootstrap helper uses this path and prints a us
 PowerShell:
 
 ```powershell
-pwsh ./scripts/start-debuglocal.ps1 -GraceServerUri "http://localhost:5000"
+pwsh ./scripts/start-debuglocal.ps1 -GraceServerUri "http://localhost:5000" -SkipAuthProbe
 ```
 
 bash / zsh:
 
 ```bash
-pwsh ./scripts/start-debuglocal.ps1 --GraceServerUri "http://localhost:5000"
+pwsh ./scripts/start-debuglocal.ps1 --GraceServerUri "http://localhost:5000" -SkipAuthProbe
 ```
+
+`-SkipAuthProbe` is required for the true zero-OIDC bootstrap path because the default auth probe checks
+`/auth/oidc/config` before TestAuth PAT creation. Omit `-SkipAuthProbe` when OIDC/MSA settings are configured and you
+want the startup helper to verify both `/auth/oidc/config` and `/auth/me` before creating the PAT.
 
 If OIDC/MSA is configured instead, use the interactive CLI path:
 

@@ -64,6 +64,9 @@ update the issue before editing the new paths.
   Codex Code Review Bot to review the refreshed PR head. A bot signal on a stale commit does not satisfy the completion
   gate. For sub-issue PRs targeting an epic integration branch, run that freshness gate against the current epic branch;
   for the final epic-to-`main` PR, run it against current `origin/main`.
+- Never sleep or poll for more than 120 seconds in one command. This applies to `Start-Sleep`, `wait_agent`,
+  long-polling commands, watch loops, and tool waits; use repeated shorter checks instead, with status updates between
+  checks during long workflows.
 - Resolve all compilation errors before considering a task complete.
 - Run impacted tests for each task and fix failures introduced by your changes.
 - Create a new git commit after each completed task to keep review scope clear.

@@ -442,6 +442,10 @@ five minutes while still working. The heartbeat should be a status update, not a
 is blocked. The orchestrator may read the status file and thread output to monitor progress, and should avoid
 interrupting an active worker only to ask for status.
 
+Agents must never sleep or poll for more than 120 seconds in one command. This applies to `Start-Sleep`, `wait_agent`,
+long-polling commands, watch loops, and tool waits. Use repeated shorter checks instead, and update the status file
+between checks when monitoring long-running validation, generation, CI, or review activity.
+
 Before editing files, the implementation worker should post or include a lightweight preflight after reading the issue:
 
 ```markdown
@@ -555,6 +559,8 @@ The review loop is blocking:
 1. After the implementation subagent pushes a commit, monitor the pull request for Codex Code Review Bot activity.
 2. Wait for the bot to put 👀 on the pull request body for the current head commit, then wait for either a 👍🏻 reaction
    or a bot review comment.
+   Use repeated checks no longer than 120 seconds each; do not run one long sleep, watch, `wait_agent`, or poll command
+   while waiting for the bot.
 3. If the bot switches the PR-body reaction to 👍🏻 and there are no unresolved bot review comments for the current head,
    record that no-issues state in `Review Status` and continue toward merge readiness.
 4. If the bot writes a top-level PR comment or inline pull-request-review comment with findings, update
