@@ -10,38 +10,56 @@ type AuthSchemeSelectionUnitTests() =
 
     let gracePatHeader = $"Bearer {TokenPrefix}user.token.secret"
 
-    let assertScheme (expected: string) isTesting hasOidc (authorization: string) =
-        Assert.That(AuthSchemeSelection.selectScheme isTesting hasOidc authorization, Is.EqualTo(expected))
+    let assertScheme (expected: string) isTesting hasOidc (authorization: string) (testUserId: string) =
+        Assert.That(AuthSchemeSelection.selectScheme isTesting hasOidc authorization testUserId, Is.EqualTo(expected))
 
     [<Test>]
-    member _.TestingModeWithNoAuthHeaderSelectsTestAuth() = assertScheme TestAuth.SchemeName true false null
+    member _.TestingModeWithNoAuthHeaderSelectsTestAuth() = assertScheme TestAuth.SchemeName true false null null
 
     [<Test>]
-    member _.TestingModeWithGracePatBearerSelectsPatAuth() = assertScheme PersonalAccessTokenAuth.SchemeName true false gracePatHeader
+    member _.TestingModeWithGracePatBearerSelectsPatAuth() = assertScheme PersonalAccessTokenAuth.SchemeName true false gracePatHeader null
 
     [<Test>]
-    member _.TestingModeWithNonPatBearerSelectsTestAuth() = assertScheme TestAuth.SchemeName true false "Bearer external-jwt-token"
+    member _.TestingModeWithGracePatBearerAndTestUserSelectsPatAuth() = assertScheme PersonalAccessTokenAuth.SchemeName true true gracePatHeader "debug-user"
 
     [<Test>]
-    member _.ProductionWithOidcAndNonPatBearerSelectsJwt() = assertScheme JwtBearerDefaults.AuthenticationScheme false true "Bearer external-jwt-token"
+    member _.TestingModeWithOidcAndNonPatBearerSelectsJwt() = assertScheme JwtBearerDefaults.AuthenticationScheme true true "Bearer external-jwt-token" null
 
     [<Test>]
-    member _.ProductionWithOidcAndGracePatBearerSelectsPatAuth() = assertScheme PersonalAccessTokenAuth.SchemeName false true gracePatHeader
+    member _.TestingModeWithOidcAndNonPatBearerPlusTestUserSelectsJwt() =
+        assertScheme JwtBearerDefaults.AuthenticationScheme true true "Bearer external-jwt-token" "debug-user"
 
     [<Test>]
-    member _.ProductionWithOidcAndNoBearerSelectsJwt() = assertScheme JwtBearerDefaults.AuthenticationScheme false true null
+    member _.TestingModeWithNonPatBearerWithoutOidcSelectsPatAuth() =
+        assertScheme PersonalAccessTokenAuth.SchemeName true false "Bearer external-jwt-token" null
+
+    [<Test>]
+    member _.TestingModeWithExplicitTestUserSelectsTestAuth() = assertScheme TestAuth.SchemeName true false null "debug-user"
+
+    [<Test>]
+    member _.TestingModeWithNonPatBearerWithoutOidcAndExplicitTestUserSelectsTestAuth() =
+        assertScheme TestAuth.SchemeName true false "Bearer external-jwt-token" "debug-user"
+
+    [<Test>]
+    member _.ProductionWithOidcAndNonPatBearerSelectsJwt() = assertScheme JwtBearerDefaults.AuthenticationScheme false true "Bearer external-jwt-token" null
+
+    [<Test>]
+    member _.ProductionWithOidcAndGracePatBearerSelectsPatAuth() = assertScheme PersonalAccessTokenAuth.SchemeName false true gracePatHeader null
+
+    [<Test>]
+    member _.ProductionWithOidcAndNoBearerSelectsJwt() = assertScheme JwtBearerDefaults.AuthenticationScheme false true null null
 
     [<Test>]
     member _.ProductionWithoutOidcSelectsPat() =
-        assertScheme PersonalAccessTokenAuth.SchemeName false false "Bearer external-jwt-token"
+        assertScheme PersonalAccessTokenAuth.SchemeName false false "Bearer external-jwt-token" null
 
-        assertScheme PersonalAccessTokenAuth.SchemeName false false null
+        assertScheme PersonalAccessTokenAuth.SchemeName false false null null
 
     [<Test>]
     member _.WhitespaceAndMalformedHeadersSelectExistingFallback() =
-        assertScheme TestAuth.SchemeName true false "   "
-        assertScheme TestAuth.SchemeName true false "Basic abc123"
-        assertScheme JwtBearerDefaults.AuthenticationScheme false true "   "
-        assertScheme JwtBearerDefaults.AuthenticationScheme false true "Basic abc123"
-        assertScheme PersonalAccessTokenAuth.SchemeName false false "   "
-        assertScheme PersonalAccessTokenAuth.SchemeName false false "Basic abc123"
+        assertScheme TestAuth.SchemeName true false "   " null
+        assertScheme TestAuth.SchemeName true false "Basic abc123" null
+        assertScheme JwtBearerDefaults.AuthenticationScheme false true "   " null
+        assertScheme JwtBearerDefaults.AuthenticationScheme false true "Basic abc123" null
+        assertScheme PersonalAccessTokenAuth.SchemeName false false "Bearer    " null
+        assertScheme PersonalAccessTokenAuth.SchemeName false false "Basic abc123" null

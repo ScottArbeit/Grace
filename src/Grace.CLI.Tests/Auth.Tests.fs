@@ -10,7 +10,12 @@ open NUnit.Framework
 open Spectre.Console
 open System
 open System.IO
+open System.Net
+open System.Net.Sockets
+open System.Text
 open System.Text.Json
+open System.Threading
+open System.Threading.Tasks
 
 [<NonParallelizable>]
 module AuthTests =
@@ -38,7 +43,7 @@ module AuthTests =
 
     let private parseJsonOutput (output: string) =
         output
-        |> fun value -> value.Trim()
+        |> (fun value -> value.Trim())
         |> JsonDocument.Parse
 
     let private withEnv (name: string) (value: string option) (action: unit -> unit) =
@@ -82,6 +87,57 @@ module AuthTests =
             action
 
     let private withoutAuthEnv (action: unit -> unit) = clearOidcEnv (fun () -> withEnv Constants.EnvironmentVariables.GraceToken None action)
+
+    let private withSingleHttpResponse (statusCode: int) (reasonPhrase: string) (body: string) (action: unit -> unit) =
+        use listener = new TcpListener(IPAddress.Loopback, 0)
+        use cancellation = new CancellationTokenSource()
+        listener.Start()
+
+        let writeResponse (client: TcpClient) =
+            task {
+                use client = client
+                use stream = client.GetStream()
+                let buffer = Array.zeroCreate<byte> 8192
+                let! _ = stream.ReadAsync(buffer, 0, buffer.Length)
+                let bodyBytes = Encoding.UTF8.GetBytes(body)
+
+                let responseHeaders = $"HTTP/1.1 {statusCode} {reasonPhrase}\r\nContent-Length: {bodyBytes.Length}\r\nConnection: close\r\n\r\n"
+
+                let headerBytes = Encoding.ASCII.GetBytes(responseHeaders)
+                do! stream.WriteAsync(headerBytes, 0, headerBytes.Length)
+
+                if bodyBytes.Length > 0 then
+                    do! stream.WriteAsync(bodyBytes, 0, bodyBytes.Length)
+            }
+
+        let rec serve () =
+            task {
+                if not cancellation.IsCancellationRequested then
+                    try
+                        let! client =
+                            listener
+                                .AcceptTcpClientAsync(cancellation.Token)
+                                .AsTask()
+
+                        do! writeResponse client
+                        return! serve ()
+                    with
+                    | :? OperationCanceledException -> return ()
+                    | :? ObjectDisposedException -> return ()
+            }
+
+        let serverTask = Task.Run(Func<Task>(fun () -> serve ()))
+
+        let port = (listener.LocalEndpoint :?> IPEndPoint).Port
+
+        try
+            withEnv Constants.EnvironmentVariables.GraceServerUri (Some $"http://127.0.0.1:{port}") action
+        finally
+            cancellation.Cancel()
+            listener.Stop()
+
+            if not (serverTask.Wait(TimeSpan.FromSeconds(5.0))) then
+                Assert.Fail("Timed out waiting for the test HTTP responder to stop.")
 
     let private assertAuthStatusJson (output: string) =
         use document = parseJsonOutput output
@@ -503,3 +559,55 @@ module AuthTests =
 
         returnValue.GetProperty("Subject").GetString()
         |> should equal subject
+
+    [<Test>]
+    let ``auth whoami reports empty unauthorized body without json parse exception`` () =
+        withoutAuthEnv (fun () ->
+            withSingleHttpResponse 401 "Unauthorized" String.Empty (fun () ->
+                let exitCode, standardOut, standardError =
+                    runWithCapturedStdoutAndStderr [| "--output"
+                                                      "Verbose"
+                                                      "auth"
+                                                      "whoami" |]
+
+                exitCode |> should not' (equal 0)
+                standardOut |> should contain "401 Unauthorized"
+                standardOut |> should contain "auth/me"
+
+                standardOut
+                |> should not' (contain "JsonException")
+
+                standardOut
+                |> should not' (contain "The input does not contain any JSON tokens")
+
+                standardError |> should equal String.Empty))
+
+    [<Test>]
+    let ``auth token create reports empty unauthorized body without json parse exception`` () =
+        let token = PersonalAccessToken.formatToken "user-1" (Guid.NewGuid()) (Array.zeroCreate 32)
+
+        clearOidcEnv (fun () ->
+            withEnv Constants.EnvironmentVariables.GraceToken (Some token) (fun () ->
+                withSingleHttpResponse 401 "Unauthorized" String.Empty (fun () ->
+                    let exitCode, standardOut, standardError =
+                        runWithCapturedStdoutAndStderr [| "--output"
+                                                          "Verbose"
+                                                          "auth"
+                                                          "token"
+                                                          "create"
+                                                          "--name"
+                                                          "local-dev"
+                                                          "--expires-in"
+                                                          "30d" |]
+
+                    exitCode |> should not' (equal 0)
+                    standardOut |> should contain "401 Unauthorized"
+                    standardOut |> should contain "auth/token/create"
+
+                    standardOut
+                    |> should not' (contain "JsonException")
+
+                    standardOut
+                    |> should not' (contain "The input does not contain any JSON tokens")
+
+                    standardError |> should equal String.Empty)))

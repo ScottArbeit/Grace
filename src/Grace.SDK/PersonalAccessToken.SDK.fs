@@ -50,23 +50,13 @@ module PersonalAccessToken =
                         |> enhance "StatusCode" $"{response.StatusCode}"
                         |> ClientIdentity.enhanceWithLifecycleDiagnostics response
                 else
-                    let! responseAsString = response.Content.ReadAsStringAsync()
+                    let! graceError = ResponseErrors.fromResponse parameters.CorrelationId route response
 
-                    try
-                        let graceError = deserialize<GraceError> responseAsString
-
-                        return
-                            Error graceError
-                            |> enhance "ServerResponseTime" $"{(endTime - startTime).TotalMilliseconds:F3} ms"
-                            |> enhance "StatusCode" $"{response.StatusCode}"
-                            |> ClientIdentity.enhanceWithLifecycleDiagnostics response
-                    with
-                    | _ ->
-                        return
-                            Error(GraceError.Create $"{responseAsString}" parameters.CorrelationId)
-                            |> enhance "ServerResponseTime" $"{(endTime - startTime).TotalMilliseconds:F3} ms"
-                            |> enhance "StatusCode" $"{response.StatusCode}"
-                            |> ClientIdentity.enhanceWithLifecycleDiagnostics response
+                    return
+                        Error graceError
+                        |> enhance "ServerResponseTime" $"{(endTime - startTime).TotalMilliseconds:F3} ms"
+                        |> enhance "StatusCode" $"{response.StatusCode}"
+                        |> ClientIdentity.enhanceWithLifecycleDiagnostics response
             with
             | ex ->
                 let exceptionResponse = Utilities.ExceptionResponse.Create ex

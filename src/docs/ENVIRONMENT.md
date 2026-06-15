@@ -56,6 +56,12 @@ The script prints both the resolved bootstrap user and the source used.
 - if `GRACE_TESTING` is already set in your shell, the script keeps that value;
 - if unset, the script sets `GRACE_TESTING=1` for local TestAuth startup.
 
+Debug/TestAuth mode is additive when OIDC is configured. Grace PAT bearer tokens still use the `GracePat` scheme,
+interactive OIDC/MSA bearer tokens use JWT bearer validation, and explicit `x-grace-user-id` requests still use
+TestAuth for first-time local bootstrap. `GRACE_TOKEN` remains PAT-only; do not put OIDC access tokens in it.
+
+Use this path when you want zero external auth for a new local environment:
+
 PowerShell:
 
 ```powershell
@@ -67,6 +73,33 @@ bash / zsh:
 ```bash
 pwsh ./scripts/start-debuglocal.ps1 --GraceServerUri "http://localhost:5000"
 ```
+
+The script creates a PAT through explicit TestAuth headers so the first local SystemAdmin can get started without an
+OIDC tenant.
+
+Use this path when the server has OIDC/MSA settings and you want normal interactive auth:
+
+PowerShell:
+
+```powershell
+$env:GRACE_SERVER_URI="http://localhost:5000"
+grace auth login
+grace auth whoami --output Verbose
+grace auth token create --name "local-dev" --expires-in 30d --output Verbose
+```
+
+bash / zsh:
+
+```bash
+export GRACE_SERVER_URI="http://localhost:5000"
+grace auth login
+grace auth whoami --output Verbose
+grace auth token create --name "local-dev" --expires-in 30d --output Verbose
+```
+
+Authentication proves the caller identity. The first authenticated OIDC/MSA caller still needs authorization: seed a
+SystemAdmin assignment with `grace__authz__bootstrap__system_admin_users` or have an existing admin grant the needed
+role before PAT creation and other protected operations will succeed.
 
 ## DebugLocal Reliability Switches
 
@@ -190,7 +223,7 @@ These capture failure classification, retryability, cleanup notes, and runtime m
 ### CLI / Client
 
 - `GRACE_SERVER_URI`: Grace server base URL (include port, omit trailing slash).
-- `GRACE_TOKEN`: PAT for non-interactive auth.
+- `GRACE_TOKEN`: Grace PAT for non-interactive auth. OIDC/MSA access tokens are not valid here.
 - `GRACE_TOKEN_FILE`: override for token file path.
 
 ### Reminders
