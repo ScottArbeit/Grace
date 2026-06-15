@@ -274,15 +274,47 @@ module Application =
 
         let requireSystemAdmin: HttpHandler = AuthorizationMiddleware.requiresPermission Operation.SystemAdmin (fun _ -> task { return Resource.System })
 
+        let requireSystemOperateOrAdmin: HttpHandler =
+            AuthorizationMiddleware.requiresAnyPermission
+                [
+                    Operation.SystemAdmin
+                    Operation.SystemOperate
+                ]
+                (fun _ -> task { return Resource.System })
+
         let requireOwnerAdmin: HttpHandler = AuthorizationMiddleware.requiresPermission Operation.OwnerAdmin ownerResourceFromContext
+
+        let requireOwnerWriteOrAdmin: HttpHandler =
+            AuthorizationMiddleware.requiresAnyPermission
+                [
+                    Operation.OwnerAdmin
+                    Operation.OwnerWrite
+                ]
+                ownerResourceFromContext
 
         let requireOwnerRead: HttpHandler = AuthorizationMiddleware.requiresPermission Operation.OwnerRead ownerResourceFromContext
 
         let requireOrganizationAdmin: HttpHandler = AuthorizationMiddleware.requiresPermission Operation.OrganizationAdmin organizationResourceFromContext
 
+        let requireOrganizationWriteOrAdmin: HttpHandler =
+            AuthorizationMiddleware.requiresAnyPermission
+                [
+                    Operation.OrganizationAdmin
+                    Operation.OrganizationWrite
+                ]
+                organizationResourceFromContext
+
         let requireOrganizationRead: HttpHandler = AuthorizationMiddleware.requiresPermission Operation.OrganizationRead organizationResourceFromContext
 
         let requireRepositoryAdmin: HttpHandler = AuthorizationMiddleware.requiresPermission Operation.RepositoryAdmin repositoryResourceFromContext
+
+        let requireRepositoryWriteOrAdmin: HttpHandler =
+            AuthorizationMiddleware.requiresAnyPermission
+                [
+                    Operation.RepositoryAdmin
+                    Operation.RepositoryWrite
+                ]
+                repositoryResourceFromContext
 
         let requireRepositoryRead: HttpHandler = AuthorizationMiddleware.requiresPermission Operation.RepositoryRead repositoryResourceFromContext
 
@@ -291,6 +323,14 @@ module Application =
         let requireArtifactRepositoryRead: HttpHandler = AuthorizationMiddleware.requiresPermissionResolved artifactRepositoryPermissionFromQuery
 
         let requireBranchAdmin: HttpHandler = AuthorizationMiddleware.requiresPermission Operation.BranchAdmin branchResourceFromContext
+
+        let requireBranchWriteOrAdmin: HttpHandler =
+            AuthorizationMiddleware.requiresAnyPermission
+                [
+                    Operation.BranchAdmin
+                    Operation.BranchWrite
+                ]
+                branchResourceFromContext
 
         let requireBranchRead: HttpHandler = AuthorizationMiddleware.requiresPermission Operation.BranchRead branchResourceFromContext
 
@@ -1028,22 +1068,22 @@ module Application =
                 subRoute
                     "/branch"
                     [
-                        POST [ route "/assign" Branch.Assign
+                        POST [ route "/assign" (composeHandlers requireBranchWriteOrAdmin Branch.Assign)
                                |> addMetadata typeof<Branch.AssignParameters>
 
                                route "/annotate" (composeHandlers requireBranchRead (composeHandlers requireAnnotatePathRead Branch.Annotate))
                                |> addMetadata typeof<Branch.AnnotateParameters>
 
-                               (route "/checkpoint" Branch.Checkpoint
+                               (route "/checkpoint" (composeHandlers requireBranchWriteOrAdmin Branch.Checkpoint)
                                 |> addMetadata typeof<Branch.CreateReferenceParameters>)
 
-                               route "/commit" (composeHandlers requireBranchWrite Branch.Commit)
+                               route "/commit" (composeHandlers requireBranchWriteOrAdmin Branch.Commit)
                                |> addMetadata typeof<Branch.CreateReferenceParameters>
 
-                               route "/create" Branch.Create
+                               route "/create" (composeHandlers requireRepositoryWriteOrAdmin Branch.Create)
                                |> addMetadata typeof<Branch.CreateBranchParameters>
 
-                               route "/createExternal" Branch.CreateExternal
+                               route "/createExternal" (composeHandlers requireBranchWriteOrAdmin Branch.CreateExternal)
                                |> addMetadata typeof<Branch.CreateReferenceParameters>
 
                                route "/delete" Branch.Delete
@@ -1121,16 +1161,16 @@ module Application =
                                route "/listContents" Branch.ListContents
                                |> addMetadata typeof<Branch.ListContentsParameters>
 
-                               route "/promote" Branch.Promote
+                               route "/promote" (composeHandlers requireBranchWriteOrAdmin Branch.Promote)
                                |> addMetadata typeof<Branch.CreateReferenceParameters>
 
                                route "/rebase" Branch.Rebase
                                |> addMetadata typeof<Branch.RebaseParameters>
 
-                               route "/save" Branch.Save
+                               route "/save" (composeHandlers requireBranchWriteOrAdmin Branch.Save)
                                |> addMetadata typeof<Branch.CreateReferenceParameters>
 
-                               route "/tag" Branch.Tag
+                               route "/tag" (composeHandlers requireBranchWriteOrAdmin Branch.Tag)
                                |> addMetadata typeof<Branch.CreateReferenceParameters>
 
                                route "/updateParentBranch" Branch.UpdateParentBranch
@@ -1151,7 +1191,7 @@ module Application =
                 subRoute
                     "/directory"
                     [
-                        POST [ route "/create" DirectoryVersion.Create
+                        POST [ route "/create" (composeHandlers requireRepositoryWriteOrAdmin DirectoryVersion.Create)
                                |> addMetadata typeof<DirectoryVersion.CreateParameters>
 
                                route "/get" DirectoryVersion.Get
@@ -1169,14 +1209,14 @@ module Application =
                                route "/getZipFile" DirectoryVersion.GetZipFile
                                |> addMetadata typeof<DirectoryVersion.GetZipFileParameters>
 
-                               route "/saveDirectoryVersions" DirectoryVersion.SaveDirectoryVersions
+                               route "/saveDirectoryVersions" (composeHandlers requireRepositoryWriteOrAdmin DirectoryVersion.SaveDirectoryVersions)
                                |> addMetadata typeof<DirectoryVersion.SaveDirectoryVersionsParameters> ]
                     ]
                 subRoute "/notifications" [ GET [] ]
                 subRoute
                     "/organization"
                     [
-                        POST [ route "/create" Organization.Create
+                        POST [ route "/create" (composeHandlers requireOwnerWriteOrAdmin Organization.Create)
                                |> addMetadata typeof<Organization.CreateOrganizationParameters>
 
                                route "/delete" Organization.Delete
@@ -1206,7 +1246,7 @@ module Application =
                 subRoute
                     "/owner"
                     [
-                        POST [ route "/create" Owner.Create
+                        POST [ route "/create" (composeHandlers requireSystemOperateOrAdmin Owner.Create)
                                |> addMetadata typeof<Owner.CreateOwnerParameters>
 
                                route "/delete" Owner.Delete
@@ -1254,7 +1294,7 @@ module Application =
                 subRoute
                     "/work"
                     [
-                        POST [ route "/create" (composeHandlers requireRepositoryWrite WorkItem.Create)
+                        POST [ route "/create" (composeHandlers requireRepositoryWriteOrAdmin WorkItem.Create)
                                |> addMetadata typeof<WorkItem.CreateWorkItemParameters>
 
                                route "/get" (composeHandlers requireRepositoryRead WorkItem.Get)
@@ -1371,7 +1411,7 @@ module Application =
                 subRoute
                     "/promotion-set"
                     [
-                        POST [ route "/create" PromotionSet.Create
+                        POST [ route "/create" (composeHandlers requireRepositoryWriteOrAdmin PromotionSet.Create)
                                |> addMetadata typeof<Grace.Shared.Parameters.PromotionSet.CreatePromotionSetParameters>
 
                                route "/get" PromotionSet.Get
@@ -1398,7 +1438,7 @@ module Application =
                 subRoute
                     "/validation-set"
                     [
-                        POST [ route "/create" ValidationSet.Create
+                        POST [ route "/create" (composeHandlers requireRepositoryWriteOrAdmin ValidationSet.Create)
                                |> addMetadata typeof<Grace.Shared.Parameters.Validation.CreateValidationSetParameters>
 
                                route "/get" ValidationSet.Get
@@ -1413,13 +1453,13 @@ module Application =
                 subRoute
                     "/validation-result"
                     [
-                        POST [ route "/record" ValidationResult.Record
+                        POST [ route "/record" (composeHandlers requireRepositoryWriteOrAdmin ValidationResult.Record)
                                |> addMetadata typeof<Grace.Shared.Parameters.Validation.RecordValidationResultParameters> ]
                     ]
                 subRoute
                     "/artifact"
                     [
-                        POST [ route "/create" (composeHandlers requireRepositoryWrite Artifact.Create)
+                        POST [ route "/create" (composeHandlers requireRepositoryWriteOrAdmin Artifact.Create)
                                |> addMetadata typeof<Grace.Shared.Parameters.Artifact.CreateArtifactParameters> ]
 
                         GET [ routef "/%O/download-uri" (fun artifactId -> composeHandlers requireArtifactRepositoryRead (Artifact.GetDownloadUri artifactId)) ]
@@ -1427,7 +1467,7 @@ module Application =
                 subRoute
                     "/repository"
                     [
-                        POST [ route "/create" Repository.Create
+                        POST [ route "/create" (composeHandlers requireOrganizationWriteOrAdmin Repository.Create)
                                |> addMetadata typeof<Repository.CreateRepositoryParameters>
 
                                route "/delete" (composeHandlers requireRepositoryAdmin Repository.Delete)
@@ -1598,7 +1638,7 @@ module Application =
                                route "/reschedule" Reminder.Reschedule
                                |> addMetadata typeof<Reminder.RescheduleReminderParameters>
 
-                               route "/create" Reminder.Create
+                               route "/create" (composeHandlers requireRepositoryWriteOrAdmin Reminder.Create)
                                |> addMetadata typeof<Reminder.CreateReminderParameters> ]
                     ]
                 subRoute
