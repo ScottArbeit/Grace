@@ -5,6 +5,7 @@ open Grace.Actors.Constants
 open Grace.Actors.Extensions.ActorProxy
 open Grace.Actors.Interfaces
 open Grace.Actors.Services
+open Grace.Server.Security
 open Grace.Server.Services
 open Grace.Server.Validations
 open Grace.Shared
@@ -31,10 +32,11 @@ module Organization =
 
     let log = ApplicationContext.loggerFactory.CreateLogger("Organization.Server")
 
-    let processCommand<'T when 'T :> OrganizationParameters>
+    let processCommandWithPostSuccess<'T when 'T :> OrganizationParameters>
         (context: HttpContext)
         (validations: Validations<'T>)
         (command: 'T -> ValueTask<OrganizationCommand>)
+        (postSuccess: unit -> Task<Result<unit, GraceError>>)
         =
         task {
             let graceIds = getGraceIds context
@@ -66,7 +68,18 @@ module Organization =
                                 .enhance ("Path", context.Request.Path.Value)
                             |> ignore
 
-                            return! context |> result200Ok graceReturnValue
+                            match! postSuccess () with
+                            | Ok () -> return! context |> result200Ok graceReturnValue
+                            | Error graceError ->
+                                graceError
+                                    .enhance(parameterDictionary)
+                                    .enhance(nameof OwnerId, graceIds.OwnerId)
+                                    .enhance(nameof OrganizationId, graceIds.OrganizationId)
+                                    .enhance("Command", commandName)
+                                    .enhance ("Path", context.Request.Path.Value)
+                                |> ignore
+
+                                return! context |> result500ServerError graceError
                         | Error graceError ->
                             graceError
                                 .enhance(parameterDictionary)
@@ -143,6 +156,13 @@ module Organization =
 
                 return! context |> result500ServerError graceError
         }
+
+    let processCommand<'T when 'T :> OrganizationParameters>
+        (context: HttpContext)
+        (validations: Validations<'T>)
+        (command: 'T -> ValueTask<OrganizationCommand>)
+        =
+        processCommandWithPostSuccess context validations command (fun () -> Task.FromResult(Ok()))
 
     /// Generic processor for all Organization queries.
     let processQuery<'T, 'U when 'T :> OrganizationParameters>
@@ -232,9 +252,22 @@ module Organization =
                     }
                     |> ValueTask<OrganizationCommand>
 
+                let ensureCreatorAdmin () =
+                    task {
+                        let graceIds = getGraceIds context
+
+                        match!
+                            CreatorScopeAdminGrant.ensureCreatorAdminForCreatedScope
+                                context
+                                (Grace.Types.Authorization.Scope.Organization(graceIds.OwnerId, graceIds.OrganizationId))
+                            with
+                        | Ok _ -> return Ok()
+                        | Error error -> return Error error
+                    }
+
                 log.LogDebug("{CurrentInstant}: In Grace.Server.Create.", getCurrentInstantExtended ())
                 context.Items.Add("Command", nameof Create)
-                return! processCommand context validations command
+                return! processCommandWithPostSuccess context validations command ensureCreatorAdmin
             }
 
     /// Set the name of an organization.

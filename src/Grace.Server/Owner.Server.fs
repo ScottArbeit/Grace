@@ -6,6 +6,7 @@ open Grace.Actors.Extensions.ActorProxy
 open Grace.Actors.Interfaces
 open Grace.Actors.Services
 open Grace.Server.ApplicationContext
+open Grace.Server.Security
 open Grace.Server.Services
 open Grace.Server.Validations
 open Grace.Shared
@@ -36,7 +37,12 @@ module Owner =
     let activitySource = new ActivitySource("Owner")
 
     /// Generic processor for all Owner commands.
-    let processCommand<'T when 'T :> OwnerParameters> (context: HttpContext) (validations: Validations<'T>) (command: 'T -> ValueTask<OwnerCommand>) =
+    let processCommandWithPostSuccess<'T when 'T :> OwnerParameters>
+        (context: HttpContext)
+        (validations: Validations<'T>)
+        (command: 'T -> ValueTask<OwnerCommand>)
+        (postSuccess: unit -> Task<Result<unit, GraceError>>)
+        =
         task {
             let commandName = context.Items["Command"] :?> string
             let graceIds = getGraceIds context
@@ -87,7 +93,17 @@ module Owner =
                                 .enhance ("Path", context.Request.Path.Value)
                             |> ignore
 
-                            return! context |> result200Ok graceReturnValue
+                            match! postSuccess () with
+                            | Ok () -> return! context |> result200Ok graceReturnValue
+                            | Error graceError ->
+                                graceError
+                                    .enhance(parameterDictionary)
+                                    .enhance(nameof OwnerId, graceIds.OwnerId)
+                                    .enhance("Command", commandName)
+                                    .enhance ("Path", context.Request.Path.Value)
+                                |> ignore
+
+                                return! context |> result500ServerError graceError
                         | Error graceError ->
                             graceError
                                 .enhance(parameterDictionary)
@@ -163,6 +179,9 @@ module Owner =
                 return! context |> result500ServerError graceError
         }
 
+    let processCommand<'T when 'T :> OwnerParameters> (context: HttpContext) (validations: Validations<'T>) (command: 'T -> ValueTask<OwnerCommand>) =
+        processCommandWithPostSuccess context validations command (fun () -> Task.FromResult(Ok()))
+
     /// Generic processor for all Owner queries.
     let processQuery<'T, 'U when 'T :> OwnerParameters>
         (context: HttpContext)
@@ -233,8 +252,17 @@ module Owner =
                     Create(ownerIdGuid, OwnerName parameters.OwnerName)
                     |> returnValueTask
 
+                let ensureCreatorAdmin () =
+                    task {
+                        let graceIds = getGraceIds context
+
+                        match! CreatorScopeAdminGrant.ensureCreatorAdminForCreatedScope context (Grace.Types.Authorization.Scope.Owner graceIds.OwnerId) with
+                        | Ok _ -> return Ok()
+                        | Error error -> return Error error
+                    }
+
                 context.Items.Add("Command", nameof Create)
-                return! processCommand context validations command
+                return! processCommandWithPostSuccess context validations command ensureCreatorAdmin
             }
 
     /// Set the name of an owner.
