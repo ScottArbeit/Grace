@@ -109,6 +109,7 @@ module CommandParsingTests =
     [<TestCase("RepositoryAdmin")>]
     [<TestCase("RepositoryContributor")>]
     [<TestCase("RepositoryReader")>]
+    [<TestCase("repositoryreader")>]
     [<TestCase("BranchAdmin")>]
     [<TestCase("BranchWriter")>]
     [<TestCase("BranchReader")>]
@@ -128,12 +129,15 @@ module CommandParsingTests =
     [<TestCase("RepoReader")>]
     [<TestCase("rEpOaDmIn")>]
     [<TestCase("oRgReAdEr")>]
-    let ``access role commands reject stale short role ids`` roleId =
+    let ``access grant role rejects stale short role ids`` roleId =
         let grantParseResult = GraceCommand.rootCommand.Parse(grantRoleArgs roleId)
         grantParseResult.Errors.Count |> should equal 1
 
+    [<TestCase("OrgAdmin")>]
+    [<TestCase("RepositoryReader")>]
+    let ``access revoke role accepts raw role ids for cleanup`` roleId =
         let revokeParseResult = GraceCommand.rootCommand.Parse(revokeRoleArgs roleId)
-        revokeParseResult.Errors.Count |> should equal 1
+        revokeParseResult.Errors.Count |> should equal 0
 
 
 namespace Grace.CLI.Tests
