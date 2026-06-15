@@ -67,6 +67,15 @@ type EndpointAuthorizationManifestTests() =
         for method_, path in routes do
             assertRouteSecurity method_ path expectedSecurity
 
+    let rec includesSecurity expectedSecurity actualSecurity =
+        actualSecurity = expectedSecurity
+        || match actualSecurity with
+           | AnyOf requirements
+           | AllOf requirements ->
+               requirements
+               |> List.exists (includesSecurity expectedSecurity)
+           | _ -> false
+
     let assertRouteRequiresSecurity method_ path (expectedSecurity: EndpointSecurity) =
         let matchingDefinitions =
             definitions
@@ -74,19 +83,74 @@ type EndpointAuthorizationManifestTests() =
                 definition.Method = method_
                 && definition.Path = path)
 
-        let rec includesSecurity actualSecurity =
-            actualSecurity = expectedSecurity
-            || match actualSecurity with
-               | AllOf requirements -> requirements |> List.exists includesSecurity
-               | _ -> false
+        match matchingDefinitions with
+        | [ definition ] ->
+            Assert.That(
+                includesSecurity expectedSecurity definition.Security,
+                Is.True,
+                $"Expected {method_} {path} to require {expectedSecurity}, but manifest uses {definition.Security}."
+            )
+        | [] -> Assert.Fail($"Expected EndpointAuthorizationManifest to include {method_} {path}.")
+        | _ -> Assert.Fail($"Expected EndpointAuthorizationManifest to include one entry for {method_} {path}.")
+
+    let assertRouteDoesNotRequireSecurity method_ path (unexpectedSecurity: EndpointSecurity) =
+        let matchingDefinitions =
+            definitions
+            |> List.filter (fun definition ->
+                definition.Method = method_
+                && definition.Path = path)
 
         match matchingDefinitions with
         | [ definition ] ->
             Assert.That(
-                includesSecurity definition.Security,
-                Is.True,
-                $"Expected {method_} {path} to require {expectedSecurity}, but manifest uses {definition.Security}."
+                includesSecurity unexpectedSecurity definition.Security,
+                Is.False,
+                $"Expected {method_} {path} not to require {unexpectedSecurity}, but manifest uses {definition.Security}."
             )
+        | [] -> Assert.Fail($"Expected EndpointAuthorizationManifest to include {method_} {path}.")
+        | _ -> Assert.Fail($"Expected EndpointAuthorizationManifest to include one entry for {method_} {path}.")
+
+    let writeOrAdmin adminOperation writeOperation resourceKind =
+        AnyOf [ Authorized(adminOperation, resourceKind)
+                Authorized(writeOperation, resourceKind) ]
+
+    let rec operationsInSecurity security =
+        match security with
+        | Authorized (operation, _) -> [ operation ]
+        | AnyOf requirements
+        | AllOf requirements -> requirements |> List.collect operationsInSecurity
+        | AllowAnonymous
+        | Authenticated -> []
+
+    let assertRouteUsesCanonicalOperationNames method_ path (expectedOperationNames: string list) =
+        let matchingDefinitions =
+            definitions
+            |> List.filter (fun definition ->
+                definition.Method = method_
+                && definition.Path = path)
+
+        match matchingDefinitions with
+        | [ definition ] ->
+            let actualOperationNames =
+                definition.Security
+                |> operationsInSecurity
+                |> List.map string
+                |> List.toArray
+
+            Assert.That(actualOperationNames, Is.EquivalentTo(expectedOperationNames), $"{method_} {path} must use canonical full operation names.")
+
+            let abbreviatedNames =
+                actualOperationNames
+                |> Array.filter (fun operationName ->
+                    [
+                        "OrgAdmin"
+                        "OrgWrite"
+                        "RepoAdmin"
+                        "RepoWrite"
+                    ]
+                    |> List.contains operationName)
+
+            Assert.That(abbreviatedNames, Is.Empty, $"{method_} {path} must not use stale abbreviated operation names.")
         | [] -> Assert.Fail($"Expected EndpointAuthorizationManifest to include {method_} {path}.")
         | _ -> Assert.Fail($"Expected EndpointAuthorizationManifest to include one entry for {method_} {path}.")
 
@@ -251,6 +315,64 @@ type EndpointAuthorizationManifestTests() =
         |> assertRoutesUseSecurity (Authorized(Operation.PathWrite, ResourceKind.Path))
 
     [<Test>]
+    member _.ScopeCreationRoutesRequireParentWriteOrAdminOperations() =
+        [
+            "POST", "/owner/create", writeOrAdmin Operation.SystemAdmin Operation.SystemOperate ResourceKind.System
+            "POST", "/organization/create", writeOrAdmin Operation.OwnerAdmin Operation.OwnerWrite ResourceKind.Owner
+            "POST", "/repository/create", writeOrAdmin Operation.OrganizationAdmin Operation.OrganizationWrite ResourceKind.Organization
+            "POST", "/branch/create", writeOrAdmin Operation.RepositoryAdmin Operation.RepositoryWrite ResourceKind.Repository
+        ]
+        |> List.iter (fun (method_, path, expectedSecurity) -> assertRouteSecurity method_ path expectedSecurity)
+
+        assertRouteDoesNotRequireSecurity "POST" "/branch/create" (Authorized(Operation.BranchWrite, ResourceKind.Branch))
+
+    [<Test>]
+    member _.CreationRouteOperationsUseCanonicalFullNames() =
+        [
+            "POST", "/owner/create", [ "SystemAdmin"; "SystemOperate" ]
+            "POST", "/organization/create", [ "OwnerAdmin"; "OwnerWrite" ]
+            "POST",
+            "/repository/create",
+            [
+                "OrganizationAdmin"
+                "OrganizationWrite"
+            ]
+            "POST", "/branch/create", [ "RepositoryAdmin"; "RepositoryWrite" ]
+            "POST", "/directory/create", [ "RepositoryAdmin"; "RepositoryWrite" ]
+            "POST", "/directory/saveDirectoryVersions", [ "RepositoryAdmin"; "RepositoryWrite" ]
+        ]
+        |> List.iter (fun (method_, path, expectedOperationNames) -> assertRouteUsesCanonicalOperationNames method_ path expectedOperationNames)
+
+    [<Test>]
+    member _.BranchReferenceCreationRoutesUseBranchWriteOrAdminNotRepositoryScopeCreation() =
+        [
+            "POST", "/branch/assign"
+            "POST", "/branch/checkpoint"
+            "POST", "/branch/commit"
+            "POST", "/branch/createExternal"
+            "POST", "/branch/promote"
+            "POST", "/branch/save"
+            "POST", "/branch/tag"
+        ]
+        |> assertRoutesUseSecurity (writeOrAdmin Operation.BranchAdmin Operation.BranchWrite ResourceKind.Branch)
+
+        assertRouteDoesNotRequireSecurity "POST" "/branch/save" (Authorized(Operation.RepositoryWrite, ResourceKind.Repository))
+
+    [<Test>]
+    member _.RepositoryContainedCreationRoutesRequireRepositoryWriteOrAdminOperations() =
+        [
+            "POST", "/artifact/create"
+            "POST", "/directory/create"
+            "POST", "/directory/saveDirectoryVersions"
+            "POST", "/promotion-set/create"
+            "POST", "/reminder/create"
+            "POST", "/validation-set/create"
+            "POST", "/validation-result/record"
+            "POST", "/work/create"
+        ]
+        |> assertRoutesUseSecurity (writeOrAdmin Operation.RepositoryAdmin Operation.RepositoryWrite ResourceKind.Repository)
+
+    [<Test>]
     member _.BranchAnnotateRequiresBranchReadAndPathRead() =
         assertRouteRequiresSecurity "POST" "/branch/annotate" (Authorized(Operation.BranchRead, ResourceKind.Branch))
         assertRouteRequiresSecurity "POST" "/branch/annotate" (Authorized(Operation.PathRead, ResourceKind.Path))
@@ -258,7 +380,6 @@ type EndpointAuthorizationManifestTests() =
     [<Test>]
     member _.SelectedWorkItemRoutesUseExpectedPolicies() =
         [
-            "POST", "/work/create"
             "POST", "/work/add-summary"
             "POST", "/work/link/artifact"
             "POST", "/work/link/promotion-set"

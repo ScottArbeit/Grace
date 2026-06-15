@@ -101,7 +101,7 @@ type AccessBootstrapTests() =
     member _.BootstrapDisabledByDefaultReturnsForbidden() =
         task {
             use client = createClient $"{Guid.NewGuid()}"
-            let! _ownerId = createOwner client
+            let! _ownerId = createOwner Client
 
             let parameters = createGrantRoleParameters "SystemAdmin" $"{Guid.NewGuid()}"
             let! response = client.PostAsync("/access/grantRole", createJsonContent parameters)

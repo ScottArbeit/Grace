@@ -57,6 +57,15 @@ module AuthorizationMiddleware =
             |> List.map formatPrincipal
             |> String.concat ", "
 
+    let private formatOperationSummary (operations: Operation list) =
+        match operations with
+        | [] -> "None"
+        | [ operation ] -> $"{operation}"
+        | _ ->
+            operations
+            |> List.map (fun operation -> $"{operation}")
+            |> String.concat " OR "
+
     let private tryGetIdentityName (context: HttpContext) =
         let identity = context.User.Identity
 
@@ -123,6 +132,56 @@ module AuthorizationMiddleware =
                     | Allowed _ -> return! next context
                     | Denied reason ->
                         logDenied context operation principalSummary (formatResource resource) reason
+                        return! forbidden reason next context
+            }
+
+    let requiresAnyPermission (operations: Operation list) (resourceFromContext: HttpContext -> Task<Resource>) : HttpHandler =
+        if operations.IsEmpty then
+            invalidArg (nameof operations) "At least one authorization operation is required."
+
+        fun next context ->
+            task {
+                match PrincipalMapper.tryGetUserId context.User with
+                | None ->
+                    let principalSummary =
+                        PrincipalMapper.getPrincipals context.User
+                        |> formatPrincipalSummary context
+
+                    logMissingAuthentication context operations.Head principalSummary
+                    return! RequestErrors.UNAUTHORIZED "Grace" "Access" "Authentication required." next context
+                | Some _ ->
+                    let principals = PrincipalMapper.getPrincipals context.User
+                    let principalSummary = formatPrincipals principals
+                    let claims = PrincipalMapper.getEffectiveClaims context.User
+                    let evaluator = context.RequestServices.GetRequiredService<IGracePermissionEvaluator>()
+                    let! resource = resourceFromContext context
+                    let mutable allowed = false
+                    let mutable deniedReason: string option = None
+                    let mutable index = 0
+
+                    while not allowed && index < operations.Length do
+                        let operation = operations[index]
+                        let! decision = evaluator.CheckAsync(principals, claims, operation, resource)
+
+                        match decision with
+                        | Allowed _ -> allowed <- true
+                        | Denied reason ->
+                            deniedReason <-
+                                match deniedReason with
+                                | Some existing -> Some $"{existing}; {operation}: {reason}"
+                                | None -> Some $"{operation}: {reason}"
+
+                        index <- index + 1
+
+                    if allowed then
+                        return! next context
+                    else
+                        let reason =
+                            deniedReason
+                            |> Option.defaultValue "No matching authorization operation was allowed."
+
+                        let operationSummary = formatOperationSummary operations
+                        logDenied context operations.Head principalSummary (formatResource resource) $"{operationSummary}: {reason}"
                         return! forbidden reason next context
             }
 
