@@ -270,6 +270,7 @@ type EndpointAuthorizationManifestTests() =
         [
             "GET", "/authorize/list-roles"
             "POST", "/authorize/check-permission"
+            "POST", "/authorize/show"
         ]
         |> assertRoutesUseSecurity Authenticated
 

@@ -33,6 +33,7 @@ module EndpointAuthorizationManifest =
             endpoint "GET" "/authorize/list-roles" Authenticated
             endpoint "POST" "/authorize/remove-path-permission" (Authorized(RepositoryAdmin, Repository))
             endpoint "POST" "/authorize/revoke-role" (Authorized(SystemAdmin, System))
+            endpoint "POST" "/authorize/show" Authenticated
             endpoint "POST" "/authorize/upsert-path-permission" (Authorized(RepositoryAdmin, Repository))
             endpoint "POST" "/admin/deleteAllFromCosmosDB" (Authorized(SystemAdmin, System))
             endpoint "POST" "/admin/deleteAllRemindersFromCosmosDB" (Authorized(SystemAdmin, System))

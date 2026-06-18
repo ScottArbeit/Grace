@@ -205,13 +205,8 @@ module Authorization =
                 { RoleId = "BranchAdmin"; AllowedOperations = branchAdminOperations; AppliesTo = Set.ofList [ scopeBranch ] }
                 { RoleId = "BranchWriter"; AllowedOperations = branchWriterOperations; AppliesTo = Set.ofList [ scopeBranch ] }
                 { RoleId = "BranchReader"; AllowedOperations = branchReaderOperations; AppliesTo = Set.ofList [ scopeBranch ] }
-                {
-                    RoleId = "ApprovalResponder"
-                    AllowedOperations = approvalResponderOperations
-                    AppliesTo =
-                        Set.ofList [ scopeRepository
-                                     scopeBranch ]
-                }
+                { RoleId = "RepositoryApprovalResponder"; AllowedOperations = approvalResponderOperations; AppliesTo = Set.ofList [ scopeRepository ] }
+                { RoleId = "BranchApprovalResponder"; AllowedOperations = approvalResponderOperations; AppliesTo = Set.ofList [ scopeBranch ] }
             ]
 
         let getAll () = roles
@@ -219,6 +214,14 @@ module Authorization =
         let tryGet (roleId: RoleId) =
             roles
             |> List.tryFind (fun role -> role.RoleId.Equals(roleId, StringComparison.OrdinalIgnoreCase))
+
+        let tryGetSingleScopeKind (roleId: RoleId) =
+            tryGet roleId
+            |> Option.bind (fun role ->
+                if role.AppliesTo.Count = 1 then
+                    role.AppliesTo |> Seq.exactlyOne |> Some
+                else
+                    None)
 
     let scopesForResource (resource: Resource) =
         match resource with

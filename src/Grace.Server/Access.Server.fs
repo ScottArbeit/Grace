@@ -168,6 +168,34 @@ module Access =
                 | Error error -> Error error
                 | Ok repositoryId -> Ok(Resource.Repository(ownerId, organizationId, repositoryId))
 
+    let private parseOptionalGuid (value: string) (fieldName: string) (correlationId: CorrelationId) =
+        if String.IsNullOrWhiteSpace value then
+            Ok None
+        else
+            let mutable parsed = Guid.Empty
+
+            if Guid.TryParse(value, &parsed) then
+                if parsed = Guid.Empty then Ok None else Ok(Some parsed)
+            else
+                Error(GraceError.Create $"{fieldName} must be a valid Guid." correlationId)
+
+    let private tryParseCurrentContextResource (parameters: AccessParameters) (correlationId: CorrelationId) =
+        match parseGuid parameters.OwnerId (nameof parameters.OwnerId) correlationId with
+        | Error error -> Error error
+        | Ok ownerId ->
+            match parseOptionalGuid parameters.OrganizationId (nameof parameters.OrganizationId) correlationId with
+            | Error error -> Error error
+            | Ok None -> Ok(Resource.Owner ownerId)
+            | Ok (Some organizationId) ->
+                match parseOptionalGuid parameters.RepositoryId (nameof parameters.RepositoryId) correlationId with
+                | Error error -> Error error
+                | Ok None -> Ok(Resource.Organization(ownerId, organizationId))
+                | Ok (Some repositoryId) ->
+                    match parseOptionalGuid parameters.BranchId (nameof parameters.BranchId) correlationId with
+                    | Error error -> Error error
+                    | Ok None -> Ok(Resource.Repository(ownerId, organizationId, repositoryId))
+                    | Ok (Some branchId) -> Ok(Resource.Branch(ownerId, organizationId, repositoryId, branchId))
+
     let private parseResource (resourceKind: string) (parameters: CheckPermissionParameters) (correlationId: CorrelationId) =
         let normalized =
             if String.IsNullOrWhiteSpace resourceKind then
@@ -232,6 +260,26 @@ module Access =
             | Some parsed -> Ok parsed
             | None -> Error(GraceError.Create $"Invalid Operation '{operation}'." correlationId)
 
+    let private parseRoleScope (roleId: string) (parameters: AccessParameters) (correlationId: CorrelationId) =
+        if String.IsNullOrWhiteSpace roleId then
+            Error(GraceError.Create "RoleId is required." correlationId)
+        else
+            match Authorization.RoleCatalog.tryGet roleId with
+            | None -> Error(GraceError.Create $"Unknown RoleId '{roleId}'." correlationId)
+            | Some roleDefinition ->
+                if roleDefinition.AppliesTo.Count <> 1 then
+                    Error(GraceError.Create $"Role '{roleId}' does not map to exactly one assignment scope." correlationId)
+                else
+                    parseScope (roleDefinition.AppliesTo |> Seq.exactlyOne) parameters correlationId
+
+    let selfAssignmentQueriesForResource (principals: Principal list) (resource: Resource) =
+        let distinctPrincipals = principals |> List.distinct
+
+        Authorization.scopesForResource resource
+        |> List.collect (fun scope ->
+            distinctPrincipals
+            |> List.map (fun principal -> scope, principal))
+
     let private tryParsePrincipalFilter (principalType: string) (principalId: string) (correlationId: CorrelationId) =
         if String.IsNullOrWhiteSpace principalType
            && String.IsNullOrWhiteSpace principalId then
@@ -250,25 +298,12 @@ module Access =
                 let correlationId = parameters.CorrelationId
 
                 let validationResult =
-                    match parseScope parameters.ScopeKind parameters correlationId with
+                    match parseRoleScope parameters.RoleId parameters correlationId with
                     | Error error -> Error error
                     | Ok scope ->
                         match parsePrincipal parameters.PrincipalType parameters.PrincipalId correlationId with
                         | Error error -> Error error
-                        | Ok principal ->
-                            if String.IsNullOrWhiteSpace parameters.RoleId then
-                                Error(GraceError.Create "RoleId is required." correlationId)
-                            else
-                                match Authorization.RoleCatalog.tryGet parameters.RoleId with
-                                | None -> Error(GraceError.Create $"Unknown RoleId '{parameters.RoleId}'." correlationId)
-                                | Some roleDefinition ->
-                                    if
-                                        not
-                                        <| roleDefinition.AppliesTo.Contains(scopeKind scope)
-                                    then
-                                        Error(GraceError.Create $"Role '{parameters.RoleId}' does not apply to scope '{scopeKind scope}'." correlationId)
-                                    else
-                                        Ok(scope, principal)
+                        | Ok principal -> Ok(scope, principal)
 
                 match validationResult with
                 | Error error -> return! context |> result400BadRequest error
@@ -310,7 +345,7 @@ module Access =
                 let! parameters = context |> parse<RevokeRoleParameters>
                 let correlationId = parameters.CorrelationId
 
-                match parseScope parameters.ScopeKind parameters correlationId with
+                match parseRoleScope parameters.RoleId parameters correlationId with
                 | Error error -> return! context |> result400BadRequest error
                 | Ok scope ->
                     match parsePrincipal parameters.PrincipalType parameters.PrincipalId correlationId with
@@ -332,6 +367,52 @@ module Access =
                                 match! actorProxy.Handle (AccessControlCommand.RevokeRole(principal, parameters.RoleId)) (createMetadata context) with
                                 | Ok returnValue -> return! context |> result200Ok returnValue
                                 | Error error -> return! context |> result400BadRequest error
+            })
+
+    let ShowRoleAssignments: HttpHandler =
+        requireGraceUser (fun next context ->
+            task {
+                let! parameters = context |> parse<ShowRoleAssignmentsParameters>
+                let correlationId = parameters.CorrelationId
+
+                match tryParseCurrentContextResource parameters correlationId with
+                | Error error -> return! context |> result400BadRequest error
+                | Ok resource ->
+                    let principals = PrincipalMapper.getPrincipals context.User
+
+                    if principals.IsEmpty then
+                        return!
+                            context
+                            |> result400BadRequest (GraceError.Create "Authenticated user principal is required." correlationId)
+                    else
+                        let metadata = createMetadata context
+                        let assignments = ResizeArray<RoleAssignment>()
+                        let mutable queryError: GraceError option = None
+
+                        let queries = selfAssignmentQueriesForResource principals resource
+                        let mutable queryIndex = 0
+
+                        while queryIndex < queries.Length && queryError.IsNone do
+                            let scope, principal = queries[queryIndex]
+                            let scopeKey = AccessControl.getScopeKey scope
+                            let actorProxy = ActorProxy.AccessControl.CreateActorProxy scopeKey correlationId
+
+                            match! actorProxy.Handle (AccessControlCommand.ListAssignments(Some principal)) metadata with
+                            | Ok returnValue -> assignments.AddRange(returnValue.ReturnValue)
+                            | Error error -> queryError <- Some error
+
+                            queryIndex <- queryIndex + 1
+
+                        match queryError with
+                        | Some error -> return! context |> result400BadRequest error
+                        | None ->
+                            let returnValue =
+                                assignments
+                                |> Seq.distinct
+                                |> Seq.toList
+                                |> fun values -> GraceReturnValue.Create values correlationId
+
+                            return! context |> result200Ok returnValue
             })
 
     let ListRoleAssignments: HttpHandler =

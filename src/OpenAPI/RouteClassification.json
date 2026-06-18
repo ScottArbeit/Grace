@@ -52,6 +52,7 @@
         { "method": "POST", "path": "/authorize/list-role-assignments" },
         { "method": "POST", "path": "/authorize/remove-path-permission" },
         { "method": "POST", "path": "/authorize/revoke-role" },
+        { "method": "POST", "path": "/authorize/show" },
         { "method": "POST", "path": "/authorize/upsert-path-permission" }
       ]
     },

@@ -73,8 +73,6 @@ module CommandParsingTests =
         [|
             "authorize"
             "grant-role"
-            "--scope"
-            "repo"
             "--principal-type"
             "User"
             "--principal-id"
@@ -87,8 +85,6 @@ module CommandParsingTests =
         [|
             "authorize"
             "revoke-role"
-            "--scope"
-            "repo"
             "--principal-type"
             "User"
             "--principal-id"
@@ -113,7 +109,8 @@ module CommandParsingTests =
     [<TestCase("BranchAdmin")>]
     [<TestCase("BranchWriter")>]
     [<TestCase("BranchReader")>]
-    [<TestCase("ApprovalResponder")>]
+    [<TestCase("RepositoryApprovalResponder")>]
+    [<TestCase("BranchApprovalResponder")>]
     let ``authorize role commands accept canonical role ids`` roleId =
         let grantParseResult = GraceCommand.rootCommand.Parse(grantRoleArgs roleId)
         grantParseResult.Errors.Count |> should equal 0
@@ -129,15 +126,38 @@ module CommandParsingTests =
     [<TestCase("RepoReader")>]
     [<TestCase("rEpOaDmIn")>]
     [<TestCase("oRgReAdEr")>]
+    [<TestCase("ApprovalResponder")>]
     let ``authorize grant role rejects stale short role ids`` roleId =
         let grantParseResult = GraceCommand.rootCommand.Parse(grantRoleArgs roleId)
         grantParseResult.Errors.Count |> should equal 1
 
     [<TestCase("OrgAdmin")>]
-    [<TestCase("RepositoryReader")>]
-    let ``authorize revoke role accepts raw role ids for cleanup`` roleId =
+    [<TestCase("ApprovalResponder")>]
+    let ``authorize revoke role rejects non-catalog role ids`` roleId =
         let revokeParseResult = GraceCommand.rootCommand.Parse(revokeRoleArgs roleId)
+        revokeParseResult.Errors.Count |> should equal 1
+
+    [<Test>]
+    let ``authorize grant and revoke derive scope from role without scope option`` () =
+        let grantParseResult = GraceCommand.rootCommand.Parse(grantRoleArgs "RepositoryReader")
+        grantParseResult.Errors.Count |> should equal 0
+
+        let revokeParseResult = GraceCommand.rootCommand.Parse(revokeRoleArgs "RepositoryReader")
         revokeParseResult.Errors.Count |> should equal 0
+
+    [<Test>]
+    let ``authorize grant no longer accepts explicit scope option`` () =
+        let parseResult =
+            GraceCommand.rootCommand.Parse(
+                [|
+                    yield! grantRoleArgs "RepositoryReader"
+                    "--scope"
+                    "repo"
+                |]
+            )
+
+        parseResult.Errors.Count
+        |> should be (greaterThan 0)
 
     [<Test>]
     let ``authenticate command group accepts authn alias`` () =
@@ -153,6 +173,30 @@ module CommandParsingTests =
             )
 
         parseResult.Errors.Count |> should equal 0
+
+    [<Test>]
+    let ``authorize show command parses through authz alias`` () =
+        let parseResult = GraceCommand.rootCommand.Parse([| "authz"; "show" |])
+        parseResult.Errors.Count |> should equal 0
+
+    [<Test>]
+    let ``authorize can command parses user oriented repo and path checks`` () =
+        let readRepo = GraceCommand.rootCommand.Parse([| "authz"; "can"; "read"; "repo" |])
+        readRepo.Errors.Count |> should equal 0
+
+        let pathRead =
+            GraceCommand.rootCommand.Parse(
+                [|
+                    "authz"
+                    "can"
+                    "read"
+                    "path"
+                    "--path"
+                    "src/Grace.CLI/Program.CLI.fs"
+                |]
+            )
+
+        pathRead.Errors.Count |> should equal 0
 
     [<TestCase("auth", "status")>]
     [<TestCase("access", "list-roles")>]
