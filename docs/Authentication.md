@@ -63,7 +63,7 @@ Set one or both of these environment variables (semicolon-delimited list):
 
 * The values must be **principal IDs**, not emails or display names.
 * For Auth0/OIDC, the user principal ID is taken from the `sub` claim (exposed as `grace_user_id`).
-* You can confirm the user ID with `GET /auth/me` (`GraceUserId` in the response).
+* You can confirm the user ID with `GET /authenticate/me` (`GraceUserId` in the response).
 
 PowerShell:
 
@@ -194,13 +194,13 @@ When enabled, Grace authenticates requests using headers:
    PowerShell:
 
    ```powershell
-   Invoke-RestMethod "http://localhost:5000/auth/me" -Headers @{ "x-grace-user-id" = "dev-scott" }
+   Invoke-RestMethod "http://localhost:5000/authenticate/me" -Headers @{ "x-grace-user-id" = "dev-scott" }
    ```
 
    bash / zsh:
 
    ```bash
-   curl -H "x-grace-user-id: dev-scott" "http://localhost:5000/auth/me"
+   curl -H "x-grace-user-id: dev-scott" "http://localhost:5000/authenticate/me"
    ```
 
 On first activation (with no existing assignments), Grace will seed `SystemAdmin` for `dev-scott`.
@@ -221,8 +221,9 @@ pwsh ./scripts/start-debuglocal.ps1 --GraceServerUri "http://localhost:5000" -Sk
 ```
 
 `-SkipAuthProbe` is required for the true zero-OIDC bootstrap path because the default auth probe checks
-`/auth/oidc/config` before TestAuth PAT creation. Omit `-SkipAuthProbe` when OIDC/MSA settings are configured and you
-want the startup helper to verify both `/auth/oidc/config` and `/auth/me` before creating the PAT.
+`/authenticate/oidc/config` before TestAuth PAT creation. Omit `-SkipAuthProbe` when OIDC/MSA settings are configured
+and you want the startup helper to verify both `/authenticate/oidc/config` and `/authenticate/me` before creating the
+PAT.
 
 If OIDC/MSA is configured instead, use the interactive CLI path:
 
@@ -372,6 +373,10 @@ unclear.
 
 ### Primary CLI commands
 
+The canonical command groups are `grace authenticate` and `grace authorize`. The CLI also accepts short aliases:
+`grace authn` for authentication commands, `grace authz` for authorization commands, and root `grace login` /
+`grace logout` aliases for the common interactive sign-in and sign-out flows.
+
 * `grace authenticate login [--auth pkce|device]`
   Interactive login to Auth0; stores access/refresh tokens in the OS secure store. If `--auth` is not
   specified, the CLI attempts PKCE and falls back to Device Code.
@@ -384,6 +389,13 @@ unclear.
 
 * `grace authenticate logout`
   Clears the cached interactive token from the secure store.
+
+Equivalent aliases:
+
+* `grace authn status`
+* `grace authn whoami`
+* `grace login`
+* `grace logout`
 
 * `grace doctor --check Authentication`
   Produces a read-only diagnostic report for local authentication environment checks. Doctor parses
@@ -508,6 +520,8 @@ Primary CLI commands for authorization management:
 * `grace authorize check ...`
   Asks the server “would this principal be allowed to do operation X on resource Y?”
 
+Equivalent short forms use the `authz` alias, for example `grace authz check ...`.
+
 > For detailed role IDs and operations, use `grace authorize list-roles` and consult the authorization types
 > in `Grace.Types.Authorization`.
 
@@ -555,7 +569,7 @@ These variables enable Auth0 JWT authentication on the server.
 
 Recommended (for CLI auto-config):
 
-* `grace__auth__oidc__cli_client_id` (optional for server auth; required for `/auth/oidc/config`)
+* `grace__auth__oidc__cli_client_id` (optional for server auth; required for `/authenticate/oidc/config`)
   **No default.**
   Source: Auth0 Native app Client ID.
 
@@ -582,7 +596,7 @@ If you set only:
 
 …then the CLI can fetch the OIDC configuration automatically by calling:
 
-* `GET /auth/oidc/config` — Returns the server’s OIDC settings needed for interactive login.
+* `GET /authenticate/oidc/config` — Returns the server’s OIDC settings needed for interactive login.
 
 This works **only if** the server is configured with OIDC and has the values needed to publish them (see
 server env vars below).
@@ -615,7 +629,7 @@ server env vars below).
 
 ##### Server-side requirements for auto-configuration
 
-For `GET /auth/oidc/config` to return useful values, the server must be configured with:
+For `GET /authenticate/oidc/config` to return useful values, the server must be configured with:
 
 * `grace__auth__oidc__authority` — `https://<tenant-domain>/`
 * `grace__auth__oidc__audience` — Auth0 API Identifier
@@ -629,7 +643,7 @@ supply the client ID locally (see Advanced).
 #### Advanced: set OIDC settings on the client
 
 If you cannot use server auto-configuration (for example, you are testing against an endpoint that does
-not expose `/auth/oidc/config`), you can configure the CLI directly via environment variables.
+not expose `/authenticate/oidc/config`), you can configure the CLI directly via environment variables.
 
 ##### Required
 
