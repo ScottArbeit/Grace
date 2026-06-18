@@ -73,6 +73,8 @@ module GraceCommand =
         aliases.Add("commit", [ "branch"; "commit" ])
         aliases.Add("commits", [ "branch"; "get-commits" ])
         aliases.Add("dir", [ "maint"; "list-contents" ])
+        aliases.Add("login", [ "authenticate"; "login" ])
+        aliases.Add("logout", [ "authenticate"; "logout" ])
         aliases.Add("ls", [ "maint"; "list-contents" ])
         aliases.Add("promote", [ "branch"; "promote" ])
         aliases.Add("promotions", [ "branch"; "get-promotions" ])
@@ -473,7 +475,7 @@ module GraceCommand =
 
     let private rootHelpSections =
         [
-            { Heading = "Getting started"; CommandNames = [ "auth"; "connect"; "config" ] }
+            { Heading = "Getting started"; CommandNames = [ "authenticate"; "connect"; "config" ] }
             {
                 Heading = "Day-to-day development"
                 CommandNames =
@@ -499,13 +501,13 @@ module GraceCommand =
                     ]
             }
             {
-                Heading = "Administration and access"
+                Heading = "Administration and authorization"
                 CommandNames =
                     [
                         "owner"
                         "organization"
                         "repository"
-                        "access"
+                        "authorize"
                         "admin"
                     ]
             }
@@ -1009,8 +1011,6 @@ module GraceCommand =
             if args.Length = 0 then
                 Array.empty<string>
             else
-                let firstToken = if isCaseInsensitive then args[ 0 ].ToLowerInvariant() else args[0]
-
                 let normalizeOutputEqualsToken (arg: string) =
                     let outputEqualsPrefix = $"{OptionName.Output}="
 
@@ -1018,6 +1018,37 @@ module GraceCommand =
                         $"{OptionName.Output}={arg.Substring(outputEqualsPrefix.Length)}"
                     else
                         arg
+
+                let tryFindTopLevelCommandIndex (args: string array) =
+                    let comparison =
+                        if isCaseInsensitive then
+                            StringComparison.InvariantCultureIgnoreCase
+                        else
+                            StringComparison.InvariantCulture
+
+                    let isOptionWithValue (token: string) =
+                        token.Equals(OptionName.Output, comparison)
+                        || token.Equals("-o", comparison)
+                        || token.Equals(OptionName.CorrelationId, comparison)
+                        || token.Equals("-c", comparison)
+                        || token.Equals(OptionName.Source, comparison)
+                        || token.Equals(OptionName.Select, comparison)
+
+                    let rec loop index =
+                        if index >= args.Length then
+                            None
+                        else
+                            let token = args[index]
+
+                            if token = "--" then
+                                if index + 1 < args.Length then Some(index + 1) else None
+                            elif token.StartsWith("-", StringComparison.Ordinal) then
+                                let nextIndex = if isOptionWithValue token then index + 2 else index + 1
+                                loop nextIndex
+                            else
+                                Some index
+
+                    loop 0
 
                 let properCasedArgs =
                     args
@@ -1043,18 +1074,30 @@ module GraceCommand =
                         else
                             normalizedArg)
 
-                if aliases.ContainsKey(firstToken) then
-                    let newArgs = List<string>()
+                match tryFindTopLevelCommandIndex args with
+                | Some commandIndex ->
+                    let aliasToken =
+                        if isCaseInsensitive then
+                            args[ commandIndex ].ToLowerInvariant()
+                        else
+                            args[commandIndex]
 
-                    for token in aliases[ firstToken ].Reverse() do
-                        newArgs.Insert(0, token)
+                    if aliases.ContainsKey(aliasToken) then
+                        let newArgs = List<string>()
 
-                    for token in properCasedArgs[1..] do
-                        newArgs.Add(token)
+                        for token in properCasedArgs[0 .. commandIndex - 1] do
+                            newArgs.Add(token)
 
-                    newArgs.ToArray()
-                else
-                    properCasedArgs
+                        for token in aliases[aliasToken] do
+                            newArgs.Add(token)
+
+                        for token in properCasedArgs[commandIndex + 1 ..] do
+                            newArgs.Add(token)
+
+                        newArgs.ToArray()
+                    else
+                        properCasedArgs
+                | None -> properCasedArgs
 
         let mutable argvNormalized = normalizeArgsForHistory args
 
@@ -1368,7 +1411,7 @@ module GraceCommand =
                             [
                                 "config"
                                 "history"
-                                "auth"
+                                "authenticate"
                                 "connect"
                                 "alias"
                                 "doctor"

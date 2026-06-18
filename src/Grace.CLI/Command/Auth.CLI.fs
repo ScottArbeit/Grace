@@ -830,7 +830,7 @@ module Auth =
     let private tryRefreshTokenAsync (config: OidcCliConfig) (bundle: TokenBundle) =
         task {
             if String.IsNullOrWhiteSpace bundle.RefreshToken then
-                return Error "Refresh token missing. Run 'grace auth login' again."
+                return Error "Refresh token missing. Run 'grace authenticate login' again."
             else
                 let endpoint = buildEndpoint config.Authority "oauth/token"
 
@@ -1161,7 +1161,7 @@ module Auth =
 
     let private authDevelopmentGuidance = "During development, TestAuth may be available. See docs/Authentication.md for details."
 
-    let private authenticationRequiredMessage = $"Authentication required. Run 'grace auth login' and try again. {authDevelopmentGuidance}"
+    let private authenticationRequiredMessage = $"Authentication required. Run 'grace authenticate login' and try again. {authDevelopmentGuidance}"
 
     let private addAuthDevelopmentGuidance (message: string) =
         if String.IsNullOrWhiteSpace message then
@@ -1677,7 +1677,8 @@ module Auth =
             }
 
     let Build =
-        let authCommand = new Command("auth", Description = "Authenticate with Grace.")
+        let authCommand = new Command("authenticate", Description = "Authenticate with Grace.")
+        authCommand.Aliases.Add("authn")
 
         let loginCommand = new Command("login", Description = "Sign in with Auth0 (PKCE or device flow).")
         loginCommand.Options.Add(LoginOptions.auth)

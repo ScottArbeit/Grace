@@ -86,9 +86,9 @@ PowerShell:
 ```powershell
 $env:GRACE_SERVER_URI="http://localhost:5000"
 Remove-Item Env:GRACE_TOKEN -ErrorAction SilentlyContinue
-grace auth login
-grace auth whoami --output Verbose
-grace auth token create --name "local-dev" --expires-in 30d --output Verbose
+grace authenticate login
+grace authenticate whoami --output Verbose
+grace authenticate token create --name "local-dev" --expires-in 30d --output Verbose
 ```
 
 bash / zsh:
@@ -96,9 +96,9 @@ bash / zsh:
 ```bash
 export GRACE_SERVER_URI="http://localhost:5000"
 unset GRACE_TOKEN
-grace auth login
-grace auth whoami --output Verbose
-grace auth token create --name "local-dev" --expires-in 30d --output Verbose
+grace authenticate login
+grace authenticate whoami --output Verbose
+grace authenticate token create --name "local-dev" --expires-in 30d --output Verbose
 ```
 
 Authentication proves the caller identity. The first authenticated OIDC/MSA caller still needs authorization: seed a
@@ -107,7 +107,7 @@ role before protected operations will succeed. An authenticated caller that maps
 RBAC grants; that PAT still authorizes protected operations only through Grace's normal authorization checks.
 
 `GRACE_TOKEN` takes precedence over M2M and interactive credentials. Clear stale or revoked PAT values before testing
-interactive OIDC/MSA login, otherwise the CLI may keep sending the stale PAT even after `grace auth login` succeeds.
+interactive OIDC/MSA login, otherwise the CLI may keep sending the stale PAT even after `grace authenticate login` succeeds.
 
 Scope creation uses normal authorization in DebugLocal and production:
 
