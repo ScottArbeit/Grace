@@ -356,7 +356,7 @@ module BranchServerTestHelpers =
             parameters.TokenName <- $"branch-sdk-{Guid.NewGuid():N}"
             parameters.CorrelationId <- generateCorrelationId ()
 
-            let! response = Client.PostAsync("/auth/token/create", createJsonContent parameters)
+            let! response = Client.PostAsync("/authenticate/token/create", createJsonContent parameters)
             response.EnsureSuccessStatusCode() |> ignore
             let! returnValue = deserializeContent<GraceReturnValue<PersonalAccessTokenCreated>> response
             return returnValue.ReturnValue.Token

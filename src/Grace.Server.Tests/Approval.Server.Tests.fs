@@ -73,7 +73,7 @@ module private ApprovalTestHelpers =
             parameters.Source <- "test"
             parameters.CorrelationId <- generateCorrelationId ()
 
-            return! client.PostAsync("/access/grantRole", createJsonContent parameters)
+            return! client.PostAsync("/authorize/grant-role", createJsonContent parameters)
         }
 
     let createPolicyParameters (repositoryId: string) (branchId: string) =

@@ -24,7 +24,7 @@ type AuthEndpoints() =
     [<Test>]
     member _.LoginPageShowsNoProvidersWhenNotConfigured() =
         task {
-            let! response = Client.GetAsync("/auth/login")
+            let! response = Client.GetAsync("/authenticate/login")
             response.EnsureSuccessStatusCode() |> ignore
             Assert.That(response.Content.Headers.ContentType.MediaType, Is.EqualTo("text/html"))
             let! body = response.Content.ReadAsStringAsync()
@@ -37,7 +37,7 @@ type AuthEndpoints() =
     [<Test>]
     member _.LoginProviderReturnsNotFoundWhenNotConfigured() =
         task {
-            let! response = Client.GetAsync("/auth/login/microsoft")
+            let! response = Client.GetAsync("/authenticate/login/microsoft")
             let! body = response.Content.ReadAsStringAsync()
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.NotFound))
             Assert.That(body, Does.Contain("Login provider not available."))
@@ -67,7 +67,7 @@ type AuthEndpoints() =
             use unauthenticatedClient = new HttpClient()
             unauthenticatedClient.BaseAddress <- Client.BaseAddress
 
-            let! response = unauthenticatedClient.GetAsync("/auth/oidc/config")
+            let! response = unauthenticatedClient.GetAsync("/authenticate/oidc/config")
             response.EnsureSuccessStatusCode() |> ignore
 
             let! returnValue = deserializeContent<GraceReturnValue<OidcClientConfig>> response
@@ -80,7 +80,7 @@ type AuthEndpoints() =
     [<Test>]
     member _.AuthMeReturnsGraceUserId() =
         task {
-            let! response = Client.GetAsync("/auth/me")
+            let! response = Client.GetAsync("/authenticate/me")
             response.EnsureSuccessStatusCode() |> ignore
             let! returnValue = deserializeContent<GraceReturnValue<AuthInfo>> response
             Assert.That(returnValue.ReturnValue.GraceUserId, Is.EqualTo(testUserId))
@@ -93,7 +93,7 @@ type AuthEndpoints() =
         task {
             use unauthenticatedClient = new HttpClient()
             unauthenticatedClient.BaseAddress <- Client.BaseAddress
-            let! response = unauthenticatedClient.GetAsync("/auth/me")
+            let! response = unauthenticatedClient.GetAsync("/authenticate/me")
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized))
         }
 
@@ -102,7 +102,7 @@ type AuthEndpoints() =
         task {
             let parameters = Grace.Shared.Parameters.Auth.CreatePersonalAccessTokenParameters()
             parameters.TokenName <- $"pat-{System.Guid.NewGuid():N}"
-            let! response = Client.PostAsync("/auth/token/create", createJsonContent parameters)
+            let! response = Client.PostAsync("/authenticate/token/create", createJsonContent parameters)
             response.EnsureSuccessStatusCode() |> ignore
 
             let! returnValue = deserializeContent<GraceReturnValue<PersonalAccessTokenCreated>> response
@@ -112,7 +112,7 @@ type AuthEndpoints() =
             patClient.BaseAddress <- Client.BaseAddress
             patClient.DefaultRequestHeaders.Authorization <- AuthenticationHeaderValue("Bearer", token)
 
-            let! meResponse = patClient.GetAsync("/auth/me")
+            let! meResponse = patClient.GetAsync("/authenticate/me")
             meResponse.EnsureSuccessStatusCode() |> ignore
 
             let! meValue = deserializeContent<GraceReturnValue<AuthInfo>> meResponse
@@ -124,20 +124,20 @@ type AuthEndpoints() =
         task {
             let parameters = Grace.Shared.Parameters.Auth.CreatePersonalAccessTokenParameters()
             parameters.TokenName <- $"pat-{System.Guid.NewGuid():N}"
-            let! response = Client.PostAsync("/auth/token/create", createJsonContent parameters)
+            let! response = Client.PostAsync("/authenticate/token/create", createJsonContent parameters)
             response.EnsureSuccessStatusCode() |> ignore
             let! returnValue = deserializeContent<GraceReturnValue<PersonalAccessTokenCreated>> response
             let created = returnValue.ReturnValue
 
             let revokeParameters = Grace.Shared.Parameters.Auth.RevokePersonalAccessTokenParameters()
             revokeParameters.TokenId <- created.Summary.TokenId
-            let! revokeResponse = Client.PostAsync("/auth/token/revoke", createJsonContent revokeParameters)
+            let! revokeResponse = Client.PostAsync("/authenticate/token/revoke", createJsonContent revokeParameters)
             revokeResponse.EnsureSuccessStatusCode() |> ignore
 
             use patClient = new HttpClient()
             patClient.BaseAddress <- Client.BaseAddress
             patClient.DefaultRequestHeaders.Authorization <- AuthenticationHeaderValue("Bearer", created.Token)
-            let! meResponse = patClient.GetAsync("/auth/me")
+            let! meResponse = patClient.GetAsync("/authenticate/me")
             Assert.That(meResponse.StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized))
         }
 
@@ -147,7 +147,7 @@ type AuthEndpoints() =
             let parameters = Grace.Shared.Parameters.Auth.CreatePersonalAccessTokenParameters()
             parameters.TokenName <- $"pat-{System.Guid.NewGuid():N}"
             parameters.ExpiresInSeconds <- 400L * 86400L
-            let! response = Client.PostAsync("/auth/token/create", createJsonContent parameters)
+            let! response = Client.PostAsync("/authenticate/token/create", createJsonContent parameters)
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
         }
 
@@ -156,12 +156,12 @@ type AuthEndpoints() =
         task {
             let parameters = Grace.Shared.Parameters.Auth.CreatePersonalAccessTokenParameters()
             parameters.TokenName <- $"pat-{System.Guid.NewGuid():N}"
-            let! response = Client.PostAsync("/auth/token/create", createJsonContent parameters)
+            let! response = Client.PostAsync("/authenticate/token/create", createJsonContent parameters)
             response.EnsureSuccessStatusCode() |> ignore
             let! createdReturn = deserializeContent<GraceReturnValue<PersonalAccessTokenCreated>> response
 
             let listParameters = Grace.Shared.Parameters.Auth.ListPersonalAccessTokensParameters()
-            let! listResponse = Client.PostAsync("/auth/token/list", createJsonContent listParameters)
+            let! listResponse = Client.PostAsync("/authenticate/token/list", createJsonContent listParameters)
             listResponse.EnsureSuccessStatusCode() |> ignore
             let! listReturn = deserializeContent<GraceReturnValue<PersonalAccessTokenSummary list>> listResponse
 
@@ -175,12 +175,12 @@ type AuthEndpoints() =
 
             let revokeParameters = Grace.Shared.Parameters.Auth.RevokePersonalAccessTokenParameters()
             revokeParameters.TokenId <- createdId
-            let! revokeResponse = Client.PostAsync("/auth/token/revoke", createJsonContent revokeParameters)
+            let! revokeResponse = Client.PostAsync("/authenticate/token/revoke", createJsonContent revokeParameters)
             revokeResponse.EnsureSuccessStatusCode() |> ignore
 
             let listWithRevoked = Grace.Shared.Parameters.Auth.ListPersonalAccessTokensParameters()
             listWithRevoked.IncludeRevoked <- true
-            let! revokedResponse = Client.PostAsync("/auth/token/list", createJsonContent listWithRevoked)
+            let! revokedResponse = Client.PostAsync("/authenticate/token/list", createJsonContent listWithRevoked)
 
             revokedResponse.EnsureSuccessStatusCode()
             |> ignore

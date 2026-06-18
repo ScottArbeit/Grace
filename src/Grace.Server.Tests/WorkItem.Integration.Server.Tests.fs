@@ -43,7 +43,7 @@ module private WorkItemIntegrationHelpers =
             parameters.Source <- "test"
             parameters.CorrelationId <- generateCorrelationId ()
 
-            let! response = Client.PostAsync("/access/grantRole", createJsonContent parameters)
+            let! response = Client.PostAsync("/authorize/grant-role", createJsonContent parameters)
             let! body = response.Content.ReadAsStringAsync()
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK), body)
         }
@@ -513,7 +513,7 @@ module private WorkItemIntegrationHelpers =
             parameters.TokenName <- $"workitem-sdk-{Guid.NewGuid():N}"
             parameters.CorrelationId <- generateCorrelationId ()
 
-            let! response = Client.PostAsync("/auth/token/create", createJsonContent parameters)
+            let! response = Client.PostAsync("/authenticate/token/create", createJsonContent parameters)
             response.EnsureSuccessStatusCode() |> ignore
             let! returnValue = deserializeContent<GraceReturnValue<PersonalAccessTokenCreated>> response
             return returnValue.ReturnValue.Token

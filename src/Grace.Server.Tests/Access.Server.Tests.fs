@@ -48,7 +48,7 @@ type AccessBootstrapEnabledTests() =
             let! _ownerId = createOwner client
 
             let parameters = createGrantRoleParameters "SystemAdmin" $"{Guid.NewGuid()}"
-            let! response = client.PostAsync("/access/grantRole", createJsonContent parameters)
+            let! response = client.PostAsync("/authorize/grant-role", createJsonContent parameters)
 
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK))
         }
@@ -104,7 +104,7 @@ type AccessBootstrapTests() =
             let! _ownerId = createOwner Client
 
             let parameters = createGrantRoleParameters "SystemAdmin" $"{Guid.NewGuid()}"
-            let! response = client.PostAsync("/access/grantRole", createJsonContent parameters)
+            let! response = client.PostAsync("/authorize/grant-role", createJsonContent parameters)
 
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden))
         }
@@ -147,7 +147,7 @@ type AccessCheckPermissionTests() =
             parameters.PrincipalId <- principalId
             parameters.CorrelationId <- generateCorrelationId ()
 
-            return! client.PostAsync("/access/checkPermission", createJsonContent parameters)
+            return! client.PostAsync("/authorize/check-permission", createJsonContent parameters)
         }
 
     [<Test>]
@@ -230,7 +230,7 @@ type AccessControlSecurityTests() =
             parameters.Source <- "test"
             parameters.CorrelationId <- generateCorrelationId ()
 
-            return! client.PostAsync("/access/grantRole", createJsonContent parameters)
+            return! client.PostAsync("/authorize/grant-role", createJsonContent parameters)
         }
 
     let revokeRoleAsync (client: HttpClient) scopeKind ownerId organizationId repositoryId branchId principalId roleId =
@@ -246,7 +246,7 @@ type AccessControlSecurityTests() =
             parameters.RoleId <- roleId
             parameters.CorrelationId <- generateCorrelationId ()
 
-            return! client.PostAsync("/access/revokeRole", createJsonContent parameters)
+            return! client.PostAsync("/authorize/revoke-role", createJsonContent parameters)
         }
 
     let listRoleAssignmentsAsync (client: HttpClient) scopeKind ownerId organizationId repositoryId branchId =
@@ -259,7 +259,7 @@ type AccessControlSecurityTests() =
             parameters.ScopeKind <- scopeKind
             parameters.CorrelationId <- generateCorrelationId ()
 
-            return! client.PostAsync("/access/listRoleAssignments", createJsonContent parameters)
+            return! client.PostAsync("/authorize/list-role-assignments", createJsonContent parameters)
         }
 
     [<Test>]
@@ -523,7 +523,7 @@ type AccessControl() =
             parameters.Source <- "test"
             parameters.CorrelationId <- generateCorrelationId ()
 
-            let! response = client.PostAsync("/access/grantRole", createJsonContent parameters)
+            let! response = client.PostAsync("/authorize/grant-role", createJsonContent parameters)
             response.EnsureSuccessStatusCode() |> ignore
         }
 
@@ -542,7 +542,7 @@ type AccessControl() =
                 claimPermission.DirectoryPermission <- permission
                 parameters.ClaimPermissions.Add(claimPermission)
 
-            let! response = client.PostAsync("/access/upsertPathPermission", createJsonContent parameters)
+            let! response = client.PostAsync("/authorize/upsert-path-permission", createJsonContent parameters)
             response.EnsureSuccessStatusCode() |> ignore
         }
 
@@ -557,7 +557,7 @@ type AccessControl() =
             parameters.Path <- path
             parameters.CorrelationId <- generateCorrelationId ()
 
-            let! response = client.PostAsync("/access/checkPermission", createJsonContent parameters)
+            let! response = client.PostAsync("/authorize/check-permission", createJsonContent parameters)
             response.EnsureSuccessStatusCode() |> ignore
             let! returnValue = deserializeContent<GraceReturnValue<PermissionCheckResult>> response
             return returnValue.ReturnValue
@@ -575,7 +575,7 @@ type AccessControl() =
             parameters.RoleId <- roleId
             parameters.CorrelationId <- generateCorrelationId ()
 
-            let! response = client.PostAsync("/access/revokeRole", createJsonContent parameters)
+            let! response = client.PostAsync("/authorize/revoke-role", createJsonContent parameters)
             response.EnsureSuccessStatusCode() |> ignore
         }
 
@@ -588,7 +588,7 @@ type AccessControl() =
             parameters.ScopeKind <- scopeKind
             parameters.CorrelationId <- generateCorrelationId ()
 
-            let! response = client.PostAsync("/access/listRoleAssignments", createJsonContent parameters)
+            let! response = client.PostAsync("/authorize/list-role-assignments", createJsonContent parameters)
             let! responseText = response.Content.ReadAsStringAsync()
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK), responseText)
             let returnValue = deserialize<GraceReturnValue<RoleAssignment list>> responseText
@@ -876,7 +876,7 @@ type AccessControl() =
             parameters.RoleId <- "SystemAdmin"
             parameters.CorrelationId <- generateCorrelationId ()
 
-            let! response = nonAdminClient.PostAsync("/access/grantRole", createJsonContent parameters)
+            let! response = nonAdminClient.PostAsync("/authorize/grant-role", createJsonContent parameters)
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden))
         }
 
@@ -890,7 +890,7 @@ type AccessControl() =
             parameters.RoleId <- "NotARealRole"
             parameters.CorrelationId <- generateCorrelationId ()
 
-            let! response = Client.PostAsync("/access/grantRole", createJsonContent parameters)
+            let! response = Client.PostAsync("/authorize/grant-role", createJsonContent parameters)
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
         }
 
@@ -905,7 +905,7 @@ type AccessControl() =
             parameters.RoleId <- "RepositoryAdmin"
             parameters.CorrelationId <- generateCorrelationId ()
 
-            let! response = Client.PostAsync("/access/grantRole", createJsonContent parameters)
+            let! response = Client.PostAsync("/authorize/grant-role", createJsonContent parameters)
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
         }
 
@@ -916,7 +916,7 @@ type AccessControl() =
             parameters.ScopeKind <- "system"
             parameters.CorrelationId <- generateCorrelationId ()
 
-            let! response = Client.PostAsync("/access/listRoleAssignments", createJsonContent parameters)
+            let! response = Client.PostAsync("/authorize/list-role-assignments", createJsonContent parameters)
             response.EnsureSuccessStatusCode() |> ignore
 
             let! returnValue = deserializeContent<GraceReturnValue<RoleAssignment list>> response
@@ -942,7 +942,7 @@ type AccessControl() =
             parameters.ScopeKind <- "owner"
             parameters.CorrelationId <- generateCorrelationId ()
 
-            let! response = nonAdminClient.PostAsync("/access/listRoleAssignments", createJsonContent parameters)
+            let! response = nonAdminClient.PostAsync("/authorize/list-role-assignments", createJsonContent parameters)
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden))
         }
 
@@ -962,7 +962,7 @@ type AccessControl() =
             parameters.PrincipalId <- "other-user"
             parameters.CorrelationId <- generateCorrelationId ()
 
-            let! response = nonAdminClient.PostAsync("/access/checkPermission", createJsonContent parameters)
+            let! response = nonAdminClient.PostAsync("/authorize/check-permission", createJsonContent parameters)
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden))
         }
 
@@ -982,7 +982,7 @@ type AccessControl() =
             parameters.PrincipalId <- nonAdminUserId
             parameters.CorrelationId <- generateCorrelationId ()
 
-            let! response = nonAdminClient.PostAsync("/access/checkPermission", createJsonContent parameters)
+            let! response = nonAdminClient.PostAsync("/authorize/check-permission", createJsonContent parameters)
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK))
         }
 
@@ -1028,7 +1028,7 @@ type EndpointAuthorizationTests() =
             parameters.Source <- "test"
             parameters.CorrelationId <- generateCorrelationId ()
 
-            return! client.PostAsync("/access/grantRole", createJsonContent parameters)
+            return! client.PostAsync("/authorize/grant-role", createJsonContent parameters)
         }
 
     let getDefaultBranchAsync (repositoryId: string) =
@@ -1217,13 +1217,13 @@ type EndpointAuthorizationTests() =
             let! healthResponse = client.GetAsync("/healthz")
             Assert.That(healthResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK))
 
-            let! configResponse = client.GetAsync("/auth/oidc/config")
+            let! configResponse = client.GetAsync("/authenticate/oidc/config")
             Assert.That(configResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK))
 
-            let! loginResponse = client.GetAsync("/auth/login")
+            let! loginResponse = client.GetAsync("/authenticate/login")
             Assert.That(loginResponse.StatusCode, Is.AnyOf(HttpStatusCode.OK, HttpStatusCode.Redirect))
 
-            let! providerLoginResponse = client.GetAsync("/auth/login/test")
+            let! providerLoginResponse = client.GetAsync("/authenticate/login/test")
             Assert.That(providerLoginResponse.StatusCode, Is.AnyOf(HttpStatusCode.OK, HttpStatusCode.Redirect, HttpStatusCode.NotFound))
         }
 

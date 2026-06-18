@@ -367,7 +367,7 @@ module Doctor =
                 Id = ServerAuthPrincipalAvailableCheckId
                 Category = "Server"
                 Title = "Grace authenticated principal"
-                Description = "Optionally probes /auth/me only when a valid non-refreshing GRACE_TOKEN PAT is present."
+                Description = "Optionally probes /authenticate/me only when a valid non-refreshing GRACE_TOKEN PAT is present."
                 DefaultEnabled = false
                 SupportsOffline = false
             }
@@ -928,15 +928,15 @@ module Doctor =
                 | Some token ->
                     let effectiveServerUri = resolveEffectiveServerUri context.ConfigurationState context.EnvironmentServerUri
 
-                    match probeServer "auth/me" (Some token) effectiveServerUri
+                    match probeServer "authenticate/me" (Some token) effectiveServerUri
                           |> fun task -> task.GetAwaiter().GetResult()
                         with
                     | ServerProbeSucceeded response when isSuccessfulHttpStatus response.StatusCode ->
                         ok
-                            $"Authenticated principal endpoint /auth/me returned HTTP {(int response.StatusCode)} {response.ReasonPhrase} using the non-refreshing {Constants.EnvironmentVariables.GraceToken} PAT source."
+                            $"Authenticated principal endpoint /authenticate/me returned HTTP {(int response.StatusCode)} {response.ReasonPhrase} using the non-refreshing {Constants.EnvironmentVariables.GraceToken} PAT source."
                     | ServerProbeSucceeded response ->
                         failed
-                            $"Authenticated principal endpoint /auth/me returned HTTP {(int response.StatusCode)} {response.ReasonPhrase}; verify the PAT, claims, and server authentication configuration."
+                            $"Authenticated principal endpoint /authenticate/me returned HTTP {(int response.StatusCode)} {response.ReasonPhrase}; verify the PAT, claims, and server authentication configuration."
                     | ServerProbeTimedOut message -> failed $"{message} Check the effective server URI, network path, proxy settings, or server startup state."
                     | ServerProbeTlsFailed message -> failed $"{message} Verify the server certificate and HTTPS endpoint configuration."
                     | ServerProbeConnectionFailed message -> failed $"{message} Check that the Grace server is running and reachable."

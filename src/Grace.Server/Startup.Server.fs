@@ -1578,32 +1578,32 @@ module Application =
                                |> addMetadata typeof<Storage.GetUploadUriParameters> ]
                     ]
                 subRoute
-                    "/access"
+                    "/authorize"
                     [
-                        POST [ route "/grantRole" Access.GrantRole
+                        POST [ route "/grant-role" Access.GrantRole
                                |> addMetadata typeof<Access.GrantRoleParameters>
 
-                               route "/revokeRole" Access.RevokeRole
+                               route "/revoke-role" Access.RevokeRole
                                |> addMetadata typeof<Access.RevokeRoleParameters>
 
-                               route "/listRoleAssignments" Access.ListRoleAssignments
+                               route "/list-role-assignments" Access.ListRoleAssignments
                                |> addMetadata typeof<Access.ListRoleAssignmentsParameters>
 
-                               route "/upsertPathPermission" Access.UpsertPathPermission
+                               route "/upsert-path-permission" Access.UpsertPathPermission
                                |> addMetadata typeof<Access.UpsertPathPermissionParameters>
 
-                               route "/removePathPermission" Access.RemovePathPermission
+                               route "/remove-path-permission" Access.RemovePathPermission
                                |> addMetadata typeof<Access.RemovePathPermissionParameters>
 
-                               route "/listPathPermissions" Access.ListPathPermissions
+                               route "/list-path-permissions" Access.ListPathPermissions
                                |> addMetadata typeof<Access.ListPathPermissionsParameters>
 
-                               route "/checkPermission" Access.CheckPermission
+                               route "/check-permission" Access.CheckPermission
                                |> addMetadata typeof<Access.CheckPermissionParameters> ]
-                        GET [ route "/listRoles" Access.ListRoles ]
+                        GET [ route "/list-roles" Access.ListRoles ]
                     ]
                 subRoute
-                    "/auth"
+                    "/authenticate"
                     [
                         GET [ route "/me" Auth.Me
                               route "/oidc/config" (Auth.OidcConfig configuration)
