@@ -20,6 +20,10 @@ type Access() =
     static member public ListRoleAssignments(parameters: ListRoleAssignmentsParameters) =
         postServer<ListRoleAssignmentsParameters, RoleAssignment list> (parameters |> ensureCorrelationIdIsSet, "authorize/list-role-assignments")
 
+    /// Displays role assignments for the current authenticated principal set.
+    static member public ShowRoleAssignments(parameters: ShowRoleAssignmentsParameters) =
+        postServer<ShowRoleAssignmentsParameters, RoleAssignment list> (parameters |> ensureCorrelationIdIsSet, "authorize/show")
+
     /// Upserts a repository path permission.
     static member public UpsertPathPermission(parameters: UpsertPathPermissionParameters) =
         postServer<UpsertPathPermissionParameters, PathPermission list> (parameters |> ensureCorrelationIdIsSet, "authorize/upsert-path-permission")

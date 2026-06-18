@@ -611,7 +611,9 @@ module CommandOutputContract =
             incompleteReturnValueContract
                 "WorkItemDto"
                 "WorkItemDto metadata is incomplete: src/Grace.Types/WorkItem.Types.fs declares additional emitted fields that are not yet represented in the CLI contract registry."
-        | "authorize.check", ExistingGraceResultEnvelope ReuseExistingApiOrSdkDto ->
+        | ("authorize.can"
+          | "authorize.check"),
+          ExistingGraceResultEnvelope ReuseExistingApiOrSdkDto ->
             incompleteReturnValueContract
                 "PermissionCheckResult"
                 "PermissionCheckResult metadata is incomplete: src/Grace.Types/Authorization.Types.fs emits the Allowed/Denied discriminated union, not an object with Allowed and Reason fields."
@@ -887,6 +889,7 @@ module CommandOutputContract =
 
     let entries =
         [
+            row [ "authorize" ] "can" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
             row [ "authorize" ] "check" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
             row [ "authorize" ] "grant-role" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
             row [ "authorize" ] "list-path-permissions" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
@@ -902,6 +905,7 @@ module CommandOutputContract =
                 server_via_sdk
                 ReuseExistingApiOrSdkDto
             row [ "authorize" ] "revoke-role" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
+            row [ "authorize" ] "show" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
             row
                 [ "authorize" ]
                 "upsert-path-permission"

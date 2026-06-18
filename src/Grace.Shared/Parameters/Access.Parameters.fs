@@ -35,6 +35,9 @@ module Access =
         member val public PrincipalId = String.Empty with get, set
         member val public ScopeKind = String.Empty with get, set
 
+    type ShowRoleAssignmentsParameters() =
+        inherit AccessParameters()
+
     type ClaimPermissionParameters() =
         member val public Claim = String.Empty with get, set
         member val public DirectoryPermission = String.Empty with get, set

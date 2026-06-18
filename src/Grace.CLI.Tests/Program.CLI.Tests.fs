@@ -73,8 +73,6 @@ module CommandParsingTests =
         [|
             "authorize"
             "grant-role"
-            "--scope"
-            "repo"
             "--principal-type"
             "User"
             "--principal-id"
@@ -87,8 +85,6 @@ module CommandParsingTests =
         [|
             "authorize"
             "revoke-role"
-            "--scope"
-            "repo"
             "--principal-type"
             "User"
             "--principal-id"
@@ -113,7 +109,8 @@ module CommandParsingTests =
     [<TestCase("BranchAdmin")>]
     [<TestCase("BranchWriter")>]
     [<TestCase("BranchReader")>]
-    [<TestCase("ApprovalResponder")>]
+    [<TestCase("RepositoryApprovalResponder")>]
+    [<TestCase("BranchApprovalResponder")>]
     let ``authorize role commands accept canonical role ids`` roleId =
         let grantParseResult = GraceCommand.rootCommand.Parse(grantRoleArgs roleId)
         grantParseResult.Errors.Count |> should equal 0
@@ -129,15 +126,38 @@ module CommandParsingTests =
     [<TestCase("RepoReader")>]
     [<TestCase("rEpOaDmIn")>]
     [<TestCase("oRgReAdEr")>]
+    [<TestCase("ApprovalResponder")>]
     let ``authorize grant role rejects stale short role ids`` roleId =
         let grantParseResult = GraceCommand.rootCommand.Parse(grantRoleArgs roleId)
         grantParseResult.Errors.Count |> should equal 1
 
     [<TestCase("OrgAdmin")>]
-    [<TestCase("RepositoryReader")>]
-    let ``authorize revoke role accepts raw role ids for cleanup`` roleId =
+    [<TestCase("ApprovalResponder")>]
+    let ``authorize revoke role rejects non-catalog role ids`` roleId =
         let revokeParseResult = GraceCommand.rootCommand.Parse(revokeRoleArgs roleId)
+        revokeParseResult.Errors.Count |> should equal 1
+
+    [<Test>]
+    let ``authorize grant and revoke derive scope from role without scope option`` () =
+        let grantParseResult = GraceCommand.rootCommand.Parse(grantRoleArgs "RepositoryReader")
+        grantParseResult.Errors.Count |> should equal 0
+
+        let revokeParseResult = GraceCommand.rootCommand.Parse(revokeRoleArgs "RepositoryReader")
         revokeParseResult.Errors.Count |> should equal 0
+
+    [<Test>]
+    let ``authorize grant no longer accepts explicit scope option`` () =
+        let parseResult =
+            GraceCommand.rootCommand.Parse(
+                [|
+                    yield! grantRoleArgs "RepositoryReader"
+                    "--scope"
+                    "repo"
+                |]
+            )
+
+        parseResult.Errors.Count
+        |> should be (greaterThan 0)
 
     [<Test>]
     let ``authenticate command group accepts authn alias`` () =
@@ -153,6 +173,30 @@ module CommandParsingTests =
             )
 
         parseResult.Errors.Count |> should equal 0
+
+    [<Test>]
+    let ``authorize show command parses through authz alias`` () =
+        let parseResult = GraceCommand.rootCommand.Parse([| "authz"; "show" |])
+        parseResult.Errors.Count |> should equal 0
+
+    [<Test>]
+    let ``authorize can command parses user oriented repo and path checks`` () =
+        let readRepo = GraceCommand.rootCommand.Parse([| "authz"; "can"; "read"; "repo" |])
+        readRepo.Errors.Count |> should equal 0
+
+        let pathRead =
+            GraceCommand.rootCommand.Parse(
+                [|
+                    "authz"
+                    "can"
+                    "read"
+                    "path"
+                    "--path"
+                    "src/Grace.CLI/Program.CLI.fs"
+                |]
+            )
+
+        pathRead.Errors.Count |> should equal 0
 
     [<TestCase("auth", "status")>]
     [<TestCase("access", "list-roles")>]
@@ -357,6 +401,87 @@ module HelpDoesNotReadConfigTests =
             (Guid.Parse("22222222-2222-2222-2222-222222222222"))
             (Guid.Parse("33333333-3333-3333-3333-333333333333"))
             (Guid.Parse("44444444-4444-4444-4444-444444444444"))
+
+    [<Test>]
+    let ``authz show explicit repository scope does not include configured branch`` () =
+        withTempDir (fun root ->
+            let ownerId = Guid.Parse("11111111-1111-1111-1111-111111111111")
+            let organizationId = Guid.Parse("22222222-2222-2222-2222-222222222222")
+            let configuredRepositoryId = Guid.Parse("33333333-3333-3333-3333-333333333333")
+            let configuredBranchId = Guid.Parse("44444444-4444-4444-4444-444444444444")
+            let requestedRepositoryId = Guid.Parse("55555555-5555-5555-5555-555555555555")
+
+            writeValidConfig root ownerId organizationId configuredRepositoryId configuredBranchId
+
+            let parseResult =
+                GraceCommand.rootCommand.Parse(
+                    [|
+                        "authz"
+                        "show"
+                        "--repository-id"
+                        requestedRepositoryId.ToString()
+                    |]
+                )
+
+            parseResult.Errors.Count |> should equal 0
+
+            let graceIds = Access.normalizeShowRoleAssignmentIds parseResult
+
+            graceIds.OwnerId |> should equal ownerId
+
+            graceIds.OrganizationId
+            |> should equal organizationId
+
+            graceIds.RepositoryId
+            |> should equal requestedRepositoryId
+
+            graceIds.RepositoryIdString
+            |> should equal (requestedRepositoryId.ToString())
+
+            graceIds.BranchId |> should equal BranchId.Empty
+
+            graceIds.BranchIdString
+            |> should equal String.Empty
+
+            graceIds.HasBranch |> should equal false)
+
+    [<Test>]
+    let ``authz show explicit owner scope does not include configured child ids`` () =
+        withTempDir (fun root ->
+            let configuredOwnerId = Guid.Parse("11111111-1111-1111-1111-111111111111")
+            let configuredOrganizationId = Guid.Parse("22222222-2222-2222-2222-222222222222")
+            let configuredRepositoryId = Guid.Parse("33333333-3333-3333-3333-333333333333")
+            let configuredBranchId = Guid.Parse("44444444-4444-4444-4444-444444444444")
+            let requestedOwnerId = Guid.Parse("66666666-6666-6666-6666-666666666666")
+
+            writeValidConfig root configuredOwnerId configuredOrganizationId configuredRepositoryId configuredBranchId
+
+            let parseResult =
+                GraceCommand.rootCommand.Parse(
+                    [|
+                        "authz"
+                        "show"
+                        "--owner-id"
+                        requestedOwnerId.ToString()
+                    |]
+                )
+
+            parseResult.Errors.Count |> should equal 0
+
+            let graceIds = Access.normalizeShowRoleAssignmentIds parseResult
+
+            graceIds.OwnerId |> should equal requestedOwnerId
+
+            graceIds.OrganizationId
+            |> should equal OrganizationId.Empty
+
+            graceIds.RepositoryId
+            |> should equal RepositoryId.Empty
+
+            graceIds.BranchId |> should equal BranchId.Empty
+            graceIds.HasOrganization |> should equal false
+            graceIds.HasRepository |> should equal false
+            graceIds.HasBranch |> should equal false)
 
     let private addLifecycleHeaders
         (response: HttpResponseMessage)

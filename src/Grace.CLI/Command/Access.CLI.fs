@@ -26,6 +26,12 @@ open System.Threading.Tasks
 
 module Access =
 
+    type private ExplicitShowScope =
+        | Owner
+        | Organization
+        | Repository
+        | Branch
+
     module private Options =
         let ownerId =
             new Option<OwnerId>(
@@ -124,6 +130,15 @@ module Access =
 
         let revokeRoleId = new Option<string>(OptionName.RoleId, Required = true, Description = "Role identifier.", Arity = ArgumentArity.ExactlyOne)
 
+        revokeRoleId.Validators.Add (fun optionResult ->
+            let roleId = optionResult.GetValueOrDefault<string>()
+            let allowedRoleIds = String.Join(", ", canonicalRoleIds)
+
+            if canonicalRoleIds
+               |> List.exists (fun canonicalRoleId -> canonicalRoleId.Equals(roleId, StringComparison.OrdinalIgnoreCase))
+               |> not then
+                optionResult.AddError($"{OptionName.RoleId} only accepts one of these values: {allowedRoleIds}"))
+
         let source = new Option<string>(OptionName.Source, Required = false, Description = "Optional role assignment source.", Arity = ArgumentArity.ZeroOrOne)
 
         let sourceDetail =
@@ -159,6 +174,28 @@ module Access =
             (new Option<string>(OptionName.Operation, Required = true, Description = "Operation to check.", Arity = ArgumentArity.ExactlyOne))
                 .AcceptOnlyFromAmong(listCases<Operation> ())
 
+        let canAction =
+            (new Argument<string>("action", Description = "Capability action (read, write, administer).", Arity = ArgumentArity.ExactlyOne))
+                .AcceptOnlyFromAmong(
+                    [|
+                        "read"
+                        "write"
+                        "admin"
+                        "administer"
+                    |]
+                )
+
+        let canResource =
+            (new Argument<string>("resource", Description = "Capability resource (repo, branch, path).", Arity = ArgumentArity.ExactlyOne))
+                .AcceptOnlyFromAmong(
+                    [|
+                        "repo"
+                        "repository"
+                        "branch"
+                        "path"
+                    |]
+                )
+
         let resourceKindRequired =
             (new Option<string>(
                 OptionName.ResourceKind,
@@ -178,6 +215,47 @@ module Access =
                         "path"
                     |]
                 )
+
+    let internal normalizeShowRoleAssignmentIds (parseResult: ParseResult) =
+        let graceIds = parseResult |> getNormalizedIdsAndNames
+
+        let isExplicit optionName =
+            isOptionPresent parseResult optionName
+            && not
+               <| isOptionResultImplicit parseResult optionName
+
+        let explicitScope =
+            if isExplicit OptionName.BranchId then Some Branch
+            elif isExplicit OptionName.RepositoryId then Some Repository
+            elif isExplicit OptionName.OrganizationId then Some Organization
+            elif isExplicit OptionName.OwnerId then Some Owner
+            else None
+
+        match explicitScope with
+        | Some Owner ->
+            { graceIds with
+                OrganizationId = OrganizationId.Empty
+                OrganizationIdString = String.Empty
+                RepositoryId = RepositoryId.Empty
+                RepositoryIdString = String.Empty
+                BranchId = BranchId.Empty
+                BranchIdString = String.Empty
+                HasOrganization = false
+                HasRepository = false
+                HasBranch = false
+            }
+        | Some Organization ->
+            { graceIds with
+                RepositoryId = RepositoryId.Empty
+                RepositoryIdString = String.Empty
+                BranchId = BranchId.Empty
+                BranchIdString = String.Empty
+                HasRepository = false
+                HasBranch = false
+            }
+        | Some Repository -> { graceIds with BranchId = BranchId.Empty; BranchIdString = String.Empty; HasBranch = false }
+        | Some Branch
+        | None -> graceIds
 
     let private formatScope (scope: Scope) =
         match scope with
@@ -290,6 +368,48 @@ module Access =
             | Allowed reason -> AnsiConsole.MarkupLine($"[{Colors.Highlighted}]Allowed[/]: {Markup.Escape(reason)}")
             | Denied reason -> AnsiConsole.MarkupLine($"[{Colors.Error}]Denied[/]: {Markup.Escape(reason)}")
 
+    let private deriveScopeKindForRole (parseResult: ParseResult) (roleId: string) =
+        let correlationId = getCorrelationId parseResult
+
+        if String.IsNullOrWhiteSpace roleId then
+            Error(GraceError.Create "RoleId is required." correlationId)
+        else
+            match Authorization.RoleCatalog.tryGet roleId with
+            | None -> Error(GraceError.Create $"Unknown RoleId '{roleId}'." correlationId)
+            | Some roleDefinition when roleDefinition.AppliesTo.Count = 1 -> Ok(roleDefinition.AppliesTo |> Seq.exactlyOne)
+            | Some _ -> Error(GraceError.Create $"Role '{roleId}' does not map to exactly one assignment scope." correlationId)
+
+    let private tryMapCapability (parseResult: ParseResult) (action: string) (resource: string) (pathValue: string) =
+        let correlationId = getCorrelationId parseResult
+        let normalizedAction = action.Trim().ToLowerInvariant()
+        let normalizedResource = resource.Trim().ToLowerInvariant()
+
+        match normalizedAction, normalizedResource with
+        | "read",
+          ("repo"
+          | "repository") -> Ok("RepositoryRead", "repository")
+        | "write",
+          ("repo"
+          | "repository") -> Ok("RepositoryWrite", "repository")
+        | ("admin"
+          | "administer"),
+          ("repo"
+          | "repository") -> Ok("RepositoryAdmin", "repository")
+        | "read", "branch" -> Ok("BranchRead", "branch")
+        | "write", "branch" -> Ok("BranchWrite", "branch")
+        | ("admin"
+          | "administer"),
+          "branch" -> Ok("BranchAdmin", "branch")
+        | "read", "path" when not (String.IsNullOrWhiteSpace pathValue) -> Ok("PathRead", "path")
+        | "write", "path" when not (String.IsNullOrWhiteSpace pathValue) -> Ok("PathWrite", "path")
+        | ("read"
+          | "write"),
+          "path" -> Error(GraceError.Create "Path is required for Path resources." correlationId)
+        | ("admin"
+          | "administer"),
+          "path" -> Error(GraceError.Create "Path does not support administer checks; use read or write." correlationId)
+        | _ -> Error(GraceError.Create $"Unsupported authorization capability '{action} {resource}'." correlationId)
+
     let private validateClaimPermissions (parseResult: ParseResult) =
         let correlationId = getCorrelationId parseResult
         let claims = parseResult.GetValue(Options.claim)
@@ -348,42 +468,47 @@ module Access =
 
                     match validateIncomingParameters with
                     | Ok _ ->
-                        let parameters =
-                            GrantRoleParameters(
-                                OwnerId = graceIds.OwnerIdString,
-                                OrganizationId = graceIds.OrganizationIdString,
-                                RepositoryId = graceIds.RepositoryIdString,
-                                BranchId = graceIds.BranchIdString,
-                                PrincipalType = parseResult.GetValue(Options.principalTypeRequired),
-                                PrincipalId = parseResult.GetValue(Options.principalIdRequired),
-                                ScopeKind = parseResult.GetValue(Options.scopeKindRequired),
-                                RoleId = parseResult.GetValue(Options.grantRoleId),
-                                Source = parseResult.GetValue(Options.source),
-                                SourceDetail = parseResult.GetValue(Options.sourceDetail),
-                                CorrelationId = getCorrelationId parseResult
-                            )
+                        let roleId = parseResult.GetValue(Options.grantRoleId)
 
-                        let! result =
-                            if parseResult |> hasOutput then
-                                progress
-                                    .Columns(progressColumns)
-                                    .StartAsync(fun progressContext ->
-                                        task {
-                                            let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
-                                            let! response = Access.GrantRole(parameters)
-                                            t0.Increment(100.0)
-                                            return response
-                                        })
-                            else
-                                Access.GrantRole(parameters)
+                        match deriveScopeKindForRole parseResult roleId with
+                        | Error error -> return Error error |> renderOutput parseResult
+                        | Ok scopeKind ->
+                            let parameters =
+                                GrantRoleParameters(
+                                    OwnerId = graceIds.OwnerIdString,
+                                    OrganizationId = graceIds.OrganizationIdString,
+                                    RepositoryId = graceIds.RepositoryIdString,
+                                    BranchId = graceIds.BranchIdString,
+                                    PrincipalType = parseResult.GetValue(Options.principalTypeRequired),
+                                    PrincipalId = parseResult.GetValue(Options.principalIdRequired),
+                                    ScopeKind = scopeKind,
+                                    RoleId = roleId,
+                                    Source = parseResult.GetValue(Options.source),
+                                    SourceDetail = parseResult.GetValue(Options.sourceDetail),
+                                    CorrelationId = getCorrelationId parseResult
+                                )
 
-                        match result with
-                        | Ok graceReturnValue ->
-                            renderAssignments parseResult graceReturnValue.ReturnValue
-                            return result |> renderOutput parseResult
-                        | Error error ->
-                            logToAnsiConsole Colors.Error (Markup.Escape($"{error}"))
-                            return result |> renderOutput parseResult
+                            let! result =
+                                if parseResult |> hasOutput then
+                                    progress
+                                        .Columns(progressColumns)
+                                        .StartAsync(fun progressContext ->
+                                            task {
+                                                let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+                                                let! response = Access.GrantRole(parameters)
+                                                t0.Increment(100.0)
+                                                return response
+                                            })
+                                else
+                                    Access.GrantRole(parameters)
+
+                            match result with
+                            | Ok graceReturnValue ->
+                                renderAssignments parseResult graceReturnValue.ReturnValue
+                                return result |> renderOutput parseResult
+                            | Error error ->
+                                logToAnsiConsole Colors.Error (Markup.Escape($"{error}"))
+                                return result |> renderOutput parseResult
                     | Error error -> return Error error |> renderOutput parseResult
                 with
                 | ex ->
@@ -406,16 +531,73 @@ module Access =
 
                     match validateIncomingParameters with
                     | Ok _ ->
+                        let roleId = parseResult.GetValue(Options.revokeRoleId)
+
+                        match deriveScopeKindForRole parseResult roleId with
+                        | Error error -> return Error error |> renderOutput parseResult
+                        | Ok scopeKind ->
+                            let parameters =
+                                RevokeRoleParameters(
+                                    OwnerId = graceIds.OwnerIdString,
+                                    OrganizationId = graceIds.OrganizationIdString,
+                                    RepositoryId = graceIds.RepositoryIdString,
+                                    BranchId = graceIds.BranchIdString,
+                                    PrincipalType = parseResult.GetValue(Options.principalTypeRequired),
+                                    PrincipalId = parseResult.GetValue(Options.principalIdRequired),
+                                    ScopeKind = scopeKind,
+                                    RoleId = roleId,
+                                    CorrelationId = getCorrelationId parseResult
+                                )
+
+                            let! result =
+                                if parseResult |> hasOutput then
+                                    progress
+                                        .Columns(progressColumns)
+                                        .StartAsync(fun progressContext ->
+                                            task {
+                                                let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
+                                                let! response = Access.RevokeRole(parameters)
+                                                t0.Increment(100.0)
+                                                return response
+                                            })
+                                else
+                                    Access.RevokeRole(parameters)
+
+                            match result with
+                            | Ok graceReturnValue ->
+                                renderAssignments parseResult graceReturnValue.ReturnValue
+                                return result |> renderOutput parseResult
+                            | Error error ->
+                                logToAnsiConsole Colors.Error (Markup.Escape($"{error}"))
+                                return result |> renderOutput parseResult
+                    | Error error -> return Error error |> renderOutput parseResult
+                with
+                | ex ->
+                    return
+                        renderOutput
+                            parseResult
+                            (GraceResult.Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId)))
+            }
+
+    type ShowRoleAssignments() =
+        inherit AsynchronousCommandLineAction()
+
+        override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Task<int> =
+            task {
+                try
+                    if parseResult |> verbose then printParseResult parseResult
+
+                    let graceIds = parseResult |> normalizeShowRoleAssignmentIds
+                    let validateIncomingParameters = parseResult |> CommonValidations
+
+                    match validateIncomingParameters with
+                    | Ok _ ->
                         let parameters =
-                            RevokeRoleParameters(
+                            ShowRoleAssignmentsParameters(
                                 OwnerId = graceIds.OwnerIdString,
                                 OrganizationId = graceIds.OrganizationIdString,
                                 RepositoryId = graceIds.RepositoryIdString,
                                 BranchId = graceIds.BranchIdString,
-                                PrincipalType = parseResult.GetValue(Options.principalTypeRequired),
-                                PrincipalId = parseResult.GetValue(Options.principalIdRequired),
-                                ScopeKind = parseResult.GetValue(Options.scopeKindRequired),
-                                RoleId = parseResult.GetValue(Options.revokeRoleId),
                                 CorrelationId = getCorrelationId parseResult
                             )
 
@@ -425,13 +607,13 @@ module Access =
                                     .Columns(progressColumns)
                                     .StartAsync(fun progressContext ->
                                         task {
-                                            let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Sending command to the server.[/]")
-                                            let! response = Access.RevokeRole(parameters)
+                                            let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Loading my role assignments.[/]")
+                                            let! response = Access.ShowRoleAssignments(parameters)
                                             t0.Increment(100.0)
                                             return response
                                         })
                             else
-                                Access.RevokeRole(parameters)
+                                Access.ShowRoleAssignments(parameters)
 
                         match result with
                         | Ok graceReturnValue ->
@@ -763,6 +945,76 @@ module Access =
                             (GraceResult.Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId)))
             }
 
+    type Can() =
+        inherit AsynchronousCommandLineAction()
+
+        override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Task<int> =
+            task {
+                try
+                    if parseResult |> verbose then printParseResult parseResult
+
+                    let graceIds = parseResult |> getNormalizedIdsAndNames
+
+                    let pathValue =
+                        parseResult.GetValue(Options.pathOptional)
+                        |> Option.ofObj
+                        |> Option.defaultValue ""
+
+                    let mapped = tryMapCapability parseResult (parseResult.GetValue(Options.canAction)) (parseResult.GetValue(Options.canResource)) pathValue
+
+                    let validateIncomingParameters =
+                        parseResult
+                        |> CommonValidations
+                        >>= (fun _ -> mapped |> Result.map (fun _ -> parseResult))
+
+                    match validateIncomingParameters with
+                    | Ok _ ->
+                        let operation, resourceKind =
+                            mapped
+                            |> Result.defaultWith (fun error -> raise (InvalidOperationException(error.Error)))
+
+                        let parameters =
+                            CheckPermissionParameters(
+                                OwnerId = graceIds.OwnerIdString,
+                                OrganizationId = graceIds.OrganizationIdString,
+                                RepositoryId = graceIds.RepositoryIdString,
+                                BranchId = graceIds.BranchIdString,
+                                Operation = operation,
+                                ResourceKind = resourceKind,
+                                Path = pathValue,
+                                CorrelationId = getCorrelationId parseResult
+                            )
+
+                        let! result =
+                            if parseResult |> hasOutput then
+                                progress
+                                    .Columns(progressColumns)
+                                    .StartAsync(fun progressContext ->
+                                        task {
+                                            let t0 = progressContext.AddTask($"[{Color.DodgerBlue1}]Checking permission.[/]")
+                                            let! response = Access.CheckPermission(parameters)
+                                            t0.Increment(100.0)
+                                            return response
+                                        })
+                            else
+                                Access.CheckPermission(parameters)
+
+                        match result with
+                        | Ok graceReturnValue ->
+                            renderPermissionCheck parseResult graceReturnValue.ReturnValue
+                            return result |> renderOutput parseResult
+                        | Error error ->
+                            logToAnsiConsole Colors.Error (Markup.Escape($"{error}"))
+                            return result |> renderOutput parseResult
+                    | Error error -> return Error error |> renderOutput parseResult
+                with
+                | ex ->
+                    return
+                        renderOutput
+                            parseResult
+                            (GraceResult.Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId)))
+            }
+
     type ListRoles() =
         inherit AsynchronousCommandLineAction()
 
@@ -816,7 +1068,6 @@ module Access =
         let grantRoleCommand =
             new Command("grant-role", Description = "Grants a role to a principal at a scope.")
             |> addScopeOptions
-            |> addOption Options.scopeKindRequired
             |> addOption Options.principalTypeRequired
             |> addOption Options.principalIdRequired
             |> addOption Options.grantRoleId
@@ -829,7 +1080,6 @@ module Access =
         let revokeRoleCommand =
             new Command("revoke-role", Description = "Revokes a role from a principal at a scope.")
             |> addScopeOptions
-            |> addOption Options.scopeKindRequired
             |> addOption Options.principalTypeRequired
             |> addOption Options.principalIdRequired
             |> addOption Options.revokeRoleId
@@ -838,7 +1088,7 @@ module Access =
         accessCommand.Subcommands.Add(revokeRoleCommand)
 
         let listRoleAssignmentsCommand =
-            new Command("list-role-assignments", Description = "Lists role assignments at a scope.")
+            new Command("list-role-assignments", Description = "Lists all role assignments at a scope. Requires scope admin permission.")
             |> addScopeOptions
             |> addOption Options.scopeKindRequired
             |> addOption Options.principalTypeOptional
@@ -846,6 +1096,13 @@ module Access =
 
         listRoleAssignmentsCommand.Action <- new ListRoleAssignments()
         accessCommand.Subcommands.Add(listRoleAssignmentsCommand)
+
+        let showRoleAssignmentsCommand =
+            new Command("show", Description = "Display my role assignments")
+            |> addScopeOptions
+
+        showRoleAssignmentsCommand.Action <- new ShowRoleAssignments()
+        accessCommand.Subcommands.Add(showRoleAssignmentsCommand)
 
         let upsertPathPermissionCommand =
             new Command("upsert-path-permission", Description = "Upserts repository path permissions.")
@@ -884,6 +1141,16 @@ module Access =
 
         checkPermissionCommand.Action <- new CheckPermission()
         accessCommand.Subcommands.Add(checkPermissionCommand)
+
+        let canCommand =
+            new Command("can", Description = "Checks whether I can perform an action on a resource.")
+            |> addScopeOptions
+            |> addOption Options.pathOptional
+
+        canCommand.Arguments.Add(Options.canAction)
+        canCommand.Arguments.Add(Options.canResource)
+        canCommand.Action <- new Can()
+        accessCommand.Subcommands.Add(canCommand)
 
         let listRolesCommand = new Command("list-roles", Description = "Lists available roles.")
 

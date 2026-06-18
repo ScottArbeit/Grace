@@ -1589,6 +1589,9 @@ module Application =
                                route "/list-role-assignments" Access.ListRoleAssignments
                                |> addMetadata typeof<Access.ListRoleAssignmentsParameters>
 
+                               route "/show" Access.ShowRoleAssignments
+                               |> addMetadata typeof<Access.ShowRoleAssignmentsParameters>
+
                                route "/upsert-path-permission" Access.UpsertPathPermission
                                |> addMetadata typeof<Access.UpsertPathPermissionParameters>
 
