@@ -20,8 +20,8 @@ PowerShell:
 
 ```powershell
 grace --output Json auth logout
-grace auth logout --schema
-grace auth logout --examples
+grace authenticate logout --schema
+grace authenticate logout --examples
 grace --output Json maintenance stats --select DirectoryCount
 grace --output Json doctor --select Status
 ```
@@ -30,8 +30,8 @@ bash / zsh:
 
 ```bash
 grace --output Json auth logout
-grace auth logout --schema
-grace auth logout --examples
+grace authenticate logout --schema
+grace authenticate logout --examples
 grace --output Json maintenance stats --select DirectoryCount
 grace --output Json doctor --select Status
 ```
@@ -78,7 +78,7 @@ An error emits a `GraceError` document:
   "Kind": "schema",
   "ContractVersion": "cli-json-v1",
   "Command": {
-    "Id": "auth.logout",
+    "Id": "authenticate.logout",
     "Path": [
       "auth",
       "logout"

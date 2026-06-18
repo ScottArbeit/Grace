@@ -229,7 +229,7 @@ module AuthTests =
         clearOidcEnv (fun () ->
             withEnv Constants.EnvironmentVariables.GraceToken (Some token) (fun () ->
                 let exitCode, standardOut, standardError =
-                    runWithCapturedStdoutAndStderr [| "auth"
+                    runWithCapturedStdoutAndStderr [| "authenticate"
                                                       "status" |]
 
                 exitCode |> should equal 0
@@ -264,7 +264,7 @@ module AuthTests =
                 let exitCode, standardOut, standardError =
                     runWithCapturedStdoutAndStderr [| "--output"
                                                       "Json"
-                                                      "auth"
+                                                      "authenticate"
                                                       "status" |]
 
                 exitCode |> should equal 0
@@ -310,7 +310,7 @@ module AuthTests =
             let exitCode, standardOut, standardError =
                 runWithCapturedStdoutAndStderr [| "--output"
                                                   "Json"
-                                                  "auth"
+                                                  "authenticate"
                                                   "status" |]
 
             exitCode |> should equal 0
@@ -352,7 +352,7 @@ module AuthTests =
                 let exitCode, standardOut, standardError =
                     runWithCapturedStdoutAndStderr [| "--output"
                                                       "Json"
-                                                      "auth"
+                                                      "authenticate"
                                                       "status" |]
 
                 exitCode |> should equal 0
@@ -394,7 +394,7 @@ module AuthTests =
                                 let exitCode, standardOut, standardError =
                                     runWithCapturedStdoutAndStderr [| "--output"
                                                                       "Json"
-                                                                      "auth"
+                                                                      "authenticate"
                                                                       "status" |]
 
                                 exitCode |> should equal 0
@@ -567,7 +567,7 @@ module AuthTests =
                 let exitCode, standardOut, standardError =
                     runWithCapturedStdoutAndStderr [| "--output"
                                                       "Verbose"
-                                                      "auth"
+                                                      "authenticate"
                                                       "whoami" |]
 
                 exitCode |> should not' (equal 0)
@@ -592,7 +592,7 @@ module AuthTests =
                     let exitCode, standardOut, standardError =
                         runWithCapturedStdoutAndStderr [| "--output"
                                                           "Verbose"
-                                                          "auth"
+                                                          "authenticate"
                                                           "token"
                                                           "create"
                                                           "--name"

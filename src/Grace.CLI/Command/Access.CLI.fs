@@ -810,7 +810,8 @@ module Access =
             |> addOption Options.repositoryId
             |> addOption Options.branchId
 
-        let accessCommand = new Command("access", Description = "Manages access control and permissions.")
+        let accessCommand = new Command("authorize", Description = "Manages access control and permissions.")
+        accessCommand.Aliases.Add("authz")
 
         let grantRoleCommand =
             new Command("grant-role", Description = "Grants a role to a principal at a scope.")

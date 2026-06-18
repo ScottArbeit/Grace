@@ -587,7 +587,7 @@ module CommandOutputContractRegistryTests =
 
     [<Test>]
     let ``schema ready registry entries describe success and error envelopes`` () =
-        let identity = CommandOutputContract.commandIdentity [ "auth" ] "logout"
+        let identity = CommandOutputContract.commandIdentity [ "authenticate" ] "logout"
 
         match CommandOutputContract.tryFind identity with
         | Some entry ->
@@ -595,7 +595,8 @@ module CommandOutputContractRegistryTests =
 
             document.Kind |> should equal "schema"
 
-            document.Command.Id |> should equal "auth.logout"
+            document.Command.Id
+            |> should equal "authenticate.logout"
 
             match document.Schema with
             | Some schema ->
@@ -655,7 +656,7 @@ module CommandOutputContractRegistryTests =
                     .GetString()
                 |> should equal "string"
             | None -> Assert.Fail("Schema introspection should include a schema document.")
-        | None -> Assert.Fail("auth.logout should have a registry entry.")
+        | None -> Assert.Fail("authenticate.logout should have a registry entry.")
 
     [<Test>]
     let ``maintenance registry entries expose schema ready local dto metadata`` () =
@@ -781,7 +782,7 @@ module CommandOutputContractRegistryTests =
             [
                 CommandOutputContract.commandIdentity [ "repository" ] "get", "RepositoryDto metadata is incomplete"
                 CommandOutputContract.commandIdentity [ "workitem" ] "show", "WorkItemDto metadata is incomplete"
-                CommandOutputContract.commandIdentity [ "access" ] "check", "PermissionCheckResult metadata is incomplete"
+                CommandOutputContract.commandIdentity [ "authorize" ] "check", "PermissionCheckResult metadata is incomplete"
             ]
 
         for identity, expectedNote in cases do
@@ -810,7 +811,7 @@ module CommandOutputContractRegistryTests =
 
     [<Test>]
     let ``examples for schema ready commands parse as Grace envelopes`` () =
-        let identity = CommandOutputContract.commandIdentity [ "auth" ] "logout"
+        let identity = CommandOutputContract.commandIdentity [ "authenticate" ] "logout"
 
         match CommandOutputContract.tryFind identity with
         | Some entry ->
@@ -848,7 +849,7 @@ module CommandOutputContractRegistryTests =
 
             errorRoot.GetProperty("CorrelationId").GetString()
             |> should equal "correlation-id"
-        | None -> Assert.Fail("auth.logout should have a registry entry.")
+        | None -> Assert.Fail("authenticate.logout should have a registry entry.")
 
     [<Test>]
     let ``all registry schema and example documents serialize as json`` () =

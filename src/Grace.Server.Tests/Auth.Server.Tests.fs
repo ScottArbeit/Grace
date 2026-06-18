@@ -31,7 +31,7 @@ type AuthEndpoints() =
             Assert.That(body, Does.StartWith("<!doctype html>"))
             Assert.That(body, Does.Contain("<title>Grace Login</title>"))
             Assert.That(body, Does.Contain("Interactive browser login is not available on the server in this phase."))
-            Assert.That(body, Does.Contain("grace auth login"))
+            Assert.That(body, Does.Contain("grace authenticate login"))
         }
 
     [<Test>]

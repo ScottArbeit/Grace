@@ -152,7 +152,8 @@ module Watch =
     let resolveSignalRAccessTokenResult (tokenResult: Result<string option, string>) =
         match tokenResult with
         | Ok (Some token) when not (String.IsNullOrWhiteSpace token) -> Ok token
-        | Ok _ -> Error $"No access token is available. Run `grace auth login` or set {Constants.EnvironmentVariables.GraceToken} before starting watch."
+        | Ok _ ->
+            Error $"No access token is available. Run `grace authenticate login` or set {Constants.EnvironmentVariables.GraceToken} before starting watch."
         | Error message -> Error $"Unable to acquire an access token for SignalR notifications: {message}"
 
     let private getSignalRAccessToken () =
@@ -833,7 +834,7 @@ module Watch =
                     && httpEx.StatusCode.Value = HttpStatusCode.Unauthorized
                     ->
                     let message =
-                        $"SignalR negotiation failed with 401 Unauthorized. Run `grace auth login` or set {Constants.EnvironmentVariables.GraceToken}, then retry `grace watch`."
+                        $"SignalR negotiation failed with 401 Unauthorized. Run `grace authenticate login` or set {Constants.EnvironmentVariables.GraceToken}, then retry `grace watch`."
 
                     if parseResult |> json then
                         return renderJsonError parseResult message

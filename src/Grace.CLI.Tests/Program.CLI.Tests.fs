@@ -71,7 +71,7 @@ module CommandParsingTests =
 
     let private grantRoleArgs roleId =
         [|
-            "access"
+            "authorize"
             "grant-role"
             "--scope"
             "repo"
@@ -85,7 +85,7 @@ module CommandParsingTests =
 
     let private revokeRoleArgs roleId =
         [|
-            "access"
+            "authorize"
             "revoke-role"
             "--scope"
             "repo"
@@ -114,7 +114,7 @@ module CommandParsingTests =
     [<TestCase("BranchWriter")>]
     [<TestCase("BranchReader")>]
     [<TestCase("ApprovalResponder")>]
-    let ``access role commands accept canonical role ids`` roleId =
+    let ``authorize role commands accept canonical role ids`` roleId =
         let grantParseResult = GraceCommand.rootCommand.Parse(grantRoleArgs roleId)
         grantParseResult.Errors.Count |> should equal 0
 
@@ -129,15 +129,38 @@ module CommandParsingTests =
     [<TestCase("RepoReader")>]
     [<TestCase("rEpOaDmIn")>]
     [<TestCase("oRgReAdEr")>]
-    let ``access grant role rejects stale short role ids`` roleId =
+    let ``authorize grant role rejects stale short role ids`` roleId =
         let grantParseResult = GraceCommand.rootCommand.Parse(grantRoleArgs roleId)
         grantParseResult.Errors.Count |> should equal 1
 
     [<TestCase("OrgAdmin")>]
     [<TestCase("RepositoryReader")>]
-    let ``access revoke role accepts raw role ids for cleanup`` roleId =
+    let ``authorize revoke role accepts raw role ids for cleanup`` roleId =
         let revokeParseResult = GraceCommand.rootCommand.Parse(revokeRoleArgs roleId)
         revokeParseResult.Errors.Count |> should equal 0
+
+    [<Test>]
+    let ``authenticate command group accepts authn alias`` () =
+        let parseResult = GraceCommand.rootCommand.Parse([| "authn"; "status" |])
+        parseResult.Errors.Count |> should equal 0
+
+    [<Test>]
+    let ``authorize command group accepts authz alias`` () =
+        let parseResult =
+            GraceCommand.rootCommand.Parse(
+                grantRoleArgs "RepositoryReader"
+                |> Array.updateAt 0 "authz"
+            )
+
+        parseResult.Errors.Count |> should equal 0
+
+    [<TestCase("auth", "status")>]
+    [<TestCase("access", "list-roles")>]
+    let ``old auth and access command groups are not accepted`` commandGroup commandName =
+        let parseResult = GraceCommand.rootCommand.Parse([| commandGroup; commandName |])
+
+        parseResult.Errors.Count
+        |> should be (greaterThan 0)
 
 
 namespace Grace.CLI.Tests
@@ -376,7 +399,7 @@ module HelpDoesNotReadConfigTests =
             writeInvalidConfig root
 
             let exitCode, _ =
-                runWithCapturedOutput [| "access"
+                runWithCapturedOutput [| "authorize"
                                          "grant-role"
                                          "-h" |]
 
@@ -386,7 +409,7 @@ module HelpDoesNotReadConfigTests =
     let ``help works without config`` () =
         withTempDir (fun _ ->
             let exitCode, _ =
-                runWithCapturedOutput [| "access"
+                runWithCapturedOutput [| "authorize"
                                          "grant-role"
                                          "-h" |]
 
@@ -396,7 +419,7 @@ module HelpDoesNotReadConfigTests =
     let ``help shows symbolic defaults`` () =
         withTempDir (fun _ ->
             let exitCode, output =
-                runWithCapturedOutput [| "access"
+                runWithCapturedOutput [| "authorize"
                                          "grant-role"
                                          "-h" |]
 
@@ -497,7 +520,7 @@ module HelpDoesNotReadConfigTests =
             let exitCode, output =
                 runWithCapturedOutput [| "--output"
                                          "Json"
-                                         "auth"
+                                         "authenticate"
                                          "logout"
                                          "--examples" |]
 
@@ -513,7 +536,7 @@ module HelpDoesNotReadConfigTests =
                 .GetProperty("Command")
                 .GetProperty("Id")
                 .GetString()
-            |> should equal "auth.logout"
+            |> should equal "authenticate.logout"
 
             let examples = rootElement.GetProperty("Examples")
             examples.GetArrayLength() |> should equal 2
@@ -523,6 +546,73 @@ module HelpDoesNotReadConfigTests =
                 .GetProperty("ReturnValue")
                 .GetString()
             |> should equal "Signed out.")
+
+    [<Test>]
+    let ``root login alias emits schema introspection`` () =
+        withTempDir (fun _ ->
+            let exitCode, output =
+                runWithCapturedOutput [| "login"
+                                         "--schema" |]
+
+            exitCode |> should equal 0
+
+            use document = parseJsonOutput output
+            let rootElement = document.RootElement
+
+            rootElement.GetProperty("Kind").GetString()
+            |> should equal "schema"
+
+            rootElement
+                .GetProperty("Command")
+                .GetProperty("Id")
+                .GetString()
+            |> should equal "authenticate.login")
+
+    [<Test>]
+    let ``root login alias preserves preceding global options for schema introspection`` () =
+        withTempDir (fun _ ->
+            let exitCode, output =
+                runWithCapturedOutput [| "--output"
+                                         "Json"
+                                         "login"
+                                         "--schema" |]
+
+            exitCode |> should equal 0
+
+            use document = parseJsonOutput output
+            let rootElement = document.RootElement
+
+            rootElement.GetProperty("Kind").GetString()
+            |> should equal "schema"
+
+            rootElement
+                .GetProperty("Command")
+                .GetProperty("Id")
+                .GetString()
+            |> should equal "authenticate.login")
+
+    [<Test>]
+    let ``root logout alias preserves preceding global options for examples introspection`` () =
+        withTempDir (fun _ ->
+            let exitCode, output =
+                runWithCapturedOutput [| "--output"
+                                         "Json"
+                                         "logout"
+                                         "--examples" |]
+
+            exitCode |> should equal 0
+
+            use document = parseJsonOutput output
+            let rootElement = document.RootElement
+
+            rootElement.GetProperty("Kind").GetString()
+            |> should equal "examples"
+
+            rootElement
+                .GetProperty("Command")
+                .GetProperty("Id")
+                .GetString()
+            |> should equal "authenticate.logout")
 
     [<Test>]
     let ``examples for missing dto metadata emit explicit unsupported document`` () =
@@ -1049,7 +1139,7 @@ module HelpDoesNotReadConfigTests =
         let parseResult =
             GraceCommand.rootCommand.Parse(
                 [|
-                    "auth"
+                    "authenticate"
                     "logout"
                     "--select"
                     "Value"
@@ -1440,7 +1530,7 @@ module HelpDoesNotReadConfigTests =
             let exitCode, standardOut, standardError =
                 runWithCapturedStdoutAndStderr [| "--output"
                                                   "Json"
-                                                  "access"
+                                                  "authorize"
                                                   "list-roles" |]
 
             exitCode |> should equal -1
@@ -1487,7 +1577,7 @@ module HelpDoesNotReadConfigTests =
             let branchId = Guid.NewGuid()
             writeValidConfig root ownerId orgId repoId branchId
 
-            let parseResult = GraceCommand.rootCommand.Parse([| "access"; "grant-role" |])
+            let parseResult = GraceCommand.rootCommand.Parse([| "authorize"; "grant-role" |])
 
             let output = captureOutput (fun () -> Common.printParseResult parseResult)
 
@@ -1506,7 +1596,7 @@ module HelpDoesNotReadConfigTests =
             let branchId = Guid.NewGuid()
             writeValidConfig root ownerId orgId repoId branchId
 
-            let parseResult = GraceCommand.rootCommand.Parse([| "access"; "grant-role" |])
+            let parseResult = GraceCommand.rootCommand.Parse([| "authorize"; "grant-role" |])
             let graceIds = Services.getNormalizedIdsAndNames parseResult
 
             graceIds.OwnerId |> should equal ownerId
@@ -1632,15 +1722,19 @@ module RootHelpGroupingTests =
             output |> should contain "Review and promotion:"
 
             output
-            |> should contain "Administration and access:"
+            |> should contain "Administration and authorization:"
 
             output |> should contain "Local utilities:"
 
             let gettingStarted = sliceBetween output "Getting started:" "Day-to-day development:"
 
-            gettingStarted |> should contain "auth"
+            gettingStarted |> should contain "authenticate"
             gettingStarted |> should contain "connect"
             gettingStarted |> should contain "config"
+
+            gettingStarted
+            |> should not' (contain $"{Environment.NewLine}    auth ")
+
             gettingStarted |> should not' (contain "branch")
 
             let dayToDay = sliceBetween output "Day-to-day development:" "Review and promotion:"
@@ -1651,7 +1745,7 @@ module RootHelpGroupingTests =
             dayToDay |> should contain "watch"
             dayToDay |> should not' (contain "work")
 
-            let reviewAndPromotion = sliceBetween output "Review and promotion:" "Administration and access:"
+            let reviewAndPromotion = sliceBetween output "Review and promotion:" "Administration and authorization:"
 
             reviewAndPromotion |> should contain "workitem"
             reviewAndPromotion |> should contain "review"
@@ -1662,7 +1756,14 @@ module RootHelpGroupingTests =
             reviewAndPromotion |> should contain "webhook"
 
             reviewAndPromotion
-            |> should contain "promotion-set")
+            |> should contain "promotion-set"
+
+            let administration = sliceBetween output "Administration and authorization:" "Local utilities:"
+
+            administration |> should contain "authorize"
+
+            administration
+            |> should not' (contain $"{Environment.NewLine}    access "))
 
     [<Test>]
     let ``subcommand help is not grouped`` () =
@@ -1681,7 +1782,7 @@ module RootHelpGroupingTests =
             |> should not' (contain "Review and promotion:")
 
             output
-            |> should not' (contain "Administration and access:")
+            |> should not' (contain "Administration and authorization:")
 
             output |> should not' (contain "Local utilities:"))
 
