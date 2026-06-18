@@ -45,14 +45,14 @@
       "reason": "Access-control administration and permission-inspection routes are internal authorization operations, not public OpenAPI expansion targets for this slice.",
       "traceIds": [ "B-020", "B-024", "B-041", "surf-startup-admin" ],
       "routes": [
-        { "method": "GET", "path": "/access/listRoles" },
-        { "method": "POST", "path": "/access/checkPermission" },
-        { "method": "POST", "path": "/access/grantRole" },
-        { "method": "POST", "path": "/access/listPathPermissions" },
-        { "method": "POST", "path": "/access/listRoleAssignments" },
-        { "method": "POST", "path": "/access/removePathPermission" },
-        { "method": "POST", "path": "/access/revokeRole" },
-        { "method": "POST", "path": "/access/upsertPathPermission" }
+        { "method": "GET", "path": "/authorize/list-roles" },
+        { "method": "POST", "path": "/authorize/check-permission" },
+        { "method": "POST", "path": "/authorize/grant-role" },
+        { "method": "POST", "path": "/authorize/list-path-permissions" },
+        { "method": "POST", "path": "/authorize/list-role-assignments" },
+        { "method": "POST", "path": "/authorize/remove-path-permission" },
+        { "method": "POST", "path": "/authorize/revoke-role" },
+        { "method": "POST", "path": "/authorize/upsert-path-permission" }
       ]
     },
     {
@@ -60,14 +60,14 @@
       "reason": "Authentication, personal access token, and OIDC bootstrap routes are server identity flows kept outside the current public OpenAPI route expansion.",
       "traceIds": [ "B-020", "B-024", "drift-003", "surf-host" ],
       "routes": [
-        { "method": "GET", "path": "/auth/login" },
-        { "method": "GET", "path": "/auth/login/%s" },
-        { "method": "GET", "path": "/auth/logout" },
-        { "method": "GET", "path": "/auth/me" },
-        { "method": "GET", "path": "/auth/oidc/config" },
-        { "method": "POST", "path": "/auth/token/create" },
-        { "method": "POST", "path": "/auth/token/list" },
-        { "method": "POST", "path": "/auth/token/revoke" }
+        { "method": "GET", "path": "/authenticate/login" },
+        { "method": "GET", "path": "/authenticate/login/%s" },
+        { "method": "GET", "path": "/authenticate/logout" },
+        { "method": "GET", "path": "/authenticate/me" },
+        { "method": "GET", "path": "/authenticate/oidc/config" },
+        { "method": "POST", "path": "/authenticate/token/create" },
+        { "method": "POST", "path": "/authenticate/token/list" },
+        { "method": "POST", "path": "/authenticate/token/revoke" }
       ]
     },
     {

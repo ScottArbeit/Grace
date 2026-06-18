@@ -76,7 +76,7 @@ module Auth =
                 let startTime = getCurrentInstant ()
 
                 let graceServerUri = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.GraceServerUri)
-                let serverUri = Uri($"{graceServerUri}/auth/oidc/config")
+                let serverUri = Uri($"{graceServerUri}/authenticate/oidc/config")
 
                 let! response = Constants.DefaultAsyncRetryPolicy.ExecuteAsync(fun _ -> httpClient.GetAsync(serverUri))
                 let endTime = getCurrentInstant ()
@@ -89,7 +89,7 @@ module Auth =
                         |> enhance "ServerResponseTime" $"{(endTime - startTime).TotalMilliseconds:F3} ms"
                         |> ClientIdentity.enhanceWithLifecycleDiagnostics response
                 else
-                    let! graceError = ResponseErrors.fromResponse correlationId "auth/oidc/config" response
+                    let! graceError = ResponseErrors.fromResponse correlationId "authenticate/oidc/config" response
 
                     return
                         Error graceError

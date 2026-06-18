@@ -572,7 +572,7 @@ module AuthTests =
 
                 exitCode |> should not' (equal 0)
                 standardOut |> should contain "401 Unauthorized"
-                standardOut |> should contain "auth/me"
+                standardOut |> should contain "authenticate/me"
 
                 standardOut
                 |> should not' (contain "JsonException")
@@ -602,7 +602,9 @@ module AuthTests =
 
                     exitCode |> should not' (equal 0)
                     standardOut |> should contain "401 Unauthorized"
-                    standardOut |> should contain "auth/token/create"
+
+                    standardOut
+                    |> should contain "authenticate/token/create"
 
                     standardOut
                     |> should not' (contain "JsonException")

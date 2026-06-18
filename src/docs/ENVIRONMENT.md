@@ -76,8 +76,8 @@ pwsh ./scripts/start-debuglocal.ps1 --GraceServerUri "http://localhost:5000" -Sk
 
 The script creates a PAT through explicit TestAuth headers so the first local SystemAdmin can get started without an
 OIDC tenant. `-SkipAuthProbe` is required for this true zero-OIDC path because the default preflight checks
-`/auth/oidc/config` before TestAuth PAT creation. Omit it when OIDC/MSA settings are configured and you want the script
-to verify `/auth/oidc/config` and `/auth/me` before creating the PAT.
+`/authenticate/oidc/config` before TestAuth PAT creation. Omit it when OIDC/MSA settings are configured and you want
+the script to verify `/authenticate/oidc/config` and `/authenticate/me` before creating the PAT.
 
 Use this path when the server has OIDC/MSA settings and you want normal interactive auth:
 
@@ -126,7 +126,7 @@ grants.
 
 These are script parameters (not environment variables):
 
-- `-SkipAuthProbe`: skip auth preflight (`/auth/oidc/config`, `/auth/me`).
+- `-SkipAuthProbe`: skip auth preflight (`/authenticate/oidc/config`, `/authenticate/me`).
 - `-NoTokenBootstrap`: skip PAT creation.
 - `-TokenBootstrapMaxAttempts`: set max token bootstrap attempts.
 - `-TokenBootstrapInitialBackoffSeconds`: set initial retry backoff.

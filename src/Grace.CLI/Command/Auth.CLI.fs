@@ -1444,7 +1444,7 @@ module Auth =
             task {
                 let correlationId = parseResult |> getCorrelationId
                 let parameters = CommonParameters(CorrelationId = correlationId)
-                let! result = Grace.SDK.Common.getServer<CommonParameters, AuthInfo> (parameters, "auth/me")
+                let! result = Grace.SDK.Common.getServer<CommonParameters, AuthInfo> (parameters, "authenticate/me")
 
                 match result with
                 | Ok graceReturnValue ->

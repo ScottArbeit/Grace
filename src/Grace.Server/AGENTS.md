@@ -24,7 +24,7 @@ code.
   should be intentional and well documented here.
 - Coordinate contracts and message flows with `Grace.Actors`, `Grace.SDK`, and
   `Grace.Types` so that clients and grain logic remain in sync.
-- Personal access tokens (PATs) use the `GracePat` auth scheme, `/auth/token/*`
+- Personal access tokens (PATs) use the `GracePat` auth scheme, `/authenticate/token/*`
   endpoints, and are governed by `grace__auth__pat__*` lifetime policies.
   Authorization headers are redacted in request logging.
 - Auth0 JWT bearer validation is configured via

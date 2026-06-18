@@ -1092,7 +1092,7 @@ module DoctorCliTests =
                             principalRequests.Count |> should equal 1
 
                             principalRequests[0].RelativePath
-                            |> should equal "auth/me"
+                            |> should equal "authenticate/me"
 
                             principalRequests[0].BearerToken
                             |> should equal (Some token)))))
