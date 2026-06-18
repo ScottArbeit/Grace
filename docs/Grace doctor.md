@@ -166,7 +166,7 @@ The v1 catalog contains 27 check IDs:
 | `server.connectivity` | Server | No | No | Reserved compatibility catalog entry. |
 | `server.healthz.reachable` | Server | No | No | Probes `/healthz` with a short timeout. |
 | `server.lifecycle.headers` | Server | No | No | Surfaces Grace SDK lifecycle response headers from `/healthz`. |
-| `server.auth-principal.available` | Server | No | No | Probes `/auth/me` only when a valid non-refreshing `GRACE_TOKEN` PAT is present. |
+| `server.auth-principal.available` | Server | No | No | Probes `/authenticate/me` only when a valid non-refreshing `GRACE_TOKEN` PAT is present. |
 
 ## Working Tree Scan
 
@@ -196,7 +196,8 @@ Doctor can help explain local authentication setup without exposing secrets:
 - `GRACE_TOKEN_FILE` is reported as unsupported; set `GRACE_TOKEN` instead.
 - OIDC M2M and CLI environment completeness is checked without token requests, browser/device-code flow, refresh,
   secure-store reads, or provider validation.
-- `server.auth-principal.available` calls `/auth/me` only when a valid non-refreshing `GRACE_TOKEN` PAT is present.
+- `server.auth-principal.available` calls `/authenticate/me` only when a valid non-refreshing `GRACE_TOKEN` PAT is
+  present.
 
 Do not paste doctor JSON into public places without reviewing paths and environment names. The report is designed to
 avoid raw secrets, but summaries may include local file paths or configured server URIs.

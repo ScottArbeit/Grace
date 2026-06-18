@@ -19,7 +19,7 @@ The contract version is `cli-json-v1`. The charter is recorded in
 PowerShell:
 
 ```powershell
-grace --output Json auth logout
+grace --output Json authenticate logout
 grace authenticate logout --schema
 grace authenticate logout --examples
 grace --output Json maintenance stats --select DirectoryCount
@@ -29,7 +29,7 @@ grace --output Json doctor --select Status
 bash / zsh:
 
 ```bash
-grace --output Json auth logout
+grace --output Json authenticate logout
 grace authenticate logout --schema
 grace authenticate logout --examples
 grace --output Json maintenance stats --select DirectoryCount
@@ -80,11 +80,11 @@ An error emits a `GraceError` document:
   "Command": {
     "Id": "authenticate.logout",
     "Path": [
-      "auth",
+      "authenticate",
       "logout"
     ],
     "GroupPath": [
-      "auth"
+      "authenticate"
     ],
     "Name": "logout"
   },

@@ -174,7 +174,7 @@ The first-time steps below use **local emulators** and **test authentication** (
 Once you have `GRACE_SERVER_URI` and `GRACE_TOKEN` set, run:
 
 ```powershell
-grace auth whoami
+grace authenticate whoami
 ```
 
 For a read-only diagnostic report that checks local configuration, authentication environment, local state, and
