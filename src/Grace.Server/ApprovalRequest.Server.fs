@@ -7,6 +7,7 @@ open Grace.Shared.Parameters.Approval
 open Grace.Shared.Utilities
 open Grace.Types
 open Grace.Types.Authorization
+open Grace.Types.Common
 open Grace.Types.Webhooks
 open Microsoft.AspNetCore.Http
 open Microsoft.Extensions.DependencyInjection
@@ -71,21 +72,46 @@ module ApprovalRequest =
                 | None -> Error(error context "Approval request was not found.")
         }
 
-    let private approvalResponderRoleSelectorIds =
-        [
-            "ApprovalResponder"
-            "RepositoryApprovalResponder"
-            "BranchApprovalResponder"
-        ]
+    type private ApprovalResponderRoleSelector =
+        | LegacyApprovalResponder
+        | RepositoryApprovalResponder
+        | BranchApprovalResponder
 
-    let private isApprovalResponderRoleSelector (selector: string) =
+    let private tryGetApprovalResponderRoleSelector (selector: string) =
         if selector.StartsWith("role:", StringComparison.OrdinalIgnoreCase) then
             let roleId = selector.Substring("role:".Length)
 
-            approvalResponderRoleSelectorIds
-            |> List.exists (fun expected -> expected.Equals(roleId, StringComparison.OrdinalIgnoreCase))
+            if roleId.Equals("ApprovalResponder", StringComparison.OrdinalIgnoreCase) then
+                Some LegacyApprovalResponder
+            elif roleId.Equals("RepositoryApprovalResponder", StringComparison.OrdinalIgnoreCase) then
+                Some RepositoryApprovalResponder
+            elif roleId.Equals("BranchApprovalResponder", StringComparison.OrdinalIgnoreCase) then
+                Some BranchApprovalResponder
+            else
+                None
         else
-            false
+            None
+
+    let private splitResponderRoleAssignment selector (scope: ApprovalScope) =
+        match selector with
+        | LegacyApprovalResponder -> None
+        | RepositoryApprovalResponder -> Some(Scope.Repository(scope.OwnerId, scope.OrganizationId, scope.RepositoryId), "RepositoryApprovalResponder")
+        | BranchApprovalResponder ->
+            if scope.TargetBranchId = BranchId.Empty then
+                None
+            else
+                Some(Scope.Branch(scope.OwnerId, scope.OrganizationId, scope.RepositoryId, scope.TargetBranchId), "BranchApprovalResponder")
+
+    let private hasSplitResponderRole (principals: Principal list) scope roleId =
+        let assignments =
+            PermissionEvaluatorDefaults.getAssignmentsForScope (scope, generateCorrelationId ())
+            |> fun getAssignments -> getAssignments.GetAwaiter().GetResult()
+
+        assignments
+        |> List.exists (fun assignment ->
+            principals |> List.contains assignment.Principal
+            && assignment.Scope = scope
+            && assignment.RoleId.Equals(roleId, StringComparison.OrdinalIgnoreCase))
 
     let private selectorMatches (context: HttpContext) (request: ApprovalRequest) =
         let selector =
@@ -111,20 +137,25 @@ module ApprovalRequest =
             |> List.exists (fun principal ->
                 principal.PrincipalType = PrincipalType.Group
                 && principal.PrincipalId.Equals(expected, StringComparison.OrdinalIgnoreCase))
-        elif isApprovalResponderRoleSelector selector then
-            let evaluator = context.RequestServices.GetRequiredService<IGracePermissionEvaluator>()
-
-            let decision =
-                evaluator
-                    .CheckAsync(principals, claims, Operation.ApprovalRequestRespond, resourceFromApprovalScope request.Scope)
-                    .GetAwaiter()
-                    .GetResult()
-
-            match decision with
-            | Allowed _ -> true
-            | Denied _ -> false
         else
-            false
+            match tryGetApprovalResponderRoleSelector selector with
+            | Some LegacyApprovalResponder ->
+                let evaluator = context.RequestServices.GetRequiredService<IGracePermissionEvaluator>()
+
+                let decision =
+                    evaluator
+                        .CheckAsync(principals, claims, Operation.ApprovalRequestRespond, resourceFromApprovalScope request.Scope)
+                        .GetAwaiter()
+                        .GetResult()
+
+                match decision with
+                | Allowed _ -> true
+                | Denied _ -> false
+            | Some roleSelector ->
+                match splitResponderRoleAssignment roleSelector request.Scope with
+                | Some (scope, roleId) -> hasSplitResponderRole principals scope roleId
+                | None -> false
+            | None -> false
 
     let private respond decision approvalRequestId reason clientDecisionId fallbackScope : HttpHandler =
         fun _ context ->

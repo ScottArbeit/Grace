@@ -704,6 +704,32 @@ type ApprovalApiIntegrationTests() =
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK), responseText)
         }
 
+    [<TestCase("role:RepositoryApprovalResponder", "branch", "BranchApprovalResponder")>]
+    [<TestCase("role:BranchApprovalResponder", "repo", "RepositoryApprovalResponder")>]
+    member _.ResponseRejectsMismatchedSplitApprovalResponderRoleSelectors(selector: string, scopeKind: string, roleId: string) =
+        task {
+            let repositoryId = repositoryIds[0]
+            let branchId = repositoryDefaultBranchIds[0]
+            let userId = $"{Guid.NewGuid()}"
+            let! requestId = ApprovalTestHelpers.seedRequest repositoryId branchId selector
+
+            let grantBranchId =
+                if scopeKind.Equals("branch", StringComparison.OrdinalIgnoreCase) then
+                    branchId
+                else
+                    ""
+
+            let! grant = ApprovalTestHelpers.grantRoleAsync Client scopeKind ownerId organizationId repositoryId grantBranchId userId roleId
+            Assert.That(grant.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+
+            use client = ApprovalTestHelpers.createAuthenticatedClient userId
+            let parameters = ApprovalTestHelpers.requestParameters<Parameters.Approval.ApproveApprovalRequestParameters> repositoryId branchId requestId
+            let! response = client.PostAsync("/approval/request/approve", createJsonContent parameters)
+            let! responseText = response.Content.ReadAsStringAsync()
+
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), responseText)
+        }
+
     [<Test>]
     member _.BodySuppliedScopeEscalationDoesNotBypassStoredScope() =
         task {

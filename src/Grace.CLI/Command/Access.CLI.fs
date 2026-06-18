@@ -26,6 +26,12 @@ open System.Threading.Tasks
 
 module Access =
 
+    type private ExplicitShowScope =
+        | Owner
+        | Organization
+        | Repository
+        | Branch
+
     module private Options =
         let ownerId =
             new Option<OwnerId>(
@@ -209,6 +215,47 @@ module Access =
                         "path"
                     |]
                 )
+
+    let internal normalizeShowRoleAssignmentIds (parseResult: ParseResult) =
+        let graceIds = parseResult |> getNormalizedIdsAndNames
+
+        let isExplicit optionName =
+            isOptionPresent parseResult optionName
+            && not
+               <| isOptionResultImplicit parseResult optionName
+
+        let explicitScope =
+            if isExplicit OptionName.BranchId then Some Branch
+            elif isExplicit OptionName.RepositoryId then Some Repository
+            elif isExplicit OptionName.OrganizationId then Some Organization
+            elif isExplicit OptionName.OwnerId then Some Owner
+            else None
+
+        match explicitScope with
+        | Some Owner ->
+            { graceIds with
+                OrganizationId = OrganizationId.Empty
+                OrganizationIdString = String.Empty
+                RepositoryId = RepositoryId.Empty
+                RepositoryIdString = String.Empty
+                BranchId = BranchId.Empty
+                BranchIdString = String.Empty
+                HasOrganization = false
+                HasRepository = false
+                HasBranch = false
+            }
+        | Some Organization ->
+            { graceIds with
+                RepositoryId = RepositoryId.Empty
+                RepositoryIdString = String.Empty
+                BranchId = BranchId.Empty
+                BranchIdString = String.Empty
+                HasRepository = false
+                HasBranch = false
+            }
+        | Some Repository -> { graceIds with BranchId = BranchId.Empty; BranchIdString = String.Empty; HasBranch = false }
+        | Some Branch
+        | None -> graceIds
 
     let private formatScope (scope: Scope) =
         match scope with
@@ -540,7 +587,7 @@ module Access =
                 try
                     if parseResult |> verbose then printParseResult parseResult
 
-                    let graceIds = parseResult |> getNormalizedIdsAndNames
+                    let graceIds = parseResult |> normalizeShowRoleAssignmentIds
                     let validateIncomingParameters = parseResult |> CommonValidations
 
                     match validateIncomingParameters with
