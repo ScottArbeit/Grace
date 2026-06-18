@@ -116,7 +116,11 @@ Approval-specific role IDs:
 
 | Scope | Role ID | Allows |
 | ----- | ------- | ------ |
-| Repository or branch | `ApprovalResponder` | Read and respond to approval requests |
+| Repository | `RepositoryApprovalResponder` | Read and respond to repository approval requests |
+| Branch | `BranchApprovalResponder` | Read and respond to branch approval requests |
+
+`role:ApprovalResponder` remains a legacy approval selector compatibility alias. Do not use `ApprovalResponder` as a
+grantable role ID.
 
 ### Scope creation and creator-admin grants
 
