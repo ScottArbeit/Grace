@@ -188,6 +188,8 @@ module Authorization =
             set [ ApprovalRequestRead
                   ApprovalRequestRespond ]
 
+        let private legacyApprovalResponderRoleId = "ApprovalResponder"
+
         let private roles: RoleDefinition list =
             [
                 { RoleId = "SystemAdmin"; AllowedOperations = systemAdminOperations; AppliesTo = Set.ofList [ scopeSystem ] }
@@ -222,6 +224,16 @@ module Authorization =
                     role.AppliesTo |> Seq.exactlyOne |> Some
                 else
                     None)
+
+        let tryGetLegacyAssignmentRole (roleId: RoleId) (assignmentScopeKind: string) =
+            if
+                legacyApprovalResponderRoleId.Equals(roleId, StringComparison.OrdinalIgnoreCase)
+                && (assignmentScopeKind.Equals(scopeRepository, StringComparison.OrdinalIgnoreCase)
+                    || assignmentScopeKind.Equals(scopeBranch, StringComparison.OrdinalIgnoreCase))
+            then
+                Some { RoleId = legacyApprovalResponderRoleId; AllowedOperations = approvalResponderOperations; AppliesTo = Set.ofList [ assignmentScopeKind ] }
+            else
+                None
 
     let scopesForResource (resource: Resource) =
         match resource with
@@ -278,6 +290,7 @@ module Authorization =
                 |> List.tryFind (fun role ->
                     role.RoleId.Equals(assignment.RoleId, StringComparison.OrdinalIgnoreCase)
                     && role.AppliesTo.Contains scopeKind)
+                |> Option.orElseWith (fun () -> RoleCatalog.tryGetLegacyAssignmentRole assignment.RoleId scopeKind)
             else
                 None)
         |> List.collect (fun role -> role.AllowedOperations |> Set.toList)

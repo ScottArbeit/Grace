@@ -314,6 +314,18 @@ module Access =
                         )
                     | Error requestedScopeKind -> Error(GraceError.Create $"Invalid ScopeKind '{requestedScopeKind}'." correlationId)
 
+    let parseRevokeRoleScope (roleId: string) (requestedScopeKind: string) (parameters: AccessParameters) (correlationId: CorrelationId) =
+        if String.IsNullOrWhiteSpace roleId then
+            Error(GraceError.Create "RoleId is required." correlationId)
+        else
+            match Authorization.RoleCatalog.tryGet roleId with
+            | Some _ -> parseRoleScope roleId requestedScopeKind parameters correlationId
+            | None ->
+                match normalizeScopeKind requestedScopeKind with
+                | Ok "" -> Error(GraceError.Create "ScopeKind is required when revoking an unknown RoleId." correlationId)
+                | Ok scopeKind -> parseScope scopeKind parameters correlationId
+                | Error scopeKind -> Error(GraceError.Create $"Invalid ScopeKind '{scopeKind}'." correlationId)
+
     let selfAssignmentQueriesForResource (principals: Principal list) (resource: Resource) =
         let distinctPrincipals = principals |> List.distinct
 
@@ -387,7 +399,7 @@ module Access =
                 let! parameters = context |> parse<RevokeRoleParameters>
                 let correlationId = parameters.CorrelationId
 
-                match parseRoleScope parameters.RoleId parameters.ScopeKind parameters correlationId with
+                match parseRevokeRoleScope parameters.RoleId parameters.ScopeKind parameters correlationId with
                 | Error error -> return! context |> result400BadRequest error
                 | Ok scope ->
                     match parsePrincipal parameters.PrincipalType parameters.PrincipalId correlationId with

@@ -116,6 +116,39 @@ type AuthorizationSemanticsTests() =
             Assert.That(RoleCatalog.tryGet roleId |> Option.isNone, Is.True, $"Old role ID '{roleId}' should not be accepted.")
 
     [<Test>]
+    member _.LegacyApprovalResponderAssignmentsGrantOnlyApprovalResponseOperations() =
+        let repositoryScope = Scope.Repository(ownerId, organizationId, repositoryId)
+        let repositoryResource = Resource.Repository(ownerId, organizationId, repositoryId)
+        let branchScope = Scope.Branch(ownerId, organizationId, repositoryId, branchId)
+        let branchResource = Resource.Branch(ownerId, organizationId, repositoryId, branchId)
+        let ownerScope = Scope.Owner ownerId
+        let ownerResource = Resource.Owner ownerId
+
+        let legacyRepositoryAssignment = createAssignment repositoryScope "ApprovalResponder"
+        let legacyBranchAssignment = createAssignment branchScope "ApprovalResponder"
+        let legacyOwnerAssignment = createAssignment ownerScope "ApprovalResponder"
+
+        let repositoryRead = checkPermission roleCatalog [ legacyRepositoryAssignment ] [] [ principal ] Set.empty ApprovalRequestRead repositoryResource
+
+        let repositoryRespond = checkPermission roleCatalog [ legacyRepositoryAssignment ] [] [ principal ] Set.empty ApprovalRequestRespond repositoryResource
+
+        let repositoryPolicyManage =
+            checkPermission roleCatalog [ legacyRepositoryAssignment ] [] [ principal ] Set.empty ApprovalPolicyManage repositoryResource
+
+        let repositoryWrite = checkPermission roleCatalog [ legacyRepositoryAssignment ] [] [ principal ] Set.empty RepositoryWrite repositoryResource
+
+        let branchRespond = checkPermission roleCatalog [ legacyBranchAssignment ] [] [ principal ] Set.empty ApprovalRequestRespond branchResource
+
+        let ownerRespond = checkPermission roleCatalog [ legacyOwnerAssignment ] [] [ principal ] Set.empty ApprovalRequestRespond ownerResource
+
+        assertAllowed repositoryRead
+        assertAllowed repositoryRespond
+        assertDenied repositoryPolicyManage
+        assertDenied repositoryWrite
+        assertAllowed branchRespond
+        assertDenied ownerRespond
+
+    [<Test>]
     member _.RoleCatalogMatrixMatchesPermissionChecks() =
         for role in roleCatalog do
             for resource in resources do
