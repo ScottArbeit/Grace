@@ -130,15 +130,6 @@ module Access =
 
         let revokeRoleId = new Option<string>(OptionName.RoleId, Required = true, Description = "Role identifier.", Arity = ArgumentArity.ExactlyOne)
 
-        revokeRoleId.Validators.Add (fun optionResult ->
-            let roleId = optionResult.GetValueOrDefault<string>()
-            let allowedRoleIds = String.Join(", ", canonicalRoleIds)
-
-            if canonicalRoleIds
-               |> List.exists (fun canonicalRoleId -> canonicalRoleId.Equals(roleId, StringComparison.OrdinalIgnoreCase))
-               |> not then
-                optionResult.AddError($"{OptionName.RoleId} only accepts one of these values: {allowedRoleIds}"))
-
         let source = new Option<string>(OptionName.Source, Required = false, Description = "Optional role assignment source.", Arity = ArgumentArity.ZeroOrOne)
 
         let sourceDetail =
@@ -216,13 +207,16 @@ module Access =
                     |]
                 )
 
-    let internal normalizeShowRoleAssignmentIds (parseResult: ParseResult) =
-        let graceIds = parseResult |> getNormalizedIdsAndNames
-
+    let private isExplicitScopeOption (parseResult: ParseResult) optionName =
         let isExplicit optionName =
             isOptionPresent parseResult optionName
             && not
                <| isOptionResultImplicit parseResult optionName
+
+        isExplicit optionName
+
+    let private getExplicitScope (parseResult: ParseResult) =
+        let isExplicit = isExplicitScopeOption parseResult
 
         let explicitScope =
             if isExplicit OptionName.BranchId then Some Branch
@@ -231,31 +225,60 @@ module Access =
             elif isExplicit OptionName.OwnerId then Some Owner
             else None
 
+        explicitScope
+
+    let private clearBranch (graceIds: GraceIds) = { graceIds with BranchId = BranchId.Empty; BranchIdString = String.Empty; HasBranch = false }
+
+    let private clearRepository (graceIds: GraceIds) =
+        { clearBranch graceIds with RepositoryId = RepositoryId.Empty; RepositoryIdString = String.Empty; HasRepository = false }
+
+    let private clearOrganization (graceIds: GraceIds) =
+        { clearRepository graceIds with OrganizationId = OrganizationId.Empty; OrganizationIdString = String.Empty; HasOrganization = false }
+
+    let private clearImplicitChildScopeIds (parseResult: ParseResult) (graceIds: GraceIds) =
+        let clearBranchIfImplicit current =
+            if isExplicitScopeOption parseResult OptionName.BranchId then
+                current
+            else
+                clearBranch current
+
+        let clearRepositoryIfImplicit current =
+            if isExplicitScopeOption parseResult OptionName.RepositoryId then
+                current
+            else
+                clearRepository current
+
+        let clearOrganizationIfImplicit current =
+            if isExplicitScopeOption parseResult OptionName.OrganizationId then
+                current
+            else
+                clearOrganization current
+
+        let explicitScope = getExplicitScope parseResult
+
         match explicitScope with
         | Some Owner ->
-            { graceIds with
-                OrganizationId = OrganizationId.Empty
-                OrganizationIdString = String.Empty
-                RepositoryId = RepositoryId.Empty
-                RepositoryIdString = String.Empty
-                BranchId = BranchId.Empty
-                BranchIdString = String.Empty
-                HasOrganization = false
-                HasRepository = false
-                HasBranch = false
-            }
+            graceIds
+            |> clearOrganizationIfImplicit
+            |> clearRepositoryIfImplicit
+            |> clearBranchIfImplicit
         | Some Organization ->
-            { graceIds with
-                RepositoryId = RepositoryId.Empty
-                RepositoryIdString = String.Empty
-                BranchId = BranchId.Empty
-                BranchIdString = String.Empty
-                HasRepository = false
-                HasBranch = false
-            }
-        | Some Repository -> { graceIds with BranchId = BranchId.Empty; BranchIdString = String.Empty; HasBranch = false }
+            graceIds
+            |> clearRepositoryIfImplicit
+            |> clearBranchIfImplicit
+        | Some Repository -> graceIds |> clearBranchIfImplicit
         | Some Branch
         | None -> graceIds
+
+    let internal normalizeShowRoleAssignmentIds (parseResult: ParseResult) =
+        parseResult
+        |> getNormalizedIdsAndNames
+        |> clearImplicitChildScopeIds parseResult
+
+    let internal normalizeCanPermissionIds (parseResult: ParseResult) =
+        parseResult
+        |> getNormalizedIdsAndNames
+        |> clearImplicitChildScopeIds parseResult
 
     let private formatScope (scope: Scope) =
         match scope with
@@ -378,6 +401,22 @@ module Access =
             | None -> Error(GraceError.Create $"Unknown RoleId '{roleId}'." correlationId)
             | Some roleDefinition when roleDefinition.AppliesTo.Count = 1 -> Ok(roleDefinition.AppliesTo |> Seq.exactlyOne)
             | Some _ -> Error(GraceError.Create $"Role '{roleId}' does not map to exactly one assignment scope." correlationId)
+
+    let internal deriveScopeKindForRevoke (parseResult: ParseResult) (roleId: string) =
+        match deriveScopeKindForRole parseResult roleId with
+        | Ok scopeKind -> Ok scopeKind
+        | Error _ ->
+            match getExplicitScope parseResult with
+            | Some Owner -> Ok "owner"
+            | Some Organization -> Ok "organization"
+            | Some Repository -> Ok "repository"
+            | Some Branch -> Ok "branch"
+            | None ->
+                Error(
+                    GraceError.Create
+                        $"Unknown RoleId '{roleId}'. Supply an explicit scope option when revoking a stale or deleted role."
+                        (getCorrelationId parseResult)
+                )
 
     let private tryMapCapability (parseResult: ParseResult) (action: string) (resource: string) (pathValue: string) =
         let correlationId = getCorrelationId parseResult
@@ -526,14 +565,14 @@ module Access =
                 try
                     if parseResult |> verbose then printParseResult parseResult
 
-                    let graceIds = parseResult |> getNormalizedIdsAndNames
+                    let graceIds = parseResult |> normalizeShowRoleAssignmentIds
                     let validateIncomingParameters = parseResult |> CommonValidations
 
                     match validateIncomingParameters with
                     | Ok _ ->
                         let roleId = parseResult.GetValue(Options.revokeRoleId)
 
-                        match deriveScopeKindForRole parseResult roleId with
+                        match deriveScopeKindForRevoke parseResult roleId with
                         | Error error -> return Error error |> renderOutput parseResult
                         | Ok scopeKind ->
                             let parameters =
@@ -953,7 +992,7 @@ module Access =
                 try
                     if parseResult |> verbose then printParseResult parseResult
 
-                    let graceIds = parseResult |> getNormalizedIdsAndNames
+                    let graceIds = parseResult |> normalizeCanPermissionIds
 
                     let pathValue =
                         parseResult.GetValue(Options.pathOptional)
