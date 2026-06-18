@@ -180,21 +180,29 @@ module Access =
                 Error(GraceError.Create $"{fieldName} must be a valid Guid." correlationId)
 
     let private tryParseCurrentContextResource (parameters: AccessParameters) (correlationId: CorrelationId) =
-        match parseGuid parameters.OwnerId (nameof parameters.OwnerId) correlationId with
-        | Error error -> Error error
-        | Ok ownerId ->
-            match parseOptionalGuid parameters.OrganizationId (nameof parameters.OrganizationId) correlationId with
+        if String.IsNullOrWhiteSpace parameters.OwnerId then
+            if String.IsNullOrWhiteSpace parameters.OrganizationId
+               && String.IsNullOrWhiteSpace parameters.RepositoryId
+               && String.IsNullOrWhiteSpace parameters.BranchId then
+                Ok Resource.System
+            else
+                Error(GraceError.Create $"{nameof parameters.OwnerId} is required." correlationId)
+        else
+            match parseGuid parameters.OwnerId (nameof parameters.OwnerId) correlationId with
             | Error error -> Error error
-            | Ok None -> Ok(Resource.Owner ownerId)
-            | Ok (Some organizationId) ->
-                match parseOptionalGuid parameters.RepositoryId (nameof parameters.RepositoryId) correlationId with
+            | Ok ownerId ->
+                match parseOptionalGuid parameters.OrganizationId (nameof parameters.OrganizationId) correlationId with
                 | Error error -> Error error
-                | Ok None -> Ok(Resource.Organization(ownerId, organizationId))
-                | Ok (Some repositoryId) ->
-                    match parseOptionalGuid parameters.BranchId (nameof parameters.BranchId) correlationId with
+                | Ok None -> Ok(Resource.Owner ownerId)
+                | Ok (Some organizationId) ->
+                    match parseOptionalGuid parameters.RepositoryId (nameof parameters.RepositoryId) correlationId with
                     | Error error -> Error error
-                    | Ok None -> Ok(Resource.Repository(ownerId, organizationId, repositoryId))
-                    | Ok (Some branchId) -> Ok(Resource.Branch(ownerId, organizationId, repositoryId, branchId))
+                    | Ok None -> Ok(Resource.Organization(ownerId, organizationId))
+                    | Ok (Some repositoryId) ->
+                        match parseOptionalGuid parameters.BranchId (nameof parameters.BranchId) correlationId with
+                        | Error error -> Error error
+                        | Ok None -> Ok(Resource.Repository(ownerId, organizationId, repositoryId))
+                        | Ok (Some branchId) -> Ok(Resource.Branch(ownerId, organizationId, repositoryId, branchId))
 
     let private parseResource (resourceKind: string) (parameters: CheckPermissionParameters) (correlationId: CorrelationId) =
         let normalized =

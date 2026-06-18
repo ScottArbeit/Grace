@@ -932,6 +932,42 @@ type AccessControl() =
         }
 
     [<Test>]
+    member _.AccessShowRoleAssignmentsWithoutOwnerShowsOnlyCurrentPrincipalSystemAssignments() =
+        task {
+            let currentUserId = $"{Guid.NewGuid()}"
+            let otherUserId = $"{Guid.NewGuid()}"
+
+            do! grantRoleAsync Client "" "" "" "system" "SystemReader" currentUserId
+            do! grantRoleAsync Client "" "" "" "system" "SystemOperator" otherUserId
+
+            use currentClient = createClientWithUserId currentUserId
+            let parameters = Parameters.Access.ShowRoleAssignmentsParameters()
+            parameters.CorrelationId <- generateCorrelationId ()
+
+            let! response = currentClient.PostAsync("/authorize/show", createJsonContent parameters)
+            let! responseText = response.Content.ReadAsStringAsync()
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK), responseText)
+
+            let returnValue = deserialize<GraceReturnValue<RoleAssignment list>> responseText
+            let assignments = returnValue.ReturnValue
+
+            Assert.That(
+                assignments
+                |> List.exists (fun assignment ->
+                    assignment.Principal.PrincipalId = currentUserId
+                    && assignment.RoleId = "SystemReader"
+                    && assignment.Scope = Scope.System),
+                Is.True
+            )
+
+            Assert.That(
+                assignments
+                |> List.exists (fun assignment -> assignment.Principal.PrincipalId = otherUserId),
+                Is.False
+            )
+        }
+
+    [<Test>]
     member _.AccessListRoleAssignmentsRequiresAdminScope() =
         task {
             let nonAdminUserId = $"{Guid.NewGuid()}"

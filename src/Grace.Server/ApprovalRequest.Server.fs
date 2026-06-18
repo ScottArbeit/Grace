@@ -71,6 +71,22 @@ module ApprovalRequest =
                 | None -> Error(error context "Approval request was not found.")
         }
 
+    let private approvalResponderRoleSelectorIds =
+        [
+            "ApprovalResponder"
+            "RepositoryApprovalResponder"
+            "BranchApprovalResponder"
+        ]
+
+    let private isApprovalResponderRoleSelector (selector: string) =
+        if selector.StartsWith("role:", StringComparison.OrdinalIgnoreCase) then
+            let roleId = selector.Substring("role:".Length)
+
+            approvalResponderRoleSelectorIds
+            |> List.exists (fun expected -> expected.Equals(roleId, StringComparison.OrdinalIgnoreCase))
+        else
+            false
+
     let private selectorMatches (context: HttpContext) (request: ApprovalRequest) =
         let selector =
             if isNull request.RequiredResponder then
@@ -95,7 +111,7 @@ module ApprovalRequest =
             |> List.exists (fun principal ->
                 principal.PrincipalType = PrincipalType.Group
                 && principal.PrincipalId.Equals(expected, StringComparison.OrdinalIgnoreCase))
-        elif selector.Equals("role:ApprovalResponder", StringComparison.OrdinalIgnoreCase) then
+        elif isApprovalResponderRoleSelector selector then
             let evaluator = context.RequestServices.GetRequiredService<IGracePermissionEvaluator>()
 
             let decision =
