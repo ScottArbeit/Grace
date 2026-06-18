@@ -41,7 +41,7 @@ type Repository() =
             parameters.Source <- "test"
             parameters.CorrelationId <- generateCorrelationId ()
 
-            let! response = Client.PostAsync("/access/grantRole", createJsonContent parameters)
+            let! response = Client.PostAsync("/authorize/grant-role", createJsonContent parameters)
             response.EnsureSuccessStatusCode() |> ignore
         }
 

@@ -1,22 +1,23 @@
     endpoint "GET" "/" Authenticated
-    endpoint "POST" "/access/checkPermission" Authenticated
-    endpoint "POST" "/access/grantRole" Authenticated
-    endpoint "POST" "/access/listPathPermissions" Authenticated
-    endpoint "POST" "/access/listRoleAssignments" Authenticated
-    endpoint "GET" "/access/listRoles" Authenticated
-    endpoint "POST" "/access/removePathPermission" Authenticated
-    endpoint "POST" "/access/revokeRole" Authenticated
-    endpoint "POST" "/access/upsertPathPermission" Authenticated
+    endpoint "POST" "/authorize/check-permission" Authenticated
+    endpoint "POST" "/authorize/grant-role" (Authorized(SystemAdmin, System))
+    endpoint "POST" "/authorize/list-path-permissions" (Authorized(RepositoryAdmin, Repository))
+    endpoint "POST" "/authorize/list-role-assignments" (Authorized(SystemAdmin, System))
+    endpoint "GET" "/authorize/list-roles" Authenticated
+    endpoint "POST" "/authorize/remove-path-permission" (Authorized(RepositoryAdmin, Repository))
+    endpoint "POST" "/authorize/revoke-role" (Authorized(SystemAdmin, System))
+    endpoint "POST" "/authorize/show" Authenticated
+    endpoint "POST" "/authorize/upsert-path-permission" (Authorized(RepositoryAdmin, Repository))
     endpoint "POST" "/admin/deleteAllFromCosmosDB" Authenticated
     endpoint "POST" "/admin/deleteAllRemindersFromCosmosDB" Authenticated
-    endpoint "GET" "/auth/login" Authenticated
-    endpoint "GET" "/auth/login/%s" Authenticated
-    endpoint "GET" "/auth/logout" Authenticated
-    endpoint "GET" "/auth/me" Authenticated
-    endpoint "GET" "/auth/oidc/config" Authenticated
-    endpoint "POST" "/auth/token/create" Authenticated
-    endpoint "POST" "/auth/token/list" Authenticated
-    endpoint "POST" "/auth/token/revoke" Authenticated
+    endpoint "GET" "/authenticate/login" AllowAnonymous
+    endpoint "GET" "/authenticate/login/%s" AllowAnonymous
+    endpoint "GET" "/authenticate/logout" Authenticated
+    endpoint "GET" "/authenticate/me" Authenticated
+    endpoint "GET" "/authenticate/oidc/config" AllowAnonymous
+    endpoint "POST" "/authenticate/token/create" Authenticated
+    endpoint "POST" "/authenticate/token/list" Authenticated
+    endpoint "POST" "/authenticate/token/revoke" Authenticated
     endpoint "POST" "/branch/assign" Authenticated
     endpoint "POST" "/branch/checkpoint" Authenticated
     endpoint "POST" "/branch/commit" Authenticated

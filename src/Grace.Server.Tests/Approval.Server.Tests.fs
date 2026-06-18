@@ -73,7 +73,7 @@ module private ApprovalTestHelpers =
             parameters.Source <- "test"
             parameters.CorrelationId <- generateCorrelationId ()
 
-            return! client.PostAsync("/access/grantRole", createJsonContent parameters)
+            return! client.PostAsync("/authorize/grant-role", createJsonContent parameters)
         }
 
     let createPolicyParameters (repositoryId: string) (branchId: string) =
@@ -285,7 +285,8 @@ type ApprovalApiIntegrationTests() =
             let! grantAdmin = ApprovalTestHelpers.grantRoleAsync Client "repo" ownerId organizationId repositoryId "" adminUser "RepositoryAdmin"
             Assert.That(grantAdmin.StatusCode, Is.EqualTo(HttpStatusCode.OK))
 
-            let! grantResponder = ApprovalTestHelpers.grantRoleAsync Client "branch" ownerId organizationId repositoryId branchId adminUser "ApprovalResponder"
+            let! grantResponder =
+                ApprovalTestHelpers.grantRoleAsync Client "branch" ownerId organizationId repositoryId branchId adminUser "BranchApprovalResponder"
 
             Assert.That(grantResponder.StatusCode, Is.EqualTo(HttpStatusCode.OK))
 
@@ -507,7 +508,8 @@ type ApprovalApiIntegrationTests() =
             let! allowedRequestId = ApprovalTestHelpers.seedRequest repositoryId allowedBranchId $"user:{userId}"
             let! otherRequestId = ApprovalTestHelpers.seedRequest repositoryId otherBranchId $"user:{Guid.NewGuid()}"
 
-            let! grantReader = ApprovalTestHelpers.grantRoleAsync Client "branch" ownerId organizationId repositoryId allowedBranchId userId "ApprovalResponder"
+            let! grantReader =
+                ApprovalTestHelpers.grantRoleAsync Client "branch" ownerId organizationId repositoryId allowedBranchId userId "BranchApprovalResponder"
 
             Assert.That(grantReader.StatusCode, Is.EqualTo(HttpStatusCode.OK))
 
@@ -564,7 +566,7 @@ type ApprovalApiIntegrationTests() =
 
             Assert.That(staleAttempt.ApprovalRequestId, Is.Not.EqualTo(first.ApprovalRequestId))
 
-            let! grantReader = ApprovalTestHelpers.grantRoleAsync Client "branch" ownerId organizationId repositoryId branchId userId "ApprovalResponder"
+            let! grantReader = ApprovalTestHelpers.grantRoleAsync Client "branch" ownerId organizationId repositoryId branchId userId "BranchApprovalResponder"
             Assert.That(grantReader.StatusCode, Is.EqualTo(HttpStatusCode.OK))
 
             use client = ApprovalTestHelpers.createAuthenticatedClient userId
@@ -622,7 +624,7 @@ type ApprovalApiIntegrationTests() =
 
             Assert.That(nextAttempt.ApprovalRequestId, Is.Not.EqualTo(requestIds[0]))
 
-            let! grantReader = ApprovalTestHelpers.grantRoleAsync Client "branch" ownerId organizationId repositoryId branchId userId "ApprovalResponder"
+            let! grantReader = ApprovalTestHelpers.grantRoleAsync Client "branch" ownerId organizationId repositoryId branchId userId "BranchApprovalResponder"
             Assert.That(grantReader.StatusCode, Is.EqualTo(HttpStatusCode.OK))
 
             use client = ApprovalTestHelpers.createAuthenticatedClient userId
@@ -670,7 +672,7 @@ type ApprovalApiIntegrationTests() =
             let userId = $"{Guid.NewGuid()}"
             let! requestId = ApprovalTestHelpers.seedRequest repositoryId branchId "group:release-managers"
 
-            let! grant = ApprovalTestHelpers.grantRoleAsync Client "branch" ownerId organizationId repositoryId branchId userId "ApprovalResponder"
+            let! grant = ApprovalTestHelpers.grantRoleAsync Client "branch" ownerId organizationId repositoryId branchId userId "BranchApprovalResponder"
             Assert.That(grant.StatusCode, Is.EqualTo(HttpStatusCode.OK))
 
             use client = ApprovalTestHelpers.createAuthenticatedClient userId
@@ -678,6 +680,54 @@ type ApprovalApiIntegrationTests() =
             let! response = client.PostAsync("/approval/request/reject", createJsonContent parameters)
 
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
+        }
+
+    [<TestCase("role:BranchApprovalResponder", "branch", "BranchApprovalResponder", true)>]
+    [<TestCase("role:RepositoryApprovalResponder", "repo", "RepositoryApprovalResponder", false)>]
+    [<TestCase("role:ApprovalResponder", "branch", "BranchApprovalResponder", true)>]
+    member _.ResponseAcceptsApprovalResponderRoleSelectors(selector: string, scopeKind: string, roleId: string, grantAtBranch: bool) =
+        task {
+            let repositoryId = repositoryIds[0]
+            let branchId = repositoryDefaultBranchIds[0]
+            let userId = $"{Guid.NewGuid()}"
+            let! requestId = ApprovalTestHelpers.seedRequest repositoryId branchId selector
+
+            let grantBranchId = if grantAtBranch then branchId else ""
+            let! grant = ApprovalTestHelpers.grantRoleAsync Client scopeKind ownerId organizationId repositoryId grantBranchId userId roleId
+            Assert.That(grant.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+
+            use client = ApprovalTestHelpers.createAuthenticatedClient userId
+            let parameters = ApprovalTestHelpers.requestParameters<Parameters.Approval.ApproveApprovalRequestParameters> repositoryId branchId requestId
+            let! response = client.PostAsync("/approval/request/approve", createJsonContent parameters)
+            let! responseText = response.Content.ReadAsStringAsync()
+
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK), responseText)
+        }
+
+    [<TestCase("role:RepositoryApprovalResponder", "branch", "BranchApprovalResponder")>]
+    [<TestCase("role:BranchApprovalResponder", "repo", "RepositoryApprovalResponder")>]
+    member _.ResponseRejectsMismatchedSplitApprovalResponderRoleSelectors(selector: string, scopeKind: string, roleId: string) =
+        task {
+            let repositoryId = repositoryIds[0]
+            let branchId = repositoryDefaultBranchIds[0]
+            let userId = $"{Guid.NewGuid()}"
+            let! requestId = ApprovalTestHelpers.seedRequest repositoryId branchId selector
+
+            let grantBranchId =
+                if scopeKind.Equals("branch", StringComparison.OrdinalIgnoreCase) then
+                    branchId
+                else
+                    ""
+
+            let! grant = ApprovalTestHelpers.grantRoleAsync Client scopeKind ownerId organizationId repositoryId grantBranchId userId roleId
+            Assert.That(grant.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+
+            use client = ApprovalTestHelpers.createAuthenticatedClient userId
+            let parameters = ApprovalTestHelpers.requestParameters<Parameters.Approval.ApproveApprovalRequestParameters> repositoryId branchId requestId
+            let! response = client.PostAsync("/approval/request/approve", createJsonContent parameters)
+            let! responseText = response.Content.ReadAsStringAsync()
+
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), responseText)
         }
 
     [<Test>]
@@ -689,7 +739,7 @@ type ApprovalApiIntegrationTests() =
             let userId = $"{Guid.NewGuid()}"
             let! requestId = ApprovalTestHelpers.seedRequest repositoryId storedBranchId $"user:{userId}"
 
-            let! grant = ApprovalTestHelpers.grantRoleAsync Client "branch" ownerId organizationId repositoryId allowedBranchId userId "ApprovalResponder"
+            let! grant = ApprovalTestHelpers.grantRoleAsync Client "branch" ownerId organizationId repositoryId allowedBranchId userId "BranchApprovalResponder"
             Assert.That(grant.StatusCode, Is.EqualTo(HttpStatusCode.OK))
 
             use client = ApprovalTestHelpers.createAuthenticatedClient userId
@@ -708,7 +758,7 @@ type ApprovalApiIntegrationTests() =
             let userId = $"{Guid.NewGuid()}"
             let! requestId = ApprovalTestHelpers.seedRequest repositoryId branchId $"user:{userId}"
 
-            let! grant = ApprovalTestHelpers.grantRoleAsync Client "branch" ownerId organizationId repositoryId branchId userId "ApprovalResponder"
+            let! grant = ApprovalTestHelpers.grantRoleAsync Client "branch" ownerId organizationId repositoryId branchId userId "BranchApprovalResponder"
             Assert.That(grant.StatusCode, Is.EqualTo(HttpStatusCode.OK))
 
             use client = ApprovalTestHelpers.createAuthenticatedClient userId
@@ -729,7 +779,9 @@ type ApprovalApiIntegrationTests() =
             let userId = $"{Guid.NewGuid()}"
             let! requestId = ApprovalTestHelpers.seedRequest repositoryId branchId $"user:{userId}"
 
-            let! grantResponder = ApprovalTestHelpers.grantRoleAsync Client "branch" ownerId organizationId repositoryId branchId userId "ApprovalResponder"
+            let! grantResponder =
+                ApprovalTestHelpers.grantRoleAsync Client "branch" ownerId organizationId repositoryId branchId userId "BranchApprovalResponder"
+
             Assert.That(grantResponder.StatusCode, Is.EqualTo(HttpStatusCode.OK))
 
             use client = ApprovalTestHelpers.createAuthenticatedClient userId

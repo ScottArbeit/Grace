@@ -26,14 +26,15 @@ module EndpointAuthorizationManifest =
     let definitions: EndpointSecurityDefinition list =
         [
             endpoint "GET" "/" AllowAnonymous
-            endpoint "POST" "/access/checkPermission" Authenticated
-            endpoint "POST" "/access/grantRole" (Authorized(SystemAdmin, System))
-            endpoint "POST" "/access/listPathPermissions" (Authorized(RepositoryAdmin, Repository))
-            endpoint "POST" "/access/listRoleAssignments" (Authorized(SystemAdmin, System))
-            endpoint "GET" "/access/listRoles" Authenticated
-            endpoint "POST" "/access/removePathPermission" (Authorized(RepositoryAdmin, Repository))
-            endpoint "POST" "/access/revokeRole" (Authorized(SystemAdmin, System))
-            endpoint "POST" "/access/upsertPathPermission" (Authorized(RepositoryAdmin, Repository))
+            endpoint "POST" "/authorize/check-permission" Authenticated
+            endpoint "POST" "/authorize/grant-role" (Authorized(SystemAdmin, System))
+            endpoint "POST" "/authorize/list-path-permissions" (Authorized(RepositoryAdmin, Repository))
+            endpoint "POST" "/authorize/list-role-assignments" (Authorized(SystemAdmin, System))
+            endpoint "GET" "/authorize/list-roles" Authenticated
+            endpoint "POST" "/authorize/remove-path-permission" (Authorized(RepositoryAdmin, Repository))
+            endpoint "POST" "/authorize/revoke-role" (Authorized(SystemAdmin, System))
+            endpoint "POST" "/authorize/show" Authenticated
+            endpoint "POST" "/authorize/upsert-path-permission" (Authorized(RepositoryAdmin, Repository))
             endpoint "POST" "/admin/deleteAllFromCosmosDB" (Authorized(SystemAdmin, System))
             endpoint "POST" "/admin/deleteAllRemindersFromCosmosDB" (Authorized(SystemAdmin, System))
             endpoint "POST" "/approval/policy/create" (Authorized(ApprovalPolicyManage, Repository))
@@ -60,14 +61,14 @@ module EndpointAuthorizationManifest =
             endpoint "POST" "/webhook/rule/test" (Authorized(WebhookManage, Repository))
             endpoint "POST" "/webhook/delivery/list" (Authorized(WebhookDeliveryRead, Repository))
             endpoint "POST" "/webhook/delivery/show" (Authorized(WebhookDeliveryRead, Repository))
-            endpoint "GET" "/auth/login" AllowAnonymous
-            endpoint "GET" "/auth/login/%s" AllowAnonymous
-            endpoint "GET" "/auth/logout" Authenticated
-            endpoint "GET" "/auth/me" Authenticated
-            endpoint "GET" "/auth/oidc/config" AllowAnonymous
-            endpoint "POST" "/auth/token/create" Authenticated
-            endpoint "POST" "/auth/token/list" Authenticated
-            endpoint "POST" "/auth/token/revoke" Authenticated
+            endpoint "GET" "/authenticate/login" AllowAnonymous
+            endpoint "GET" "/authenticate/login/%s" AllowAnonymous
+            endpoint "GET" "/authenticate/logout" Authenticated
+            endpoint "GET" "/authenticate/me" Authenticated
+            endpoint "GET" "/authenticate/oidc/config" AllowAnonymous
+            endpoint "POST" "/authenticate/token/create" Authenticated
+            endpoint "POST" "/authenticate/token/list" Authenticated
+            endpoint "POST" "/authenticate/token/revoke" Authenticated
             endpoint "POST" "/agent/session/active" (Authorized(RepositoryRead, Repository))
             endpoint "POST" "/agent/session/listActive" (Authorized(RepositoryRead, Repository))
             endpoint "POST" "/agent/session/start" (Authorized(RepositoryWrite, Repository))

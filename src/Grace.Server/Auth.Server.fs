@@ -53,7 +53,7 @@ module Auth =
         |> ignore
 
         builder.AppendLine(
-            "<p>Interactive browser login is not available on the server in this phase. Use the CLI (grace auth login) or provide GRACE_TOKEN / Auth0 M2M credentials.</p>"
+            "<p>Interactive browser login is not available on the server in this phase. Use the CLI (grace authenticate login) or provide GRACE_TOKEN / Auth0 M2M credentials.</p>"
         )
         |> ignore
 

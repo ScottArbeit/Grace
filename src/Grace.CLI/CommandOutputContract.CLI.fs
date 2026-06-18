@@ -611,11 +611,13 @@ module CommandOutputContract =
             incompleteReturnValueContract
                 "WorkItemDto"
                 "WorkItemDto metadata is incomplete: src/Grace.Types/WorkItem.Types.fs declares additional emitted fields that are not yet represented in the CLI contract registry."
-        | "access.check", ExistingGraceResultEnvelope ReuseExistingApiOrSdkDto ->
+        | ("authorize.can"
+          | "authorize.check"),
+          ExistingGraceResultEnvelope ReuseExistingApiOrSdkDto ->
             incompleteReturnValueContract
                 "PermissionCheckResult"
                 "PermissionCheckResult metadata is incomplete: src/Grace.Types/Authorization.Types.fs emits the Allowed/Denied discriminated union, not an object with Allowed and Reason fields."
-        | "auth.logout", ExistingGraceResultEnvelope ReuseExistingApiOrSdkDto ->
+        | "authenticate.logout", ExistingGraceResultEnvelope ReuseExistingApiOrSdkDto ->
             supportedReturnValueContract
                 "string"
                 "GraceReturnValue<string>"
@@ -887,14 +889,32 @@ module CommandOutputContract =
 
     let entries =
         [
-            row [ "access" ] "check" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "access" ] "grant-role" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "access" ] "list-path-permissions" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "access" ] "list-role-assignments" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "access" ] "list-roles" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "access" ] "remove-path-permission" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "access" ] "revoke-role" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "access" ] "upsert-path-permission" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
+            row [ "authorize" ] "can" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
+            row [ "authorize" ] "check" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
+            row [ "authorize" ] "grant-role" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
+            row [ "authorize" ] "list-path-permissions" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
+            row [ "authorize" ] "list-role-assignments" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
+            row [ "authorize" ] "list-roles" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
+            row
+                [ "authorize" ]
+                "remove-path-permission"
+                true
+                true
+                common_renderOutput_envelope
+                mutating_state_transition
+                server_via_sdk
+                ReuseExistingApiOrSdkDto
+            row [ "authorize" ] "revoke-role" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
+            row [ "authorize" ] "show" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
+            row
+                [ "authorize" ]
+                "upsert-path-permission"
+                true
+                true
+                common_renderOutput_envelope
+                mutating_state_transition
+                server_via_sdk
+                ReuseExistingApiOrSdkDto
             row [ "admin"; "reminder" ] "create" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
             row [ "admin"; "reminder" ] "delete" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
             row [ "admin"; "reminder" ] "get" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
@@ -921,16 +941,16 @@ module CommandOutputContract =
             row [ "approval"; "request" ] "reject" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
             row [ "approval"; "request" ] "show" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
             row [ "approval"; "request" ] "wait" true true common_renderOutput_envelope workflow_accepted_operation server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "auth" ] "login" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "auth" ] "logout" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "auth" ] "status" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "auth"; "token" ] "clear" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "auth"; "token" ] "create" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "auth"; "token" ] "list" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "auth"; "token" ] "revoke" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "auth"; "token" ] "set" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "auth"; "token" ] "status" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
-            row [ "auth" ] "whoami" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
+            row [ "authenticate" ] "login" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
+            row [ "authenticate" ] "logout" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
+            row [ "authenticate" ] "status" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
+            row [ "authenticate"; "token" ] "clear" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
+            row [ "authenticate"; "token" ] "create" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
+            row [ "authenticate"; "token" ] "list" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
+            row [ "authenticate"; "token" ] "revoke" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
+            row [ "authenticate"; "token" ] "set" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
+            row [ "authenticate"; "token" ] "status" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
+            row [ "authenticate" ] "whoami" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
             row [ "branch" ] "annotate" true true common_renderOutput_envelope mutating_state_transition composite_local_server ReuseExistingApiOrSdkDto
             row [ "branch" ] "assign" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
             row [ "branch" ] "checkpoint" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto

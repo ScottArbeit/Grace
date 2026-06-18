@@ -61,7 +61,7 @@ module private WebhookTestHelpers =
             parameters.Source <- "test"
             parameters.CorrelationId <- generateCorrelationId ()
 
-            return! client.PostAsync("/access/grantRole", createJsonContent parameters)
+            return! client.PostAsync("/authorize/grant-role", createJsonContent parameters)
         }
 
     let ruleParameters (repositoryId: string) (branchId: string) =

@@ -281,8 +281,8 @@ function Invoke-AuthProbe(
 ) {
   Write-Step "Running auth readiness probe." "Green"
 
-  $oidcConfigUri = "$GraceServerUri/auth/oidc/config"
-  $authMeUri = "$GraceServerUri/auth/me"
+  $oidcConfigUri = "$GraceServerUri/authenticate/oidc/config"
+  $authMeUri = "$GraceServerUri/authenticate/me"
   $headers = @{ "x-grace-user-id" = $BootstrapUserId }
 
   Write-Detail "Probe 1/2: GET $oidcConfigUri"
@@ -292,7 +292,7 @@ function Invoke-AuthProbe(
     $failure = Get-WebFailureInfo -ErrorRecord $_ -Stage "auth probe" -GraceServerUri $GraceServerUri -BootstrapUserId $BootstrapUserId
     Set-LastFailureInfo -FailureInfo $failure
     $statusSegment = if ($null -eq $failure.StatusCode) { "no-http-status" } else { [string]$failure.StatusCode }
-    throw "Auth probe failed at /auth/oidc/config (classification=$($failure.Classification), status=$statusSegment). $($failure.Hint)"
+    throw "Auth probe failed at /authenticate/oidc/config (classification=$($failure.Classification), status=$statusSegment). $($failure.Hint)"
   }
 
   Write-Detail "Probe 2/2: GET $authMeUri (x-grace-user-id=$BootstrapUserId)"
@@ -302,7 +302,7 @@ function Invoke-AuthProbe(
     $failure = Get-WebFailureInfo -ErrorRecord $_ -Stage "auth probe" -GraceServerUri $GraceServerUri -BootstrapUserId $BootstrapUserId
     Set-LastFailureInfo -FailureInfo $failure
     $statusSegment = if ($null -eq $failure.StatusCode) { "no-http-status" } else { [string]$failure.StatusCode }
-    throw "Auth probe failed at /auth/me (classification=$($failure.Classification), status=$statusSegment). $($failure.Hint)"
+    throw "Auth probe failed at /authenticate/me (classification=$($failure.Classification), status=$statusSegment). $($failure.Hint)"
   }
 
   Write-Detail "Auth readiness probe passed." "Green"
@@ -315,7 +315,7 @@ function Invoke-TokenBootstrapWithRetry(
   [int] $MaxAttempts,
   [int] $InitialBackoffSeconds
 ) {
-  $tokenUri = "$GraceServerUri/auth/token/create"
+  $tokenUri = "$GraceServerUri/authenticate/token/create"
   $headers = @{ "x-grace-user-id" = $BootstrapUserId }
   $safeMaxAttempts = [Math]::Max($MaxAttempts, 1)
   $safeInitialBackoff = [Math]::Max($InitialBackoffSeconds, 1)

@@ -56,8 +56,8 @@ Rules:
 
 Current high-signal command groups:
 
-- `grace auth` for login, status, whoami, PAT create/list/revoke/status.
-- `grace access` for role assignments and path permissions.
+- `grace authenticate` with alias `authn` for login, status, whoami, PAT create/list/revoke/status.
+- `grace authorize` with alias `authz` for role assignments and path permissions.
 - `grace workitem` with aliases `work`, `work-item`, and `wi`.
 - `grace review` for candidate review operations and review report output.
 - `grace candidate` for candidate-first reviewer projections.

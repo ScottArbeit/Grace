@@ -64,10 +64,10 @@ module PersonalAccessToken =
         }
 
     let Create (parameters: CreatePersonalAccessTokenParameters) =
-        postServerWithEnv<CreatePersonalAccessTokenParameters, PersonalAccessTokenCreated> (parameters, "auth/token/create")
+        postServerWithEnv<CreatePersonalAccessTokenParameters, PersonalAccessTokenCreated> (parameters, "authenticate/token/create")
 
     let List (parameters: ListPersonalAccessTokensParameters) =
-        postServerWithEnv<ListPersonalAccessTokensParameters, PersonalAccessTokenSummary list> (parameters, "auth/token/list")
+        postServerWithEnv<ListPersonalAccessTokensParameters, PersonalAccessTokenSummary list> (parameters, "authenticate/token/list")
 
     let Revoke (parameters: RevokePersonalAccessTokenParameters) =
-        postServerWithEnv<RevokePersonalAccessTokenParameters, PersonalAccessTokenSummary> (parameters, "auth/token/revoke")
+        postServerWithEnv<RevokePersonalAccessTokenParameters, PersonalAccessTokenSummary> (parameters, "authenticate/token/revoke")

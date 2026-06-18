@@ -38,9 +38,9 @@ security-sensitive logging, or review of public access boundaries.
 
 ## Authentication
 
-- PATs use the `GracePat` auth scheme and `/auth/token/*` endpoints.
+- PATs use the `GracePat` auth scheme and `/authenticate/token/*` endpoints.
 - `GRACE_TOKEN` accepts Grace PATs only.
-- OIDC configuration is exposed through `/auth/oidc/config`.
+- OIDC configuration is exposed through `/authenticate/oidc/config`.
 - Auth0/OIDC settings use `grace__auth__oidc__*` environment keys.
 - TestAuth is controlled through local/test configuration; verify `GRACE_TESTING=1` before assuming it is available.
 - Local token files are disabled in the CLI. Do not re-enable local token persistence without a current product decision.

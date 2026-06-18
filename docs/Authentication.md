@@ -36,8 +36,8 @@ export GRACE_SERVER_URI="http://localhost:5000"
 
 1. **Login via the CLI**:
 
-   * `grace auth login` — Interactive login (tries PKCE first, then falls back to Device Code).
-   * `grace auth whoami` — Verifies your identity against the running server.
+   * `grace authenticate login` — Interactive login (tries PKCE first, then falls back to Device Code).
+   * `grace authenticate whoami` — Verifies your identity against the running server.
 
 ---
 
@@ -63,7 +63,7 @@ Set one or both of these environment variables (semicolon-delimited list):
 
 * The values must be **principal IDs**, not emails or display names.
 * For Auth0/OIDC, the user principal ID is taken from the `sub` claim (exposed as `grace_user_id`).
-* You can confirm the user ID with `GET /auth/me` (`GraceUserId` in the response).
+* You can confirm the user ID with `GET /authenticate/me` (`GraceUserId` in the response).
 
 PowerShell:
 
@@ -82,7 +82,7 @@ export grace__authz__bootstrap__system_admin_users="auth0|abc123"
 ## Authorization roles and creation boundaries
 
 Authentication identifies the caller. Authorization decides whether that caller can act at a system, owner,
-organization, repository, branch, or path scope. Use `grace access list-roles` for the live role catalog, and use the
+organization, repository, branch, or path scope. Use `grace authorize list-roles` for the live role catalog, and use the
 full role IDs shown here when granting roles.
 
 ### System support roles
@@ -116,7 +116,11 @@ Approval-specific role IDs:
 
 | Scope | Role ID | Allows |
 | ----- | ------- | ------ |
-| Repository or branch | `ApprovalResponder` | Read and respond to approval requests |
+| Repository | `RepositoryApprovalResponder` | Read and respond to repository approval requests |
+| Branch | `BranchApprovalResponder` | Read and respond to branch approval requests |
+
+`role:ApprovalResponder` remains a legacy approval selector compatibility alias. Do not use `ApprovalResponder` as a
+grantable role ID.
 
 ### Scope creation and creator-admin grants
 
@@ -190,13 +194,13 @@ When enabled, Grace authenticates requests using headers:
    PowerShell:
 
    ```powershell
-   Invoke-RestMethod "http://localhost:5000/auth/me" -Headers @{ "x-grace-user-id" = "dev-scott" }
+   Invoke-RestMethod "http://localhost:5000/authenticate/me" -Headers @{ "x-grace-user-id" = "dev-scott" }
    ```
 
    bash / zsh:
 
    ```bash
-   curl -H "x-grace-user-id: dev-scott" "http://localhost:5000/auth/me"
+   curl -H "x-grace-user-id: dev-scott" "http://localhost:5000/authenticate/me"
    ```
 
 On first activation (with no existing assignments), Grace will seed `SystemAdmin` for `dev-scott`.
@@ -217,8 +221,9 @@ pwsh ./scripts/start-debuglocal.ps1 --GraceServerUri "http://localhost:5000" -Sk
 ```
 
 `-SkipAuthProbe` is required for the true zero-OIDC bootstrap path because the default auth probe checks
-`/auth/oidc/config` before TestAuth PAT creation. Omit `-SkipAuthProbe` when OIDC/MSA settings are configured and you
-want the startup helper to verify both `/auth/oidc/config` and `/auth/me` before creating the PAT.
+`/authenticate/oidc/config` before TestAuth PAT creation. Omit `-SkipAuthProbe` when OIDC/MSA settings are configured
+and you want the startup helper to verify both `/authenticate/oidc/config` and `/authenticate/me` before creating the
+PAT.
 
 If OIDC/MSA is configured instead, use the interactive CLI path:
 
@@ -227,9 +232,9 @@ PowerShell:
 ```powershell
 $env:GRACE_SERVER_URI="http://localhost:5000"
 Remove-Item Env:GRACE_TOKEN -ErrorAction SilentlyContinue
-grace auth login
-grace auth whoami --output Verbose
-grace auth token create --name "local-dev" --expires-in 30d --output Verbose
+grace authenticate login
+grace authenticate whoami --output Verbose
+grace authenticate token create --name "local-dev" --expires-in 30d --output Verbose
 ```
 
 bash / zsh:
@@ -237,13 +242,13 @@ bash / zsh:
 ```bash
 export GRACE_SERVER_URI="http://localhost:5000"
 unset GRACE_TOKEN
-grace auth login
-grace auth whoami --output Verbose
-grace auth token create --name "local-dev" --expires-in 30d --output Verbose
+grace authenticate login
+grace authenticate whoami --output Verbose
+grace authenticate token create --name "local-dev" --expires-in 30d --output Verbose
 ```
 
-`grace auth whoami` proves authentication. `grace auth token create` requires an authenticated principal that maps to a
-Grace User; it does not require an RBAC role before token creation.
+`grace authenticate whoami` proves authentication. `grace authenticate token create` requires an authenticated
+principal that maps to a Grace User; it does not require an RBAC role before token creation.
 
 MSA/OIDC authentication alone does not authorize first-time scope creation or other protected operations. For a fresh
 local/debug environment, seed the first admin through `grace__authz__bootstrap__system_admin_users` or use an existing
@@ -363,23 +368,34 @@ The CLI can authenticate in multiple ways. The first matching mode “wins”:
 
 Because `GRACE_TOKEN` wins before M2M and interactive login, a stale or revoked PAT can mask a fresh interactive
 OIDC/MSA login. Unset `GRACE_TOKEN` when you want the CLI to use cached interactive credentials, and use
-`grace auth token status --output Verbose` or `grace doctor --check Authentication` when the active auth source is
+`grace authenticate token status --output Verbose` or `grace doctor --check Authentication` when the active auth source
 unclear.
 
 ### Primary CLI commands
 
-* `grace auth login [--auth pkce|device]`
+The canonical command groups are `grace authenticate` and `grace authorize`. The CLI also accepts short aliases:
+`grace authn` for authentication commands, `grace authz` for authorization commands, and root `grace login` /
+`grace logout` aliases for the common interactive sign-in and sign-out flows.
+
+* `grace authenticate login [--auth pkce|device]`
   Interactive login to Auth0; stores access/refresh tokens in the OS secure store. If `--auth` is not
   specified, the CLI attempts PKCE and falls back to Device Code.
 
-* `grace auth status`
+* `grace authenticate status`
   Shows whether the CLI currently has usable credentials (PAT, M2M, or interactive).
 
-* `grace auth whoami`
+* `grace authenticate whoami`
   Calls the server and prints the authenticated identity information.
 
-* `grace auth logout`
+* `grace authenticate logout`
   Clears the cached interactive token from the secure store.
+
+Equivalent aliases:
+
+* `grace authn status`
+* `grace authn whoami`
+* `grace login`
+* `grace logout`
 
 * `grace doctor --check Authentication`
   Produces a read-only diagnostic report for local authentication environment checks. Doctor parses
@@ -409,13 +425,13 @@ only through Grace's normal authorization checks.
 
 #### CLI (recommended)
 
-* `grace auth token create --name "<token-name>"`
+* `grace authenticate token create --name "<token-name>"`
   Creates a PAT with the server-default lifetime.
 
-* `grace auth token create --name "<token-name>" --expires-in 30d`
+* `grace authenticate token create --name "<token-name>" --expires-in 30d`
   Creates a PAT that expires after the given duration. Supported suffixes: `s`, `m`, `h`, `d`.
 
-* `grace auth token create --name "<token-name>" --no-expiry`
+* `grace authenticate token create --name "<token-name>" --no-expiry`
   Creates a non-expiring PAT **only if** the server allows it.
 
 #### Notes
@@ -447,16 +463,16 @@ If you are calling the HTTP API directly, use the standard Authorization header:
 
 ### Listing and revoking PATs
 
-* `grace auth token list`
+* `grace authenticate token list`
   Lists active PATs for the current principal.
 
-* `grace auth token list --all`
+* `grace authenticate token list --all`
   Lists active + expired + revoked tokens.
 
-* `grace auth token revoke <token-id>`
+* `grace authenticate token revoke <token-id>`
   Revokes a PAT by token ID (GUID). Revoked tokens are no longer accepted.
 
-* `grace auth token status`
+* `grace authenticate token status`
   Shows whether the current `GRACE_TOKEN` is present and parseable.
 
 ### How PAT “permissions” work in Grace
@@ -483,28 +499,30 @@ granting/revoking roles and path permissions for that principal.
 
 Primary CLI commands for authorization management:
 
-* `grace access grant-role ...`
+* `grace authorize grant-role ...`
   Grants a role to a principal at a scope (Owner/Organization/Repository/Branch/System).
 
-* `grace access revoke-role ...`
+* `grace authorize revoke-role ...`
   Revokes a role from a principal at a scope.
 
-* `grace access list-role-assignments ...`
+* `grace authorize list-role-assignments ...`
   Lists role assignments at a scope (optionally filtered by principal).
 
-* `grace access upsert-path-permission ...`
+* `grace authorize upsert-path-permission ...`
   Sets or updates a path permission entry in a repository.
 
-* `grace access remove-path-permission ...`
+* `grace authorize remove-path-permission ...`
   Removes a path permission entry.
 
-* `grace access list-path-permissions ...`
+* `grace authorize list-path-permissions ...`
   Lists path permissions, optionally scoped to a path prefix.
 
-* `grace access check ...`
+* `grace authorize check ...`
   Asks the server “would this principal be allowed to do operation X on resource Y?”
 
-> For detailed role IDs and operations, use `grace access list-roles` and consult the authorization types
+Equivalent short forms use the `authz` alias, for example `grace authz check ...`.
+
+> For detailed role IDs and operations, use `grace authorize list-roles` and consult the authorization types
 > in `Grace.Types.Authorization`.
 
 ---
@@ -551,7 +569,7 @@ These variables enable Auth0 JWT authentication on the server.
 
 Recommended (for CLI auto-config):
 
-* `grace__auth__oidc__cli_client_id` (optional for server auth; required for `/auth/oidc/config`)
+* `grace__auth__oidc__cli_client_id` (optional for server auth; required for `/authenticate/oidc/config`)
   **No default.**
   Source: Auth0 Native app Client ID.
 
@@ -578,7 +596,7 @@ If you set only:
 
 …then the CLI can fetch the OIDC configuration automatically by calling:
 
-* `GET /auth/oidc/config` — Returns the server’s OIDC settings needed for interactive login.
+* `GET /authenticate/oidc/config` — Returns the server’s OIDC settings needed for interactive login.
 
 This works **only if** the server is configured with OIDC and has the values needed to publish them (see
 server env vars below).
@@ -603,15 +621,15 @@ server env vars below).
 
 1. Login:
 
-   * `grace auth login` — Interactive Auth0 login (tries PKCE, then device flow).
+   * `grace authenticate login` — Interactive Auth0 login (tries PKCE, then device flow).
 
 1. Verify:
 
-   * `grace auth whoami` — Calls the server and prints the authenticated identity.
+   * `grace authenticate whoami` — Calls the server and prints the authenticated identity.
 
 ##### Server-side requirements for auto-configuration
 
-For `GET /auth/oidc/config` to return useful values, the server must be configured with:
+For `GET /authenticate/oidc/config` to return useful values, the server must be configured with:
 
 * `grace__auth__oidc__authority` — `https://<tenant-domain>/`
 * `grace__auth__oidc__audience` — Auth0 API Identifier
@@ -625,7 +643,7 @@ supply the client ID locally (see Advanced).
 #### Advanced: set OIDC settings on the client
 
 If you cannot use server auto-configuration (for example, you are testing against an endpoint that does
-not expose `/auth/oidc/config`), you can configure the CLI directly via environment variables.
+not expose `/authenticate/oidc/config`), you can configure the CLI directly via environment variables.
 
 ##### Required
 
@@ -674,11 +692,11 @@ not expose `/auth/oidc/config`), you can configure the CLI directly via environm
 
 1. Login:
 
-   * `grace auth login` — Interactive Auth0 login (tries PKCE, then device flow).
+   * `grace authenticate login` — Interactive Auth0 login (tries PKCE, then device flow).
 
 1. Verify:
 
-   * `grace auth whoami` — Calls the server and prints the authenticated identity.
+   * `grace authenticate whoami` — Calls the server and prints the authenticated identity.
 
 ---
 
@@ -732,7 +750,7 @@ export grace__auth__oidc__m2m_scopes="read:foo write:bar"
 
 * `GRACE_TOKEN` (optional)
   **No default.**
-  Source: output from `grace auth token create`.
+  Source: output from `grace authenticate token create`.
   Must be a Grace PAT (prefix `grace_pat_v1_`). If set, this overrides interactive login and M2M. Unset stale or
   revoked values before troubleshooting interactive OIDC/MSA login.
 
@@ -823,7 +841,7 @@ You can create Auth0 resources non-interactively.
 
 ## Troubleshooting
 
-### `grace auth login` fails and mentions refresh tokens
+### `grace authenticate login` fails and mentions refresh tokens
 
 Ensure:
 
@@ -846,16 +864,16 @@ Quick checks:
 PowerShell:
 
 ```powershell
-grace auth status --output Verbose
-grace auth token status --output Verbose
+grace authenticate status --output Verbose
+grace authenticate token status --output Verbose
 grace status --output Verbose
 ```
 
 bash / zsh:
 
 ```bash
-grace auth status --output Verbose
-grace auth token status --output Verbose
+grace authenticate status --output Verbose
+grace authenticate token status --output Verbose
 grace status --output Verbose
 ```
 
@@ -864,17 +882,17 @@ If `GRACE_TOKEN` is false and interactive token is false, authenticate first:
 PowerShell:
 
 ```powershell
-grace auth login --auth device
+grace authenticate login --auth device
 # or
-grace auth login --auth pkce
+grace authenticate login --auth pkce
 ```
 
 bash / zsh:
 
 ```bash
-grace auth login --auth device
+grace authenticate login --auth device
 # or
-grace auth login --auth pkce
+grace authenticate login --auth pkce
 ```
 
 If you are using a PAT:
@@ -883,14 +901,14 @@ PowerShell:
 
 ```powershell
 $env:GRACE_TOKEN="grace_pat_v1_..."
-grace auth token status --output Verbose
+grace authenticate token status --output Verbose
 ```
 
 bash / zsh:
 
 ```bash
 export GRACE_TOKEN="grace_pat_v1_..."
-grace auth token status --output Verbose
+grace authenticate token status --output Verbose
 ```
 
 If you are trying to use interactive OIDC/MSA login, make sure a stale PAT is not taking precedence:
@@ -899,16 +917,16 @@ PowerShell:
 
 ```powershell
 Remove-Item Env:GRACE_TOKEN -ErrorAction SilentlyContinue
-grace auth status --output Verbose
-grace auth whoami --output Verbose
+grace authenticate status --output Verbose
+grace authenticate whoami --output Verbose
 ```
 
 bash / zsh:
 
 ```bash
 unset GRACE_TOKEN
-grace auth status --output Verbose
-grace auth whoami --output Verbose
+grace authenticate status --output Verbose
+grace authenticate whoami --output Verbose
 ```
 
 Why logs may look empty:
@@ -928,11 +946,11 @@ Also note:
 * During development, TestAuth may be available. See this file for setup details:
   `docs/Authentication.md` -> **Development without Auth0 (TestAuth)**.
 
-### You can see `SystemAdmin` in Cosmos, but `grace access check` says denied
+### You can see `SystemAdmin` in Cosmos, but `grace authorize check` says denied
 
-If `grace auth whoami` shows your expected `GraceUserId`, but:
+If `grace authenticate whoami` shows your expected `GraceUserId`, but:
 
-* `grace access check --operation SystemAdmin --resource system --output Json`
+* `grace authorize check --operation SystemAdmin --resource system --output Json`
   returns `Denied: missing permission SystemAdmin.`,
 
 and you can also see a `SystemAdmin` assignment document in Cosmos, the most common cause is a **runtime context
@@ -955,15 +973,15 @@ What to verify first:
 PowerShell:
 
 ```powershell
-grace auth whoami --output Json
-grace access check --operation SystemAdmin --resource system --output Json
+grace authenticate whoami --output Json
+grace authorize check --operation SystemAdmin --resource system --output Json
 ```
 
 bash / zsh:
 
 ```bash
-grace auth whoami --output Json
-grace access check --operation SystemAdmin --resource system --output Json
+grace authenticate whoami --output Json
+grace authorize check --operation SystemAdmin --resource system --output Json
 ```
 
 Then verify server configuration:
@@ -978,7 +996,7 @@ Recommended recovery steps:
 2. Re-run the two checks above.
 3. Re-open Cosmos and confirm the `system` AccessControl actor document for the active service context
    contains your user principal.
-4. If needed, use a current `SystemAdmin` principal to grant your role again via `grace access grant-role`.
+4. If needed, use a current `SystemAdmin` principal to grant your role again via `grace authorize grant-role`.
 
 ### Headless environments / CI
 
@@ -986,4 +1004,4 @@ Use:
 
 * M2M auth (client credentials env vars), or
 * PATs (`GRACE_TOKEN`), or
-* `grace auth login --auth device` if interactive login is still acceptable.
+* `grace authenticate login --auth device` if interactive login is still acceptable.

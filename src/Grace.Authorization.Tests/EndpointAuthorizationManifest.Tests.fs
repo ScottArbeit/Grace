@@ -266,22 +266,59 @@ type EndpointAuthorizationManifestTests() =
         |> assertRoutesUseSecurity (Authorized(Operation.WebhookDeliveryRead, ResourceKind.Repository))
 
     [<Test>]
+    member _.AuthorizationRoutesUseExpectedAuthenticatedAndAdminPolicies() =
+        [
+            "GET", "/authorize/list-roles"
+            "POST", "/authorize/check-permission"
+            "POST", "/authorize/show"
+        ]
+        |> assertRoutesUseSecurity Authenticated
+
+        [
+            "POST", "/authorize/grant-role"
+            "POST", "/authorize/list-role-assignments"
+            "POST", "/authorize/revoke-role"
+        ]
+        |> assertRoutesUseSecurity (Authorized(Operation.SystemAdmin, ResourceKind.System))
+
+        [
+            "POST", "/authorize/list-path-permissions"
+            "POST", "/authorize/remove-path-permission"
+            "POST", "/authorize/upsert-path-permission"
+        ]
+        |> assertRoutesUseSecurity (Authorized(Operation.RepositoryAdmin, ResourceKind.Repository))
+
+    [<Test>]
     member _.AuthRoutesUseExpectedAnonymousAndAuthenticatedPolicies() =
         [
-            "GET", "/auth/login"
-            "GET", "/auth/login/%s"
-            "GET", "/auth/oidc/config"
+            "GET", "/authenticate/login"
+            "GET", "/authenticate/login/%s"
+            "GET", "/authenticate/oidc/config"
         ]
         |> assertRoutesUseSecurity AllowAnonymous
 
         [
-            "GET", "/auth/logout"
-            "GET", "/auth/me"
-            "POST", "/auth/token/create"
-            "POST", "/auth/token/list"
-            "POST", "/auth/token/revoke"
+            "GET", "/authenticate/logout"
+            "GET", "/authenticate/me"
+            "POST", "/authenticate/token/create"
+            "POST", "/authenticate/token/list"
+            "POST", "/authenticate/token/revoke"
         ]
         |> assertRoutesUseSecurity Authenticated
+
+    [<Test>]
+    member _.AuthenticationAndAuthorizationRoutesDoNotKeepLegacyPrefixes() =
+        let legacyRoutes =
+            definitions
+            |> List.filter (fun definition ->
+                definition.Path.StartsWith("/auth/", StringComparison.Ordinal)
+                || definition.Path.StartsWith("/access/", StringComparison.Ordinal))
+
+        if not legacyRoutes.IsEmpty then
+            legacyRoutes
+            |> List.map (fun definition -> $"{definition.Method} {definition.Path}")
+            |> String.concat Environment.NewLine
+            |> fun routes -> Assert.Fail($"Legacy auth/access routes must not remain in EndpointAuthorizationManifest:{Environment.NewLine}{routes}")
 
     [<Test>]
     member _.MetricsAndManualRoutesUseExpectedPolicies() =

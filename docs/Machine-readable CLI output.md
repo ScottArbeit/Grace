@@ -19,9 +19,9 @@ The contract version is `cli-json-v1`. The charter is recorded in
 PowerShell:
 
 ```powershell
-grace --output Json auth logout
-grace auth logout --schema
-grace auth logout --examples
+grace --output Json authenticate logout
+grace authenticate logout --schema
+grace authenticate logout --examples
 grace --output Json maintenance stats --select DirectoryCount
 grace --output Json doctor --select Status
 ```
@@ -29,9 +29,9 @@ grace --output Json doctor --select Status
 bash / zsh:
 
 ```bash
-grace --output Json auth logout
-grace auth logout --schema
-grace auth logout --examples
+grace --output Json authenticate logout
+grace authenticate logout --schema
+grace authenticate logout --examples
 grace --output Json maintenance stats --select DirectoryCount
 grace --output Json doctor --select Status
 ```
@@ -78,13 +78,13 @@ An error emits a `GraceError` document:
   "Kind": "schema",
   "ContractVersion": "cli-json-v1",
   "Command": {
-    "Id": "auth.logout",
+    "Id": "authenticate.logout",
     "Path": [
-      "auth",
+      "authenticate",
       "logout"
     ],
     "GroupPath": [
-      "auth"
+      "authenticate"
     ],
     "Name": "logout"
   },
@@ -129,8 +129,8 @@ Rejected selectors return a JSON error envelope. They do not produce partial out
 
 The final registry-backed inventory covers every CLI leaf command with exactly one disposition:
 
-- Total leaf commands: `203`
-- JSON-ready routed commands: `182`
+- Total leaf commands: `205`
+- JSON-ready routed commands: `184`
 - Intentionally human-only commands: `1`
 - Deferred routed commands with explicit V2 scope: `11`
 - Source-only/unrouted commands: `9`

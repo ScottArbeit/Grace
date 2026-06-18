@@ -17,6 +17,7 @@ type AuthorizationSemanticsTests() =
 
     let principal = { PrincipalType = PrincipalType.User; PrincipalId = "user-1" }
     let otherPrincipal = { PrincipalType = PrincipalType.User; PrincipalId = "user-2" }
+    let groupPrincipal = { PrincipalType = PrincipalType.Group; PrincipalId = "group-1" }
 
     let ownerId = Guid.Parse("11111111-1111-1111-1111-111111111111")
     let organizationId = Guid.Parse("22222222-2222-2222-2222-222222222222")
@@ -88,7 +89,8 @@ type AuthorizationSemanticsTests() =
                 "BranchAdmin"
                 "BranchWriter"
                 "BranchReader"
-                "ApprovalResponder"
+                "RepositoryApprovalResponder"
+                "BranchApprovalResponder"
             ]
 
         let actualRoleIds = roleCatalog |> List.map (fun role -> role.RoleId)
@@ -105,12 +107,46 @@ type AuthorizationSemanticsTests() =
                 "RepoAdmin"
                 "RepoContributor"
                 "RepoReader"
+                "ApprovalResponder"
                 "rEpOrEaDeR"
                 "oRgAdMiN"
             ]
 
         for roleId in oldRoleIds do
             Assert.That(RoleCatalog.tryGet roleId |> Option.isNone, Is.True, $"Old role ID '{roleId}' should not be accepted.")
+
+    [<Test>]
+    member _.LegacyApprovalResponderAssignmentsGrantOnlyApprovalResponseOperations() =
+        let repositoryScope = Scope.Repository(ownerId, organizationId, repositoryId)
+        let repositoryResource = Resource.Repository(ownerId, organizationId, repositoryId)
+        let branchScope = Scope.Branch(ownerId, organizationId, repositoryId, branchId)
+        let branchResource = Resource.Branch(ownerId, organizationId, repositoryId, branchId)
+        let ownerScope = Scope.Owner ownerId
+        let ownerResource = Resource.Owner ownerId
+
+        let legacyRepositoryAssignment = createAssignment repositoryScope "ApprovalResponder"
+        let legacyBranchAssignment = createAssignment branchScope "ApprovalResponder"
+        let legacyOwnerAssignment = createAssignment ownerScope "ApprovalResponder"
+
+        let repositoryRead = checkPermission roleCatalog [ legacyRepositoryAssignment ] [] [ principal ] Set.empty ApprovalRequestRead repositoryResource
+
+        let repositoryRespond = checkPermission roleCatalog [ legacyRepositoryAssignment ] [] [ principal ] Set.empty ApprovalRequestRespond repositoryResource
+
+        let repositoryPolicyManage =
+            checkPermission roleCatalog [ legacyRepositoryAssignment ] [] [ principal ] Set.empty ApprovalPolicyManage repositoryResource
+
+        let repositoryWrite = checkPermission roleCatalog [ legacyRepositoryAssignment ] [] [ principal ] Set.empty RepositoryWrite repositoryResource
+
+        let branchRespond = checkPermission roleCatalog [ legacyBranchAssignment ] [] [ principal ] Set.empty ApprovalRequestRespond branchResource
+
+        let ownerRespond = checkPermission roleCatalog [ legacyOwnerAssignment ] [] [ principal ] Set.empty ApprovalRequestRespond ownerResource
+
+        assertAllowed repositoryRead
+        assertAllowed repositoryRespond
+        assertDenied repositoryPolicyManage
+        assertDenied repositoryWrite
+        assertAllowed branchRespond
+        assertDenied ownerRespond
 
     [<Test>]
     member _.RoleCatalogMatrixMatchesPermissionChecks() =
@@ -139,6 +175,34 @@ type AuthorizationSemanticsTests() =
         Assert.That(repositoryAdmin.AllowedOperations.Contains BranchAdmin, Is.True)
 
     [<Test>]
+    member _.EveryRoleMapsToExactlyOneAssignmentScope() =
+        for role in roleCatalog do
+            Assert.That(role.AppliesTo.Count, Is.EqualTo(1), $"Role '{role.RoleId}' must map to exactly one assignment scope.")
+
+            RoleCatalog.tryGetSingleScopeKind role.RoleId
+            |> Option.isSome
+            |> fun hasScope -> Assert.That(hasScope, Is.True, $"Role '{role.RoleId}' should expose a derived assignment scope.")
+
+    [<Test>]
+    member _.SelfAssignmentQueriesUseOnlyEffectiveCallerPrincipalsAcrossScopeLadder() =
+        let resource = Resource.Repository(ownerId, organizationId, repositoryId)
+
+        let queries = Grace.Server.Access.selfAssignmentQueriesForResource [ principal; groupPrincipal; principal ] resource
+
+        let expectedScopes = scopesForResource resource
+        let actualScopes = queries |> List.map fst |> List.distinct
+        Assert.That((actualScopes = expectedScopes), Is.True)
+
+        let actualPrincipals = queries |> List.map snd |> Set.ofList
+        Assert.That((actualPrincipals = Set.ofList [ principal; groupPrincipal ]), Is.True)
+
+        queries
+        |> List.exists (fun (_, queryPrincipal) -> queryPrincipal = otherPrincipal)
+        |> fun containsOtherPrincipal -> Assert.That(containsOtherPrincipal, Is.False)
+
+        Assert.That(queries.Length, Is.EqualTo(expectedScopes.Length * 2))
+
+    [<Test>]
     member _.ApprovalOperationsUseConservativeRoleGrants() =
         let repositoryAdmin =
             roleCatalog
@@ -152,9 +216,13 @@ type AuthorizationSemanticsTests() =
             roleCatalog
             |> List.find (fun role -> role.RoleId.Equals("RepositoryContributor", StringComparison.OrdinalIgnoreCase))
 
-        let responder =
+        let repositoryResponder =
             roleCatalog
-            |> List.find (fun role -> role.RoleId.Equals("ApprovalResponder", StringComparison.OrdinalIgnoreCase))
+            |> List.find (fun role -> role.RoleId.Equals("RepositoryApprovalResponder", StringComparison.OrdinalIgnoreCase))
+
+        let branchResponder =
+            roleCatalog
+            |> List.find (fun role -> role.RoleId.Equals("BranchApprovalResponder", StringComparison.OrdinalIgnoreCase))
 
         Assert.That(repositoryAdmin.AllowedOperations.Contains ApprovalPolicyManage, Is.True)
         Assert.That(repositoryAdmin.AllowedOperations.Contains ApprovalRequestRead, Is.True)
@@ -166,11 +234,15 @@ type AuthorizationSemanticsTests() =
         Assert.That(repositoryReader.AllowedOperations.Contains ApprovalRequestRespond, Is.False)
         Assert.That(repositoryContributor.AllowedOperations.Contains ApprovalRequestRespond, Is.False)
 
-        Assert.That(responder.AppliesTo.Contains("repository"), Is.True)
-        Assert.That(responder.AppliesTo.Contains("branch"), Is.True)
-        Assert.That(responder.AllowedOperations.Count, Is.EqualTo(2))
-        Assert.That(responder.AllowedOperations.Contains ApprovalRequestRead, Is.True)
-        Assert.That(responder.AllowedOperations.Contains ApprovalRequestRespond, Is.True)
+        Assert.That(repositoryResponder.AppliesTo, Is.EquivalentTo([ "repository" ]))
+        Assert.That(repositoryResponder.AllowedOperations.Count, Is.EqualTo(2))
+        Assert.That(repositoryResponder.AllowedOperations.Contains ApprovalRequestRead, Is.True)
+        Assert.That(repositoryResponder.AllowedOperations.Contains ApprovalRequestRespond, Is.True)
+
+        Assert.That(branchResponder.AppliesTo, Is.EquivalentTo([ "branch" ]))
+        Assert.That(branchResponder.AllowedOperations.Count, Is.EqualTo(2))
+        Assert.That(branchResponder.AllowedOperations.Contains ApprovalRequestRead, Is.True)
+        Assert.That(branchResponder.AllowedOperations.Contains ApprovalRequestRespond, Is.True)
 
     [<Test>]
     member _.SystemOperatorHasDescendantAdminWriteReadButNoSystemAdmin() =
