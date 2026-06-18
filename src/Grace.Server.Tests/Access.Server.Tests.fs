@@ -910,6 +910,46 @@ type AccessControl() =
         }
 
     [<Test>]
+    member _.AccessGrantRoleRejectsConflictingRequestedScopeKind() =
+        task {
+            let! organizationId = createOrganizationAsync Client
+            let! repositoryId = createRepositoryAsync Client organizationId
+
+            let parameters = Parameters.Access.GrantRoleParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.ScopeKind <- "owner"
+            parameters.PrincipalType <- "User"
+            parameters.PrincipalId <- $"{Guid.NewGuid()}"
+            parameters.RoleId <- "RepositoryReader"
+            parameters.CorrelationId <- generateCorrelationId ()
+
+            let! response = Client.PostAsync("/authorize/grant-role", createJsonContent parameters)
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
+        }
+
+    [<Test>]
+    member _.AccessRevokeRoleRejectsConflictingRequestedScopeKind() =
+        task {
+            let! organizationId = createOrganizationAsync Client
+            let! repositoryId = createRepositoryAsync Client organizationId
+
+            let parameters = Parameters.Access.RevokeRoleParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.ScopeKind <- "owner"
+            parameters.PrincipalType <- "User"
+            parameters.PrincipalId <- $"{Guid.NewGuid()}"
+            parameters.RoleId <- "RepositoryReader"
+            parameters.CorrelationId <- generateCorrelationId ()
+
+            let! response = Client.PostAsync("/authorize/revoke-role", createJsonContent parameters)
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
+        }
+
+    [<Test>]
     member _.BootstrapSeedsSystemAdmin() =
         task {
             let parameters = Parameters.Access.ListRoleAssignmentsParameters()
@@ -965,6 +1005,44 @@ type AccessControl() =
                 |> List.exists (fun assignment -> assignment.Principal.PrincipalId = otherUserId),
                 Is.False
             )
+        }
+
+    [<Test>]
+    member _.AccessShowRoleAssignmentsRejectsRepositoryWithoutOrganization() =
+        task {
+            let parameters = Parameters.Access.ShowRoleAssignmentsParameters()
+            parameters.OwnerId <- ownerId
+            parameters.RepositoryId <- $"{Guid.NewGuid()}"
+            parameters.CorrelationId <- generateCorrelationId ()
+
+            let! response = Client.PostAsync("/authorize/show", createJsonContent parameters)
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
+        }
+
+    [<Test>]
+    member _.AccessShowRoleAssignmentsRejectsBranchWithoutRepository() =
+        task {
+            let! organizationId = createOrganizationAsync Client
+
+            let parameters = Parameters.Access.ShowRoleAssignmentsParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.BranchId <- $"{Guid.NewGuid()}"
+            parameters.CorrelationId <- generateCorrelationId ()
+
+            let! response = Client.PostAsync("/authorize/show", createJsonContent parameters)
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
+        }
+
+    [<Test>]
+    member _.AccessShowRoleAssignmentsRejectsChildScopeWithoutOwner() =
+        task {
+            let parameters = Parameters.Access.ShowRoleAssignmentsParameters()
+            parameters.RepositoryId <- $"{Guid.NewGuid()}"
+            parameters.CorrelationId <- generateCorrelationId ()
+
+            let! response = Client.PostAsync("/authorize/show", createJsonContent parameters)
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
         }
 
     [<Test>]
