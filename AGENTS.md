@@ -37,6 +37,10 @@ assign each sub-issue's parent issue relationship to the epic in GitHub Relation
 issue that shows dependencies and parallelization opportunities. As sub-issues complete, update the epic checklist so
 completed sub-issues are checked. Use the concrete `addSubIssue` GraphQL workflow in `docs/Development process.md`
 when creating the native parent/child relationships.
+When creating the epic and child issues from PowerShell, avoid one giant inline script that embeds every issue body.
+Write each issue body to its own temporary Markdown file with `Set-Content` or an equivalent small file-write command,
+call `gh issue create --body-file <path>` for each issue, then patch the epic body with the real child issue numbers
+and create the native relationships with GraphQL `addSubIssue`.
 When implementing an epic, always use an explicit epic integration branch. Create
 `epic/<parent-issue>-<slug>` from `origin/main`, branch sub-issue worktrees from the current `origin/epic/...`, open
 sub-issue PRs to the epic branch, keep that branch refreshed from `origin/main`, and use the final epic-to-`main` PR as
@@ -60,6 +64,9 @@ so links stay traceable without relying on epic-branch auto-close behavior.
   and a DAG in the parent issue that shows dependencies and parallelization opportunities. As each sub-issue completes,
   check its box in the epic. Use the concrete `addSubIssue` GraphQL workflow in `docs/Development process.md` when
   creating the native parent/child relationships.
+- For epic plus child issue creation, prefer separate temporary Markdown body files and `gh issue create --body-file`
+  over a giant inline PowerShell script containing all issue bodies. After the child issue numbers exist, patch the epic
+  body with those real numbers, then use GraphQL `addSubIssue` for the native parent relationships.
 - Before assigning or starting a coding issue or sub-issue, apply the minimum detail gate from
   `docs/Development process.md`: invariant tuple, forbidden implementation shapes, positive/negative/regression/boundary
   tests, high-risk adversarial examples, selected risk-surface traps, and explicit N/A waivers. Keep each issue

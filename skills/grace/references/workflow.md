@@ -19,6 +19,10 @@ Re-read these files during the current session before relying on older memory or
   parent relationships, a DAG in the parent issue, and an epic checklist that is updated as sub-issues complete. Use the
   concrete `addSubIssue` GraphQL workflow in `docs/Development process.md` when creating the native parent/child
   relationships.
+- When creating an epic plus child issues from PowerShell, write each issue body to a separate temporary Markdown file
+  with `Set-Content` or equivalent small commands, then call `gh issue create --body-file` for each issue. Do not build
+  one huge inline script containing all issue bodies. After the child issue numbers exist, patch the epic body with the
+  real numbers, then use GraphQL `addSubIssue` for the native parent relationships.
 - When implementing an epic, always use an explicit `epic-integration-branch`. Create
   `epic/<parent-issue>-<short-slug>` from `origin/main`, route sub-issue pull requests to that branch, and use the
   final epic-to-`main` pull request as the production release candidate. Do not use direct-to-`main` epic slices.

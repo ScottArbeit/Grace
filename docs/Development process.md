@@ -36,11 +36,15 @@ dependency map, and integration status. Each sub-issue owns one implementation s
 review loop, and pull request. When creating the epic and sub-issues, assign each sub-issue's parent issue relationship
 to the epic in GitHub Relationships.
 
-Create the parent epic issue and child issues with `gh issue create`, using issue bodies written as separate files in a
-temporary directory so PowerShell does not have to quote large Markdown bodies inline. After the issues exist, create the
-native GitHub parent/child relationships with the GitHub GraphQL `addSubIssue` mutation for each child. The native
-relationship is the GraphQL part; REST issue links, body checklists, and cross-reference comments are useful traceability
-but are not a substitute for the native parent relationship.
+Create the parent epic issue and child issues with `gh issue create --body-file`, using issue bodies written as separate
+Markdown files in a temporary directory. Prefer one small `Set-Content` or equivalent file-write command per issue body
+over one giant inline PowerShell script or command that embeds every Markdown body. This avoids Windows command-line
+length limits and keeps failed issue creation recoverable.
+
+Create the issues first. After GitHub returns the real child issue numbers, patch the parent epic body so its checklist
+and DAG reference those actual numbers. Then create the native GitHub parent/child relationships with the GitHub GraphQL
+`addSubIssue` mutation for each child. The native relationship is the GraphQL part; REST issue links, body checklists,
+and cross-reference comments are useful traceability but are not a substitute for the native parent relationship.
 
 Use this mutation shape:
 
@@ -54,7 +58,8 @@ mutation($parent: ID!, $child: ID!) {
 ```
 
 `issueId` is the parent epic issue node ID. `subIssueId` is the child issue node ID. Use variables instead of embedding
-node IDs in the query string. This PowerShell-friendly shape keeps the GraphQL text and issue bodies in temporary files:
+node IDs in the query string. This PowerShell-friendly shape keeps the GraphQL text and each issue body in temporary
+files:
 
 ```powershell
 $temp = New-Item -ItemType Directory -Path (Join-Path ([IO.Path]::GetTempPath()) "grace-epic-$([guid]::NewGuid())")
@@ -62,8 +67,22 @@ $parentBody = Join-Path $temp.FullName "parent.md"
 $childBody = Join-Path $temp.FullName "child-1.md"
 $addSubIssueQuery = Join-Path $temp.FullName "add-subissue.graphql"
 
-Set-Content -LiteralPath $parentBody -Value $parentIssueMarkdown
-Set-Content -LiteralPath $childBody -Value $childIssueMarkdown
+Set-Content -LiteralPath $parentBody -Value @'
+# Epic: <short title>
+
+## Checklist
+
+- [ ] Child issue will be patched in after creation.
+'@
+
+Set-Content -LiteralPath $childBody -Value @'
+# <child title>
+
+## Objective
+
+- <one implementation slice>
+'@
+
 Set-Content -LiteralPath $addSubIssueQuery -Value @'
 mutation($parent: ID!, $child: ID!) {
   addSubIssue(input: { issueId: $parent, subIssueId: $child, replaceParent: true }) {
@@ -78,6 +97,13 @@ $childUrl = gh issue create --title "<child title>" --body-file $childBody
 
 $parentNumber = [int]([regex]::Match($parentUrl, '/issues/(\d+)$').Groups[1].Value)
 $childNumber = [int]([regex]::Match($childUrl, '/issues/(\d+)$').Groups[1].Value)
+
+$updatedParentBody = Join-Path $temp.FullName "parent-updated.md"
+(Get-Content -Raw -LiteralPath $parentBody).Replace(
+  "Child issue will be patched in after creation.",
+  "#$childNumber - <child title>"
+) | Set-Content -LiteralPath $updatedParentBody
+gh issue edit $parentNumber --body-file $updatedParentBody
 
 $parentNodeId = gh issue view $parentNumber --json id --jq .id
 $childNodeId = gh issue view $childNumber --json id --jq .id
