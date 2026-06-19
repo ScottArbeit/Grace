@@ -274,6 +274,8 @@ type StorageContentBlockSasRoutes() =
         client.BaseAddress <- Client.BaseAddress
         client
 
+    let createMalformedJsonContent () = new StringContent("{", Encoding.UTF8, "application/json")
+
     let grantRoleAsync (client: HttpClient) scopeKind ownerId organizationId repositoryId branchId principalId roleId =
         task {
             let parameters = Parameters.Access.GrantRoleParameters()
@@ -300,20 +302,36 @@ type StorageContentBlockSasRoutes() =
     let createContentBlockUploadParameters repositoryId =
         let parameters = Parameters.Storage.GetContentBlockUploadUriParameters()
         setContentBlockParameters parameters repositoryId
-        parameters.ContentBlockAddress <- $"content-block-{Guid.NewGuid():N}"
+        parameters.ContentBlockAddress <- ContentAddress.computeBlake3Hex (Guid.NewGuid().ToByteArray())
         parameters
 
     let createContentBlockDownloadParameters repositoryId =
         let parameters = Parameters.Storage.GetContentBlockDownloadUriParameters()
         setContentBlockParameters parameters repositoryId
-        parameters.ContentBlockAddress <- $"content-block-{Guid.NewGuid():N}"
+        parameters.ContentBlockAddress <- ContentAddress.computeBlake3Hex (Guid.NewGuid().ToByteArray())
         parameters
+
+    let malformedContentBlockAddress () = ContentBlockAddress $"content-block-contract-{Guid.NewGuid():N}"
+
+    let assertUnauthorized (response: HttpResponseMessage) =
+        task {
+            let! body = response.Content.ReadAsStringAsync()
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized), body)
+        }
+
+    let assertBadRequestForMalformedContentBlockAddress (response: HttpResponseMessage) =
+        task {
+            let! body = response.Content.ReadAsStringAsync()
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), body)
+            Assert.That(body, Does.Contain("ContentBlockAddress"))
+            Assert.That(body, Does.Contain("64-character hexadecimal BLAKE3"))
+        }
 
     let assertSuccessSasForContentBlock (response: HttpResponseMessage) (contentBlockAddress: ContentBlockAddress) =
         task {
             let! body = response.Content.ReadAsStringAsync()
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK), body)
-            Assert.That(body, Does.Contain("cas/content-blocks"))
+            Assert.That(body, Does.Contain("cas/content/"))
             Assert.That(body, Does.Contain(contentBlockAddress))
         }
 
@@ -343,6 +361,37 @@ type StorageContentBlockSasRoutes() =
         }
 
     [<Test>]
+    member _.ContentBlockUploadUriChecksPrincipalBeforeBodyValidationAndReturnsBadRequestAfterAuthentication() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let pathWriter = $"{Guid.NewGuid()}"
+
+            let! grantWriter = grantRoleAsync Client "repo" ownerId organizationId repositoryId "" pathWriter "RepositoryContributor"
+            Assert.That(grantWriter.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+
+            use unauthClient = createUnauthenticatedClient ()
+            use writerClient = createClientWithUserId pathWriter
+            let parameters = createContentBlockUploadParameters repositoryId
+
+            parameters.ContentBlockAddress <- malformedContentBlockAddress ()
+
+            let! unauthInvalidUpload = unauthClient.PostAsync("/storage/getContentBlockUploadUri", createJsonContent parameters)
+            do! assertUnauthorized unauthInvalidUpload
+
+            use malformedJson = createMalformedJsonContent ()
+            let! unauthMalformedUpload = unauthClient.PostAsync("/storage/getContentBlockUploadUri", malformedJson)
+            do! assertUnauthorized unauthMalformedUpload
+
+            let! malformedUpload = writerClient.PostAsync("/storage/getContentBlockUploadUri", createJsonContent parameters)
+            do! assertBadRequestForMalformedContentBlockAddress malformedUpload
+
+            parameters.ContentBlockAddress <- ContentBlockAddress String.Empty
+
+            let! emptyUpload = writerClient.PostAsync("/storage/getContentBlockUploadUri", createJsonContent parameters)
+            do! assertBadRequestForMalformedContentBlockAddress emptyUpload
+        }
+
+    [<Test>]
     member _.ContentBlockDownloadUriRequiresPathReadAndDoesNotProbeBlockExistence() =
         task {
             let repositoryId = repositoryIds[0]
@@ -365,6 +414,37 @@ type StorageContentBlockSasRoutes() =
 
             let! allowedDownload = readerClient.PostAsync("/storage/getContentBlockDownloadUri", createJsonContent parameters)
             do! assertSuccessSasForContentBlock allowedDownload parameters.ContentBlockAddress
+        }
+
+    [<Test>]
+    member _.ContentBlockDownloadUriChecksPrincipalBeforeBodyValidationAndReturnsBadRequestAfterAuthentication() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let pathReader = $"{Guid.NewGuid()}"
+
+            let! grantReader = grantRoleAsync Client "repo" ownerId organizationId repositoryId "" pathReader "RepositoryReader"
+            Assert.That(grantReader.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+
+            use unauthClient = createUnauthenticatedClient ()
+            use readerClient = createClientWithUserId pathReader
+            let parameters = createContentBlockDownloadParameters repositoryId
+
+            parameters.ContentBlockAddress <- malformedContentBlockAddress ()
+
+            let! unauthInvalidDownload = unauthClient.PostAsync("/storage/getContentBlockDownloadUri", createJsonContent parameters)
+            do! assertUnauthorized unauthInvalidDownload
+
+            use malformedJson = createMalformedJsonContent ()
+            let! unauthMalformedDownload = unauthClient.PostAsync("/storage/getContentBlockDownloadUri", malformedJson)
+            do! assertUnauthorized unauthMalformedDownload
+
+            let! malformedDownload = readerClient.PostAsync("/storage/getContentBlockDownloadUri", createJsonContent parameters)
+            do! assertBadRequestForMalformedContentBlockAddress malformedDownload
+
+            parameters.ContentBlockAddress <- ContentBlockAddress String.Empty
+
+            let! emptyDownload = readerClient.PostAsync("/storage/getContentBlockDownloadUri", createJsonContent parameters)
+            do! assertBadRequestForMalformedContentBlockAddress emptyDownload
         }
 
 [<NonParallelizable>]
@@ -760,7 +840,7 @@ type StorageManifestUploadSessionRoutes() =
 
             let! uploadETag = uploadContentBlockWithSas block.Payload uploadUri
 
-            let storagePlacement = { ObjectKey = $"cas/content-blocks/{block.Address}"; ETag = Some uploadETag }
+            let storagePlacement = { ObjectKey = StorageKeys.contentBlockObjectKey block.Address; ETag = Some uploadETag }
 
             Assert.That(storagePlacement.ETag, Is.Not.EqualTo(None))
 
@@ -822,7 +902,7 @@ type StorageManifestUploadSessionRoutes() =
         task {
             let repositoryId = repositoryIds[0]
             let correlationId = generateCorrelationId ()
-            let contentBlockAddress = ContentBlockAddress $"content-block-contract-{Guid.NewGuid():N}"
+            let contentBlockAddress = ContentBlockAddress(ContentAddress.computeBlake3Hex (Encoding.UTF8.GetBytes $"content-block-contract-{Guid.NewGuid():N}"))
 
             let uploadUriParameters = Parameters.Storage.GetContentBlockUploadUriParameters()
             setStorageParameters uploadUriParameters repositoryId correlationId
@@ -834,7 +914,7 @@ type StorageManifestUploadSessionRoutes() =
             Assert.That(uploadUriResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), uploadUriBody)
             assertRawStringContent uploadUriResponse
             Assert.That(uploadUriBody, Does.StartWith("http"))
-            Assert.That(uploadUriBody, Does.Contain("cas/content-blocks"))
+            Assert.That(uploadUriBody, Does.Contain("cas/content/"))
             Assert.That(uploadUriBody, Does.Not.StartWith("{"))
 
             let downloadUriParameters = Parameters.Storage.GetContentBlockDownloadUriParameters()
@@ -846,7 +926,7 @@ type StorageManifestUploadSessionRoutes() =
             Assert.That(downloadUriResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), downloadUriBody)
             assertRawStringContent downloadUriResponse
             Assert.That(downloadUriBody, Does.StartWith("http"))
-            Assert.That(downloadUriBody, Does.Contain("cas/content-blocks"))
+            Assert.That(downloadUriBody, Does.Contain("cas/content/"))
             Assert.That(downloadUriBody, Does.Not.StartWith("{"))
 
             let! discoveryResponse =
@@ -1319,7 +1399,11 @@ type StorageManifestUploadSessionRoutes() =
             confirm.ContentBlockAddress <- block.Address
             confirm.Payload <- block.Payload
 
-            confirm.StoragePlacement <- { ObjectKey = $"cas/content-blocks/missing-{Guid.NewGuid():N}"; ETag = Some "etag-missing-block" }
+            confirm.StoragePlacement <-
+                {
+                    ObjectKey = StorageKeys.contentBlockObjectKey (ContentAddress.computeBlake3Hex (Guid.NewGuid().ToByteArray()))
+                    ETag = Some "etag-missing-block"
+                }
 
             let! _ = postUploadSessionDecision "/storage/confirmContentBlockUpload" confirm
 
@@ -1405,7 +1489,7 @@ type StorageManifestUploadSessionRoutes() =
             confirm.OperationId <- "confirm-0"
             confirm.ContentBlockAddress <- block.Address
             confirm.Payload <- block.Payload
-            confirm.StoragePlacement <- { ObjectKey = $"cas/content-blocks/{block.Address}"; ETag = Some uploadETag }
+            confirm.StoragePlacement <- { ObjectKey = StorageKeys.contentBlockObjectKey block.Address; ETag = Some uploadETag }
 
             let! _ = postUploadSessionDecision "/storage/confirmContentBlockUpload" confirm
 

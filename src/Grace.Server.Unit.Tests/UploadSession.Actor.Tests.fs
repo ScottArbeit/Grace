@@ -80,7 +80,7 @@ type UploadSessionActorTests() =
             OperationId = operationId
             ContentBlockAddress = blockAddress
             Payload = payload
-            StoragePlacement = { ObjectKey = $"cas/content-blocks/{blockAddress}"; ETag = Some "etag-confirmed" }
+            StoragePlacement = { ObjectKey = StorageKeys.contentBlockObjectKey blockAddress; ETag = Some "etag-confirmed" }
         }
 
     let confirmWithPlacement operationId blockAddress payload placement : ConfirmBlockUploaded =
@@ -111,7 +111,7 @@ type UploadSessionActorTests() =
         UploadSessionCommand.FinalizeManifest { OperationId = operationId; Manifest = manifest; BlockPayloads = payloads }
 
     let storagePoolId = StoragePoolId "pool-main"
-    let reuseBlockAddress = ContentBlockAddress "block-blake3-reuse"
+    let reuseBlockAddress = ContentBlockAddress "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
     let discoveryExpiresAt = timestamp.Plus(Duration.FromMinutes(10L))
     let minimumReuseRunLength = 4
 
@@ -123,7 +123,7 @@ type UploadSessionActorTests() =
             StoragePoolId = storagePoolId
             ContentBlockAddress = reuseBlockAddress
             BlockFormatVersion = 1s
-            StoragePlacement = { ObjectKey = $"cas/content-blocks/{reuseBlockAddress}"; ETag = Some "etag-reuse" }
+            StoragePlacement = { ObjectKey = StorageKeys.contentBlockObjectKey reuseBlockAddress; ETag = Some "etag-reuse" }
             Ranges = ranges
             TotalPhysicalBytes = 4096L
             ActivePhysicalBytes = 0L
@@ -134,7 +134,7 @@ type UploadSessionActorTests() =
     let reuseMetadataFor contentBlockAddress metadataVersion ranges : ContentBlockMetadata =
         { reuseMetadata metadataVersion ranges with
             ContentBlockAddress = contentBlockAddress
-            StoragePlacement = { ObjectKey = $"cas/content-blocks/{contentBlockAddress}"; ETag = Some "etag-reuse" }
+            StoragePlacement = { ObjectKey = StorageKeys.contentBlockObjectKey contentBlockAddress; ETag = Some "etag-reuse" }
         }
 
     let reuseHint =
@@ -697,7 +697,7 @@ type UploadSessionActorTests() =
                         {
                             ContentBlockAddress = firstBlock.Address
                             PayloadLength = firstBlock.Payload.LongLength
-                            StoragePlacement = { ObjectKey = $"cas/content-blocks/{firstBlock.Address}"; ETag = Some "etag-first" }
+                            StoragePlacement = { ObjectKey = StorageKeys.contentBlockObjectKey firstBlock.Address; ETag = Some "etag-first" }
                             Ranges =
                                 [|
                                     {
@@ -713,7 +713,7 @@ type UploadSessionActorTests() =
                         {
                             ContentBlockAddress = secondBlock.Address
                             PayloadLength = secondBlock.Payload.LongLength
-                            StoragePlacement = { ObjectKey = $"cas/content-blocks/{secondBlock.Address}"; ETag = Some "etag-second" }
+                            StoragePlacement = { ObjectKey = StorageKeys.contentBlockObjectKey secondBlock.Address; ETag = Some "etag-second" }
                             Ranges =
                                 [|
                                     {
@@ -748,8 +748,8 @@ type UploadSessionActorTests() =
                 Assert.That(merge.Ranges[0].ActiveManifestCount, Is.EqualTo(1))
             | _ -> Assert.Fail("Expected uploaded block finalization to create ContentBlockMetadata MergePhysicalRanges commands.")
 
-        assertMerge commands[0] firstBlock.Address $"cas/content-blocks/{firstBlock.Address}"
-        assertMerge commands[1] secondBlock.Address $"cas/content-blocks/{secondBlock.Address}"
+        assertMerge commands[0] firstBlock.Address (StorageKeys.contentBlockObjectKey firstBlock.Address)
+        assertMerge commands[1] secondBlock.Address (StorageKeys.contentBlockObjectKey secondBlock.Address)
 
     [<Test>]
     member _.FinalizedUploadRangesIncrementExistingActiveManifestCount() =
@@ -1183,7 +1183,7 @@ type UploadSessionActorTests() =
             {
                 ContentBlockAddress = block.Address
                 PayloadLength = block.Payload.LongLength
-                StoragePlacement = { ObjectKey = $"cas/content-blocks/{block.Address}"; ETag = Some "etag-confirmed" }
+                StoragePlacement = { ObjectKey = StorageKeys.contentBlockObjectKey block.Address; ETag = Some "etag-confirmed" }
                 Ranges =
                     [|
                         { OrdinalStart = 0; OrdinalCount = 1; ActiveManifestCount = 0; PhysicalOffset = 0L; PhysicalLength = 11L }
