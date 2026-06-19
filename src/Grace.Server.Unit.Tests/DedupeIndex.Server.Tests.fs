@@ -26,11 +26,13 @@ type DedupeIndexServerTests() =
         let mutable physicalOffset = 0L
 
         let chunks =
-            [| for index in 0 .. chunkCount - 1 do
-                   let chunkBytes = bytes $"{name}-chunk-{index:D2}-{String('x', 128)}"
-                   let input: ContentBlockFormat.ContentBlockInputChunk = { PhysicalOffset = physicalOffset; Bytes = chunkBytes }
-                   physicalOffset <- physicalOffset + int64 chunkBytes.Length
-                   input |]
+            [|
+                for index in 0 .. chunkCount - 1 do
+                    let chunkBytes = bytes $"{name}-chunk-{index:D2}-{String('x', 128)}"
+                    let input: ContentBlockFormat.ContentBlockInputChunk = { PhysicalOffset = physicalOffset; Bytes = chunkBytes }
+                    physicalOffset <- physicalOffset + int64 chunkBytes.Length
+                    input
+            |]
 
         match ContentBlockFormat.encode chunks with
         | Ok block -> block
@@ -38,15 +40,27 @@ type DedupeIndexServerTests() =
             Assert.Fail($"Expected test content block to encode, got {error}.")
             Unchecked.defaultof<ContentBlockFormat.EncodedContentBlock>
 
-    let decodedChunkAddresses (block: ContentBlockFormat.EncodedContentBlock) = block.Chunks |> Array.map (fun chunk -> chunk.Address)
+    let decodedChunkAddresses (block: ContentBlockFormat.EncodedContentBlock) =
+        block.Chunks
+        |> Array.map (fun chunk -> chunk.Address)
 
     let manifestFor (block: ContentBlockFormat.EncodedContentBlock) =
-        let size = block.Chunks |> Array.sumBy (fun chunk -> int64 chunk.Length)
+        let size =
+            block.Chunks
+            |> Array.sumBy (fun chunk -> int64 chunk.Length)
 
         let fileHash = FileContentHash(ContentAddress.computeBlake3Hex block.Payload)
 
         let manifest =
-            FileManifest.Create(ManifestAddress String.Empty, RabinChunking.SuiteName, fileHash, size, [ ContentBlock.Create(block.Address, 0L, size) ])
+            FileManifest.Create(
+                ManifestAddress String.Empty,
+                RabinChunking.SuiteName,
+                fileHash,
+                size,
+                [
+                    ContentBlock.Create(block.Address, 0L, size)
+                ]
+            )
 
         { manifest with ManifestAddress = ContentAddress.computeManifestAddressForManifest manifest }
 
@@ -54,30 +68,38 @@ type DedupeIndexServerTests() =
         { UploadSessionDto.Default with
             RepositoryId = repositoryId
             LifecycleState = UploadSessionLifecycleState.RetentionPending
-            FinalizedManifestAddress = Some manifest.ManifestAddress }
+            FinalizedManifestAddress = Some manifest.ManifestAddress
+        }
 
     let nonFinalizedSession () =
         { UploadSessionDto.Default with
             RepositoryId = repositoryId
             LifecycleState = UploadSessionLifecycleState.UploadingBlocks
-            FinalizedManifestAddress = None }
+            FinalizedManifestAddress = None
+        }
 
     let metadataFor activeManifestCount metadataVersion (block: ContentBlockFormat.EncodedContentBlock) =
-        { Class = nameof ContentBlockMetadata
-          StoragePoolId = storagePoolId
-          ContentBlockAddress = block.Address
-          BlockFormatVersion = 1s
-          StoragePlacement = { ObjectKey = $"cas/content-blocks/{block.Address}"; ETag = Some $"etag-{metadataVersion}" }
-          Ranges =
-            [| { OrdinalStart = 0
-                 OrdinalCount = block.Chunks.Length
-                 ActiveManifestCount = activeManifestCount
-                 PhysicalOffset = 0L
-                 PhysicalLength = block.Payload.LongLength } |]
-          TotalPhysicalBytes = block.Payload.LongLength
-          ActivePhysicalBytes = if activeManifestCount > 0 then block.Payload.LongLength else 0L
-          MetadataVersion = metadataVersion
-          UpdatedAt = timestamp }
+        {
+            Class = nameof ContentBlockMetadata
+            StoragePoolId = storagePoolId
+            ContentBlockAddress = block.Address
+            BlockFormatVersion = 1s
+            StoragePlacement = { ObjectKey = StorageKeys.contentBlockObjectKey block.Address; ETag = Some $"etag-{metadataVersion}" }
+            Ranges =
+                [|
+                    {
+                        OrdinalStart = 0
+                        OrdinalCount = block.Chunks.Length
+                        ActiveManifestCount = activeManifestCount
+                        PhysicalOffset = 0L
+                        PhysicalLength = block.Payload.LongLength
+                    }
+                |]
+            TotalPhysicalBytes = block.Payload.LongLength
+            ActivePhysicalBytes = if activeManifestCount > 0 then block.Payload.LongLength else 0L
+            MetadataVersion = metadataVersion
+            UpdatedAt = timestamp
+        }
 
     let payloadFor (block: ContentBlockFormat.EncodedContentBlock) : FinalizeManifestBlockPayload = { Address = block.Address; Payload = block.Payload }
 
@@ -153,15 +175,23 @@ type DedupeIndexServerTests() =
             let tail = bytes $"limit-tail-{index}-{String('y', 128)}"
 
             let chunks: ContentBlockFormat.ContentBlockInputChunk array =
-                [| let firstChunk: ContentBlockFormat.ContentBlockInputChunk = { PhysicalOffset = 0L; Bytes = sharedChunkBytes }
-                   firstChunk
+                [|
+                    let firstChunk: ContentBlockFormat.ContentBlockInputChunk = { PhysicalOffset = 0L; Bytes = sharedChunkBytes }
+                    firstChunk
 
-                   for ordinal in 1..11 do
-                       let chunk: ContentBlockFormat.ContentBlockInputChunk =
-                           { PhysicalOffset = int64 (sharedChunkBytes.Length + (ordinal - 1) * tail.Length)
-                             Bytes = bytes $"limit-{index}-{ordinal}-{String('z', 128)}" }
+                    for ordinal in 1..11 do
+                        let chunk: ContentBlockFormat.ContentBlockInputChunk =
+                            {
+                                PhysicalOffset =
+                                    int64 (
+                                        sharedChunkBytes.Length
+                                        + (ordinal - 1) * tail.Length
+                                    )
+                                Bytes = bytes $"limit-{index}-{ordinal}-{String('z', 128)}"
+                            }
 
-                       chunk |]
+                        chunk
+                |]
 
             match ContentBlockFormat.encode chunks with
             | Ok block -> block
@@ -170,10 +200,12 @@ type DedupeIndexServerTests() =
                 Unchecked.defaultof<ContentBlockFormat.EncodedContentBlock>
 
         let records =
-            [| for index in 0 .. MaxCandidateWindowsPerKeyChunk + 2 do
-                   let block = createBlock index
-                   let manifest = manifestFor block
-                   DedupeIndex.recordsAfterFinalize (sourceFor (finalizedSession manifest) manifest block (metadataFor 1 (int64 index + 1L) block)) |]
+            [|
+                for index in 0 .. MaxCandidateWindowsPerKeyChunk + 2 do
+                    let block = createBlock index
+                    let manifest = manifestFor block
+                    DedupeIndex.recordsAfterFinalize (sourceFor (finalizedSession manifest) manifest block (metadataFor 1 (int64 index + 1L) block))
+            |]
             |> Array.concat
 
         let requestedChunk = (decodedChunkAddresses firstBlock)[0]
@@ -188,11 +220,13 @@ type DedupeIndexServerTests() =
         let matchingChunk = (decodedChunkAddresses duplicateBlock)[0]
 
         let requested =
-            [| yield matchingChunk
-               yield matchingChunk
-               yield String.Empty
-               for index in 0 .. MaxDiscoveryKeyChunkAddresses + 10 do
-                   yield $"missing-key-{index:D3}" |]
+            [|
+                yield matchingChunk
+                yield matchingChunk
+                yield String.Empty
+                for index in 0 .. MaxDiscoveryKeyChunkAddresses + 10 do
+                    yield $"missing-key-{index:D3}"
+            |]
 
         let result = discover Array.empty requested
 
@@ -207,8 +241,13 @@ type DedupeIndexServerTests() =
     [<Test>]
     member _.DiscoveryResponseBudgetTruncatesProtectedWindowsAndMarksPartial() =
         let blocks =
-            [| for index in 0 .. MaxResponseProtectedChunks / MinimumAcceptedReuseRunLength + 8 do
-                   encodedBlock $"budget-{index:D4}" MinimumAcceptedReuseRunLength |]
+            [|
+                for index in
+                    0 .. MaxResponseProtectedChunks
+                         / MinimumAcceptedReuseRunLength
+                         + 8 do
+                    encodedBlock $"budget-{index:D4}" MinimumAcceptedReuseRunLength
+            |]
 
         let records =
             blocks
@@ -218,7 +257,9 @@ type DedupeIndexServerTests() =
                 DedupeIndex.recordsAfterFinalize (sourceFor (finalizedSession manifest) manifest block metadata))
             |> Array.concat
 
-        let requested = blocks |> Array.map (fun block -> (decodedChunkAddresses block)[0])
+        let requested =
+            blocks
+            |> Array.map (fun block -> (decodedChunkAddresses block)[0])
 
         let result = discover records requested
 
@@ -248,31 +289,41 @@ type DedupeIndexServerTests() =
         let authoritativeMetadata =
             { metadataFor 1 8L block with
                 Ranges =
-                    [| { OrdinalStart = candidate.OrdinalStart
-                         OrdinalCount = candidate.OrdinalCount
-                         ActiveManifestCount = 1
-                         PhysicalOffset = 0L
-                         PhysicalLength = block.Payload.LongLength } |] }
+                    [|
+                        {
+                            OrdinalStart = candidate.OrdinalStart
+                            OrdinalCount = candidate.OrdinalCount
+                            ActiveManifestCount = 1
+                            PhysicalOffset = 0L
+                            PhysicalLength = block.Payload.LongLength
+                        }
+                    |]
+            }
 
         let discovery =
             UploadSessionCommand.IssueDedupeDiscovery
-                { OperationId = "op-discovery"
-                  ExpiresAt = timestamp.Plus(Duration.FromMinutes(5L))
-                  MinimumReuseRunLength = MinimumAcceptedReuseRunLength
-                  Hints = [| hint |] }
+                {
+                    OperationId = "op-discovery"
+                    ExpiresAt = timestamp.Plus(Duration.FromMinutes(5L))
+                    MinimumReuseRunLength = MinimumAcceptedReuseRunLength
+                    Hints = [| hint |]
+                }
 
         let started =
             { UploadSessionDto.Default with
                 UploadSessionId = Guid.NewGuid()
                 RepositoryId = repositoryId
-                LifecycleState = UploadSessionLifecycleState.Started }
+                LifecycleState = UploadSessionLifecycleState.Started
+            }
 
         let eventMetadata =
-            { Timestamp = timestamp
-              CorrelationId = "corr-stale-candidate"
-              Principal = "tester"
-              ClientType = Microsoft.FSharp.Core.Option.None
-              Properties = Dictionary<string, string>() }
+            {
+                Timestamp = timestamp
+                CorrelationId = "corr-stale-candidate"
+                Principal = "tester"
+                ClientType = Microsoft.FSharp.Core.Option.None
+                Properties = Dictionary<string, string>()
+            }
 
         let issued =
             match Grace.Actors.UploadSession.decideCommand [] started discovery eventMetadata with
@@ -285,7 +336,14 @@ type DedupeIndexServerTests() =
 
         let claim =
             UploadSessionCommand.ClaimReuseRanges
-                { OperationId = "op-claim"; DiscoveryOperationId = "op-discovery"; Ranges = [| { Hint = hint; Metadata = authoritativeMetadata } |] }
+                {
+                    OperationId = "op-claim"
+                    DiscoveryOperationId = "op-discovery"
+                    Ranges =
+                        [|
+                            { Hint = hint; Metadata = authoritativeMetadata }
+                        |]
+                }
 
         match Grace.Actors.UploadSession.decideCommand discoveryEvents discoveredSession claim eventMetadata with
         | Ok _ -> Assert.Fail("Expected stale index candidate to be rejected by authoritative metadata at claim time.")
@@ -303,10 +361,14 @@ type DedupeIndexServerTests() =
         let requested = [| (decodedChunkAddresses block)[0] |]
 
         let incrementalCandidates =
-            (discover incremental requested).CandidateContentBlocks
+            (discover incremental requested)
+                .CandidateContentBlocks
             |> Array.map candidateShape
 
-        let rebuiltCandidates = (discover rebuilt requested).CandidateContentBlocks |> Array.map candidateShape
+        let rebuiltCandidates =
+            (discover rebuilt requested)
+                .CandidateContentBlocks
+            |> Array.map candidateShape
 
         Assert.That(rebuiltCandidates.Length, Is.EqualTo(incrementalCandidates.Length))
 
@@ -321,9 +383,8 @@ type DedupeIndexServerTests() =
         let newerMetadata = metadataFor 1 11L block
 
         let rebuilt =
-            DedupeIndex.rebuild
-                [| sourceFor (finalizedSession manifest) manifest block olderMetadata
-                   sourceFor (finalizedSession manifest) manifest block newerMetadata |]
+            DedupeIndex.rebuild [| sourceFor (finalizedSession manifest) manifest block olderMetadata
+                                   sourceFor (finalizedSession manifest) manifest block newerMetadata |]
 
         let matchingRecords =
             rebuilt
@@ -415,7 +476,8 @@ type DedupeIndexServerTests() =
         let registration: DedupeIndex.FinalizedManifestRegistration =
             { StoragePoolId = storagePoolId; Session = finalizedSession manifest; Manifest = manifest; BlockPayloads = [| payloadFor block |] }
 
-        DedupeIndex.registerFinalizedManifest registration |> ignore
+        DedupeIndex.registerFinalizedManifest registration
+        |> ignore
 
         let firstRecords = DedupeIndex.writeAfterAuthoritativeMetadata firstMetadata
         let secondRecords = DedupeIndex.writeAfterAuthoritativeMetadata secondMetadata
@@ -509,6 +571,14 @@ type DedupeIndexServerTests() =
 
         Assert.That(result.CandidateContentBlocks[0].MetadataVersion, Is.EqualTo(5L))
 
-        Assert.That(matchingSnapshot |> Array.exists (fun record -> record.MetadataVersion = 1L), Is.False)
+        Assert.That(
+            matchingSnapshot
+            |> Array.exists (fun record -> record.MetadataVersion = 1L),
+            Is.False
+        )
 
-        Assert.That(matchingSnapshot |> Array.exists (fun record -> record.MetadataVersion = 5L), Is.True)
+        Assert.That(
+            matchingSnapshot
+            |> Array.exists (fun record -> record.MetadataVersion = 5L),
+            Is.True
+        )
