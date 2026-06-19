@@ -300,20 +300,20 @@ type StorageContentBlockSasRoutes() =
     let createContentBlockUploadParameters repositoryId =
         let parameters = Parameters.Storage.GetContentBlockUploadUriParameters()
         setContentBlockParameters parameters repositoryId
-        parameters.ContentBlockAddress <- $"content-block-{Guid.NewGuid():N}"
+        parameters.ContentBlockAddress <- ContentAddress.computeBlake3Hex (Guid.NewGuid().ToByteArray())
         parameters
 
     let createContentBlockDownloadParameters repositoryId =
         let parameters = Parameters.Storage.GetContentBlockDownloadUriParameters()
         setContentBlockParameters parameters repositoryId
-        parameters.ContentBlockAddress <- $"content-block-{Guid.NewGuid():N}"
+        parameters.ContentBlockAddress <- ContentAddress.computeBlake3Hex (Guid.NewGuid().ToByteArray())
         parameters
 
     let assertSuccessSasForContentBlock (response: HttpResponseMessage) (contentBlockAddress: ContentBlockAddress) =
         task {
             let! body = response.Content.ReadAsStringAsync()
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK), body)
-            Assert.That(body, Does.Contain("cas/content-blocks"))
+            Assert.That(body, Does.Contain("cas/content/"))
             Assert.That(body, Does.Contain(contentBlockAddress))
         }
 
@@ -760,7 +760,7 @@ type StorageManifestUploadSessionRoutes() =
 
             let! uploadETag = uploadContentBlockWithSas block.Payload uploadUri
 
-            let storagePlacement = { ObjectKey = $"cas/content-blocks/{block.Address}"; ETag = Some uploadETag }
+            let storagePlacement = { ObjectKey = StorageKeys.contentBlockObjectKey block.Address; ETag = Some uploadETag }
 
             Assert.That(storagePlacement.ETag, Is.Not.EqualTo(None))
 
@@ -834,7 +834,7 @@ type StorageManifestUploadSessionRoutes() =
             Assert.That(uploadUriResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), uploadUriBody)
             assertRawStringContent uploadUriResponse
             Assert.That(uploadUriBody, Does.StartWith("http"))
-            Assert.That(uploadUriBody, Does.Contain("cas/content-blocks"))
+            Assert.That(uploadUriBody, Does.Contain("cas/content/"))
             Assert.That(uploadUriBody, Does.Not.StartWith("{"))
 
             let downloadUriParameters = Parameters.Storage.GetContentBlockDownloadUriParameters()
@@ -846,7 +846,7 @@ type StorageManifestUploadSessionRoutes() =
             Assert.That(downloadUriResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), downloadUriBody)
             assertRawStringContent downloadUriResponse
             Assert.That(downloadUriBody, Does.StartWith("http"))
-            Assert.That(downloadUriBody, Does.Contain("cas/content-blocks"))
+            Assert.That(downloadUriBody, Does.Contain("cas/content/"))
             Assert.That(downloadUriBody, Does.Not.StartWith("{"))
 
             let! discoveryResponse =
@@ -1319,7 +1319,11 @@ type StorageManifestUploadSessionRoutes() =
             confirm.ContentBlockAddress <- block.Address
             confirm.Payload <- block.Payload
 
-            confirm.StoragePlacement <- { ObjectKey = $"cas/content-blocks/missing-{Guid.NewGuid():N}"; ETag = Some "etag-missing-block" }
+            confirm.StoragePlacement <-
+                {
+                    ObjectKey = StorageKeys.contentBlockObjectKey (ContentAddress.computeBlake3Hex (Guid.NewGuid().ToByteArray()))
+                    ETag = Some "etag-missing-block"
+                }
 
             let! _ = postUploadSessionDecision "/storage/confirmContentBlockUpload" confirm
 
@@ -1405,7 +1409,7 @@ type StorageManifestUploadSessionRoutes() =
             confirm.OperationId <- "confirm-0"
             confirm.ContentBlockAddress <- block.Address
             confirm.Payload <- block.Payload
-            confirm.StoragePlacement <- { ObjectKey = $"cas/content-blocks/{block.Address}"; ETag = Some uploadETag }
+            confirm.StoragePlacement <- { ObjectKey = StorageKeys.contentBlockObjectKey block.Address; ETag = Some uploadETag }
 
             let! _ = postUploadSessionDecision "/storage/confirmContentBlockUpload" confirm
 

@@ -272,12 +272,6 @@ module internal AnnotationMaterialization =
 
     let materializeTargetText (repositoryDto: RepositoryDto) (fileVersion: FileVersion) correlationId cancellationToken =
         let reader (objectKey: string) correlationId cancellationToken =
-            let maxPayloadBytes =
-                if objectKey.StartsWith(StorageKeys.contentBlockObjectKey String.Empty, StringComparison.Ordinal) then
-                    MaxContentBlockPayloadBytes
-                else
-                    MaxContentBlockPayloadBytes
-
-            azureObjectPayloadReader repositoryDto maxPayloadBytes objectKey correlationId cancellationToken
+            azureObjectPayloadReader repositoryDto MaxContentBlockPayloadBytes objectKey correlationId cancellationToken
 
         materializeTextWithObjectReader reader fileVersion correlationId cancellationToken
