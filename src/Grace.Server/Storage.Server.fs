@@ -427,23 +427,6 @@ module Storage =
                     return! context.WriteTextAsync $"Error in {context.Request.Path} at {DateTime.Now.ToLongTimeString()}."
             }
 
-    /// Gets an upload URI for the specified ContentBlock payload without probing whether the blob already exists.
-    let ValidateContentBlockUploadUriParameters: HttpHandler =
-        fun (next: HttpFunc) (context: HttpContext) ->
-            task {
-                let correlationId = getCorrelationId context
-
-                context.Request.EnableBuffering()
-                let! parameters = context.BindJsonAsync<GetContentBlockUploadUriParameters>()
-
-                context.Request.Body.Seek(0L, SeekOrigin.Begin)
-                |> ignore
-
-                match validateContentBlockAddress correlationId parameters.ContentBlockAddress with
-                | Ok () -> return! next context
-                | Error error -> return! context |> result400BadRequest error
-            }
-
     let GetContentBlockUploadUri: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
@@ -470,23 +453,6 @@ module Storage =
                     logToConsole $"Exception in GetContentBlockUploadUri: {(ExceptionResponse.Create ex)}"
 
                     return! context.WriteTextAsync $"{getCurrentInstantExtended ()} Error in {context.Request.Path} at {DateTime.Now.ToLongTimeString()}."
-            }
-
-    /// Gets a download URI for the specified ContentBlock payload without probing whether the blob already exists.
-    let ValidateContentBlockDownloadUriParameters: HttpHandler =
-        fun (next: HttpFunc) (context: HttpContext) ->
-            task {
-                let correlationId = getCorrelationId context
-
-                context.Request.EnableBuffering()
-                let! parameters = context.BindJsonAsync<GetContentBlockDownloadUriParameters>()
-
-                context.Request.Body.Seek(0L, SeekOrigin.Begin)
-                |> ignore
-
-                match validateContentBlockAddress correlationId parameters.ContentBlockAddress with
-                | Ok () -> return! next context
-                | Error error -> return! context |> result400BadRequest error
             }
 
     let GetContentBlockDownloadUri: HttpHandler =
