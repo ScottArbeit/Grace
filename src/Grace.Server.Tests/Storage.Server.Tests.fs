@@ -309,6 +309,14 @@ type StorageContentBlockSasRoutes() =
         parameters.ContentBlockAddress <- ContentAddress.computeBlake3Hex (Guid.NewGuid().ToByteArray())
         parameters
 
+    let assertBadRequestForMalformedContentBlockAddress (response: HttpResponseMessage) =
+        task {
+            let! body = response.Content.ReadAsStringAsync()
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), body)
+            Assert.That(body, Does.Contain("ContentBlockAddress"))
+            Assert.That(body, Does.Contain("64-character hexadecimal BLAKE3"))
+        }
+
     let assertSuccessSasForContentBlock (response: HttpResponseMessage) (contentBlockAddress: ContentBlockAddress) =
         task {
             let! body = response.Content.ReadAsStringAsync()
@@ -343,6 +351,29 @@ type StorageContentBlockSasRoutes() =
         }
 
     [<Test>]
+    member _.ContentBlockUploadUriReturnsBadRequestForMalformedContentBlockAddressBeforeAuthorizationResource() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let pathWriter = $"{Guid.NewGuid()}"
+
+            let! grantWriter = grantRoleAsync Client "repo" ownerId organizationId repositoryId "" pathWriter "RepositoryContributor"
+            Assert.That(grantWriter.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+
+            use writerClient = createClientWithUserId pathWriter
+            let parameters = createContentBlockUploadParameters repositoryId
+
+            parameters.ContentBlockAddress <- ContentBlockAddress $"content-block-contract-{Guid.NewGuid():N}"
+
+            let! malformedUpload = writerClient.PostAsync("/storage/getContentBlockUploadUri", createJsonContent parameters)
+            do! assertBadRequestForMalformedContentBlockAddress malformedUpload
+
+            parameters.ContentBlockAddress <- ContentBlockAddress String.Empty
+
+            let! emptyUpload = writerClient.PostAsync("/storage/getContentBlockUploadUri", createJsonContent parameters)
+            do! assertBadRequestForMalformedContentBlockAddress emptyUpload
+        }
+
+    [<Test>]
     member _.ContentBlockDownloadUriRequiresPathReadAndDoesNotProbeBlockExistence() =
         task {
             let repositoryId = repositoryIds[0]
@@ -365,6 +396,29 @@ type StorageContentBlockSasRoutes() =
 
             let! allowedDownload = readerClient.PostAsync("/storage/getContentBlockDownloadUri", createJsonContent parameters)
             do! assertSuccessSasForContentBlock allowedDownload parameters.ContentBlockAddress
+        }
+
+    [<Test>]
+    member _.ContentBlockDownloadUriReturnsBadRequestForMalformedContentBlockAddressBeforeAuthorizationResource() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let pathReader = $"{Guid.NewGuid()}"
+
+            let! grantReader = grantRoleAsync Client "repo" ownerId organizationId repositoryId "" pathReader "RepositoryReader"
+            Assert.That(grantReader.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+
+            use readerClient = createClientWithUserId pathReader
+            let parameters = createContentBlockDownloadParameters repositoryId
+
+            parameters.ContentBlockAddress <- ContentBlockAddress $"content-block-contract-{Guid.NewGuid():N}"
+
+            let! malformedDownload = readerClient.PostAsync("/storage/getContentBlockDownloadUri", createJsonContent parameters)
+            do! assertBadRequestForMalformedContentBlockAddress malformedDownload
+
+            parameters.ContentBlockAddress <- ContentBlockAddress String.Empty
+
+            let! emptyDownload = readerClient.PostAsync("/storage/getContentBlockDownloadUri", createJsonContent parameters)
+            do! assertBadRequestForMalformedContentBlockAddress emptyDownload
         }
 
 [<NonParallelizable>]
@@ -822,7 +876,7 @@ type StorageManifestUploadSessionRoutes() =
         task {
             let repositoryId = repositoryIds[0]
             let correlationId = generateCorrelationId ()
-            let contentBlockAddress = ContentBlockAddress $"content-block-contract-{Guid.NewGuid():N}"
+            let contentBlockAddress = ContentBlockAddress(ContentAddress.computeBlake3Hex (Encoding.UTF8.GetBytes $"content-block-contract-{Guid.NewGuid():N}"))
 
             let uploadUriParameters = Parameters.Storage.GetContentBlockUploadUriParameters()
             setStorageParameters uploadUriParameters repositoryId correlationId
