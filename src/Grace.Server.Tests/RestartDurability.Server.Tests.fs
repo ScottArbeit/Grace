@@ -239,7 +239,7 @@ module private RestartDurabilityHelpers =
             confirm.OperationId <- "confirm-0"
             confirm.ContentBlockAddress <- block.Address
             confirm.Payload <- block.Payload
-            confirm.StoragePlacement <- { ObjectKey = $"cas/content-blocks/{block.Address}"; ETag = Some uploadETag }
+            confirm.StoragePlacement <- { ObjectKey = StorageKeys.contentBlockObjectKey block.Address; ETag = Some uploadETag }
 
             let! confirmResult = postUploadSessionDecisionAsync "/storage/confirmContentBlockUpload" confirm
             Assert.That(confirmResult.ReturnValue.Session.ConfirmedBlockUploads.Length, Is.EqualTo(1))
