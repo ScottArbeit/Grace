@@ -1,6 +1,7 @@
 namespace Grace.Server.Tests
 
 open Grace.Actors
+open Grace.Shared
 open Grace.Types.ContentBlockMetadata
 open Grace.Types.Common
 open NodaTime
@@ -27,7 +28,8 @@ type ContentBlockMetadataActorTests() =
         }
 
     let storagePoolId = StoragePoolId "pool-main"
-    let contentBlockAddress = ContentBlockAddress "block-blake3-0001"
+    let contentBlockAddress = ContentBlockAddress "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    let contentBlockObjectKey = StorageKeys.contentBlockObjectKey contentBlockAddress
 
     let activeRange = { OrdinalStart = 0; OrdinalCount = 8; ActiveManifestCount = 2; PhysicalOffset = 0L; PhysicalLength = 1024L }
 
@@ -39,7 +41,7 @@ type ContentBlockMetadataActorTests() =
             StoragePoolId = storagePoolId
             ContentBlockAddress = contentBlockAddress
             BlockFormatVersion = 1s
-            StoragePlacement = { ObjectKey = "cas/content-blocks/block-blake3-0001"; ETag = Some "etag-1" }
+            StoragePlacement = { ObjectKey = contentBlockObjectKey; ETag = Some "etag-1" }
             Ranges = ranges
             TotalPhysicalBytes = 1536L
             ActivePhysicalBytes = 1024L
@@ -71,7 +73,7 @@ type ContentBlockMetadataActorTests() =
 
     let mergeWithObjectKey operationId objectKey ranges = mergeWithPlacement operationId { ObjectKey = objectKey; ETag = Some "etag-1" } ranges
 
-    let merge operationId ranges = mergeWithObjectKey operationId "cas/content-blocks/block-blake3-0001" ranges
+    let merge operationId ranges = mergeWithObjectKey operationId contentBlockObjectKey ranges
 
     let compact operationId expectedMetadataVersion placement ranges context =
         ContentBlockMetadataCommand.CompactPhysicalRanges
@@ -267,7 +269,7 @@ type ContentBlockMetadataActorTests() =
             }
 
         let compactedRange = { active with PhysicalOffset = 0L }
-        let compactedPlacement = { ObjectKey = "cas/content-blocks/block-blake3-0001.compacted"; ETag = Some "etag-compact" }
+        let compactedPlacement = { ObjectKey = $"{contentBlockObjectKey}.compacted"; ETag = Some "etag-compact" }
 
         let result =
             ContentBlockMetadataActor.decideCommand
@@ -318,7 +320,7 @@ type ContentBlockMetadataActorTests() =
                 HasActiveCompaction = false
             }
 
-        let placement = { ObjectKey = "cas/content-blocks/block-blake3-0001.compacted"; ETag = Some "etag-compact" }
+        let placement = { ObjectKey = $"{contentBlockObjectKey}.compacted"; ETag = Some "etag-compact" }
         let changedLogicalRange = { active with OrdinalCount = active.OrdinalCount + 1; PhysicalOffset = 0L }
 
         let changedLogicalResult =
@@ -371,7 +373,7 @@ type ContentBlockMetadataActorTests() =
                 HasActiveCompaction = false
             }
 
-        let placement = { ObjectKey = "cas/content-blocks/block-blake3-0001.compacted"; ETag = Some "etag-compact" }
+        let placement = { ObjectKey = $"{contentBlockObjectKey}.compacted"; ETag = Some "etag-compact" }
         let nonCompactingRange = { active with PhysicalOffset = minimumReclaimableBytes; PhysicalLength = 8192L }
 
         let result =
@@ -407,7 +409,7 @@ type ContentBlockMetadataActorTests() =
                 HasActiveCompaction = false
             }
 
-        let placement = { ObjectKey = "cas/content-blocks/block-blake3-0001.compacted"; ETag = Some "etag-compact" }
+        let placement = { ObjectKey = $"{contentBlockObjectKey}.compacted"; ETag = Some "etag-compact" }
 
         let futureBypassResult =
             ContentBlockMetadataActor.decideCommand
@@ -477,7 +479,7 @@ type ContentBlockMetadataActorTests() =
                 HasActiveCompaction = true
             }
 
-        let placement = { ObjectKey = "cas/content-blocks/block-blake3-0001.compacted"; ETag = Some "etag-compact" }
+        let placement = { ObjectKey = $"{contentBlockObjectKey}.compacted"; ETag = Some "etag-compact" }
 
         let result =
             ContentBlockMetadataActor.decideCommand
@@ -535,7 +537,7 @@ type ContentBlockMetadataActorTests() =
                 HasActiveCompaction = false
             }
 
-        let placement = { ObjectKey = "cas/content-blocks/block-blake3-0001.compacted"; ETag = Some "etag-compact" }
+        let placement = { ObjectKey = $"{contentBlockObjectKey}.compacted"; ETag = Some "etag-compact" }
 
         let result =
             ContentBlockMetadataActor.decideCommand
@@ -787,7 +789,10 @@ type ContentBlockMetadataActorTests() =
             ContentBlockMetadataActor.decideCommand
                 createdEvents
                 createdDto
-                (mergeWithObjectKey "op-moved" "cas/content-blocks/other-object" [| reclaimableRange |])
+                (mergeWithObjectKey
+                    "op-moved"
+                    (StorageKeys.contentBlockObjectKey "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+                    [| reclaimableRange |])
                 (metadata "corr-moved")
 
         match changedPlacement with
@@ -798,7 +803,7 @@ type ContentBlockMetadataActorTests() =
     member _.MetadataActorUsesOneCompositeStringKeyAndDoesNotIntroduceChunkActorState() =
         let key = ContentBlockMetadataActorKey.Create storagePoolId contentBlockAddress
 
-        Assert.That(key, Is.EqualTo("pool-main|block-blake3-0001"))
+        Assert.That(key, Is.EqualTo($"pool-main|{contentBlockAddress}"))
 
         let repoRoot =
             DirectoryInfo(

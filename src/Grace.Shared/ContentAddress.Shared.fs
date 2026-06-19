@@ -23,6 +23,13 @@ module ContentAddress =
             ||| RegexOptions.CultureInvariant
         )
 
+    let private anyCaseAddressRegex =
+        Regex(
+            "^[0-9a-fA-F]{64}$",
+            RegexOptions.Compiled
+            ||| RegexOptions.CultureInvariant
+        )
+
     let private appendLine (builder: StringBuilder) (value: string) = builder.Append(value).Append('\n') |> ignore
 
     let private ensureNonNegative name value =
@@ -55,6 +62,24 @@ module ContentAddress =
     let isValidAddress (address: string) =
         not (String.IsNullOrEmpty(address))
         && lowercaseAddressRegex.IsMatch(address)
+
+    /// Normalizes a 64-hex BLAKE3 address for storage key construction.
+    let tryNormalizeBlake3Address (address: string) =
+        if String.IsNullOrWhiteSpace(address) then
+            None
+        else
+            let candidate = address.Trim()
+
+            if anyCaseAddressRegex.IsMatch(candidate) then
+                Some(candidate.ToLowerInvariant())
+            else
+                None
+
+    /// Requires a 64-hex BLAKE3 address and returns its lowercase storage-key representation.
+    let requireBlake3Address name address =
+        match tryNormalizeBlake3Address address with
+        | Some normalized -> normalized
+        | None -> invalidArg name "Content addresses must be 64-character hexadecimal BLAKE3 values."
 
     /// Computes the content address for one physical chunk payload.
     let computeChunkAddress (bytes: byte array) : ChunkAddress = ChunkAddress(computeBlake3Hex bytes)
