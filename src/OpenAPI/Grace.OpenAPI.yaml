@@ -3935,6 +3935,8 @@ components:
           type: string
         StorageContainerName:
           $ref: '#/components/schemas/StorageContainerName'
+        StoragePoolId:
+          $ref: '#/components/schemas/StoragePoolId'
         RepositoryVisibility:
           $ref: '#/components/schemas/RepositoryVisibility'
         RepositoryStatus:
@@ -4385,13 +4387,11 @@ components:
     GetContentBlockUploadUriParameters:
       description: Parameters for /storage/getContentBlockUploadUri.
       allOf:
-        - $ref: '#/components/schemas/StorageParameters'
+        - $ref: '#/components/schemas/UploadSessionStorageParameters'
       type: object
       properties:
         ContentBlockAddress:
           $ref: '#/components/schemas/ContentBlockAddress'
-        AuthorizedScope:
-          $ref: '#/components/schemas/RelativePath'
     GetContentBlockDownloadUriParameters:
       description: Parameters for /storage/getContentBlockDownloadUri.
       allOf:
@@ -4400,6 +4400,8 @@ components:
       properties:
         ContentBlockAddress:
           $ref: '#/components/schemas/ContentBlockAddress'
+        StoragePoolId:
+          $ref: '#/components/schemas/StoragePoolId'
     DiscoverContentBlocksParameters:
       description: Parameters for /storage/discoverContentBlocks. Discovery is bounded and non-authoritative; empty results do not prove that chunks or future ContentBlocks are absent.
       allOf:
@@ -4563,6 +4565,8 @@ components:
           $ref: '#/components/schemas/ChunkingSuiteId'
         FileContentHash:
           $ref: '#/components/schemas/FileContentHash'
+        StoragePoolId:
+          $ref: '#/components/schemas/StoragePoolId'
         Size:
           type: integer
           format: int64
@@ -4575,6 +4579,7 @@ components:
         - ManifestAddress
         - ChunkingSuiteId
         - FileContentHash
+        - StoragePoolId
         - Size
         - Blocks
     ContentBlock:
@@ -6286,6 +6291,17 @@ components:
       type: object
       additionalProperties:
         $ref: '#/components/schemas/UriString'
+    UploadSessionStorageParameters:
+      description: Parameters common to manifest upload-session endpoints.
+      allOf:
+        - $ref: '#/components/schemas/StorageParameters'
+      type: object
+      properties:
+        UploadSessionId:
+          type: string
+          format: uuid
+        AuthorizedScope:
+          $ref: '#/components/schemas/RelativePath'
     ContentBlockDiscoveryPolicy:
       description: Bounded, non-authoritative discovery policy returned by /storage/discoverContentBlocks.
       type: object
@@ -6349,17 +6365,6 @@ components:
               $ref: '#/components/schemas/DiscoverContentBlocksResult'
           required:
             - ReturnValue
-    UploadSessionStorageParameters:
-      description: Parameters common to manifest upload-session endpoints.
-      allOf:
-        - $ref: '#/components/schemas/StorageParameters'
-      type: object
-      properties:
-        UploadSessionId:
-          type: string
-          format: uuid
-        AuthorizedScope:
-          $ref: '#/components/schemas/RelativePath'
     UploadSessionLifecycleState:
       description: Lifecycle state for a manifest upload session.
       type: string

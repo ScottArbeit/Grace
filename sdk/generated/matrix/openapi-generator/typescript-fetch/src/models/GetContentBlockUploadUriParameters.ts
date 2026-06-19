@@ -68,17 +68,23 @@ export interface GetContentBlockUploadUriParameters {
      */
     repositoryName?: string;
     /**
-     * Lowercase 64-character BLAKE3-derived ContentBlock address.
+     * 
      * @type {string}
      * @memberof GetContentBlockUploadUriParameters
      */
-    contentBlockAddress?: string;
+    uploadSessionId?: string;
     /**
      * 
      * @type {string}
      * @memberof GetContentBlockUploadUriParameters
      */
     authorizedScope?: string;
+    /**
+     * Lowercase 64-character BLAKE3-derived ContentBlock address.
+     * @type {string}
+     * @memberof GetContentBlockUploadUriParameters
+     */
+    contentBlockAddress?: string;
 }
 
 /**
@@ -106,8 +112,9 @@ export function GetContentBlockUploadUriParametersFromJSONTyped(json: any, ignor
         'organizationName': json['OrganizationName'] == null ? undefined : json['OrganizationName'],
         'repositoryId': json['RepositoryId'] == null ? undefined : json['RepositoryId'],
         'repositoryName': json['RepositoryName'] == null ? undefined : json['RepositoryName'],
-        'contentBlockAddress': json['ContentBlockAddress'] == null ? undefined : json['ContentBlockAddress'],
+        'uploadSessionId': json['UploadSessionId'] == null ? undefined : json['UploadSessionId'],
         'authorizedScope': json['AuthorizedScope'] == null ? undefined : json['AuthorizedScope'],
+        'contentBlockAddress': json['ContentBlockAddress'] == null ? undefined : json['ContentBlockAddress'],
     };
 }
 
@@ -130,8 +137,9 @@ export function GetContentBlockUploadUriParametersToJSONTyped(value?: GetContent
         'OrganizationName': value['organizationName'],
         'RepositoryId': value['repositoryId'],
         'RepositoryName': value['repositoryName'],
-        'ContentBlockAddress': value['contentBlockAddress'],
+        'UploadSessionId': value['uploadSessionId'],
         'AuthorizedScope': value['authorizedScope'],
+        'ContentBlockAddress': value['contentBlockAddress'],
     };
 }
 

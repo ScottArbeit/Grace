@@ -44,8 +44,9 @@ class TestGetContentBlockUploadUriParameters(unittest.TestCase):
                 organization_name = '',
                 repository_id = '',
                 repository_name = '',
-                content_block_address = 'bf325375e030fccba00917317c574773100bf03b5fc61486286e564b23e9566b',
-                authorized_scope = ''
+                upload_session_id = '',
+                authorized_scope = '',
+                content_block_address = 'bf325375e030fccba00917317c574773100bf03b5fc61486286e564b23e9566b'
             )
         else:
             return GetContentBlockUploadUriParameters(

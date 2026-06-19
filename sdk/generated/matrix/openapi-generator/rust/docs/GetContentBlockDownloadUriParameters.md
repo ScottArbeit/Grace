@@ -13,6 +13,7 @@ Name | Type | Description | Notes
 **repository_id** | Option<**String**> |  | [optional]
 **repository_name** | Option<**String**> |  | [optional]
 **content_block_address** | Option<**String**> | Lowercase 64-character BLAKE3-derived ContentBlock address. | [optional]
+**storage_pool_id** | Option<**String**> | StoragePool-wide CAS scope identifier. | [optional]
 
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
 

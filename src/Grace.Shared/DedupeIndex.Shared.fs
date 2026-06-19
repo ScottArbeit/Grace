@@ -90,30 +90,30 @@ module DedupeIndex =
             IsAuthoritative = false
         }
 
-    let defaultStorageShardForRepository (repositoryDto: RepositoryDto) =
+    let defaultStorageShard () =
         {
             StorageShardId = Constants.DefaultStorageShardId
-            ObjectStorageProvider = repositoryDto.ObjectStorageProvider
-            StorageAccountName = repositoryDto.StorageAccountName
+            ObjectStorageProvider = ObjectStorageProvider.AzureBlobStorage
+            StorageAccountName = Constants.DefaultCasStorageAccountName
             StorageContainerName = Constants.DefaultCasStorageContainerName
             ObjectKeyPrefix = String.Empty
             IsActive = true
         }
 
-    let defaultStoragePoolForRepository (repositoryDto: RepositoryDto) =
-        {
-            StoragePoolId = StoragePoolId Constants.DefaultStoragePoolId
-            IsActive = true
-            Shards =
-                [|
-                    defaultStorageShardForRepository repositoryDto
-                |]
-        }
+    let defaultStorageShardForRepository (_: RepositoryDto) = defaultStorageShard ()
+
+    let defaultStoragePool () = { StoragePoolId = StoragePoolId Constants.DefaultStoragePoolId; IsActive = true; Shards = [| defaultStorageShard () |] }
+
+    let defaultStoragePoolForRepository (_: RepositoryDto) = defaultStoragePool ()
 
     let defaultStoragePoolsForRepository repositoryDto =
         [|
             defaultStoragePoolForRepository repositoryDto
         |]
+
+    let private repositoryMatchesStorageShard (repositoryDto: RepositoryDto) (shard: StorageShard) =
+        repositoryDto.ObjectStorageProvider = shard.ObjectStorageProvider
+        && String.Equals(repositoryDto.StorageAccountName, shard.StorageAccountName, StringComparison.OrdinalIgnoreCase)
 
     let resolveRepositoryStorageRoute correlationId (storagePools: StoragePool array) (repositoryDto: RepositoryDto) =
         if isNull (box repositoryDto) then
@@ -150,6 +150,15 @@ module DedupeIndex =
                 | Some shard ->
                     if String.IsNullOrWhiteSpace shard.StorageContainerName then
                         Error(GraceError.Create $"StoragePool '{repositoryDto.StoragePoolId}' active StorageShard requires a container name." correlationId)
+                    elif
+                        pool.StoragePoolId = StoragePoolId Constants.DefaultStoragePoolId
+                        && not (repositoryMatchesStorageShard repositoryDto shard)
+                    then
+                        Error(
+                            GraceError.Create
+                                $"Repository storage settings do not match configured StoragePool '{pool.StoragePoolId}'. CAS routing requires pool-wide shard configuration."
+                                correlationId
+                        )
                     else
                         Ok { RepositoryId = repositoryDto.RepositoryId; StoragePoolId = pool.StoragePoolId; StorageShard = shard }
 
@@ -158,6 +167,20 @@ module DedupeIndex =
             resolveRepositoryStorageRoute correlationId Array.empty repositoryDto
         else
             resolveRepositoryStorageRoute correlationId (defaultStoragePoolsForRepository repositoryDto) repositoryDto
+
+    let resolveRepositoryStorageRouteForPool correlationId storagePoolId repositoryDto =
+        if String.IsNullOrWhiteSpace storagePoolId then
+            Error(GraceError.Create "CAS routing requires a non-empty recorded StoragePoolId." correlationId)
+        else
+            match resolveRepositoryStorageRouteWithDefaults correlationId repositoryDto with
+            | Error error -> Error error
+            | Ok route when route.StoragePoolId <> storagePoolId ->
+                Error(
+                    GraceError.Create
+                        $"Repository storage route drift detected. Recorded StoragePoolId '{storagePoolId}' does not match current route '{route.StoragePoolId}'."
+                        correlationId
+                )
+            | Ok route -> Ok route
 
     let repositoryForStorageRoute (route: RepositoryStorageRoute) (repositoryDto: RepositoryDto) =
         { repositoryDto with

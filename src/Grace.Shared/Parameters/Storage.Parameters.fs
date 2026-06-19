@@ -60,14 +60,10 @@ module Storage =
         inherit StorageParameters()
         member val public FileVersion = FileVersion.Default with get, set
 
-    type GetContentBlockUploadUriParameters() =
-        inherit StorageParameters()
-        member val public ContentBlockAddress: ContentBlockAddress = String.Empty with get, set
-        member val public AuthorizedScope: RelativePath = String.Empty with get, set
-
     type GetContentBlockDownloadUriParameters() =
         inherit StorageParameters()
         member val public ContentBlockAddress: ContentBlockAddress = String.Empty with get, set
+        member val public StoragePoolId: StoragePoolId = String.Empty with get, set
 
     /// Parameters for /storage/discoverContentBlocks.
     ///
@@ -81,6 +77,10 @@ module Storage =
         inherit StorageParameters()
         member val public UploadSessionId: UploadSessionId = Guid.Empty with get, set
         member val public AuthorizedScope: RelativePath = String.Empty with get, set
+
+    type GetContentBlockUploadUriParameters() =
+        inherit UploadSessionStorageParameters()
+        member val public ContentBlockAddress: ContentBlockAddress = String.Empty with get, set
 
     type StartManifestUploadSessionParameters() =
         inherit UploadSessionStorageParameters()

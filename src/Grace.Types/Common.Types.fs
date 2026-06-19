@@ -331,6 +331,8 @@ module Common =
             ChunkingSuiteId: ChunkingSuiteId
             [<Key(5)>]
             FileContentHash: FileContentHash
+            [<Key(6)>]
+            StoragePoolId: StoragePoolId
         }
 
         static member Create
@@ -348,6 +350,7 @@ module Common =
                 Blocks = List<ContentBlock>(blocks)
                 ChunkingSuiteId = chunkingSuiteId
                 FileContentHash = fileContentHash
+                StoragePoolId = StoragePoolId String.Empty
             }
 
         static member Create(manifestAddress: ManifestAddress, size: int64, blocks: ContentBlock list) =
@@ -363,6 +366,7 @@ module Common =
                 && this.Size = otherManifest.Size
                 && this.ChunkingSuiteId = otherManifest.ChunkingSuiteId
                 && this.FileContentHash = otherManifest.FileContentHash
+                && this.StoragePoolId = otherManifest.StoragePoolId
                 && this.Blocks.Count = otherManifest.Blocks.Count
                 && Seq.forall2 (=) this.Blocks otherManifest.Blocks
             | _ -> false
@@ -374,6 +378,7 @@ module Common =
             hashCode.Add(this.Size)
             hashCode.Add(this.ChunkingSuiteId)
             hashCode.Add(this.FileContentHash)
+            hashCode.Add(this.StoragePoolId)
 
             for block in this.Blocks do
                 hashCode.Add(block)

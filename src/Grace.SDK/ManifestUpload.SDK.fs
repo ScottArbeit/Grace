@@ -142,9 +142,10 @@ module ManifestUpload =
         parameters.ExpectedPayloadLength <- int64 block.Payload.Length
         parameters
 
-    let private buildUploadUriParameters request contentBlockAddress =
+    let private buildUploadUriParameters request uploadSessionId contentBlockAddress =
         let parameters = GetContentBlockUploadUriParameters()
         setStorageParameters request parameters |> ignore
+        parameters.UploadSessionId <- uploadSessionId
         parameters.ContentBlockAddress <- contentBlockAddress
         parameters.AuthorizedScope <- request.AuthorizedScope
         parameters
@@ -353,7 +354,9 @@ module ManifestUpload =
                                 if claimedBlockAddresses.Contains encodedBlock.Address then
                                     ()
                                 else
-                                    match! client.UploadContentBlock (buildUploadUriParameters request encodedBlock.Address) encodedBlock.Payload with
+                                    match!
+                                        client.UploadContentBlock (buildUploadUriParameters request uploadSessionId encodedBlock.Address) encodedBlock.Payload
+                                        with
                                     | Error error -> errors.Add error
                                     | Ok placementResult ->
                                         match!
@@ -370,13 +373,15 @@ module ManifestUpload =
                             else
                                 match! client.FinalizeManifest(buildFinalizeParameters request uploadSessionId manifest) with
                                 | Error error -> return Error error
-                                | Ok _ ->
+                                | Ok finalizeResult ->
+                                    let finalizedManifest = { manifest with StoragePoolId = finalizeResult.ReturnValue.Session.StoragePoolId }
+
                                     return
                                         Ok(
                                             GraceReturnValue.Create
                                                 {
-                                                    FileVersion = manifestFileVersion request.FileVersion manifest
-                                                    Manifest = Some manifest
+                                                    FileVersion = manifestFileVersion request.FileVersion finalizedManifest
+                                                    Manifest = Some finalizedManifest
                                                     UploadSessionId = Some uploadSessionId
                                                     UploadedBlockCount = uploadedBlockCount
                                                     UsedManifestUpload = true

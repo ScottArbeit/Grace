@@ -4,6 +4,7 @@ open Grace.Server
 open Grace.Shared
 open Grace.Shared.Utilities
 open Grace.Types.Common
+open Grace.Types.Repository
 open NUnit.Framework
 open System
 open System.Collections.Generic
@@ -80,7 +81,7 @@ type AnnotationMaterializationServerTests() =
         let block = encodeBlock bytes
         let manifest = manifestFor bytes block
         let fileVersion = fileVersion relativePath false bytes
-        fileVersion.ContentReference <- FileContentReference.FileManifest manifest
+        fileVersion.ContentReference <- FileContentReference.FileManifest { manifest with StoragePoolId = Constants.DefaultStoragePoolId }
         fileVersion, block
 
     let materialize reader fileVersion =
@@ -212,3 +213,43 @@ type AnnotationMaterializationServerTests() =
 
         materialize (readerFrom objects) target
         |> expectErrorContains "Invalid manifest reconstruction"
+
+    [<Test>]
+    member _.ManifestBackedMaterializationUsesCasStoragePoolRoute() =
+        let bytes = textBytes "manifest route"
+        let target, _ = manifestFile "/src/Routed.fs" bytes
+
+        let repository =
+            { RepositoryDto.Default with
+                RepositoryId = Guid.Parse("65bedc6b-f114-498d-8474-57a8d96c4b4a")
+                RepositoryStatus = RepositoryStatus.Active
+                ObjectStorageProvider = ObjectStorageProvider.AzureBlobStorage
+                StorageAccountName = Constants.DefaultCasStorageAccountName
+                StorageContainerName = "repository-objects"
+                StoragePoolId = Constants.DefaultStoragePoolId
+            }
+
+        match AnnotationMaterialization.repositoryForTargetMaterialization repository target correlationId with
+        | Error error -> Assert.Fail($"Expected manifest materialization to route through CAS, got {error.Error}.")
+        | Ok routedRepository ->
+            Assert.That(routedRepository.StorageContainerName, Is.EqualTo(Constants.DefaultCasStorageContainerName))
+            Assert.That(routedRepository.StorageContainerName, Is.Not.EqualTo(repository.StorageContainerName))
+
+    [<Test>]
+    member _.ManifestBackedMaterializationRejectsRouteDrift() =
+        let bytes = textBytes "manifest route drift"
+        let target, _ = manifestFile "/src/Drift.fs" bytes
+
+        let repository =
+            { RepositoryDto.Default with
+                RepositoryId = Guid.Parse("a68fd077-9aeb-4d45-a1e0-e7a52877fa56")
+                RepositoryStatus = RepositoryStatus.Active
+                ObjectStorageProvider = ObjectStorageProvider.AzureBlobStorage
+                StorageAccountName = Constants.DefaultCasStorageAccountName
+                StorageContainerName = "repository-objects"
+                StoragePoolId = "pool-after-drift"
+            }
+
+        match AnnotationMaterialization.repositoryForTargetMaterialization repository target correlationId with
+        | Ok routedRepository -> Assert.Fail($"Expected route drift to fail closed, got {routedRepository.StoragePoolId}.")
+        | Error error -> Assert.That(error.Error, Does.Contain("not configured"))

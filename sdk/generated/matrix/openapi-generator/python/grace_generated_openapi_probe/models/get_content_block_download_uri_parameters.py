@@ -38,7 +38,8 @@ class GetContentBlockDownloadUriParameters(BaseModel):
     repository_id: Optional[StrictStr] = Field(default=None, alias="RepositoryId")
     repository_name: Optional[StrictStr] = Field(default=None, alias="RepositoryName")
     content_block_address: Optional[Annotated[str, Field(strict=True)]] = Field(default=None, description="Lowercase 64-character BLAKE3-derived ContentBlock address.", alias="ContentBlockAddress")
-    __properties: ClassVar[List[str]] = ["CorrelationId", "Principal", "OwnerId", "OwnerName", "OrganizationId", "OrganizationName", "RepositoryId", "RepositoryName", "ContentBlockAddress"]
+    storage_pool_id: Optional[StrictStr] = Field(default=None, description="StoragePool-wide CAS scope identifier.", alias="StoragePoolId")
+    __properties: ClassVar[List[str]] = ["CorrelationId", "Principal", "OwnerId", "OwnerName", "OrganizationId", "OrganizationName", "RepositoryId", "RepositoryName", "ContentBlockAddress", "StoragePoolId"]
 
     @field_validator('content_block_address')
     def content_block_address_validate_regular_expression(cls, value):
@@ -112,7 +113,8 @@ class GetContentBlockDownloadUriParameters(BaseModel):
             "OrganizationName": obj.get("OrganizationName"),
             "RepositoryId": obj.get("RepositoryId"),
             "RepositoryName": obj.get("RepositoryName"),
-            "ContentBlockAddress": obj.get("ContentBlockAddress")
+            "ContentBlockAddress": obj.get("ContentBlockAddress"),
+            "StoragePoolId": obj.get("StoragePoolId")
         })
         return _obj
 

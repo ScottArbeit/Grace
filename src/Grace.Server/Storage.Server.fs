@@ -92,7 +92,16 @@ module Storage =
 
     let private resolveRepositoryStorageRoute correlationId repositoryDto = DedupeIndex.resolveRepositoryStorageRouteWithDefaults correlationId repositoryDto
 
+    let private resolveRepositoryStorageRouteForPool correlationId storagePoolId repositoryDto =
+        DedupeIndex.resolveRepositoryStorageRouteForPool correlationId storagePoolId repositoryDto
+
     let private repositoryForCasStorage route repositoryDto = DedupeIndex.repositoryForStorageRoute route repositoryDto
+
+    let private stampManifestStoragePool storagePoolId (manifest: FileManifest) =
+        if isNull (box manifest) then
+            manifest
+        else
+            { manifest with StoragePoolId = storagePoolId }
 
     let internal createEventMetadata (context: HttpContext) correlationId =
         let metadata = { createMetadata context with CorrelationId = correlationId }
@@ -316,74 +325,62 @@ module Storage =
         (correlationId: CorrelationId)
         =
         task {
-            if isNull parameters.BlockPayloads |> not
-               && parameters.BlockPayloads.Length > 0 then
-                return Ok parameters.BlockPayloads
-            else
-                let graceIds = getGraceIds context
-                let organizationId, repositoryId = resolveStorageIds graceIds parameters
-                let repositoryActor = Repository.CreateActorProxy organizationId repositoryId correlationId
-                let! repositoryDto = repositoryActor.Get correlationId
-                let routeResult = resolveRepositoryStorageRoute correlationId repositoryDto
-                let uploadSessionActor = Grace.Actors.Extensions.ActorProxy.UploadSession.CreateActorProxy parameters.UploadSessionId repositoryId correlationId
-                let! session = uploadSessionActor.Get correlationId
+            let graceIds = getGraceIds context
+            let organizationId, repositoryId = resolveStorageIds graceIds parameters
+            let repositoryActor = Repository.CreateActorProxy organizationId repositoryId correlationId
+            let! repositoryDto = repositoryActor.Get correlationId
+            let uploadSessionActor = Grace.Actors.Extensions.ActorProxy.UploadSession.CreateActorProxy parameters.UploadSessionId repositoryId correlationId
+            let! session = loadSessionForScope uploadSessionActor correlationId
 
-                let! confirmedBlockUploads =
-                    task {
-                        if
-                            isNull (box session)
-                            || isNull session.ConfirmedBlockUploads
-                        then
-                            let! events = uploadSessionActor.GetEvents correlationId
-
-                            return
-                                events
-                                |> Seq.fold (fun dto event -> UploadSessionDto.UpdateDto event dto) UploadSessionDto.Default
-                                |> fun dto ->
-                                    if isNull dto.ConfirmedBlockUploads then
-                                        Array.empty
-                                    else
-                                        dto.ConfirmedBlockUploads
-                        else
-                            return session.ConfirmedBlockUploads
-                    }
-
-                let payloads = ResizeArray<FinalizeManifestBlockPayload>()
-                let mutable error = None
-                let mutable index = 0
-
-                let blockAddresses =
-                    if isNull (box manifest) || isNull manifest.Blocks then
-                        Array.empty
+            match requireUploadSessionStoragePool correlationId session with
+            | Error error -> return Error error
+            | Ok storagePoolId ->
+                match resolveRepositoryStorageRouteForPool correlationId storagePoolId repositoryDto with
+                | Error routeError -> return Error routeError
+                | Ok route ->
+                    if isNull parameters.BlockPayloads |> not
+                       && parameters.BlockPayloads.Length > 0 then
+                        return Ok(parameters.BlockPayloads, storagePoolId)
                     else
-                        manifest.Blocks
-                        |> Seq.map (fun block -> block.Address)
-                        |> Seq.distinct
-                        |> Seq.toArray
+                        let confirmedBlockUploads =
+                            if isNull session.ConfirmedBlockUploads then
+                                Array.empty
+                            else
+                                session.ConfirmedBlockUploads
 
-                while index < blockAddresses.Length
-                      && Option.isNone error do
-                    let address = blockAddresses[index]
+                        let payloads = ResizeArray<FinalizeManifestBlockPayload>()
+                        let mutable error = None
+                        let mutable index = 0
 
-                    match routeResult with
-                    | Error routeError -> error <- Some routeError
-                    | Ok route ->
+                        let blockAddresses =
+                            if isNull (box manifest) || isNull manifest.Blocks then
+                                Array.empty
+                            else
+                                manifest.Blocks
+                                |> Seq.map (fun block -> block.Address)
+                                |> Seq.distinct
+                                |> Seq.toArray
+
                         let casRepositoryDto = repositoryForCasStorage route repositoryDto
 
-                        match confirmedBlockUploads
-                              |> Array.tryFind (fun confirmedBlock -> confirmedBlock.ContentBlockAddress = address)
-                            with
-                        | None -> ()
-                        | Some confirmedBlock ->
-                            match! downloadContentBlockPayload casRepositoryDto confirmedBlock correlationId with
-                            | Ok payload -> payloads.Add payload
-                            | Error downloadError -> error <- Some downloadError
+                        while index < blockAddresses.Length
+                              && Option.isNone error do
+                            let address = blockAddresses[index]
 
-                    index <- index + 1
+                            match confirmedBlockUploads
+                                  |> Array.tryFind (fun confirmedBlock -> confirmedBlock.ContentBlockAddress = address)
+                                with
+                            | None -> ()
+                            | Some confirmedBlock ->
+                                match! downloadContentBlockPayload casRepositoryDto confirmedBlock correlationId with
+                                | Ok payload -> payloads.Add payload
+                                | Error downloadError -> error <- Some downloadError
 
-                match error with
-                | Some error -> return Error error
-                | None -> return Ok(payloads.ToArray())
+                            index <- index + 1
+
+                        match error with
+                        | Some error -> return Error error
+                        | None -> return Ok(payloads.ToArray(), storagePoolId)
         }
 
     let private createDiscoveryPolicy () : StorageParameterContracts.ContentBlockDiscoveryPolicy =
@@ -466,17 +463,26 @@ module Storage =
                     | Error error -> return! context |> result400BadRequest error
                     | Ok () ->
                         let organizationId, repositoryId = resolveStorageIds graceIds parameters
-                        let repositoryActor = Repository.CreateActorProxy organizationId repositoryId correlationId
-                        let! repositoryDto = repositoryActor.Get correlationId
+                        let! requestContext = createUploadSessionRequestContext context parameters correlationId
+                        let! scopeValidation = validateUploadSessionScope requestContext parameters correlationId true
 
-                        match resolveRepositoryStorageRoute correlationId repositoryDto with
+                        match scopeValidation with
                         | Error error -> return! context |> result400BadRequest error
-                        | Ok route ->
-                            let blobName = getContentBlockObjectKey parameters.ContentBlockAddress
-                            let casRepositoryDto = repositoryForCasStorage route repositoryDto
-                            let! uploadUri = getUriWithCreateSharedAccessSignature casRepositoryDto blobName correlationId
-                            context.SetStatusCode StatusCodes.Status200OK
-                            return! context.WriteStringAsync uploadUri.AbsoluteUri
+                        | Ok requestContext ->
+                            let repositoryActor = Repository.CreateActorProxy organizationId repositoryId correlationId
+                            let! repositoryDto = repositoryActor.Get correlationId
+
+                            match requireUploadSessionStoragePool correlationId requestContext.SessionForScope with
+                            | Error error -> return! context |> result400BadRequest error
+                            | Ok storagePoolId ->
+                                match resolveRepositoryStorageRouteForPool correlationId storagePoolId repositoryDto with
+                                | Error error -> return! context |> result400BadRequest error
+                                | Ok route ->
+                                    let blobName = getContentBlockObjectKey parameters.ContentBlockAddress
+                                    let casRepositoryDto = repositoryForCasStorage route repositoryDto
+                                    let! uploadUri = getUriWithCreateSharedAccessSignature casRepositoryDto blobName correlationId
+                                    context.SetStatusCode StatusCodes.Status200OK
+                                    return! context.WriteStringAsync uploadUri.AbsoluteUri
                 with
                 | ex ->
                     context.SetStatusCode StatusCodes.Status500InternalServerError
@@ -501,7 +507,13 @@ module Storage =
                         let repositoryActor = Repository.CreateActorProxy organizationId repositoryId correlationId
                         let! repositoryDto = repositoryActor.Get correlationId
 
-                        match resolveRepositoryStorageRoute correlationId repositoryDto with
+                        let routeResult =
+                            if String.IsNullOrWhiteSpace parameters.StoragePoolId then
+                                resolveRepositoryStorageRoute correlationId repositoryDto
+                            else
+                                resolveRepositoryStorageRouteForPool correlationId parameters.StoragePoolId repositoryDto
+
+                        match routeResult with
                         | Error error -> return! context |> result400BadRequest error
                         | Ok route ->
                             let blobName = getContentBlockObjectKey parameters.ContentBlockAddress
@@ -833,10 +845,11 @@ module Storage =
 
                     match blockPayloadsResult with
                     | Error error -> return! context |> result400BadRequest error
-                    | Ok blockPayloads ->
+                    | Ok (blockPayloads, storagePoolId) ->
+                        let manifest = stampManifestStoragePool storagePoolId parameters.Manifest
+
                         let command =
-                            UploadSessionCommand.FinalizeManifest
-                                { OperationId = parameters.OperationId; Manifest = parameters.Manifest; BlockPayloads = blockPayloads }
+                            UploadSessionCommand.FinalizeManifest { OperationId = parameters.OperationId; Manifest = manifest; BlockPayloads = blockPayloads }
 
                         return! handleUploadSessionCommand context parameters command correlationId
                 with

@@ -34,6 +34,9 @@ pub struct GetContentBlockDownloadUriParameters {
     /// Lowercase 64-character BLAKE3-derived ContentBlock address.
     #[serde(rename = "ContentBlockAddress", skip_serializing_if = "Option::is_none")]
     pub content_block_address: Option<String>,
+    /// StoragePool-wide CAS scope identifier.
+    #[serde(rename = "StoragePoolId", skip_serializing_if = "Option::is_none")]
+    pub storage_pool_id: Option<String>,
 }
 
 impl GetContentBlockDownloadUriParameters {
@@ -48,6 +51,7 @@ impl GetContentBlockDownloadUriParameters {
             repository_id: None,
             repository_name: None,
             content_block_address: None,
+            storage_pool_id: None,
         }
     }
 }

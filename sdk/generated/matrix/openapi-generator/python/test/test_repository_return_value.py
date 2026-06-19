@@ -45,6 +45,7 @@ class TestRepositoryReturnValue(unittest.TestCase):
                     object_storage_provider = 'AWSS3', 
                     storage_account_name = '', 
                     storage_container_name = '', 
+                    storage_pool_id = '', 
                     repository_visibility = 'Private', 
                     repository_status = 'Active', 
                     branches = [
@@ -71,6 +72,7 @@ class TestRepositoryReturnValue(unittest.TestCase):
                     object_storage_provider = 'AWSS3', 
                     storage_account_name = '', 
                     storage_container_name = '', 
+                    storage_pool_id = '', 
                     repository_visibility = 'Private', 
                     repository_status = 'Active', 
                     branches = [

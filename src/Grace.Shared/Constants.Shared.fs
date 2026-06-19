@@ -137,6 +137,10 @@ module Constants =
     [<Literal>]
     let DefaultStorageShardId = "default"
 
+    /// The local/pre-production Azure Storage account for the default shared CAS pool.
+    [<Literal>]
+    let DefaultCasStorageAccountName = "gracevcsdevelopment"
+
     /// The default shared blob container for content-addressed ContentBlock payloads.
     [<Literal>]
     let DefaultCasStorageContainerName = "grace-cas"

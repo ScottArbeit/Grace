@@ -10,6 +10,7 @@ Name | Type | Description | Notes
 **manifest_address** | **str** | Lowercase 64-character BLAKE3-derived FileManifest address. | 
 **chunking_suite_id** | **str** | Versioned chunking suite identifier. | 
 **file_content_hash** | **str** | Lowercase 64-character BLAKE3 hash of the complete unencoded file bytes. | 
+**storage_pool_id** | **str** | StoragePool-wide CAS scope identifier. | 
 **size** | **int** |  | 
 **blocks** | [**List[ContentBlock]**](ContentBlock.md) |  | 
 

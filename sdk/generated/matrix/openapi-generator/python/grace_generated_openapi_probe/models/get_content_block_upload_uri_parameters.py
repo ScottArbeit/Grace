@@ -21,6 +21,7 @@ import json
 from pydantic import BaseModel, ConfigDict, Field, StrictStr, field_validator
 from typing import Any, ClassVar, Dict, List, Optional
 from typing_extensions import Annotated
+from uuid import UUID
 from typing import Optional, Set
 from typing_extensions import Self
 from pydantic_core import to_jsonable_python
@@ -37,9 +38,10 @@ class GetContentBlockUploadUriParameters(BaseModel):
     organization_name: Optional[StrictStr] = Field(default=None, alias="OrganizationName")
     repository_id: Optional[StrictStr] = Field(default=None, alias="RepositoryId")
     repository_name: Optional[StrictStr] = Field(default=None, alias="RepositoryName")
-    content_block_address: Optional[Annotated[str, Field(strict=True)]] = Field(default=None, description="Lowercase 64-character BLAKE3-derived ContentBlock address.", alias="ContentBlockAddress")
+    upload_session_id: Optional[UUID] = Field(default=None, alias="UploadSessionId")
     authorized_scope: Optional[StrictStr] = Field(default=None, alias="AuthorizedScope")
-    __properties: ClassVar[List[str]] = ["CorrelationId", "Principal", "OwnerId", "OwnerName", "OrganizationId", "OrganizationName", "RepositoryId", "RepositoryName", "ContentBlockAddress", "AuthorizedScope"]
+    content_block_address: Optional[Annotated[str, Field(strict=True)]] = Field(default=None, description="Lowercase 64-character BLAKE3-derived ContentBlock address.", alias="ContentBlockAddress")
+    __properties: ClassVar[List[str]] = ["CorrelationId", "Principal", "OwnerId", "OwnerName", "OrganizationId", "OrganizationName", "RepositoryId", "RepositoryName", "UploadSessionId", "AuthorizedScope", "ContentBlockAddress"]
 
     @field_validator('content_block_address')
     def content_block_address_validate_regular_expression(cls, value):
@@ -113,8 +115,9 @@ class GetContentBlockUploadUriParameters(BaseModel):
             "OrganizationName": obj.get("OrganizationName"),
             "RepositoryId": obj.get("RepositoryId"),
             "RepositoryName": obj.get("RepositoryName"),
-            "ContentBlockAddress": obj.get("ContentBlockAddress"),
-            "AuthorizedScope": obj.get("AuthorizedScope")
+            "UploadSessionId": obj.get("UploadSessionId"),
+            "AuthorizedScope": obj.get("AuthorizedScope"),
+            "ContentBlockAddress": obj.get("ContentBlockAddress")
         })
         return _obj
 

@@ -14,6 +14,7 @@ Name | Type | Description | Notes
 **object_storage_provider** | [**ObjectStorageProvider**](ObjectStorageProvider.md) |  | [optional] 
 **storage_account_name** | **str** |  | [optional] 
 **storage_container_name** | **str** |  | [optional] 
+**storage_pool_id** | **str** | StoragePool-wide CAS scope identifier. | [optional] 
 **repository_visibility** | [**RepositoryVisibility**](RepositoryVisibility.md) |  | [optional] 
 **repository_status** | [**RepositoryStatus**](RepositoryStatus.md) |  | [optional] 
 **branches** | **List[str]** |  | [optional] 

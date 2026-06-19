@@ -107,7 +107,7 @@ module ManifestContributionWorkflow =
 
     let private graceError correlationId message = GraceError.Create message correlationId
 
-    let private validateRange correlationId range =
+    let private validateRange correlationId (range: ManifestContributionWorkflowRange) =
         if String.IsNullOrWhiteSpace range.StoragePoolId then
             Some(graceError correlationId "ManifestContributionWorkflow range requires a non-empty StoragePoolId.")
         elif String.IsNullOrWhiteSpace range.ContentBlockAddress then
@@ -119,7 +119,7 @@ module ManifestContributionWorkflow =
         else
             None
 
-    let private hasDuplicateRanges ranges =
+    let private hasDuplicateRanges (ranges: ManifestContributionWorkflowRange array) =
         let seen = HashSet<ManifestContributionWorkflowRange>()
 
         ranges

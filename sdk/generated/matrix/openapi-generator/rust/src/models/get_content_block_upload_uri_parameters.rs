@@ -31,11 +31,13 @@ pub struct GetContentBlockUploadUriParameters {
     pub repository_id: Option<String>,
     #[serde(rename = "RepositoryName", skip_serializing_if = "Option::is_none")]
     pub repository_name: Option<String>,
+    #[serde(rename = "UploadSessionId", skip_serializing_if = "Option::is_none")]
+    pub upload_session_id: Option<uuid::Uuid>,
+    #[serde(rename = "AuthorizedScope", skip_serializing_if = "Option::is_none")]
+    pub authorized_scope: Option<String>,
     /// Lowercase 64-character BLAKE3-derived ContentBlock address.
     #[serde(rename = "ContentBlockAddress", skip_serializing_if = "Option::is_none")]
     pub content_block_address: Option<String>,
-    #[serde(rename = "AuthorizedScope", skip_serializing_if = "Option::is_none")]
-    pub authorized_scope: Option<String>,
 }
 
 impl GetContentBlockUploadUriParameters {
@@ -49,8 +51,9 @@ impl GetContentBlockUploadUriParameters {
             organization_name: None,
             repository_id: None,
             repository_name: None,
-            content_block_address: None,
+            upload_session_id: None,
             authorized_scope: None,
+            content_block_address: None,
         }
     }
 }

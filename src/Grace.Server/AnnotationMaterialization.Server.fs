@@ -270,8 +270,26 @@ module internal AnnotationMaterialization =
                 return Error(error correlationId "Annotation content materialization cannot use an unknown object storage provider.")
         }
 
-    let materializeTargetText (repositoryDto: RepositoryDto) (fileVersion: FileVersion) correlationId cancellationToken =
-        let reader (objectKey: string) correlationId cancellationToken =
-            azureObjectPayloadReader repositoryDto MaxContentBlockPayloadBytes objectKey correlationId cancellationToken
+    let internal repositoryForTargetMaterialization (repositoryDto: RepositoryDto) (fileVersion: FileVersion) correlationId =
+        if not (isNull (box fileVersion))
+           && not (isNull (box fileVersion.ContentReference))
+           && fileVersion.ContentReference.ReferenceType = FileContentReferenceType.FileManifest then
+            match fileVersion.ContentReference.Manifest with
+            | Some manifest ->
+                match DedupeIndex.resolveRepositoryStorageRouteForPool correlationId manifest.StoragePoolId repositoryDto with
+                | Ok route -> Ok(DedupeIndex.repositoryForStorageRoute route repositoryDto)
+                | Error error -> Error error
+            | None -> Ok repositoryDto
+        else
+            Ok repositoryDto
 
-        materializeTextWithObjectReader reader fileVersion correlationId cancellationToken
+    let materializeTargetText (repositoryDto: RepositoryDto) (fileVersion: FileVersion) correlationId cancellationToken =
+        task {
+            match repositoryForTargetMaterialization repositoryDto fileVersion correlationId with
+            | Error error -> return Error error
+            | Ok routedRepositoryDto ->
+                let reader (objectKey: string) correlationId cancellationToken =
+                    azureObjectPayloadReader routedRepositoryDto MaxContentBlockPayloadBytes objectKey correlationId cancellationToken
+
+                return! materializeTextWithObjectReader reader fileVersion correlationId cancellationToken
+        }

@@ -12,6 +12,7 @@ Name | Type | Description | Notes
 **object_storage_provider** | Option<[**models::ObjectStorageProvider**](ObjectStorageProvider.md)> |  | [optional]
 **storage_account_name** | Option<**String**> |  | [optional]
 **storage_container_name** | Option<**String**> |  | [optional]
+**storage_pool_id** | Option<**String**> | StoragePool-wide CAS scope identifier. | [optional]
 **repository_visibility** | Option<[**models::RepositoryVisibility**](RepositoryVisibility.md)> |  | [optional]
 **repository_status** | Option<[**models::RepositoryStatus**](RepositoryStatus.md)> |  | [optional]
 **branches** | Option<**Vec<String>**> |  | [optional]

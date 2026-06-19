@@ -87,7 +87,7 @@ type SaveBoundaryActorTests() =
                 ]
             )
 
-        { manifest with ManifestAddress = ContentAddress.computeManifestAddressForManifest manifest }
+        { manifest with ManifestAddress = ContentAddress.computeManifestAddressForManifest manifest; StoragePoolId = storagePoolId }
 
     let finalizedManifest () = finalizedManifestWithBlockCopies 1
 
@@ -167,6 +167,15 @@ type SaveBoundaryActorTests() =
         match result with
         | Ok _ -> Assert.Fail("Expected an unfinalized manifest reference to reject before save publication.")
         | Error error -> Assert.That(error.Error, Does.Contain("must be finalized before Save"))
+
+    [<Test>]
+    member _.SaveBoundaryRejectsManifestWithoutStoragePoolId() =
+        let manifest = { finalizedManifest () with StoragePoolId = StoragePoolId String.Empty }
+        let fileVersion = manifestFile manifest
+
+        match DirectoryVersionActor.validateManifestBackedFileForSaveBoundary "corr-manifest-pool-missing" fileVersion manifest with
+        | Ok () -> Assert.Fail("Expected manifest-backed FileVersion without StoragePoolId to be rejected.")
+        | Error error -> Assert.That(error.Error, Does.Contain("StoragePoolId"))
 
     [<Test>]
     member _.DirectoryVersionWholeFileValidationSetIgnoresFinalizedManifestBackedFiles() =

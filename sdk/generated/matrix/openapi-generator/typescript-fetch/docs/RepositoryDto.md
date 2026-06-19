@@ -15,6 +15,7 @@ Name | Type
 `objectStorageProvider` | [ObjectStorageProvider](ObjectStorageProvider.md)
 `storageAccountName` | string
 `storageContainerName` | string
+`storagePoolId` | string
 `repositoryVisibility` | [RepositoryVisibility](RepositoryVisibility.md)
 `repositoryStatus` | [RepositoryStatus](RepositoryStatus.md)
 `branches` | Array&lt;string&gt;
@@ -38,6 +39,7 @@ const example = {
   "objectStorageProvider": null,
   "storageAccountName": null,
   "storageContainerName": null,
+  "storagePoolId": null,
   "repositoryVisibility": null,
   "repositoryStatus": null,
   "branches": null,

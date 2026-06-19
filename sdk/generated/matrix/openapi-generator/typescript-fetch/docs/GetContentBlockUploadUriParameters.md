@@ -14,8 +14,9 @@ Name | Type
 `organizationName` | string
 `repositoryId` | string
 `repositoryName` | string
-`contentBlockAddress` | string
+`uploadSessionId` | string
 `authorizedScope` | string
+`contentBlockAddress` | string
 
 ## Example
 
@@ -32,8 +33,9 @@ const example = {
   "organizationName": null,
   "repositoryId": null,
   "repositoryName": null,
-  "contentBlockAddress": null,
+  "uploadSessionId": null,
   "authorizedScope": null,
+  "contentBlockAddress": null,
 } satisfies GetContentBlockUploadUriParameters
 
 console.log(example)

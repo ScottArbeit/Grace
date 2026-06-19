@@ -30,6 +30,9 @@ pub struct RepositoryDto {
     pub storage_account_name: Option<String>,
     #[serde(rename = "StorageContainerName", skip_serializing_if = "Option::is_none")]
     pub storage_container_name: Option<String>,
+    /// StoragePool-wide CAS scope identifier.
+    #[serde(rename = "StoragePoolId", skip_serializing_if = "Option::is_none")]
+    pub storage_pool_id: Option<String>,
     #[serde(rename = "RepositoryVisibility", skip_serializing_if = "Option::is_none")]
     pub repository_visibility: Option<models::RepositoryVisibility>,
     #[serde(rename = "RepositoryStatus", skip_serializing_if = "Option::is_none")]
@@ -58,6 +61,7 @@ impl RepositoryDto {
             object_storage_provider: None,
             storage_account_name: None,
             storage_container_name: None,
+            storage_pool_id: None,
             repository_visibility: None,
             repository_status: None,
             branches: None,

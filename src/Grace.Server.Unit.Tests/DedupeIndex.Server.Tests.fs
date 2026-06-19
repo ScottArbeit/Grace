@@ -128,7 +128,7 @@ type DedupeIndexServerTests() =
             OrganizationId = organizationId
             RepositoryStatus = RepositoryStatus.Active
             ObjectStorageProvider = ObjectStorageProvider.AzureBlobStorage
-            StorageAccountName = "devstoreaccount1"
+            StorageAccountName = Constants.DefaultCasStorageAccountName
             StoragePoolId = poolId
         }
 
@@ -136,7 +136,7 @@ type DedupeIndexServerTests() =
         {
             StorageShardId = shardId
             ObjectStorageProvider = ObjectStorageProvider.AzureBlobStorage
-            StorageAccountName = "devstoreaccount1"
+            StorageAccountName = Constants.DefaultCasStorageAccountName
             StorageContainerName = containerName
             ObjectKeyPrefix = String.Empty
             IsActive = true
@@ -144,6 +144,16 @@ type DedupeIndexServerTests() =
 
     let storagePool poolId shardId containerName : DedupeIndex.StoragePool =
         { StoragePoolId = poolId; IsActive = true; Shards = [| shard shardId containerName |] }
+
+    let storagePoolWithAccount poolId shardId accountName containerName : DedupeIndex.StoragePool =
+        {
+            StoragePoolId = poolId
+            IsActive = true
+            Shards =
+                [|
+                    { shard shardId containerName with StorageAccountName = accountName }
+                |]
+        }
 
     [<Test>]
     member _.RepositoryStorageRouteUsesSharedDefaultPoolForLocalRepositories() =
@@ -220,6 +230,31 @@ type DedupeIndexServerTests() =
         match DedupeIndex.resolveRepositoryStorageRoute "corr-route-missing" pools repository with
         | Ok route -> Assert.Fail($"Expected missing StoragePool config to fail closed, got {route.StoragePoolId}.")
         | Error error -> Assert.That(error.Error, Does.Contain("not configured"))
+
+    [<Test>]
+    member _.RepositoryStorageRouteForRecordedPoolRejectsRouteDrift() =
+        let repository = repositoryWithStoragePool repositoryId (StoragePoolId "pool-current")
+
+        match DedupeIndex.resolveRepositoryStorageRouteForPool "corr-route-drift" (StoragePoolId "pool-recorded") repository with
+        | Ok route -> Assert.Fail($"Expected route drift to fail closed, got {route.StoragePoolId}.")
+        | Error error -> Assert.That(error.Error, Does.Contain("not configured"))
+
+    [<Test>]
+    member _.DefaultCasPoolFailsClosedWhenRepositoryStorageSettingsDiverge() =
+        let repository = { repositoryWithStoragePool repositoryId Constants.DefaultStoragePoolId with StorageAccountName = "repository-specific-account" }
+
+        let pools =
+            [|
+                storagePoolWithAccount
+                    Constants.DefaultStoragePoolId
+                    "default-shard"
+                    Constants.DefaultCasStorageAccountName
+                    Constants.DefaultCasStorageContainerName
+            |]
+
+        match DedupeIndex.resolveRepositoryStorageRoute "corr-route-diverge" pools repository with
+        | Ok route -> Assert.Fail($"Expected repository-specific default-pool storage settings to fail closed, got {route.StorageShard.StorageAccountName}.")
+        | Error error -> Assert.That(error.Error, Does.Contain("pool-wide shard configuration"))
 
     [<Test>]
     member _.RepositoryStorageRouteFailsClosedForDeletedRepository() =

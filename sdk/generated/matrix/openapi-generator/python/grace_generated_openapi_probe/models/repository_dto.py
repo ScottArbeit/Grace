@@ -40,6 +40,7 @@ class RepositoryDto(BaseModel):
     object_storage_provider: Optional[ObjectStorageProvider] = Field(default=None, alias="ObjectStorageProvider")
     storage_account_name: Optional[StrictStr] = Field(default=None, alias="StorageAccountName")
     storage_container_name: Optional[StrictStr] = Field(default=None, alias="StorageContainerName")
+    storage_pool_id: Optional[StrictStr] = Field(default=None, description="StoragePool-wide CAS scope identifier.", alias="StoragePoolId")
     repository_visibility: Optional[RepositoryVisibility] = Field(default=None, alias="RepositoryVisibility")
     repository_status: Optional[RepositoryStatus] = Field(default=None, alias="RepositoryStatus")
     branches: Optional[List[StrictStr]] = Field(default=None, alias="Branches")
@@ -47,7 +48,7 @@ class RepositoryDto(BaseModel):
     default_branch_name: Optional[StrictStr] = Field(default=None, alias="DefaultBranchName")
     save_days: Optional[Union[StrictFloat, StrictInt]] = Field(default=None, alias="SaveDays")
     checkpoint_days: Optional[Union[StrictFloat, StrictInt]] = Field(default=None, alias="CheckpointDays")
-    __properties: ClassVar[List[str]] = ["Class", "RepositoryId", "OwnerId", "OrganizationId", "RepositoryName", "ObjectStorageProvider", "StorageAccountName", "StorageContainerName", "RepositoryVisibility", "RepositoryStatus", "Branches", "DefaultServerApiVersion", "DefaultBranchName", "SaveDays", "CheckpointDays"]
+    __properties: ClassVar[List[str]] = ["Class", "RepositoryId", "OwnerId", "OrganizationId", "RepositoryName", "ObjectStorageProvider", "StorageAccountName", "StorageContainerName", "StoragePoolId", "RepositoryVisibility", "RepositoryStatus", "Branches", "DefaultServerApiVersion", "DefaultBranchName", "SaveDays", "CheckpointDays"]
 
     model_config = ConfigDict(
         validate_by_name=True,
@@ -108,6 +109,7 @@ class RepositoryDto(BaseModel):
             "ObjectStorageProvider": obj.get("ObjectStorageProvider"),
             "StorageAccountName": obj.get("StorageAccountName"),
             "StorageContainerName": obj.get("StorageContainerName"),
+            "StoragePoolId": obj.get("StoragePoolId"),
             "RepositoryVisibility": obj.get("RepositoryVisibility"),
             "RepositoryStatus": obj.get("RepositoryStatus"),
             "Branches": obj.get("Branches"),

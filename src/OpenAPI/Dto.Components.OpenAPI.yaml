@@ -182,6 +182,8 @@
           type: string
         StorageContainerName:
           $ref: Shared.Components.OpenAPI.yaml#/components/schemas/StorageContainerName
+        StoragePoolId:
+          $ref: Storage.Components.OpenAPI.yaml#/StoragePoolId
         RepositoryVisibility:
           $ref: Shared.Components.OpenAPI.yaml#/components/schemas/RepositoryVisibility
         RepositoryStatus:

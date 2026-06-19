@@ -90,6 +90,12 @@ export interface RepositoryDto {
      */
     storageContainerName?: string;
     /**
+     * StoragePool-wide CAS scope identifier.
+     * @type {string}
+     * @memberof RepositoryDto
+     */
+    storagePoolId?: string;
+    /**
      * 
      * @type {RepositoryVisibility}
      * @memberof RepositoryDto
@@ -160,6 +166,7 @@ export function RepositoryDtoFromJSONTyped(json: any, ignoreDiscriminator: boole
         'objectStorageProvider': json['ObjectStorageProvider'] == null ? undefined : ObjectStorageProviderFromJSON(json['ObjectStorageProvider']),
         'storageAccountName': json['StorageAccountName'] == null ? undefined : json['StorageAccountName'],
         'storageContainerName': json['StorageContainerName'] == null ? undefined : json['StorageContainerName'],
+        'storagePoolId': json['StoragePoolId'] == null ? undefined : json['StoragePoolId'],
         'repositoryVisibility': json['RepositoryVisibility'] == null ? undefined : RepositoryVisibilityFromJSON(json['RepositoryVisibility']),
         'repositoryStatus': json['RepositoryStatus'] == null ? undefined : RepositoryStatusFromJSON(json['RepositoryStatus']),
         'branches': json['Branches'] == null ? undefined : json['Branches'],
@@ -189,6 +196,7 @@ export function RepositoryDtoToJSONTyped(value?: RepositoryDto | null, ignoreDis
         'ObjectStorageProvider': ObjectStorageProviderToJSON(value['objectStorageProvider']),
         'StorageAccountName': value['storageAccountName'],
         'StorageContainerName': value['storageContainerName'],
+        'StoragePoolId': value['storagePoolId'],
         'RepositoryVisibility': RepositoryVisibilityToJSON(value['repositoryVisibility']),
         'RepositoryStatus': RepositoryStatusToJSON(value['repositoryStatus']),
         'Branches': value['branches'],

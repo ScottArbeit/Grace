@@ -62,13 +62,11 @@ GetDownloadUriParameters:
 GetContentBlockUploadUriParameters:
   description: Parameters for /storage/getContentBlockUploadUri.
   allOf:
-    - $ref: '#/StorageParameters'
+    - $ref: '#/UploadSessionStorageParameters'
   type: object
   properties:
     ContentBlockAddress:
       $ref: '#/ContentBlockAddress'
-    AuthorizedScope:
-      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/RelativePath'
 
 GetContentBlockDownloadUriParameters:
   description: Parameters for /storage/getContentBlockDownloadUri.
@@ -78,6 +76,8 @@ GetContentBlockDownloadUriParameters:
   properties:
     ContentBlockAddress:
       $ref: '#/ContentBlockAddress'
+    StoragePoolId:
+      $ref: '#/StoragePoolId'
 
 DiscoverContentBlocksParameters:
   description: >-
@@ -875,6 +875,8 @@ FileManifest:
       $ref: '#/ChunkingSuiteId'
     FileContentHash:
       $ref: '#/FileContentHash'
+    StoragePoolId:
+      $ref: '#/StoragePoolId'
     Size:
       type: integer
       format: int64
@@ -887,6 +889,7 @@ FileManifest:
     - ManifestAddress
     - ChunkingSuiteId
     - FileContentHash
+    - StoragePoolId
     - Size
     - Blocks
 

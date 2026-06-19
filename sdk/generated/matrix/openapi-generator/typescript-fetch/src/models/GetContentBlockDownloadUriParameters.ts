@@ -73,6 +73,12 @@ export interface GetContentBlockDownloadUriParameters {
      * @memberof GetContentBlockDownloadUriParameters
      */
     contentBlockAddress?: string;
+    /**
+     * StoragePool-wide CAS scope identifier.
+     * @type {string}
+     * @memberof GetContentBlockDownloadUriParameters
+     */
+    storagePoolId?: string;
 }
 
 /**
@@ -101,6 +107,7 @@ export function GetContentBlockDownloadUriParametersFromJSONTyped(json: any, ign
         'repositoryId': json['RepositoryId'] == null ? undefined : json['RepositoryId'],
         'repositoryName': json['RepositoryName'] == null ? undefined : json['RepositoryName'],
         'contentBlockAddress': json['ContentBlockAddress'] == null ? undefined : json['ContentBlockAddress'],
+        'storagePoolId': json['StoragePoolId'] == null ? undefined : json['StoragePoolId'],
     };
 }
 
@@ -124,6 +131,7 @@ export function GetContentBlockDownloadUriParametersToJSONTyped(value?: GetConte
         'RepositoryId': value['repositoryId'],
         'RepositoryName': value['repositoryName'],
         'ContentBlockAddress': value['contentBlockAddress'],
+        'StoragePoolId': value['storagePoolId'],
     };
 }
 

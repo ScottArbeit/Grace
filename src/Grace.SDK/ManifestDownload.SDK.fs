@@ -55,10 +55,11 @@ module ManifestDownload =
     let private emptyResult fileVersion =
         { FileVersion = fileVersion; Manifest = None; BytesWritten = 0L; DownloadedBlockCount = 0; UsedManifestDownload = false }
 
-    let private buildDownloadUriParameters request contentBlockAddress =
+    let private buildDownloadUriParameters request storagePoolId contentBlockAddress =
         let parameters = GetContentBlockDownloadUriParameters()
         setStorageParameters request parameters |> ignore
         parameters.ContentBlockAddress <- contentBlockAddress
+        parameters.StoragePoolId <- storagePoolId
         parameters
 
     let private describeValidationError validationError =
@@ -145,7 +146,7 @@ module ManifestDownload =
             while index < manifest.Blocks.Count
                   && Option.isNone errorResult do
                 let block = manifest.Blocks[index]
-                let parameters = buildDownloadUriParameters request block.Address
+                let parameters = buildDownloadUriParameters request manifest.StoragePoolId block.Address
 
                 match! client.GetContentBlockDownloadUri parameters with
                 | Error error -> errorResult <- Some error

@@ -98,6 +98,20 @@ type StorageContentBlockSdkContract() =
         assertSdkMethod "DiscoverContentBlocks" "DiscoverContentBlocksParameters"
 
     [<Test>]
+    member _.ContentBlockUploadUriParametersArePinnedToUploadSession() =
+        let parameterType = getStorageParameterType "GetContentBlockUploadUriParameters"
+        Assert.That(parameterType, Is.Not.Null)
+        Assert.That(parameterType.IsSubclassOf(typeof<Parameters.Storage.UploadSessionStorageParameters>), Is.True)
+        Assert.That(parameterType.GetProperty("UploadSessionId"), Is.Not.Null)
+        Assert.That(parameterType.GetProperty("AuthorizedScope"), Is.Not.Null)
+
+    [<Test>]
+    member _.ContentBlockDownloadUriParametersCanCarryManifestStoragePool() =
+        let parameterType = getStorageParameterType "GetContentBlockDownloadUriParameters"
+        Assert.That(parameterType, Is.Not.Null)
+        Assert.That(parameterType.GetProperty("StoragePoolId"), Is.Not.Null)
+
+    [<Test>]
     member _.IssueDedupeDiscoveryValidationUsesSessionStoragePoolAfterRepositoryRouteDrift() =
         let originalPool = StoragePoolId "pool-original"
         let currentRepositoryPool = StoragePoolId "pool-after-route-change"
