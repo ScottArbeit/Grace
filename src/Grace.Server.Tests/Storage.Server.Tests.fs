@@ -274,6 +274,8 @@ type StorageContentBlockSasRoutes() =
         client.BaseAddress <- Client.BaseAddress
         client
 
+    let createMalformedJsonContent () = new StringContent("{", Encoding.UTF8, "application/json")
+
     let grantRoleAsync (client: HttpClient) scopeKind ownerId organizationId repositoryId branchId principalId roleId =
         task {
             let parameters = Parameters.Access.GrantRoleParameters()
@@ -308,6 +310,14 @@ type StorageContentBlockSasRoutes() =
         setContentBlockParameters parameters repositoryId
         parameters.ContentBlockAddress <- ContentAddress.computeBlake3Hex (Guid.NewGuid().ToByteArray())
         parameters
+
+    let malformedContentBlockAddress () = ContentBlockAddress $"content-block-contract-{Guid.NewGuid():N}"
+
+    let assertUnauthorized (response: HttpResponseMessage) =
+        task {
+            let! body = response.Content.ReadAsStringAsync()
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized), body)
+        }
 
     let assertBadRequestForMalformedContentBlockAddress (response: HttpResponseMessage) =
         task {
@@ -351,7 +361,7 @@ type StorageContentBlockSasRoutes() =
         }
 
     [<Test>]
-    member _.ContentBlockUploadUriReturnsBadRequestForMalformedContentBlockAddressBeforeAuthorizationResource() =
+    member _.ContentBlockUploadUriChecksPrincipalBeforeBodyValidationAndReturnsBadRequestAfterAuthentication() =
         task {
             let repositoryId = repositoryIds[0]
             let pathWriter = $"{Guid.NewGuid()}"
@@ -359,10 +369,18 @@ type StorageContentBlockSasRoutes() =
             let! grantWriter = grantRoleAsync Client "repo" ownerId organizationId repositoryId "" pathWriter "RepositoryContributor"
             Assert.That(grantWriter.StatusCode, Is.EqualTo(HttpStatusCode.OK))
 
+            use unauthClient = createUnauthenticatedClient ()
             use writerClient = createClientWithUserId pathWriter
             let parameters = createContentBlockUploadParameters repositoryId
 
-            parameters.ContentBlockAddress <- ContentBlockAddress $"content-block-contract-{Guid.NewGuid():N}"
+            parameters.ContentBlockAddress <- malformedContentBlockAddress ()
+
+            let! unauthInvalidUpload = unauthClient.PostAsync("/storage/getContentBlockUploadUri", createJsonContent parameters)
+            do! assertUnauthorized unauthInvalidUpload
+
+            use malformedJson = createMalformedJsonContent ()
+            let! unauthMalformedUpload = unauthClient.PostAsync("/storage/getContentBlockUploadUri", malformedJson)
+            do! assertUnauthorized unauthMalformedUpload
 
             let! malformedUpload = writerClient.PostAsync("/storage/getContentBlockUploadUri", createJsonContent parameters)
             do! assertBadRequestForMalformedContentBlockAddress malformedUpload
@@ -399,7 +417,7 @@ type StorageContentBlockSasRoutes() =
         }
 
     [<Test>]
-    member _.ContentBlockDownloadUriReturnsBadRequestForMalformedContentBlockAddressBeforeAuthorizationResource() =
+    member _.ContentBlockDownloadUriChecksPrincipalBeforeBodyValidationAndReturnsBadRequestAfterAuthentication() =
         task {
             let repositoryId = repositoryIds[0]
             let pathReader = $"{Guid.NewGuid()}"
@@ -407,10 +425,18 @@ type StorageContentBlockSasRoutes() =
             let! grantReader = grantRoleAsync Client "repo" ownerId organizationId repositoryId "" pathReader "RepositoryReader"
             Assert.That(grantReader.StatusCode, Is.EqualTo(HttpStatusCode.OK))
 
+            use unauthClient = createUnauthenticatedClient ()
             use readerClient = createClientWithUserId pathReader
             let parameters = createContentBlockDownloadParameters repositoryId
 
-            parameters.ContentBlockAddress <- ContentBlockAddress $"content-block-contract-{Guid.NewGuid():N}"
+            parameters.ContentBlockAddress <- malformedContentBlockAddress ()
+
+            let! unauthInvalidDownload = unauthClient.PostAsync("/storage/getContentBlockDownloadUri", createJsonContent parameters)
+            do! assertUnauthorized unauthInvalidDownload
+
+            use malformedJson = createMalformedJsonContent ()
+            let! unauthMalformedDownload = unauthClient.PostAsync("/storage/getContentBlockDownloadUri", malformedJson)
+            do! assertUnauthorized unauthMalformedDownload
 
             let! malformedDownload = readerClient.PostAsync("/storage/getContentBlockDownloadUri", createJsonContent parameters)
             do! assertBadRequestForMalformedContentBlockAddress malformedDownload
