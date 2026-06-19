@@ -1,12 +1,16 @@
 namespace Grace.Server.Tests
 
+open Grace.Actors.Services
 open Grace.Actors.Extensions
 open Grace.Server
+open Grace.Types.Common
 open NUnit.Framework
 open Orleans.Runtime
 open System
+open System.Collections.Generic
 
 module DiffActor = ActorProxy.Diff
+module DiffActorImplementation = Grace.Actors.Diff
 
 [<Parallelizable(ParallelScope.All)>]
 type DiffActorTests() =
@@ -62,3 +66,62 @@ type DiffActorTests() =
         Assert.That(DiffBlobGrainStorage.etagForWriteTarget hashedName hashedName "\"hashed-etag\"", Is.EqualTo("\"hashed-etag\""))
 
         Assert.That(DiffBlobGrainStorage.etagForWriteTarget legacyName hashedName "\"legacy-etag\"", Is.Null)
+
+    [<Test>]
+    member _.ScanForDifferencesTreatsSameSha256DifferentBlake3FileAsChange() =
+        task {
+            let repositoryId = Guid.Parse("62a0b8ef-f3a8-4a99-acb9-9c24c5a2c202")
+            let relativePath = RelativePath "/src/same-sha.txt"
+            let sharedSha256 = Sha256Hash "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            let olderBlake3 = Blake3Hash "1111111111111111111111111111111111111111111111111111111111111111"
+            let newerBlake3 = Blake3Hash "2222222222222222222222222222222222222222222222222222222222222222"
+
+            let olderFile = FileVersion.CreateWithHashes relativePath sharedSha256 olderBlake3 String.Empty false 12L
+            let newerFile = FileVersion.CreateWithHashes relativePath sharedSha256 newerBlake3 String.Empty false 12L
+
+            let olderDirectory =
+                DirectoryVersion.CreateWithHashes
+                    first
+                    Guid.Empty
+                    Guid.Empty
+                    repositoryId
+                    "/src/"
+                    (Sha256Hash "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+                    (Blake3Hash "3333333333333333333333333333333333333333333333333333333333333333")
+                    (List<DirectoryVersionId>())
+                    (List<FileVersion>([ olderFile ]))
+                    olderFile.Size
+
+            let newerDirectory =
+                DirectoryVersion.CreateWithHashes
+                    second
+                    Guid.Empty
+                    Guid.Empty
+                    repositoryId
+                    "/src/"
+                    (Sha256Hash "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+                    (Blake3Hash "4444444444444444444444444444444444444444444444444444444444444444")
+                    (List<DirectoryVersionId>())
+                    (List<FileVersion>([ newerFile ]))
+                    newerFile.Size
+
+            let olderIndex = ServerGraceIndex()
+            olderIndex.Add(olderDirectory.RelativePath, olderDirectory)
+
+            let newerIndex = ServerGraceIndex()
+            newerIndex.Add(newerDirectory.RelativePath, newerDirectory)
+
+            let! differences = DiffActorImplementation.scanForDifferences newerIndex olderIndex
+
+            Assert.That(differences, Has.Count.EqualTo(2))
+
+            Assert.That(
+                differences,
+                Has
+                    .Exactly(1)
+                    .Matches<FileSystemDifference>(fun difference ->
+                        difference.FileSystemEntryType = FileSystemEntryType.File
+                        && difference.DifferenceType = DifferenceType.Change
+                        && difference.RelativePath = relativePath)
+            )
+        }
