@@ -13,6 +13,20 @@ open System.Text
 
 module DedupeIndex =
 
+    type StorageShard =
+        {
+            StorageShardId: string
+            ObjectStorageProvider: ObjectStorageProvider
+            StorageAccountName: StorageAccountName
+            StorageContainerName: StorageContainerName
+            ObjectKeyPrefix: string
+            IsActive: bool
+        }
+
+    type StoragePool = { StoragePoolId: StoragePoolId; IsActive: bool; Shards: StorageShard array }
+
+    type RepositoryStorageRoute = { RepositoryId: RepositoryId; StoragePoolId: StoragePoolId; StorageShard: StorageShard }
+
     type FinalizedManifestIndexSource =
         {
             StoragePoolId: StoragePoolId
@@ -76,9 +90,81 @@ module DedupeIndex =
             IsAuthoritative = false
         }
 
-    let storagePoolIdForRepositoryId (repositoryId: RepositoryId) = StoragePoolId $"{repositoryId}"
+    let defaultStorageShardForRepository (repositoryDto: RepositoryDto) =
+        {
+            StorageShardId = Constants.DefaultStorageShardId
+            ObjectStorageProvider = repositoryDto.ObjectStorageProvider
+            StorageAccountName = repositoryDto.StorageAccountName
+            StorageContainerName = Constants.DefaultCasStorageContainerName
+            ObjectKeyPrefix = String.Empty
+            IsActive = true
+        }
 
-    let storagePoolIdForRepository (repositoryDto: RepositoryDto) = storagePoolIdForRepositoryId repositoryDto.RepositoryId
+    let defaultStoragePoolForRepository (repositoryDto: RepositoryDto) =
+        {
+            StoragePoolId = StoragePoolId Constants.DefaultStoragePoolId
+            IsActive = true
+            Shards =
+                [|
+                    defaultStorageShardForRepository repositoryDto
+                |]
+        }
+
+    let defaultStoragePoolsForRepository repositoryDto =
+        [|
+            defaultStoragePoolForRepository repositoryDto
+        |]
+
+    let resolveRepositoryStorageRoute correlationId (storagePools: StoragePool array) (repositoryDto: RepositoryDto) =
+        if isNull (box repositoryDto) then
+            Error(GraceError.Create "Repository storage routing requires a repository." correlationId)
+        elif repositoryDto.RepositoryId = RepositoryId.Empty then
+            Error(GraceError.Create "Repository storage routing requires a non-empty RepositoryId." correlationId)
+        elif repositoryDto.RepositoryStatus = RepositoryStatus.Deleted
+             || repositoryDto.DeletedAt.IsSome then
+            Error(GraceError.Create "Repository storage routing requires an active repository." correlationId)
+        elif String.IsNullOrWhiteSpace repositoryDto.StoragePoolId then
+            Error(GraceError.Create "Repository storage routing requires a non-empty StoragePoolId." correlationId)
+        elif isNull storagePools || storagePools.Length = 0 then
+            Error(GraceError.Create $"StoragePool '{repositoryDto.StoragePoolId}' is not configured." correlationId)
+        else
+            let pool =
+                storagePools
+                |> Array.tryFind (fun pool ->
+                    not (isNull (box pool))
+                    && pool.IsActive
+                    && pool.StoragePoolId = repositoryDto.StoragePoolId)
+
+            match pool with
+            | None -> Error(GraceError.Create $"StoragePool '{repositoryDto.StoragePoolId}' is not configured or active." correlationId)
+            | Some pool ->
+                let shard =
+                    if isNull pool.Shards then
+                        None
+                    else
+                        pool.Shards
+                        |> Array.tryFind (fun shard -> not (isNull (box shard)) && shard.IsActive)
+
+                match shard with
+                | None -> Error(GraceError.Create $"StoragePool '{repositoryDto.StoragePoolId}' has no active StorageShard." correlationId)
+                | Some shard ->
+                    if String.IsNullOrWhiteSpace shard.StorageContainerName then
+                        Error(GraceError.Create $"StoragePool '{repositoryDto.StoragePoolId}' active StorageShard requires a container name." correlationId)
+                    else
+                        Ok { RepositoryId = repositoryDto.RepositoryId; StoragePoolId = pool.StoragePoolId; StorageShard = shard }
+
+    let resolveRepositoryStorageRouteWithDefaults correlationId repositoryDto =
+        if isNull (box repositoryDto) then
+            resolveRepositoryStorageRoute correlationId Array.empty repositoryDto
+        else
+            resolveRepositoryStorageRoute correlationId (defaultStoragePoolsForRepository repositoryDto) repositoryDto
+
+    let repositoryForStorageRoute (route: RepositoryStorageRoute) (repositoryDto: RepositoryDto) =
+        { repositoryDto with
+            ObjectStorageProvider = route.StorageShard.ObjectStorageProvider
+            StorageAccountName = route.StorageShard.StorageAccountName
+            StorageContainerName = route.StorageShard.StorageContainerName
+        }
 
     let private protectChunkAddress (storagePoolId: StoragePoolId) (chunkAddress: ChunkAddress) =
         let preimage = $"grace.dedupe-index.v1.protected-window\n{storagePoolId}\n{chunkAddress}"

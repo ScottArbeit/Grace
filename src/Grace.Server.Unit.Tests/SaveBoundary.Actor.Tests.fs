@@ -24,6 +24,7 @@ type SaveBoundaryActorTests() =
     let ownerId = Guid.Parse("06fed2a6-8de5-4ef2-86b7-e465448cf77d")
     let organizationId = Guid.Parse("5a602145-3f0a-47c8-bc7c-f6618425c07f")
     let repositoryId = Guid.Parse("e34f8949-6306-4fb1-89ca-e9eb831022b0")
+    let storagePoolId = StoragePoolId "pool-shared"
     let directoryVersionId = Guid.Parse("29e93e9b-3e5f-4b6e-b8c3-2a964d8d33f3")
     let referenceId = Guid.Parse("9b26f91a-fd44-46b3-9cc7-17645bb388a2")
 
@@ -134,7 +135,7 @@ type SaveBoundaryActorTests() =
         let unfinalizedManifest = { finalizedManifest () with ManifestAddress = ManifestAddress String.Empty }
         let directoryVersion = directoryWith [ manifestFile unfinalizedManifest ]
 
-        let result = ReferenceActor.planManifestSaveBoundary repositoryId referenceId directoryVersion "corr-unfinalized"
+        let result = ReferenceActor.planManifestSaveBoundary repositoryId storagePoolId referenceId directoryVersion "corr-unfinalized"
 
         match result with
         | Ok _ -> Assert.Fail("Expected an unfinalized manifest reference to reject before save publication.")
@@ -458,11 +459,11 @@ type SaveBoundaryActorTests() =
         | Error error -> Assert.Fail($"Expected multi-block manifest metadata checks to use content-block ordinal zero, got {error.Error}.")
 
     [<Test>]
-    member _.ManifestSaveBoundaryUsesRepositoryDerivedContentBlockMetadataPool() =
+    member _.ManifestSaveBoundaryUsesResolvedStoragePoolForContentBlockMetadata() =
         let contentBlockAddress = ContentBlockAddress "block-address"
-        let expected = $"{DedupeIndex.storagePoolIdForRepositoryId repositoryId}|{contentBlockAddress}"
+        let expected = $"{storagePoolId}|{contentBlockAddress}"
 
-        let actual = DirectoryVersionActor.contentBlockMetadataActorKeyForSaveBoundary repositoryId contentBlockAddress
+        let actual = DirectoryVersionActor.contentBlockMetadataActorKeyForSaveBoundary storagePoolId contentBlockAddress
 
         Assert.That(actual, Is.EqualTo(expected))
 
@@ -472,7 +473,7 @@ type SaveBoundaryActorTests() =
         let directoryVersion = directoryWith [ manifestFile manifest ]
 
         let plan =
-            ReferenceActor.planManifestSaveBoundary repositoryId referenceId directoryVersion "corr-finalized"
+            ReferenceActor.planManifestSaveBoundary repositoryId storagePoolId referenceId directoryVersion "corr-finalized"
             |> expectPlan
 
         let counterDecision = RepositoryContentCounterActor.decideCommand [] RepositoryContentCounterDto.Default plan.CounterCommand (metadata "corr-counter")
@@ -490,7 +491,7 @@ type SaveBoundaryActorTests() =
         let directoryVersion = directoryWith [ manifestFile manifest ]
 
         let plan =
-            ReferenceActor.planManifestSaveBoundary repositoryId referenceId directoryVersion "corr-replay"
+            ReferenceActor.planManifestSaveBoundary repositoryId storagePoolId referenceId directoryVersion "corr-replay"
             |> expectPlan
 
         let firstCounterDecision =
@@ -532,7 +533,7 @@ type SaveBoundaryActorTests() =
         let directoryVersion = directoryWith [ manifestFile manifest ]
 
         let plan =
-            ReferenceActor.planManifestSaveBoundary repositoryId referenceId directoryVersion "corr-fanout"
+            ReferenceActor.planManifestSaveBoundary repositoryId storagePoolId referenceId directoryVersion "corr-fanout"
             |> expectPlan
 
         let intent = RepositoryContentCounterIntent.IncrementManifestReferenceCount(repositoryId, manifest.ManifestAddress)
@@ -553,10 +554,10 @@ type SaveBoundaryActorTests() =
     member _.SaveBoundaryStartsContributionWorkflowForRepeatedManifestBlockOccurrences() =
         let manifest = finalizedManifestWithBlockCopies 2
         let directoryVersion = directoryWith [ manifestFile manifest ]
-        let expectedStoragePoolId = DedupeIndex.storagePoolIdForRepositoryId repositoryId
+        let expectedStoragePoolId = storagePoolId
 
         let plan =
-            ReferenceActor.planManifestSaveBoundary repositoryId referenceId directoryVersion "corr-repeated-block"
+            ReferenceActor.planManifestSaveBoundary repositoryId storagePoolId referenceId directoryVersion "corr-repeated-block"
             |> expectPlan
 
         Assert.That(plan.WorkflowRanges, Has.Length.EqualTo(1))
@@ -588,7 +589,7 @@ type SaveBoundaryActorTests() =
         let directoryVersion = directoryWith [ manifestFile manifest ]
 
         let savePlan =
-            ReferenceActor.planManifestSaveBoundary repositoryId referenceId directoryVersion "corr-expiry-plan"
+            ReferenceActor.planManifestSaveBoundary repositoryId storagePoolId referenceId directoryVersion "corr-expiry-plan"
             |> expectPlan
 
         let decrementPlan =
@@ -621,7 +622,7 @@ type SaveBoundaryActorTests() =
         let directoryVersion = directoryWith [ manifestFile manifest ]
 
         let savePlan =
-            ReferenceActor.planManifestSaveBoundary repositoryId referenceId directoryVersion "corr-expiry-operation-plan"
+            ReferenceActor.planManifestSaveBoundary repositoryId storagePoolId referenceId directoryVersion "corr-expiry-operation-plan"
             |> expectPlan
 
         let incrementStart =
@@ -680,7 +681,7 @@ type SaveBoundaryActorTests() =
         let directoryVersion = directoryWith [ manifestFile manifest ]
 
         let savePlan =
-            ReferenceActor.planManifestSaveBoundary repositoryId referenceId directoryVersion "corr-expiry-replay-plan"
+            ReferenceActor.planManifestSaveBoundary repositoryId storagePoolId referenceId directoryVersion "corr-expiry-replay-plan"
             |> expectPlan
 
         let addDecision =
@@ -744,7 +745,7 @@ type SaveBoundaryActorTests() =
         let directoryVersion = directoryWith [ manifestFile manifest ]
 
         let savePlan =
-            ReferenceActor.planManifestSaveBoundary repositoryId referenceId directoryVersion "corr-expiry-gc-plan"
+            ReferenceActor.planManifestSaveBoundary repositoryId storagePoolId referenceId directoryVersion "corr-expiry-gc-plan"
             |> expectPlan
 
         let decrementPlan =
@@ -805,7 +806,7 @@ type SaveBoundaryActorTests() =
     member _.SaveExpiryPlanningKeepsWholeFileCleanupAsNoOp() =
         let directoryVersion = directoryWith [ wholeFile () ]
 
-        match ReferenceActor.planManifestSaveBoundary repositoryId referenceId directoryVersion "corr-whole-file-expiry" with
+        match ReferenceActor.planManifestSaveBoundary repositoryId storagePoolId referenceId directoryVersion "corr-whole-file-expiry" with
         | Ok plans -> Assert.That(plans, Is.Empty)
         | Error error -> Assert.Fail($"Expected whole-file save expiry planning to remain a no-op, got {error.Error}.")
 

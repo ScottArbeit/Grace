@@ -30,6 +30,7 @@ type UploadSessionActorTests() =
     let ownerId = Guid.Parse("4f512f0d-d6b0-488a-934c-db16840d2a8d")
     let organizationId = Guid.Parse("2b4ffda8-1129-47df-9c0c-76371153a807")
     let repositoryId = Guid.Parse("75ce5e36-25f6-4da0-afdd-ad4ad56540d5")
+    let storagePoolId = StoragePoolId "pool-main"
 
     let start operationId =
         {
@@ -37,6 +38,7 @@ type UploadSessionActorTests() =
             OwnerId = ownerId
             OrganizationId = organizationId
             RepositoryId = repositoryId
+            StoragePoolId = storagePoolId
             AuthorizedScope = "/src"
             FileContentHash = "blake3:file"
             ExpectedSize = 1_048_576L
@@ -110,7 +112,6 @@ type UploadSessionActorTests() =
     let finalize operationId manifest payloads =
         UploadSessionCommand.FinalizeManifest { OperationId = operationId; Manifest = manifest; BlockPayloads = payloads }
 
-    let storagePoolId = StoragePoolId "pool-main"
     let reuseBlockAddress = ContentBlockAddress "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
     let discoveryExpiresAt = timestamp.Plus(Duration.FromMinutes(10L))
     let minimumReuseRunLength = 4
@@ -729,7 +730,7 @@ type UploadSessionActorTests() =
                     |]
             }
 
-        let expectedStoragePoolId = DedupeIndex.storagePoolIdForRepositoryId repositoryId
+        let expectedStoragePoolId = storagePoolId
 
         let commands = UploadSessionActor.createContentBlockMetadataMergeCommandsForFinalizedUploads expectedStoragePoolId "op-finalize" session manifest
 

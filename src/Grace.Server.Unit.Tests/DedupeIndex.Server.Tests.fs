@@ -5,6 +5,7 @@ open Grace.Shared
 open Grace.Shared.Parameters.Storage
 open Grace.Types.ContentBlockMetadata
 open Grace.Types.Common
+open Grace.Types.Repository
 open Grace.Types.UploadSession
 open NodaTime
 open NUnit.Framework
@@ -19,6 +20,8 @@ type DedupeIndexServerTests() =
     let timestamp = Instant.FromUtc(2026, 5, 24, 14, 0)
     let storagePoolId = StoragePoolId "pool-main"
     let repositoryId = Guid.Parse("f6494929-27ef-4f68-897c-442f5ead4941")
+    let ownerId = Guid.Parse("e9127ee3-8936-40f3-aa1b-56545a2d54fe")
+    let organizationId = Guid.Parse("fc66f3dd-2304-474f-99d7-2c63779f7da8")
 
     let bytes (text: string) = Encoding.UTF8.GetBytes(text)
 
@@ -115,6 +118,105 @@ type DedupeIndexServerTests() =
         let preimage = $"grace.dedupe-index.v1.protected-window\n{storagePoolId}\n{chunkAddress}"
         let hash = SHA256.HashData(Encoding.UTF8.GetBytes(preimage))
         $"protected-sha256:{Convert.ToHexString(hash).ToLowerInvariant()}"
+
+    let repositoryWithStoragePool id poolId =
+        { RepositoryDto.Default with
+            RepositoryId = id
+            OwnerId = ownerId
+            OrganizationId = organizationId
+            RepositoryStatus = RepositoryStatus.Active
+            ObjectStorageProvider = ObjectStorageProvider.AzureBlobStorage
+            StorageAccountName = "devstoreaccount1"
+            StoragePoolId = poolId
+        }
+
+    let shard shardId containerName : DedupeIndex.StorageShard =
+        {
+            StorageShardId = shardId
+            ObjectStorageProvider = ObjectStorageProvider.AzureBlobStorage
+            StorageAccountName = "devstoreaccount1"
+            StorageContainerName = containerName
+            ObjectKeyPrefix = String.Empty
+            IsActive = true
+        }
+
+    let storagePool poolId shardId containerName : DedupeIndex.StoragePool =
+        { StoragePoolId = poolId; IsActive = true; Shards = [| shard shardId containerName |] }
+
+    [<Test>]
+    member _.RepositoryStorageRouteUsesSharedDefaultPoolForLocalRepositories() =
+        let firstRepository = repositoryWithStoragePool repositoryId Constants.DefaultStoragePoolId
+        let secondRepository = repositoryWithStoragePool (Guid.Parse("5850356f-d1c8-467b-86be-12b089b42de2")) Constants.DefaultStoragePoolId
+
+        let pools =
+            [|
+                DedupeIndex.defaultStoragePoolForRepository firstRepository
+            |]
+
+        let firstRoute = DedupeIndex.resolveRepositoryStorageRoute "corr-route-first" pools firstRepository
+        let secondRoute = DedupeIndex.resolveRepositoryStorageRoute "corr-route-second" pools secondRepository
+
+        match firstRoute, secondRoute with
+        | Ok first, Ok second ->
+            Assert.That(first.StoragePoolId, Is.EqualTo(StoragePoolId Constants.DefaultStoragePoolId))
+            Assert.That(second.StoragePoolId, Is.EqualTo(first.StoragePoolId))
+            Assert.That(first.StorageShard.StorageContainerName, Is.EqualTo(Constants.DefaultCasStorageContainerName))
+            Assert.That(second.StorageShard.StorageContainerName, Is.EqualTo(Constants.DefaultCasStorageContainerName))
+        | Error error, _
+        | _, Error error -> Assert.Fail($"Expected shared default StoragePool routing to succeed, got {error.Error}.")
+
+    [<Test>]
+    member _.RepositoryStorageRouteCanResolveDistinctPoolsWithoutRepositoryDerivedIds() =
+        let firstPool = StoragePoolId "pool-alpha"
+        let secondPool = StoragePoolId "pool-beta"
+        let firstRepository = repositoryWithStoragePool repositoryId firstPool
+        let secondRepository = repositoryWithStoragePool (Guid.Parse("f939af47-3c46-4e4c-9707-6c16c554d164")) secondPool
+
+        let pools =
+            [|
+                storagePool firstPool "shard-alpha" "cas-alpha"
+                storagePool secondPool "shard-beta" "cas-beta"
+            |]
+
+        let firstRoute = DedupeIndex.resolveRepositoryStorageRoute "corr-route-alpha" pools firstRepository
+        let secondRoute = DedupeIndex.resolveRepositoryStorageRoute "corr-route-beta" pools secondRepository
+
+        match firstRoute, secondRoute with
+        | Ok first, Ok second ->
+            Assert.That(first.StoragePoolId, Is.EqualTo(firstPool))
+            Assert.That(second.StoragePoolId, Is.EqualTo(secondPool))
+            Assert.That(first.StoragePoolId, Is.Not.EqualTo(firstRepository.RepositoryId.ToString()))
+            Assert.That(second.StoragePoolId, Is.Not.EqualTo(secondRepository.RepositoryId.ToString()))
+            Assert.That(first.StorageShard.StorageContainerName, Is.EqualTo("cas-alpha"))
+            Assert.That(second.StorageShard.StorageContainerName, Is.EqualTo("cas-beta"))
+        | Error error, _
+        | _, Error error -> Assert.Fail($"Expected explicit StoragePool routing to succeed, got {error.Error}.")
+
+    [<Test>]
+    member _.RepositoryStorageRouteFailsClosedWhenPoolIsMissing() =
+        let repository = repositoryWithStoragePool repositoryId (StoragePoolId "pool-missing")
+
+        let pools =
+            [|
+                storagePool (StoragePoolId "pool-other") "shard-other" "cas-other"
+            |]
+
+        match DedupeIndex.resolveRepositoryStorageRoute "corr-route-missing" pools repository with
+        | Ok route -> Assert.Fail($"Expected missing StoragePool config to fail closed, got {route.StoragePoolId}.")
+        | Error error -> Assert.That(error.Error, Does.Contain("not configured"))
+
+    [<Test>]
+    member _.RepositoryStorageRouteFailsClosedForDeletedRepository() =
+        let repository = { repositoryWithStoragePool repositoryId Constants.DefaultStoragePoolId with RepositoryStatus = RepositoryStatus.Deleted }
+
+        let pools =
+            [|
+                DedupeIndex.defaultStoragePoolForRepository repository
+            |]
+
+        match DedupeIndex.resolveRepositoryStorageRoute "corr-route-deleted" pools repository with
+        | Ok route -> Assert.Fail($"Expected deleted repository routing to fail closed, got {route.StoragePoolId}.")
+        | Error error -> Assert.That(error.Error, Does.Contain("active repository"))
 
     [<Test>]
     member _.ProtectedChunkAddressKnownVectorKeepsSha256LabelAndPreimageStable() =

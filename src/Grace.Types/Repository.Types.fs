@@ -26,6 +26,7 @@ module Repository =
         | SetObjectStorageProvider of objectStorageProvider: ObjectStorageProvider
         | SetStorageAccountName of storageAccountName: StorageAccountName
         | SetStorageContainerName of storageContainerName: StorageContainerName
+        | SetStoragePoolId of storagePoolId: StoragePoolId
         | SetRepositoryType of repositoryVisibility: RepositoryType
         | SetRepositoryStatus of repositoryStatus: RepositoryStatus
         | SetRecordSaves of recordSaves: bool
@@ -60,6 +61,7 @@ module Repository =
         | ObjectStorageProviderSet of objectStorageProvider: ObjectStorageProvider
         | StorageAccountNameSet of storageAccountName: StorageAccountName
         | StorageContainerNameSet of storageContainerName: StorageContainerName
+        | StoragePoolIdSet of storagePoolId: StoragePoolId
         | RepositoryTypeSet of repositoryVisibility: RepositoryType
         | RepositoryStatusSet of repositoryStatus: RepositoryStatus
         | AllowsLargeFilesSet of allowsLargeFiles: bool
@@ -101,6 +103,7 @@ module Repository =
             ObjectStorageProvider: ObjectStorageProvider
             StorageAccountName: StorageAccountName
             StorageContainerName: StorageContainerName
+            StoragePoolId: StoragePoolId
             RepositoryType: RepositoryType
             RepositoryStatus: RepositoryStatus
             AnonymousAccess: bool
@@ -133,6 +136,7 @@ module Repository =
                 ObjectStorageProvider = ObjectStorageProvider.Unknown
                 StorageAccountName = String.Empty
                 StorageContainerName = "grace-objects"
+                StoragePoolId = Constants.DefaultStoragePoolId
                 RepositoryType = RepositoryType.Private
                 RepositoryStatus = RepositoryStatus.Active
                 AnonymousAccess = false
@@ -168,12 +172,14 @@ module Repository =
                         ObjectStorageProvider = objectStorageProvider
                         StorageAccountName = DefaultObjectStorageAccount
                         StorageContainerName = $"{repositoryId}"
+                        StoragePoolId = Constants.DefaultStoragePoolId
                         CreatedAt = repositoryEvent.Metadata.Timestamp
                     }
                 | Initialized -> { currentRepositoryDto with InitializedAt = Some(getCurrentInstant ()) }
                 | ObjectStorageProviderSet objectStorageProvider -> { currentRepositoryDto with ObjectStorageProvider = objectStorageProvider }
                 | StorageAccountNameSet storageAccountName -> { currentRepositoryDto with StorageAccountName = storageAccountName }
                 | StorageContainerNameSet containerName -> { currentRepositoryDto with StorageContainerName = containerName }
+                | StoragePoolIdSet storagePoolId -> { currentRepositoryDto with StoragePoolId = storagePoolId }
                 | RepositoryStatusSet repositoryStatus -> { currentRepositoryDto with RepositoryStatus = repositoryStatus }
                 | RepositoryTypeSet repositoryType -> { currentRepositoryDto with RepositoryType = repositoryType }
                 | RecordSavesSet recordSaves -> { currentRepositoryDto with RecordSaves = recordSaves }

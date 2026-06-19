@@ -44,8 +44,6 @@ open Azure.Storage
 
 module DirectoryVersion =
 
-    let private DefaultStoragePoolId = "default"
-
     /// Result of validating a single whole-file content reference.
     type FileValidationResult =
         | Valid of fileVersion: FileVersion * computedSha256Hash: Sha256Hash * computedBlake3Hash: Blake3Hash * elapsedMs: float
@@ -463,9 +461,7 @@ module DirectoryVersion =
         | Some graceError -> Error graceError
         | None -> Ok(manifests.Values |> Seq.toList)
 
-    let contentBlockMetadataActorKeyForSaveBoundary repositoryId contentBlockAddress =
-        let storagePoolId = DedupeIndex.storagePoolIdForRepositoryId repositoryId
-        $"{storagePoolId}|{contentBlockAddress}"
+    let contentBlockMetadataActorKeyForSaveBoundary storagePoolId contentBlockAddress = $"{storagePoolId}|{contentBlockAddress}"
 
     let validateManifestReferencesForSaveBoundaryWithResolver
         (getRangePresence: ContentBlockAddress -> ContentBlockRangeQuery -> Task<ContentBlockRangePresence>)
@@ -505,14 +501,17 @@ module DirectoryVersion =
                 | None -> Ok()
         }
 
-    let private validateManifestReferencesForSaveBoundary repositoryId correlationId manifests =
-        let getRangePresence contentBlockAddress query =
-            let actorKey = contentBlockMetadataActorKeyForSaveBoundary repositoryId contentBlockAddress
-            let metadataActor = orleansClient.CreateActorProxyWithCorrelationId<IContentBlockMetadataActor>(actorKey, correlationId)
+    let private validateManifestReferencesForSaveBoundary (repositoryDto: RepositoryDto) correlationId manifests =
+        match DedupeIndex.resolveRepositoryStorageRouteWithDefaults correlationId repositoryDto with
+        | Error graceError -> Task.FromResult(Error graceError)
+        | Ok route ->
+            let getRangePresence contentBlockAddress query =
+                let actorKey = contentBlockMetadataActorKeyForSaveBoundary route.StoragePoolId contentBlockAddress
+                let metadataActor = orleansClient.CreateActorProxyWithCorrelationId<IContentBlockMetadataActor>(actorKey, correlationId)
 
-            metadataActor.GetRangePresence query correlationId
+                metadataActor.GetRangePresence query correlationId
 
-        validateManifestReferencesForSaveBoundaryWithResolver getRangePresence correlationId manifests
+            validateManifestReferencesForSaveBoundaryWithResolver getRangePresence correlationId manifests
 
     type DirectoryVersionActor
         (
@@ -1078,7 +1077,7 @@ module DirectoryVersion =
                                         match getManifestReferencesForSaveBoundary directoryVersion metadata.CorrelationId with
                                         | Error graceError -> return Error graceError
                                         | Ok manifests ->
-                                            match! validateManifestReferencesForSaveBoundary repositoryDto.RepositoryId metadata.CorrelationId manifests with
+                                            match! validateManifestReferencesForSaveBoundary repositoryDto metadata.CorrelationId manifests with
                                             | Error graceError -> return Error graceError
                                             | Ok () ->
 

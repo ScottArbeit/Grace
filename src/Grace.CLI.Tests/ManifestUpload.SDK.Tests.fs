@@ -448,7 +448,7 @@ type ManifestUploadSdkTests() =
                 let request = ManifestUploadSdkTests.CreateRequest tempPath fileVersion correlationId
                 let plan = LocalPlanner.analyzeFile request.PlannerOptions tempPath
                 let claimedBlock = plan.Blocks[0]
-                let storagePoolId = StoragePoolId $"{request.RepositoryId}"
+                let storagePoolId = StoragePoolId Constants.DefaultStoragePoolId
                 let protectedKeyChunkAddress = ManifestUploadSdkTests.ProtectedChunkAddress storagePoolId claimedBlock.KeyChunkAddress
 
                 Assert.That(protectedKeyChunkAddress, Does.StartWith("protected-sha256:"))
@@ -564,7 +564,7 @@ type ManifestUploadSdkTests() =
                 let request = ManifestUploadSdkTests.CreateRequest tempPath fileVersion correlationId
                 let plan = LocalPlanner.analyzeFile request.PlannerOptions tempPath
                 let partiallyClaimedBlock = plan.Blocks[0]
-                let storagePoolId = StoragePoolId $"{request.RepositoryId}"
+                let storagePoolId = StoragePoolId Constants.DefaultStoragePoolId
 
                 let client: ManifestUpload.ManifestUploadClient =
                     {
@@ -726,7 +726,7 @@ type ManifestUploadSdkTests() =
                 let request = ManifestUploadSdkTests.CreateRequest tempPath fileVersion correlationId
                 let plan = LocalPlanner.analyzeFile request.PlannerOptions tempPath
                 let candidateBlock = plan.Blocks[0]
-                let storagePoolId = StoragePoolId $"{request.RepositoryId}"
+                let storagePoolId = StoragePoolId Constants.DefaultStoragePoolId
 
                 let client: ManifestUpload.ManifestUploadClient =
                     {
@@ -815,7 +815,7 @@ type ManifestUploadSdkTests() =
                 let request = ManifestUploadSdkTests.CreateRequest tempPath fileVersion correlationId
                 let plan = LocalPlanner.analyzeFile request.PlannerOptions tempPath
                 let candidateBlock = plan.Blocks[0]
-                let storagePoolId = StoragePoolId $"{request.RepositoryId}"
+                let storagePoolId = StoragePoolId Constants.DefaultStoragePoolId
 
                 let client: ManifestUpload.ManifestUploadClient =
                     {

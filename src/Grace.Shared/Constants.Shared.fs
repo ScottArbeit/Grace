@@ -129,6 +129,18 @@ module Constants =
     [<Literal>]
     let GraceInMemoryStorage = "in-memory"
 
+    /// The default shared CAS storage pool used by local and pre-production repository routing.
+    [<Literal>]
+    let DefaultStoragePoolId = "default-shared"
+
+    /// The default active storage shard inside the shared CAS storage pool.
+    [<Literal>]
+    let DefaultStorageShardId = "default"
+
+    /// The default shared blob container for content-addressed ContentBlock payloads.
+    [<Literal>]
+    let DefaultCasStorageContainerName = "grace-cas"
+
     /// The name of the service for Grace object storage.
     [<Literal>]
     let GraceDiffStorage = "gracediffstorage"

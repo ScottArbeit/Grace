@@ -55,8 +55,7 @@ module Reference =
         | ManifestContributionDirection.Increment -> ManifestContributionWorkflowOperationId $"save:{referenceId:N}:{manifestAddress}:fanout"
         | ManifestContributionDirection.Decrement -> ManifestContributionWorkflowOperationId $"save-expiry:{referenceId:N}:{manifestAddress}:fanout"
 
-    let private workflowRangesForManifest repositoryId (manifest: FileManifest) =
-        let storagePoolId = DedupeIndex.storagePoolIdForRepositoryId repositoryId
+    let private workflowRangesForManifest storagePoolId (manifest: FileManifest) =
         let seenContentBlocks = HashSet<ContentBlockAddress>()
         let ranges = ResizeArray<ManifestContributionWorkflowRange>()
         let mutable index = 0
@@ -83,7 +82,7 @@ module Reference =
                 Ranges = plan.WorkflowRanges
             }
 
-    let planManifestSaveBoundary repositoryId referenceId (directoryVersion: DirectoryVersion) correlationId =
+    let planManifestSaveBoundary repositoryId storagePoolId referenceId (directoryVersion: DirectoryVersion) correlationId =
         match DirectoryVersion.getManifestReferencesForSaveBoundary directoryVersion correlationId with
         | Error graceError -> Error graceError
         | Ok manifests ->
@@ -96,12 +95,12 @@ module Reference =
                     ReferenceId = referenceId
                     Manifest = manifest
                     CounterCommand = RepositoryContentCounterCommand.AddReference(operationId, repositoryId, manifest.ManifestAddress)
-                    WorkflowRanges = workflowRangesForManifest repositoryId manifest
+                    WorkflowRanges = workflowRangesForManifest storagePoolId manifest
                 })
             |> Ok
 
-    let planManifestSaveExpiryBoundary repositoryId referenceId (directoryVersion: DirectoryVersion) correlationId =
-        planManifestSaveBoundary repositoryId referenceId directoryVersion correlationId
+    let planManifestSaveExpiryBoundary repositoryId storagePoolId referenceId (directoryVersion: DirectoryVersion) correlationId =
+        planManifestSaveBoundary repositoryId storagePoolId referenceId directoryVersion correlationId
         |> Result.map (fun plans ->
             plans
             |> List.map (fun plan ->
@@ -415,18 +414,27 @@ module Reference =
 
                         let! directoryVersionDto = directoryVersionActorProxy.Get this.correlationId
 
+                        let repositoryActorProxy =
+                            Repository.CreateActorProxy referenceDto.OrganizationId physicalDeletionReminderState.RepositoryId this.correlationId
+
+                        let! repositoryDto = repositoryActorProxy.Get this.correlationId
+
                         let! boundaryResult =
                             task {
                                 if shouldApplySaveExpiryBoundary referenceDto then
-                                    match
-                                        planManifestSaveExpiryBoundary
-                                            physicalDeletionReminderState.RepositoryId
-                                            referenceId
-                                            directoryVersionDto.DirectoryVersion
-                                            this.correlationId
-                                        with
+                                    match DedupeIndex.resolveRepositoryStorageRouteWithDefaults this.correlationId repositoryDto with
                                     | Error graceError -> return Error graceError
-                                    | Ok plans -> return! applyManifestContributionBoundary plans (EventMetadata.New this.correlationId "GraceSystem")
+                                    | Ok route ->
+                                        match
+                                            planManifestSaveExpiryBoundary
+                                                physicalDeletionReminderState.RepositoryId
+                                                route.StoragePoolId
+                                                referenceId
+                                                directoryVersionDto.DirectoryVersion
+                                                this.correlationId
+                                            with
+                                        | Error graceError -> return Error graceError
+                                        | Ok plans -> return! applyManifestContributionBoundary plans (EventMetadata.New this.correlationId "GraceSystem")
                                 else
                                     return Ok()
                             }
@@ -640,30 +648,60 @@ module Reference =
                     }
 
                 let processCommand (command: ReferenceCommand) (metadata: EventMetadata) =
-                    let applySaveManifestBoundary referenceId repositoryId directoryId referenceType =
+                    let resolveStorageRoute organizationId repositoryId =
                         task {
-                            if referenceType <> ReferenceType.Save then
-                                return Ok()
-                            else
-                                let directoryVersionActorProxy = DirectoryVersion.CreateActorProxy directoryId repositoryId metadata.CorrelationId
-                                let! directoryVersionDto = directoryVersionActorProxy.Get metadata.CorrelationId
+                            let repositoryActorProxy = Repository.CreateActorProxy organizationId repositoryId metadata.CorrelationId
+                            let! repositoryDto = repositoryActorProxy.Get metadata.CorrelationId
 
-                                match planManifestSaveBoundary repositoryId referenceId directoryVersionDto.DirectoryVersion metadata.CorrelationId with
-                                | Error graceError -> return Error graceError
-                                | Ok plans -> return! applyManifestContributionBoundary plans metadata
+                            return DedupeIndex.resolveRepositoryStorageRouteWithDefaults metadata.CorrelationId repositoryDto
                         }
 
-                    let applySaveExpiryManifestBoundary referenceId repositoryId directoryId referenceType =
+                    let applySaveManifestBoundary referenceId organizationId repositoryId directoryId referenceType =
                         task {
                             if referenceType <> ReferenceType.Save then
                                 return Ok()
                             else
                                 let directoryVersionActorProxy = DirectoryVersion.CreateActorProxy directoryId repositoryId metadata.CorrelationId
                                 let! directoryVersionDto = directoryVersionActorProxy.Get metadata.CorrelationId
+                                let! route = resolveStorageRoute organizationId repositoryId
 
-                                match planManifestSaveExpiryBoundary repositoryId referenceId directoryVersionDto.DirectoryVersion metadata.CorrelationId with
+                                match route with
                                 | Error graceError -> return Error graceError
-                                | Ok plans -> return! applyManifestContributionBoundary plans metadata
+                                | Ok route ->
+                                    match
+                                        planManifestSaveBoundary
+                                            repositoryId
+                                            route.StoragePoolId
+                                            referenceId
+                                            directoryVersionDto.DirectoryVersion
+                                            metadata.CorrelationId
+                                        with
+                                    | Error graceError -> return Error graceError
+                                    | Ok plans -> return! applyManifestContributionBoundary plans metadata
+                        }
+
+                    let applySaveExpiryManifestBoundary referenceId organizationId repositoryId directoryId referenceType =
+                        task {
+                            if referenceType <> ReferenceType.Save then
+                                return Ok()
+                            else
+                                let directoryVersionActorProxy = DirectoryVersion.CreateActorProxy directoryId repositoryId metadata.CorrelationId
+                                let! directoryVersionDto = directoryVersionActorProxy.Get metadata.CorrelationId
+                                let! route = resolveStorageRoute organizationId repositoryId
+
+                                match route with
+                                | Error graceError -> return Error graceError
+                                | Ok route ->
+                                    match
+                                        planManifestSaveExpiryBoundary
+                                            repositoryId
+                                            route.StoragePoolId
+                                            referenceId
+                                            directoryVersionDto.DirectoryVersion
+                                            metadata.CorrelationId
+                                        with
+                                    | Error graceError -> return Error graceError
+                                    | Ok plans -> return! applyManifestContributionBoundary plans metadata
                         }
 
                     let validateRootDirectoryVersionHashes repositoryId directoryId sha256Hash blake3Hash =
@@ -698,7 +736,7 @@ module Reference =
                                           links) ->
                                     match! validateRootDirectoryVersionHashes repositoryId directoryId sha256Hash blake3Hash with
                                     | Ok () ->
-                                        match! applySaveManifestBoundary referenceId repositoryId directoryId referenceType with
+                                        match! applySaveManifestBoundary referenceId organizationId repositoryId directoryId referenceType with
                                         | Ok () ->
                                             return
                                                 Ok(
@@ -768,6 +806,7 @@ module Reference =
                                     match!
                                         applySaveExpiryManifestBoundary
                                             referenceDto.ReferenceId
+                                            referenceDto.OrganizationId
                                             referenceDto.RepositoryId
                                             referenceDto.DirectoryId
                                             referenceDto.ReferenceType

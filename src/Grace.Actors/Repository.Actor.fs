@@ -478,6 +478,7 @@ module Repository =
                                     | SetObjectStorageProvider objectStorageProvider -> return ObjectStorageProviderSet objectStorageProvider
                                     | SetStorageAccountName storageAccountName -> return StorageAccountNameSet storageAccountName
                                     | SetStorageContainerName containerName -> return StorageContainerNameSet containerName
+                                    | SetStoragePoolId storagePoolId -> return StoragePoolIdSet storagePoolId
                                     | SetRepositoryStatus repositoryStatus -> return RepositoryStatusSet repositoryStatus
                                     | SetRepositoryType repositoryType -> return RepositoryTypeSet repositoryType
                                     | SetAllowsLargeFiles allowsLargeFiles -> return AllowsLargeFilesSet allowsLargeFiles
