@@ -1572,12 +1572,18 @@ module Application =
                                route "/getDownloadUri" (composeHandlers requirePathRead Storage.GetDownloadUri)
                                |> addMetadata typeof<Storage.GetDownloadUriParameters>
 
-                               route "/getContentBlockUploadUri" (composeHandlers requirePathWriteForContentBlockUploadUri Storage.GetContentBlockUploadUri)
+                               route
+                                   "/getContentBlockUploadUri"
+                                   (composeHandlers
+                                       Storage.ValidateContentBlockUploadUriParameters
+                                       (composeHandlers requirePathWriteForContentBlockUploadUri Storage.GetContentBlockUploadUri))
                                |> addMetadata typeof<Storage.GetContentBlockUploadUriParameters>
 
                                route
                                    "/getContentBlockDownloadUri"
-                                   (composeHandlers requirePathReadForContentBlockDownloadUri Storage.GetContentBlockDownloadUri)
+                                   (composeHandlers
+                                       Storage.ValidateContentBlockDownloadUriParameters
+                                       (composeHandlers requirePathReadForContentBlockDownloadUri Storage.GetContentBlockDownloadUri))
                                |> addMetadata typeof<Storage.GetContentBlockDownloadUriParameters>
 
                                route "/getUploadUri" (composeHandlers requirePathWriteForUploadUri Storage.GetUploadUris)

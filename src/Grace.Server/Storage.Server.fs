@@ -61,6 +61,14 @@ module Storage =
 
     let private getContentBlockObjectKey (contentBlockAddress: ContentBlockAddress) = StorageKeys.contentBlockObjectKey contentBlockAddress
 
+    let private invalidContentBlockAddressError correlationId =
+        GraceError.Create "ContentBlockAddress must be a 64-character hexadecimal BLAKE3 value." correlationId
+
+    let private validateContentBlockAddress correlationId (contentBlockAddress: ContentBlockAddress) =
+        match ContentAddress.tryNormalizeBlake3Address contentBlockAddress with
+        | Some _ -> Ok()
+        | None -> Error(invalidContentBlockAddressError correlationId)
+
     let private resolveStorageIds (graceIds: GraceIds) (parameters: StorageParameters) =
         let organizationId =
             if graceIds.OrganizationId <> OrganizationId.Empty then
@@ -420,6 +428,22 @@ module Storage =
             }
 
     /// Gets an upload URI for the specified ContentBlock payload without probing whether the blob already exists.
+    let ValidateContentBlockUploadUriParameters: HttpHandler =
+        fun (next: HttpFunc) (context: HttpContext) ->
+            task {
+                let correlationId = getCorrelationId context
+
+                context.Request.EnableBuffering()
+                let! parameters = context.BindJsonAsync<GetContentBlockUploadUriParameters>()
+
+                context.Request.Body.Seek(0L, SeekOrigin.Begin)
+                |> ignore
+
+                match validateContentBlockAddress correlationId parameters.ContentBlockAddress with
+                | Ok () -> return! next context
+                | Error error -> return! context |> result400BadRequest error
+            }
+
     let GetContentBlockUploadUri: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
@@ -428,14 +452,18 @@ module Storage =
 
                 try
                     let! parameters = context.BindJsonAsync<GetContentBlockUploadUriParameters>()
-                    let organizationId, repositoryId = resolveStorageIds graceIds parameters
-                    let repositoryActor = Repository.CreateActorProxy organizationId repositoryId correlationId
-                    let! repositoryDto = repositoryActor.Get correlationId
 
-                    let blobName = getContentBlockObjectKey parameters.ContentBlockAddress
-                    let! uploadUri = getUriWithCreateSharedAccessSignature repositoryDto blobName correlationId
-                    context.SetStatusCode StatusCodes.Status200OK
-                    return! context.WriteStringAsync uploadUri.AbsoluteUri
+                    match validateContentBlockAddress correlationId parameters.ContentBlockAddress with
+                    | Error error -> return! context |> result400BadRequest error
+                    | Ok () ->
+                        let organizationId, repositoryId = resolveStorageIds graceIds parameters
+                        let repositoryActor = Repository.CreateActorProxy organizationId repositoryId correlationId
+                        let! repositoryDto = repositoryActor.Get correlationId
+
+                        let blobName = getContentBlockObjectKey parameters.ContentBlockAddress
+                        let! uploadUri = getUriWithCreateSharedAccessSignature repositoryDto blobName correlationId
+                        context.SetStatusCode StatusCodes.Status200OK
+                        return! context.WriteStringAsync uploadUri.AbsoluteUri
                 with
                 | ex ->
                     context.SetStatusCode StatusCodes.Status500InternalServerError
@@ -445,6 +473,22 @@ module Storage =
             }
 
     /// Gets a download URI for the specified ContentBlock payload without probing whether the blob already exists.
+    let ValidateContentBlockDownloadUriParameters: HttpHandler =
+        fun (next: HttpFunc) (context: HttpContext) ->
+            task {
+                let correlationId = getCorrelationId context
+
+                context.Request.EnableBuffering()
+                let! parameters = context.BindJsonAsync<GetContentBlockDownloadUriParameters>()
+
+                context.Request.Body.Seek(0L, SeekOrigin.Begin)
+                |> ignore
+
+                match validateContentBlockAddress correlationId parameters.ContentBlockAddress with
+                | Ok () -> return! next context
+                | Error error -> return! context |> result400BadRequest error
+            }
+
     let GetContentBlockDownloadUri: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
@@ -453,14 +497,18 @@ module Storage =
 
                 try
                     let! parameters = context.BindJsonAsync<GetContentBlockDownloadUriParameters>()
-                    let organizationId, repositoryId = resolveStorageIds graceIds parameters
-                    let repositoryActor = Repository.CreateActorProxy organizationId repositoryId correlationId
-                    let! repositoryDto = repositoryActor.Get correlationId
 
-                    let blobName = getContentBlockObjectKey parameters.ContentBlockAddress
-                    let! downloadUri = getUriWithReadSharedAccessSignature repositoryDto blobName correlationId
-                    context.SetStatusCode StatusCodes.Status200OK
-                    return! context.WriteStringAsync downloadUri.AbsoluteUri
+                    match validateContentBlockAddress correlationId parameters.ContentBlockAddress with
+                    | Error error -> return! context |> result400BadRequest error
+                    | Ok () ->
+                        let organizationId, repositoryId = resolveStorageIds graceIds parameters
+                        let repositoryActor = Repository.CreateActorProxy organizationId repositoryId correlationId
+                        let! repositoryDto = repositoryActor.Get correlationId
+
+                        let blobName = getContentBlockObjectKey parameters.ContentBlockAddress
+                        let! downloadUri = getUriWithReadSharedAccessSignature repositoryDto blobName correlationId
+                        context.SetStatusCode StatusCodes.Status200OK
+                        return! context.WriteStringAsync downloadUri.AbsoluteUri
                 with
                 | ex ->
                     context.SetStatusCode StatusCodes.Status500InternalServerError
