@@ -209,6 +209,17 @@ module Storage =
         | Some error -> Error error
         | None -> Ok(boundHints.ToArray())
 
+    let internal requireUploadSessionStoragePool correlationId (session: UploadSessionDto) =
+        if String.IsNullOrWhiteSpace session.StoragePoolId then
+            Error(GraceError.Create "UploadSession StoragePoolId must be recorded before reuse operations." correlationId)
+        else
+            Ok session.StoragePoolId
+
+    let internal validateIssuedDedupeDiscoveryHintsForSession correlationId (session: UploadSessionDto) hints records =
+        match requireUploadSessionStoragePool correlationId session with
+        | Error error -> Error error
+        | Ok storagePoolId -> validateIssuedDedupeDiscoveryHints correlationId storagePoolId hints records
+
     let private hintMatchesIssuedHint (hint: ContentBlockReuseRangeHint) (issued: ContentBlockReuseRangeHint) =
         not (isNull (box issued))
         && issued.StoragePoolId = hint.StoragePoolId
@@ -244,6 +255,11 @@ module Storage =
         match error with
         | Some error -> Error error
         | None -> Ok(boundHints.ToArray())
+
+    let internal validateClaimReuseHintsForSession correlationId (session: UploadSessionDto) discovery hints =
+        match requireUploadSessionStoragePool correlationId session with
+        | Error error -> Error error
+        | Ok storagePoolId -> validateClaimReuseHints correlationId storagePoolId discovery hints
 
     let private handleUploadSessionCommand
         (context: HttpContext)
@@ -620,37 +636,26 @@ module Storage =
                         match scopeValidation with
                         | Error error -> return! context |> result400BadRequest error
                         | Ok requestContext ->
-                            let repositoryActor =
-                                Repository.CreateActorProxy
-                                    requestContext.SessionForScope.OrganizationId
-                                    requestContext.SessionForScope.RepositoryId
-                                    correlationId
+                            let dedupeIndexActor = DedupeIndexActor.CreateActorProxy correlationId
+                            let! records = dedupeIndexActor.Snapshot correlationId
 
-                            let! repositoryDto = repositoryActor.Get correlationId
-
-                            match resolveRepositoryStorageRoute correlationId repositoryDto with
+                            match validateIssuedDedupeDiscoveryHintsForSession correlationId requestContext.SessionForScope hints records with
                             | Error error -> return! context |> result400BadRequest error
-                            | Ok route ->
-                                let dedupeIndexActor = DedupeIndexActor.CreateActorProxy correlationId
-                                let! records = dedupeIndexActor.Snapshot correlationId
+                            | Ok boundHints ->
+                                let command =
+                                    UploadSessionCommand.IssueDedupeDiscovery
+                                        {
+                                            OperationId = parameters.OperationId
+                                            ExpiresAt = parameters.ExpiresAt
+                                            MinimumReuseRunLength = parameters.MinimumReuseRunLength
+                                            Hints = boundHints
+                                        }
 
-                                match validateIssuedDedupeDiscoveryHints correlationId route.StoragePoolId hints records with
+                                let! result = requestContext.UploadSessionActor.Handle command requestContext.Metadata
+
+                                match result with
+                                | Ok returnValue -> return! context |> result200Ok returnValue
                                 | Error error -> return! context |> result400BadRequest error
-                                | Ok boundHints ->
-                                    let command =
-                                        UploadSessionCommand.IssueDedupeDiscovery
-                                            {
-                                                OperationId = parameters.OperationId
-                                                ExpiresAt = parameters.ExpiresAt
-                                                MinimumReuseRunLength = parameters.MinimumReuseRunLength
-                                                Hints = boundHints
-                                            }
-
-                                    let! result = requestContext.UploadSessionActor.Handle command requestContext.Metadata
-
-                                    match result with
-                                    | Ok returnValue -> return! context |> result200Ok returnValue
-                                    | Error error -> return! context |> result400BadRequest error
                 with
                 | ex ->
                     let exceptionResponse = ExceptionResponse.Create ex
@@ -698,63 +703,52 @@ module Storage =
                             match validateActiveDedupeDiscoveryForClaim requestContext parameters correlationId with
                             | Error error -> return! context |> result400BadRequest error
                             | Ok discovery ->
-                                let repositoryActor =
-                                    Repository.CreateActorProxy
-                                        requestContext.SessionForScope.OrganizationId
-                                        requestContext.SessionForScope.RepositoryId
-                                        correlationId
-
-                                let! repositoryDto = repositoryActor.Get correlationId
-
-                                match resolveRepositoryStorageRoute correlationId repositoryDto with
+                                match validateClaimReuseHintsForSession correlationId requestContext.SessionForScope discovery hints with
                                 | Error error -> return! context |> result400BadRequest error
-                                | Ok route ->
-                                    match validateClaimReuseHints correlationId route.StoragePoolId discovery hints with
-                                    | Error error -> return! context |> result400BadRequest error
-                                    | Ok hints ->
-                                        let ranges = ResizeArray<ClaimReuseRange>()
-                                        let mutable error = None
-                                        let mutable index = 0
+                                | Ok hints ->
+                                    let ranges = ResizeArray<ClaimReuseRange>()
+                                    let mutable error = None
+                                    let mutable index = 0
 
-                                        while error.IsNone && index < hints.Length do
-                                            let hint = hints[index]
+                                    while error.IsNone && index < hints.Length do
+                                        let hint = hints[index]
 
-                                            let metadataActor =
-                                                grainFactory.CreateActorProxyWithCorrelationId<IContentBlockMetadataActor>(
-                                                    Grace.Actors.ContentBlockMetadataActorKey.Create hint.StoragePoolId hint.ContentBlockAddress,
-                                                    correlationId
+                                        let metadataActor =
+                                            grainFactory.CreateActorProxyWithCorrelationId<IContentBlockMetadataActor>(
+                                                Grace.Actors.ContentBlockMetadataActorKey.Create hint.StoragePoolId hint.ContentBlockAddress,
+                                                correlationId
+                                            )
+
+                                        let! metadata = metadataActor.Get correlationId
+
+                                        match metadata with
+                                        | Some metadata -> ranges.Add({ Hint = hint; Metadata = metadata })
+                                        | None ->
+                                            error <-
+                                                Some(
+                                                    GraceError.Create
+                                                        $"Authoritative ContentBlockMetadata is absent for {hint.ContentBlockAddress}; reuse range cannot be claimed."
+                                                        correlationId
                                                 )
 
-                                            let! metadata = metadataActor.Get correlationId
+                                        index <- index + 1
 
-                                            match metadata with
-                                            | Some metadata -> ranges.Add({ Hint = hint; Metadata = metadata })
-                                            | None ->
-                                                error <-
-                                                    Some(
-                                                        GraceError.Create
-                                                            $"Authoritative ContentBlockMetadata is absent for {hint.ContentBlockAddress}; reuse range cannot be claimed."
-                                                            correlationId
-                                                    )
+                                    match error with
+                                    | Some error -> return! context |> result400BadRequest error
+                                    | None ->
+                                        let command =
+                                            UploadSessionCommand.ClaimReuseRanges
+                                                {
+                                                    OperationId = parameters.OperationId
+                                                    DiscoveryOperationId = parameters.DiscoveryOperationId
+                                                    Ranges = ranges.ToArray()
+                                                }
 
-                                            index <- index + 1
+                                        let! result = requestContext.UploadSessionActor.Handle command requestContext.Metadata
 
-                                        match error with
-                                        | Some error -> return! context |> result400BadRequest error
-                                        | None ->
-                                            let command =
-                                                UploadSessionCommand.ClaimReuseRanges
-                                                    {
-                                                        OperationId = parameters.OperationId
-                                                        DiscoveryOperationId = parameters.DiscoveryOperationId
-                                                        Ranges = ranges.ToArray()
-                                                    }
-
-                                            let! result = requestContext.UploadSessionActor.Handle command requestContext.Metadata
-
-                                            match result with
-                                            | Ok returnValue -> return! context |> result200Ok returnValue
-                                            | Error error -> return! context |> result400BadRequest error
+                                        match result with
+                                        | Ok returnValue -> return! context |> result200Ok returnValue
+                                        | Error error -> return! context |> result400BadRequest error
                 with
                 | ex ->
                     let exceptionResponse = ExceptionResponse.Create ex

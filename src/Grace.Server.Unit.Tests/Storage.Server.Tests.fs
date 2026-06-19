@@ -1,11 +1,58 @@
 namespace Grace.Server.Tests
 
 open Grace.Shared
+open Grace.Types.Common
+open Grace.Types.UploadSession
+open NodaTime
 open NUnit.Framework
+open System
 open System.Reflection
+
+module DedupeIndex = Grace.Shared.DedupeIndex
+module StorageServer = Grace.Server.Storage
 
 [<Parallelizable(ParallelScope.All)>]
 type StorageContentBlockSdkContract() =
+
+    let sessionWithPool storagePoolId =
+        { UploadSessionDto.Default with
+            UploadSessionId = Guid.Parse("f5bdfb2a-1f4a-4509-a6d6-b610f851cfdd")
+            StoragePoolId = storagePoolId
+            LifecycleState = UploadSessionLifecycleState.Started
+        }
+
+    let reuseHint storagePoolId : ContentBlockReuseRangeHint =
+        {
+            StoragePoolId = storagePoolId
+            ContentBlockAddress = ContentBlockAddress "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+            OrdinalStart = 0
+            OrdinalCount = 8
+            MetadataVersion = 7L
+        }
+
+    let dedupeRecord storagePoolId : DedupeIndex.DedupeIndexRecord =
+        let hint = reuseHint storagePoolId
+
+        {
+            StoragePoolId = hint.StoragePoolId
+            ManifestAddress = ManifestAddress "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
+            ContentBlockAddress = hint.ContentBlockAddress
+            OrdinalStart = hint.OrdinalStart
+            OrdinalCount = hint.OrdinalCount
+            MetadataVersion = hint.MetadataVersion
+            ProtectedChunkAddresses =
+                [|
+                    "protected-sha256:session-original"
+                |]
+        }
+
+    let discoveryFor (hint: ContentBlockReuseRangeHint) : DedupeDiscoverySnapshot =
+        {
+            OperationId = UploadSessionOperationId "discover-original"
+            ExpiresAt = Instant.FromUtc(2026, 6, 19, 12, 0)
+            MinimumReuseRunLength = hint.OrdinalCount
+            Hints = [| hint |]
+        }
 
     let getStorageParameterType typeName =
         typeof<Parameters.Storage.StorageParameters>.Assembly.GetType ($"Grace.Shared.Parameters.Storage+{typeName}", throwOnError = false)
@@ -49,3 +96,37 @@ type StorageContentBlockSdkContract() =
         Assert.That(parameterType.GetProperty("KeyChunkAddresses"), Is.Not.Null)
         Assert.That(parameterType.GetProperty("ContentBlockAddress"), Is.Null)
         assertSdkMethod "DiscoverContentBlocks" "DiscoverContentBlocksParameters"
+
+    [<Test>]
+    member _.IssueDedupeDiscoveryValidationUsesSessionStoragePoolAfterRepositoryRouteDrift() =
+        let originalPool = StoragePoolId "pool-original"
+        let currentRepositoryPool = StoragePoolId "pool-after-route-change"
+        let hint = reuseHint originalPool
+        let records = [| dedupeRecord originalPool |]
+
+        match StorageServer.validateIssuedDedupeDiscoveryHintsForSession "corr-discovery-original" (sessionWithPool originalPool) [| hint |] records with
+        | Ok boundHints ->
+            Assert.That(boundHints, Has.Length.EqualTo(1))
+            Assert.That(boundHints[0].StoragePoolId, Is.EqualTo(originalPool))
+        | Error error -> Assert.Fail($"Expected original session pool discovery hints to validate, got {error.Error}.")
+
+        match StorageServer.validateIssuedDedupeDiscoveryHintsForSession "corr-discovery-drift" (sessionWithPool currentRepositoryPool) [| hint |] records with
+        | Ok _ -> Assert.Fail("Expected discovery validation to reject hints that do not match the session-recorded storage pool.")
+        | Error error -> Assert.That(error.Error, Does.Contain("this repository"))
+
+    [<Test>]
+    member _.ClaimReuseRangeValidationUsesSessionStoragePoolAfterRepositoryRouteDrift() =
+        let originalPool = StoragePoolId "pool-original"
+        let currentRepositoryPool = StoragePoolId "pool-after-route-change"
+        let hint = reuseHint originalPool
+        let discovery = discoveryFor hint
+
+        match StorageServer.validateClaimReuseHintsForSession "corr-claim-original" (sessionWithPool originalPool) discovery [| hint |] with
+        | Ok boundHints ->
+            Assert.That(boundHints, Has.Length.EqualTo(1))
+            Assert.That(boundHints[0].StoragePoolId, Is.EqualTo(originalPool))
+        | Error error -> Assert.Fail($"Expected original session pool claim hints to validate, got {error.Error}.")
+
+        match StorageServer.validateClaimReuseHintsForSession "corr-claim-drift" (sessionWithPool currentRepositoryPool) discovery [| hint |] with
+        | Ok _ -> Assert.Fail("Expected claim validation to reject hints that do not match the session-recorded storage pool.")
+        | Error error -> Assert.That(error.Error, Does.Contain("upload session repository storage pool"))

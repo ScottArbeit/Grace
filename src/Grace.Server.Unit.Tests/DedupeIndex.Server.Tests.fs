@@ -14,6 +14,8 @@ open System.Collections.Generic
 open System.Security.Cryptography
 open System.Text
 
+module ActorServices = Grace.Actors.Services
+
 [<Parallelizable(ParallelScope.All)>]
 type DedupeIndexServerTests() =
 
@@ -191,6 +193,20 @@ type DedupeIndexServerTests() =
             Assert.That(second.StorageShard.StorageContainerName, Is.EqualTo("cas-beta"))
         | Error error, _
         | _, Error error -> Assert.Fail($"Expected explicit StoragePool routing to succeed, got {error.Error}.")
+
+    [<Test>]
+    member _.CasRepositoryStorageUsesRoutedStorageContainerName() =
+        let poolId = StoragePoolId "pool-routed"
+        let repository = repositoryWithStoragePool repositoryId poolId
+
+        let route: DedupeIndex.RepositoryStorageRoute =
+            { RepositoryId = repository.RepositoryId; StoragePoolId = poolId; StorageShard = shard "shard-routed" "cas-routed" }
+
+        let casRepository = DedupeIndex.repositoryForStorageRoute route repository
+
+        Assert.That(casRepository.StorageContainerName, Is.EqualTo("cas-routed"))
+        Assert.That(ActorServices.storageContainerNameForRepository casRepository, Is.EqualTo("cas-routed"))
+        Assert.That(ActorServices.storageContainerNameForRepository casRepository, Is.Not.EqualTo($"{repository.RepositoryId}"))
 
     [<Test>]
     member _.RepositoryStorageRouteFailsClosedWhenPoolIsMissing() =

@@ -3,6 +3,7 @@ namespace Grace.Server.Tests
 open Grace.Shared
 open Grace.Types.ContentBlockMetadata
 open Grace.Types.ManifestContributionWorkflow
+open Grace.Types.Reference
 open Grace.Types.RepositoryContentCounter
 open Grace.Types.Common
 open NodaTime
@@ -25,6 +26,7 @@ type SaveBoundaryActorTests() =
     let organizationId = Guid.Parse("5a602145-3f0a-47c8-bc7c-f6618425c07f")
     let repositoryId = Guid.Parse("e34f8949-6306-4fb1-89ca-e9eb831022b0")
     let storagePoolId = StoragePoolId "pool-shared"
+    let branchId = Guid.Parse("a649ad57-3620-4936-8f2f-fbff8f99f449")
     let directoryVersionId = Guid.Parse("29e93e9b-3e5f-4b6e-b8c3-2a964d8d33f3")
     let referenceId = Guid.Parse("9b26f91a-fd44-46b3-9cc7-17645bb388a2")
 
@@ -35,6 +37,31 @@ type SaveBoundaryActorTests() =
             Principal = "tester"
             ClientType = Microsoft.FSharp.Core.Option.None
             Properties = Dictionary<string, string>()
+        }
+
+    let saveCreatedEventWithStoragePool storagePoolId : ReferenceEvent =
+        let eventMetadata = metadata "corr-save-pool-event"
+
+        eventMetadata.Properties[
+            ReferenceActor.SaveStoragePoolIdMetadataKey
+        ] <- $"{storagePoolId}"
+
+        {
+            Event =
+                ReferenceEventType.Created(
+                    referenceId,
+                    ownerId,
+                    organizationId,
+                    repositoryId,
+                    branchId,
+                    directoryVersionId,
+                    Sha256Hash "sha",
+                    Blake3Hash "blake3",
+                    ReferenceType.Save,
+                    ReferenceText "save",
+                    Seq.empty
+                )
+            Metadata = eventMetadata
         }
 
     let finalizedManifestWithBlockCopies blockCopies : FileManifest =
@@ -615,6 +642,33 @@ type SaveBoundaryActorTests() =
                 Assert.That(ManifestContributionWorkflowActor.pendingRanges decision.Workflow, Has.Length.EqualTo(manifest.Blocks.Count))
             | Error error -> Assert.Fail($"Expected save expiry decrement workflow to start, got {error.Error}.")
         | None -> Assert.Fail("Expected decrement intent to start manifest contribution workflow fan-out.")
+
+    [<Test>]
+    member _.SaveExpiryDurableStoragePoolComesFromCreatedSaveEvent() =
+        let originalPool = StoragePoolId "pool-before-route-change"
+        let currentRepositoryPool = StoragePoolId "pool-after-route-change"
+        let manifest = finalizedManifest ()
+        let directoryVersion = directoryWith [ manifestFile manifest ]
+        let createdEvent = saveCreatedEventWithStoragePool originalPool
+
+        Assert.That(ReferenceActor.tryGetSaveStoragePoolIdFromCreatedEvent createdEvent, Is.EqualTo(Some originalPool))
+
+        match ReferenceActor.requireSaveStoragePoolId "corr-expiry-missing" referenceId None with
+        | Ok pool -> Assert.Fail($"Expected missing save StoragePoolId evidence to fail closed, got {pool}.")
+        | Error error -> Assert.That(error.Error, Does.Contain("does not have a recorded StoragePoolId"))
+
+        let expiryPlan =
+            ReferenceActor.planManifestSaveExpiryBoundary repositoryId originalPool referenceId directoryVersion "corr-expiry-original-pool"
+            |> expectPlan
+
+        Assert.That(currentRepositoryPool, Is.Not.EqualTo(originalPool))
+        Assert.That(expiryPlan.WorkflowRanges, Has.Length.EqualTo(manifest.Blocks.Count))
+
+        Assert.That(
+            expiryPlan.WorkflowRanges
+            |> Seq.forall (fun range -> range.StoragePoolId = originalPool),
+            Is.True
+        )
 
     [<Test>]
     member _.SaveExpiryDecrementWorkflowUsesDistinctOperationIdAfterIncrementWorkflow() =

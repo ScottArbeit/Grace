@@ -11,6 +11,7 @@ Name | Type
 `ownerId` | string
 `organizationId` | string
 `repositoryId` | string
+`storagePoolId` | string
 `authorizedScope` | string
 `fileContentHash` | string
 `expectedSize` | number
@@ -29,6 +30,7 @@ const example = {
   "ownerId": 9dd5f81f-dc43-4839-9173-85d09394f30f,
   "organizationId": e35d64a9-b990-44f5-bf02-32ad7d15630c,
   "repositoryId": ab6f35ef-6e01-440b-8f9b-c343a5272095,
+  "storagePoolId": null,
   "authorizedScope": null,
   "fileContentHash": null,
   "expectedSize": null,

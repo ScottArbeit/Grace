@@ -2,18 +2,18 @@
   "schemaVersion": 1,
   "issue": 221,
   "sourceProjection": "src/OpenAPI/Grace.OpenAPI.3.1.2.yaml",
-  "sourceProjectionSha256": "faa7fd4c86831359648bc82b1dfa7699db7725b28fa72d566164b890bee2a50b",
+  "sourceProjectionSha256": "db30fe1605f2f6eb64f32827bca3be0de0fca27cd45546ccc02761da7a2b4e57",
   "generatedAtPolicy": "not recorded; report is deterministic across machines except tool output directories",
   "toolVersions": {
     "pwsh": "PowerShell 7.6.2",
-    "dotnet": "10.0.103",
+    "dotnet": "10.0.301",
     "node": "v24.3.0",
     "npm": "11.10.1",
     "python": "Python 3.14.6",
     "cargo": "cargo 1.96.0 (30a34c682 2026-05-25)",
     "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)",
     "docker": "Docker version 29.5.3, build d1c06ef",
-    "java": "openjdk 21.0.11 2026-04-21 LTS",
+    "java": "unavailable",
     "openApiGenerator": "openapitools/openapi-generator-cli:v7.22.0",
     "kiota": "1.32.1+958a7d04f87c48ab4c0dba1c4e91032ad2f6b9cb",
     "nswag": "NSwag version: 14.7.1.0"
@@ -153,15 +153,15 @@
   "deterministicRegeneration": [
     {
       "path": "sdk/generated/matrix/openapi-generator/typescript-fetch",
-      "manifestSha256": "021cd34cdb39e81c9889626749aed0d2bac4cdee813bd2dc62c135d9aa21530d"
+      "manifestSha256": "3c61333c8b6f11b54d4d972978de580ee316c6043b077af6a2d095381858c505"
     },
     {
       "path": "sdk/generated/matrix/openapi-generator/python",
-      "manifestSha256": "ef9f7f3860b4183192c686e70ec06444b1810d79531157220a239d46e335ae29"
+      "manifestSha256": "e70cf4d429bb00c1be224fbc7424f4100493412cef068ed03a2f89d8c56119b1"
     },
     {
       "path": "sdk/generated/matrix/openapi-generator/rust",
-      "manifestSha256": "e80cc810bee536be7451b1627d0074f3218f988e77bfcef4a5736cc8d459c5e3"
+      "manifestSha256": "94f7824a6cc3ccd539c2fd414defd2b8ae3b67ca436add9e4d8a2b61d3d74ac9"
     }
   ],
   "overallConclusion": "OpenAPI Generator is the only evaluated tool that produced compile/importable TS, Python, and Rust output, and only with --skip-validate-spec. Kiota and NSwag are rejected until OpenAPI schema-shape debt is fixed.",

@@ -29,6 +29,8 @@ open System.Threading.Tasks
 
 module Reference =
 
+    let internal SaveStoragePoolIdMetadataKey = "StoragePoolId"
+
     type ManifestSaveContributionPlan =
         {
             RepositoryId: RepositoryId
@@ -111,6 +113,19 @@ module Reference =
     let shouldApplySaveExpiryBoundary (referenceDto: ReferenceDto) =
         referenceDto.ReferenceId <> ReferenceId.Empty
         && referenceDto.ReferenceType = ReferenceType.Save
+
+    let internal tryGetSaveStoragePoolIdFromCreatedEvent (referenceEvent: ReferenceEvent) =
+        match referenceEvent.Event with
+        | Created (_, _, _, _, _, _, _, _, referenceType, _, _) when referenceType = ReferenceType.Save ->
+            match referenceEvent.Metadata.Properties.TryGetValue SaveStoragePoolIdMetadataKey with
+            | true, value when not (String.IsNullOrWhiteSpace value) -> Some(StoragePoolId value)
+            | _ -> None
+        | _ -> None
+
+    let internal requireSaveStoragePoolId correlationId referenceId storagePoolId =
+        match storagePoolId with
+        | Some storagePoolId when not (String.IsNullOrWhiteSpace storagePoolId) -> Ok storagePoolId
+        | _ -> Error(GraceError.Create $"Save reference {referenceId} does not have a recorded StoragePoolId for manifest expiry fan-out." correlationId)
 
     let validateReferenceRootDirectoryVersionHashes correlationId repositoryId directoryId sha256Hash blake3Hash (directoryVersion: DirectoryVersion) =
         let rootRelativePath = directoryVersion.RelativePath
@@ -334,6 +349,8 @@ module Reference =
 
         let mutable referenceDto = ReferenceDto.Default
 
+        let mutable saveStoragePoolId: StoragePoolId option = None
+
         member val private correlationId: CorrelationId = String.Empty with get, set
 
         override this.OnActivateAsync(ct) =
@@ -367,6 +384,11 @@ module Reference =
                     repairResults
                     |> Array.map fst
                     |> Seq.fold (fun referenceDto event -> ReferenceDto.UpdateDto event referenceDto) referenceDto
+
+                saveStoragePoolId <-
+                    repairResults
+                    |> Array.map fst
+                    |> Array.tryPick tryGetSaveStoragePoolIdFromCreatedEvent
             }
             :> Task
 
@@ -414,21 +436,20 @@ module Reference =
 
                         let! directoryVersionDto = directoryVersionActorProxy.Get this.correlationId
 
-                        let repositoryActorProxy =
-                            Repository.CreateActorProxy referenceDto.OrganizationId physicalDeletionReminderState.RepositoryId this.correlationId
-
-                        let! repositoryDto = repositoryActorProxy.Get this.correlationId
-
                         let! boundaryResult =
                             task {
                                 if shouldApplySaveExpiryBoundary referenceDto then
-                                    match DedupeIndex.resolveRepositoryStorageRouteWithDefaults this.correlationId repositoryDto with
+                                    let storagePoolId =
+                                        physicalDeletionReminderState.StoragePoolId
+                                        |> Option.orElse saveStoragePoolId
+
+                                    match requireSaveStoragePoolId this.correlationId referenceId storagePoolId with
                                     | Error graceError -> return Error graceError
-                                    | Ok route ->
+                                    | Ok storagePoolId ->
                                         match
                                             planManifestSaveExpiryBoundary
                                                 physicalDeletionReminderState.RepositoryId
-                                                route.StoragePoolId
+                                                storagePoolId
                                                 referenceId
                                                 directoryVersionDto.DirectoryVersion
                                                 this.correlationId
@@ -489,6 +510,10 @@ module Reference =
                         referenceDto
                         |> ReferenceDto.UpdateDto referenceEvent
 
+                    match tryGetSaveStoragePoolIdFromCreatedEvent referenceEvent with
+                    | Some storagePoolId -> saveStoragePoolId <- Some storagePoolId
+                    | None -> ()
+
                     // Publish the event to the rest of the world.
                     let graceEvent = GraceEvent.ReferenceEvent referenceEvent
                     do! publishGraceEvent graceEvent referenceEvent.Metadata
@@ -520,6 +545,7 @@ module Reference =
                                             DirectoryVersionId = referenceDto.DirectoryId
                                             Sha256Hash = referenceDto.Sha256Hash
                                             Blake3Hash = referenceDto.Blake3Hash
+                                            StoragePoolId = saveStoragePoolId
                                             DeleteReason = $"Save: automatic deletion after {repositoryDto.SaveDays} days"
                                             CorrelationId = correlationId
                                         }
@@ -544,6 +570,7 @@ module Reference =
                                             DirectoryVersionId = referenceDto.DirectoryId
                                             Sha256Hash = referenceDto.Sha256Hash
                                             Blake3Hash = referenceDto.Blake3Hash
+                                            StoragePoolId = None
                                             DeleteReason = $"Checkpoint: automatic deletion after {repositoryDto.CheckpointDays} days"
                                             CorrelationId = correlationId
                                         }
@@ -659,7 +686,7 @@ module Reference =
                     let applySaveManifestBoundary referenceId organizationId repositoryId directoryId referenceType =
                         task {
                             if referenceType <> ReferenceType.Save then
-                                return Ok()
+                                return Ok None
                             else
                                 let directoryVersionActorProxy = DirectoryVersion.CreateActorProxy directoryId repositoryId metadata.CorrelationId
                                 let! directoryVersionDto = directoryVersionActorProxy.Get metadata.CorrelationId
@@ -677,7 +704,10 @@ module Reference =
                                             metadata.CorrelationId
                                         with
                                     | Error graceError -> return Error graceError
-                                    | Ok plans -> return! applyManifestContributionBoundary plans metadata
+                                    | Ok plans ->
+                                        match! applyManifestContributionBoundary plans metadata with
+                                        | Ok () -> return Ok(Some route.StoragePoolId)
+                                        | Error graceError -> return Error graceError
                         }
 
                     let applySaveExpiryManifestBoundary referenceId organizationId repositoryId directoryId referenceType =
@@ -687,15 +717,14 @@ module Reference =
                             else
                                 let directoryVersionActorProxy = DirectoryVersion.CreateActorProxy directoryId repositoryId metadata.CorrelationId
                                 let! directoryVersionDto = directoryVersionActorProxy.Get metadata.CorrelationId
-                                let! route = resolveStorageRoute organizationId repositoryId
 
-                                match route with
+                                match requireSaveStoragePoolId metadata.CorrelationId referenceId saveStoragePoolId with
                                 | Error graceError -> return Error graceError
-                                | Ok route ->
+                                | Ok storagePoolId ->
                                     match
                                         planManifestSaveExpiryBoundary
                                             repositoryId
-                                            route.StoragePoolId
+                                            storagePoolId
                                             referenceId
                                             directoryVersionDto.DirectoryVersion
                                             metadata.CorrelationId
@@ -737,7 +766,11 @@ module Reference =
                                     match! validateRootDirectoryVersionHashes repositoryId directoryId sha256Hash blake3Hash with
                                     | Ok () ->
                                         match! applySaveManifestBoundary referenceId organizationId repositoryId directoryId referenceType with
-                                        | Ok () ->
+                                        | Ok storagePoolId ->
+                                            match storagePoolId with
+                                            | Some storagePoolId -> metadata.Properties[ SaveStoragePoolIdMetadataKey ] <- $"{storagePoolId}"
+                                            | None -> ()
+
                                             return
                                                 Ok(
                                                     Created(
@@ -789,6 +822,7 @@ module Reference =
                                             DirectoryVersionId = referenceDto.DirectoryId
                                             Sha256Hash = referenceDto.Sha256Hash
                                             Blake3Hash = referenceDto.Blake3Hash
+                                            StoragePoolId = saveStoragePoolId
                                             DeleteReason = deleteReason
                                             CorrelationId = metadata.CorrelationId
                                         }

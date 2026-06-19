@@ -310,10 +310,16 @@ module Services =
     queryRequestOptions.PopulateIndexMetrics <- true
 #endif
 
+    let internal storageContainerNameForRepository (repositoryDto: RepositoryDto) =
+        if String.IsNullOrWhiteSpace repositoryDto.StorageContainerName then
+            $"{repositoryDto.RepositoryId}"
+        else
+            repositoryDto.StorageContainerName
+
     /// Gets an Azure Blob Storage container client for the container that holds the object files for the given repository.
     let getContainerClient (repositoryDto: RepositoryDto) correlationId =
         task {
-            let containerName = $"{repositoryDto.RepositoryId}"
+            let containerName = storageContainerNameForRepository repositoryDto
             let key = $"Con:{repositoryDto.StorageAccountName}-{containerName}"
 
             let! blobContainerClient =

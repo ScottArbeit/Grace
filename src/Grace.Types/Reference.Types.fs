@@ -19,6 +19,7 @@ module Reference =
             DirectoryVersionId: DirectoryVersionId
             Sha256Hash: Sha256Hash
             Blake3Hash: Blake3Hash
+            StoragePoolId: StoragePoolId option
             DeleteReason: DeleteReason
             CorrelationId: CorrelationId
         }

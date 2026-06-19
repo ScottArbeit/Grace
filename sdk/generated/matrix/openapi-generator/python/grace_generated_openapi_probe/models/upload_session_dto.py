@@ -41,6 +41,7 @@ class UploadSessionDto(BaseModel):
     owner_id: UUID = Field(alias="OwnerId")
     organization_id: UUID = Field(alias="OrganizationId")
     repository_id: UUID = Field(alias="RepositoryId")
+    storage_pool_id: StrictStr = Field(description="StoragePool-wide CAS scope identifier.", alias="StoragePoolId")
     authorized_scope: StrictStr = Field(alias="AuthorizedScope")
     file_content_hash: Annotated[str, Field(strict=True)] = Field(description="Lowercase 64-character BLAKE3 hash of the complete unencoded file bytes.", alias="FileContentHash")
     expected_size: StrictInt = Field(alias="ExpectedSize")
@@ -57,7 +58,7 @@ class UploadSessionDto(BaseModel):
     cleanup_reminder_scheduled_at: datetime = Field(alias="CleanupReminderScheduledAt")
     cleanup_reminder_operation_id: StrictStr = Field(description="Caller-supplied idempotency key for one upload-session operation.", alias="CleanupReminderOperationId")
     last_operation_id: StrictStr = Field(description="Caller-supplied idempotency key for one upload-session operation.", alias="LastOperationId")
-    __properties: ClassVar[List[str]] = ["Class", "UploadSessionId", "OwnerId", "OrganizationId", "RepositoryId", "AuthorizedScope", "FileContentHash", "ExpectedSize", "ChunkingSuiteId", "SamplingPolicySnapshot", "LifecycleState", "StartedAt", "CompletedAt", "FinalizedManifestAddress", "BlockUploadIntents", "ConfirmedBlockUploads", "DedupeDiscovery", "ClaimedReuseRanges", "CleanupReminderScheduledAt", "CleanupReminderOperationId", "LastOperationId"]
+    __properties: ClassVar[List[str]] = ["Class", "UploadSessionId", "OwnerId", "OrganizationId", "RepositoryId", "StoragePoolId", "AuthorizedScope", "FileContentHash", "ExpectedSize", "ChunkingSuiteId", "SamplingPolicySnapshot", "LifecycleState", "StartedAt", "CompletedAt", "FinalizedManifestAddress", "BlockUploadIntents", "ConfirmedBlockUploads", "DedupeDiscovery", "ClaimedReuseRanges", "CleanupReminderScheduledAt", "CleanupReminderOperationId", "LastOperationId"]
 
     @field_validator('var_class')
     def var_class_validate_enum(cls, value):
@@ -166,6 +167,7 @@ class UploadSessionDto(BaseModel):
             "OwnerId": obj.get("OwnerId"),
             "OrganizationId": obj.get("OrganizationId"),
             "RepositoryId": obj.get("RepositoryId"),
+            "StoragePoolId": obj.get("StoragePoolId"),
             "AuthorizedScope": obj.get("AuthorizedScope"),
             "FileContentHash": obj.get("FileContentHash"),
             "ExpectedSize": obj.get("ExpectedSize"),
