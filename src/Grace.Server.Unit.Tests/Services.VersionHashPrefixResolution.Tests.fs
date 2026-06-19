@@ -291,3 +291,29 @@ type ServicesVersionHashPrefixResolutionTests() =
         match resolution with
         | Services.UniqueMatch actual -> Assert.That(actual.ReferenceId, Is.EqualTo(blake3Only.ReferenceId))
         | _ -> Assert.Fail($"Expected BLAKE3-only match, got {resolution}.")
+
+    [<Test>]
+    member _.PairedHashResolutionFiltersAmbiguousBlake3PrefixBySha256Prefix() =
+        let expected = candidate 1 repositoryId (Guid.NewGuid()) uniqueSha256 uniqueBlake3
+        let sameBlake3Prefix = candidate 2 repositoryId (Guid.NewGuid()) ambiguousSha256 ambiguousBlake3
+
+        let resolution =
+            [ expected; sameBlake3Prefix ]
+            |> Services.resolveScopedVersionHashPrefixes uniqueSha256 (fun candidate -> candidate.Sha256Hash) "ba5e" (fun candidate -> candidate.Blake3Hash)
+
+        match resolution with
+        | Services.UniqueMatch actual -> Assert.That(actual.DirectoryVersionId, Is.EqualTo(expected.DirectoryVersionId))
+        | _ -> Assert.Fail($"Expected paired hashes to select the SHA-matching BLAKE3 candidate, got {resolution}.")
+
+    [<Test>]
+    member _.PairedHashResolutionKeepsAmbiguityWhenBothPrefixesMatchMultipleVersions() =
+        let first = candidate 1 repositoryId (Guid.NewGuid()) uniqueSha256 uniqueBlake3
+        let second = candidate 2 repositoryId (Guid.NewGuid()) uniqueSha256 ambiguousBlake3
+
+        let resolution =
+            [ first; second ]
+            |> Services.resolveScopedVersionHashPrefixes uniqueSha256 (fun candidate -> candidate.Sha256Hash) "ba5e" (fun candidate -> candidate.Blake3Hash)
+
+        match resolution with
+        | Services.AmbiguousMatches matches -> Assert.That(matches, Has.Length.EqualTo(2))
+        | _ -> Assert.Fail($"Expected paired hashes to preserve true ambiguity, got {resolution}.")
