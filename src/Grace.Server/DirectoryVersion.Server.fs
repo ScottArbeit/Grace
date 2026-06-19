@@ -278,33 +278,65 @@ module DirectoryVersion =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let graceIds = getGraceIds context
+                let correlationId = getCorrelationId context
 
-                let validations (parameters: GetBySha256HashParameters) =
-                    [|
-                        Guid.isValidAndNotEmptyGuid $"{parameters.DirectoryVersionId}" DirectoryVersionError.InvalidDirectoryVersionId
-                        Guid.isValidAndNotEmptyGuid $"{parameters.RepositoryId}" DirectoryVersionError.InvalidRepositoryId
-                        String.isNotEmpty parameters.Sha256Hash DirectoryVersionError.Sha256HashIsRequired
-                        Repository.repositoryIdExists
-                            graceIds.OrganizationId
-                            $"{parameters.RepositoryId}"
-                            parameters.CorrelationId
-                            DirectoryVersionError.RepositoryDoesNotExist
-                    |]
+                try
+                    let! parameters = context |> parse<GetBySha256HashParameters>
 
-                let query (context: HttpContext) (maxCount: int) (actorProxy: IDirectoryVersionActor) =
-                    task {
-                        let parameters = context.Items[nameof GetBySha256HashParameters] :?> GetBySha256HashParameters
+                    let validations =
+                        [|
+                            Guid.isValidAndNotEmptyGuid $"{parameters.DirectoryVersionId}" DirectoryVersionError.InvalidDirectoryVersionId
+                            Guid.isValidAndNotEmptyGuid $"{parameters.RepositoryId}" DirectoryVersionError.InvalidRepositoryId
+                            String.isNotEmpty parameters.Sha256Hash DirectoryVersionError.Sha256HashIsRequired
+                            Repository.repositoryIdExists
+                                graceIds.OrganizationId
+                                $"{parameters.RepositoryId}"
+                                parameters.CorrelationId
+                                DirectoryVersionError.RepositoryDoesNotExist
+                        |]
 
-                        match!
-                            getDirectoryVersionBySha256Hash (Guid.Parse(parameters.RepositoryId)) (Sha256Hash parameters.Sha256Hash) (getCorrelationId context)
-                            with
-                        | Some directoryVersion -> return directoryVersion
-                        | None -> return DirectoryVersion.Default
-                    }
+                    let! validationsPassed = validations |> allPass
 
-                let! parameters = context |> parse<GetBySha256HashParameters>
-                context.Items[ nameof GetBySha256HashParameters ] <- parameters
-                return! processQuery context parameters validations 1 query
+                    if validationsPassed then
+                        let! resolution =
+                            getDirectoryVersionResolutionBySha256Hash (Guid.Parse(parameters.RepositoryId)) (Sha256Hash parameters.Sha256Hash) correlationId
+
+                        match resolution with
+                        | NoMatches ->
+                            let graceReturnValue = GraceReturnValue.Create DirectoryVersion.Default correlationId
+
+                            graceReturnValue.Properties[ nameof OwnerId ] <- graceIds.OwnerId
+                            graceReturnValue.Properties[ nameof OrganizationId ] <- graceIds.OrganizationId
+                            graceReturnValue.Properties[ nameof RepositoryId ] <- graceIds.RepositoryId
+                            graceReturnValue.Properties[ nameof BranchId ] <- graceIds.BranchId
+
+                            return! context |> result200Ok graceReturnValue
+                        | UniqueMatch directoryVersion ->
+                            let graceReturnValue = GraceReturnValue.Create directoryVersion correlationId
+
+                            graceReturnValue.Properties[ nameof OwnerId ] <- graceIds.OwnerId
+                            graceReturnValue.Properties[ nameof OrganizationId ] <- graceIds.OrganizationId
+                            graceReturnValue.Properties[ nameof RepositoryId ] <- graceIds.RepositoryId
+                            graceReturnValue.Properties[ nameof BranchId ] <- graceIds.BranchId
+
+                            return! context |> result200Ok graceReturnValue
+                        | AmbiguousMatches _ ->
+                            let graceError =
+                                GraceError.Create $"The supplied SHA-256 hash prefix '{parameters.Sha256Hash}' is ambiguous in repository scope." correlationId
+
+                            graceError.Properties.Add("Path", context.Request.Path.Value)
+                            return! context |> result400BadRequest graceError
+                    else
+                        let! error = validations |> getFirstError
+                        let graceError = GraceError.Create (DirectoryVersionError.getErrorMessage error) correlationId
+
+                        graceError.Properties.Add("Path", context.Request.Path.Value)
+                        return! context |> result400BadRequest graceError
+                with
+                | ex ->
+                    return!
+                        context
+                        |> result500ServerError (GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" correlationId)
             }
 
     let private addGraceIds (context: HttpContext) (graceReturnValue: GraceReturnValue<'T>) =

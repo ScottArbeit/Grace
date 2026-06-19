@@ -1181,6 +1181,38 @@ type BranchServer() =
         }
 
     [<Test>]
+    member _.SaveWithAmbiguousBlake3PrefixAndMatchingShaCreatesReferenceForPairedRoot() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let branchId = repositoryDefaultBranchIds[0]
+            let! parentBranch = BranchServerTestHelpers.getBranchAsync repositoryId branchId
+            let! branch = BranchServerTestHelpers.createBranchAsync repositoryId parentBranch $"PairedHashSave{Guid.NewGuid():N}"
+
+            let firstChild, firstRoot, secondChild, secondRoot, sharedPrefix =
+                BranchServerTestHelpers.createSameBlake3PrefixRootPair repositoryId $"paired-hash-save/{Guid.NewGuid():N}"
+
+            do!
+                BranchServerTestHelpers.saveDirectoryVersionsAsync
+                    repositoryId
+                    [
+                        firstChild
+                        firstRoot
+                        secondChild
+                        secondRoot
+                    ]
+
+            let! response = BranchServerTestHelpers.saveReferenceByShaAndBlake3ResponseAsync repositoryId branch firstRoot.Sha256Hash (Blake3Hash sharedPrefix)
+
+            let! body = response.Content.ReadAsStringAsync()
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK), body)
+
+            let! afterBranch = BranchServerTestHelpers.getBranchAsync repositoryId $"{branch.BranchId}"
+            Assert.That(afterBranch.LatestSave.DirectoryId, Is.EqualTo(firstRoot.DirectoryVersionId))
+            Assert.That(afterBranch.LatestSave.Sha256Hash, Is.EqualTo(firstRoot.Sha256Hash))
+            Assert.That(afterBranch.LatestSave.Blake3Hash, Is.EqualTo(firstRoot.Blake3Hash))
+        }
+
+    [<Test>]
     member _.SaveWithShaOnlyChildDirectoryPrefixDoesNotCreateRootReference() =
         task {
             let repositoryId = repositoryIds[0]
@@ -1325,6 +1357,55 @@ type BranchServer() =
                     .ReturnValue
 
             Assert.That(directoryIds, Is.Empty)
+        }
+
+    [<Test>]
+    member _.HashReadQueriesUseShaToDisambiguateSharedBlake3RootPrefix() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let branchId = repositoryDefaultBranchIds[0]
+            let! parentBranch = BranchServerTestHelpers.getBranchAsync repositoryId branchId
+
+            let firstChild, firstRoot, secondChild, secondRoot, sharedPrefix =
+                BranchServerTestHelpers.createSameBlake3PrefixRootPair repositoryId $"read-paired-hash/{Guid.NewGuid():N}"
+
+            do!
+                BranchServerTestHelpers.saveDirectoryVersionsAsync
+                    repositoryId
+                    [
+                        firstChild
+                        firstRoot
+                        secondChild
+                        secondRoot
+                    ]
+
+            let! listContentsResponse =
+                BranchServerTestHelpers.listContentsByShaAndBlake3HashResponseAsync repositoryId parentBranch firstRoot.Sha256Hash (Blake3Hash sharedPrefix)
+
+            let! listContentsBody = listContentsResponse.Content.ReadAsStringAsync()
+            Assert.That(listContentsResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), listContentsBody)
+
+            let listContents =
+                (deserialize<GraceReturnValue<DirectoryVersion.DirectoryVersionDto array>> listContentsBody)
+                    .ReturnValue
+
+            Assert.That(
+                listContents
+                |> Array.exists (fun directoryVersionDto -> directoryVersionDto.DirectoryVersion.DirectoryVersionId = firstRoot.DirectoryVersionId),
+                Is.True
+            )
+
+            let! getVersionResponse =
+                BranchServerTestHelpers.getVersionByShaAndBlake3HashResponseAsync repositoryId parentBranch firstRoot.Sha256Hash (Blake3Hash sharedPrefix)
+
+            let! getVersionBody = getVersionResponse.Content.ReadAsStringAsync()
+            Assert.That(getVersionResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), getVersionBody)
+
+            let directoryIds =
+                (deserialize<GraceReturnValue<Guid array>> getVersionBody)
+                    .ReturnValue
+
+            Assert.That(directoryIds, Does.Contain(firstRoot.DirectoryVersionId))
         }
 
     [<Test>]
