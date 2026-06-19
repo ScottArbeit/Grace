@@ -745,10 +745,23 @@ type UploadSessionActorTests() =
                 Assert.That(merge.Ranges, Has.Length.EqualTo(1))
                 Assert.That(merge.Ranges[0].OrdinalStart, Is.EqualTo(0))
                 Assert.That(merge.Ranges[0].OrdinalCount, Is.EqualTo(1))
+                Assert.That(merge.Ranges[0].ActiveManifestCount, Is.EqualTo(1))
             | _ -> Assert.Fail("Expected uploaded block finalization to create ContentBlockMetadata MergePhysicalRanges commands.")
 
         assertMerge commands[0] firstBlock.Address $"cas/content-blocks/{firstBlock.Address}"
         assertMerge commands[1] secondBlock.Address $"cas/content-blocks/{secondBlock.Address}"
+
+    [<Test>]
+    member _.FinalizedUploadRangesIncrementExistingActiveManifestCount() =
+        let ranges =
+            [|
+                { OrdinalStart = 0; OrdinalCount = 1; ActiveManifestCount = 2; PhysicalOffset = 0L; PhysicalLength = 11L }
+            |]
+
+        let activeRanges = UploadSessionActor.activeRangesForFinalizedManifest ranges
+
+        Assert.That(activeRanges[0].ActiveManifestCount, Is.EqualTo(3))
+        Assert.That(ranges[0].ActiveManifestCount, Is.EqualTo(2))
 
     [<Test>]
     member _.FinalizeManifestFromClaimedReuseRangeValidatesReconstructionAndFinalizes() =

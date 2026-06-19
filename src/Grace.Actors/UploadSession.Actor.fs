@@ -329,6 +329,10 @@ module UploadSession =
 
         addresses
 
+    let activeRangesForFinalizedManifest (ranges: ContentBlockMetadataRange array) =
+        ranges
+        |> Array.map (fun range -> { range with ActiveManifestCount = range.ActiveManifestCount + 1 })
+
     let createContentBlockMetadataMergeCommandsForFinalizedUploads storagePoolId finalizeOperationId (session: UploadSessionDto) (manifest: FileManifest) =
         let manifestAddresses = manifestBlockAddresses manifest
         let commands = ResizeArray<ContentBlockMetadataCommand>()
@@ -345,7 +349,7 @@ module UploadSession =
                             ContentBlockAddress = confirmedBlock.ContentBlockAddress
                             BlockFormatVersion = 1s
                             StoragePlacement = confirmedBlock.StoragePlacement
-                            Ranges = confirmedBlock.Ranges
+                            Ranges = activeRangesForFinalizedManifest confirmedBlock.Ranges
                         }
                 )
 
