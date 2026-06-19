@@ -36,6 +36,66 @@ open Grace.Actors.Extensions
 
 module Diff =
 
+    type private VersionHashIdentity = { Sha256Hash: Sha256Hash; Blake3Hash: Blake3Hash }
+
+    /// Gets a Dictionary for indexed lookups by relative path.
+    let private getLookupCache (graceIndex: ServerGraceIndex) =
+        let lookupCache = Dictionary<FileSystemEntryType * RelativePath, VersionHashIdentity>()
+
+        for directoryVersion in graceIndex.Values do
+            // Add the directory to the lookup cache.
+            lookupCache.TryAdd(
+                (FileSystemEntryType.Directory, directoryVersion.RelativePath),
+                { Sha256Hash = directoryVersion.Sha256Hash; Blake3Hash = directoryVersion.Blake3Hash }
+            )
+            |> ignore
+            // Add each file to the lookup cache.
+            for file in directoryVersion.Files do
+                lookupCache.TryAdd((FileSystemEntryType.File, file.RelativePath), { Sha256Hash = file.Sha256Hash; Blake3Hash = file.Blake3Hash })
+                |> ignore
+
+        lookupCache
+
+    /// Scans two ServerGraceIndex instances for differences.
+    let internal scanForDifferences (newerGraceIndex: ServerGraceIndex) (olderGraceIndex: ServerGraceIndex) =
+        task {
+            let differences = List<FileSystemDifference>()
+
+            // Create indexed lookup tables of entry path -> paired version-hash identity.
+            let olderLookupCache = getLookupCache olderGraceIndex
+            let newerLookupCache = getLookupCache newerGraceIndex
+
+            // Compare them for differences.
+            for kvp in olderLookupCache do
+                let ((fileSystemEntryType, relativePath), versionIdentity) = kvp.Deconstruct()
+                // Find the entries that changed
+                if
+                    newerLookupCache.ContainsKey((fileSystemEntryType, relativePath))
+                    && versionIdentity
+                       <> newerLookupCache.Item((fileSystemEntryType, relativePath))
+                then
+                    differences.Add(FileSystemDifference.Create Change fileSystemEntryType relativePath)
+
+                // Find the entries that were deleted
+                elif
+                    not
+                    <| newerLookupCache.ContainsKey((fileSystemEntryType, relativePath))
+                then
+                    differences.Add(FileSystemDifference.Create Delete fileSystemEntryType relativePath)
+
+            // Find the entries that were added
+            for kvp in newerLookupCache do
+                let ((fileSystemEntryType, relativePath), _) = kvp.Deconstruct()
+
+                if
+                    not
+                    <| olderLookupCache.ContainsKey((fileSystemEntryType, relativePath))
+                then
+                    differences.Add(FileSystemDifference.Create Add fileSystemEntryType relativePath)
+
+            return differences
+        }
+
     type DiffActor([<PersistentState(StateName.Diff, Constants.GraceDiffStorage)>] state: IPersistentState<DiffDto>) =
         inherit Grain()
 
@@ -44,62 +104,6 @@ module Diff =
         let log = loggerFactory.CreateLogger("Diff.Actor")
 
         let mutable diffDto: DiffDto = DiffDto.Default
-
-        /// Gets a Dictionary for indexed lookups by relative path.
-        let getLookupCache (graceIndex: ServerGraceIndex) =
-            let lookupCache = Dictionary<FileSystemEntryType * RelativePath, Sha256Hash>()
-
-            for directoryVersion in graceIndex.Values do
-                // Add the directory to the lookup cache.
-                lookupCache.TryAdd((FileSystemEntryType.Directory, directoryVersion.RelativePath), directoryVersion.Sha256Hash)
-                |> ignore
-                // Add each file to the lookup cache.
-                for file in directoryVersion.Files do
-                    lookupCache.TryAdd((FileSystemEntryType.File, file.RelativePath), file.Sha256Hash)
-                    |> ignore
-
-            lookupCache
-
-        /// Scans two ServerGraceIndex instances for differences.
-        let scanForDifferences (newerGraceIndex: ServerGraceIndex) (olderGraceIndex: ServerGraceIndex) =
-            task {
-                let emptyLookup = KeyValuePair(String.Empty, Sha256Hash String.Empty)
-                let differences = List<FileSystemDifference>()
-
-                // Create an indexed lookup table of path -> lastWriteTimeUtc from the Grace index file.
-                let olderLookupCache = getLookupCache olderGraceIndex
-                let newerLookupCache = getLookupCache newerGraceIndex
-
-                // Compare them for differences.
-                for kvp in olderLookupCache do
-                    let ((fileSystemEntryType, relativePath), sha256Hash) = kvp.Deconstruct()
-                    // Find the entries that changed
-                    if
-                        newerLookupCache.ContainsKey((fileSystemEntryType, relativePath))
-                        && sha256Hash
-                           <> newerLookupCache.Item((fileSystemEntryType, relativePath))
-                    then
-                        differences.Add(FileSystemDifference.Create Change fileSystemEntryType relativePath)
-
-                    // Find the entries that were deleted
-                    elif
-                        not
-                        <| newerLookupCache.ContainsKey((fileSystemEntryType, relativePath))
-                    then
-                        differences.Add(FileSystemDifference.Create Delete fileSystemEntryType relativePath)
-
-                // Find the entries that were added
-                for kvp in newerLookupCache do
-                    let ((fileSystemEntryType, relativePath), sha256Hash) = kvp.Deconstruct()
-
-                    if
-                        not
-                        <| olderLookupCache.ContainsKey((fileSystemEntryType, relativePath))
-                    then
-                        differences.Add(FileSystemDifference.Create Add fileSystemEntryType relativePath)
-
-                return differences
-            }
 
         /// Deconstructs a Diff actor primary key from the current compact format or the legacy D-format key.
         let deconstructActorId (primaryKey: string) = ActorProxy.Diff.ParsePrimaryKey primaryKey
