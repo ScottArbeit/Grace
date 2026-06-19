@@ -72,7 +72,7 @@ type StorageAuthorizationResourcesTests() =
     [<Test>]
     member _.ContentBlockUploadHonorsExplicitAuthorizedScope() =
         let parameters = Storage.GetContentBlockUploadUriParameters()
-        parameters.ContentBlockAddress <- "sha256-explicit"
+        parameters.ContentBlockAddress <- "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         parameters.AuthorizedScope <- "manifest/file.bin"
 
         let resource = StorageAuthorizationResources.contentBlockUploadResource ownerId organizationId repositoryId parameters
@@ -82,21 +82,21 @@ type StorageAuthorizationResourcesTests() =
     [<Test>]
     member _.ContentBlockUploadFallsBackToContentBlockObjectKeyWhenScopeIsBlank() =
         let parameters = Storage.GetContentBlockUploadUriParameters()
-        parameters.ContentBlockAddress <- "sha256-blank-scope"
+        parameters.ContentBlockAddress <- "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
         parameters.AuthorizedScope <- "   "
 
         let resource = StorageAuthorizationResources.contentBlockUploadResource ownerId organizationId repositoryId parameters
 
-        assertPathResource (StorageKeys.contentBlockObjectKey "sha256-blank-scope") resource
+        assertPathResource (StorageKeys.contentBlockObjectKey "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb") resource
 
     [<Test>]
     member _.ContentBlockDownloadUsesContentBlockObjectKey() =
         let parameters = Storage.GetContentBlockDownloadUriParameters()
-        parameters.ContentBlockAddress <- "sha256-download"
+        parameters.ContentBlockAddress <- "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
 
         let resource = StorageAuthorizationResources.contentBlockDownloadResource ownerId organizationId repositoryId parameters
 
-        assertPathResource (StorageKeys.contentBlockObjectKey "sha256-download") resource
+        assertPathResource (StorageKeys.contentBlockObjectKey "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc") resource
 
     [<Test>]
     member _.UploadSessionStorageUsesAuthorizedScope() =
