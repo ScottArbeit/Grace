@@ -111,6 +111,21 @@ module DirectoryVersionServerTestHelpers =
 
         parameters
 
+    let createSameSha256PrefixDirectoryPair repositoryId pathPrefix =
+        let candidates =
+            [|
+                for index in 0..512 -> createDirectoryVersion (Guid.NewGuid()) repositoryId (RelativePath $"/{pathPrefix}/{index}/") []
+            |]
+
+        candidates
+        |> Array.groupBy (fun directoryVersion ->
+            (string directoryVersion.Sha256Hash)
+                .Substring(0, 2))
+        |> Array.tryPick (fun (sharedPrefix, matches) -> if matches.Length >= 2 then Some(matches[0], matches[1], sharedPrefix) else None)
+        |> function
+            | Some pair -> pair
+            | None -> failwith "Could not generate same-prefix SHA-256 directory versions for directory route tests."
+
     let assertOk (response: HttpResponseMessage) =
         task {
             let! body = response.Content.ReadAsStringAsync()
@@ -244,6 +259,31 @@ type DirectoryVersionServer() =
             Assert.That(getBySha.ReturnValue.DirectoryVersionId, Is.EqualTo(DirectoryVersion.Default.DirectoryVersionId))
             Assert.That(getBySha.ReturnValue.Sha256Hash, Is.EqualTo(DirectoryVersion.Default.Sha256Hash))
             Assert.That(getBySha.ReturnValue.Blake3Hash, Is.EqualTo(DirectoryVersion.Default.Blake3Hash))
+        }
+
+    [<Test>]
+    member _.GetByShaRejectsAmbiguousPrefixInsteadOfReturningDefaultSentinel() =
+        task {
+            let repositoryId = repositoryIds[0]
+
+            let first, second, sharedPrefix =
+                DirectoryVersionServerTestHelpers.createSameSha256PrefixDirectoryPair repositoryId $"ambiguous-directory-sha/{Guid.NewGuid():N}"
+
+            let! saveResponse =
+                Client.PostAsync(
+                    "/directory/saveDirectoryVersions",
+                    createJsonContent (DirectoryVersionServerTestHelpers.saveParameters repositoryId [ first; second ])
+                )
+
+            do! DirectoryVersionServerTestHelpers.assertOk saveResponse
+
+            let getByShaParameters = DirectoryVersionServerTestHelpers.getBySha256HashParameters repositoryId first.DirectoryVersionId (Sha256Hash sharedPrefix)
+
+            let! getByShaResponse = Client.PostAsync("/directory/getBySha256Hash", createJsonContent getByShaParameters)
+            let! getByShaBody = getByShaResponse.Content.ReadAsStringAsync()
+
+            Assert.That(getByShaResponse.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), getByShaBody)
+            Assert.That((deserialize<GraceError> getByShaBody).Error, Does.Contain("ambiguous"))
         }
 
     [<Test>]

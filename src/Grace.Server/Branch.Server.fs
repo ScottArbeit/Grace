@@ -625,13 +625,7 @@ module Branch =
                 not (String.IsNullOrEmpty(string blake3Hash))
                 && not (String.IsNullOrEmpty(string sha256Hash))
             then
-                match! getRootDirectoryVersionByBlake3Hash repositoryId blake3Hash correlationId with
-                | Some directoryVersion when
-                    (string directoryVersion.Sha256Hash)
-                        .StartsWith(string sha256Hash, StringComparison.OrdinalIgnoreCase)
-                    ->
-                    return Some directoryVersion
-                | _ -> return None
+                return! getRootDirectoryVersionByHashQuery repositoryId sha256Hash blake3Hash correlationId
             elif not (String.IsNullOrEmpty(string blake3Hash)) then
                 return! getRootDirectoryVersionByBlake3Hash repositoryId blake3Hash correlationId
             elif not (String.IsNullOrEmpty(string sha256Hash)) then
@@ -641,46 +635,10 @@ module Branch =
         }
 
     let private tryResolveRootDirectoryVersionForHashQuery repositoryId sha256Hash blake3Hash correlationId =
-        task {
-            if
-                not (String.IsNullOrEmpty(string blake3Hash))
-                && not (String.IsNullOrEmpty(string sha256Hash))
-            then
-                match! getRootDirectoryVersionByBlake3Hash repositoryId blake3Hash correlationId with
-                | Some directoryVersion when
-                    (string directoryVersion.Sha256Hash)
-                        .StartsWith(string sha256Hash, StringComparison.OrdinalIgnoreCase)
-                    ->
-                    return Some directoryVersion
-                | _ -> return None
-            elif not (String.IsNullOrEmpty(string blake3Hash)) then
-                return! getRootDirectoryVersionByBlake3Hash repositoryId blake3Hash correlationId
-            elif not (String.IsNullOrEmpty(string sha256Hash)) then
-                return! getRootDirectoryVersionBySha256Hash repositoryId sha256Hash correlationId
-            else
-                return None
-        }
+        task { return! getRootDirectoryVersionByHashQuery repositoryId sha256Hash blake3Hash correlationId }
 
     let private tryResolveDirectoryVersionForHashQuery repositoryId sha256Hash blake3Hash correlationId =
-        task {
-            if
-                not (String.IsNullOrEmpty(string blake3Hash))
-                && not (String.IsNullOrEmpty(string sha256Hash))
-            then
-                match! Services.getDirectoryVersionByBlake3Hash repositoryId blake3Hash correlationId with
-                | Some directoryVersion when
-                    (string directoryVersion.Sha256Hash)
-                        .StartsWith(string sha256Hash, StringComparison.OrdinalIgnoreCase)
-                    ->
-                    return Some directoryVersion
-                | _ -> return None
-            elif not (String.IsNullOrEmpty(string blake3Hash)) then
-                return! Services.getDirectoryVersionByBlake3Hash repositoryId blake3Hash correlationId
-            elif not (String.IsNullOrEmpty(string sha256Hash)) then
-                return! Services.getDirectoryVersionBySha256Hash repositoryId sha256Hash correlationId
-            else
-                return None
-        }
+        task { return! Services.getDirectoryVersionByHashQuery repositoryId sha256Hash blake3Hash correlationId }
 
     let private referenceCommandFromRoot
         (createCommand: DirectoryVersionId * Sha256Hash * Blake3Hash * ReferenceText -> BranchCommand)
@@ -2525,7 +2483,7 @@ module Branch =
                 let! latestReference = getLatestReference branchDto.RepositoryId branchDto.BranchId
 
                 match latestReference with
-                | Some referenceDto -> return! getRootDirectoryVersionBySha256Hash repositoryId referenceDto.Sha256Hash correlationId
+                | Some referenceDto -> return! getRootDirectoryVersionByReferenceId repositoryId referenceDto.ReferenceId correlationId
                 | None -> return None
         }
 
