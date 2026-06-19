@@ -330,7 +330,7 @@ try {
         Write-Section "Build"
         Write-Host "Build properties: " -ForegroundColor Green -NoNewline
        $graceBuildProperties | ForEach-Object {
-            Write-Host "$_ ; " -ForegroundColor DarkYellow -NoNewline
+            Write-Host "$_; " -ForegroundColor DarkYellow -NoNewline
         }
         Write-Host ""
         Invoke-External "Grace solution build" { dotnet build "src/Grace.slnx" -c $Configuration @graceBuildProperties }

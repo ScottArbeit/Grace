@@ -56,7 +56,7 @@ module Utilities =
 
     let pooledObjectPolicy = StringBuilderPooledObjectPolicy()
 
-    /// An ObjectPool that can be used to efficiently get StringBuilder instances.
+    /// An ObjectPool that provides StringBuilder instances efficiently.
     let stringBuilderPool = ObjectPool.Create<StringBuilder>(pooledObjectPolicy)
 
     /// Gets the current instant.

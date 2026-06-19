@@ -683,7 +683,7 @@ try {
     Write-Step "Grace.Server is already healthy; skipping AppHost startup." "Green"
   } else {
     $staleProcesses = Get-DebugLocalDotnetProcesses -ProjectPath $resolvedProjectPath -LaunchProfile $LaunchProfile
-    if ($staleProcesses.Count -gt 0) {
+    if ($staleProcesses) {
       Write-Step "Detected $($staleProcesses.Count) stale DebugLocal AppHost process(es); cleaning up before startup." "Yellow"
       foreach ($staleProcess in $staleProcesses) {
         Write-Detail "Stale process PID $($staleProcess.ProcessId): $($staleProcess.CommandLine)" "Yellow"

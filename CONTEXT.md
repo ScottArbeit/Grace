@@ -201,6 +201,82 @@ The registered identity Grace Cache uses for configured prefetch subscriptions. 
 itself authorize serving cached chunks to arbitrary callers.
 _Avoid_: Global chunk reader, mirror credential
 
+**Authorization Scope**:
+A node in Grace's authorization hierarchy where RoleAssignments can be granted, such as System, Owner, Organization,
+Repository, or Branch. Repository-contained objects inherit access through an Authorization Scope instead of becoming
+separate scopes, and a DirectoryVersion is repository-contained rather than its own Authorization Scope.
+_Avoid_: Account, entity ACL, object owner
+
+**Role Inheritance**:
+The downward application of RoleAssignments from an ancestor Authorization Scope to its descendants. Role Inheritance is
+additive: a narrower-scope assignment can add effective permissions, but it does not subtract inherited permissions.
+_Avoid_: Permission copy, cascading ACL rows, down-scope deny
+
+**Effective Permission**:
+The permission Grace derives for a principal by combining matching RoleAssignments across the target Authorization Scope
+and its ancestors, plus any applicable path permissions. Effective Permission describes the current authorization
+answer, not a stored role assignment. Effective Permission names use full scope names, such as OrganizationWrite or
+RepositoryRead, rather than abbreviations; SystemOperate is the system-level support operation permission.
+_Avoid_: Direct permission, computed role, owner flag, Org permission, Repo permission
+
+**Scope Role**:
+A named authorization role granted at an Authorization Scope. Scope Role names use full scope names, such as
+OrganizationAdmin or RepositoryContributor, rather than abbreviations; Admin remains the canonical administrative
+suffix. Contributor is the write-level suffix for Owner, Organization, and Repository scopes; Writer is the write-level
+suffix for Branch.
+_Avoid_: Org role, Repo role, short role ID, Administrator suffix
+
+**Administrative Scope Role**:
+A Scope Role that grants administrative Effective Permissions at its scope and descendant scopes, including
+authorization-management authority. Write-level and reader Scope Roles are not Administrative Scope Roles.
+_Avoid_: Local-only admin, grant-only role, contributor administrator
+
+**SystemOperator**:
+A system-scope support role with system-wide write and administrative Effective Permissions for operating Grace while
+excluding SystemAdmin-level authority. SystemOperator can administer descendant scopes but cannot manage system-scope
+identity, authorization, bootstrap, or security policy; SystemOperate is its system-level permission.
+_Avoid_: Owner creator only, support superuser, hidden SystemAdmin, system identity administrator
+
+**SystemReader**:
+A system-scope support role with system-wide read Effective Permissions and no write or administrative Effective
+Permissions. SystemReader is the role name; SystemRead is the permission name.
+_Avoid_: SystemRead role, read-only admin, support operator
+
+**Write-Level Scope Role**:
+A Scope Role that grants read/write Effective Permissions at its scope and covered descendant scopes without granting
+admin Effective Permissions. OwnerContributor, OrganizationContributor, RepositoryContributor, and BranchWriter are
+write-level roles.
+_Avoid_: Contributor admin, implicit administrator, write admin
+
+**Scope Creator Admin Grant**:
+The RoleAssignment Grace creates when a new Authorization Scope would otherwise leave the authenticated creator without
+the matching Effective Permission. A Scope Creator Admin Grant is not duplicated when Role Inheritance already gives the
+creator admin rights to the new scope, and it belongs to the creator's User principal rather than the credential or
+group used to authenticate. It is not added when the requested Authorization Scope already exists.
+_Avoid_: Created-by privilege, implicit ownership, redundant child grant, creator bypass, token-owned grant, group
+promotion, existing-scope repair
+
+**Scope Creation Authorization**:
+The authorization rule for creating Authorization Scopes. Creating a child Authorization Scope requires admin or write
+Effective Permission on the containing parent scope, while creating a top-level Owner requires system administrative or
+system operate Effective Permission. Commands that create repository-contained or branch-contained objects are not Scope
+Creation Authorization even when their route names include `create`; creating a Branch Authorization Scope is scope
+creation, but creating a Branch Reference is not.
+_Avoid_: Self-appointed child admin, create-anywhere permission, child-scope bootstrap, create-route authorization,
+reference creation, directory-version creation
+
+**Scope Creation Success**:
+The completed outcome of creating an Authorization Scope where the new scope exists and the authenticated creator has
+matching administrative Effective Permission. A response that leaves the creator without that permission is not Scope
+Creation Success.
+_Avoid_: Stranded scope, partial create, success without admin
+
+**Non-Scope Creation**:
+The creation of an object contained by an Authorization Scope rather than a new Authorization Scope. Non-Scope Creation
+requires the containing scope's relevant write or administrative Effective Permission and does not create a Scope Creator
+Admin Grant.
+_Avoid_: Scope bootstrap, implicit admin grant, contained scope creation
+
 **Cache Mode**:
 The operating posture for Grace Cache. CI Cache Mode serves controlled build infrastructure, while User Cache Mode
 serves normal Grace clients; both modes use ContentAccessGrants for per-call validation.
@@ -229,6 +305,36 @@ _Avoid_: Shared hosted pool
 A provider-owned StoragePool that can serve multiple Organizations while keeping logical billing and authorization
 scoped per Repository or Organization.
 _Avoid_: Organization-owned pool, visible cross-tenant dedupe
+
+**UsageFact**:
+An immutable measurement or declaration of Grace resource usage for one accounting-relevant occurrence. A UsageFact is
+the raw source material for customer usage aggregates and operator cost reconciliation.
+_Avoid_: UsageEvent, UsageOperation, raw ledger entry
+
+**UsageFactId**:
+The stable identity Grace uses to recognize one UsageFact across retries, replay, and ingestion. A UsageFactId is the
+UsageFact uniqueness identity, while a CorrelationId provides request or workflow lineage.
+_Avoid_: CorrelationId-as-usage-id, usage operation id, retry counter
+
+**Customer Usage Ledger**:
+The customer-visible record of Grace usage counts and proof derived from UsageFacts and repository reference state.
+Customer Usage Ledger entries describe Grace usage, not provider invoices or Grace's supplier costs.
+_Avoid_: Azure cost report, customer invoice line source, provider billing ledger
+
+**Operator Cost Ledger**:
+The internal Grace record that reconciles provider costs and resource usage with Grace usage. The Operator Cost Ledger
+supports margin, anomaly, and capacity analysis and is not customer-facing proof.
+_Avoid_: Customer usage proof, customer-visible Azure bill, repository invoice ledger
+
+**Charge Ledger**:
+The record of Grace pricing policy applied to Customer Usage Ledger counts. The Charge Ledger contains billable Grace
+charges, not raw provider cost, physical dedupe savings, or unpriced usage facts.
+_Avoid_: Pricing policy, raw usage ledger, operator cost ledger
+
+**Repository Storage**:
+The customer-facing usage category for storage consumed by a Repository's logical retained content. Repository Storage
+can include active and recoverable deleted content according to Grace retention policy.
+_Avoid_: Blob storage, physical dedupe storage, soft-deleted storage line item
 
 **StorageShard**:
 A physical storage resource inside a StoragePool, such as an Azure Storage account/container or S3 bucket/prefix group.
