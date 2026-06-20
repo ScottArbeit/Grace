@@ -327,6 +327,34 @@ type DedupeIndexServerTests() =
         | Error error -> Assert.That(error.Error, Does.Contain("pool-wide shard configuration"))
 
     [<Test>]
+    member _.FinalizeManifestUploadStorageRouteUsesRecordedPoolAfterRepositoryStorageSettingsDrift() =
+        let repository = { repositoryWithStoragePool repositoryId Constants.DefaultStoragePoolId with StorageAccountName = "repository-specific-account" }
+
+        match Storage.resolveFinalizeManifestUploadStorageRoute "corr-finalize-route-drift" Constants.DefaultStoragePoolId repository with
+        | Ok route ->
+            Assert.That(route.RepositoryId, Is.EqualTo(repositoryId))
+            Assert.That(route.StoragePoolId, Is.EqualTo(StoragePoolId Constants.DefaultStoragePoolId))
+            Assert.That(route.StorageShard.StorageAccountName, Is.EqualTo(Constants.DefaultCasStorageAccountName))
+            Assert.That(route.StorageShard.StorageContainerName, Is.EqualTo(Constants.DefaultCasStorageContainerName))
+        | Error error -> Assert.Fail($"Expected finalization to route through the session-recorded StoragePoolId after repository drift, got {error.Error}.")
+
+    [<Test>]
+    member _.FinalizeManifestUploadStorageRouteFailsClosedForInvalidRecordedPool() =
+        let repository = repositoryWithStoragePool repositoryId Constants.DefaultStoragePoolId
+
+        match Storage.resolveFinalizeManifestUploadStorageRoute "corr-finalize-route-invalid" (StoragePoolId "pool-not-configured") repository with
+        | Ok route -> Assert.Fail($"Expected unconfigured finalization StoragePoolId to fail closed, got {route.StoragePoolId}.")
+        | Error error -> Assert.That(error.Error, Does.Contain("not configured"))
+
+    [<Test>]
+    member _.FinalizeManifestUploadStorageRouteFailsClosedForBlankRecordedPool() =
+        let repository = repositoryWithStoragePool repositoryId Constants.DefaultStoragePoolId
+
+        match Storage.resolveFinalizeManifestUploadStorageRoute "corr-finalize-route-blank" (StoragePoolId String.Empty) repository with
+        | Ok route -> Assert.Fail($"Expected blank finalization StoragePoolId to fail closed, got {route.StoragePoolId}.")
+        | Error error -> Assert.That(error.Error, Does.Contain("non-empty recorded StoragePoolId"))
+
+    [<Test>]
     member _.RepositoryStorageRouteFailsClosedForDeletedRepository() =
         let repository = { repositoryWithStoragePool repositoryId Constants.DefaultStoragePoolId with RepositoryStatus = RepositoryStatus.Deleted }
 

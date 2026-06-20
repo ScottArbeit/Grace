@@ -101,6 +101,9 @@ module Storage =
     let private resolveRepositoryStorageRouteForPool correlationId storagePoolId repositoryDto =
         DedupeIndex.resolveRepositoryStorageRouteForPool correlationId storagePoolId repositoryDto
 
+    let internal resolveFinalizeManifestUploadStorageRoute correlationId storagePoolId repositoryDto =
+        DedupeIndex.resolveStoredManifestStorageRouteWithDefaults correlationId storagePoolId repositoryDto
+
     let internal resolveContentBlockDownloadStorageRoute correlationId (repositoryDto: RepositoryDto) (parameters: GetContentBlockDownloadUriParameters) =
         if
             not (isNull (box parameters.Manifest))
@@ -459,7 +462,7 @@ module Storage =
                 match validateFinalizeBlockPayloadContract correlationId parameters.BlockPayloads with
                 | Error error -> return Error error
                 | Ok () ->
-                    match resolveRepositoryStorageRouteForPool correlationId storagePoolId repositoryDto with
+                    match resolveFinalizeManifestUploadStorageRoute correlationId storagePoolId repositoryDto with
                     | Error routeError -> return Error routeError
                     | Ok route ->
                         let confirmedBlockUploads =
