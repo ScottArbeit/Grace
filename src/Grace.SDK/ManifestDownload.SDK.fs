@@ -61,9 +61,10 @@ module ManifestDownload =
         parameters.AuthorizedScope <- request.FileVersion.RelativePath
         parameters.ContentBlockAddress <- contentBlockAddress
 
-        parameters.Manifest <-
+        parameters.ManifestAddress <-
             request.FileVersion.ContentReference.Manifest
-            |> Option.defaultValue FileManifest.Default
+            |> Option.map (fun manifest -> manifest.ManifestAddress)
+            |> Option.defaultValue String.Empty
 
         parameters
 
