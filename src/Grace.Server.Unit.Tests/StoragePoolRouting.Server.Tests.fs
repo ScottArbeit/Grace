@@ -65,17 +65,17 @@ type StoragePoolRoutingServerTests() =
             Assert.That(error.CorrelationId, Is.EqualTo("corr-missing-pool"))
 
     [<Test>]
-    member _.RepositoryDerivedBridgeNoLongerUsesRepositoryIdAsStoragePoolId() =
+    member _.RepositoryDerivedBridgeRemainsRepositoryScopedUntilContentBlockPlacementUsesStoragePoolShard() =
         let firstRepositoryId = Guid.Parse("55555555-5555-5555-5555-555555555555")
         let secondRepositoryId = Guid.Parse("66666666-6666-6666-6666-666666666666")
 
         let firstPool = DedupeIndex.storagePoolIdForRepositoryId firstRepositoryId
         let secondPool = DedupeIndex.storagePoolIdForRepositoryId secondRepositoryId
 
-        Assert.That(firstPool, Is.EqualTo(StoragePoolRouting.defaultStoragePoolId))
-        Assert.That(secondPool, Is.EqualTo(firstPool))
-        Assert.That(firstPool, Is.Not.EqualTo(StoragePoolId $"{firstRepositoryId}"))
-        Assert.That(secondPool, Is.Not.EqualTo(StoragePoolId $"{secondRepositoryId}"))
+        Assert.That(firstPool, Is.EqualTo(StoragePoolId $"{firstRepositoryId}"))
+        Assert.That(secondPool, Is.EqualTo(StoragePoolId $"{secondRepositoryId}"))
+        Assert.That(firstPool, Is.Not.EqualTo(secondPool))
+        Assert.That(firstPool, Is.Not.EqualTo(StoragePoolRouting.defaultStoragePoolId))
 
     [<Test>]
     member _.RepositoryCreationKeepsWholeFileStorageContainerRepositoryScoped() =

@@ -76,12 +76,18 @@ module DedupeIndex =
             IsAuthoritative = false
         }
 
-    let storagePoolIdForRepositoryId (_repositoryId: RepositoryId) = StoragePoolRouting.defaultStoragePoolId
+    let storagePoolIdForRepositoryId (repositoryId: RepositoryId) = StoragePoolId $"{repositoryId}"
 
     let storagePoolIdForRepository (repositoryDto: RepositoryDto) =
-        match StoragePoolRouting.resolveRepositoryRoute repositoryDto String.Empty with
-        | Ok route -> route.StoragePoolId
-        | Error error -> invalidOp error.Error
+        if isNull (box repositoryDto) then
+            invalidOp "Repository state is required before resolving a StoragePool route."
+        elif String.IsNullOrWhiteSpace repositoryDto.StoragePoolId then
+            invalidOp "Repository StoragePoolId is not configured."
+        elif repositoryDto.StoragePoolId
+             <> StoragePoolRouting.defaultStoragePoolId then
+            invalidOp $"StoragePoolId '{repositoryDto.StoragePoolId}' is not configured. StoragePool routing fails closed."
+        else
+            storagePoolIdForRepositoryId repositoryDto.RepositoryId
 
     let private protectChunkAddress (storagePoolId: StoragePoolId) (chunkAddress: ChunkAddress) =
         let preimage = $"grace.dedupe-index.v1.protected-window\n{storagePoolId}\n{chunkAddress}"
