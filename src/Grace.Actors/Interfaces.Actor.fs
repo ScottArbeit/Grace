@@ -623,6 +623,18 @@ module Interfaces =
         /// Returns the current dedupe index snapshot for bounded discovery.
         abstract member Snapshot: correlationId: CorrelationId -> Task<DedupeIndex.DedupeIndexRecord array>
 
+        /// Returns the current dedupe index state for server-side authorization gates.
+        abstract member SnapshotState: correlationId: CorrelationId -> Task<DedupeIndex.DedupeIndexState>
+
+        /// Returns finalized metadata for one scoped manifest/block authorization lookup without snapshotting the full index.
+        abstract member TryGetFinalizedScopedContentBlockMetadata:
+            storagePoolId: StoragePoolId *
+            authorizedScope: string *
+            manifestAddress: ManifestAddress *
+            contentBlockAddress: ContentBlockAddress *
+            correlationId: CorrelationId ->
+                Task<ContentBlockMetadata option>
+
     /// Defines the operations for the UploadSession actor.
     [<Interface>]
     type IUploadSessionActor =

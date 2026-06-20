@@ -65,6 +65,9 @@ GetContentBlockUploadUriParameters:
     - $ref: '#/StorageParameters'
   type: object
   properties:
+    UploadSessionId:
+      type: string
+      format: uuid
     ContentBlockAddress:
       $ref: '#/ContentBlockAddress'
     AuthorizedScope:
@@ -76,8 +79,12 @@ GetContentBlockDownloadUriParameters:
     - $ref: '#/StorageParameters'
   type: object
   properties:
+    AuthorizedScope:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/RelativePath'
     ContentBlockAddress:
       $ref: '#/ContentBlockAddress'
+    ManifestAddress:
+      $ref: '#/ManifestAddress'
 
 DiscoverContentBlocksParameters:
   description: >-
@@ -837,12 +844,18 @@ ContentBlockStoragePlacement:
   description: Object-storage placement metadata for a confirmed ContentBlock payload.
   type: object
   properties:
+    StorageAccountName:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/StorageAccountName'
+    StorageContainerName:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/StorageContainerName'
     ObjectKey:
       type: string
     ETag:
       type: string
       nullable: true
   required:
+    - StorageAccountName
+    - StorageContainerName
     - ObjectKey
 
 FinalizeManifestBlockPayload:

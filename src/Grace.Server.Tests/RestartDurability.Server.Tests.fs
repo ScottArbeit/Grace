@@ -31,6 +31,37 @@ module private RestartDurabilityHelpers =
             return body
         }
 
+    let contentBlockPlacementFromUri (blobUriWithSasToken: Uri) eTag =
+        let pathSegments =
+            blobUriWithSasToken
+                .AbsolutePath
+                .Trim('/')
+                .Split([| '/' |], StringSplitOptions.RemoveEmptyEntries)
+            |> Array.map Uri.UnescapeDataString
+
+        let isPathStyleAzurite =
+            blobUriWithSasToken.Host.Equals("localhost", StringComparison.OrdinalIgnoreCase)
+            || IPAddress.TryParse(blobUriWithSasToken.Host)
+               |> fst
+
+        let accountName =
+            if isPathStyleAzurite && pathSegments.Length >= 3 then
+                pathSegments[0]
+            else
+                let host = blobUriWithSasToken.Host
+                let firstDot = host.IndexOf('.')
+
+                if firstDot > 0 then host.Substring(0, firstDot) else host
+
+        let containerIndex = if isPathStyleAzurite then 1 else 0
+
+        {
+            StorageAccountName = accountName
+            StorageContainerName = StorageContainerName pathSegments[containerIndex]
+            ObjectKey = String.Join("/", pathSegments |> Array.skip (containerIndex + 1))
+            ETag = eTag
+        }
+
     let getSharedHostState () =
         match App with
         | Some app ->
@@ -223,6 +254,7 @@ module private RestartDurabilityHelpers =
 
             let uploadUriParameters = Parameters.Storage.GetContentBlockUploadUriParameters()
             setStorageParameters uploadUriParameters repositoryId correlationId
+            uploadUriParameters.UploadSessionId <- sessionId
             uploadUriParameters.ContentBlockAddress <- block.Address
             uploadUriParameters.AuthorizedScope <- "/"
 
@@ -230,7 +262,8 @@ module private RestartDurabilityHelpers =
             let! uploadUriBody = requireOkAsync uploadUriResponse
             Assert.That(uploadUriResponse.Content.Headers.ContentType, Is.Null)
 
-            let! uploadETag = uploadContentBlockWithSasAsync block.Payload (Uri uploadUriBody)
+            let uploadUri = Uri uploadUriBody
+            let! uploadETag = uploadContentBlockWithSasAsync block.Payload uploadUri
 
             let confirm = Parameters.Storage.ConfirmContentBlockUploadParameters()
             setStorageParameters confirm repositoryId correlationId
@@ -239,7 +272,7 @@ module private RestartDurabilityHelpers =
             confirm.OperationId <- "confirm-0"
             confirm.ContentBlockAddress <- block.Address
             confirm.Payload <- block.Payload
-            confirm.StoragePlacement <- { ObjectKey = StorageKeys.contentBlockObjectKey block.Address; ETag = Some uploadETag }
+            confirm.StoragePlacement <- contentBlockPlacementFromUri uploadUri (Some uploadETag)
 
             let! confirmResult = postUploadSessionDecisionAsync "/storage/confirmContentBlockUpload" confirm
             Assert.That(confirmResult.ReturnValue.Session.ConfirmedBlockUploads.Length, Is.EqualTo(1))

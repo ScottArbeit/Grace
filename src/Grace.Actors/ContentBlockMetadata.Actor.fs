@@ -90,6 +90,10 @@ module ContentBlockMetadata =
     let private validateStoragePlacement correlationId (placement: ContentBlockStoragePlacement) =
         if isNull (box placement) then
             Some(graceError correlationId "StoragePlacement is required.")
+        elif String.IsNullOrWhiteSpace placement.StorageAccountName then
+            Some(graceError correlationId "StoragePlacement.StorageAccountName is required.")
+        elif String.IsNullOrWhiteSpace placement.StorageContainerName then
+            Some(graceError correlationId "StoragePlacement.StorageContainerName is required.")
         elif String.IsNullOrWhiteSpace placement.ObjectKey then
             Some(graceError correlationId "StoragePlacement.ObjectKey is required.")
         else
@@ -98,6 +102,10 @@ module ContentBlockMetadata =
     let private validateExistingStoragePlacement correlationId (placement: ContentBlockStoragePlacement) =
         if isNull (box placement) then
             Some(graceError correlationId "Existing StoragePlacement is required.")
+        elif String.IsNullOrWhiteSpace placement.StorageAccountName then
+            Some(graceError correlationId "Existing StoragePlacement.StorageAccountName is required.")
+        elif String.IsNullOrWhiteSpace placement.StorageContainerName then
+            Some(graceError correlationId "Existing StoragePlacement.StorageContainerName is required.")
         elif String.IsNullOrWhiteSpace placement.ObjectKey then
             Some(graceError correlationId "Existing StoragePlacement.ObjectKey is required.")
         else
@@ -308,6 +316,24 @@ module ContentBlockMetadata =
                     |> Option.get
                 )
             | Some existing when
+                existing.StoragePlacement.StorageAccountName
+                <> merge.StoragePlacement.StorageAccountName
+                ->
+                Error(
+                    graceError
+                        correlationId
+                        $"ContentBlockMetadata StoragePlacement.StorageAccountName mismatch. Existing {existing.StoragePlacement.StorageAccountName}, requested {merge.StoragePlacement.StorageAccountName}."
+                )
+            | Some existing when
+                existing.StoragePlacement.StorageContainerName
+                <> merge.StoragePlacement.StorageContainerName
+                ->
+                Error(
+                    graceError
+                        correlationId
+                        $"ContentBlockMetadata StoragePlacement.StorageContainerName mismatch. Existing {existing.StoragePlacement.StorageContainerName}, requested {merge.StoragePlacement.StorageContainerName}."
+                )
+            | Some existing when
                 existing.StoragePlacement.ObjectKey
                 <> merge.StoragePlacement.ObjectKey
                 ->
@@ -379,31 +405,34 @@ module ContentBlockMetadata =
                 match validateMetadata eventMetadata.CorrelationId replace.Metadata with
                 | Some error -> Error error
                 | None ->
-                    match current.Metadata, replace.ExpectedMetadataVersion with
-                    | None, Some expectedVersion ->
-                        Error(graceError eventMetadata.CorrelationId $"ContentBlockMetadata does not exist; expected MetadataVersion {expectedVersion}.")
-                    | Some _, None ->
-                        Error(graceError eventMetadata.CorrelationId "ExpectedMetadataVersion is required when replacing existing ContentBlockMetadata.")
-                    | Some existing, Some expectedVersion when existing.MetadataVersion <> expectedVersion ->
-                        Error(
-                            graceError
-                                eventMetadata.CorrelationId
-                                $"Stale ContentBlockMetadata update rejected. Expected MetadataVersion {expectedVersion}, current MetadataVersion {existing.MetadataVersion}."
-                        )
-                    | currentState, _ ->
-                        let nextVersion =
-                            currentState
-                            |> Option.map (fun metadata -> metadata.MetadataVersion + 1L)
-                            |> Option.defaultValue 1L
+                    match validateStoragePlacement eventMetadata.CorrelationId replace.Metadata.StoragePlacement with
+                    | Some error -> Error error
+                    | None ->
+                        match current.Metadata, replace.ExpectedMetadataVersion with
+                        | None, Some expectedVersion ->
+                            Error(graceError eventMetadata.CorrelationId $"ContentBlockMetadata does not exist; expected MetadataVersion {expectedVersion}.")
+                        | Some _, None ->
+                            Error(graceError eventMetadata.CorrelationId "ExpectedMetadataVersion is required when replacing existing ContentBlockMetadata.")
+                        | Some existing, Some expectedVersion when existing.MetadataVersion <> expectedVersion ->
+                            Error(
+                                graceError
+                                    eventMetadata.CorrelationId
+                                    $"Stale ContentBlockMetadata update rejected. Expected MetadataVersion {expectedVersion}, current MetadataVersion {existing.MetadataVersion}."
+                            )
+                        | currentState, _ ->
+                            let nextVersion =
+                                currentState
+                                |> Option.map (fun metadata -> metadata.MetadataVersion + 1L)
+                                |> Option.defaultValue 1L
 
-                        let metadata = stampMetadata replace.Metadata nextVersion eventMetadata.Timestamp
+                            let metadata = stampMetadata replace.Metadata nextVersion eventMetadata.Timestamp
 
-                        let events =
-                            [
-                                { Event = ContentBlockMetadataEventType.WholeRecordReplaced(operationId, metadata); Metadata = eventMetadata }
-                            ]
+                            let events =
+                                [
+                                    { Event = ContentBlockMetadataEventType.WholeRecordReplaced(operationId, metadata); Metadata = eventMetadata }
+                                ]
 
-                        okDecision metadata operationId events false "ContentBlockMetadata whole record replaced."
+                            okDecision metadata operationId events false "ContentBlockMetadata whole record replaced."
             | ContentBlockMetadataCommand.MergePhysicalRanges merge ->
                 match createMergedMetadata eventMetadata.CorrelationId current.Metadata merge eventMetadata.Timestamp with
                 | Error error -> Error error

@@ -1,6 +1,7 @@
 namespace Grace.Server.UnitTests
 
 open Grace.Shared
+open Grace.Types.ContentBlockMetadata
 open Grace.Types.Common
 open Grace.Types.Repository
 open NUnit.Framework
@@ -8,6 +9,8 @@ open System
 
 [<Parallelizable(ParallelScope.All)>]
 type StoragePoolRoutingServerTests() =
+
+    do Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.DebugEnvironment, "Local")
 
     let repositoryWithId repositoryId =
         { RepositoryDto.Default with
@@ -22,8 +25,6 @@ type StoragePoolRoutingServerTests() =
 
     [<Test>]
     member _.DefaultRepositoriesResolveToSharedConfiguredPoolAndShard() =
-        Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.DebugEnvironment, "Local")
-
         let firstRepository = repositoryWithId (Guid.Parse("11111111-1111-1111-1111-111111111111"))
         let secondRepository = repositoryWithId (Guid.Parse("22222222-2222-2222-2222-222222222222"))
 
@@ -63,6 +64,104 @@ type StoragePoolRoutingServerTests() =
         | Error error ->
             Assert.That(error.Error, Does.Contain("StoragePoolId 'pool-a' is not configured."))
             Assert.That(error.CorrelationId, Is.EqualTo("corr-missing-pool"))
+
+    [<Test>]
+    member _.ShardPlacementUsesSelectedAccountContainerAndPrefix() =
+        let shard: StoragePoolRouting.StorageShard =
+            { StorageAccountName = "cas-shard-a"; StorageContainerName = StorageContainerName "cas-a"; ObjectKeyPrefix = "/pool-a/" }
+
+        let placement = StoragePoolRouting.storagePlacementForObjectKey shard "blocks/aa" (Some "etag-a")
+
+        Assert.That(placement.StorageAccountName, Is.EqualTo("cas-shard-a"))
+        Assert.That(placement.StorageContainerName, Is.EqualTo(StorageContainerName "cas-a"))
+        Assert.That(placement.ObjectKey, Is.EqualTo("pool-a/blocks/aa"))
+        Assert.That(placement.ETag, Is.EqualTo(Some "etag-a"))
+
+    [<Test>]
+    member _.SameObjectKeyInTwoStoragePoolsHasDistinctPlacementEvidence() =
+        let objectKey = "blocks/same-address"
+
+        let first =
+            StoragePoolRouting.storagePlacementForObjectKey
+                { StorageAccountName = "cas-shard-a"; StorageContainerName = StorageContainerName "cas-a"; ObjectKeyPrefix = "pool-a" }
+                objectKey
+                None
+
+        let second =
+            StoragePoolRouting.storagePlacementForObjectKey
+                { StorageAccountName = "cas-shard-b"; StorageContainerName = StorageContainerName "cas-b"; ObjectKeyPrefix = "pool-b" }
+                objectKey
+                None
+
+        Assert.That(first.ObjectKey.EndsWith(objectKey, StringComparison.Ordinal), Is.True)
+        Assert.That(second.ObjectKey.EndsWith(objectKey, StringComparison.Ordinal), Is.True)
+        Assert.That(first, Is.Not.EqualTo(second))
+
+    [<Test>]
+    member _.MissingShardContainerFailsClosed() =
+        let shard: StoragePoolRouting.StorageShard =
+            { StorageAccountName = "cas-shard-a"; StorageContainerName = StorageContainerName " "; ObjectKeyPrefix = String.Empty }
+
+        match StoragePoolRouting.validateShard "corr-missing-shard-container" shard with
+        | Ok () -> Assert.Fail("Expected missing shard container to fail closed.")
+        | Error error ->
+            Assert.That(error.Error, Is.EqualTo("StorageShard.StorageContainerName is required."))
+            Assert.That(error.CorrelationId, Is.EqualTo("corr-missing-shard-container"))
+
+    [<Test>]
+    member _.SameAccountSharedKeyShardCanBeSigned() =
+        let shard: StoragePoolRouting.StorageShard =
+            {
+                StorageAccountName = AzureEnvironment.storageEndpoints.AccountName
+                StorageContainerName = StorageContainerName "cas-a"
+                ObjectKeyPrefix = String.Empty
+            }
+
+        match StoragePoolRouting.validateShardForSharedKeySas "corr-same-account-shared-key" shard with
+        | Ok () -> Assert.Pass()
+        | Error error -> Assert.Fail($"Expected same-account shared-key shard to be accepted, got {error.Error}.")
+
+    [<Test>]
+    member _.CrossAccountSharedKeyShardFailsBeforeSasMinting() =
+        let shard: StoragePoolRouting.StorageShard =
+            {
+                StorageAccountName = $"{AzureEnvironment.storageEndpoints.AccountName}-other"
+                StorageContainerName = StorageContainerName "cas-a"
+                ObjectKeyPrefix = String.Empty
+            }
+
+        match StoragePoolRouting.validateShardForSharedKeySas "corr-cross-account-shared-key" shard with
+        | Ok () -> Assert.Fail("Expected cross-account shared-key shard to fail before SAS minting.")
+        | Error error ->
+            Assert.That(error.Error, Does.Contain("cannot be signed with the configured shared-key account"))
+            Assert.That(error.CorrelationId, Is.EqualTo("corr-cross-account-shared-key"))
+
+    [<Test>]
+    member _.ManagedIdentityCasUserDelegationSasUsesSelectedShardAccountName() =
+        let route: StoragePoolRouting.StoragePoolRoute =
+            {
+                RepositoryId = Guid.Parse("99999999-1111-2222-3333-444444444444")
+                StoragePoolId = StoragePoolId "pool-custom-cname"
+                Shard =
+                    { StorageAccountName = "cas-shard-authority"; StorageContainerName = StorageContainerName "cas-a"; ObjectKeyPrefix = "pool-custom-cname" }
+            }
+
+        let signingAccount = Grace.Actors.Services.casUserDelegationSasSigningAccountName route
+
+        Assert.That(signingAccount, Is.EqualTo(route.Shard.StorageAccountName))
+        Assert.That(signingAccount, Is.Not.EqualTo(AzureEnvironment.storageEndpoints.AccountName))
+
+    [<Test>]
+    member _.ShardBlobHostReplacementPreservesPrivateLinkSuffix() =
+        let host = Grace.Actors.Services.shardBlobHostForConfiguredHost "cas-shard-private" "primaryacct.privatelink.blob.core.windows.net"
+
+        Assert.That(host, Is.EqualTo("cas-shard-private.privatelink.blob.core.windows.net"))
+
+    [<Test>]
+    member _.ShardBlobHostReplacementPreservesStandardBlobSuffix() =
+        let host = Grace.Actors.Services.shardBlobHostForConfiguredHost "cas-shard-standard" "primaryacct.blob.core.windows.net"
+
+        Assert.That(host, Is.EqualTo("cas-shard-standard.blob.core.windows.net"))
 
     [<Test>]
     member _.RepositoryDerivedBridgeRemainsRepositoryScopedUntilContentBlockPlacementUsesStoragePoolShard() =

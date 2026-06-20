@@ -148,6 +148,10 @@ module UploadSession =
     let private validateStoragePlacement correlationId (placement: ContentBlockStoragePlacement) =
         if isNull (box placement) then
             Some(graceError correlationId "StoragePlacement is required.")
+        elif String.IsNullOrWhiteSpace placement.StorageAccountName then
+            Some(graceError correlationId "StoragePlacement.StorageAccountName is required.")
+        elif String.IsNullOrWhiteSpace placement.StorageContainerName then
+            Some(graceError correlationId "StoragePlacement.StorageContainerName is required.")
         elif String.IsNullOrWhiteSpace placement.ObjectKey then
             Some(graceError correlationId "StoragePlacement.ObjectKey is required.")
         else
@@ -752,11 +756,14 @@ module UploadSession =
 
                         match decideCommand state.State uploadSessionDto command metadata with
                         | Ok decision ->
-                            if not decision.Events.IsEmpty then do! this.ApplyEvents decision.Events
+                            match! deleteUploadSessionStagingPayloads uploadSessionDto metadata.CorrelationId with
+                            | Error error -> return Error error
+                            | Ok _ ->
+                                if not decision.Events.IsEmpty then do! this.ApplyEvents decision.Events
 
-                            do! this.CompactPhysicalStateEvents()
-                            this.DeactivateOnIdle()
-                            return Ok()
+                                do! this.CompactPhysicalStateEvents()
+                                this.DeactivateOnIdle()
+                                return Ok()
                         | Error error -> return Error error
                     | reminderType, reminderState ->
                         return

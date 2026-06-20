@@ -1,8 +1,10 @@
 namespace Grace.Server
 
+open Azure
 open Azure.Core
 open Azure.Storage.Blobs
 open Azure.Storage.Blobs.Models
+open Azure.Storage.Blobs.Specialized
 open Azure.Storage.Sas
 open Giraffe
 open Grace.Actors
@@ -17,6 +19,7 @@ open Grace.Shared.Utilities
 open Grace.Shared
 open Grace.Shared.Client.Configuration
 open Grace.Shared.Validation.Errors
+open Grace.Types.ContentBlockMetadata
 open Grace.Types.UploadSession
 open Grace.Types.Repository
 open Grace.Types.Common
@@ -28,6 +31,7 @@ open System.Collections.Generic
 open System.Linq
 open System.Threading.Tasks
 open System.IO
+open System.Net
 open System.Text
 open Azure.Storage
 open System.Diagnostics
@@ -61,13 +65,209 @@ module Storage =
 
     let private getContentBlockObjectKey (contentBlockAddress: ContentBlockAddress) = StorageKeys.contentBlockObjectKey contentBlockAddress
 
+    let private appendShardEvidenceFragment (storageAccountName: StorageAccountName) (uri: Uri) =
+        let builder = UriBuilder(uri)
+        builder.Fragment <- $"graceStorageAccount={Uri.EscapeDataString(storageAccountName)}"
+        builder.Uri
+
     let private invalidContentBlockAddressError correlationId =
         GraceError.Create "ContentBlockAddress must be a 64-character hexadecimal BLAKE3 value." correlationId
+
+    let private invalidManifestAddressError correlationId =
+        GraceError.Create "ManifestAddress must be a 64-character lowercase hexadecimal BLAKE3 value." correlationId
 
     let private validateContentBlockAddress correlationId (contentBlockAddress: ContentBlockAddress) =
         match ContentAddress.tryNormalizeBlake3Address contentBlockAddress with
         | Some _ -> Ok()
         | None -> Error(invalidContentBlockAddressError correlationId)
+
+    let private validateManifestAddress correlationId (manifestAddress: ManifestAddress) =
+        if ContentAddress.isValidAddress manifestAddress then
+            Ok()
+        else
+            Error(invalidManifestAddressError correlationId)
+
+    let private expectedContentBlockStoragePlacement (route: StoragePoolRouting.StoragePoolRoute) (contentBlockAddress: ContentBlockAddress) eTag =
+        StoragePoolRouting.storagePlacementForObjectKey route.Shard (getContentBlockObjectKey contentBlockAddress) eTag
+
+    let private expectedContentBlockStagingPlacement
+        (route: StoragePoolRouting.StoragePoolRoute)
+        (repositoryId: RepositoryId)
+        (uploadSessionId: UploadSessionId)
+        (contentBlockAddress: ContentBlockAddress)
+        eTag
+        =
+        getContentBlockStagingPlacement route repositoryId uploadSessionId contentBlockAddress eTag
+
+    let private validateContentBlockStagingPlacementForRoute
+        correlationId
+        (route: StoragePoolRouting.StoragePoolRoute)
+        (repositoryId: RepositoryId)
+        (uploadSessionId: UploadSessionId)
+        (contentBlockAddress: ContentBlockAddress)
+        (placement: ContentBlockStoragePlacement)
+        =
+        if isNull (box placement) then
+            Error(GraceError.Create "StoragePlacement is required." correlationId)
+        else
+            let expected = expectedContentBlockStagingPlacement route repositoryId uploadSessionId contentBlockAddress placement.ETag
+
+            if placement.StorageAccountName
+               <> expected.StorageAccountName then
+                Error(
+                    GraceError.Create
+                        $"StoragePlacement.StorageAccountName must match the selected staging shard. Expected {expected.StorageAccountName}, actual {placement.StorageAccountName}."
+                        correlationId
+                )
+            elif placement.StorageContainerName
+                 <> expected.StorageContainerName then
+                Error(
+                    GraceError.Create
+                        $"StoragePlacement.StorageContainerName must match the selected staging shard. Expected {expected.StorageContainerName}, actual {placement.StorageContainerName}."
+                        correlationId
+                )
+            elif placement.ObjectKey <> expected.ObjectKey then
+                Error(
+                    GraceError.Create
+                        $"StoragePlacement.ObjectKey must match the selected staging shard. Expected {expected.ObjectKey}, actual {placement.ObjectKey}."
+                        correlationId
+                )
+            else
+                Ok()
+
+    let private contentBlockPayloadValidationError contentBlockAddress error correlationId =
+        GraceError.Create $"ContentBlock payload for {contentBlockAddress} is invalid: {error}." correlationId
+
+    let private validateContentBlockPayload contentBlockAddress (payload: byte array) correlationId =
+        if isNull payload then
+            Error(GraceError.Create "ContentBlock payload is required." correlationId)
+        elif payload.LongLength = 0L then
+            Error(GraceError.Create "ContentBlock payload must not be empty." correlationId)
+        else
+            match ContentBlockFormat.decode payload with
+            | Error error -> Error(contentBlockPayloadValidationError contentBlockAddress error correlationId)
+            | Ok decodedBlock ->
+                match ContentBlockFormat.validateAddress contentBlockAddress decodedBlock with
+                | Error error -> Error(contentBlockPayloadValidationError contentBlockAddress error correlationId)
+                | Ok () -> Ok()
+
+    let private decodeContentBlockPayload contentBlockAddress (payload: byte array) correlationId =
+        match ContentBlockFormat.decode payload with
+        | Error error -> Error(contentBlockPayloadValidationError contentBlockAddress error correlationId)
+        | Ok decodedBlock ->
+            match ContentBlockFormat.validateAddress contentBlockAddress decodedBlock with
+            | Error error -> Error(contentBlockPayloadValidationError contentBlockAddress error correlationId)
+            | Ok () -> Ok decodedBlock
+
+    let private contentBlockPayloadsAreEquivalent (expected: ContentBlockFormat.DecodedContentBlock) (actual: ContentBlockFormat.DecodedContentBlock) =
+        expected.Address = actual.Address
+        && expected.Payload.SequenceEqual(actual.Payload)
+        && expected.Chunks.Length = actual.Chunks.Length
+        && Array.forall2
+            (fun (expectedChunk: ContentBlockFormat.ContentBlockChunk) (actualChunk: ContentBlockFormat.ContentBlockChunk) ->
+                expectedChunk.LogicalOffset = actualChunk.LogicalOffset
+                && expectedChunk.PhysicalOffset = actualChunk.PhysicalOffset
+                && expectedChunk.Length = actualChunk.Length
+                && expectedChunk.Address = actualChunk.Address
+                && expectedChunk.Bytes.SequenceEqual(actualChunk.Bytes))
+            expected.Chunks
+            actual.Chunks
+
+    let private readContentBlockPayloadFromPlacement (placement: ContentBlockStoragePlacement) correlationId =
+        task {
+            try
+                match! getAzureContentBlockClientForPlacement placement correlationId with
+                | Error error -> return Error error
+                | Ok blobClient ->
+                    let! downloadResult = blobClient.DownloadContentAsync()
+                    return Ok(downloadResult.Value.Content.ToArray(), Some(downloadResult.Value.Details.ETag.ToString()))
+            with
+            | :? RequestFailedException as ex ->
+                return Error(GraceError.Create $"ContentBlock payload could not be read from object storage: {ex.Message}" correlationId)
+        }
+
+    let private deleteContentBlockPayloadBestEffort placement correlationId =
+        task {
+            match! deleteAzureContentBlockPlacementIfExists placement correlationId with
+            | Ok _
+            | Error _ -> return ()
+        }
+
+    let private deleteContentBlockStagingPayload placement correlationId = deleteContentBlockPayloadBestEffort placement correlationId
+
+    type private MaterializedContentBlock = { StoragePlacement: ContentBlockStoragePlacement }
+
+    let private createAzureContentBlockSasUriForPlacement (placement: ContentBlockStoragePlacement) permission correlationId =
+        task {
+            if isNull (box placement) then
+                return Error(GraceError.Create "StoragePlacement is required before issuing a ContentBlock SAS URI." correlationId)
+            else
+                let shard: StoragePoolRouting.StorageShard =
+                    { StorageAccountName = placement.StorageAccountName; StorageContainerName = placement.StorageContainerName; ObjectKeyPrefix = String.Empty }
+
+                let route: StoragePoolRouting.StoragePoolRoute =
+                    { RepositoryId = RepositoryId.Empty; StoragePoolId = StoragePoolId String.Empty; Shard = shard }
+
+                return! createAzureContentBlockSasUriForObjectKey route placement.ObjectKey permission correlationId
+        }
+
+    let private isExistingBlobConflict (ex: RequestFailedException) =
+        ex.Status = int HttpStatusCode.Conflict
+        || ex.Status = int HttpStatusCode.PreconditionFailed
+        || String.Equals(ex.ErrorCode, "BlobAlreadyExists", StringComparison.OrdinalIgnoreCase)
+
+    let private materializeValidatedContentBlock
+        (route: StoragePoolRouting.StoragePoolRoute)
+        (contentBlockAddress: ContentBlockAddress)
+        (payload: byte array)
+        correlationId
+        =
+        task {
+            let finalPlacement = expectedContentBlockStoragePlacement route contentBlockAddress None
+
+            match validateContentBlockPayload contentBlockAddress payload correlationId with
+            | Error error -> return Error error
+            | Ok () ->
+                match! getAzureContentBlockClientForPlacement finalPlacement correlationId with
+                | Error error -> return Error error
+                | Ok finalBlobClient ->
+                    try
+                        use payloadStream = new MemoryStream(payload, writable = false)
+                        let conditions = BlobRequestConditions()
+                        conditions.IfNoneMatch <- ETag.All
+                        let uploadOptions = BlobUploadOptions()
+                        uploadOptions.Conditions <- conditions
+                        let! uploadResult = finalBlobClient.UploadAsync(payloadStream, uploadOptions)
+
+                        return
+                            Ok { StoragePlacement = expectedContentBlockStoragePlacement route contentBlockAddress (Some(uploadResult.Value.ETag.ToString())) }
+                    with
+                    | :? RequestFailedException as ex when isExistingBlobConflict ex ->
+                        match! readContentBlockPayloadFromPlacement finalPlacement correlationId with
+                        | Error error -> return Error error
+                        | Ok (existingPayload, existingETag) ->
+                            match decodeContentBlockPayload contentBlockAddress existingPayload correlationId,
+                                  decodeContentBlockPayload contentBlockAddress payload correlationId
+                                with
+                            | Error error, _ ->
+                                return
+                                    Error(
+                                        GraceError.Create
+                                            $"Existing final ContentBlock {contentBlockAddress} is invalid and cannot be treated as a successful upload: {error.Error}"
+                                            correlationId
+                                    )
+                            | _, Error error -> return Error error
+                            | Ok existingBlock, Ok stagedBlock when not (contentBlockPayloadsAreEquivalent existingBlock stagedBlock) ->
+                                return
+                                    Error(
+                                        GraceError.Create
+                                            $"Existing final ContentBlock {contentBlockAddress} does not match the staged validated payload."
+                                            correlationId
+                                    )
+                            | Ok _, Ok _ -> return Ok { StoragePlacement = expectedContentBlockStoragePlacement route contentBlockAddress existingETag }
+                    | :? RequestFailedException as ex ->
+                        return Error(GraceError.Create $"ContentBlock payload could not be materialized to final CAS storage: {ex.Message}" correlationId)
+        }
 
     let private resolveStorageIds (graceIds: GraceIds) (parameters: StorageParameters) =
         let organizationId =
@@ -272,10 +472,12 @@ module Storage =
             match repositoryDto.ObjectStorageProvider with
             | AzureBlobStorage ->
                 try
-                    let! blobClient = getAzureBlobClient repositoryDto confirmedBlock.StoragePlacement.ObjectKey correlationId
-                    let! downloadResult = blobClient.DownloadContentAsync()
+                    match! getAzureContentBlockClientForPlacement confirmedBlock.StoragePlacement correlationId with
+                    | Error error -> return Error error
+                    | Ok blobClient ->
+                        let! downloadResult = blobClient.DownloadContentAsync()
 
-                    return Ok({ Address = confirmedBlock.ContentBlockAddress; Payload = downloadResult.Value.Content.ToArray() })
+                        return Ok({ Address = confirmedBlock.ContentBlockAddress; Payload = downloadResult.Value.Content.ToArray() })
                 with
                 | :? Azure.RequestFailedException as ex ->
                     return
@@ -403,6 +605,195 @@ module Storage =
                 return Error(getErrorMessage StorageError.UnknownObjectStorageProvider)
         }
 
+    let private isActiveUploadSessionLifecycle lifecycleState =
+        match lifecycleState with
+        | UploadSessionLifecycleState.Started
+        | UploadSessionLifecycleState.Discovering
+        | UploadSessionLifecycleState.UploadingBlocks
+        | UploadSessionLifecycleState.ClaimingRanges -> true
+        | _ -> false
+
+    let private validateUploadSessionForContentBlockUpload (parameters: GetContentBlockUploadUriParameters) repositoryId correlationId =
+        task {
+            if parameters.UploadSessionId = UploadSessionId.Empty then
+                return Error(GraceError.Create "UploadSessionId is required before issuing a ContentBlock upload URI." correlationId)
+            else
+                let uploadSessionActor = Grace.Actors.Extensions.ActorProxy.UploadSession.CreateActorProxy parameters.UploadSessionId repositoryId correlationId
+
+                let! session = loadSessionForScope uploadSessionActor correlationId
+
+                if
+                    session.UploadSessionId = UploadSessionId.Empty
+                    || not (isActiveUploadSessionLifecycle session.LifecycleState)
+                then
+                    return
+                        Error(
+                            GraceError.Create
+                                $"UploadSession must be active before issuing a ContentBlock upload URI; current state is {session.LifecycleState}."
+                                correlationId
+                        )
+                elif session.AuthorizedScope
+                     <> parameters.AuthorizedScope then
+                    return
+                        Error(
+                            GraceError.Create
+                                $"UploadSession AuthorizedScope must match the scope recorded when the session was started. Expected '{session.AuthorizedScope}', actual '{parameters.AuthorizedScope}'."
+                                correlationId
+                        )
+                elif
+                    isNull session.BlockUploadIntents
+                    || not
+                        (
+                            session.BlockUploadIntents
+                            |> Array.exists (fun intent ->
+                                not (isNull (box intent))
+                                && intent.ContentBlockAddress = parameters.ContentBlockAddress)
+                        )
+                then
+                    return
+                        Error(
+                            GraceError.Create
+                                $"Block upload intent does not exist for ContentBlockAddress {parameters.ContentBlockAddress}; upload URI cannot be issued."
+                                correlationId
+                        )
+                else
+                    return Ok()
+        }
+
+    let private uploadSessionEventOperationId (uploadSessionEvent: UploadSessionEvent) =
+        match uploadSessionEvent.Event with
+        | UploadSessionEventType.Started start -> Some start.OperationId
+        | UploadSessionEventType.Abandoned operationId
+        | UploadSessionEventType.Expired operationId
+        | UploadSessionEventType.PhysicalStateDeleted operationId -> Some operationId
+        | UploadSessionEventType.Finalized (operationId, _)
+        | UploadSessionEventType.CleanupReminderScheduled (operationId, _)
+        | UploadSessionEventType.BlockUploadIntentRegistered (operationId, _)
+        | UploadSessionEventType.BlockUploadConfirmed (operationId, _)
+        | UploadSessionEventType.DedupeDiscoveryIssued (operationId, _)
+        | UploadSessionEventType.ReuseRangesClaimed (operationId, _) -> Some operationId
+
+    let private tryReplayUploadSessionCommand requestContext command operationId correlationId =
+        task {
+            let! events = requestContext.UploadSessionActor.GetEvents correlationId
+
+            if events
+               |> Seq.exists (fun uploadSessionEvent -> uploadSessionEventOperationId uploadSessionEvent = Some operationId) then
+                let! replay = requestContext.UploadSessionActor.Handle command requestContext.Metadata
+                return Some replay
+            else
+                return None
+        }
+
+    let private validateActiveConfirmSession requestContext (parameters: ConfirmContentBlockUploadParameters) correlationId =
+        let session = requestContext.SessionForScope
+
+        if not (isActiveUploadSessionLifecycle session.LifecycleState) then
+            Error(
+                GraceError.Create
+                    $"UploadSession must be active before confirming a ContentBlock upload; current state is {session.LifecycleState}."
+                    correlationId
+            )
+        elif
+            isNull session.BlockUploadIntents
+            || not
+                (
+                    session.BlockUploadIntents
+                    |> Array.exists (fun intent ->
+                        not (isNull (box intent))
+                        && intent.ContentBlockAddress = parameters.ContentBlockAddress)
+                )
+        then
+            Error(GraceError.Create $"Block upload intent does not exist for ContentBlockAddress {parameters.ContentBlockAddress}." correlationId)
+        else
+            Ok()
+
+    let private decodedContentBlockLogicalLength (decodedBlock: ContentBlockFormat.DecodedContentBlock) =
+        decodedBlock.Chunks
+        |> Array.sumBy (fun chunk -> int64 chunk.Length)
+
+    let private validateConfirmIntentAgainstPayload requestContext (parameters: ConfirmContentBlockUploadParameters) (stagedPayload: byte array) correlationId =
+        let session = requestContext.SessionForScope
+
+        let intents =
+            if isNull session.BlockUploadIntents then
+                Array.empty
+            else
+                session.BlockUploadIntents
+                |> Array.filter (fun intent ->
+                    not (isNull (box intent))
+                    && intent.ContentBlockAddress = parameters.ContentBlockAddress)
+
+        match intents with
+        | [||] -> Error(GraceError.Create $"Block upload intent does not exist for ContentBlockAddress {parameters.ContentBlockAddress}." correlationId)
+        | _ ->
+            let matchingPayloadLength =
+                intents
+                |> Array.filter (fun intent -> intent.ExpectedPayloadLength = stagedPayload.LongLength)
+
+            if matchingPayloadLength.Length = 0 then
+                let expectedLengths =
+                    intents
+                    |> Array.map (fun intent -> intent.ExpectedPayloadLength.ToString())
+                    |> String.concat ", "
+
+                Error(
+                    GraceError.Create
+                        $"ContentBlock payload length mismatch. Expected one of [{expectedLengths}], actual {stagedPayload.LongLength}."
+                        correlationId
+                )
+            else
+                match decodeContentBlockPayload parameters.ContentBlockAddress stagedPayload correlationId with
+                | Error error -> Error error
+                | Ok decodedBlock ->
+                    let logicalLength = decodedContentBlockLogicalLength decodedBlock
+
+                    if matchingPayloadLength
+                       |> Array.exists (fun intent -> intent.LogicalLength = logicalLength)
+                       |> not then
+                        let expectedLengths =
+                            matchingPayloadLength
+                            |> Array.map (fun intent -> intent.LogicalLength.ToString())
+                            |> String.concat ", "
+
+                        Error(
+                            GraceError.Create
+                                $"ContentBlock logical length mismatch. Expected one of [{expectedLengths}], actual {logicalLength}."
+                                correlationId
+                        )
+                    else
+                        Ok()
+
+    let internal tryFindFinalizedScopedContentBlockMetadata storagePoolId authorizedScope manifestAddress contentBlockAddress state =
+        DedupeIndex.tryFindFinalizedScopedContentBlockMetadata storagePoolId authorizedScope manifestAddress contentBlockAddress state
+
+    let private validateManifestForContentBlockDownload storagePoolId (parameters: GetContentBlockDownloadUriParameters) correlationId =
+        task {
+            match validateManifestAddress correlationId parameters.ManifestAddress with
+            | Error error -> return Error error
+            | Ok () ->
+                let dedupeIndexActor = DedupeIndexActor.CreateActorProxy correlationId
+
+                match!
+                    dedupeIndexActor.TryGetFinalizedScopedContentBlockMetadata
+                        (
+                            storagePoolId,
+                            parameters.AuthorizedScope,
+                            parameters.ManifestAddress,
+                            parameters.ContentBlockAddress,
+                            correlationId
+                        )
+                    with
+                | Some metadata -> return Ok metadata.StoragePlacement
+                | None ->
+                    return
+                        Error(
+                            GraceError.Create
+                                $"ContentBlockAddress {parameters.ContentBlockAddress} is not referenced by finalized metadata reachable from this repository and authorized scope."
+                                correlationId
+                        )
+        }
+
     /// Gets a download URI for the specified file version that can be used by a Grace client.
     let GetDownloadUri: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
@@ -443,10 +834,21 @@ module Storage =
                         let repositoryActor = Repository.CreateActorProxy organizationId repositoryId correlationId
                         let! repositoryDto = repositoryActor.Get correlationId
 
-                        let blobName = getContentBlockObjectKey parameters.ContentBlockAddress
-                        let! uploadUri = getUriWithCreateSharedAccessSignature repositoryDto blobName correlationId
-                        context.SetStatusCode StatusCodes.Status200OK
-                        return! context.WriteStringAsync uploadUri.AbsoluteUri
+                        match resolveRepositoryStoragePoolRoute repositoryDto correlationId with
+                        | Error error -> return! context |> result400BadRequest error
+                        | Ok route ->
+                            match! validateUploadSessionForContentBlockUpload parameters repositoryId correlationId with
+                            | Error error -> return! context |> result400BadRequest error
+                            | Ok () ->
+                                let stagingPlacement =
+                                    expectedContentBlockStagingPlacement route repositoryId parameters.UploadSessionId parameters.ContentBlockAddress None
+
+                                match! createAzureContentBlockSasUriForObjectKey route stagingPlacement.ObjectKey azureBlobCreatePermissions correlationId with
+                                | Error error -> return! context |> result400BadRequest error
+                                | Ok uploadUri ->
+                                    let uploadUri = appendShardEvidenceFragment route.Shard.StorageAccountName uploadUri
+                                    context.SetStatusCode StatusCodes.Status200OK
+                                    return! context.WriteStringAsync uploadUri.AbsoluteUri
                 with
                 | ex ->
                     context.SetStatusCode StatusCodes.Status500InternalServerError
@@ -471,10 +873,19 @@ module Storage =
                         let repositoryActor = Repository.CreateActorProxy organizationId repositoryId correlationId
                         let! repositoryDto = repositoryActor.Get correlationId
 
-                        let blobName = getContentBlockObjectKey parameters.ContentBlockAddress
-                        let! downloadUri = getUriWithReadSharedAccessSignature repositoryDto blobName correlationId
-                        context.SetStatusCode StatusCodes.Status200OK
-                        return! context.WriteStringAsync downloadUri.AbsoluteUri
+                        match resolveRepositoryStoragePoolRoute repositoryDto correlationId with
+                        | Error error -> return! context |> result400BadRequest error
+                        | Ok route ->
+                            let storagePoolId = DedupeIndex.storagePoolIdForRepository repositoryDto
+
+                            match! validateManifestForContentBlockDownload storagePoolId parameters correlationId with
+                            | Error error -> return! context |> result400BadRequest error
+                            | Ok storagePlacement ->
+                                match! createAzureContentBlockSasUriForPlacement storagePlacement azureBlobReadPermissions correlationId with
+                                | Error error -> return! context |> result400BadRequest error
+                                | Ok downloadUri ->
+                                    context.SetStatusCode StatusCodes.Status200OK
+                                    return! context.WriteStringAsync downloadUri.AbsoluteUri
                 with
                 | ex ->
                     context.SetStatusCode StatusCodes.Status500InternalServerError
@@ -776,16 +1187,99 @@ module Storage =
                 try
                     let! parameters = context.BindJsonAsync<ConfirmContentBlockUploadParameters>()
 
-                    let command =
-                        UploadSessionCommand.ConfirmBlockUploaded
-                            {
-                                OperationId = parameters.OperationId
-                                ContentBlockAddress = parameters.ContentBlockAddress
-                                Payload = parameters.Payload
-                                StoragePlacement = parameters.StoragePlacement
-                            }
+                    match validateContentBlockAddress correlationId parameters.ContentBlockAddress with
+                    | Error error -> return! context |> result400BadRequest error
+                    | Ok () ->
+                        let graceIds = getGraceIds context
+                        let organizationId, repositoryId = resolveStorageIds graceIds parameters
+                        let repositoryActor = Repository.CreateActorProxy organizationId repositoryId correlationId
+                        let! repositoryDto = repositoryActor.Get correlationId
 
-                    return! handleUploadSessionCommand context parameters command correlationId
+                        match resolveRepositoryStoragePoolRoute repositoryDto correlationId with
+                        | Error error -> return! context |> result400BadRequest error
+                        | Ok route ->
+                            match
+                                validateContentBlockStagingPlacementForRoute
+                                    correlationId
+                                    route
+                                    repositoryId
+                                    parameters.UploadSessionId
+                                    parameters.ContentBlockAddress
+                                    parameters.StoragePlacement
+                                with
+                            | Error error -> return! context |> result400BadRequest error
+                            | Ok () ->
+                                let! requestContext = createUploadSessionRequestContext context parameters correlationId
+                                let! scopeValidation = validateUploadSessionScope requestContext parameters correlationId true
+
+                                match scopeValidation with
+                                | Error error -> return! context |> result400BadRequest error
+                                | Ok requestContext ->
+                                    let replayCommand =
+                                        UploadSessionCommand.ConfirmBlockUploaded
+                                            {
+                                                OperationId = parameters.OperationId
+                                                ContentBlockAddress = parameters.ContentBlockAddress
+                                                Payload = if isNull parameters.Payload then Array.empty else parameters.Payload
+                                                StoragePlacement = parameters.StoragePlacement
+                                            }
+
+                                    match! tryReplayUploadSessionCommand requestContext replayCommand parameters.OperationId correlationId with
+                                    | Some (Ok returnValue) -> return! context |> result200Ok returnValue
+                                    | Some (Error error) -> return! context |> result400BadRequest error
+                                    | None ->
+                                        match validateActiveConfirmSession requestContext parameters correlationId with
+                                        | Error error ->
+                                            do! deleteContentBlockStagingPayload parameters.StoragePlacement correlationId
+                                            return! context |> result400BadRequest error
+                                        | Ok () ->
+                                            match! readContentBlockPayloadFromPlacement parameters.StoragePlacement correlationId with
+                                            | Error error -> return! context |> result400BadRequest error
+                                            | Ok (stagedPayload, _) ->
+                                                if
+                                                    not (isNull parameters.Payload)
+                                                    && parameters.Payload.Length > 0
+                                                    && not (parameters.Payload.SequenceEqual(stagedPayload))
+                                                then
+                                                    do! deleteContentBlockStagingPayload parameters.StoragePlacement correlationId
+
+                                                    return!
+                                                        context
+                                                        |> result400BadRequest (
+                                                            GraceError.Create
+                                                                "ConfirmContentBlockUpload Payload must match the staged uploaded bytes."
+                                                                correlationId
+                                                        )
+                                                else
+                                                    match validateConfirmIntentAgainstPayload requestContext parameters stagedPayload correlationId with
+                                                    | Error error ->
+                                                        do! deleteContentBlockStagingPayload parameters.StoragePlacement correlationId
+                                                        return! context |> result400BadRequest error
+                                                    | Ok () ->
+                                                        match! materializeValidatedContentBlock route parameters.ContentBlockAddress stagedPayload correlationId
+                                                            with
+                                                        | Error error ->
+                                                            do! deleteContentBlockStagingPayload parameters.StoragePlacement correlationId
+                                                            return! context |> result400BadRequest error
+                                                        | Ok finalMaterialization ->
+                                                            let command =
+                                                                UploadSessionCommand.ConfirmBlockUploaded
+                                                                    {
+                                                                        OperationId = parameters.OperationId
+                                                                        ContentBlockAddress = parameters.ContentBlockAddress
+                                                                        Payload = stagedPayload
+                                                                        StoragePlacement = finalMaterialization.StoragePlacement
+                                                                    }
+
+                                                            let! result = requestContext.UploadSessionActor.Handle command requestContext.Metadata
+
+                                                            match result with
+                                                            | Ok returnValue ->
+                                                                do! deleteContentBlockStagingPayload parameters.StoragePlacement correlationId
+                                                                return! context |> result200Ok returnValue
+                                                            | Error error ->
+                                                                do! deleteContentBlockStagingPayload parameters.StoragePlacement correlationId
+                                                                return! context |> result400BadRequest error
                 with
                 | ex ->
                     let exceptionResponse = ExceptionResponse.Create ex

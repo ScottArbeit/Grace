@@ -75,12 +75,20 @@ type UploadSessionActorTests() =
 
         intentAtWithLength operationId block.Address block.Payload.LongLength logicalOffset logicalLength
 
+    let placementFor blockAddress eTag =
+        {
+            StorageAccountName = "cas-account"
+            StorageContainerName = StorageContainerName "cas-container"
+            ObjectKey = StorageKeys.contentBlockObjectKey blockAddress
+            ETag = eTag
+        }
+
     let confirm operationId blockAddress payload : ConfirmBlockUploaded =
         {
             OperationId = operationId
             ContentBlockAddress = blockAddress
             Payload = payload
-            StoragePlacement = { ObjectKey = StorageKeys.contentBlockObjectKey blockAddress; ETag = Some "etag-confirmed" }
+            StoragePlacement = placementFor blockAddress (Some "etag-confirmed")
         }
 
     let confirmWithPlacement operationId blockAddress payload placement : ConfirmBlockUploaded =
@@ -123,7 +131,7 @@ type UploadSessionActorTests() =
             StoragePoolId = storagePoolId
             ContentBlockAddress = reuseBlockAddress
             BlockFormatVersion = 1s
-            StoragePlacement = { ObjectKey = StorageKeys.contentBlockObjectKey reuseBlockAddress; ETag = Some "etag-reuse" }
+            StoragePlacement = placementFor reuseBlockAddress (Some "etag-reuse")
             Ranges = ranges
             TotalPhysicalBytes = 4096L
             ActivePhysicalBytes = 0L
@@ -134,7 +142,7 @@ type UploadSessionActorTests() =
     let reuseMetadataFor contentBlockAddress metadataVersion ranges : ContentBlockMetadata =
         { reuseMetadata metadataVersion ranges with
             ContentBlockAddress = contentBlockAddress
-            StoragePlacement = { ObjectKey = StorageKeys.contentBlockObjectKey contentBlockAddress; ETag = Some "etag-reuse" }
+            StoragePlacement = placementFor contentBlockAddress (Some "etag-reuse")
         }
 
     let reuseHint =
@@ -697,7 +705,7 @@ type UploadSessionActorTests() =
                         {
                             ContentBlockAddress = firstBlock.Address
                             PayloadLength = firstBlock.Payload.LongLength
-                            StoragePlacement = { ObjectKey = StorageKeys.contentBlockObjectKey firstBlock.Address; ETag = Some "etag-first" }
+                            StoragePlacement = placementFor firstBlock.Address (Some "etag-first")
                             Ranges =
                                 [|
                                     {
@@ -713,7 +721,7 @@ type UploadSessionActorTests() =
                         {
                             ContentBlockAddress = secondBlock.Address
                             PayloadLength = secondBlock.Payload.LongLength
-                            StoragePlacement = { ObjectKey = StorageKeys.contentBlockObjectKey secondBlock.Address; ETag = Some "etag-second" }
+                            StoragePlacement = placementFor secondBlock.Address (Some "etag-second")
                             Ranges =
                                 [|
                                     {
@@ -1183,7 +1191,7 @@ type UploadSessionActorTests() =
             {
                 ContentBlockAddress = block.Address
                 PayloadLength = block.Payload.LongLength
-                StoragePlacement = { ObjectKey = StorageKeys.contentBlockObjectKey block.Address; ETag = Some "etag-confirmed" }
+                StoragePlacement = placementFor block.Address (Some "etag-confirmed")
                 Ranges =
                     [|
                         { OrdinalStart = 0; OrdinalCount = 1; ActiveManifestCount = 0; PhysicalOffset = 0L; PhysicalLength = 11L }

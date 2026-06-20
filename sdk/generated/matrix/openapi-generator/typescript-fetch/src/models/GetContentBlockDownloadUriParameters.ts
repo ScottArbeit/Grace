@@ -68,11 +68,23 @@ export interface GetContentBlockDownloadUriParameters {
      */
     repositoryName?: string;
     /**
+     * 
+     * @type {string}
+     * @memberof GetContentBlockDownloadUriParameters
+     */
+    authorizedScope?: string;
+    /**
      * Lowercase 64-character BLAKE3-derived ContentBlock address.
      * @type {string}
      * @memberof GetContentBlockDownloadUriParameters
      */
     contentBlockAddress?: string;
+    /**
+     * Lowercase 64-character BLAKE3-derived FileManifest address.
+     * @type {string}
+     * @memberof GetContentBlockDownloadUriParameters
+     */
+    manifestAddress?: string;
 }
 
 /**
@@ -100,7 +112,9 @@ export function GetContentBlockDownloadUriParametersFromJSONTyped(json: any, ign
         'organizationName': json['OrganizationName'] == null ? undefined : json['OrganizationName'],
         'repositoryId': json['RepositoryId'] == null ? undefined : json['RepositoryId'],
         'repositoryName': json['RepositoryName'] == null ? undefined : json['RepositoryName'],
+        'authorizedScope': json['AuthorizedScope'] == null ? undefined : json['AuthorizedScope'],
         'contentBlockAddress': json['ContentBlockAddress'] == null ? undefined : json['ContentBlockAddress'],
+        'manifestAddress': json['ManifestAddress'] == null ? undefined : json['ManifestAddress'],
     };
 }
 
@@ -123,7 +137,9 @@ export function GetContentBlockDownloadUriParametersToJSONTyped(value?: GetConte
         'OrganizationName': value['organizationName'],
         'RepositoryId': value['repositoryId'],
         'RepositoryName': value['repositoryName'],
+        'AuthorizedScope': value['authorizedScope'],
         'ContentBlockAddress': value['contentBlockAddress'],
+        'ManifestAddress': value['manifestAddress'],
     };
 }
 

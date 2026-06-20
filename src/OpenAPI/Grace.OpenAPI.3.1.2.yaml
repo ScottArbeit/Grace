@@ -4390,6 +4390,9 @@ components:
         - $ref: '#/components/schemas/StorageParameters'
       type: object
       properties:
+        UploadSessionId:
+          type: string
+          format: uuid
         ContentBlockAddress:
           $ref: '#/components/schemas/ContentBlockAddress'
         AuthorizedScope:
@@ -4400,8 +4403,12 @@ components:
         - $ref: '#/components/schemas/StorageParameters'
       type: object
       properties:
+        AuthorizedScope:
+          $ref: '#/components/schemas/RelativePath'
         ContentBlockAddress:
           $ref: '#/components/schemas/ContentBlockAddress'
+        ManifestAddress:
+          $ref: '#/components/schemas/ManifestAddress'
     DiscoverContentBlocksParameters:
       description: Parameters for /storage/discoverContentBlocks. Discovery is bounded and non-authoritative; empty results do not prove that chunks or future ContentBlocks are absent.
       allOf:
@@ -6404,12 +6411,18 @@ components:
       description: Object-storage placement metadata for a confirmed ContentBlock payload.
       type: object
       properties:
+        StorageAccountName:
+          $ref: '#/components/schemas/StorageAccountName'
+        StorageContainerName:
+          $ref: '#/components/schemas/StorageContainerName'
         ObjectKey:
           type: string
         ETag:
           type: string
           nullable: true
       required:
+        - StorageAccountName
+        - StorageContainerName
         - ObjectKey
     ContentBlockMetadataRange:
       description: Physical range metadata for ContentBlock reconstruction, reuse, and compaction.

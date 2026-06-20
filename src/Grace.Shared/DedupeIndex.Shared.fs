@@ -508,6 +508,43 @@ module DedupeIndex =
 
     let snapshot () = lock globalGate (fun () -> Array.copy (normalizeState globalState).Records)
 
+    let finalizedManifestContainsBlock storagePoolId manifestAddress contentBlockAddress (state: DedupeIndexState) =
+        (normalizeState state).FinalizedManifests
+        |> Array.exists (fun registration ->
+            not (isNull (box registration))
+            && registration.StoragePoolId = storagePoolId
+            && registration.ManifestAddress = manifestAddress
+            && not (isNull registration.Blocks)
+            && registration.Blocks
+               |> Array.exists (fun block ->
+                   not (isNull (box block))
+                   && block.Address = contentBlockAddress))
+
+    let finalizedScopedManifestContainsBlock storagePoolId authorizedScope manifestAddress contentBlockAddress (state: DedupeIndexState) =
+        (normalizeState state).FinalizedManifests
+        |> Array.exists (fun registration ->
+            not (isNull (box registration))
+            && registration.StoragePoolId = storagePoolId
+            && registration.ManifestAddress = manifestAddress
+            && not (isNull (box registration.Session))
+            && registration.Session.AuthorizedScope = authorizedScope
+            && not (isNull registration.Blocks)
+            && registration.Blocks
+               |> Array.exists (fun block ->
+                   not (isNull (box block))
+                   && block.Address = contentBlockAddress))
+
+    let tryFindFinalizedScopedContentBlockMetadata storagePoolId authorizedScope manifestAddress contentBlockAddress (state: DedupeIndexState) =
+        if finalizedScopedManifestContainsBlock storagePoolId authorizedScope manifestAddress contentBlockAddress state
+           |> not then
+            None
+        else
+            (normalizeState state).MetadataRecords
+            |> Array.tryFind (fun metadata ->
+                not (isNull (box metadata))
+                && metadata.StoragePoolId = storagePoolId
+                && metadata.ContentBlockAddress = contentBlockAddress)
+
     let private candidateFromRecord matchingKeyChunkCount (record: DedupeIndexRecord) =
         {
             StoragePoolId = record.StoragePoolId
