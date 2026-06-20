@@ -16,32 +16,18 @@ $exitCode = 0
 $formatDisabled = $true
 
 function Get-GraceBuildProperties {
-    $buildKind = $env:GraceBuildKind
-    if ([string]::IsNullOrWhiteSpace($buildKind)) {
-        $buildKind = "dev"
+    $properties = @()
+
+    if (-not [string]::IsNullOrWhiteSpace($env:GraceBuildKind)) {
+        $properties += "-p:GraceBuildKind=$env:GraceBuildKind"
     }
 
-    $buildNumber = $env:GraceBuildNumber
-
-    $sourceRevision = $env:GraceSourceRevisionId
-    if ([string]::IsNullOrWhiteSpace($sourceRevision)) {
-        $git = Get-Command git -ErrorAction SilentlyContinue
-        if ($null -ne $git) {
-            $sourceRevision = (& git rev-parse HEAD 2>$null)
-            if ($LASTEXITCODE -ne 0) {
-                $sourceRevision = $null
-            }
-        }
+    if (-not [string]::IsNullOrWhiteSpace($env:GraceBuildNumber)) {
+        $properties += "-p:GraceBuildNumber=$env:GraceBuildNumber"
     }
 
-    $properties = @("-p:GraceBuildKind=$buildKind")
-
-    if (-not [string]::IsNullOrWhiteSpace($buildNumber)) {
-        $properties += "-p:GraceBuildNumber=$buildNumber"
-    }
-
-    if (-not [string]::IsNullOrWhiteSpace($sourceRevision)) {
-        $properties += "-p:GraceSourceRevisionId=$sourceRevision"
+    if (-not [string]::IsNullOrWhiteSpace($env:GraceSourceRevisionId)) {
+        $properties += "-p:GraceSourceRevisionId=$env:GraceSourceRevisionId"
     }
 
     [string[]]$properties
@@ -324,13 +310,17 @@ try {
         Write-Host "Skipped (-SkipFormat)."
     }
 
-    $graceBuildProperties = Get-GraceBuildProperties
+    $graceBuildProperties = @(Get-GraceBuildProperties)
 
     if (-not $SkipBuild) {
         Write-Section "Build"
         Write-Host "Build properties: " -ForegroundColor Green -NoNewline
-       $graceBuildProperties | ForEach-Object {
-            Write-Host "$_; " -ForegroundColor DarkYellow -NoNewline
+        if ($graceBuildProperties.Count -eq 0) {
+            Write-Host "(none)" -ForegroundColor DarkYellow -NoNewline
+        } else {
+            $graceBuildProperties | ForEach-Object {
+                Write-Host "$_; " -ForegroundColor DarkYellow -NoNewline
+            }
         }
         Write-Host ""
         Invoke-External "Grace solution build" { dotnet build "src/Grace.slnx" -c $Configuration @graceBuildProperties }
