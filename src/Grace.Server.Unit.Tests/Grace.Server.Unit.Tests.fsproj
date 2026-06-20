@@ -32,6 +32,7 @@
     <Compile Include="Storage.Server.Tests.fs" />
     <Compile Include="AnnotationMaterialization.Server.Tests.fs" />
     <Compile Include="DedupeIndex.Server.Tests.fs" />
+    <Compile Include="Repository.Actor.Tests.fs" />
     <Compile Include="Eventing.Server.Tests.fs" />
     <Compile Include="Notification.Server.Tests.fs" />
     <Compile Include="PromotionSet.CommandValidation.Tests.fs" />

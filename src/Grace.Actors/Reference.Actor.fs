@@ -338,6 +338,31 @@ module Reference =
             | None -> return Ok()
         }
 
+    let internal applySaveManifestBoundaryWithRouteResolver
+        (resolveStorageRoute: unit -> Task<Result<DedupeIndex.RepositoryStorageRoute, GraceError>>)
+        (applyBoundary: ManifestSaveContributionPlan list -> EventMetadata -> Task<Result<unit, GraceError>>)
+        repositoryId
+        referenceId
+        referenceType
+        (directoryVersion: DirectoryVersion)
+        (metadata: EventMetadata)
+        =
+        task {
+            if referenceType <> ReferenceType.Save then
+                return Ok None
+            else
+                match planManifestSaveBoundary repositoryId (StoragePoolId String.Empty) referenceId directoryVersion metadata.CorrelationId with
+                | Error graceError -> return Error graceError
+                | Ok [] -> return Ok None
+                | Ok plans ->
+                    match! resolveStorageRoute () with
+                    | Error graceError -> return Error graceError
+                    | Ok route ->
+                        match! applyBoundary plans metadata with
+                        | Ok () -> return Ok(Some route.StoragePoolId)
+                        | Error graceError -> return Error graceError
+        }
+
     type ReferenceActor([<PersistentState(StateName.Reference, Constants.GraceActorStorage)>] state: IPersistentState<List<ReferenceEvent>>) =
         inherit Grain()
 
@@ -690,24 +715,16 @@ module Reference =
                             else
                                 let directoryVersionActorProxy = DirectoryVersion.CreateActorProxy directoryId repositoryId metadata.CorrelationId
                                 let! directoryVersionDto = directoryVersionActorProxy.Get metadata.CorrelationId
-                                let! route = resolveStorageRoute organizationId repositoryId
 
-                                match route with
-                                | Error graceError -> return Error graceError
-                                | Ok route ->
-                                    match
-                                        planManifestSaveBoundary
-                                            repositoryId
-                                            route.StoragePoolId
-                                            referenceId
-                                            directoryVersionDto.DirectoryVersion
-                                            metadata.CorrelationId
-                                        with
-                                    | Error graceError -> return Error graceError
-                                    | Ok plans ->
-                                        match! applyManifestContributionBoundary plans metadata with
-                                        | Ok () -> return Ok(Some route.StoragePoolId)
-                                        | Error graceError -> return Error graceError
+                                return!
+                                    applySaveManifestBoundaryWithRouteResolver
+                                        (fun () -> resolveStorageRoute organizationId repositoryId)
+                                        applyManifestContributionBoundary
+                                        repositoryId
+                                        referenceId
+                                        referenceType
+                                        directoryVersionDto.DirectoryVersion
+                                        metadata
                         }
 
                     let applySaveExpiryManifestBoundary referenceId organizationId repositoryId directoryId referenceType =

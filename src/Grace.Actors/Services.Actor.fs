@@ -106,11 +106,12 @@ module Services =
     /// Dictionary for caching blob container clients
     let containerClients = new ConcurrentDictionary<string, BlobContainerClient>()
 
+    let private defaultAzureCredential = lazy (DefaultAzureCredential())
+
     /// Shared key credential for Azure Storage when available.
-    let private sharedKeyCredential =
-        lazy
-            AzureEnvironment.storageAccountKey
-            |> Option.map (fun accountKey -> StorageSharedKeyCredential(AzureEnvironment.storageEndpoints.AccountName, accountKey))
+    let private sharedKeyCredentialForAccount accountName =
+        AzureEnvironment.storageAccountKey
+        |> Option.map (fun accountKey -> StorageSharedKeyCredential(accountName, accountKey))
 
     let private normalizeLocalAzuriteBlobUri (accountName: string) (blobUri: Uri) =
         let accountPathPrefix = $"/{accountName}/"
@@ -125,15 +126,38 @@ module Services =
         else
             blobUri
 
-    let private createBlobContainerClientFromEndpoint containerName =
-        if AzureEnvironment.useManagedIdentityForStorage then
-            Context.blobServiceClient.GetBlobContainerClient(containerName)
+    let internal buildBlobContainerUriForEndpoint accountName containerName (defaultAccountName: string) (defaultEndpoint: Uri) =
+        if String.Equals(accountName, defaultAccountName, StringComparison.OrdinalIgnoreCase) then
+            Uri($"{defaultEndpoint.AbsoluteUri.TrimEnd('/')}/{containerName}")
+        elif defaultEndpoint.Host.Equals("localhost", StringComparison.OrdinalIgnoreCase) then
+            Uri($"{defaultEndpoint.Scheme}://{defaultEndpoint.Authority}/{accountName}/{containerName}")
         else
-            match sharedKeyCredential.Value with
+            let builder = UriBuilder(defaultEndpoint)
+            let hostParts = defaultEndpoint.Host.Split('.', 2)
+            builder.Host <- if hostParts.Length = 2 then $"{accountName}.{hostParts[1]}" else accountName
+
+            builder.Path <- containerName
+            builder.Uri
+
+    let internal buildBlobContainerUriForAccount accountName containerName =
+        buildBlobContainerUriForEndpoint accountName containerName AzureEnvironment.storageEndpoints.AccountName AzureEnvironment.storageEndpoints.BlobEndpoint
+
+    let private createBlobContainerClientFromEndpoint accountName containerName =
+        if AzureEnvironment.useManagedIdentityForStorage then
+            if String.Equals(accountName, AzureEnvironment.storageEndpoints.AccountName, StringComparison.OrdinalIgnoreCase) then
+                Context.blobServiceClient.GetBlobContainerClient(containerName)
+            else
+                let containerUri =
+                    buildBlobContainerUriForAccount accountName containerName
+                    |> normalizeLocalAzuriteBlobUri accountName
+
+                BlobContainerClient(containerUri, defaultAzureCredential.Value)
+        else
+            match sharedKeyCredentialForAccount accountName with
             | Some credential ->
                 let containerUri =
-                    Uri($"{AzureEnvironment.storageEndpoints.BlobEndpoint.AbsoluteUri.TrimEnd('/')}/{containerName}")
-                    |> normalizeLocalAzuriteBlobUri AzureEnvironment.storageEndpoints.AccountName
+                    buildBlobContainerUriForAccount accountName containerName
+                    |> normalizeLocalAzuriteBlobUri accountName
 
                 BlobContainerClient(containerUri, credential)
             | None -> Context.blobServiceClient.GetBlobContainerClient(containerName)
@@ -195,8 +219,6 @@ module Services =
             hashMatchesPrefix normalizedSha256HashPrefix (getSha256Hash candidate)
             && hashMatchesPrefix normalizedBlake3HashPrefix (getBlake3Hash candidate))
         |> resolveVersionHashPrefixMatches
-
-    let private defaultAzureCredential = lazy (DefaultAzureCredential())
 
     let private serviceBusClient =
         lazy
@@ -327,7 +349,7 @@ module Services =
                     key,
                     fun cacheEntry ->
                         task {
-                            let blobContainerClient = createBlobContainerClientFromEndpoint containerName
+                            let blobContainerClient = createBlobContainerClientFromEndpoint repositoryDto.StorageAccountName containerName
                             let ownerActorProxy = Owner.CreateActorProxy repositoryDto.OwnerId CorrelationId.Empty
                             let! ownerDto = ownerActorProxy.Get correlationId
                             let organizationActorProxy = Organization.CreateActorProxy repositoryDto.OrganizationId CorrelationId.Empty
@@ -387,7 +409,7 @@ module Services =
 
             let blobUri =
                 Uri($"{blobContainerClient.Uri.AbsoluteUri.TrimEnd('/')}/{blobName}")
-                |> normalizeLocalAzuriteBlobUri AzureEnvironment.storageEndpoints.AccountName
+                |> normalizeLocalAzuriteBlobUri repositoryDto.StorageAccountName
 
             let blobSasBuilder =
                 BlobSasBuilder(
@@ -418,7 +440,7 @@ module Services =
                     }
                 else
                     task {
-                        match sharedKeyCredential.Value with
+                        match sharedKeyCredentialForAccount repositoryDto.StorageAccountName with
                         | Some credential ->
                             let fullUriBlobClient = BlobClient(blobUri, credential)
 
@@ -2642,7 +2664,13 @@ module Services =
                     stringBuilderPool.Return(requestCharge)
             | MongoDB -> ()
 
-            return resolveScopedVersionHashPrefix hashPrefix getHash directoryVersions
+            let rootDirectoryVersions =
+                directoryVersions
+                |> Seq.filter (fun directoryVersion ->
+                    directoryVersion.RelativePath = Constants.RootDirectoryPath
+                    || directoryVersion.RelativePath = "/")
+
+            return resolveScopedVersionHashPrefix hashPrefix getHash rootDirectoryVersions
         }
 
     /// Resolves a Root DirectoryVersion by searching using a Sha256Hash value.
@@ -2759,13 +2787,19 @@ module Services =
                     stringBuilderPool.Return(requestCharge)
             | MongoDB -> ()
 
+            let rootDirectoryVersions =
+                directoryVersions
+                |> Seq.filter (fun directoryVersion ->
+                    directoryVersion.RelativePath = Constants.RootDirectoryPath
+                    || directoryVersion.RelativePath = "/")
+
             return
                 resolveScopedVersionHashPrefixes
                     sha256Hash
                     (fun (directoryVersion: DirectoryVersion) -> directoryVersion.Sha256Hash)
                     blake3Hash
                     (fun (directoryVersion: DirectoryVersion) -> directoryVersion.Blake3Hash)
-                    directoryVersions
+                    rootDirectoryVersions
         }
 
     let getRootDirectoryVersionResolutionByHashQuery (repositoryId: RepositoryId) (sha256Hash: Sha256Hash) (blake3Hash: Blake3Hash) correlationId =

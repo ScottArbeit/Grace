@@ -208,15 +208,41 @@ type DedupeIndexServerTests() =
     member _.CasRepositoryStorageUsesRoutedStorageContainerName() =
         let poolId = StoragePoolId "pool-routed"
         let repository = repositoryWithStoragePool repositoryId poolId
+        let shardAccount = StorageAccountName "cas-shard-account"
 
         let route: DedupeIndex.RepositoryStorageRoute =
-            { RepositoryId = repository.RepositoryId; StoragePoolId = poolId; StorageShard = shard "shard-routed" "cas-routed" }
+            {
+                RepositoryId = repository.RepositoryId
+                StoragePoolId = poolId
+                StorageShard =
+                    { shard "shard-routed" "cas-routed" with StorageAccountName = shardAccount; ObjectStorageProvider = ObjectStorageProvider.AzureBlobStorage }
+            }
 
         let casRepository = DedupeIndex.repositoryForStorageRoute route repository
 
+        let containerUri =
+            ActorServices.buildBlobContainerUriForEndpoint
+                casRepository.StorageAccountName
+                casRepository.StorageContainerName
+                Constants.DefaultCasStorageAccountName
+                (Uri($"https://{Constants.DefaultCasStorageAccountName}.blob.core.windows.net"))
+
+        let azuriteContainerUri =
+            ActorServices.buildBlobContainerUriForEndpoint
+                casRepository.StorageAccountName
+                casRepository.StorageContainerName
+                Constants.DefaultCasStorageAccountName
+                (Uri($"http://localhost:10000/{Constants.DefaultCasStorageAccountName}"))
+
+        Assert.That(casRepository.ObjectStorageProvider, Is.EqualTo(ObjectStorageProvider.AzureBlobStorage))
+        Assert.That(casRepository.StorageAccountName, Is.EqualTo(shardAccount))
         Assert.That(casRepository.StorageContainerName, Is.EqualTo("cas-routed"))
         Assert.That(ActorServices.storageContainerNameForRepository casRepository, Is.EqualTo("cas-routed"))
         Assert.That(ActorServices.storageContainerNameForRepository casRepository, Is.Not.EqualTo($"{repository.RepositoryId}"))
+
+        Assert.That(containerUri.Host.StartsWith($"{shardAccount}.", StringComparison.OrdinalIgnoreCase), Is.True)
+
+        Assert.That(azuriteContainerUri.AbsolutePath, Does.StartWith($"/{shardAccount}/cas-routed"))
 
     [<Test>]
     member _.RepositoryStorageRouteFailsClosedWhenPoolIsMissing() =

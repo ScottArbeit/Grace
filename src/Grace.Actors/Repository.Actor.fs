@@ -49,6 +49,15 @@ module Repository =
         let mutable repositoryDto = RepositoryDto.Default
         member val private correlationId: CorrelationId = String.Empty with get, set
 
+        static member internal ValidateStoragePoolAssignment correlationId storagePoolId =
+            if String.IsNullOrWhiteSpace storagePoolId then
+                Error(GraceError.Create "Repository StoragePoolId must not be empty." correlationId)
+            elif storagePoolId
+                 <> StoragePoolId Constants.DefaultStoragePoolId then
+                Error(GraceError.Create $"StoragePool '{storagePoolId}' is not configured or active." correlationId)
+            else
+                Ok()
+
         override this.OnActivateAsync(ct) =
             let activateStartTime = getCurrentInstant ()
 
@@ -462,7 +471,13 @@ module Repository =
                                 | None -> return Ok command
                             | _ ->
                                 match repositoryDto.UpdatedAt with
-                                | Some _ -> return Ok command
+                                | Some _ ->
+                                    match command with
+                                    | SetStoragePoolId storagePoolId ->
+                                        match RepositoryActor.ValidateStoragePoolAssignment metadata.CorrelationId storagePoolId with
+                                        | Ok () -> return Ok command
+                                        | Error error -> return Error error
+                                    | _ -> return Ok command
                                 | None -> return Error(GraceError.Create (getErrorMessage RepositoryError.RepositoryIdDoesNotExist) metadata.CorrelationId)
                     }
 

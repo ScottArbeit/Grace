@@ -217,6 +217,45 @@ type SaveBoundaryActorTests() =
         Assert.That(filesToValidate[0].RelativePath, Is.EqualTo(wholeFile.RelativePath))
 
     [<Test>]
+    member _.WholeFileOnlySaveBoundaryDoesNotResolveCasRoute() =
+        task {
+            let directoryVersion = directoryWith [ wholeFile () ]
+            let mutable routeCalls = 0
+            let mutable boundaryCalls = 0
+
+            let resolveRoute () =
+                task {
+                    routeCalls <- routeCalls + 1
+
+                    return Error(GraceError.Create "Whole-file-only Save should not resolve CAS storage routing." "corr-whole-file-no-route")
+                }
+
+            let applyBoundary _ _ =
+                task {
+                    boundaryCalls <- boundaryCalls + 1
+                    return Error(GraceError.Create "Whole-file-only Save should not apply manifest contribution boundaries." "corr-whole-file-no-route")
+                }
+
+            let! result =
+                ReferenceActor.applySaveManifestBoundaryWithRouteResolver
+                    resolveRoute
+                    applyBoundary
+                    repositoryId
+                    referenceId
+                    ReferenceType.Save
+                    directoryVersion
+                    (metadata "corr-whole-file-no-route")
+
+            match result with
+            | Ok None -> ()
+            | Ok (Some storagePoolId) -> Assert.Fail($"Expected whole-file-only Save to skip CAS route resolution, got {storagePoolId}.")
+            | Error error -> Assert.Fail($"Expected whole-file-only Save boundary to succeed without CAS route resolution, got {error.Error}.")
+
+            Assert.That(routeCalls, Is.EqualTo(0))
+            Assert.That(boundaryCalls, Is.EqualTo(0))
+        }
+
+    [<Test>]
     member _.ManifestSaveBoundaryRejectsMismatchedFileBlake3WhenPresent() =
         let manifest = finalizedManifest ()
         let fileVersion = manifestFile manifest
