@@ -28,9 +28,11 @@ class ContentBlockStoragePlacement(BaseModel):
     """
     Object-storage placement metadata for a confirmed ContentBlock payload.
     """ # noqa: E501
+    storage_account_name: StrictStr = Field(alias="StorageAccountName")
+    storage_container_name: StrictStr = Field(alias="StorageContainerName")
     object_key: StrictStr = Field(alias="ObjectKey")
     e_tag: Optional[StrictStr] = Field(default=None, alias="ETag")
-    __properties: ClassVar[List[str]] = ["ObjectKey", "ETag"]
+    __properties: ClassVar[List[str]] = ["StorageAccountName", "StorageContainerName", "ObjectKey", "ETag"]
 
     model_config = ConfigDict(
         validate_by_name=True,
@@ -83,6 +85,8 @@ class ContentBlockStoragePlacement(BaseModel):
             return cls.model_validate(obj)
 
         _obj = cls.model_validate({
+            "StorageAccountName": obj.get("StorageAccountName"),
+            "StorageContainerName": obj.get("StorageContainerName"),
             "ObjectKey": obj.get("ObjectKey"),
             "ETag": obj.get("ETag")
         })

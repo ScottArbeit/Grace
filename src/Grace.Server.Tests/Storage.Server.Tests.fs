@@ -424,6 +424,36 @@ type StorageContentBlockSasRoutes() =
         }
 
     [<Test>]
+    member _.ConfirmContentBlockUploadValidatesAddressBeforePlacementKeyDerivation() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let pathWriter = $"{Guid.NewGuid()}"
+
+            let! grantWriter = grantRoleAsync Client "repo" ownerId organizationId repositoryId "" pathWriter "RepositoryContributor"
+            Assert.That(grantWriter.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+
+            use writerClient = createClientWithUserId pathWriter
+            let parameters = Parameters.Storage.ConfirmContentBlockUploadParameters()
+            setContentBlockParameters parameters repositoryId
+            parameters.UploadSessionId <- Guid.NewGuid()
+            parameters.AuthorizedScope <- "/"
+            parameters.OperationId <- "confirm-malformed-address"
+            parameters.ContentBlockAddress <- malformedContentBlockAddress ()
+            parameters.Payload <- Array.empty
+
+            parameters.StoragePlacement <-
+                {
+                    StorageAccountName = "wrong-account"
+                    StorageContainerName = StorageContainerName "wrong-container"
+                    ObjectKey = "wrong/object/key"
+                    ETag = None
+                }
+
+            let! response = writerClient.PostAsync("/storage/confirmContentBlockUpload", createJsonContent parameters)
+            do! assertBadRequestForMalformedContentBlockAddress response
+        }
+
+    [<Test>]
     member _.ContentBlockDownloadUriRequiresPathReadAndDoesNotProbeBlockExistence() =
         task {
             let repositoryId = repositoryIds[0]
