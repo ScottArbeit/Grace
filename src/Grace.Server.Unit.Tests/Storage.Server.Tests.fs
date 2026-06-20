@@ -54,6 +54,36 @@ type StorageContentBlockSdkContract() =
             Hints = [| hint |]
         }
 
+    let manifestWithBlock contentBlockAddress =
+        FileManifest.Create(
+            ManifestAddress "manifest-address",
+            10L,
+            [
+                ContentBlock.Create(contentBlockAddress, 0L, 10L)
+            ]
+        )
+
+    let claimedRange storagePoolId contentBlockAddress : ClaimedReuseRange =
+        {
+            StoragePoolId = storagePoolId
+            ContentBlockAddress = contentBlockAddress
+            OrdinalStart = 0
+            OrdinalCount = 8
+            PhysicalOffset = 0L
+            PhysicalLength = 10L
+            MetadataVersion = 7L
+            ClaimedAt = Instant.FromUtc(2026, 6, 19, 12, 1)
+        }
+
+    let confirmedBlock contentBlockAddress : ConfirmedBlockUpload =
+        {
+            ContentBlockAddress = contentBlockAddress
+            PayloadLength = 10L
+            StoragePlacement = { ObjectKey = "cas/content/confirmed"; ETag = Some "etag-confirmed" }
+            Ranges = Array.empty
+            ConfirmedAt = Instant.FromUtc(2026, 6, 19, 12, 2)
+        }
+
     let getStorageParameterType typeName =
         typeof<Parameters.Storage.StorageParameters>.Assembly.GetType ($"Grace.Shared.Parameters.Storage+{typeName}", throwOnError = false)
 
@@ -110,6 +140,40 @@ type StorageContentBlockSdkContract() =
         let parameterType = getStorageParameterType "GetContentBlockDownloadUriParameters"
         Assert.That(parameterType, Is.Not.Null)
         Assert.That(parameterType.GetProperty("StoragePoolId"), Is.Not.Null)
+        Assert.That(parameterType.GetProperty("Manifest"), Is.Not.Null)
+        Assert.That(parameterType.GetProperty("UploadSessionId"), Is.Not.Null)
+
+    [<Test>]
+    member _.FinalizePayloadHydrationSelectsClaimedReuseRangeWhenBlockWasNotConfirmed() =
+        let storagePoolId = StoragePoolId "pool-original"
+        let contentBlockAddress = ContentBlockAddress "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        let claimedRange = claimedRange storagePoolId contentBlockAddress
+        let manifest = manifestWithBlock contentBlockAddress
+
+        let sources = StorageServer.selectFinalizeBlockPayloadSources manifest Array.empty [| claimedRange |]
+
+        Assert.That(sources, Has.Length.EqualTo(1))
+        Assert.That(fst sources[0], Is.EqualTo(contentBlockAddress))
+
+        match snd sources[0] with
+        | StorageServer.ClaimedReuseRange selectedRange -> Assert.That(selectedRange, Is.EqualTo(claimedRange))
+        | StorageServer.ConfirmedUpload _ -> Assert.Fail("Expected unconfirmed manifest block to hydrate from the claimed reuse range.")
+
+    [<Test>]
+    member _.FinalizePayloadHydrationPrefersConfirmedUploadWhenBothConfirmedAndClaimedExist() =
+        let storagePoolId = StoragePoolId "pool-original"
+        let contentBlockAddress = ContentBlockAddress "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        let claimedRange = claimedRange storagePoolId contentBlockAddress
+        let confirmedBlock = confirmedBlock contentBlockAddress
+        let manifest = manifestWithBlock contentBlockAddress
+
+        let sources = StorageServer.selectFinalizeBlockPayloadSources manifest [| confirmedBlock |] [| claimedRange |]
+
+        Assert.That(sources, Has.Length.EqualTo(1))
+
+        match snd sources[0] with
+        | StorageServer.ConfirmedUpload selectedBlock -> Assert.That(selectedBlock, Is.EqualTo(confirmedBlock))
+        | StorageServer.ClaimedReuseRange _ -> Assert.Fail("Expected confirmed upload payload hydration to preserve existing precedence.")
 
     [<Test>]
     member _.IssueDedupeDiscoveryValidationUsesSessionStoragePoolAfterRepositoryRouteDrift() =

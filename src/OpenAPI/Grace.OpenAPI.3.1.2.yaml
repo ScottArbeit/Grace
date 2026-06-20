@@ -4398,11 +4398,18 @@ components:
         - $ref: '#/components/schemas/StorageParameters'
       type: object
       properties:
-        ContentBlockAddress:
-          $ref: '#/components/schemas/ContentBlockAddress'
-        StoragePoolId:
-          $ref: '#/components/schemas/StoragePoolId'
-    DiscoverContentBlocksParameters:
+    ContentBlockAddress:
+      $ref: '#/components/schemas/ContentBlockAddress'
+    StoragePoolId:
+      $ref: '#/components/schemas/StoragePoolId'
+    Manifest:
+      $ref: '#/components/schemas/FileManifest'
+    UploadSessionId:
+      type: string
+      format: uuid
+    AuthorizedScope:
+      $ref: '#/components/schemas/RelativePath'
+  DiscoverContentBlocksParameters:
       description: Parameters for /storage/discoverContentBlocks. Discovery is bounded and non-authoritative; empty results do not prove that chunks or future ContentBlocks are absent.
       allOf:
         - $ref: '#/components/schemas/StorageParameters'

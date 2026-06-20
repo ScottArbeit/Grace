@@ -17,6 +17,8 @@ open Grace.Shared.Utilities
 open Grace.Shared
 open Grace.Shared.Client.Configuration
 open Grace.Shared.Validation.Errors
+open Grace.Types.ContentBlockMetadata
+open Grace.Types.RepositoryContentCounter
 open Grace.Types.UploadSession
 open Grace.Types.Repository
 open Grace.Types.Common
@@ -39,6 +41,10 @@ module StorageParameterContracts = Grace.Shared.Parameters.Storage
 module Storage =
 
     let log = ApplicationContext.loggerFactory.CreateLogger("Storage.Server")
+
+    type internal FinalizeBlockPayloadSource =
+        | ConfirmedUpload of ConfirmedBlockUpload
+        | ClaimedReuseRange of ClaimedReuseRange
 
     let private normalizeWholeFileContentReference (fileVersion: FileVersion) =
         if isNull (box fileVersion.ContentReference) then
@@ -296,27 +302,99 @@ module Storage =
                 | Error error -> return! context |> result400BadRequest error
         }
 
-    let private downloadContentBlockPayload (repositoryDto: RepositoryDto) (confirmedBlock: ConfirmedBlockUpload) correlationId =
+    let private downloadContentBlockPayloadFromPlacement
+        (repositoryDto: RepositoryDto)
+        (contentBlockAddress: ContentBlockAddress)
+        (storagePlacement: ContentBlockStoragePlacement)
+        correlationId
+        =
         task {
             match repositoryDto.ObjectStorageProvider with
             | AzureBlobStorage ->
                 try
-                    let! blobClient = getAzureBlobClient repositoryDto confirmedBlock.StoragePlacement.ObjectKey correlationId
+                    let! blobClient = getAzureBlobClient repositoryDto storagePlacement.ObjectKey correlationId
                     let! downloadResult = blobClient.DownloadContentAsync()
 
-                    return Ok({ Address = confirmedBlock.ContentBlockAddress; Payload = downloadResult.Value.Content.ToArray() })
+                    return Ok({ Address = contentBlockAddress; Payload = downloadResult.Value.Content.ToArray() })
                 with
                 | :? Azure.RequestFailedException as ex ->
                     return
-                        Error(
-                            GraceError.Create
-                                $"Confirmed ContentBlock payload {confirmedBlock.ContentBlockAddress} could not be read from object storage: {ex.Message}"
-                                correlationId
-                        )
+                        Error(GraceError.Create $"ContentBlock payload {contentBlockAddress} could not be read from object storage: {ex.Message}" correlationId)
             | AWSS3 -> return Error(GraceError.Create (getErrorMessage StorageError.NotImplemented) correlationId)
             | GoogleCloudStorage -> return Error(GraceError.Create (getErrorMessage StorageError.NotImplemented) correlationId)
             | ObjectStorageProvider.Unknown -> return Error(GraceError.Create (getErrorMessage StorageError.UnknownObjectStorageProvider) correlationId)
         }
+
+    let private downloadConfirmedContentBlockPayload (repositoryDto: RepositoryDto) (confirmedBlock: ConfirmedBlockUpload) correlationId =
+        downloadContentBlockPayloadFromPlacement repositoryDto confirmedBlock.ContentBlockAddress confirmedBlock.StoragePlacement correlationId
+
+    let private downloadClaimedContentBlockPayload (repositoryDto: RepositoryDto) (claimedRange: ClaimedReuseRange) correlationId =
+        task {
+            let metadataActor =
+                grainFactory.CreateActorProxyWithCorrelationId<IContentBlockMetadataActor>(
+                    Grace.Actors.ContentBlockMetadataActorKey.Create claimedRange.StoragePoolId claimedRange.ContentBlockAddress,
+                    correlationId
+                )
+
+            let! metadata = metadataActor.Get correlationId
+
+            match metadata with
+            | None ->
+                return
+                    Error(
+                        GraceError.Create
+                            $"Authoritative ContentBlockMetadata is absent for claimed ContentBlock {claimedRange.ContentBlockAddress}; payload cannot be hydrated."
+                            correlationId
+                    )
+            | Some metadata when
+                metadata.StoragePoolId
+                <> claimedRange.StoragePoolId
+                || metadata.ContentBlockAddress
+                   <> claimedRange.ContentBlockAddress
+                ->
+                return
+                    Error(
+                        GraceError.Create
+                            $"Authoritative ContentBlockMetadata does not match claimed ContentBlock {claimedRange.ContentBlockAddress}."
+                            correlationId
+                    )
+            | Some metadata ->
+                return! downloadContentBlockPayloadFromPlacement repositoryDto claimedRange.ContentBlockAddress metadata.StoragePlacement correlationId
+        }
+
+    let internal selectFinalizeBlockPayloadSources
+        (manifest: FileManifest)
+        (confirmedBlockUploads: ConfirmedBlockUpload array)
+        (claimedReuseRanges: ClaimedReuseRange array)
+        =
+        let sources = ResizeArray<ContentBlockAddress * FinalizeBlockPayloadSource>()
+
+        let blockAddresses =
+            if isNull (box manifest) || isNull manifest.Blocks then
+                Array.empty
+            else
+                manifest.Blocks
+                |> Seq.map (fun block -> block.Address)
+                |> Seq.distinct
+                |> Seq.toArray
+
+        let confirmedBlockUploads = if isNull confirmedBlockUploads then Array.empty else confirmedBlockUploads
+
+        let claimedReuseRanges = if isNull claimedReuseRanges then Array.empty else claimedReuseRanges
+
+        for address in blockAddresses do
+            match confirmedBlockUploads
+                  |> Array.tryFind (fun confirmedBlock -> confirmedBlock.ContentBlockAddress = address)
+                with
+            | Some confirmedBlock -> sources.Add(address, ConfirmedUpload confirmedBlock)
+            | None ->
+                match claimedReuseRanges
+                      |> Array.tryFind (fun claimedRange -> claimedRange.ContentBlockAddress = address)
+                    with
+                | Some claimedRange -> sources.Add(address, ClaimedReuseRange claimedRange)
+                | None -> ()
+
+        sources.ToArray()
 
     let private hydrateFinalizeBlockPayloads
         (context: HttpContext)
@@ -348,31 +426,30 @@ module Storage =
                             else
                                 session.ConfirmedBlockUploads
 
+                        let claimedReuseRanges =
+                            if isNull session.ClaimedReuseRanges then
+                                Array.empty
+                            else
+                                session.ClaimedReuseRanges
+
                         let payloads = ResizeArray<FinalizeManifestBlockPayload>()
                         let mutable error = None
                         let mutable index = 0
 
-                        let blockAddresses =
-                            if isNull (box manifest) || isNull manifest.Blocks then
-                                Array.empty
-                            else
-                                manifest.Blocks
-                                |> Seq.map (fun block -> block.Address)
-                                |> Seq.distinct
-                                |> Seq.toArray
-
                         let casRepositoryDto = repositoryForCasStorage route repositoryDto
+                        let payloadSources = selectFinalizeBlockPayloadSources manifest confirmedBlockUploads claimedReuseRanges
 
-                        while index < blockAddresses.Length
+                        while index < payloadSources.Length
                               && Option.isNone error do
-                            let address = blockAddresses[index]
+                            let _, payloadSource = payloadSources[index]
 
-                            match confirmedBlockUploads
-                                  |> Array.tryFind (fun confirmedBlock -> confirmedBlock.ContentBlockAddress = address)
-                                with
-                            | None -> ()
-                            | Some confirmedBlock ->
-                                match! downloadContentBlockPayload casRepositoryDto confirmedBlock correlationId with
+                            match payloadSource with
+                            | ConfirmedUpload confirmedBlock ->
+                                match! downloadConfirmedContentBlockPayload casRepositoryDto confirmedBlock correlationId with
+                                | Ok payload -> payloads.Add payload
+                                | Error downloadError -> error <- Some downloadError
+                            | ClaimedReuseRange claimedRange ->
+                                match! downloadClaimedContentBlockPayload casRepositoryDto claimedRange correlationId with
                                 | Ok payload -> payloads.Add payload
                                 | Error downloadError -> error <- Some downloadError
 
@@ -381,6 +458,101 @@ module Storage =
                         match error with
                         | Some error -> return Error error
                         | None -> return Ok(payloads.ToArray(), storagePoolId)
+        }
+
+    let private manifestContainsContentBlock (contentBlockAddress: ContentBlockAddress) (manifest: FileManifest) =
+        not (isNull (box manifest))
+        && not (isNull manifest.Blocks)
+        && manifest.Blocks
+           |> Seq.exists (fun block ->
+               not (isNull (box block))
+               && block.Address = contentBlockAddress)
+
+    let private validateContentBlockDownloadManifest
+        correlationId
+        (contentBlockAddress: ContentBlockAddress)
+        (storagePoolId: StoragePoolId)
+        (manifest: FileManifest)
+        =
+        if isNull (box manifest) then
+            Error(GraceError.Create "ContentBlock download requires a FileManifest." correlationId)
+        elif String.IsNullOrWhiteSpace manifest.ManifestAddress then
+            Error(GraceError.Create "ContentBlock download requires a FileManifest ManifestAddress." correlationId)
+        elif not (ContentAddress.isValidAddress manifest.ManifestAddress) then
+            Error(GraceError.Create "ContentBlock download FileManifest ManifestAddress must be a 64-character hexadecimal BLAKE3 value." correlationId)
+        elif String.IsNullOrWhiteSpace manifest.StoragePoolId then
+            Error(GraceError.Create "ContentBlock download FileManifest StoragePoolId is required." correlationId)
+        elif manifest.StoragePoolId <> storagePoolId then
+            Error(GraceError.Create "ContentBlock download FileManifest StoragePoolId must match the resolved repository storage route." correlationId)
+        elif not (manifestContainsContentBlock contentBlockAddress manifest) then
+            Error(GraceError.Create "ContentBlock download requires the requested ContentBlockAddress to belong to the supplied FileManifest." correlationId)
+        else
+            let expectedManifestAddress = ContentAddress.computeManifestAddressForManifest manifest
+
+            if expectedManifestAddress
+               <> manifest.ManifestAddress then
+                Error(GraceError.Create "ContentBlock download FileManifest ManifestAddress does not match its reconstruction contract." correlationId)
+            else
+                Ok()
+
+    let private loadRepositoryContentCounter repositoryId manifestAddress correlationId =
+        task {
+            let counterActor =
+                grainFactory.CreateActorProxyWithCorrelationId<IRepositoryContentCounterActor>(
+                    Grace.Actors.RepositoryContentCounter.primaryKey repositoryId manifestAddress,
+                    correlationId
+                )
+
+            return! counterActor.Get correlationId
+        }
+
+    let private repositoryOwnsManifest repositoryId manifestAddress correlationId =
+        task {
+            let! counter = loadRepositoryContentCounter repositoryId manifestAddress correlationId
+
+            return
+                counter.RepositoryId = repositoryId
+                && counter.ManifestAddress = manifestAddress
+                && counter.ReferenceCount > 0L
+                && counter.LifecycleState = RepositoryContentCounterLifecycleState.Referenced
+        }
+
+    let private uploadSessionOwnsManifest repositoryId (parameters: GetContentBlockDownloadUriParameters) (manifest: FileManifest) correlationId =
+        task {
+            if parameters.UploadSessionId = UploadSessionId.Empty then
+                return false
+            else
+                let uploadSessionActor = Grace.Actors.Extensions.ActorProxy.UploadSession.CreateActorProxy parameters.UploadSessionId repositoryId correlationId
+
+                let! session = loadSessionForScope uploadSessionActor correlationId
+
+                return
+                    session.UploadSessionId = parameters.UploadSessionId
+                    && session.RepositoryId = repositoryId
+                    && session.FinalizedManifestAddress = Some manifest.ManifestAddress
+                    && session.StoragePoolId = manifest.StoragePoolId
+                    && (String.IsNullOrWhiteSpace parameters.AuthorizedScope
+                        || session.AuthorizedScope = parameters.AuthorizedScope)
+        }
+
+    let private authorizeContentBlockDownloadForManifest repositoryId (parameters: GetContentBlockDownloadUriParameters) correlationId =
+        task {
+            let! sessionOwnsManifest = uploadSessionOwnsManifest repositoryId parameters parameters.Manifest correlationId
+
+            if sessionOwnsManifest then
+                return Ok()
+            else
+                let! hasRepositoryManifestReference = repositoryOwnsManifest repositoryId parameters.Manifest.ManifestAddress correlationId
+
+                if hasRepositoryManifestReference then
+                    return Ok()
+                else
+                    return
+                        Error(
+                            GraceError.Create
+                                "ContentBlock download requires a repository-owned manifest or finalized upload session before issuing a read SAS."
+                                correlationId
+                        )
         }
 
     let private createDiscoveryPolicy () : StorageParameterContracts.ContentBlockDiscoveryPolicy =
@@ -523,11 +695,17 @@ module Storage =
                         match routeResult with
                         | Error error -> return! context |> result400BadRequest error
                         | Ok route ->
-                            let blobName = getContentBlockObjectKey parameters.ContentBlockAddress
-                            let casRepositoryDto = repositoryForCasStorage route repositoryDto
-                            let! downloadUri = getUriWithReadSharedAccessSignature casRepositoryDto blobName correlationId
-                            context.SetStatusCode StatusCodes.Status200OK
-                            return! context.WriteStringAsync downloadUri.AbsoluteUri
+                            match validateContentBlockDownloadManifest correlationId parameters.ContentBlockAddress route.StoragePoolId parameters.Manifest with
+                            | Error error -> return! context |> result400BadRequest error
+                            | Ok () ->
+                                match! authorizeContentBlockDownloadForManifest repositoryId parameters correlationId with
+                                | Error error -> return! context |> result400BadRequest error
+                                | Ok () ->
+                                    let blobName = getContentBlockObjectKey parameters.ContentBlockAddress
+                                    let casRepositoryDto = repositoryForCasStorage route repositoryDto
+                                    let! downloadUri = getUriWithReadSharedAccessSignature casRepositoryDto blobName correlationId
+                                    context.SetStatusCode StatusCodes.Status200OK
+                                    return! context.WriteStringAsync downloadUri.AbsoluteUri
                 with
                 | ex ->
                     context.SetStatusCode StatusCodes.Status500InternalServerError
