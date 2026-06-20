@@ -167,6 +167,18 @@ type StorageContentBlockSdkContract() =
         Assert.That(parameterType.GetProperty("AuthorizedScope"), Is.Not.Null)
 
     [<Test>]
+    member _.ContentBlockUploadRouteUsesSessionRecordedPoolAfterRepositoryRouteDrift() =
+        let originalPool = StoragePoolId Constants.DefaultStoragePoolId
+        let currentRepositoryPool = StoragePoolId "pool-after-upload-route-drift"
+        let repository = repositoryWithStoragePool currentRepositoryPool
+
+        match StorageServer.resolveContentBlockUploadStorageRoute "corr-upload-route-drift" originalPool repository with
+        | Ok route ->
+            Assert.That(route.StoragePoolId, Is.EqualTo(originalPool))
+            Assert.That(route.StorageShard.StorageContainerName, Is.EqualTo(Constants.DefaultCasStorageContainerName))
+        | Error error -> Assert.Fail($"Expected session recorded pool to resolve after repository route drift, got {error.Error}.")
+
+    [<Test>]
     member _.ContentBlockCreateSasPermissionsDoNotGrantOverwriteWrite() =
         Assert.That(ActorServices.azureBlobCreatePermissions.HasFlag BlobSasPermissions.Create, Is.True)
         Assert.That(ActorServices.azureBlobCreatePermissions.HasFlag BlobSasPermissions.Write, Is.False)
@@ -236,7 +248,7 @@ type StorageContentBlockSdkContract() =
         | Error error -> Assert.Fail($"Expected FilePath evidence to accept the saved file manifest, got {error.Error}.")
 
     [<Test>]
-    member _.ContentBlockDownloadAuthorizationRejectsPathManifestSwapEvenWhenRepositoryOwnsManifest() =
+    member _.ContentBlockDownloadPathEvidenceRejectsPathManifestSwapEvenWhenRepositoryOwnsManifest() =
         let authorizedPath = RelativePath "src/authorized.bin"
         let contentBlockAddress = ContentBlockAddress "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
         let authorizedManifest = downloadManifestWithBlock (StoragePoolId Constants.DefaultStoragePoolId) contentBlockAddress
@@ -249,13 +261,7 @@ type StorageContentBlockSdkContract() =
         let fileVersion = FileVersion.Create authorizedPath authorizedManifest.FileContentHash String.Empty false authorizedManifest.Size
         fileVersion.ContentReference <- FileContentReference.FileManifest authorizedManifest
 
-        match
-            StorageServer.validateContentBlockDownloadAuthorizationEvidence
-                "corr-path-swap-repository-owned"
-                authorizedPath
-                (Some fileVersion)
-                swappedManifest
-                true
+        match StorageServer.validateContentBlockDownloadFilePathEvidence "corr-path-swap-repository-owned" authorizedPath (Some fileVersion) swappedManifest
             with
         | Ok () -> Assert.Fail("Expected FilePath manifest evidence to remain authoritative even when the repository owns the supplied manifest.")
         | Error error -> Assert.That(error.Error, Does.Contain("ManifestAddress"))
@@ -287,6 +293,18 @@ type StorageContentBlockSdkContract() =
         match StorageServer.validateContentBlockDownloadRepositoryOwnership "corr-historical-repository-owned" true with
         | Ok () -> ()
         | Error error -> Assert.Fail($"Expected durable repository manifest ownership to authorize the historical manifest, got {error.Error}.")
+
+        match
+            StorageServer.validateContentBlockDownloadAuthorizationEvidence
+                "corr-historical-download-authorization"
+                historicalPath
+                (Some latestFileVersion)
+                historicalManifest
+                true
+            with
+        | Ok () -> ()
+        | Error error ->
+            Assert.Fail($"Expected durable repository manifest ownership to authorize a historical manifest after path replacement, got {error.Error}.")
 
         match StorageServer.validateContentBlockDownloadRepositoryOwnership "corr-historical-not-owned" false with
         | Ok () -> Assert.Fail("Expected missing repository manifest ownership to fail closed.")

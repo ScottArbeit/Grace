@@ -104,6 +104,9 @@ module Storage =
     let internal resolveFinalizeManifestUploadStorageRoute correlationId storagePoolId repositoryDto =
         DedupeIndex.resolveStoredManifestStorageRouteWithDefaults correlationId storagePoolId repositoryDto
 
+    let internal resolveContentBlockUploadStorageRoute correlationId storagePoolId repositoryDto =
+        DedupeIndex.resolveStoredManifestStorageRouteWithDefaults correlationId storagePoolId repositoryDto
+
     let internal resolveContentBlockDownloadStorageRoute correlationId (repositoryDto: RepositoryDto) (parameters: GetContentBlockDownloadUriParameters) =
         if
             not (isNull (box parameters.Manifest))
@@ -691,9 +694,12 @@ module Storage =
             )
 
     let internal validateContentBlockDownloadAuthorizationEvidence correlationId filePath savedFileVersion manifest hasRepositoryManifestReference =
-        match validateContentBlockDownloadFilePathEvidence correlationId filePath savedFileVersion manifest with
-        | Error error -> Error error
-        | Ok () -> validateContentBlockDownloadRepositoryOwnership correlationId hasRepositoryManifestReference
+        if hasRepositoryManifestReference then
+            Ok()
+        else
+            match validateContentBlockDownloadFilePathEvidence correlationId filePath savedFileVersion manifest with
+            | Error error -> Error error
+            | Ok () -> validateContentBlockDownloadRepositoryOwnership correlationId hasRepositoryManifestReference
 
     let private uploadSessionOwnsManifest repositoryId (parameters: GetContentBlockDownloadUriParameters) (manifest: FileManifest) correlationId =
         task {
@@ -719,23 +725,22 @@ module Storage =
         task {
             let! savedFileVersion = loadSavedFileVersionForFilePath repositoryId parameters.FilePath correlationId
 
-            match validateContentBlockDownloadFilePathEvidence correlationId parameters.FilePath savedFileVersion parameters.Manifest with
-            | Error error -> return Error error
-            | Ok () ->
-                let! sessionOwnsManifest = uploadSessionOwnsManifest repositoryId parameters parameters.Manifest correlationId
+            let! sessionOwnsManifest = uploadSessionOwnsManifest repositoryId parameters parameters.Manifest correlationId
 
-                if sessionOwnsManifest then
-                    return Ok()
-                else
-                    let! hasRepositoryManifestReference = repositoryOwnsManifest repositoryId parameters.Manifest correlationId
+            if sessionOwnsManifest then
+                match validateContentBlockDownloadFilePathEvidence correlationId parameters.FilePath savedFileVersion parameters.Manifest with
+                | Error error -> return Error error
+                | Ok () -> return Ok()
+            else
+                let! hasRepositoryManifestReference = repositoryOwnsManifest repositoryId parameters.Manifest correlationId
 
-                    return
-                        validateContentBlockDownloadAuthorizationEvidence
-                            correlationId
-                            parameters.FilePath
-                            savedFileVersion
-                            parameters.Manifest
-                            hasRepositoryManifestReference
+                return
+                    validateContentBlockDownloadAuthorizationEvidence
+                        correlationId
+                        parameters.FilePath
+                        savedFileVersion
+                        parameters.Manifest
+                        hasRepositoryManifestReference
         }
 
     let private createDiscoveryPolicy () : StorageParameterContracts.ContentBlockDiscoveryPolicy =
@@ -834,7 +839,7 @@ module Storage =
                                     | Ok () ->
                                         match requireUploadSessionStoragePool correlationId requestContext.SessionForScope with
                                         | Error error -> return Error error
-                                        | Ok storagePoolId -> return resolveRepositoryStorageRouteForPool correlationId storagePoolId repositoryDto
+                                        | Ok storagePoolId -> return resolveContentBlockUploadStorageRoute correlationId storagePoolId repositoryDto
                             }
 
                         match routeResult with
