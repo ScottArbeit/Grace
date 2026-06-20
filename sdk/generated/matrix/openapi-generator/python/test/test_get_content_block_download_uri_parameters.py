@@ -46,6 +46,7 @@ class TestGetContentBlockDownloadUriParameters(unittest.TestCase):
                 repository_name = '',
                 content_block_address = 'bf325375e030fccba00917317c574773100bf03b5fc61486286e564b23e9566b',
                 storage_pool_id = '',
+                file_path = '',
                 manifest = grace_generated_openapi_probe.models.file_manifest.FileManifest(
                     class = 'FileManifest', 
                     manifest_address = 'bf325375e030fccba00917317c574773100bf03b5fc61486286e564b23e9566b', 

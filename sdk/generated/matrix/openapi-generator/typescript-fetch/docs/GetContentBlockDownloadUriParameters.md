@@ -16,6 +16,7 @@ Name | Type
 `repositoryName` | string
 `contentBlockAddress` | string
 `storagePoolId` | string
+`filePath` | string
 `manifest` | [FileManifest](FileManifest.md)
 `uploadSessionId` | string
 `authorizedScope` | string
@@ -37,6 +38,7 @@ const example = {
   "repositoryName": null,
   "contentBlockAddress": null,
   "storagePoolId": null,
+  "filePath": null,
   "manifest": null,
   "uploadSessionId": null,
   "authorizedScope": null,
@@ -54,5 +56,4 @@ console.log(exampleParsed)
 ```
 
 [[Back to top]](#) [[Back to API list]](../README.md#api-endpoints) [[Back to Model list]](../README.md#models) [[Back to README]](../README.md)
-
 

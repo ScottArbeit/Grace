@@ -14,10 +14,10 @@ Name | Type | Description | Notes
 **repository_name** | Option<**String**> |  | [optional]
 **content_block_address** | Option<**String**> | Lowercase 64-character BLAKE3-derived ContentBlock address. | [optional]
 **storage_pool_id** | Option<**String**> | StoragePool-wide CAS scope identifier. | [optional]
+**file_path** | Option<**String**> |  | [optional]
 **manifest** | Option<[**models::FileManifest**](FileManifest.md)> |  | [optional]
 **upload_session_id** | Option<**uuid::Uuid**> |  | [optional]
 **authorized_scope** | Option<**String**> |  | [optional]
 
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
-
 

@@ -3,11 +3,13 @@ namespace Grace.Server.Tests
 open Azure.Storage.Sas
 open Grace.Shared
 open Grace.Types.Common
+open Grace.Types.Repository
 open Grace.Types.UploadSession
 open NodaTime
 open NUnit.Framework
 open System
 open System.Collections.Generic
+open System.IO
 open System.Reflection
 
 module DedupeIndex = Grace.Shared.DedupeIndex
@@ -101,6 +103,18 @@ type StorageContentBlockSdkContract() =
             ConfirmedAt = Instant.FromUtc(2026, 6, 19, 12, 2)
         }
 
+    let repositoryWithStoragePool storagePoolId =
+        { RepositoryDto.Default with
+            RepositoryId = Guid.Parse("4d509875-a266-49ea-87d9-6f57b1b919c6")
+            OwnerId = Guid.Parse("241d960f-1aba-46ef-93d6-765a8b82252c")
+            OrganizationId = Guid.Parse("1a266008-bc58-45d3-99ad-4b6380ebd623")
+            RepositoryStatus = RepositoryStatus.Active
+            ObjectStorageProvider = ObjectStorageProvider.AzureBlobStorage
+            StorageAccountName = Constants.DefaultCasStorageAccountName
+            StorageContainerName = Constants.DefaultCasStorageContainerName
+            StoragePoolId = storagePoolId
+        }
+
     let getStorageParameterType typeName =
         typeof<Parameters.Storage.StorageParameters>.Assembly.GetType ($"Grace.Shared.Parameters.Storage+{typeName}", throwOnError = false)
 
@@ -162,8 +176,89 @@ type StorageContentBlockSdkContract() =
         let parameterType = getStorageParameterType "GetContentBlockDownloadUriParameters"
         Assert.That(parameterType, Is.Not.Null)
         Assert.That(parameterType.GetProperty("StoragePoolId"), Is.Not.Null)
+        Assert.That(parameterType.GetProperty("FilePath"), Is.Not.Null)
         Assert.That(parameterType.GetProperty("Manifest"), Is.Not.Null)
         Assert.That(parameterType.GetProperty("UploadSessionId"), Is.Not.Null)
+
+    [<Test>]
+    member _.ContentBlockDownloadRouteUsesStoredManifestPoolAfterRepositoryRouteDrift() =
+        let originalPool = StoragePoolId Constants.DefaultStoragePoolId
+        let currentRepositoryPool = StoragePoolId "pool-after-download-route-drift"
+        let contentBlockAddress = ContentBlockAddress "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        let manifest = downloadManifestWithBlock originalPool contentBlockAddress
+        let repository = repositoryWithStoragePool currentRepositoryPool
+        let parameters = Parameters.Storage.GetContentBlockDownloadUriParameters()
+        parameters.ContentBlockAddress <- contentBlockAddress
+        parameters.StoragePoolId <- originalPool
+        parameters.Manifest <- manifest
+
+        match StorageServer.resolveContentBlockDownloadStorageRoute "corr-download-route-drift" repository parameters with
+        | Ok route ->
+            Assert.That(route.StoragePoolId, Is.EqualTo(originalPool))
+            Assert.That(route.StorageShard.StorageContainerName, Is.EqualTo(Constants.DefaultCasStorageContainerName))
+        | Error error -> Assert.Fail($"Expected stored manifest pool to resolve after repository route drift, got {error.Error}.")
+
+    [<Test>]
+    member _.ContentBlockDownloadRouteRejectsStoragePoolIdThatDoesNotMatchManifest() =
+        let originalPool = StoragePoolId Constants.DefaultStoragePoolId
+        let contentBlockAddress = ContentBlockAddress "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        let manifest = downloadManifestWithBlock originalPool contentBlockAddress
+        let repository = repositoryWithStoragePool originalPool
+        let parameters = Parameters.Storage.GetContentBlockDownloadUriParameters()
+        parameters.ContentBlockAddress <- contentBlockAddress
+        parameters.StoragePoolId <- StoragePoolId "pool-swapped"
+        parameters.Manifest <- manifest
+
+        match StorageServer.resolveContentBlockDownloadStorageRoute "corr-download-route-swap" repository parameters with
+        | Ok route -> Assert.Fail($"Expected mismatched StoragePoolId to fail closed, got {route.StoragePoolId}.")
+        | Error error -> Assert.That(error.Error, Does.Contain("must match"))
+
+    [<Test>]
+    member _.ContentBlockDownloadFilePathEvidenceRejectsManifestSwap() =
+        let authorizedPath = RelativePath "src/authorized.bin"
+        let contentBlockAddress = ContentBlockAddress "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        let authorizedManifest = downloadManifestWithBlock (StoragePoolId Constants.DefaultStoragePoolId) contentBlockAddress
+
+        let swappedManifest =
+            downloadManifestWithBlock
+                (StoragePoolId Constants.DefaultStoragePoolId)
+                (ContentBlockAddress "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789")
+
+        let fileVersion = FileVersion.Create authorizedPath authorizedManifest.FileContentHash String.Empty false authorizedManifest.Size
+        fileVersion.ContentReference <- FileContentReference.FileManifest authorizedManifest
+
+        match StorageServer.validateContentBlockDownloadFilePathEvidence "corr-path-swap" authorizedPath (Some fileVersion) swappedManifest with
+        | Ok () -> Assert.Fail("Expected FilePath evidence to reject a caller-supplied manifest for a different saved file.")
+        | Error error -> Assert.That(error.Error, Does.Contain("ManifestAddress"))
+
+        match StorageServer.validateContentBlockDownloadFilePathEvidence "corr-path-bound" authorizedPath (Some fileVersion) authorizedManifest with
+        | Ok () -> ()
+        | Error error -> Assert.Fail($"Expected FilePath evidence to accept the saved file manifest, got {error.Error}.")
+
+    [<Test>]
+    member _.GeneratedRawClientsCarryFilePathForContentBlockDownloads() =
+        let repoRoot = Path.GetFullPath(Path.Combine(TestContext.CurrentContext.TestDirectory, "..", "..", "..", "..", ".."))
+
+        let assertContains (relativePath: string) expected =
+            let fullPath = Path.Combine(repoRoot, relativePath.Replace('/', Path.DirectorySeparatorChar))
+            Assert.That(File.Exists fullPath, Is.True, $"{relativePath} should exist.")
+            Assert.That(File.ReadAllText fullPath, Does.Contain(expected), $"{relativePath} should include {expected}.")
+
+        assertContains "sdk/generated/matrix/openapi-generator/typescript-fetch/src/models/GetContentBlockDownloadUriParameters.ts" "filePath"
+
+        assertContains
+            "sdk/generated/matrix/openapi-generator/typescript-fetch/src/models/GetContentBlockDownloadUriParameters.ts"
+            "'FilePath': value['filePath']"
+
+        assertContains
+            "sdk/generated/matrix/openapi-generator/python/grace_generated_openapi_probe/models/get_content_block_download_uri_parameters.py"
+            "file_path:"
+
+        assertContains
+            "sdk/generated/matrix/openapi-generator/python/grace_generated_openapi_probe/models/get_content_block_download_uri_parameters.py"
+            "\"FilePath\": obj.get(\"FilePath\")"
+
+        assertContains "sdk/generated/matrix/openapi-generator/rust/src/models/get_content_block_download_uri_parameters.rs" "pub file_path: Option<String>"
 
     [<Test>]
     member _.FinalizePayloadHydrationSelectsClaimedReuseRangeWhenBlockWasNotConfirmed() =

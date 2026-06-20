@@ -41,10 +41,11 @@ class GetContentBlockDownloadUriParameters(BaseModel):
     repository_name: Optional[StrictStr] = Field(default=None, alias="RepositoryName")
     content_block_address: Optional[Annotated[str, Field(strict=True)]] = Field(default=None, description="Lowercase 64-character BLAKE3-derived ContentBlock address.", alias="ContentBlockAddress")
     storage_pool_id: Optional[StrictStr] = Field(default=None, description="StoragePool-wide CAS scope identifier.", alias="StoragePoolId")
+    file_path: Optional[StrictStr] = Field(default=None, alias="FilePath")
     manifest: Optional[FileManifest] = Field(default=None, alias="Manifest")
     upload_session_id: Optional[UUID] = Field(default=None, alias="UploadSessionId")
     authorized_scope: Optional[StrictStr] = Field(default=None, alias="AuthorizedScope")
-    __properties: ClassVar[List[str]] = ["CorrelationId", "Principal", "OwnerId", "OwnerName", "OrganizationId", "OrganizationName", "RepositoryId", "RepositoryName", "ContentBlockAddress", "StoragePoolId", "Manifest", "UploadSessionId", "AuthorizedScope"]
+    __properties: ClassVar[List[str]] = ["CorrelationId", "Principal", "OwnerId", "OwnerName", "OrganizationId", "OrganizationName", "RepositoryId", "RepositoryName", "ContentBlockAddress", "StoragePoolId", "FilePath", "Manifest", "UploadSessionId", "AuthorizedScope"]
 
     @field_validator('content_block_address')
     def content_block_address_validate_regular_expression(cls, value):
@@ -123,10 +124,10 @@ class GetContentBlockDownloadUriParameters(BaseModel):
             "RepositoryName": obj.get("RepositoryName"),
             "ContentBlockAddress": obj.get("ContentBlockAddress"),
             "StoragePoolId": obj.get("StoragePoolId"),
+            "FilePath": obj.get("FilePath"),
             "Manifest": FileManifest.from_dict(obj["Manifest"]) if obj.get("Manifest") is not None else None,
             "UploadSessionId": obj.get("UploadSessionId"),
             "AuthorizedScope": obj.get("AuthorizedScope")
         })
         return _obj
-
 

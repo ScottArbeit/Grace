@@ -89,6 +89,12 @@ export interface GetContentBlockDownloadUriParameters {
     storagePoolId?: string;
     /**
      * 
+     * @type {string}
+     * @memberof GetContentBlockDownloadUriParameters
+     */
+    filePath?: string;
+    /**
+     * 
      * @type {FileManifest}
      * @memberof GetContentBlockDownloadUriParameters
      */
@@ -134,6 +140,7 @@ export function GetContentBlockDownloadUriParametersFromJSONTyped(json: any, ign
         'repositoryName': json['RepositoryName'] == null ? undefined : json['RepositoryName'],
         'contentBlockAddress': json['ContentBlockAddress'] == null ? undefined : json['ContentBlockAddress'],
         'storagePoolId': json['StoragePoolId'] == null ? undefined : json['StoragePoolId'],
+        'filePath': json['FilePath'] == null ? undefined : json['FilePath'],
         'manifest': json['Manifest'] == null ? undefined : FileManifestFromJSON(json['Manifest']),
         'uploadSessionId': json['UploadSessionId'] == null ? undefined : json['UploadSessionId'],
         'authorizedScope': json['AuthorizedScope'] == null ? undefined : json['AuthorizedScope'],
@@ -161,9 +168,9 @@ export function GetContentBlockDownloadUriParametersToJSONTyped(value?: GetConte
         'RepositoryName': value['repositoryName'],
         'ContentBlockAddress': value['contentBlockAddress'],
         'StoragePoolId': value['storagePoolId'],
+        'FilePath': value['filePath'],
         'Manifest': FileManifestToJSON(value['manifest']),
         'UploadSessionId': value['uploadSessionId'],
         'AuthorizedScope': value['authorizedScope'],
     };
 }
-

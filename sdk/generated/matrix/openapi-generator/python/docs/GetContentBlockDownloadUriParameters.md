@@ -15,6 +15,7 @@ Name | Type | Description | Notes
 **repository_name** | **str** |  | [optional] 
 **content_block_address** | **str** | Lowercase 64-character BLAKE3-derived ContentBlock address. | [optional] 
 **storage_pool_id** | **str** | StoragePool-wide CAS scope identifier. | [optional] 
+**file_path** | **str** |  | [optional] 
 **manifest** | [**FileManifest**](FileManifest.md) |  | [optional] 
 **upload_session_id** | **UUID** |  | [optional] 
 **authorized_scope** | **str** |  | [optional] 
@@ -37,5 +38,4 @@ get_content_block_download_uri_parameters_dict = get_content_block_download_uri_
 get_content_block_download_uri_parameters_from_dict = GetContentBlockDownloadUriParameters.from_dict(get_content_block_download_uri_parameters_dict)
 ```
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
-
 

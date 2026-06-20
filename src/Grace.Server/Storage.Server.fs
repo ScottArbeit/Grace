@@ -101,6 +101,24 @@ module Storage =
     let private resolveRepositoryStorageRouteForPool correlationId storagePoolId repositoryDto =
         DedupeIndex.resolveRepositoryStorageRouteForPool correlationId storagePoolId repositoryDto
 
+    let internal resolveContentBlockDownloadStorageRoute correlationId (repositoryDto: RepositoryDto) (parameters: GetContentBlockDownloadUriParameters) =
+        if
+            not (isNull (box parameters.Manifest))
+            && not (String.IsNullOrWhiteSpace parameters.Manifest.StoragePoolId)
+        then
+            if
+                not (String.IsNullOrWhiteSpace parameters.StoragePoolId)
+                && parameters.StoragePoolId
+                   <> parameters.Manifest.StoragePoolId
+            then
+                Error(GraceError.Create "ContentBlock download StoragePoolId must match the supplied FileManifest StoragePoolId." correlationId)
+            else
+                DedupeIndex.resolveStoredManifestStorageRouteWithDefaults correlationId parameters.Manifest.StoragePoolId repositoryDto
+        elif String.IsNullOrWhiteSpace parameters.StoragePoolId then
+            resolveRepositoryStorageRoute correlationId repositoryDto
+        else
+            resolveRepositoryStorageRouteForPool correlationId parameters.StoragePoolId repositoryDto
+
     let private repositoryForCasStorage route repositoryDto = DedupeIndex.repositoryForStorageRoute route repositoryDto
 
     let private validateSasStorageAccount correlationId (repositoryDto: RepositoryDto) =
@@ -606,6 +624,59 @@ module Storage =
                 && counter.LifecycleState = RepositoryContentCounterLifecycleState.Referenced
         }
 
+    let private tryGetFileManifest (fileVersion: FileVersion) =
+        if isNull (box fileVersion)
+           || isNull (box fileVersion.ContentReference)
+           || fileVersion.ContentReference.ReferenceType
+              <> FileContentReferenceType.FileManifest then
+            None
+        else
+            fileVersion.ContentReference.Manifest
+
+    let internal validateContentBlockDownloadFilePathEvidence
+        correlationId
+        (filePath: RelativePath)
+        (savedFileVersion: FileVersion option)
+        (manifest: FileManifest)
+        =
+        if String.IsNullOrWhiteSpace filePath then
+            Ok()
+        else
+            match savedFileVersion with
+            | None -> Error(GraceError.Create "ContentBlock download FilePath must reference a saved file that owns the supplied FileManifest." correlationId)
+            | Some fileVersion ->
+                match tryGetFileManifest fileVersion with
+                | None -> Error(GraceError.Create "ContentBlock download FilePath must reference a manifest-backed saved file." correlationId)
+                | Some savedManifest when
+                    savedManifest.ManifestAddress
+                    <> manifest.ManifestAddress
+                    ->
+                    Error(GraceError.Create "ContentBlock download FilePath does not match the supplied FileManifest ManifestAddress." correlationId)
+                | Some savedManifest when
+                    savedManifest.StoragePoolId
+                    <> manifest.StoragePoolId
+                    ->
+                    Error(GraceError.Create "ContentBlock download FilePath does not match the supplied FileManifest StoragePoolId." correlationId)
+                | Some _ -> Ok()
+
+    let private loadSavedFileVersionForPath repositoryId (filePath: RelativePath) correlationId =
+        task {
+            if String.IsNullOrWhiteSpace filePath then
+                return None
+            else
+                let directoryPath = getRelativeDirectory filePath Constants.RootDirectoryPath
+                let! directoryVersion = getMostRecentDirectoryVersionByRelativePath repositoryId directoryPath correlationId
+
+                return
+                    directoryVersion
+                    |> Option.bind (fun directory ->
+                        if isNull directory.Files then
+                            None
+                        else
+                            directory.Files
+                            |> Seq.tryFind (fun fileVersion -> String.Equals(fileVersion.RelativePath, filePath, StringComparison.OrdinalIgnoreCase)))
+        }
+
     let private uploadSessionOwnsManifest repositoryId (parameters: GetContentBlockDownloadUriParameters) (manifest: FileManifest) correlationId =
         task {
             if parameters.UploadSessionId = UploadSessionId.Empty then
@@ -622,6 +693,8 @@ module Storage =
                     && session.StoragePoolId = manifest.StoragePoolId
                     && (String.IsNullOrWhiteSpace parameters.AuthorizedScope
                         || session.AuthorizedScope = parameters.AuthorizedScope)
+                    && (String.IsNullOrWhiteSpace parameters.FilePath
+                        || session.AuthorizedScope = parameters.FilePath)
         }
 
     let private authorizeContentBlockDownloadForManifest repositoryId (parameters: GetContentBlockDownloadUriParameters) correlationId =
@@ -634,7 +707,8 @@ module Storage =
                 let! hasRepositoryManifestReference = repositoryOwnsManifest repositoryId parameters.Manifest.ManifestAddress correlationId
 
                 if hasRepositoryManifestReference then
-                    return Ok()
+                    let! savedFileVersion = loadSavedFileVersionForPath repositoryId parameters.FilePath correlationId
+                    return validateContentBlockDownloadFilePathEvidence correlationId parameters.FilePath savedFileVersion parameters.Manifest
                 else
                     return
                         Error(
@@ -779,11 +853,7 @@ module Storage =
                         let repositoryActor = Repository.CreateActorProxy organizationId repositoryId correlationId
                         let! repositoryDto = repositoryActor.Get correlationId
 
-                        let routeResult =
-                            if String.IsNullOrWhiteSpace parameters.StoragePoolId then
-                                resolveRepositoryStorageRoute correlationId repositoryDto
-                            else
-                                resolveRepositoryStorageRouteForPool correlationId parameters.StoragePoolId repositoryDto
+                        let routeResult = resolveContentBlockDownloadStorageRoute correlationId repositoryDto parameters
 
                         match routeResult with
                         | Error error -> return! context |> result400BadRequest error
