@@ -921,6 +921,72 @@ type UploadSessionActorTests() =
         | Error error -> Assert.Fail($"Expected confirmed upload to supersede stale claimed metadata, got {error.Error}.")
 
     [<Test>]
+    member _.FinalizeManifestSelectsFreshClaimWhenStaleDuplicateClaimForSameBlockExists() =
+        let fileBytes = Text.Encoding.UTF8.GetBytes("fresh claim supersedes stale duplicate")
+        let block = encodedBlock fileBytes
+        let manifest = manifestFor fileBytes [| block |]
+
+        let staleRange =
+            { reusableMetadataRange with OrdinalStart = 0; OrdinalCount = minimumReuseRunLength; PhysicalOffset = 0L; PhysicalLength = int64 fileBytes.Length }
+
+        let freshRange = { staleRange with ActiveManifestCount = 2 }
+
+        let staleClaim =
+            {
+                StoragePoolId = sessionStoragePoolId
+                ContentBlockAddress = block.Address
+                OrdinalStart = staleRange.OrdinalStart
+                OrdinalCount = staleRange.OrdinalCount
+                PhysicalOffset = staleRange.PhysicalOffset
+                PhysicalLength = staleRange.PhysicalLength
+                MetadataVersion = 7L
+                ClaimedAt = timestamp
+            }
+
+        let freshClaim = { staleClaim with MetadataVersion = 8L; ClaimedAt = timestamp.Plus(Duration.FromSeconds(1L)) }
+
+        let session =
+            { UploadSessionDto.Default with
+                UploadSessionId = sessionId
+                StoragePoolId = sessionStoragePoolId
+                LifecycleState = UploadSessionLifecycleState.ClaimingRanges
+                FileContentHash = manifest.FileContentHash
+                ExpectedSize = manifest.Size
+                ChunkingSuiteId = manifest.ChunkingSuiteId
+                ClaimedReuseRanges = [| staleClaim; freshClaim |]
+            }
+
+        let freshMetadata = reuseMetadataFor block.Address 8L [| freshRange |]
+        let finalizeCommand = finalizeWithClaimedMetadata "op-finalize" manifest [| payloadFor block |] [| freshMetadata |]
+        let result = UploadSessionActor.decideCommand [] session finalizeCommand (metadata "corr-finalize-fresh-claim")
+
+        match result with
+        | Ok decision ->
+            Assert.That(decision.Session.LifecycleState, Is.EqualTo(UploadSessionLifecycleState.RetentionPending))
+
+            let commands =
+                UploadSessionActor.createContentBlockMetadataMergeCommandsForFinalizedBlocks
+                    sessionStoragePoolId
+                    "op-finalize"
+                    session
+                    manifest
+                    [| freshMetadata |]
+
+            Assert.That(commands, Has.Length.EqualTo(1))
+
+            match commands[0] with
+            | ContentBlockMetadataCommand.MergePhysicalRanges merge ->
+                Assert.That(merge.OperationId, Is.EqualTo($"op-finalize:content-block-metadata:{block.Address}"))
+                Assert.That(merge.ContentBlockAddress, Is.EqualTo(block.Address))
+                Assert.That(merge.BlockFormatVersion, Is.EqualTo(freshMetadata.BlockFormatVersion))
+                Assert.That(merge.StoragePlacement, Is.EqualTo(freshMetadata.StoragePlacement))
+                Assert.That(merge.Ranges, Has.Length.EqualTo(1))
+                Assert.That(merge.Ranges[0].PhysicalLength, Is.EqualTo(int64 fileBytes.Length))
+                Assert.That(merge.Ranges[0].ActiveManifestCount, Is.EqualTo(1))
+            | _ -> Assert.Fail("Expected the fresh claimed range to provide the metadata merge command.")
+        | Error error -> Assert.Fail($"Expected fresh duplicate claim to supersede stale claim, got {error.Error}.")
+
+    [<Test>]
     member _.FinalizedUploadRangesEmitSingleReferenceContribution() =
         let ranges =
             [|

@@ -435,23 +435,61 @@ module UploadSession =
                                 $"Authoritative ContentBlockMetadata range is absent or changed for claimed reuse range {claimedRange.ContentBlockAddress}."
                         ))
 
+    let private trySelectClaimedRangeMetadata
+        correlationId
+        storagePoolId
+        (claimedMetadata: Dictionary<string, ContentBlockMetadata>)
+        (claimedRanges: ClaimedReuseRange array)
+        contentBlockAddress
+        =
+        let candidates =
+            claimedRanges
+            |> Array.filter (fun claimedRange -> claimedRange.ContentBlockAddress = contentBlockAddress)
+            |> Array.sortWith (fun left right ->
+                let versionComparison = compare right.MetadataVersion left.MetadataVersion
+
+                if versionComparison <> 0 then
+                    versionComparison
+                else
+                    compare right.ClaimedAt left.ClaimedAt)
+
+        let mutable selected = None
+        let mutable firstError = None
+        let mutable index = 0
+
+        while selected.IsNone && index < candidates.Length do
+            let claimedRange = candidates[index]
+
+            match validateClaimedRangeMetadata correlationId storagePoolId claimedMetadata claimedRange with
+            | Ok () -> selected <- Some claimedRange
+            | Error validationError -> if firstError.IsNone then firstError <- Some validationError
+
+            index <- index + 1
+
+        match selected with
+        | Some claimedRange -> Ok claimedRange
+        | None ->
+            match firstError with
+            | Some validationError -> Error validationError
+            | None -> Error(graceError correlationId $"A claimed reuse range satisfying manifest block {contentBlockAddress} is required before finalization.")
+
     let private validateClaimedMetadataForFinalize correlationId storagePoolId (session: UploadSessionDto) (manifest: FileManifest) claimedMetadata =
         let manifestAddresses = manifestBlockAddressesRequiringClaimedMetadata session manifest
         let metadata = claimedMetadataByKey claimedMetadata
+
+        let claimedRanges =
+            if isNull session.ClaimedReuseRanges then
+                Array.empty
+            else
+                session.ClaimedReuseRanges
+
         let mutable error = None
-        let mutable index = 0
 
-        while error.IsNone
-              && not (isNull session.ClaimedReuseRanges)
-              && index < session.ClaimedReuseRanges.Length do
-            let claimedRange = session.ClaimedReuseRanges[index]
-
-            if manifestAddresses.Contains claimedRange.ContentBlockAddress then
-                match validateClaimedRangeMetadata correlationId storagePoolId metadata claimedRange with
-                | Ok () -> ()
+        for contentBlockAddress in manifestAddresses do
+            if error.IsNone then
+                match trySelectClaimedRangeMetadata correlationId storagePoolId metadata claimedRanges contentBlockAddress with
+                | Ok _ -> ()
                 | Error validationError -> error <- Some validationError
-
-            index <- index + 1
 
         match error with
         | Some validationError -> Error validationError
@@ -497,10 +535,16 @@ module UploadSession =
 
         let metadata = claimedMetadataByKey claimedMetadata
 
-        if not (isNull session.ClaimedReuseRanges) then
-            for claimedRange in session.ClaimedReuseRanges do
-                if manifestAddresses.Contains claimedRange.ContentBlockAddress
-                   && seen.Add claimedRange.ContentBlockAddress then
+        let claimedRanges =
+            if isNull session.ClaimedReuseRanges then
+                Array.empty
+            else
+                session.ClaimedReuseRanges
+
+        for contentBlockAddress in manifestAddresses do
+            if seen.Add contentBlockAddress then
+                match trySelectClaimedRangeMetadata String.Empty storagePoolId metadata claimedRanges contentBlockAddress with
+                | Ok claimedRange ->
                     let key = claimedMetadataKey claimedRange.StoragePoolId claimedRange.ContentBlockAddress claimedRange.MetadataVersion
 
                     match metadata.TryGetValue key with
@@ -520,6 +564,7 @@ module UploadSession =
                             )
                         | None -> ()
                     | false, _ -> ()
+                | Error _ -> ()
 
         commands.ToArray()
 

@@ -548,9 +548,6 @@ module Storage =
                     )
         }
 
-    let private claimedMetadataKey (claimedRange: ClaimedReuseRange) =
-        $"{claimedRange.StoragePoolId}|{claimedRange.ContentBlockAddress}|{claimedRange.MetadataVersion}"
-
     let private authoritativeClaimedRangeMatches (claimedRange: ClaimedReuseRange) (metadata: ContentBlockMetadata) =
         metadata.StoragePoolId = claimedRange.StoragePoolId
         && metadata.ContentBlockAddress = claimedRange.ContentBlockAddress
@@ -563,6 +560,20 @@ module Storage =
                && range.PhysicalOffset = claimedRange.PhysicalOffset
                && range.PhysicalLength = claimedRange.PhysicalLength)
 
+    let private claimedRangesForAddressNewestFirst (session: UploadSessionDto) contentBlockAddress =
+        if isNull session.ClaimedReuseRanges then
+            Array.empty
+        else
+            session.ClaimedReuseRanges
+            |> Array.filter (fun claimedRange -> claimedRange.ContentBlockAddress = contentBlockAddress)
+            |> Array.sortWith (fun left right ->
+                let versionComparison = compare right.MetadataVersion left.MetadataVersion
+
+                if versionComparison <> 0 then
+                    versionComparison
+                else
+                    compare right.ClaimedAt left.ClaimedAt)
+
     let private loadClaimedMetadataForFinalize (requestContext: UploadSessionRequestContext) (manifest: FileManifest) correlationId =
         task {
             let storagePoolId = requestContext.SessionForScope.StoragePoolId
@@ -570,28 +581,31 @@ module Storage =
             let manifestAddresses = manifestBlockAddressesRequiringClaimedMetadata requestContext.SessionForScope manifest
 
             let metadata = ResizeArray<ContentBlockMetadata>()
-            let seen = HashSet<string>()
             let mutable error = None
             let mutable index = 0
+            let manifestAddressArray = manifestAddresses |> Seq.toArray
 
-            let claimedRanges =
-                if isNull requestContext.SessionForScope.ClaimedReuseRanges then
-                    Array.empty
-                else
-                    requestContext.SessionForScope.ClaimedReuseRanges
+            while error.IsNone
+                  && index < manifestAddressArray.Length do
+                let contentBlockAddress = manifestAddressArray[index]
+                let candidates = claimedRangesForAddressNewestFirst requestContext.SessionForScope contentBlockAddress
+                let mutable selected = None
+                let mutable firstError = None
+                let mutable candidateIndex = 0
 
-            while error.IsNone && index < claimedRanges.Length do
-                let claimedRange = claimedRanges[index]
+                while selected.IsNone
+                      && candidateIndex < candidates.Length do
+                    let claimedRange = candidates[candidateIndex]
 
-                if manifestAddresses.Contains claimedRange.ContentBlockAddress then
                     if claimedRange.StoragePoolId <> storagePoolId then
-                        error <-
-                            Some(
-                                GraceError.Create
-                                    "Claimed reuse range StoragePoolId must match the upload session StoragePoolId before finalization."
-                                    correlationId
-                            )
-                    else if seen.Add(claimedMetadataKey claimedRange) then
+                        if firstError.IsNone then
+                            firstError <-
+                                Some(
+                                    GraceError.Create
+                                        "Claimed reuse range StoragePoolId must match the upload session StoragePoolId before finalization."
+                                        correlationId
+                                )
+                    else
                         let metadataActor =
                             grainFactory.CreateActorProxyWithCorrelationId<IContentBlockMetadataActor>(
                                 Grace.Actors.ContentBlockMetadataActorKey.Create claimedRange.StoragePoolId claimedRange.ContentBlockAddress,
@@ -602,20 +616,37 @@ module Storage =
 
                         match authoritativeMetadata with
                         | None ->
-                            error <-
-                                Some(
-                                    GraceError.Create
-                                        $"Authoritative ContentBlockMetadata is absent for {claimedRange.ContentBlockAddress}; claimed reuse cannot be finalized."
-                                        correlationId
-                                )
+                            if firstError.IsNone then
+                                firstError <-
+                                    Some(
+                                        GraceError.Create
+                                            $"Authoritative ContentBlockMetadata is absent for {claimedRange.ContentBlockAddress}; claimed reuse cannot be finalized."
+                                            correlationId
+                                    )
                         | Some authoritativeMetadata when not (authoritativeClaimedRangeMatches claimedRange authoritativeMetadata) ->
-                            error <-
-                                Some(
-                                    GraceError.Create
-                                        $"Authoritative ContentBlockMetadata is stale or incomplete for claimed reuse range {claimedRange.ContentBlockAddress}."
-                                        correlationId
-                                )
-                        | Some authoritativeMetadata -> metadata.Add authoritativeMetadata
+                            if firstError.IsNone then
+                                firstError <-
+                                    Some(
+                                        GraceError.Create
+                                            $"Authoritative ContentBlockMetadata is stale or incomplete for claimed reuse range {claimedRange.ContentBlockAddress}."
+                                            correlationId
+                                    )
+                        | Some authoritativeMetadata -> selected <- Some authoritativeMetadata
+
+                    candidateIndex <- candidateIndex + 1
+
+                match selected with
+                | Some authoritativeMetadata -> metadata.Add authoritativeMetadata
+                | None ->
+                    match firstError with
+                    | Some validationError -> error <- Some validationError
+                    | None ->
+                        error <-
+                            Some(
+                                GraceError.Create
+                                    $"A claimed reuse range satisfying manifest block {contentBlockAddress} is required before finalization."
+                                    correlationId
+                            )
 
                 index <- index + 1
 
@@ -1427,33 +1458,24 @@ module Storage =
                     match scopeValidation with
                     | Error error -> return! context |> result400BadRequest error
                     | Ok requestContext ->
-                        let replayCommand =
-                            UploadSessionCommand.FinalizeManifest
-                                {
-                                    OperationId = parameters.OperationId
-                                    Manifest = parameters.Manifest
-                                    BlockPayloads = Array.empty
-                                    ClaimedMetadata = Array.empty
-                                }
+                        let! evidenceResult = hydrateFinalizeEvidence requestContext parameters parameters.Manifest correlationId
 
-                        match! tryReplayUploadSessionCommand requestContext replayCommand parameters.OperationId correlationId with
-                        | Some (Ok returnValue) -> return! context |> result200Ok returnValue
-                        | Some (Error error) -> return! context |> result400BadRequest error
-                        | None ->
-                            let! evidenceResult = hydrateFinalizeEvidence requestContext parameters parameters.Manifest correlationId
+                        match evidenceResult with
+                        | Error error -> return! context |> result400BadRequest error
+                        | Ok evidence ->
+                            let command =
+                                UploadSessionCommand.FinalizeManifest
+                                    {
+                                        OperationId = parameters.OperationId
+                                        Manifest = parameters.Manifest
+                                        BlockPayloads = evidence.BlockPayloads
+                                        ClaimedMetadata = evidence.ClaimedMetadata
+                                    }
 
-                            match evidenceResult with
-                            | Error error -> return! context |> result400BadRequest error
-                            | Ok evidence ->
-                                let command =
-                                    UploadSessionCommand.FinalizeManifest
-                                        {
-                                            OperationId = parameters.OperationId
-                                            Manifest = parameters.Manifest
-                                            BlockPayloads = evidence.BlockPayloads
-                                            ClaimedMetadata = evidence.ClaimedMetadata
-                                        }
-
+                            match! tryReplayUploadSessionCommand requestContext command parameters.OperationId correlationId with
+                            | Some (Ok returnValue) -> return! context |> result200Ok returnValue
+                            | Some (Error error) -> return! context |> result400BadRequest error
+                            | None ->
                                 let! result = requestContext.UploadSessionActor.Handle command requestContext.Metadata
 
                                 match result with
