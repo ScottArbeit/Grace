@@ -6,6 +6,8 @@ Object-storage placement metadata for a confirmed ContentBlock payload.
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
+**storage_account_name** | **str** |  | 
+**storage_container_name** | **str** |  | 
 **object_key** | **str** |  | 
 **e_tag** | **str** |  | [optional] 
 

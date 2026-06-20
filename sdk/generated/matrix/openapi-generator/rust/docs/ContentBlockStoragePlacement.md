@@ -4,6 +4,8 @@
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
+**storage_account_name** | **String** |  | 
+**storage_container_name** | **String** |  | 
 **object_key** | **String** |  | 
 **e_tag** | Option<**String**> |  | [optional]
 
