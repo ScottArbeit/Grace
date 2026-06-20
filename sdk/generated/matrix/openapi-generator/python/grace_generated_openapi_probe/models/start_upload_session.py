@@ -34,13 +34,14 @@ class StartUploadSession(BaseModel):
     owner_id: UUID = Field(alias="OwnerId")
     organization_id: UUID = Field(alias="OrganizationId")
     repository_id: UUID = Field(alias="RepositoryId")
+    storage_pool_id: StrictStr = Field(description="StoragePool-wide CAS scope identifier.", alias="StoragePoolId")
     authorized_scope: StrictStr = Field(alias="AuthorizedScope")
     file_content_hash: Annotated[str, Field(strict=True)] = Field(description="Lowercase 64-character BLAKE3 hash of the complete unencoded file bytes.", alias="FileContentHash")
     expected_size: StrictInt = Field(alias="ExpectedSize")
     chunking_suite_id: StrictStr = Field(description="Versioned chunking suite identifier.", alias="ChunkingSuiteId")
     sampling_policy_snapshot: StrictStr = Field(alias="SamplingPolicySnapshot")
     operation_id: StrictStr = Field(description="Caller-supplied idempotency key for one upload-session operation.", alias="OperationId")
-    __properties: ClassVar[List[str]] = ["UploadSessionId", "OwnerId", "OrganizationId", "RepositoryId", "AuthorizedScope", "FileContentHash", "ExpectedSize", "ChunkingSuiteId", "SamplingPolicySnapshot", "OperationId"]
+    __properties: ClassVar[List[str]] = ["UploadSessionId", "OwnerId", "OrganizationId", "RepositoryId", "StoragePoolId", "AuthorizedScope", "FileContentHash", "ExpectedSize", "ChunkingSuiteId", "SamplingPolicySnapshot", "OperationId"]
 
     @field_validator('file_content_hash')
     def file_content_hash_validate_regular_expression(cls, value):
@@ -107,6 +108,7 @@ class StartUploadSession(BaseModel):
             "OwnerId": obj.get("OwnerId"),
             "OrganizationId": obj.get("OrganizationId"),
             "RepositoryId": obj.get("RepositoryId"),
+            "StoragePoolId": obj.get("StoragePoolId"),
             "AuthorizedScope": obj.get("AuthorizedScope"),
             "FileContentHash": obj.get("FileContentHash"),
             "ExpectedSize": obj.get("ExpectedSize"),

@@ -30,6 +30,7 @@ type UploadSessionActorTests() =
     let ownerId = Guid.Parse("4f512f0d-d6b0-488a-934c-db16840d2a8d")
     let organizationId = Guid.Parse("2b4ffda8-1129-47df-9c0c-76371153a807")
     let repositoryId = Guid.Parse("75ce5e36-25f6-4da0-afdd-ad4ad56540d5")
+    let sessionStoragePoolId = StoragePoolId "pool-session-recorded"
 
     let start operationId =
         {
@@ -37,6 +38,7 @@ type UploadSessionActorTests() =
             OwnerId = ownerId
             OrganizationId = organizationId
             RepositoryId = repositoryId
+            StoragePoolId = sessionStoragePoolId
             AuthorizedScope = "/src"
             FileContentHash = "blake3:file"
             ExpectedSize = 1_048_576L
@@ -202,6 +204,8 @@ type UploadSessionActorTests() =
             Assert.That(decision.Events.Length, Is.EqualTo(1))
 
             let dto = applyAll decision.Events UploadSessionDto.Default
+            Assert.That(dto.StoragePoolId, Is.EqualTo(sessionStoragePoolId))
+
             let replay = UploadSessionActor.decideCommand decision.Events dto command (metadata "corr-start-2")
 
             match replay with
@@ -209,6 +213,7 @@ type UploadSessionActorTests() =
                 Assert.That(replayDecision.WasIdempotentReplay, Is.True)
                 Assert.That(replayDecision.Events, Is.Empty)
                 Assert.That(replayDecision.Session.UploadSessionId, Is.EqualTo(sessionId))
+                Assert.That(replayDecision.Session.StoragePoolId, Is.EqualTo(sessionStoragePoolId))
                 Assert.That(replayDecision.Session.LifecycleState, Is.EqualTo(UploadSessionLifecycleState.Started))
             | Error error -> Assert.Fail($"Expected idempotent replay, got {error.Error}.")
         | Error error -> Assert.Fail($"Expected start to succeed, got {error.Error}.")
@@ -737,7 +742,7 @@ type UploadSessionActorTests() =
                     |]
             }
 
-        let expectedStoragePoolId = DedupeIndex.storagePoolIdForRepositoryId repositoryId
+        let expectedStoragePoolId = sessionStoragePoolId
 
         let commands = UploadSessionActor.createContentBlockMetadataMergeCommandsForFinalizedUploads expectedStoragePoolId "op-finalize" session manifest
 

@@ -89,6 +89,20 @@ module StoragePoolRouting =
             | Some pool -> Ok { RepositoryId = repository.RepositoryId; StoragePoolId = pool.StoragePoolId; Shard = pool.Shard }
             | None -> fail correlationId $"StoragePoolId '{repository.StoragePoolId}' is not configured. StoragePool routing fails closed."
 
+    let resolveConfiguredPoolRouteForStoragePoolId (configuredPools: ConfiguredStoragePool seq) repositoryId storagePoolId correlationId =
+        if repositoryId = RepositoryId.Empty then
+            fail correlationId "RepositoryId is required before resolving a StoragePool route."
+        elif String.IsNullOrWhiteSpace storagePoolId then
+            fail correlationId "UploadSession StoragePoolId is not configured."
+        else
+            let configuredPool =
+                configuredPools
+                |> Seq.tryFind (fun pool -> pool.StoragePoolId = storagePoolId)
+
+            match configuredPool with
+            | Some pool -> Ok { RepositoryId = repositoryId; StoragePoolId = pool.StoragePoolId; Shard = pool.Shard }
+            | None -> fail correlationId $"StoragePoolId '{storagePoolId}' is not configured. StoragePool routing fails closed."
+
     let resolveRepositoryRoute (repository: RepositoryDto) correlationId =
         if isNull (box repository) then
             fail correlationId "Repository state is required before resolving a StoragePool route."
@@ -98,3 +112,6 @@ module StoragePoolRouting =
             fail correlationId $"StoragePoolId '{repository.StoragePoolId}' is not configured. StoragePool routing fails closed."
         else
             resolveConfiguredPoolRoute [ defaultConfiguredPool () ] repository correlationId
+
+    let resolveStoragePoolRouteForStoragePoolId repositoryId storagePoolId correlationId =
+        resolveConfiguredPoolRouteForStoragePoolId [ defaultConfiguredPool () ] repositoryId storagePoolId correlationId
