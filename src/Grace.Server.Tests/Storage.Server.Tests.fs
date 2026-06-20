@@ -20,6 +20,21 @@ open System.Text.Json
 open System.Net.Http.Headers
 
 module private StoragePlacementTestHelpers =
+    let private fragmentParameter (name: string) (uri: Uri) =
+        uri
+            .Fragment
+            .TrimStart('#')
+            .Split('&', StringSplitOptions.RemoveEmptyEntries)
+        |> Array.tryPick (fun part ->
+            let pieces = part.Split('=', 2)
+
+            if pieces.Length = 2
+               && pieces[0]
+                   .Equals(name, StringComparison.OrdinalIgnoreCase) then
+                Some(Uri.UnescapeDataString pieces[1])
+            else
+                None)
+
     let contentBlockPlacementFromUri (blobUriWithSasToken: Uri) eTag =
         let pathSegments =
             blobUriWithSasToken
@@ -36,6 +51,10 @@ module private StoragePlacementTestHelpers =
         let accountName =
             if isPathStyleAzurite && pathSegments.Length >= 3 then
                 pathSegments[0]
+            else if (fragmentParameter "graceStorageAccount" blobUriWithSasToken)
+                .IsSome then
+                (fragmentParameter "graceStorageAccount" blobUriWithSasToken)
+                    .Value
             else
                 let host = blobUriWithSasToken.Host
                 let firstDot = host.IndexOf('.')
@@ -887,6 +906,53 @@ type StorageManifestUploadSessionRoutes() =
             return response.Value.Content.ToArray()
         }
 
+    let uploadFinalContentBlockByAddress (uploadUri: Uri) (contentBlockAddress: ContentBlockAddress) (payload: byte array) =
+        task {
+            let pathSegments =
+                uploadUri
+                    .AbsolutePath
+                    .Trim('/')
+                    .Split([| '/' |], StringSplitOptions.RemoveEmptyEntries)
+
+            let isPathStyleAzurite =
+                uploadUri.Host.Equals("localhost", StringComparison.OrdinalIgnoreCase)
+                || IPAddress.TryParse(uploadUri.Host) |> fst
+
+            let accountName =
+                if isPathStyleAzurite && pathSegments.Length > 0 then
+                    pathSegments[0]
+                else
+                    uploadUri.Host.Substring(0, uploadUri.Host.IndexOf('.'))
+
+            let blobEndpoint =
+                if isPathStyleAzurite then
+                    $"{uploadUri.Scheme}://{uploadUri.Authority}/{accountName}"
+                else
+                    $"{uploadUri.Scheme}://{uploadUri.Authority}"
+
+            let connectionString =
+                $"DefaultEndpointsProtocol={uploadUri.Scheme};AccountName={accountName};AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint={blobEndpoint};"
+
+            let containerName = if isPathStyleAzurite then pathSegments[1] else pathSegments[0]
+
+            let objectKey =
+                let prefix = Constants.DefaultCasStoragePrefix.Trim().Trim('/')
+                let contentObjectKey = StorageKeys.contentBlockObjectKey contentBlockAddress
+
+                if String.IsNullOrWhiteSpace prefix then
+                    contentObjectKey
+                else
+                    $"{prefix}/{contentObjectKey}"
+
+            let containerClient = BlobContainerClient(connectionString, containerName)
+            let! _ = containerClient.CreateIfNotExistsAsync()
+            let blockBlobClient = containerClient.GetBlockBlobClient(objectKey)
+            let! _ = blockBlobClient.DeleteIfExistsAsync()
+            use payloadStream = new MemoryStream(payload, writable = false)
+            let! _ = blockBlobClient.UploadAsync(payloadStream)
+            return ()
+        }
+
     let reuseHint index =
         {
             StoragePoolId = StoragePoolId $"storage-pool-{Guid.NewGuid():N}"
@@ -920,6 +986,7 @@ type StorageManifestUploadSessionRoutes() =
             let sessionId = Guid.NewGuid()
             let payload = pseudoRandomBytes 220000
             payload[0] <- 0uy
+            Guid.NewGuid().ToByteArray().CopyTo(payload, 1)
             let block = encodeBlock payload
             let manifest = manifestFor payload block
 
@@ -963,6 +1030,9 @@ type StorageManifestUploadSessionRoutes() =
             let sasPermissions = queryParameter "sp" uploadUri
             Assert.That(sasPermissions, Does.Contain("c"))
             Assert.That(sasPermissions, Does.Contain("w"))
+            Assert.That(uploadUri.AbsolutePath, Does.Contain($"/staging/upload-sessions/{sessionId:N}/content-blocks/{block.Address}"))
+            Assert.That(uploadUri.AbsolutePath, Does.Not.Contain($"/cas/content/{block.Address}"))
+            Assert.That(uploadUri.Fragment, Does.Contain("graceStorageAccount="))
 
             let! uploadETag = uploadContentBlockWithSas block.Payload uploadUri
 
@@ -1023,6 +1093,75 @@ type StorageManifestUploadSessionRoutes() =
                 with
             | Ok reconstructedBytes -> Assert.That(Convert.ToHexString(reconstructedBytes), Is.EqualTo(Convert.ToHexString(payload)))
             | Error error -> Assert.Fail($"Expected downloaded ContentBlock to reconstruct the manifest bytes, got {error}.")
+        }
+
+    [<Test>]
+    member _.ConfirmContentBlockUploadRejectsInvalidFinalCasBlobInsteadOfTreatingItAsSuccess() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let correlationId = generateCorrelationId ()
+            let sessionId = Guid.NewGuid()
+            let payload = pseudoRandomBytes 220000
+            payload[0] <- 0uy
+            Guid.NewGuid().ToByteArray().CopyTo(payload, 1)
+            let block = encodeBlock payload
+            let manifest = manifestFor payload block
+            let invalidFinalPayload = pseudoRandomBytes block.Payload.Length
+            invalidFinalPayload[0] <- invalidFinalPayload[0] ^^^ 0xffuy
+
+            let start = Parameters.Storage.StartManifestUploadSessionParameters()
+            setStorageParameters start repositoryId correlationId
+            start.UploadSessionId <- sessionId
+            start.AuthorizedScope <- "/"
+            start.FileContentHash <- manifest.FileContentHash
+            start.ExpectedSize <- manifest.Size
+            start.ChunkingSuiteId <- manifest.ChunkingSuiteId
+            start.SamplingPolicySnapshot <- "sdk-no-global-dedupe-v1"
+            start.OperationId <- "start-poisoned-final"
+
+            let! _ = postUploadSessionDecision "/storage/startManifestUploadSession" start
+
+            let register = Parameters.Storage.RegisterContentBlockUploadParameters()
+            setStorageParameters register repositoryId correlationId
+            register.UploadSessionId <- sessionId
+            register.AuthorizedScope <- "/"
+            register.OperationId <- "register-poisoned-final"
+            register.ContentBlockAddress <- block.Address
+            register.LogicalOffset <- 0L
+            register.LogicalLength <- int64 payload.Length
+            register.ExpectedPayloadLength <- int64 block.Payload.Length
+
+            let! _ = postUploadSessionDecision "/storage/registerContentBlockUpload" register
+
+            let uploadUriParameters = Parameters.Storage.GetContentBlockUploadUriParameters()
+            setStorageParameters uploadUriParameters repositoryId correlationId
+            uploadUriParameters.UploadSessionId <- sessionId
+            uploadUriParameters.ContentBlockAddress <- block.Address
+            uploadUriParameters.AuthorizedScope <- "/"
+
+            let! uploadUriResponse = Client.PostAsync("/storage/getContentBlockUploadUri", createJsonContent uploadUriParameters)
+            let! uploadUriBody = uploadUriResponse.Content.ReadAsStringAsync()
+            Assert.That(uploadUriResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), uploadUriBody)
+
+            let uploadUri = Uri uploadUriBody
+            Assert.That(uploadUri.AbsolutePath, Does.Contain($"/staging/upload-sessions/{sessionId:N}/content-blocks/{block.Address}"))
+            Assert.That(uploadUri.AbsolutePath, Does.Not.Contain($"/cas/content/{block.Address}"))
+
+            let! uploadETag = uploadContentBlockWithSas block.Payload uploadUri
+            do! uploadFinalContentBlockByAddress uploadUri block.Address invalidFinalPayload
+
+            let confirm = Parameters.Storage.ConfirmContentBlockUploadParameters()
+            setStorageParameters confirm repositoryId correlationId
+            confirm.UploadSessionId <- sessionId
+            confirm.AuthorizedScope <- "/"
+            confirm.OperationId <- "confirm-poisoned-final"
+            confirm.ContentBlockAddress <- block.Address
+            confirm.Payload <- block.Payload
+            confirm.StoragePlacement <- StoragePlacementTestHelpers.contentBlockPlacementFromUri uploadUri (Some uploadETag)
+
+            let! body = postUploadSessionBadRequest "/storage/confirmContentBlockUpload" confirm
+            Assert.That(body, Does.Contain("Existing final ContentBlock"))
+            Assert.That(body, Does.Contain("invalid"))
         }
 
     [<Test>]
@@ -1154,6 +1293,7 @@ type StorageManifestUploadSessionRoutes() =
             let! uploadUriResponse = Client.PostAsync("/storage/getContentBlockUploadUri", createJsonContent uploadUriParameters)
             let! uploadUriBody = uploadUriResponse.Content.ReadAsStringAsync()
             Assert.That(uploadUriResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), uploadUriBody)
+            let! uploadETag = uploadContentBlockWithSas block.Payload (Uri uploadUriBody)
 
             let confirm = Parameters.Storage.ConfirmContentBlockUploadParameters()
             setStorageParameters confirm repositoryId correlationId
@@ -1162,7 +1302,7 @@ type StorageManifestUploadSessionRoutes() =
             confirm.OperationId <- "confirm-0"
             confirm.ContentBlockAddress <- block.Address
             confirm.Payload <- block.Payload
-            confirm.StoragePlacement <- StoragePlacementTestHelpers.contentBlockPlacementFromUri (Uri uploadUriBody) (Some "etag-scope-binding")
+            confirm.StoragePlacement <- StoragePlacementTestHelpers.contentBlockPlacementFromUri (Uri uploadUriBody) (Some uploadETag)
 
             let! _ = postUploadSessionDecision "/storage/confirmContentBlockUpload" confirm
 
@@ -1653,7 +1793,7 @@ type StorageManifestUploadSessionRoutes() =
         }
 
     [<Test>]
-    member _.FinalizeManifestUploadReturnsBadRequestWhenConfirmedBlockBlobIsMissing() =
+    member _.ConfirmContentBlockUploadReturnsBadRequestWhenStagedBlockBlobIsMissing() =
         task {
             let repositoryId = repositoryIds[0]
             let correlationId = generateCorrelationId ()
@@ -1707,37 +1847,12 @@ type StorageManifestUploadSessionRoutes() =
 
             confirm.StoragePlacement <- StoragePlacementTestHelpers.contentBlockPlacementFromUri (Uri uploadUriBody) (Some "etag-missing-block")
 
-            let! _ = postUploadSessionDecision "/storage/confirmContentBlockUpload" confirm
-
-            let finalize = Parameters.Storage.FinalizeManifestUploadParameters()
-            setStorageParameters finalize repositoryId correlationId
-            finalize.UploadSessionId <- sessionId
-            finalize.AuthorizedScope <- "/"
-            finalize.OperationId <- "finalize"
-            finalize.Manifest <- manifest
-
-            let! body = postUploadSessionBadRequest "/storage/finalizeManifestUpload" finalize
+            let! body = postUploadSessionBadRequest "/storage/confirmContentBlockUpload" confirm
             Assert.That(body, Does.Contain("could not be read from object storage"))
-
-            let retryFinalize = Parameters.Storage.FinalizeManifestUploadParameters()
-            setStorageParameters retryFinalize repositoryId correlationId
-            retryFinalize.UploadSessionId <- sessionId
-            retryFinalize.AuthorizedScope <- "/"
-            retryFinalize.OperationId <- "finalize"
-            retryFinalize.Manifest <- manifest
-
-            retryFinalize.BlockPayloads <-
-                [|
-                    { Address = block.Address; Payload = block.Payload }
-                |]
-
-            let! retryResult = postUploadSessionDecision "/storage/finalizeManifestUpload" retryFinalize
-            Assert.That(retryResult.ReturnValue.Session.FinalizedManifestAddress, Is.EqualTo(Some manifest.ManifestAddress))
-            Assert.That(retryResult.ReturnValue.Session.LifecycleState, Is.EqualTo(UploadSessionLifecycleState.RetentionPending))
         }
 
     [<Test>]
-    member _.FinalizeManifestUploadReturnsBadRequestWhenConfirmedBlockBlobIsCorrupt() =
+    member _.ConfirmContentBlockUploadReturnsBadRequestWhenStagedBlockBlobIsCorrupt() =
         task {
             let repositoryId = repositoryIds[0]
             let correlationId = generateCorrelationId ()
@@ -1794,31 +1909,6 @@ type StorageManifestUploadSessionRoutes() =
             confirm.Payload <- block.Payload
             confirm.StoragePlacement <- StoragePlacementTestHelpers.contentBlockPlacementFromUri (Uri uploadUriBody) (Some uploadETag)
 
-            let! _ = postUploadSessionDecision "/storage/confirmContentBlockUpload" confirm
-
-            let finalize = Parameters.Storage.FinalizeManifestUploadParameters()
-            setStorageParameters finalize repositoryId correlationId
-            finalize.UploadSessionId <- sessionId
-            finalize.AuthorizedScope <- "/"
-            finalize.OperationId <- "finalize"
-            finalize.Manifest <- manifest
-
-            let! body = postUploadSessionBadRequest "/storage/finalizeManifestUpload" finalize
-            Assert.That(body, Does.Contain("ContentBlock payload"))
-
-            let retryFinalize = Parameters.Storage.FinalizeManifestUploadParameters()
-            setStorageParameters retryFinalize repositoryId correlationId
-            retryFinalize.UploadSessionId <- sessionId
-            retryFinalize.AuthorizedScope <- "/"
-            retryFinalize.OperationId <- "finalize"
-            retryFinalize.Manifest <- manifest
-
-            retryFinalize.BlockPayloads <-
-                [|
-                    { Address = block.Address; Payload = block.Payload }
-                |]
-
-            let! retryResult = postUploadSessionDecision "/storage/finalizeManifestUpload" retryFinalize
-            Assert.That(retryResult.ReturnValue.Session.FinalizedManifestAddress, Is.EqualTo(Some manifest.ManifestAddress))
-            Assert.That(retryResult.ReturnValue.Session.LifecycleState, Is.EqualTo(UploadSessionLifecycleState.RetentionPending))
+            let! body = postUploadSessionBadRequest "/storage/confirmContentBlockUpload" confirm
+            Assert.That(body, Does.Contain("Payload must match the staged uploaded bytes"))
         }
