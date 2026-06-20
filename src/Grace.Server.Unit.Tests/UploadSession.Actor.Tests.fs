@@ -118,9 +118,12 @@ type UploadSessionActorTests() =
     let payloadFor (block: ContentBlockFormat.EncodedContentBlock) : FinalizeManifestBlockPayload = { Address = block.Address; Payload = block.Payload }
 
     let finalize operationId manifest payloads =
-        UploadSessionCommand.FinalizeManifest { OperationId = operationId; Manifest = manifest; BlockPayloads = payloads }
+        UploadSessionCommand.FinalizeManifest { OperationId = operationId; Manifest = manifest; BlockPayloads = payloads; ClaimedMetadata = Array.empty }
 
-    let storagePoolId = StoragePoolId "pool-main"
+    let finalizeWithClaimedMetadata operationId manifest payloads claimedMetadata =
+        UploadSessionCommand.FinalizeManifest { OperationId = operationId; Manifest = manifest; BlockPayloads = payloads; ClaimedMetadata = claimedMetadata }
+
+    let storagePoolId = sessionStoragePoolId
     let reuseBlockAddress = ContentBlockAddress "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
     let discoveryExpiresAt = timestamp.Plus(Duration.FromMinutes(10L))
     let minimumReuseRunLength = 4
@@ -765,6 +768,60 @@ type UploadSessionActorTests() =
         assertMerge commands[1] secondBlock.Address (StorageKeys.contentBlockObjectKey secondBlock.Address)
 
     [<Test>]
+    member _.FinalizeManifestCreatesSessionPoolMetadataForClaimedReuseRangesWithoutConfirmedUpload() =
+        let fileBytes = Text.Encoding.UTF8.GetBytes("claimed authoritative metadata")
+        let block = encodedBlock fileBytes
+        let manifest = manifestFor fileBytes [| block |]
+
+        let metadataRange =
+            { reusableMetadataRange with
+                OrdinalStart = 0
+                OrdinalCount = minimumReuseRunLength
+                PhysicalLength = int64 fileBytes.Length
+                ActiveManifestCount = 2
+            }
+
+        let claimedRange =
+            {
+                StoragePoolId = sessionStoragePoolId
+                ContentBlockAddress = block.Address
+                OrdinalStart = metadataRange.OrdinalStart
+                OrdinalCount = metadataRange.OrdinalCount
+                PhysicalOffset = metadataRange.PhysicalOffset
+                PhysicalLength = metadataRange.PhysicalLength
+                MetadataVersion = 7L
+                ClaimedAt = timestamp
+            }
+
+        let session = { UploadSessionDto.Default with StoragePoolId = sessionStoragePoolId; ClaimedReuseRanges = [| claimedRange |] }
+
+        let authoritativeMetadata = reuseMetadataFor block.Address 7L [| metadataRange |]
+
+        let commands =
+            UploadSessionActor.createContentBlockMetadataMergeCommandsForFinalizedBlocks
+                sessionStoragePoolId
+                "op-finalize"
+                session
+                manifest
+                [| authoritativeMetadata |]
+
+        Assert.That(commands, Has.Length.EqualTo(1))
+
+        match commands[0] with
+        | ContentBlockMetadataCommand.MergePhysicalRanges merge ->
+            Assert.That(merge.OperationId, Is.EqualTo($"op-finalize:content-block-metadata:{block.Address}"))
+            Assert.That(merge.StoragePoolId, Is.EqualTo(sessionStoragePoolId))
+            Assert.That(merge.ContentBlockAddress, Is.EqualTo(block.Address))
+            Assert.That(merge.StoragePlacement, Is.EqualTo(authoritativeMetadata.StoragePlacement))
+            Assert.That(merge.Ranges, Has.Length.EqualTo(1))
+            Assert.That(merge.Ranges[0].OrdinalStart, Is.EqualTo(metadataRange.OrdinalStart))
+            Assert.That(merge.Ranges[0].OrdinalCount, Is.EqualTo(metadataRange.OrdinalCount))
+            Assert.That(merge.Ranges[0].PhysicalOffset, Is.EqualTo(metadataRange.PhysicalOffset))
+            Assert.That(merge.Ranges[0].PhysicalLength, Is.EqualTo(metadataRange.PhysicalLength))
+            Assert.That(merge.Ranges[0].ActiveManifestCount, Is.EqualTo(metadataRange.ActiveManifestCount + 1))
+        | _ -> Assert.Fail("Expected claimed reuse finalization to create a ContentBlockMetadata MergePhysicalRanges command.")
+
+    [<Test>]
     member _.FinalizedUploadRangesIncrementExistingActiveManifestCount() =
         let ranges =
             [|
@@ -821,7 +878,17 @@ type UploadSessionActorTests() =
                 UploadSessionDto.Default, []
 
         let result =
-            UploadSessionActor.decideCommand claimedEvents claimedDto (finalize "op-finalize" manifest [| payloadFor block |]) (metadata "corr-finalize")
+            UploadSessionActor.decideCommand
+                claimedEvents
+                claimedDto
+                (finalizeWithClaimedMetadata
+                    "op-finalize"
+                    manifest
+                    [| payloadFor block |]
+                    [|
+                        reuseMetadataFor block.Address 7L [| metadataRange |]
+                    |])
+                (metadata "corr-finalize")
 
         match result with
         | Ok decision ->
@@ -829,6 +896,49 @@ type UploadSessionActorTests() =
             Assert.That(decision.Session.FinalizedManifestAddress, Is.EqualTo(Some manifest.ManifestAddress))
             Assert.That(decision.Session.CleanupReminderOperationId, Is.EqualTo(Some "op-finalize:cleanup"))
         | Error error -> Assert.Fail($"Expected finalize from claimed range to succeed, got {error.Error}.")
+
+    [<Test>]
+    member _.FinalizeManifestRejectsClaimedReuseMetadataFromWrongPool() =
+        let fileBytes = Text.Encoding.UTF8.GetBytes("wrong pool claimed metadata")
+        let block = encodedBlock fileBytes
+        let manifest = manifestFor fileBytes [| block |]
+
+        let metadataRange = { reusableMetadataRange with OrdinalStart = 0; OrdinalCount = minimumReuseRunLength; PhysicalLength = int64 fileBytes.Length }
+
+        let claimedRange =
+            {
+                StoragePoolId = StoragePoolId "pool-other"
+                ContentBlockAddress = block.Address
+                OrdinalStart = metadataRange.OrdinalStart
+                OrdinalCount = metadataRange.OrdinalCount
+                PhysicalOffset = metadataRange.PhysicalOffset
+                PhysicalLength = metadataRange.PhysicalLength
+                MetadataVersion = 7L
+                ClaimedAt = timestamp
+            }
+
+        let session =
+            { UploadSessionDto.Default with
+                StoragePoolId = sessionStoragePoolId
+                ExpectedSize = manifest.Size
+                FileContentHash = manifest.FileContentHash
+                ChunkingSuiteId = manifest.ChunkingSuiteId
+                LifecycleState = UploadSessionLifecycleState.ClaimingRanges
+                ClaimedReuseRanges = [| claimedRange |]
+            }
+
+        let wrongPoolMetadata = { reuseMetadataFor block.Address 7L [| metadataRange |] with StoragePoolId = claimedRange.StoragePoolId }
+
+        let result =
+            UploadSessionActor.decideCommand
+                []
+                session
+                (finalizeWithClaimedMetadata "op-finalize" manifest [| payloadFor block |] [| wrongPoolMetadata |])
+                (metadata "corr-finalize-wrong-pool")
+
+        match result with
+        | Ok _ -> Assert.Fail("Expected wrong-pool claimed metadata to fail closed before finalization.")
+        | Error error -> Assert.That(error.Error, Does.Contain("StoragePoolId must match the upload session StoragePoolId"))
 
     [<Test>]
     member _.FinalizeManifestRejectsMissingConfirmedOrClaimedBlockWithoutConsumingOperationId() =

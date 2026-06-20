@@ -185,6 +185,44 @@ type StorageContentBlockSdkContract() =
         | Ok () -> Assert.Pass()
 
     [<Test>]
+    member _.FinalizeManifestValidatesRequestRepositoryBeforeHydratingEvidence() =
+        let storageServerPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Server", "Storage.Server.fs"))
+        let storageServerSource = File.ReadAllText(storageServerPath)
+        let finalizeStart = storageServerSource.IndexOf("let FinalizeManifestUpload", StringComparison.Ordinal)
+        let finalizeEnd = storageServerSource.IndexOf("let GetUploadUris", finalizeStart, StringComparison.Ordinal)
+
+        Assert.That(finalizeStart, Is.GreaterThanOrEqualTo(0))
+        Assert.That(finalizeEnd, Is.GreaterThan(finalizeStart))
+
+        let finalizeSource = storageServerSource.Substring(finalizeStart, finalizeEnd - finalizeStart)
+        let scopeValidationIndex = finalizeSource.IndexOf("validateUploadSessionScope requestContext parameters correlationId true", StringComparison.Ordinal)
+
+        let hydrateIndex =
+            finalizeSource.IndexOf("hydrateFinalizeEvidence requestContext parameters parameters.Manifest correlationId", StringComparison.Ordinal)
+
+        Assert.That(scopeValidationIndex, Is.GreaterThanOrEqualTo(0))
+        Assert.That(hydrateIndex, Is.GreaterThan(scopeValidationIndex))
+        Assert.That(finalizeSource, Does.Not.Contain("hydrateFinalizeBlockPayloads context"))
+
+    [<Test>]
+    member _.FinalizeManifestLoadsClaimedReuseEvidenceFromAuthoritativeMetadataActorKey() =
+        let storageServerPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Server", "Storage.Server.fs"))
+        let storageServerSource = File.ReadAllText(storageServerPath)
+        let compactedSource = String.Join(" ", storageServerSource.Split([| '\r'; '\n'; '\t'; ' ' |], StringSplitOptions.RemoveEmptyEntries))
+
+        Assert.That(
+            compactedSource,
+            Does.Contain("ContentBlockMetadataActorKey.Create claimedRange.StoragePoolId claimedRange.ContentBlockAddress"),
+            "Finalize must load claimed reuse proof by the authoritative StoragePoolId + ContentBlockAddress key."
+        )
+
+        Assert.That(
+            compactedSource,
+            Does.Contain("readFinalizeBlockPayloadFromPlacement address metadata.StoragePlacement"),
+            "Claimed reuse payload hydration must use authoritative metadata placement, not a recomputed route."
+        )
+
+    [<Test>]
     member _.DownloadAuthorizationUsesTargetedDedupeIndexLookupInsteadOfFullSnapshotState() =
         let methodInfo = typeof<IDedupeIndexActor>.GetMethod ("TryGetFinalizedScopedContentBlockMetadata", BindingFlags.Public ||| BindingFlags.Instance)
 
