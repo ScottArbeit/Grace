@@ -22,6 +22,18 @@ type StorageSdkTests() =
         Assert.That(placement.ETag, Is.EqualTo(Some "etag-custom"))
 
     [<Test>]
+    member _.ContentBlockPlacementFromProductionUploadUriUsesShardEvidenceFragmentForCustomBlobEndpoint() =
+        let placement =
+            Storage.contentBlockPlacementFromUri
+                (Uri "https://cas.example.test/cas-container/staging/upload-sessions/session/content-blocks/aaaaaaaa?sig=fake#graceStorageAccount=cas-shard-a")
+                (Some "etag-staged")
+
+        Assert.That(placement.StorageAccountName, Is.EqualTo("cas-shard-a"))
+        Assert.That(string placement.StorageContainerName, Is.EqualTo("cas-container"))
+        Assert.That(placement.ObjectKey, Is.EqualTo("staging/upload-sessions/session/content-blocks/aaaaaaaa"))
+        Assert.That(placement.ETag, Is.EqualTo(Some "etag-staged"))
+
+    [<Test>]
     member _.ContentBlockPlacementFromUriDoesNotInferAccountFromArbitraryCustomHost() =
         let placement =
             Storage.contentBlockPlacementFromUriUsingConfiguredEndpoint

@@ -206,6 +206,7 @@ type ManifestUploadSdkTests() =
             let calls = ResizeArray<string>()
             let uploadedBlocks = Dictionary<ContentBlockAddress, byte array>()
             let confirmedBlocks = Dictionary<ContentBlockAddress, byte array>()
+            let confirmedPlacements = Dictionary<ContentBlockAddress, ContentBlockStoragePlacement>()
             let mutable finalizedManifest = None
 
             try
@@ -246,7 +247,11 @@ type ManifestUploadSdkTests() =
                                 calls.Add($"upload:{parameters.ContentBlockAddress}")
                                 uploadedBlocks[parameters.ContentBlockAddress] <- payload
 
-                                let placement = ManifestUploadSdkTests.Placement parameters.ContentBlockAddress (Some $"etag-{uploadedBlocks.Count}")
+                                let placement =
+                                    { ManifestUploadSdkTests.Placement parameters.ContentBlockAddress (Some $"etag-{uploadedBlocks.Count}") with
+                                        StorageAccountName = "custom-shard-account"
+                                        ObjectKey = $"staging/custom/{parameters.UploadSessionId:N}/{parameters.ContentBlockAddress}"
+                                    }
 
                                 Task.FromResult(Ok(GraceReturnValue.Create placement correlationId))
                         ConfirmBlockUploaded =
@@ -254,6 +259,7 @@ type ManifestUploadSdkTests() =
                                 Assert.That(parameters.AuthorizedScope, Is.EqualTo(fileVersion.RelativePath))
                                 calls.Add($"confirm:{parameters.ContentBlockAddress}")
                                 confirmedBlocks[parameters.ContentBlockAddress] <- parameters.Payload
+                                confirmedPlacements[parameters.ContentBlockAddress] <- parameters.StoragePlacement
                                 ManifestUploadSdkTests.Decision correlationId parameters.UploadSessionId parameters.OperationId
                         FinalizeManifest =
                             fun parameters ->
@@ -284,6 +290,18 @@ type ManifestUploadSdkTests() =
                     Assert.That(calls, Does.Not.Contain("claim"))
 
                     Assert.That(uploadedBlocks.Keys, Is.EquivalentTo(confirmedBlocks.Keys))
+
+                    Assert.That(
+                        confirmedPlacements.Values
+                        |> Seq.map (fun placement -> placement.StorageAccountName),
+                        Is.All.EqualTo("custom-shard-account")
+                    )
+
+                    Assert.That(
+                        confirmedPlacements.Values
+                        |> Seq.forall (fun placement -> placement.ObjectKey.StartsWith("staging/custom/")),
+                        Is.True
+                    )
             finally
                 if File.Exists(tempPath) then File.Delete(tempPath)
         }

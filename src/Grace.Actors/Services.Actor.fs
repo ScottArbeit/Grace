@@ -526,15 +526,13 @@ module Services =
             return UriWithSharedAccessSignature($"{sasUri}")
         }
 
-    let createAzureContentBlockSasUri
+    let createAzureContentBlockSasUriForObjectKey
         (route: StoragePoolRouting.StoragePoolRoute)
-        (contentBlockAddress: ContentBlockAddress)
+        (objectKey: string)
         (permission: BlobSasPermissions)
         (correlationId: CorrelationId)
         =
         task {
-            let objectKey = StoragePoolRouting.objectKeyInShard route.Shard (StorageKeys.contentBlockObjectKey contentBlockAddress)
-
             match StoragePoolRouting.validateShard correlationId route.Shard with
             | Error error -> return Error error
             | Ok () when
@@ -609,6 +607,15 @@ module Services =
 
                     return Ok(UriWithSharedAccessSignature($"{sasUri}"))
         }
+
+    let createAzureContentBlockSasUri
+        (route: StoragePoolRouting.StoragePoolRoute)
+        (contentBlockAddress: ContentBlockAddress)
+        (permission: BlobSasPermissions)
+        (correlationId: CorrelationId)
+        =
+        let objectKey = StoragePoolRouting.objectKeyInShard route.Shard (StorageKeys.contentBlockObjectKey contentBlockAddress)
+        createAzureContentBlockSasUriForObjectKey route objectKey permission correlationId
 
     let azureBlobReadPermissions =
         (BlobSasPermissions.Read
