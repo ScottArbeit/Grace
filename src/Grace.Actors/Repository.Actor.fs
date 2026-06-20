@@ -474,6 +474,19 @@ module Repository =
                                     match command with
                                     | Create (repositoryName, repositoryId, ownerId, organizationId, objectStorageProvider) ->
                                         return Created(repositoryName, repositoryId, ownerId, organizationId, objectStorageProvider)
+                                    | SetStoragePoolId storagePoolId when String.IsNullOrWhiteSpace storagePoolId ->
+                                        return raise (ApplicationException("Repository StoragePoolId cannot be blank."))
+                                    | SetStoragePoolId storagePoolId when
+                                        storagePoolId
+                                        <> StoragePoolId Constants.DefaultStoragePoolId
+                                        ->
+                                        return
+                                            raise (
+                                                ApplicationException(
+                                                    $"StoragePoolId '{storagePoolId}' is not configured. Non-default StoragePool routing fails closed until configured pool loading exists."
+                                                )
+                                            )
+                                    | SetStoragePoolId storagePoolId -> return StoragePoolIdSet storagePoolId
                                     | Initialize -> return Initialized
                                     | SetObjectStorageProvider objectStorageProvider -> return ObjectStorageProviderSet objectStorageProvider
                                     | SetStorageAccountName storageAccountName -> return StorageAccountNameSet storageAccountName
